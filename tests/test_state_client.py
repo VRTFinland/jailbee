@@ -20,8 +20,13 @@ from jailbee.state_service import StateServiceUnavailable, paths
 from jailbee.state_service import client as client_module
 from jailbee.state_service.client import DISCONNECTED, StateClient
 from jailbee.state_service.protocol import PROTOCOL, Hello, Snapshot, encode
-from jailbee.state_service.server import StateServer
+from jailbee.state_service.server import LOCK_WAIT_SECONDS, StateServer
 from tests.test_state_server import T0, FakeGatherer, reap_servers, track_server  # noqa: F401
+
+# Stands in for run_service's lifetime lock: a replacement server must not bind
+# the socket until the previous one has unlinked it, or that unlink removes the
+# replacement's socket.
+_LIFETIME_LOCK = threading.Lock()
 
 
 class Spawner:
@@ -39,12 +44,16 @@ class Spawner:
         self.servers.append(server)
 
         def run():
-            # As `run_service` does: Python 3.12's asyncio leaves the socket
-            # file behind on close (`cleanup_socket` arrived in 3.13).
+            # As `run_service` does: only the lock holder touches the socket,
+            # and it unlinks it on exit because Python 3.12's asyncio leaves
+            # the file behind on close (`cleanup_socket` arrived in 3.13).
+            if not _LIFETIME_LOCK.acquire(timeout=LOCK_WAIT_SECONDS):
+                return
             try:
                 asyncio.run(server.serve(paths.socket_path()))
             finally:
                 paths.socket_path().unlink(missing_ok=True)
+                _LIFETIME_LOCK.release()
 
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
