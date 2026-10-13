@@ -381,9 +381,7 @@ def test_gather_rows_carries_remote_mountable(tmp_path, mocker, make_cfg):
             "aws": {"host": str(tmp_path), "container": "/home/dev/.aws"},
         },
     )
-    gcfg = GlobalConfig.model_validate(
-        {"remote": {"ssh": {"mount_roots": [{"path": str(data)}]}}}
-    )
+    gcfg = GlobalConfig.model_validate({"remote": {"ssh": {"mount_roots": [{"path": str(data)}]}}})
     mocker.patch.object(dmodel, "global_config_or_defaults", return_value=gcfg)
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
     mocker.patch.object(dmodel, "list_containers", return_value=[])

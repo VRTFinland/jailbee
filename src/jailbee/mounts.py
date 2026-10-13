@@ -13,8 +13,6 @@ from jailbee.db import state_dir
 from jailbee.incus import Incus, IncusError
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from jailbee.remote_ssh.mount_policy import MountGrant
 
 DEVICE_NAME_PREFIX = "optional-"

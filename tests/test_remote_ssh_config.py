@@ -1,5 +1,6 @@
 """Tests for the host-global remote SSH policy."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,6 @@ from jailbee.config.models_remote import (
     RemoteSSHConfig,
 )
 from jailbee.global_config import GlobalConfig, validate_global_raw
-
-import re
 
 
 def test_remote_ssh_defaults_enable_all_routes_with_full_commands() -> None:

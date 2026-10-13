@@ -78,7 +78,9 @@ class RemoteMountRoot(BaseModel):
         if len(values) != len(set(values)):
             raise ValueError("remote.ssh.mount_roots repos contains duplicates")
         if any(not _PREFIX_RE.fullmatch(v) for v in values):
-            raise ValueError("remote.ssh.mount_roots repos entries must be valid container prefixes")
+            raise ValueError(
+                "remote.ssh.mount_roots repos entries must be valid container prefixes"
+            )
         return values
 
 

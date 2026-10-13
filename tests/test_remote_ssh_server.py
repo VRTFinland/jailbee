@@ -16,7 +16,12 @@ import pytest
 from sqlmodel import Session
 
 from jailbee.config import ConfigError
-from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteMountRoot, RemoteSSHConfig
+from jailbee.config.models_remote import (
+    RemoteCommandPolicy,
+    RemoteConfig,
+    RemoteMountRoot,
+    RemoteSSHConfig,
+)
 from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import GlobalConfig, default_global_config_path
 from jailbee.remote_ssh import overrides as overrides_module
@@ -1477,7 +1482,10 @@ def test_startup_reports_optional_mounts(listener, caplog, monkeypatch, tmp_path
     caplog.clear()
 
     # Two mount_roots
-    roots = [RemoteMountRoot(path=(tmp_path / "a").resolve()), RemoteMountRoot(path=(tmp_path / "b").resolve())]
+    roots = [
+        RemoteMountRoot(path=(tmp_path / "a").resolve()),
+        RemoteMountRoot(path=(tmp_path / "b").resolve()),
+    ]
     with caplog.at_level(logging.INFO, logger=server.__name__):
         asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, mount_roots=roots)))
     assert "  optional mounts: 2 host directories (remote.ssh.mount_roots)" in caplog.text

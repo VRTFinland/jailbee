@@ -233,7 +233,9 @@ def container_extras(
     if container.state in _EXISTING_STATES:
         if allowed(snapshot_ls_argv(name)):
             before.append(("Snapshots…", SNAPSHOTS))
-        if mount_entries(container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable):
+        if mount_entries(
+            container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
+        ):
             before.append(("Mounts…", MOUNTS))
     return ContainerExtras(tuple(after_job), tuple(before))
 
