@@ -167,6 +167,17 @@ Neither has been checked in the same depth as the four above:
   (Apache-2.0) runs OCI images in local libkrun microVMs without a daemon or
   root, behind SDKs.
 
+One that is not an alternative at all, although it is often named in the
+same breath: **[herdr](https://github.com/herdrdev/herdr)** (Apache-2.0,
+Rust) is a terminal multiplexer for coding agents — a background server
+keeps each agent's terminal alive, a sidebar shows whether it is working,
+blocked or idle, and a socket API lets agents open panes and wait on each
+other. Its panes are plain host processes: it has no isolation of its own
+(its docs point at nono for that), no per-branch environment and no git
+model. It sits in the layer JailBee's dashboard and in-container tmux
+occupy, and it will run inside a JailBee container like any other terminal
+program.
+
 ### Where that leaves JailBee
 
 The argument for JailBee is the combination, not a claim to the strongest
