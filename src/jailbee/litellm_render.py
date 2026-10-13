@@ -4,7 +4,7 @@ Pure: no Incus, no filesystem. `litellm` pushes what this returns.
 
 One LiteLLM process per account (`CHATGPT_TOKEN_DIR` is process-wide), so
 everything here is rendered per account. An instance serves every API-key
-route, plus the subscription routes of the profiles bound to its account.
+route, plus the subscription routes of its own account that some profile maps.
 
 Effort never goes into a deployment's `litellm_params`: the 2026-09-29 spike
 showed a deployment's `reasoning_effort` is only a default, and Claude Code
@@ -104,14 +104,19 @@ def container_key_file(account: str) -> str:
 
 
 def served_routes(cfg: LiteLLMConfig, account: str) -> dict[str, ResolvedRoute]:
+    """API-key routes, plus this account's subscription routes that some profile maps.
+
+    Unmapped subscription routes are served nowhere: the built-in `chatgpt/`
+    routes always exist, and serving them would demand a ChatGPT login from
+    an account whose profiles never use one.
+    """
     routes = cfg.effective_routes()
-    bound = {
-        route
-        for profile in cfg.effective_profiles().values()
-        if cfg.instance_account(profile) == account
-        for route in profile.tiers.values()
+    mapped = {r for p in cfg.effective_profiles().values() for r in p.tiers.values()}
+    return {
+        n: r
+        for n, r in routes.items()
+        if not r.subscription or (n in mapped and r.account == account)
     }
-    return {n: r for n, r in routes.items() if not r.subscription or n in bound}
 
 
 def account_login_providers(

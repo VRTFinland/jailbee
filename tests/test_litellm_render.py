@@ -279,6 +279,28 @@ def test_an_unreferenced_subscription_route_is_served_nowhere():
     assert "spare" not in served_routes(cfg, "default")
 
 
+def test_a_routes_own_account_decides_where_it_is_served():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "accounts": ["personal", "work"],
+            "routes": {"sol-w": {"model": "chatgpt/gpt-6.1-sol", "account": "work"}},
+            "profiles": {"w": {"opus": "sol-w"}},
+        }
+    )
+    assert "sol-w" in served_routes(cfg, "work")
+    assert "sol-w" not in served_routes(cfg, "personal")
+
+
+def test_a_grok_only_setup_needs_no_chatgpt_login():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {"grok": {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}},
+            "profiles": {"codex": {"fable": "grok", "opus": "grok", "sonnet": "grok", "haiku": "grok"}},
+        }
+    )
+    assert account_login_providers(cfg, "default") == ("xai",)
+
+
 def test_api_key_is_rendered_as_an_env_reference_never_a_value():
     cfg = LiteLLMConfig.model_validate(
         {"routes": {"kimi": {**_KIMI, "api_base": "https://openrouter.ai/api/v1"}}}
