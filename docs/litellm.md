@@ -288,7 +288,9 @@ and the proxy answers each one with whichever route the profile maps that tier
 to now. So after `jailbee apply` you can rename, replace or remap routes, and
 every open session continues on the new route. What still breaks an open
 session is renaming or removing the profile itself, unmapping the tier, or
-moving one of its subscription routes to another `account`. The levels do not
+moving the profile to another account — which happens when every one of its
+subscription routes moves to that account, since a profile is served by one
+account's instance. The levels do not
 repeat Claude
 family names because Claude Code reads `opus`, `haiku` and similar from a model
 name and changes its requests to match.
@@ -492,7 +494,8 @@ litellm:
 ```
 
 A profile of API-key routes needs no `account` on those routes; every instance serves API-key
-routes, and a subscription route with no `account` uses the first account's instance. The proxy's
+routes, and a subscription route with no `account` uses the first account's instance
+when a profile maps it (an unmapped one is served nowhere). The proxy's
 egress allowlist follows the routes: jailbee knows the hosts of `chatgpt/`,
 `openai/`, `openrouter/`, `xai/`, `gemini/` and `deepseek/`. Any other provider
 needs `api_base` (whose host replaces the provider's default hosts) or
