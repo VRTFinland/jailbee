@@ -128,6 +128,14 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **A LiteLLM account belongs to the route, not the profile.** A subscription
+  route (`chatgpt/` or `oauth: true`) sets `litellm.routes.<route>.account`,
+  defaulting to the first account, and a profile is served by its routes'
+  account, so a single-account setup never names one and renaming the only
+  account no longer requires rebinding `codex`. A profile can mix providers
+  (an xAI OAuth Haiku tier with ChatGPT tiers) but not two accounts.
+  `profiles.<p>.account` is rejected with a pointer to the new key; with one
+  account, delete the line; with several, move it to the routes.
 - **A menu's letters work in the terminal dashboard's table, without Enter.**
   With a container highlighted `g` opens `Git →`, `l` `Lifecycle →`, `t` attaches
   tmux, and so on; a repo header answers the repo menu's letters the same way.

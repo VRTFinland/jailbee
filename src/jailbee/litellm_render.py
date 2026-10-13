@@ -108,7 +108,7 @@ def served_routes(cfg: LiteLLMConfig, account: str) -> dict[str, ResolvedRoute]:
 
     Unmapped subscription routes are served nowhere: the built-in `chatgpt/`
     routes always exist, and serving them would demand a ChatGPT login from
-    an account whose profiles never use one.
+    an account that no mapped profile's route names.
     """
     routes = cfg.effective_routes()
     mapped = {r for p in cfg.effective_profiles().values() for r in p.tiers.values()}

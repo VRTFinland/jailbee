@@ -91,7 +91,7 @@ unit suite passes.
 ### xAI subscription (needs a SuperGrok or X Premium+ account)
 
 1. Add `grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}` as a
-   route and `grok: {account: default, opus: grok, sonnet: grok, haiku: grok}`
+   route and `grok: {opus: grok, sonnet: grok, haiku: grok}`
    as a profile (and, unless the rig already has a ChatGPT login for `default`,
    remap the built-in `codex` profile's four tiers to `grok` too, or `default`
    also needs a ChatGPT login and is held back), then run `jailbee litellm up`. Expect

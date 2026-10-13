@@ -92,7 +92,7 @@ litellm:
   profiles:
     openrouter: {fable: kimi, opus: kimi, sonnet: kimi, haiku: kimi}
     # Without a ChatGPT subscription, point the built-in profile here as well:
-    # while it maps chatgpt/ routes, its account waits for a ChatGPT login.
+    # while it maps chatgpt/ routes, the account that serves them waits for a ChatGPT login.
     codex: {fable: kimi, opus: kimi, sonnet: kimi, haiku: kimi}
 ```
 
@@ -129,20 +129,20 @@ X Premium+ subscription can serve routes too, as
 ## xAI subscription (experimental)
 
 A SuperGrok or X Premium+ subscription can serve routes through LiteLLM's xAI
-OAuth provider. Mark the route `oauth: true` and give it an account:
+OAuth provider. Mark the route `oauth: true`:
 
 ```yaml
 litellm:
   routes:
     grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}
   profiles:
-    grok: {account: default, fable: grok, opus: grok, sonnet: grok, haiku: grok}
+    grok: {fable: grok, opus: grok, sonnet: grok, haiku: grok}
     codex: {fable: grok, opus: grok, sonnet: grok, haiku: grok}   # no ChatGPT subscription
 ```
 
 Remapping `codex` keeps the built-in `default` account from also needing a
 ChatGPT login: an account is held back until it has a login for every provider
-its profiles use.
+its mapped routes use.
 
 Run `jailbee litellm up`, then `jailbee litellm login --provider xai` on the
 host: it prints a URL; open it in a browser on the same machine and approve.
@@ -161,7 +161,7 @@ account and one profile can use both.
 Without an xAI login the account's proxy still starts: only its `oauth` routes
 fail, and `jailbee litellm up`, `status` and `doctor` say so. `--provider` may
 be left out here, since no route of `default` needs a ChatGPT login; an account
-whose profiles use both providers needs `--provider chatgpt` or `--provider xai`.
+whose routes use both providers needs `--provider chatgpt` or `--provider xai`.
 
 This is experimental: it follows LiteLLM's xAI OAuth provider and has not yet
 been verified by jailbee against a live subscription. Grok models LiteLLM's
@@ -194,12 +194,14 @@ litellm:
     luna-floor: {model: chatgpt/gpt-6-luna, min_effort: medium}
   profiles:
     codex: {haiku: luna-floor} # other codex tiers keep their defaults
-    fast: {account: default, sonnet: luna-floor, haiku: luna-floor, effort: low}
+    fast: {sonnet: luna-floor, haiku: luna-floor, effort: low}
 ```
 
-A profile that maps a `chatgpt/` route must name the `account` that serves it
-(the built-in `codex` profile names `default`), so a new profile of ChatGPT
-routes carries `account:` as above.
+A subscription route (`chatgpt/`, or `oauth: true`) is served by the first
+account in `litellm.accounts` unless it sets `account`; API-key routes are
+served by every account. A profile may mix providers freely, but its
+subscription routes must all belong to one account, since one proxy instance
+serves a session.
 
 `effort` **fixes** the reasoning effort on every request; `min_effort` only
 raises requests below its floor. They cannot be set together on a route. The
@@ -286,7 +288,8 @@ and the proxy answers each one with whichever route the profile maps that tier
 to now. So after `jailbee apply` you can rename, replace or remap routes, and
 every open session continues on the new route. What still breaks an open
 session is renaming or removing the profile itself, unmapping the tier, or
-moving the profile to another `account`. The levels do not repeat Claude
+moving one of its subscription routes to another `account`. The levels do not
+repeat Claude
 family names because Claude Code reads `opus`, `haiku` and similar from a model
 name and changes its requests to match.
 
@@ -369,7 +372,7 @@ litellm:
   routes:
     luna-high: {effort: low}          # this repo's Haiku tier thinks less
   profiles:
-    fast: {account: default, sonnet: luna-high, haiku: luna-high, effort: low}
+    fast: {sonnet: luna-high, haiku: luna-high, effort: low}
   autostart: true
 ```
 
@@ -440,27 +443,34 @@ configured. The profile is `claude-jb`'s own selection, so the repo's
 
 Each entry in `litellm.accounts` is one LiteLLM process
 (`jailbee-litellm@<account>`, its own port) and holds one ChatGPT login and one
-xAI login side by side. A profile names the account that
-serves it; the built-in `codex` profile uses `default`, so renaming that
-account means rebinding `codex`:
+xAI login side by side. A subscription route names the account whose login
+serves it; without `account` it uses the first one, so a single-account setup
+never mentions accounts. A profile is served by its routes' account, and all
+its subscription routes must share one. To use one model on two
+subscriptions, give each its own route:
 
 ```yaml
 litellm:
   enabled: true
   accounts: [personal, work]
+  routes:
+    sol-high-work: {model: chatgpt/gpt-6.1-sol, effort: high, account: work}
+    luna-work: {model: chatgpt/gpt-6-luna, effort: high, account: work}
   profiles:
-    codex: {account: personal}
-    codex-work: {account: work, fable: astra, opus: sol-high, sonnet: sol-medium, haiku: luna-high}
+    codex-work: {fable: sol-high-work, opus: sol-high-work, sonnet: sol-high-work, haiku: luna-work}
 ```
 
 Log each account in once: `jailbee litellm login personal`, `jailbee litellm
 login work`. `claude-jb --profile codex-work` then runs on the work
-subscription. A `chatgpt/` route is served only by the instances whose
-profiles map it. Removing an account from the list stops its instance on the
+subscription. A subscription route is served only by its own account's
+instance, and only when a profile maps it. Removing an account from the list stops its instance on the
 next `jailbee litellm up` (which prints `Stopped <account>`); its login is kept
 in the state volume until `jailbee litellm down --purge`. `logout`, `login` and
 `logs` accept only accounts in the list, so log an account out before removing
 it.
+
+Earlier releases set the account on the profile (`profiles.<p>.account`); that
+key is now rejected with a pointer here.
 
 ## Other providers and API keys
 
@@ -481,8 +491,8 @@ litellm:
     kimi: {opus: kimi, sonnet: kimi, haiku: kimi}
 ```
 
-A profile of API-key routes needs no `account`; every instance serves API-key
-routes, and an unset `account` means the first account's instance. The proxy's
+A profile of API-key routes needs no `account` on those routes; every instance serves API-key
+routes, and a subscription route with no `account` uses the first account's instance. The proxy's
 egress allowlist follows the routes: jailbee knows the hosts of `chatgpt/`,
 `openai/`, `openrouter/`, `xai/`, `gemini/` and `deepseek/`. Any other provider
 needs `api_base` (whose host replaces the provider's default hosts) or
@@ -571,7 +581,7 @@ On the host, `jailbee litellm up`, `login` and `jailbee apply` can report:
 | `cannot read ...` (about `secrets.env` or the `extra` file) | Make the file readable by your user and plain UTF-8 text, then run `jailbee litellm up`. |
 | `missing LiteLLM account; pass it explicitly, or run in a terminal to choose. Candidates: ...` | Several accounts are configured and there is no terminal to choose from: pass the account name, e.g. `jailbee litellm login work`. |
 | `Cannot listen on 127.0.0.1:56121` (from `login --provider xai`) | Another program on the host uses the port; stop it and retry. |
-| `No route of account ... uses an xAI subscription` | Mark a route of that account's profiles `oauth: true`, run `jailbee litellm up`, then log in. |
+| `No route of account ... uses an xAI subscription` | Mark a route of that account `oauth: true`, run `jailbee litellm up`, then log in. |
 | `profile(s) ... have no proxy instance yet` (from `jailbee apply` or `jailbee new`) | Run `jailbee litellm up`, then `jailbee apply`. |
 
 On the host, use `jailbee litellm ls` (profiles, tiers, routes, efforts and

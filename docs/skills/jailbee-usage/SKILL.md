@@ -779,7 +779,7 @@ globally and per repo override; read-only; allowed over remote SSH in the defaul
 `jailbee litellm status`, `logs [ACCOUNT] [-f]`,
 `logout [ACCOUNT] [--provider chatgpt|xai]` and `down [--purge]`. After `down`, run `jailbee apply` to
 remove stale proxy settings from running dev containers. Several ChatGPT
-accounts (`litellm.accounts`, one per profile via `profiles.<p>.account`) and
+accounts (`litellm.accounts`; a subscription route names its account via `routes.<r>.account`, default the first) and
 API-key providers (keys in the host's `~/.config/jailbee/litellm/secrets.env`)
 are supported. A repo can override routes, profiles, `default_profile` and
 `autostart` in its host-local `~/.config/jailbee/repos/<prefix>.yaml` under
@@ -797,7 +797,7 @@ break them. A profile's `instructions` (model-policy text written on the host) i
 
 With `litellm.autostart`, the Claude autostart window runs
 `claude-jb`. Inside the container there is no key and no login: `claude-jb` only
-reads `/etc/jailbee/litellm.json` and the proxy key for the profile's account.
+reads `/etc/jailbee/litellm.json` and the proxy key for the account that serves the profile.
 Full setup and limits:
 [LiteLLM](../../litellm.md); exact CLI flags:
 [commands](references/commands.md#litellm-proxy).
