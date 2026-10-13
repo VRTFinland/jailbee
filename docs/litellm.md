@@ -211,7 +211,7 @@ effect. An explicitly `null` tier removes that mapping; unmapped requests may
 hit the proxy's `claude-*` catch-all, which uses the default profile's cheapest
 mapped tier.
 
-Profile selection order is `claude-jb --profile NAME`, then
+Profile selection order is `claude-jb -P NAME` (or `--profile NAME`), then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (default `codex`).
 `--profile` is consumed by the wrapper, not passed to Claude Code. Use plain
 `claude` for native access, not `--profile native`. `claude-jb --help` prints the
@@ -556,8 +556,8 @@ back on; that is your choice.
 |---|---|
 | `no LiteLLM proxy configured for this container` | On the host run `jailbee litellm up`, then `jailbee apply` in this repo; rebuild the golden image if the wrapper itself is absent. |
 | `cannot read ... (not valid JSON)` or `cannot read the proxy key` | Run `jailbee apply` in the repo on the host. |
-| `unknown profile` | Check the names in `litellm.profiles`, in `global.yaml` and in this repo's override (`jailbee litellm ls` lists both); select a valid `--profile` or fix `JAILBEE_LITELLM_PROFILE`. |
-| `--profile needs a name` | Pass `--profile NAME` or remove the flag. |
+| `unknown profile` | The error lists every profile and its window. Select one of those names with `-P`/`--profile`, or fix `JAILBEE_LITELLM_PROFILE`. |
+| `-P needs a name` or `--profile needs a name` | Pass the name (`-P grok`, `--profile grok`) or remove the flag. |
 | `--context needs a value` or `... is not a size` | Pass `272k`, `1m`, a token count, `max` or `default`. |
 | `--context ... above the ...-token ceiling of profile` | Choose a smaller window or `max`; to allow more, raise `max_context_window` on the profile's routes and run `jailbee apply` on the host. |
 | `proxy key ... is empty` | Run `jailbee apply` on the host to resync the key. |
