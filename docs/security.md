@@ -297,10 +297,11 @@ restricts the root to those container prefixes and requires `restrict_host: true
 with no path check and no readonly override; the repo config alone decides
 the host path. It does not require `restrict_host`.
 
-A root is refused at `jb apply` time when a *different* read-write
-`host_mounts` or `optional_mounts` entry resolves to the root or an ancestor
-of it. `jailbee doctor` warns when any registered repo has a writable mount
-covering a root, and when a listed root directory does not exist on disk.
+A root is refused at `jailbee mount` time (for the repo whose container is
+being mounted) when a *different* read-write `host_mounts` or `optional_mounts`
+entry resolves to the root or an ancestor of it. `jailbee doctor` warns when
+any registered repo has a writable mount covering a root, and when a listed
+root directory does not exist on disk.
 Removing a root does not detach a mount already attached.
 
 The decision rests on the resolved host path against a host-global list;
