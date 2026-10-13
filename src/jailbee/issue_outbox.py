@@ -212,7 +212,7 @@ class PreparedBatch:
         # "uncertain" still maps to status "pending" via _status, so status
         # alone would count a refused-to-reconcile action as fresh foreign
         # work and a later refusal would write a journal first.
-        pending = []
+        pending: list[ResolvedAction] = []
         for manifest in self.manifests:
             receipts = (
                 {receipt.index for receipt in manifest.journal.actions}
