@@ -1,5 +1,6 @@
 """Tests for the host-global remote SSH policy."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,12 @@ from pydantic import ValidationError
 
 from jailbee.config import ConfigError
 from jailbee.config.common import normalize_remote_ssh_keys
-from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
+from jailbee.config.models_remote import (
+    RemoteCommandPolicy,
+    RemoteConfig,
+    RemoteMountRoot,
+    RemoteSSHConfig,
+)
 from jailbee.global_config import GlobalConfig, validate_global_raw
 
 
@@ -75,6 +81,84 @@ def test_default_entrypoint_rejects_one_shot_commands() -> None:
 def test_port_must_be_in_tcp_range(port: int) -> None:
     with pytest.raises(ValidationError):
         RemoteSSHConfig(port=port)
+
+
+# --- remote.ssh.mount_roots / mounts ---------------------------------------
+
+
+def test_mount_roots_default_empty_and_mounts_off() -> None:
+    ssh = RemoteSSHConfig()
+    assert ssh.mount_roots == []
+    assert ssh.mounts is False
+
+
+def test_mount_root_defaults_to_readonly_all_repos(tmp_path: Path) -> None:
+    root = RemoteMountRoot(path=tmp_path.resolve())
+    assert root.readonly is True
+    assert root.repos == []
+
+
+def test_mount_root_must_be_absolute() -> None:
+    with pytest.raises(ValidationError, match="absolute"):
+        RemoteMountRoot(path=Path("data/sets"))
+
+
+def test_mount_root_must_be_its_own_realpath(tmp_path: Path) -> None:
+    real = tmp_path.resolve() / "real"
+    real.mkdir()
+    link = tmp_path.resolve() / "link"
+    link.symlink_to(real)
+    with pytest.raises(ValidationError, match=re.escape(str(real))):
+        RemoteMountRoot(path=link)
+    with pytest.raises(ValidationError, match="resolved"):
+        RemoteMountRoot(path=Path(f"{real}/../real"))
+
+
+@pytest.mark.parametrize("which", ["root", "home", "home_parent"])
+def test_root_may_not_be_home_or_an_ancestor(which: str) -> None:
+    home = Path.home().resolve()
+    path = {"root": Path("/"), "home": home, "home_parent": home.parent}[which]
+    with pytest.raises(ValidationError, match="too broad"):
+        RemoteMountRoot(path=path)
+
+
+def test_root_may_not_hold_jailbee_own_dirs(monkeypatch, tmp_path: Path) -> None:
+    cfg_home = tmp_path.resolve() / "xdg-config"
+    (cfg_home / "jailbee").mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_home))
+    with pytest.raises(ValidationError, match="JailBee"):
+        RemoteMountRoot(path=cfg_home)
+    with pytest.raises(ValidationError, match="JailBee"):
+        RemoteMountRoot(path=cfg_home / "jailbee")
+
+
+def test_mount_root_repos_are_prefixes(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="prefixes"):
+        RemoteMountRoot(path=tmp_path.resolve(), repos=["Not A Prefix"])
+    with pytest.raises(ValidationError, match="duplicates"):
+        RemoteMountRoot(path=tmp_path.resolve(), repos=["app", "app"])
+
+
+def test_mount_roots_reject_duplicate_paths(tmp_path: Path) -> None:
+    p = tmp_path.resolve()
+    with pytest.raises(ValidationError, match="duplicate"):
+        RemoteSSHConfig(mount_roots=[RemoteMountRoot(path=p), RemoteMountRoot(path=p)])
+
+
+def test_mount_roots_require_restrict_host(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="restrict_host"):
+        RemoteSSHConfig(restrict_host=False, mount_roots=[RemoteMountRoot(path=tmp_path.resolve())])
+    # the trust-everything switch has no such coupling
+    assert RemoteSSHConfig(restrict_host=False, mounts=True).mounts is True
+
+
+def test_mount_roots_load_from_global_yaml(tmp_path: Path) -> None:
+    p = tmp_path.resolve()
+    gcfg = GlobalConfig.model_validate(
+        {"remote": {"ssh": {"mount_roots": [{"path": str(p), "repos": ["app"]}]}}}
+    )
+    (root,) = gcfg.remote.ssh.mount_roots
+    assert root.path == p and root.readonly is True and root.repos == ["app"]
 
 
 def test_listen_must_be_an_ip_literal() -> None:

@@ -148,6 +148,7 @@ def _full_snapshot() -> Snapshot:
             agent_config_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             optional_mounts=("ssh", "gpg"),
             mount_ttl_defaults={"ssh": "15m", "gpg": None},
+            remote_mountable=("data",),
             checkout="feat-1",
         )
     )
@@ -178,6 +179,15 @@ def test_snapshot_preserves_mount_ttl_defaults():
     snapshot.groups[0].mount_ttl_defaults = {"aws": "15m", "docs": None}
     restored = decode(encode(snapshot))
     assert restored.groups[0].mount_ttl_defaults == {"aws": "15m", "docs": None}
+
+
+def test_snapshot_preserves_remote_mountable():
+    snapshot = _full_snapshot()
+    snapshot.groups[0] = snapshot.groups[0].__class__(
+        **{**snapshot.groups[0].__dict__, "remote_mountable": ("data",)}
+    )
+    restored = decode(encode(snapshot))
+    assert restored.groups[0].remote_mountable == ("data",)
 
 
 def test_a_snapshot_decodes_to_the_real_types():

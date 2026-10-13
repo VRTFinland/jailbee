@@ -96,7 +96,13 @@ def open_menu(
     # An orphan group is view-only: no shared action and no terminal extra either.
     if not actions and RepoTarget.of(group) is None:
         return None
-    extras = dact.container_extras(container, group.optional_mounts, ssh_policy, over_ssh=over_ssh)
+    extras = dact.container_extras(
+        container,
+        group.optional_mounts,
+        ssh_policy,
+        over_ssh=over_ssh,
+        remote_mountable=group.remote_mountable,
+    )
     actions = _insert_after_job(actions, extras.after_job)
     if extras.before_network:
         actions = _insert_before_network(actions, extras.before_network)

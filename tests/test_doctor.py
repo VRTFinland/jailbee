@@ -4112,3 +4112,54 @@ def test_egress_proxy_unexpected_probe_failure_is_not_reported_as_not_needed(moc
     out = _check_egress_proxy(cfg, _baseline_incus())
     assert out[0].ok is False
     assert out[0].detail == "error querying: boom"
+
+
+def test_remote_mount_roots_check_is_silent_without_roots():
+    from jailbee.doctor import _check_remote_mount_roots
+    from jailbee.global_config import GlobalConfig
+
+    assert _check_remote_mount_roots(GlobalConfig(), roots=lambda: []) == []
+
+
+def test_remote_mount_roots_check_flags_a_writable_cover_in_another_repo(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+
+    data = tmp_path.resolve() / "data"
+    data.mkdir()
+    other = tmp_path / "other-repo"
+    cfg = make_cfg(other, host_mounts=[{"host": str(tmp_path.resolve()), "container": "/w"}])
+    mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
+    gcfg = GlobalConfig.model_validate({"remote": {"ssh": {"mount_roots": [{"path": str(data)}]}}})
+
+    (row,) = doctor._check_remote_mount_roots(gcfg, roots=lambda: [other])
+
+    assert row.ok is False
+    assert str(data) in row.detail and cfg.container_prefix in row.detail
+
+
+def test_remote_mount_roots_check_flags_a_missing_root(tmp_path):
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+
+    gone = tmp_path.resolve() / "gone"
+    gcfg = GlobalConfig.model_validate({"remote": {"ssh": {"mount_roots": [{"path": str(gone)}]}}})
+
+    (row,) = doctor._check_remote_mount_roots(gcfg, roots=lambda: [])
+
+    assert row.ok is False and "does not exist" in row.detail
+
+
+def test_remote_mount_roots_check_passes_when_clear(tmp_path):
+    from jailbee import doctor
+    from jailbee.global_config import GlobalConfig
+
+    data = tmp_path.resolve() / "data"
+    data.mkdir()
+    gcfg = GlobalConfig.model_validate({"remote": {"ssh": {"mount_roots": [{"path": str(data)}]}}})
+
+    (row,) = doctor._check_remote_mount_roots(gcfg, roots=lambda: [])
+
+    assert row.ok is True and "1" in row.detail

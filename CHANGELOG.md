@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Remote SSH sessions can attach optional mounts.** `remote.ssh.mount_roots`
+  lists the host directories a restricted session may bind (exact paths,
+  read-only by default, optionally per repo), and `remote.ssh.mounts: true`
+  allows every `optional_mounts` entry. `jailbee doctor` warns when a writable
+  mount sits above a listed directory.
 - **`jb pr` offers submodule PRs before publishing the superproject.** A
   checklist selects candidates on a terminal, `--yes` takes all and
   `--no-submodules` opts out. Both PR commands maintain reciprocal links in

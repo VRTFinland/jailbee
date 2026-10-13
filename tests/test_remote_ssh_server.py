@@ -16,7 +16,12 @@ import pytest
 from sqlmodel import Session
 
 from jailbee.config import ConfigError
-from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
+from jailbee.config.models_remote import (
+    RemoteCommandPolicy,
+    RemoteConfig,
+    RemoteMountRoot,
+    RemoteSSHConfig,
+)
 from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import GlobalConfig, default_global_config_path
 from jailbee.remote_ssh import overrides as overrides_module
@@ -1464,6 +1469,33 @@ def test_startup_reports_network_widening_when_on(listener, caplog, monkeypatch)
         asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, network=True)))
 
     assert "network widening: on (net loose, net egress add)" in caplog.text
+
+
+def test_startup_reports_optional_mounts(listener, caplog, monkeypatch, tmp_path):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    # mounts=True
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, mounts=True)))
+    assert "  optional mounts: all (remote.ssh.mounts)" in caplog.text
+
+    caplog.clear()
+
+    # Two mount_roots
+    roots = [
+        RemoteMountRoot(path=(tmp_path / "a").resolve()),
+        RemoteMountRoot(path=(tmp_path / "b").resolve()),
+    ]
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, mount_roots=roots)))
+    assert "  optional mounts: 2 host directories (remote.ssh.mount_roots)" in caplog.text
+
+    caplog.clear()
+
+    # Neither configured
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(exec=True)))
+    assert "optional mounts" not in caplog.text
 
 
 def test_startup_does_not_call_net_loose_refused_when_network_is_on(listener, caplog, monkeypatch):

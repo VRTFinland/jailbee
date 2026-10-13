@@ -149,6 +149,9 @@ class RepoGroup:
     ``mount_ttl_defaults`` maps each optional-mount kind to the TTL the Mount…
     flow pre-selects, None = attach without asking (policy off, `never`, or a
     malformed value the CLI will report).
+    ``remote_mountable`` lists the kinds a restricted remote SSH session may
+    attach under `remote.ssh` (`remote_ssh.mount_policy.grantable_kinds`); the
+    Mounts… panel offers only these over SSH. Orphan groups keep it empty.
     ``checkout`` is what the repo's own working tree has checked out — a
     branch name, or ``@<sha>`` on a detached HEAD — shown beside the heading;
     None for orphan groups and when git cannot say."""
@@ -166,6 +169,7 @@ class RepoGroup:
     agent_config_homes: tuple[tuple[str, str, Path], ...] = ()
     optional_mounts: tuple[str, ...] = ()
     mount_ttl_defaults: dict[str, str | None] = field(default_factory=dict)
+    remote_mountable: tuple[str, ...] = ()
     checkout: str | None = None
 
 
@@ -329,6 +333,7 @@ def gather_rows(
     orphan groups.
     """
     from jailbee.apps import resolve_apps
+    from jailbee.remote_ssh.mount_policy import grantable_kinds
 
     groups: list[RepoGroup] = []
     covered: set[str] = set()
@@ -378,6 +383,7 @@ def gather_rows(
                 agent_config_homes=agent_config_homes(cfg, [c.name for c in containers]),
                 optional_mounts=tuple(cfg.optional_mounts),
                 mount_ttl_defaults=_mount_ttl_defaults(cfg, gcfg),
+                remote_mountable=grantable_kinds(gcfg.remote.ssh, cfg),
                 checkout=git.get_checkout_label(root),
             )
         )

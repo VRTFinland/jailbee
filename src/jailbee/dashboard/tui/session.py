@@ -1028,7 +1028,11 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         entries = dact.mount_entries(
-            info, group.optional_mounts, self.ssh_policy, over_ssh=self.over_ssh
+            info,
+            group.optional_mounts,
+            self.ssh_policy,
+            over_ssh=self.over_ssh,
+            remote_mountable=group.remote_mountable,
         )
         if not entries:
             self.set_notice("No optional mount to add or remove")
