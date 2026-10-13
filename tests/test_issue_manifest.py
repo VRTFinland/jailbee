@@ -640,3 +640,59 @@ def test_allows_multiple_comments_and_disjoint_edits_to_one_target() -> None:
     )
 
     assert len(manifest.actions) == 4
+
+
+@pytest.mark.parametrize(
+    "repo", ["github:BerriAI/litellm", "github:a/b", "github:a-b/c.d_e", "github:" + "o" * 39 + "/r"]
+)
+def test_accepts_github_repository_values_as_written(repo: str) -> None:
+    manifest = _parse_action(_create(repo=repo))
+
+    assert manifest.actions[0] == CreateAction(
+        repo=repo, ref="new", title="New issue", body="Details", labels=()
+    )
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "github:",
+        "github:a",
+        "github:a/",
+        "github:/b",
+        "github:a/b/c",
+        "github:-a/b",
+        "github:a/..",
+        "github:a/.",
+        "github:" + "o" * 40 + "/r",
+        "github:a/" + "n" * 101,
+        "github:a b/c",
+        "GitHub:a/b",
+        "gitlab:a/b",
+    ],
+)
+def test_rejects_malformed_github_repository_values(repo: str) -> None:
+    with pytest.raises(IssueManifestError, match="repo"):
+        _parse_action(_create(repo=repo))
+
+
+def test_issue_ref_cannot_cross_from_a_github_repo_to_the_superproject() -> None:
+    with pytest.raises(IssueManifestError, match="same repo"):
+        parse_manifest(
+            "001-work.json",
+            _manifest(
+                _create(repo="github:acme/other"),
+                {"type": "comment", "repo": ".", "issue_ref": "new", "body": "x"},
+            ),
+            {},
+        )
+
+
+@pytest.mark.parametrize(
+    ("repo", "slug"),
+    [("github:BerriAI/litellm", "BerriAI/litellm"), (".", None), ("libs/x", None), ("github:a", None)],
+)
+def test_foreign_slug(repo: str, slug: str | None) -> None:
+    from jailbee.issue_manifest import foreign_slug
+
+    assert foreign_slug(repo) == slug
