@@ -88,7 +88,8 @@ def test_publish_from_child_is_whole_manifest(view):
         publish=lambda *args: captured.append(args) or 0,
     )
     assert captured == [(view.name, view.proposals[0].id, view.proposals[0].revision)]
-    assert "all pending actions" in confirmations[0]
+    # The publication asks once, under its plan; the browser asks nothing first.
+    assert confirmations == []
 
 
 def test_cascade_scope_is_explicit_and_can_be_declined(view):

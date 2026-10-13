@@ -645,6 +645,24 @@ def foreign_consent(
     return ask(f"Publish {count} {noun} to foreign repositories {names}?")
 
 
+def foreign_question(batch: PreparedBatch) -> str | None:
+    """The single publish question when foreign repositories are involved, else None.
+
+    An interactive run asks this instead of a plain publish question followed
+    by foreign_consent's: one "yes" under the plan consents to both.
+    """
+    slugs = batch.foreign_slugs
+    if not slugs:
+        return None
+    total = sum(a.status == "pending" for m in batch.manifests for a in m.actions)
+    noun = "action" if total == 1 else "actions"
+    names = ", ".join(slugs)
+    count = batch.foreign_pending
+    if count == total:
+        return f"Publish {total} pending {noun} to foreign repositories {names}?"
+    return f"Publish {total} pending {noun}, {count} of them to foreign repositories {names}?"
+
+
 def plan_lines(batch: PreparedBatch) -> list[str]:
     """Return the complete approval text in execution order, without markup."""
     lines = [f"Host GitHub login: {batch.login}", f"Container: {batch.container}"]

@@ -247,28 +247,15 @@ def proposal_picker(
     )
 
 
-def outbox_confirm_picker(
-    container: str,
-    action: str,
-    pid: str,
-    revision: str,
-    actions: int,
-    foreign: Sequence[str] = (),
-) -> Picker:
-    """Confirm a publish or a delete. "No" comes first, so a stray Enter changes nothing."""
-    if action == PUBLISH:
-        question = f"Publish every pending action of {pid}?"
-        yes = "Yes, publish"
-    else:
-        question = f"Delete {pid} ({_plural(actions, 'action')}) from {container}?"
-        yes = "Yes, delete"
+def outbox_delete_confirm_picker(container: str, pid: str, revision: str, actions: int) -> Picker:
+    """Confirm a delete. "No" comes first, so a stray Enter changes nothing.
+
+    A publish has no dashboard question: `outbox apply` asks once, under its plan.
+    """
     return Picker(
         "container-outbox-confirm",
-        question,
-        (PickerEntry("No", "no"), PickerEntry(yes, "yes")),
+        f"Delete {pid} ({_plural(actions, 'action')}) from {container}?",
+        (PickerEntry("No", "no"), PickerEntry("Yes, delete", "yes")),
         target=container,
-        carry=(action, pid, revision),
-        detail=(f"⚠ Targets a foreign repository: {', '.join(foreign)}",)
-        if action == PUBLISH and foreign
-        else (),
+        carry=(pid, revision),
     )

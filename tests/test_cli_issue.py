@@ -1512,14 +1512,15 @@ def test_apply_help_shows_foreign():
     assert "--foreign" in result.output
 
 
-@pytest.mark.parametrize(("answer", "applied"), [("y\nn\n", False), ("y\ny\n", True)])
-def test_apply_asks_a_second_question_for_foreign_repositories(mocker, tmp_path, answer, applied):
+@pytest.mark.parametrize(("answer", "applied"), [("n\n", False), ("y\n", True)])
+def test_apply_asks_one_question_naming_foreign_repositories(mocker, tmp_path, answer, applied):
     revalidate, apply_batch = _patch_apply(mocker, tmp_path)
 
     result = runner.invoke(app, ["issue", "apply", "feat-foo"], input=answer)
 
     assert result.exit_code == 0, result.output
-    assert "Publish 1 action to foreign repositories BerriAI/litellm?" in result.output
+    assert "Publish 1 pending action to foreign repositories BerriAI/litellm?" in result.output
+    assert "Proceed?" not in result.output
     assert apply_batch.called is applied
     assert revalidate.called is applied
 

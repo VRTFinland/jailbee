@@ -1116,8 +1116,9 @@ a terminal the confirmation under it is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
 `jb outbox apply` and `jb review apply`; invalid for issues). The terminal
 browser and both dashboards' publication terminals ask under the plan, so
-they need no flag. The terminal dashboard's initial "Yes, publish" opens the
-plan; publication still needs the confirmation below it. `jb pr`'s post-push
+they need no flag. Publication asks exactly once, under the plan: the
+terminal dashboard's Publish… and the browser's publish entry open the plan
+without a question of their own. `jb pr`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
 `jb review apply --foreign <container>`. `jb review ls` lists it with the state
@@ -1131,9 +1132,10 @@ its other menus: a proposal offers Show (paged), Publish… and Delete….
 A description awaiting a PR offers **Create PR…** instead of Publish…:
 it opens the existing `jb pr` or `jb submodule pr` flow for the resolved
 repository scope, with that command's own checks and confirmations. An
-unresolved scope is not offered for creation. Publish and Delete are
-confirmed with "No" first and run as the explicit `outbox apply` or
-`outbox drop` pinned to the listed revision. **Browse actions & comments…**
+unresolved scope is not offered for creation. Publish runs the explicit
+`outbox apply` pinned to the listed revision, which asks under its plan;
+Delete is confirmed in the dashboard with "No" first and runs `outbox drop`
+pinned to the listed revision. **Browse actions & comments…**
 opens this browser for deleting a single action or comment. Over
 remote SSH each entry appears only when the session's policy permits its
 command. The local Qt dashboard instead opens a native non-modal tree with
