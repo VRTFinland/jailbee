@@ -4,6 +4,7 @@ import fcntl
 import importlib
 import os
 import pty
+import resource
 import socket
 import struct
 import termios
@@ -135,7 +136,20 @@ def test_main_sanitizes_upstream_errors(capsys):
     assert "failed" in captured.err
 
 
-def test_waiter_supports_high_numbered_descriptors():
+@pytest.fixture
+def nofile_above_1100():
+    # F_DUPFD past RLIMIT_NOFILE is EINVAL; hosts default the soft limit to
+    # 1024 (`uv run` raises it, a bare `.venv/bin/pytest` does not).
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft != resource.RLIM_INFINITY and soft <= 1100:
+        if hard != resource.RLIM_INFINITY and hard <= 1100:
+            pytest.skip(f"RLIMIT_NOFILE hard limit {hard} is too low")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (2048, hard))
+    yield
+    resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_waiter_supports_high_numbered_descriptors(nofile_above_1100):
     s = server()
     read, write = os.pipe()
     high = fcntl.fcntl(read, fcntl.F_DUPFD, 1100)
