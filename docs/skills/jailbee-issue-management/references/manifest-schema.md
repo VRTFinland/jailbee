@@ -37,11 +37,16 @@ No other top-level field is allowed; an unknown key is refused, naming it.
 
 ## `repo` (every action)
 
-`"."` for the superproject, or a submodule's path relative to the
-superproject root, normalized POSIX-relative (no leading `/`, no `\`, no `.`
-or `..` segment). **Never `owner/repo`** — the host alone resolves the
-actual GitHub repository, from git remotes it already trusts, and refuses
-any `repo` value it does not recognize as `.` or a declared submodule.
+`"."` for the superproject, a submodule's path relative to the superproject
+root (normalized POSIX-relative: no leading `/`, no `\`, no `:`, no `.` or
+`..` segment), or `"github:<owner>/<name>"` for any other GitHub repository
+(owner 1–39 of `[A-Za-z0-9-]`, not starting with `-`; name 1–100 of
+`[A-Za-z0-9._-]`, not `.`/`..`). A bare `owner/name` is a *path*, never a
+GitHub repository. The host resolves `.` and submodules from git remotes it
+already trusts, and shows a `github:` target as a **foreign repository**:
+the plan warns about it, and publication needs a separate confirmation (or
+`--foreign` with `-y`). A `github:` slug naming this repo or a submodule is
+treated as that repo.
 
 ## Targeting an issue: `issue` vs `issue_ref`
 

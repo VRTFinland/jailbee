@@ -450,13 +450,83 @@ def test_apply_at_a_terminal_publishes_an_issue_without_foreign(publication_env,
     create.assert_called_once()
 
 
-def test_apply_rejects_foreign_for_an_issue(publication_env):
+def _foreign_issue(env):
+    from tests.outbox_support import store
+
+    env[2]["issue"] = store(
+        "issue",
+        {
+            "001.json": json.dumps(
+                {
+                    "version": 1,
+                    "actions": [
+                        {
+                            "type": "create",
+                            "repo": "github:BerriAI/litellm",
+                            "ref": "bug",
+                            "title": "Upstream bug",
+                            "body": "Details",
+                        }
+                    ],
+                }
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize(("answer", "published"), [("y\nn\n", False), ("y\ny\n", True)])
+def test_apply_at_a_terminal_asks_again_for_a_foreign_issue_repo(
+    publication_env, mocker, answer, published
+):
+    env, create, _comment, _review = publication_env
+    _foreign_issue(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"], input=answer)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index("⚠ foreign repository") < result.output.index("Publish 1 pending")
+    assert "Publish 1 action to foreign repositories BerriAI/litellm?" in result.output
+    assert create.called is published
+    assert ("001.json" in env[2]["issue"].as_dict()) is not published
+    if published:
+        # create_issue(repo_root, slug, ...) — the slug is the second positional.
+        assert create.call_args.args[1] == "BerriAI/litellm"
+
+
+def test_apply_yes_refuses_a_foreign_issue_repo_without_foreign(publication_env, mocker):
+    env, create, _comment, _review = publication_env
+    _foreign_issue(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json", "-y"])
+
+    assert result.exit_code == 2, result.output
+    # error_plain wraps at the console width, so the refusal may split a line.
+    assert "without --foreign" in " ".join(result.output.split())
+    create.assert_not_called()
+
+
+def test_apply_yes_foreign_publishes_a_foreign_issue_repo(publication_env, mocker):
+    env, create, _comment, _review = publication_env
+    _foreign_issue(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
     result = CliRunner().invoke(
         app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--foreign"]
     )
 
+    assert result.exit_code == 0, result.output
+    create.assert_called_once()
+
+
+def test_apply_still_rejects_force_for_an_issue(publication_env):
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--force"]
+    )
+
     assert result.exit_code == 2, result.output
-    assert "foreign" in result.output
+    assert "force" in result.output
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
@@ -1079,6 +1149,8 @@ def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(env, mock
     actions["a"].publish("feature", ProposalId(kind, "001.json"), "a" * 64)
 
     assert applied.call_args.kwargs["options"].foreign is foreign
+    if kind == "issue":
+        assert callable(applied.call_args.kwargs["confirm_foreign"])
 
 
 def _description_store():

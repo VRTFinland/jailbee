@@ -406,6 +406,11 @@ review gate entirely — the same trust boundary the read-only recommendation
 in [`config.md`](config.md#github) and [`git-bridge.md`](git-bridge.md#github-cli-gh-inside-containers)
 exists to hold.
 
+An issue manifest may target a repository outside this project
+(`github:<owner>/<name>`); the host marks it as foreign in every plan and
+dashboard and publishes to it only after a separate confirmation or an
+explicit `--foreign`, since the write uses the host's own GitHub identity.
+
 **Out of reach.** Your host's filesystem and dotfiles. Other repos'
 containers and their shared dirs. `optional_mounts` you haven't attached with
 `jailbee mount`. Private keys, which never leave the host agent. In `strict`

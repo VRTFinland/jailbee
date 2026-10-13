@@ -46,6 +46,9 @@ class ProposalRow:
     error: str | None
     edit_block: str | None
     create_scope: dict[str, str] | None = None
+    # `github:` targets of an issue proposal; the host plan decides whether one is
+    # really foreign (a slug may name this repo), so this only marks them.
+    foreign_repos: tuple[str, ...] = ()
 
     @property
     def publishable(self) -> bool:
@@ -103,7 +106,20 @@ def _proposal_row(item: object) -> ProposalRow:
         _opt_str(item.get("error")),
         _opt_str(item.get("edit_block")),
         _scope(item.get("create_scope")),
+        _foreign_repos(actions),
     )
+
+
+def _foreign_repos(actions: list[object]) -> tuple[str, ...]:
+    from jailbee.issue_manifest import foreign_slug
+
+    slugs: dict[str, str] = {}
+    for action in actions:
+        repo = action.get("repo") if isinstance(action, dict) else None
+        slug = foreign_slug(repo) if isinstance(repo, str) else None
+        if slug is not None:
+            slugs.setdefault(slug.casefold(), slug)
+    return tuple(sorted(slugs.values(), key=str.casefold))
 
 
 def _scope(value: object) -> dict[str, str] | None:
@@ -193,7 +209,8 @@ def _plural(count: int, word: str) -> str:
 
 
 def _proposal_label(row: ProposalRow) -> str:
-    return f"{row.id}  {row.state}  ({row.error or _plural(row.actions, 'action')})"
+    foreign = f", ⚠ foreign: {', '.join(row.foreign_repos)}" if row.foreign_repos else ""
+    return f"{row.id}  {row.state}  ({row.error or _plural(row.actions, 'action')}{foreign})"
 
 
 def outbox_picker(container: str, rows: Sequence[ProposalRow], *, can_browse: bool) -> Picker:
@@ -231,7 +248,12 @@ def proposal_picker(
 
 
 def outbox_confirm_picker(
-    container: str, action: str, pid: str, revision: str, actions: int
+    container: str,
+    action: str,
+    pid: str,
+    revision: str,
+    actions: int,
+    foreign: Sequence[str] = (),
 ) -> Picker:
     """Confirm a publish or a delete. "No" comes first, so a stray Enter changes nothing."""
     if action == PUBLISH:
@@ -246,4 +268,7 @@ def outbox_confirm_picker(
         (PickerEntry("No", "no"), PickerEntry(yes, "yes")),
         target=container,
         carry=(action, pid, revision),
+        detail=(f"⚠ Targets a foreign repository: {', '.join(foreign)}",)
+        if action == PUBLISH and foreign
+        else (),
     )

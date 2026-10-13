@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from jailbee import config as config_api
 from jailbee.incus import Incus
+from jailbee.issue_manifest import foreign_slug
 from jailbee.outbox import commands, service
 from jailbee.outbox.delete import DeletePlan, DeleteSelection, plan_delete
 from jailbee.outbox.models import ContainerView, OutboxChanged, OutboxError, ProposalView
@@ -263,8 +264,9 @@ class OutboxDialog(QDialog):
                 "Raw manifest:\n" + proposal.raw_text,
             ]
             for entry in proposal.actions:
+                mark = " ⚠ foreign repository" if foreign_slug(entry.repo) else ""
                 texts.append(
-                    f"Action {entry.index}: {entry.kind} {entry.repo} "
+                    f"Action {entry.index}: {entry.kind} {entry.repo}{mark} "
                     f"{entry.target} [{entry.state}]\n{entry.text}"
                 )
                 if entry.receipt:

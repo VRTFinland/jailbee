@@ -171,6 +171,42 @@ def test_outbox_confirm_puts_no_first(action):
     assert picker.carry == (action, "pr/a.json", "r1")
 
 
+def test_parse_collects_foreign_repos_from_action_repo_values():
+    listing = dob.parse_outbox_listing(
+        _listing(
+            _proposal(
+                "issue/a.json",
+                actions=[
+                    {"index": 0, "repo": "github:BerriAI/litellm"},
+                    {"index": 1, "repo": "."},
+                    {"index": 2, "repo": "github:berriai/litellm"},
+                    {"index": 3, "repo": "github:acme/x"},
+                ],
+            )
+        ),
+        "alpha-x",
+    )
+    assert listing.rows[0].foreign_repos == ("acme/x", "BerriAI/litellm")
+
+
+def test_rows_without_github_actions_have_no_foreign_repos():
+    listing = dob.parse_outbox_listing(_listing(_proposal()), "alpha-x")
+    assert listing.rows[0].foreign_repos == ()
+
+
+def test_foreign_repos_show_in_the_label_and_the_publish_question():
+    row = _row(id="issue/a.json", foreign_repos=("BerriAI/litellm",))
+    picker = dob.outbox_picker("alpha-x", (row,), can_browse=False)
+    assert "⚠ foreign: BerriAI/litellm" in picker.entries[0].label
+
+    confirm = dob.outbox_confirm_picker(
+        "alpha-x", dob.PUBLISH, "issue/a.json", "r1", 1, foreign=row.foreign_repos
+    )
+    assert confirm.detail == ("⚠ Targets a foreign repository: BerriAI/litellm",)
+    plain = dob.outbox_confirm_picker("alpha-x", dob.PUBLISH, "issue/a.json", "r1", 1)
+    assert plain.detail == ()
+
+
 def test_every_outbox_question_is_about_the_container():
     questions = (
         dob.outbox_picker("alpha-x", (_row(),), can_browse=True),
