@@ -368,6 +368,31 @@ def test_gather_rows_carries_mount_ttl_defaults(tmp_path, mocker, make_cfg, afte
     assert groups[0].mount_ttl_defaults == {"aws": expected, "docs": None}
 
 
+def test_gather_rows_carries_remote_mountable(tmp_path, mocker, make_cfg):
+    from jailbee.global_config import GlobalConfig
+
+    data = tmp_path.resolve() / "data"
+    data.mkdir()
+    root = tmp_path / "alpha"
+    cfg = make_cfg(
+        root,
+        optional_mounts={
+            "data": {"host": str(data), "container": "/d"},
+            "aws": {"host": str(tmp_path), "container": "/home/dev/.aws"},
+        },
+    )
+    gcfg = GlobalConfig.model_validate(
+        {"remote": {"ssh": {"mount_roots": [{"path": str(data)}]}}}
+    )
+    mocker.patch.object(dmodel, "global_config_or_defaults", return_value=gcfg)
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
+
+    assert groups[0].remote_mountable == ("data",)
+
+
 def test_orphan_groups_have_no_optional_mounts():
     assert dmodel.RepoGroup("orphan", None, None, []).optional_mounts == ()
 

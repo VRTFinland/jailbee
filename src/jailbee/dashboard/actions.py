@@ -209,6 +209,7 @@ def container_extras(
     ssh_policy: RemoteSSHConfig | None,
     *,
     over_ssh: bool,
+    remote_mountable: Sequence[str] = (),
 ) -> ContainerExtras:
     """What one container's menu adds; each entry hidden when its command would be refused.
 
@@ -232,7 +233,7 @@ def container_extras(
     if container.state in _EXISTING_STATES:
         if allowed(snapshot_ls_argv(name)):
             before.append(("Snapshots…", SNAPSHOTS))
-        if mount_entries(container, mount_kinds, ssh_policy, over_ssh=over_ssh):
+        if mount_entries(container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable):
             before.append(("Mounts…", MOUNTS))
     return ContainerExtras(tuple(after_job), tuple(before))
 
@@ -247,20 +248,26 @@ def mount_entries(
     ssh_policy: RemoteSSHConfig | None,
     *,
     over_ssh: bool,
+    remote_mountable: Sequence[str] = (),
 ) -> tuple[PickerEntry, ...]:
     """One entry per configured kind: attached ones unmount, the rest mount.
 
     Each direction is gated on its own argv, so an SSH allowlist that permits
-    `unmount` and not `mount` offers only the attached kinds.
+    `unmount` and not `mount` offers only the attached kinds. In a restricted
+    SSH session a kind is offered for mounting only when `remote_mountable`
+    names it, the same rule `jailbee mount` applies there.
     """
+    from jailbee.remote_ssh.session import is_remote_session
+
     can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
     can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
+    restricted = over_ssh and is_remote_session()
     entries: list[PickerEntry] = []
     for kind in kinds:
         if kind in container.optional_mounts:
             if can_remove:
                 entries.append(PickerEntry(f"● {kind} — unmount", _UNMOUNT_VALUE + kind))
-        elif can_add:
+        elif can_add and (not restricted or kind in remote_mountable):
             entries.append(PickerEntry(f"○ {kind} — mount", _MOUNT_VALUE + kind))
     return tuple(entries)
 
