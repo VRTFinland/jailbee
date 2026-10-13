@@ -265,6 +265,7 @@ def browse(
                 confirm=lambda total: typer.confirm(
                     f"Publish {total} pending actions in the whole manifest?", default=False
                 ),
+                confirm_foreign=lambda question: typer.confirm(question, default=False),
                 expected_revision=revision,
             )
 
@@ -420,7 +421,10 @@ def apply(
         bool,
         typer.Option(
             "--foreign",
-            help="Publish to a PR the container does not own (needed with -y); invalid for issues.",
+            help=(
+                "Publish to a PR the container does not own, or an issue action "
+                "on a foreign repository (needed with -y)."
+            ),
         ),
     ] = False,
     yes: YesOption = False,
@@ -445,7 +449,7 @@ def apply(
             pid,
             # A PR the container does not own is warned about in the plan;
             # the prompt below it is consent only when someone reads it.
-            # Issues have no foreign notion: apply_selected rejects the flag.
+            # A foreign issue repository asks its own question unless --foreign.
             options=PublishOptions(
                 dry_run,
                 force,
@@ -454,6 +458,11 @@ def apply(
             journal_store=store,
             confirm=lambda total: (
                 yes or typer.confirm(f"Publish {total} pending actions?", default=False)
+            ),
+            confirm_foreign=(
+                None
+                if yes or not prompting.is_interactive()
+                else (lambda question: typer.confirm(question, default=False))
             ),
             expected_revision=revision,
         )

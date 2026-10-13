@@ -398,6 +398,23 @@ def test_ambiguous_mutation_failure_still_notifies_controller(env, qtbot):
     assert "journal retained" in dialog.status.text()
 
 
+def test_action_detail_marks_a_foreign_repository(env, tmp_path, mocker, qtbot):
+    files = issue_files()
+    payload = json.loads(files["001.json"])
+    payload["actions"] = [
+        {"type": "create", "repo": "github:BerriAI/litellm", "ref": "b", "title": "T", "body": "B"}
+    ]
+    files["001.json"] = json.dumps(payload)
+    dialog, _view, read = env[0], env[1], env[2]
+    read.return_value = views(tmp_path, files=files)
+    dialog.refresh()
+    qtbot.waitUntil(lambda: not dialog.busy)
+
+    # select the issue proposal (index 1: pr first, then issue)
+    select(dialog, proposal=1)
+    assert "github:BerriAI/litellm ⚠ foreign repository" in dialog.details.toPlainText()
+
+
 def test_direct_native_window_refuses_any_ssh(qtbot, monkeypatch, tmp_path):
     from jailbee.qtui.outbox import OutboxDialog
 

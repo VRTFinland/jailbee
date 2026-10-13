@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 class PublishOptions:
     dry_run: bool = False
     force: bool = False
-    # Consent to publish to a PR the container does not own; the plan warns.
+    # Consent to a PR the container does not own, or to an issue action on a
+    # foreign repository (`github:<owner>/<name>`); the plan warns about both.
     foreign: bool = False
 
 
@@ -138,6 +139,7 @@ def publish_selected(
     journal_store: JournalStore,
     options: PublishOptions,
     confirm: Callable[[int], bool],
+    confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
     raise_errors: bool = False,
 ) -> int:
@@ -150,8 +152,8 @@ def publish_selected(
     the default retains legacy printed diagnostics and integer failure counts.
     """
     try:
-        if proposal.kind == "issue" and (options.force or options.foreign):
-            raise OutboxError("force and foreign are only valid for PR publication")
+        if proposal.kind == "issue" and options.force:
+            raise OutboxError("force is only valid for PR publication")
         identity = _identity(incus, container)
         manager = PrManagement() if proposal.kind == "pr" else None
         lock = (
@@ -232,6 +234,14 @@ def publish_selected(
             if total and not confirm(total):
                 info_plain("Nothing published.")
                 return 0
+            try:
+                if not issue_outbox.foreign_consent(
+                    batch, allowed=options.foreign, ask=confirm_foreign
+                ):
+                    info_plain("Nothing published.")
+                    return 0
+            except issue_outbox.ForeignRepoRefused as exc:
+                raise OutboxError(str(exc)) from exc
             _checked(
                 cfg,
                 incus,
