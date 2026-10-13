@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
@@ -116,14 +117,32 @@ def _required_string(
     return value
 
 
+GITHUB_REPO_PREFIX: Final = "github:"
+_GITHUB_SLUG = re.compile(r"(?!-)[A-Za-z0-9-]{1,39}/(?!\.{1,2}\Z)[A-Za-z0-9._-]{1,100}")
+
+
+def foreign_slug(repo: str) -> str | None:
+    """``owner/name`` of a ``github:<owner>/<name>`` repo value; None for anything else."""
+    if not repo.startswith(GITHUB_REPO_PREFIX):
+        return None
+    slug = repo.removeprefix(GITHUB_REPO_PREFIX)
+    return slug if _GITHUB_SLUG.fullmatch(slug) else None
+
+
 def _repo(item: Mapping[str, object], context: str) -> str:
     repo = _required_string(item, "repo", context)
-    if repo == ".":
+    if repo == "." or foreign_slug(repo) is not None:
         return repo
     parts = repo.split("/")
-    if repo.startswith("/") or "\\" in repo or any(part in {"", ".", ".."} for part in parts):
+    if (
+        repo.startswith("/")
+        or "\\" in repo
+        or ":" in repo
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
         raise IssueManifestError(
-            f"{context}: repo must be '.' or a normalized relative POSIX submodule path"
+            f"{context}: repo must be '.', a normalized relative POSIX submodule path, "
+            "or github:<owner>/<name>"
         )
     return repo
 

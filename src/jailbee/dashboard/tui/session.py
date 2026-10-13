@@ -1212,7 +1212,15 @@ class DashboardSession:
                 self.run_dashboard_command(container, "container", argv)
                 return None
             if entry.value in (dob.PUBLISH, dob.DELETE):
-                return dob.outbox_confirm_picker(container, entry.value, pid, revision, int(count))
+                row = next((r for r in self.outbox_rows.get(container, ()) if r.id == pid), None)
+                return dob.outbox_confirm_picker(
+                    container,
+                    entry.value,
+                    pid,
+                    revision,
+                    int(count),
+                    foreign=row.foreign_repos if row is not None else (),
+                )
             return None
         if picker.purpose == "container-outbox-confirm":
             if entry.value != "yes":

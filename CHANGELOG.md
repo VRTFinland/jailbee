@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- An issue-outbox action can target any GitHub repository with
+  `"repo": "github:<owner>/<name>"`, e.g. an upstream bug report. The plan and
+  both dashboards mark it as a foreign repository, and `jailbee issue apply` /
+  `jailbee outbox apply` ask a separate confirmation for it, or need
+  `--foreign` with `-y`.
 - **Remote SSH sessions can attach optional mounts.** `remote.ssh.mount_roots`
   lists the host directories a restricted session may bind (exact paths,
   read-only by default, optionally per repo), and `remote.ssh.mounts: true`
