@@ -10,306 +10,234 @@
     src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
 </p>
 
-**JailBee** runs isolated, per-branch development environments in
-[Incus](https://linuxcontainers.org/incus/) system containers. Spin up multiple
-full stacks in parallel on one host — each with its own services, Docker daemon,
-IDE, and browser — without port conflicts, Docker name clashes, or
-shared-database collisions.
+**JailBee gives each git branch its own Linux development environment.** Run
+several full stacks on one host — services, databases, Docker, browsers and
+IDEs — without making each branch compete for the same ports or Docker names.
+The environments are [Incus](https://linuxcontainers.org/incus/) system
+containers, not VMs: each has its own userland and network stack, but shares
+the host kernel.
 
-The CLI is `jailbee`, or `jb` for short. Release announcements are at
-[jailbee.gisgro.io/news](https://jailbee.gisgro.io/news/).
+That makes parallel coding-agent work practical: give each attempt its own
+working tree and runtime, see which Claude Code session needs you in the
+terminal dashboard, and bring commits back through a local git bridge.
+The same workflow works for development and review without an agent.
 
-**JailBee** is project-agnostic: every repo supplies its own `.jailbee/config.yaml`. The
-golden image ships stack-neutral by default — language toolchains (JDK, Node,
-Python venv/pip, Docker) are bundled but opt-in, enabled per repo via
-`golden.stacks` / `golden.enable_snippets`. It was built at GISGRO, which is
-its origin, not its scope.
+The CLI is `jailbee`, or **`jb`** for short. It requires a **Linux host with
+Incus**. JailBee is project-agnostic: a repo's `.jailbee/config.yaml` describes
+its environment. Built at GISGRO, but not tied to GISGRO's stack.
 
 ## See it work
-
-<p align="center">
-  <a href="https://jailbee.gisgro.io/#demos"><img
-    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/media/a-teaser.gif"
-    width="760"
-    alt="A terminal recording: jb ls shows one container, jb new feat/health-endpoint clones a second from the golden image and provisions it — dependencies, database, dev server, agent — and jb ls shows it running."></a>
-</p>
-
-<p align="center">
-  <a href="https://jailbee.gisgro.io/#demos"><strong>▶ Watch the whole flow</strong></a>
-</p>
-
-**What the full clip shows, end to end.** A branch gets a container of its own,
-cloned from the golden image with the app's dependencies synced, its database
-seeded and its dev server already listening on port 8080. A coding agent gets a
-window inside it and is asked for a `/health` endpoint with a test; the human
-detaches, checks the running service from outside, and comes back to find the
-work committed. `jb git pull` brings that commit onto the host as a merge —
-asking before it destroys anything — and `jb destroy` throws the container away
-as its own deliberate step.
-
-Every command and every line of output is real. Two stretches of the clip are
-sped up and say so on screen; nothing else is edited.
 
 <p align="center">
   <a href="https://youtu.be/XIu-REiLms4"><img
     src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/videos/XIu-REiLms4-play.jpg"
     width="760"
-    alt="Play the JailBee 1.7 tour on YouTube: the dashboard listing a dozen branch containers, several with an AI agent at work."></a>
+    alt="Play the JailBee 1.7 tour on YouTube: the terminal dashboard listing branch containers and their coding-agent activity."></a>
 </p>
 
 <p align="center">
   <a href="https://youtu.be/XIu-REiLms4"><strong>▶ JailBee 1.7: the 3-minute tour</strong></a>
-  — what a container per branch gives an agent, and how the dashboard tells you
-  which of a dozen agents needs you.
 </p>
 
-## Key features
+See what a container per branch gives an agent and how the terminal dashboard
+helps you manage several at once. For the complete create → code → merge →
+destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
 
-- **Per-branch isolation** — one full-stack container per git branch, running
-  in parallel without port or Docker-name collisions.
-- **Host↔container git bridge** — the container acts as a git remote; move
-  commits with `jailbee git push`/`pull`/`checkout` instead of round-tripping
-  through GitHub, and merge one container's branch straight into another's
-  with `jailbee git merge` (`jailbee fork` starts a second attempt at the same
-  change).
-- **Submodules that travel** — sub-repos are initialised offline on
-  `jailbee new` and their objects move with the superproject on every
-  push/pull, so a repo with submodules needs no manual setup on either side.
-  `jailbee pr` offers a PR for each changed submodule before the
-  superproject's and links them to each other.
-- **Nested Docker** — `security.nesting=true` out of the box on Ubuntu 26.04.
-- **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`), Chrome or
-  Firefox (`jailbee chrome`, `jailbee firefox`), or any other app registered
-  under `apps:` (`jailbee apps run <name>`), from inside a container onto
-  your Wayland session.
-- **Host sockets, shared** — the gpg-agent (with `gpg.enabled`) is attached
-  to every container at boot and the Wayland display on a container's first GUI
-  launch (`gui.wayland`), PulseAudio and D-Bus on request
-  (`gui.audio`, `gui.dbus`), so `git commit -S` and `ssh` work inside while
-  the private key never leaves the host (a smartcard still asks for its
-  touch). Mount any other host socket the same way and use it from inside.
-- **Host services, forwarded in** — declare
-  `host_ports: [{ name: adb, port: 5037 }]` and every container of the repo
-  reaches that host service on its own localhost, so plain `adb devices` works
-  inside with no `ADB_SERVER_SOCKET` juggling. `jailbee port` adds or removes a
-  forward on one container without touching the config, in either direction —
-  `to-host` for the rarer case where you do want a container's service on the
-  host.
-- **Network modes** — per-container egress allowlist with `strict` and
-  `loose` policies (`jailbee net`), safe for unattended agent runs. Entries are
-  hostnames and ports (`api.example.com:443`), not IP addresses: JailBee
-  resolves them into the kernel ACL, keeps a cumulative pool as CDN
-  addresses rotate, and pins the container's `/etc/hosts` to match. Any
-  protocol, not just HTTP — `ssh`, `git+ssh` and a database client work
-  under the same list. A `*.example.com` wildcard allows a domain and every
-  subdomain over HTTP(S), through an egress proxy that tools honouring
-  `HTTPS_PROXY` use; see
-  [Wildcards](https://jailbee.gisgro.io/docs/config/#wildcards-go-through-the-egress-proxy).
-  `jailbee net egress add` widens one container's copy
-  of that list — or this machine's copy of the repo's — without editing the
-  committed config, so a host only you need never lands in git; see
-  [Egress overrides](https://jailbee.gisgro.io/docs/security/#egress-overrides).
-  An optional work network (`jailbee net migrate`) gives containers a stable
-  address and switches modes without replacing their NIC.
-- **Personal settings stay out of git** — `~/.config/jailbee/global.yaml`
-  holds what is yours on every repo, and a host-local
-  `~/.config/jailbee/repos/<prefix>.yaml` what is yours on one (its GitHub
-  token, credential group, extra egress), above the committed
-  `.jailbee/config.yaml`; `jailbee config edit --local` edits it.
-- **First-class Claude Code** — opt in with `agents.claude.enabled: true` and
-  every container gets Claude Code installed, sharing one settings directory
-  across the repo's containers and one login across every repo in its
-  credential group (`jailbee account` manages the stored logins), while your
-  host `~/.claude` is never read. Instructions written once in
-  `~/.config/jailbee/AGENTS.md` reach every container's Claude. The Anthropic
-  hosts are added to the strict-mode allowlist
-  automatically, JailBee's own skills teach the in-container Claude to drive
-  `jailbee`, and `jailbee pr` writes the PR title and body — to your repo's own
-  standard, if you state one in `pr.prompt`. Start it
-  automatically in a tmux window and the container is ready for an
-  unattended run the moment it boots — with permission prompts turned off
-  (`--dangerously-skip-permissions`), because the boundary is the container
-  rather than the agent's own judgement. You size that boundary once in the
-  repo's config; see
-  [Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts)
-  for what it does and doesn't cover.
-- **PR and issue outbox** — a container's `gh` is read-only, so an agent
-  reviewing a PR or triaging issues inside it stages comments, replies,
-  description rewrites and issue changes as JSON manifests instead of posting
-  them straight to GitHub. A human reviews the exact text and publishes it
-  with one confirmation: `jailbee review apply` and `jailbee issue apply`
-  (also `ls`/`show`/`drop`), or `jailbee outbox` to browse both in one place;
-  `jailbee ls` and both dashboards mark a container carrying pending
-  manifests, and `jailbee pr` picks up a pending description in place of
-  asking an agent to write one.
-- **Claude Code on other models** — `claude-jb` runs Claude Code against a
-  LiteLLM proxy that JailBee keeps in its own container, so the same agent
-  can work on a ChatGPT subscription or on any provider you have an API key
-  for, while plain `claude` stays native. Tested with ChatGPT (Codex) and
-  SuperGrok subscriptions, it is the recommended way to use non-Anthropic
-  models. One proxy per account, per-repo route overrides, live route
-  reloads; see
-  [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/).
-- **Remote access over SSH** — an optional, key-only SSH service
-  (`jailbee remote ssh enable`) opens the dashboard, a restricted console or
-  policy-limited one-shot commands from another computer; host-management
-  commands stay refused, and widening a container's network over SSH needs
-  `remote.ssh.network: true`. With `remote.ssh.gui` on, GUI apps launched over SSH
-  appear on a shared RDP display (`jailbee display`) you open in any RDP
-  client, or as native windows on your own desktop through `waypipe ssh`
-  (a Mac included, through Cocoa-Way); see
-  [Remote GUI over SSH](https://jailbee.gisgro.io/docs/remote-gui/).
-- **Generic agent support** — `agents: {codex: {enabled: true}}` wires any
-  terminal coding agent into the same mount/egress/install/autostart
-  pipeline Claude Code uses, via a shipped preset or one you write yourself.
-  An agent that declares a skills directory gets JailBee's skills, and one
-  with a headless command can write `jailbee pr`'s title and body
-  (`pr.agent`). Five presets beyond Claude (`codex`, `gemini`, `aider`,
-  `opencode`, `grok`) ship as untested starting points; for other models,
-  the recommended route is Claude Code through LiteLLM above — see
-  [Generic agent support](https://jailbee.gisgro.io/docs/agents/).
-- **One shared state layer per repo** — package-manager caches, the JetBrains
-  config, `~/.ssh` and Claude's login live in a shared dir outside the
-  containers, set up once per repo instead of once per branch. Most of it is
-  one mount every container shares live — pnpm's store, JetBrains, `~/.ssh`,
-  Claude's login. Gradle, Maven and the Chrome profile instead give each
-  container its own private slot seeded from the warmest one: a warm cache
-  without the lock contention one shared `~/.gradle` used to cause. Either
-  way the state outlives `jailbee destroy` / `jailbee new` — while nothing a
-  container does reaches your host's own dotfiles.
-- **Fast, cheap containers** — copy-on-write clones of one golden image; a live
-  TUI dashboard (`jailbee dashboard`, alias `jailbee tui`, and what bare
-  `jailbee` opens) or Qt GUI dashboard (`jailbee gui`) spans
-  every repo, shows what each container's agent is doing — its state, last
-  tool call and last message in the details panel — and acts on what it
-  shows: attach a shell or tmux, open the IDE, create or update the PR,
-  update a container from its base, read its diff — without leaving the view
-  that told you it was needed. Mark several containers to start, stop or
-  destroy them in one go; the terminal dashboard takes the mouse too.
-  `jailbee console` is a `jb>` prompt with completion and history for those
-  who prefer typing; `default_command` picks which one bare `jailbee` opens.
+## What you get
+
+- **A whole stack per branch.** Containers have their own services and, when
+  enabled, their own Docker daemon. A browser inside each container reaches
+  that branch's app on the same `localhost` port, without host port forwarding.
+  Configure provisioning and autostart once, then reuse a golden image for
+  new environments. The default image includes general development tools;
+  language toolchains and Docker are opt-in. A copy-on-write storage backend
+  such as btrfs makes image reuse and snapshots efficient.
+  [Stacks](https://jailbee.gisgro.io/docs/config/#golden) ·
+  [Storage](https://jailbee.gisgro.io/docs/storage/)
+
+- **A local git workflow, not a trip through GitHub.** `jb git push` and
+  `jb git pull` move commits between host and container; `jb git merge`
+  merges one container's branch into another. `jb fork` starts another
+  environment from a container's committed work, not its running services or
+  database. Submodules initialized on the host travel with the repo, and
+  `jb pr` can coordinate submodule PRs before the superproject's.
+  [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/)
+
+- **A terminal dashboard for parallel work.** Bare `jb` opens the TUI on an
+  interactive terminal by default. It spans registered repos, shows git and
+  resource status, and tracks Claude Code's state and recent tool calls and
+  messages. Attach a session, inspect a diff, open a PR or start and stop
+  selected containers from the same view. Claude Code has a dedicated
+  integration; Codex, Gemini, Aider, OpenCode and Grok presets are best-effort
+  starting points, not equally tested integrations. For other providers'
+  models, `claude-jb` routes Claude Code through a separate LiteLLM proxy
+  container; plain `claude` stays native.
+  [Agents](https://jailbee.gisgro.io/docs/agents/) ·
+  [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/)
+
+- **Explicit network policy and a GitHub outbox.** Strict mode is the default:
+  destination IP allowlists, with optional TCP-port restrictions, filter
+  container network traffic. An HTTP(S) egress proxy adds hostname rules,
+  including wildcards; loose mode removes JailBee's allowlist filtering.
+  Agents can stage proposed PR and issue changes for you to inspect and
+  publish with the host's `gh`, instead of posting directly. Configure a
+  read-only container token for that workflow — the outbox does not enforce
+  the token's permissions.
+  [Security and limitations](https://jailbee.gisgro.io/docs/security/) ·
+  [Outbox commands](https://jailbee.gisgro.io/docs/commands/)
+
+- **Desktop tools inside the environment, local or remote.** Launch a
+  JetBrains IDE, Chrome, Firefox or a configured app inside a container, with
+  its window on your Wayland desktop. Declare host devices and forwarded
+  services when needed — for example, adb on container localhost. Optional
+  SSH access exposes the TUI and policy-controlled commands, with host
+  management restricted by default. Remote GUI apps can use `waypipe ssh`
+  or a shared RDP display.
+  [GUI apps](https://jailbee.gisgro.io/docs/config/#apps) ·
+  [Remote GUI](https://jailbee.gisgro.io/docs/remote-gui/)
+
+- **Reusable state, personal settings outside git.** Shared caches and
+  settings outlive individual containers; pooled caches give each container
+  a private slot seeded from existing data. Claude settings are shared
+  within a repo, while optional credential groups share its login across
+  repos. This default wiring uses JailBee-managed directories rather than
+  your personal host `~/.claude`. Keep environment settings in the repo,
+  personal defaults in `~/.config/jailbee/global.yaml`, and host-local repo
+  overrides in `~/.config/jailbee/repos/<prefix>.yaml`.
+  [Configuration layers](https://jailbee.gisgro.io/docs/config/#configuration-layers) ·
+  [Credential groups](https://jailbee.gisgro.io/docs/agents/#shared-credential-groups-credentials)
+
+JailBee is most useful when **the runtime is the hard part**: several services,
+Docker stacks, desktop tools or agents running in parallel. If worktrees alone
+solve your problem, you may not need it. See
+[Who JailBee is for](https://jailbee.gisgro.io/docs/comparison/) for trade-offs
+and alternatives.
 
 ## Getting started
 
-**JailBee** needs a Linux host running Incus. Install the CLI with
-[`uv`](https://docs.astral.sh/uv/) or [`pipx`](https://pipx.pypa.io/) —
-JailBee is an ordinary PyPI package and needs neither at runtime, but
-Ubuntu 24.04+ refuses a bare `pip install` into its system Python:
+### Prepare the host
+
+Install the CLI with [`uv`](https://docs.astral.sh/uv/) or
+[`pipx`](https://pipx.pypa.io/) (Python 3.12+):
 
 ```bash
 uv tool install jailbee      # or: pipx install jailbee
 ```
 
-For the optional Qt GUI dashboard (`jailbee gui`), add the `gui` extra:
+Then follow **[Installation](https://jailbee.gisgro.io/docs/installation/)**
+for Incus, storage and UID/GID delegation, plus any firewall or kernel-limit
+adjustments your host needs. This is a real setup step, not something
+installing the Python package does for you.
+
+Run `jb setup` to install shell completion and the network-refresh user timer,
+with optional JailBee skills for host agents. It does not install Incus or
+configure the host prerequisites.
+
+### Try it without a repo config
+
+Once the host is ready, open a git repo **without** `.jailbee/config.yaml`:
 
 ```bash
-uv tool install 'jailbee[gui]'      # or: pipx install 'jailbee[gui]'
+jb new work                 # create a scratch environment
+jb                          # open the terminal dashboard
 ```
 
-Host setup — Incus, firewall, UID mapping, kernel keyring limits — is a
-one-time job with a few moving parts. Follow **[Installation](https://jailbee.gisgro.io/docs/installation/)**
-end-to-end first. Then, from the repo you want to manage:
+With scratch mode enabled (the default), JailBee synthesizes a config and
+creates the repo's Incus profiles. On an interactive terminal it offers to
+build the scratch image if missing; later scratch environments reuse that
+image by default. The image supplies the configured tools, not automatic
+detection or setup of your app's stack.
+
+For a directory that is not a git repo, use `jb new --mount work` instead.
+**Mount mode shares the host directory read-write**; it is not a separate
+working tree. Scratch skips repo configuration, not host preparation.
+[Scratch configuration](https://jailbee.gisgro.io/docs/config/#scratch)
+
+### Configure a repeatable project environment
+
+For a fresh project setup, use this path instead of scratch mode. From the
+repo you want to manage:
 
 ```bash
-jailbee config init          # write .jailbee/config.yaml
-jailbee doctor               # sanity-check host + config
-jailbee init                 # create Incus profiles, ACLs, bridge
-jailbee base build           # build the golden image (one-time, ~10–15 min)
-jailbee new feat/my-branch   # spin up an isolated env for a branch
+jb config init              # generate .jailbee/config.yaml
+# Edit the config: enable the stacks and integrations your project needs.
+jb doctor                   # check host prerequisites and config
+jb init                     # create the repo's profiles, ACLs and shared dirs
+jb base build               # build its reusable image; allow several minutes
+jb new feat/my-branch       # create the branch environment
+jb                          # manage it in the terminal dashboard
 ```
 
-See **[Getting started](https://jailbee.gisgro.io/docs/getting-started/)** for the full first-run
-walkthrough.
+Add provisioning and autostart steps for your dependencies, database and dev
+server; those are project-specific, not inferred by JailBee. See
+[Getting started](https://jailbee.gisgro.io/docs/getting-started/) for the full
+walkthrough and a typical day's workflow.
 
-### Trying it without a repo config
+**Already tried scratch in this repo?** `jb config init` writes a template;
+it does not adopt the scratch environment. The template normally resolves to
+a different container prefix, leaving the old containers under their scratch
+identity. To keep that identity, explicitly carry over its `container_prefix`
+and use `jb apply` instead of `jb init`. Review the scratch settings you want
+to retain before applying the new config. See
+[Scratch configuration](https://jailbee.gisgro.io/docs/config/#scratch).
 
-Skip `jailbee config init` and `jailbee init` entirely for a quick look —
-`cd` into any git repo and just run `jailbee new work`. With no
-`.jailbee/config.yaml` in the directory, JailBee synthesizes a config from
-`~/.config/jailbee/global.yaml`'s `scratch:` block, creates that directory's
-Incus profiles on the fly, and boots the container from a golden image
-shared by every such directory on the host (alias `jailbee-scratch-base`).
-The first time, it asks to build that image (a one-time, few-minutes cost);
-every later scratch directory reuses it immediately. A directory that isn't
-a git repo needs `jailbee new --mount work` instead, since there's no
-upstream to clone from. See [`scratch`](https://jailbee.gisgro.io/docs/config/#scratch)
-for the config block, and run `jailbee config init` once the work outlives
-an afternoon.
+The TUI is the primary interface; `jb console` is an alternative command
+prompt. An optional Qt dashboard is available as `jb gui` with the `gui`
+extra (`uv tool install 'jailbee[gui]'`). This is separate from launching
+browsers and IDEs inside containers, which does not require that extra.
 
-## Post-install setup
+## Know the boundary
 
-Installing the package puts `jailbee` and `jb` on your `PATH` and nothing
-else. One command installs the rest:
+JailBee uses unprivileged system containers, **not a separate guest kernel**.
+It is not a hostile multi-tenant isolation boundary. Before leaving an agent
+running without permission prompts, review what that environment can reach:
 
-```bash
-jailbee setup
-```
+- **Working trees and mounts.** Clone mode gives the container a separate
+  working tree; `--mount` does not. Shared caches, agent settings and writable
+  host mounts can affect other environments. By default, an existing repo
+  `.local/` directory is also shared read-write. Container snapshots do not
+  roll back external bind-mounted data.
+- **Credentials and host services.** Readable token files can be copied.
+  Agent sockets can authorize signing or authentication even when mounted
+  read-only. Devices, desktop sockets and port forwards expose host
+  capabilities beyond the private runtime; attach only what you need.
+- **Network policy.** The direct-traffic ACL works with IPs, not HTTP paths or
+  content; different hosts can share an allowed IP. Wildcards apply through
+  the HTTP(S) proxy, not to arbitrary protocols. Host sockets and declared
+  port forwards are separate access paths, not covered by the NIC ACL.
+- **GitHub publication.** Use a correctly scoped read-only token inside
+  containers. JailBee does not verify its effective permissions: a
+  write-capable token can bypass the outbox review step.
 
-It asks about three steps, each idempotent — re-run it after upgrading:
+Read [Security and limitations](https://jailbee.gisgro.io/docs/security/),
+especially [Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts),
+for the controls and their limits.
 
-- **shell completions** for both `jailbee` and `jb` (bash, zsh or fish),
-- the **`jailbee-net-refresh` user timer**, which keeps strict-mode egress
-  allowlists current and expires `jailbee net loose --for` TTLs,
-- JailBee's **agent skills** for the agents found on your host (opt-in via
-  `install_host_skills` in `~/.config/jailbee/global.yaml`), so they know
-  how to drive `jailbee`.
+## Updates and documentation
 
-After upgrading JailBee itself, `jailbee upgrade` re-runs `jailbee base build`
-and `jailbee apply` in every registered repo that the release's upgrade notes
-say needs them, without restarting any container (`--dry-run` shows what
-would run).
+After updating the CLI package, re-run `jb setup` for its host integrations.
+`jb upgrade --dry-run` shows which registered repos need an image rebuild or
+profile update according to the release's upgrade notes; `jb upgrade` performs
+those steps without restarting containers. It does not update the CLI package
+itself.
 
-`jailbee doctor` reports any step that is missing. Host prerequisites — Incus,
-the firewall, UID delegation — are separate; see
-[Installation](https://jailbee.gisgro.io/docs/installation/).
+The full, searchable documentation is at
+**[jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/)**.
 
-### Shell completion
-
-Restart the shell after `jailbee setup`, and TAB completes commands, options,
-and:
-
-- **container names** on every command that takes one (`jailbee shell`, `jailbee destroy`,
-  `jailbee git push`, `jailbee ide`, …) — short names and `jailbee rename`
-  aliases, from the containers that exist in the current repo
-- **branch names** on `jailbee new`, `jailbee fork --branch` and
-  `jailbee retarget`, from the host repo's local branches
-- **app names, credential groups, stored accounts, submodule paths and port
-  forwards** wherever a command takes one
-- **snapshot tags** on `jailbee snapshot restore` and `jailbee snapshot delete`, from the
-  container already named on the command line
-- **fixed values** for `--format`, `--layer`, `--attach` and `--user`
-
-Completion looks for `.jailbee/config.yaml` in the current directory, the same
-default the commands themselves use; elsewhere it offers nothing. Unlike the
-commands, it does not honor `--config`/`-c`, so e.g. `jailbee shell -c
-/other/repo/.jailbee/config.yaml <TAB>` still completes against the *current
-directory's* containers, not the repo the flag points at.
-
-## Documentation
-
-The full documentation lives at **[jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/)** —
-the same pages [this repository's `docs/`](https://github.com/VRTFinland/jailbee/tree/main/docs)
-holds, indexed and searchable.
-
-Start here:
-
-| Doc | What's inside |
+| Guide | What's inside |
 |---|---|
-| [Installation](https://jailbee.gisgro.io/docs/installation/) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
-| [Storage: use btrfs](https://jailbee.gisgro.io/docs/storage/) | Why a copy-on-write btrfs pool beats the default `dir` pool, how to set one up, and how to point JailBee at it |
-| [Getting started](https://jailbee.gisgro.io/docs/getting-started/) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
-| [Commands](https://jailbee.gisgro.io/docs/commands/) | Full command + flag reference table |
-| [Configuration reference](https://jailbee.gisgro.io/docs/config/) | Every `.jailbee/config.yaml` and `global.yaml` key |
-| [News](https://jailbee.gisgro.io/news/) | Release announcements (also as an [RSS feed](https://jailbee.gisgro.io/news/feed.xml)) |
-| [FAQ](https://jailbee.gisgro.io/docs/faq/) | Short answers to the common questions, each linking to the page that covers it in full |
+| [Installation](https://jailbee.gisgro.io/docs/installation/) | Host setup and CLI installation |
+| [Storage](https://jailbee.gisgro.io/docs/storage/) | Copy-on-write pools, btrfs and the cost of the `dir` backend |
+| [Getting started](https://jailbee.gisgro.io/docs/getting-started/) | Configure a repo and walk through a typical day |
+| [Commands](https://jailbee.gisgro.io/docs/commands/) | CLI commands and flags |
+| [Configuration](https://jailbee.gisgro.io/docs/config/) | Repo config, personal defaults and local overrides |
+| [FAQ](https://jailbee.gisgro.io/docs/faq/) | Common questions and troubleshooting pointers |
+| [News](https://jailbee.gisgro.io/news/) | Release announcements and the [RSS feed](https://jailbee.gisgro.io/news/feed.xml) |
 
-**Project internals** — maintainer procedure, kept in the repository:
-
-| Doc | What's inside |
-|---|---|
-| [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md) | End-to-end smoke-test recipes (require a real Incus daemon) |
-| [Releasing](https://github.com/VRTFinland/jailbee/blob/main/docs/releasing.md) | Release process |
-| [Contributing](https://github.com/VRTFinland/jailbee/blob/main/CONTRIBUTING.md) | Development setup and repo conventions |
+For contributors:
+[Contributing](https://github.com/VRTFinland/jailbee/blob/main/CONTRIBUTING.md),
+[Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md),
+and [Releasing](https://github.com/VRTFinland/jailbee/blob/main/docs/releasing.md).
 
 ## License
 
