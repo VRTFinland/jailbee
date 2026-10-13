@@ -35,22 +35,26 @@ def _resolved(path: Path) -> Path:
     return Path(os.path.realpath(path))
 
 
-def _writable_mounts(cfg: Config) -> Iterator[tuple[str, Path]]:
+def _writable_mounts(cfg: Config, exclude: str | None = None) -> Iterator[tuple[str, Path]]:
     for mount in cfg.host_mounts:
         if not mount.readonly:
             yield f"host_mounts {mount.host}", _resolved(mount.host)
     for kind, opt in cfg.optional_mounts.items():
+        if kind == exclude:
+            continue
         if not opt.readonly:
             yield f"optional_mounts {kind} ({opt.host})", _resolved(opt.host)
 
 
-def writable_cover(cfg: Config, root: Path) -> str | None:
+def writable_cover(cfg: Config, root: Path, exclude: str | None = None) -> str | None:
     """The first read-write mount of ``cfg`` on ``root`` or one of its parents.
 
     A container holding such a mount can swap ``root`` for a symlink between
     the check and Incus opening it, so ``root`` is not safe to grant.
+    When ``exclude`` is set, that optional_mounts kind is ignored (the mount
+    being decided is exempt from its own cover check).
     """
-    for label, host in _writable_mounts(cfg):
+    for label, host in _writable_mounts(cfg, exclude=exclude):
         if root.is_relative_to(host):
             return f"{label} (read-write)"
     return None
@@ -86,7 +90,7 @@ def remote_mount_grant(policy: RemoteSSHConfig, cfg: Config, kind: str) -> Mount
         return f"remote.ssh.mount_roots path {root.path} does not exist."
     if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
         return f"remote.ssh.mount_roots path {root.path} is not a directory or a file."
-    cover = writable_cover(cfg, root.path)
+    cover = writable_cover(cfg, root.path, exclude=kind)
     if cover is not None:
         return (
             f"'{kind}' is not attachable over remote SSH: {cover} covers {root.path}, so a "

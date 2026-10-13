@@ -43,20 +43,17 @@ def test_exact_root_is_granted_readonly(tree, make_cfg, tmp_path) -> None:
 
 
 def test_readonly_root_forces_a_writable_mount_readonly(tree, make_cfg, tmp_path) -> None:
-    # A writable mount at the root itself is refused (writable_cover detects it)
     mounts = {"d": {"host": str(tree / "data"), "container": "/d", "readonly": False}}
     cfg = _cfg(make_cfg, tmp_path, mounts)
-    refusal = remote_mount_grant(_policy(RemoteMountRoot(path=tree / "data")), cfg, "d")
-    assert isinstance(refusal, str) and "optional_mounts d" in refusal
+    grant = remote_mount_grant(_policy(RemoteMountRoot(path=tree / "data")), cfg, "d")
+    assert grant == MountGrant(tree / "data", readonly=True, forced_readonly=True)
 
 
 def test_writable_root_keeps_the_mount_own_flag(tree, make_cfg, tmp_path) -> None:
-    # A writable root with a writable mount is still refused by writable_cover
     mounts = {"d": {"host": str(tree / "data"), "container": "/d", "readonly": False}}
     cfg = _cfg(make_cfg, tmp_path, mounts)
     root = RemoteMountRoot(path=tree / "data", readonly=False)
-    refusal = remote_mount_grant(_policy(root), cfg, "d")
-    assert isinstance(refusal, str) and "optional_mounts d" in refusal
+    assert remote_mount_grant(_policy(root), cfg, "d") == MountGrant(tree / "data", False, False)
 
 
 @pytest.mark.parametrize("spelling", ["{t}/data/", "{t}/other/../data", "{t}/./data"])
@@ -141,6 +138,17 @@ def test_writable_optional_mount_on_the_parent_is_refused(tree, make_cfg, tmp_pa
     mounts = {
         "d": {"host": str(tree / "data"), "container": "/d"},
         "w": {"host": str(tree), "container": "/w", "readonly": False},
+    }
+    cfg = _cfg(make_cfg, tmp_path, mounts)
+    refusal = remote_mount_grant(_policy(RemoteMountRoot(path=tree / "data")), cfg, "d")
+    assert isinstance(refusal, str) and "optional_mounts w" in refusal
+
+
+def test_writable_optional_mount_on_the_same_path_refuses(tree, make_cfg, tmp_path) -> None:
+    # A different read-write optional mount on the exact same host path still refuses
+    mounts = {
+        "d": {"host": str(tree / "data"), "container": "/d"},
+        "w": {"host": str(tree / "data"), "container": "/w", "readonly": False},
     }
     cfg = _cfg(make_cfg, tmp_path, mounts)
     refusal = remote_mount_grant(_policy(RemoteMountRoot(path=tree / "data")), cfg, "d")
