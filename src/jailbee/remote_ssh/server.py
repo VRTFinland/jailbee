@@ -532,6 +532,13 @@ def _startup_summary(
         lines.append("  sftp/scp: on (container repo directories only)")
     if config.network:
         lines.append("  network widening: on (net loose, net egress add)")
+    if config.mounts:
+        lines.append("  optional mounts: all (remote.ssh.mounts)")
+    elif config.mount_roots:
+        lines.append(
+            f"  optional mounts: {len(config.mount_roots)} host directories "
+            "(remote.ssh.mount_roots)"
+        )
     if restricted and config.commands.mode == "allowlist":
         unlocks = RemoteUnlocks.of(config)
         refused = sorted(

@@ -245,7 +245,8 @@ def command_path(argv: Sequence[str]) -> str:
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
-#     `optional_mounts` entry), `port to-container`;
+#     `optional_mounts` entry) unless `remote.ssh.mount_roots` or
+#     `remote.ssh.mounts` unlocks it (`RemoteUnlocks`), `port to-container`;
 #   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`;
 #   - a second console: `console` runs with the local, unrestricted policy;
 # `tests/test_remote_ssh_router.py` partitions every public leaf between this
@@ -323,6 +324,14 @@ def is_gui_app_command(argv: Sequence[str]) -> bool:
 _NETWORK_WIDENING_COMMANDS: frozenset[str] = frozenset({"net loose", "net egress add"})
 
 
+# `mount` (attach an `optional_mounts` entry), turned into a container command
+# by `remote.ssh.mount_roots` or `remote.ssh.mounts`. The router only lets it
+# through: which host path a session may bind is decided by `jailbee mount`
+# itself (`remote_ssh.mount_policy`), since it needs the repo config and the
+# filesystem.
+_MOUNT_COMMANDS: frozenset[str] = frozenset({"mount"})
+
+
 @dataclass(frozen=True)
 class RemoteUnlocks:
     """The `remote.ssh` switches that move host commands to the container side.
@@ -333,18 +342,25 @@ class RemoteUnlocks:
 
     gui: bool = False
     network: bool = False
+    mounts: bool = False
 
     @classmethod
     def of(cls, config: RemoteSSHConfig | None) -> RemoteUnlocks:
         """The switches `config` turns on; all off without a config."""
         if config is None:
             return cls()
-        return cls(gui=config.gui, network=config.network)
+        return cls(
+            gui=config.gui,
+            network=config.network,
+            mounts=config.mounts or bool(config.mount_roots),
+        )
 
     def commands(self) -> frozenset[str]:
         """Host commands these switches turn into container commands."""
-        return (_GUI_APP_COMMANDS if self.gui else frozenset()) | (
-            _NETWORK_WIDENING_COMMANDS if self.network else frozenset()
+        return (
+            (_GUI_APP_COMMANDS if self.gui else frozenset())
+            | (_NETWORK_WIDENING_COMMANDS if self.network else frozenset())
+            | (_MOUNT_COMMANDS if self.mounts else frozenset())
         )
 
 

@@ -1151,6 +1151,49 @@ def test_every_leaf_is_classified_with_network_on_too() -> None:
     assert paths <= (router._CONTAINER_COMMANDS | router._NETWORK_WIDENING_COMMANDS)
 
 
+    def test_remote_unlocks_mounts_from_either_switch(tmp_path) -> None:
+        from jailbee.config.models_remote import RemoteMountRoot
+        from jailbee.remote_ssh.router import RemoteUnlocks
+
+        assert RemoteUnlocks.of(RemoteSSHConfig()).mounts is False
+        assert RemoteUnlocks.of(RemoteSSHConfig(mounts=True)).commands() == frozenset({"mount"})
+        roots = RemoteSSHConfig(mount_roots=[RemoteMountRoot(path=tmp_path.resolve())])
+        assert RemoteUnlocks.of(roots).commands() == frozenset({"mount"})
+
+
+    def test_route_threads_the_mounts_flag_to_the_command_policy(repo, engine: Engine) -> None:
+        off = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))
+        on = off.model_copy(update={"mounts": True})
+
+        with pytest.raises(RouteError, match="manages the host"):
+            route("--repo project mount aws feat", off, engine=engine)
+        assert route("--repo project mount aws feat", on, engine=engine).kind == "command"
+
+
+    def test_allowlist_still_has_to_name_mount() -> None:
+        from jailbee.remote_ssh.router import RemoteUnlocks
+
+        policy = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+        with pytest.raises(RouteError):
+            policy_allows(["mount", "aws", "x"], policy, unlocks=RemoteUnlocks(mounts=True))
+
+
+    def test_new_mount_stays_refused_with_mounts_on() -> None:
+        from jailbee.remote_ssh.router import RemoteUnlocks
+
+        with pytest.raises(RouteError):
+            policy_allows(["new", "--mount", "x"], FULL, unlocks=RemoteUnlocks(mounts=True))
+
+
+    def test_every_leaf_is_classified_with_mounts_on_too() -> None:
+        from jailbee.remote_ssh import router
+
+        unlocks = router.RemoteUnlocks(mounts=True)
+        paths = {p for p in known_command_paths() if not router.is_host_command(p, unlocks=unlocks)}
+        assert "mount" in paths
+        assert paths <= (router._CONTAINER_COMMANDS | router._MOUNT_COMMANDS)
+
+
 _NEW_LOOSE = [
     ("new", "feat", "--net", "loose"),
     ("new", "--net", "loose", "feat"),  # leading position
