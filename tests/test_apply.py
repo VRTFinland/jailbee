@@ -34,7 +34,7 @@ def _no_mirror_lookup(mocker: MockerFixture) -> Any:
 
 
 @pytest.fixture(autouse=True)
-def _no_egress_refresh(mocker: MockerFixture) -> Any:
+def _no_egress_refresh(mocker: MockerFixture, db_engine: Any) -> Any:
     """Default: refresh_pool is a no-op success. Override per-test by re-patching.
 
     Returns the mock so tests that need to alter the RefreshResult can
@@ -42,7 +42,7 @@ def _no_egress_refresh(mocker: MockerFixture) -> Any:
     """
     from jailbee.egress_pool import RefreshResult
 
-    mocker.patch("jailbee.apply.get_engine")
+    mocker.patch("jailbee.apply.get_engine", return_value=db_engine)
     mocker.patch("jailbee.apply.register_repo")
     return mocker.patch(
         "jailbee.apply.refresh_pool",

@@ -36,6 +36,7 @@ from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
+from tests.conftest import memory_engine
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
 _MAX_CALLBACK_PAUSES = 50  # pauses after a callable step before the run moves on regardless
@@ -278,7 +279,7 @@ def _patch_startup(mocker, view_state=None, mouse=True, jobs=SyncJobs):  # type:
     )
     mocker.patch.object(tsession, "_interactive", return_value=True)
     mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
-    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
+    mocker.patch("jailbee.db.get_engine", return_value=memory_engine())
     mocker.patch.object(tsession, "seed_view_state", return_value=view_state or ViewState())
     mocker.patch.object(tsession, "JobRunner", jobs)
 

@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from jailbee.autostart_plan import AutostartPlan
 from jailbee.cli import app
-from tests.conftest import make_cfg
+from tests.conftest import make_cfg, memory_engine
 
 runner = CliRunner()
 
@@ -50,7 +50,7 @@ def _setup_new(tmp_path: Path, mocker):
         "jailbee.egress_pool.refresh_pool",
         return_value=RefreshResult(container_prefix="myrepo", status="ok"),
     )
-    mocker.patch("jailbee.db.get_engine")
+    mocker.patch("jailbee.db.get_engine", return_value=memory_engine())
     mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
     mocker.patch("jailbee.setup_command.consume_hint", return_value=[])
     mocker.patch("jailbee.cli._preflight_cache_pools")

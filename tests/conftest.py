@@ -713,15 +713,25 @@ def _neutralize_kitty_autodetect(request, mocker):
     )
 
 
-@pytest.fixture
-def db_engine() -> Engine:
-    """In-memory SQLite engine with the jailbee schema applied. One per test."""
+def memory_engine() -> Engine:
+    """In-memory SQLite engine with the jailbee schema applied.
+
+    Stand in for `get_engine` with this, not a bare `MagicMock`: a `Session`
+    over a mock engine sees a truthy `in_transaction()` and SQLAlchemy warns
+    on every query.
+    """
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
     )
     _ensure_schema(engine)
     return engine
+
+
+@pytest.fixture
+def db_engine() -> Engine:
+    """In-memory SQLite engine with the jailbee schema applied. One per test."""
+    return memory_engine()
 
 
 @pytest.fixture
