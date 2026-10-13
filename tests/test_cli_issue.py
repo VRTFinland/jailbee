@@ -1552,10 +1552,13 @@ def test_apply_yes_with_foreign_publishes_without_asking(mocker, tmp_path):
 
 
 def test_apply_dry_run_with_foreign_asks_nothing(mocker, tmp_path):
-    _revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+    revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+    confirm = mocker.patch("typer.confirm", return_value=True)
 
     result = runner.invoke(app, ["issue", "apply", "feat-foo", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "foreign repositories" not in result.output
+    confirm.assert_not_called()
+    revalidate.assert_not_called()
     apply_batch.assert_not_called()
