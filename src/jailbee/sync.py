@@ -2463,6 +2463,15 @@ def push_to_container(
     else:
         assert_never(tags)
 
+    if namespace == "host":
+        # Transfer pinned submodule objects before the superproject ref.
+        try:
+            submodules.transport_submodules_to_container(
+                cfg, incus, full_name, repo_dir=repo_dir, commit=new_oid
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
+
     if len(refspecs) == 1:
         git.push_url(cfg.repo_root, url, refspecs[0])
     else:
@@ -2921,7 +2930,6 @@ def push_and_merge(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,
@@ -3172,7 +3180,6 @@ def push_and_rebase(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,
@@ -3263,7 +3270,6 @@ def push_and_reset(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,

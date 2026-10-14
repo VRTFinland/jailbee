@@ -663,3 +663,61 @@ def test_pull_only_nested_container_born_leaf_fetches_parents_first(rig, tmp_pat
     assert not (rig.top / ".git/modules/unrelated").exists()
     assert not (rig.top / "new-parent").exists()
     assert _git(rig.top, "status", "--porcelain") == ""
+
+
+@pytest.fixture
+def push_urls(monkeypatch):
+    monkeypatch.setattr(submodules, "_sub_receive_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}")
+
+
+def _container_clone(tmp_path, rig, branch):
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", branch, str(rig.top), str(ctr))
+    return ctr
+
+
+def test_push_dev_from_host_main_sends_pinned_nested_submodules(rig, tmp_path, push_urls):
+    ctr = _container_clone(tmp_path, rig, "dev")
+    parent = _git(rig.top, "rev-parse", "dev:sub")
+    inner = _git(rig.top / "sub", "rev-parse", f"{parent}:inner")
+    (rig.top / "sub/inner/i").write_text("different HEAD\n")
+    _git(rig.top / "sub/inner", "commit", "-qam", "unrelated inner head")
+    _git(rig.top / "sub", "commit", "-qam", "unrelated parent head")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "--force", "main")
+    submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "dev"))
+    for path, sha in [("sub", parent), ("sub/inner", inner)]:
+        assert _git(ctr / path, "rev-parse", f"refs/jailbee-sub/host/{path}/HEAD") == sha
+        assert _git(ctr / path, "rev-parse", "HEAD") == sha
+    assert not (rig.top / "sub").exists()
+
+
+def test_push_main_from_host_dev_creates_no_stray_subrepo(rig, tmp_path, push_urls):
+    ctr = _container_clone(tmp_path, rig, "main")
+    submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "main"))
+    assert not (ctr / "sub").exists()
+
+
+@pytest.mark.parametrize("missing", ["repo", "nested-repo", "object"])
+def test_push_refuses_missing_host_submodule_before_creation(rig, tmp_path, push_urls, missing):
+    import shutil
+
+    ctr = _container_clone(tmp_path, rig, "dev")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    parent = rig.top / ".git/modules/sub"
+    if missing == "repo":
+        shutil.rmtree(parent)
+    elif missing == "nested-repo":
+        shutil.rmtree(parent / "modules/inner-custom")
+    else:
+        sha = _git(rig.top, "rev-parse", "dev:sub")
+        (parent / "objects" / sha[:2] / sha[2:]).unlink()
+    with pytest.raises(submodules.SubmoduleError, match="sub.*not on the host"):
+        submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "dev"))
+    assert not (ctr / "sub/.git").exists()
+
+
+def test_push_refuses_missing_superproject_object_before_creation(rig, tmp_path, push_urls):
+    ctr = _container_clone(tmp_path, rig, "dev")
+    with pytest.raises(submodules.SubmoduleError, match="commit.*not on the host"):
+        submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit="1" * 40)
+    assert not (ctr / "sub/.git").exists()

@@ -1763,14 +1763,15 @@ def transport_submodules_to_container(
     repo_dir: str,
     source_ns: str = "host",
     paths: list[str] | None = None,
+    commit: str | None = None,
 ) -> None:
     """Push submodule objects into `container`'s matching sub-repos.
 
     `source_ns` names whose objects these are, and becomes the
     `refs/jailbee-sub/<source_ns>/<path>/...` namespace inside the target sub-repo.
-    The default `"host"` keeps the original behaviour: the host working tree's
-    own submodules, enumerated from `git.submodule_status_paths` when `paths`
-    is not given, pushed from their `HEAD` and `refs/heads/*`.
+    The default "host" enumerates the pushed commit's trees recursively and
+    pushes its pinned gitlinks, not the host worktree's current HEADs.
+    Every source repo and commit is validated before any target is created.
 
     A non-host `source_ns` relays another container's work instead. Those
     objects were fetched into the host sub-repos under
@@ -1798,8 +1799,38 @@ def transport_submodules_to_container(
     """
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
-    sub_paths = paths if paths is not None else git.submodule_status_paths(repo_root)
-    for path in sub_paths:
+    entries: list[tuple[str, Path, str | None, str | None]]
+    if source_ns == "host":
+        if commit is None:
+            raise ValueError("transport_submodules_to_container: commit is required for 'host'")
+        if not git.has_commit(repo_root, commit):
+            raise SubmoduleError(f"Source commit '{commit}' is not on the host. Fetch it first.")
+        try:
+            subs = host_submodules_at(repo_root, commit)
+        except git.GitError as exc:
+            raise SubmoduleError(f"Cannot inspect submodules in commit '{commit}': {exc}") from exc
+        missing = [
+            sub.path
+            for sub in subs
+            if sub.gitlink is not None
+            and (sub.repo is None or not git.has_commit(sub.repo.root, sub.gitlink))
+        ]
+        if missing:
+            raise SubmoduleError(
+                "\n".join(
+                    f"Submodule '{path}' commit (gitlink in {commit[:7]}) is not on the host. "
+                    f"Fetch it first: git -C {repo_root} submodule update --init {path}"
+                    for path in missing
+                )
+            )
+        entries = [
+            (sub.path, sub.repo.root, sub.gitlink, sub.url)
+            for sub in subs
+            if sub.repo is not None and sub.gitlink is not None
+        ]
+    else:
+        entries = [(path, host_subrepo_root(repo_root, path), None, None) for path in (paths or [])]
+    for path, host_root, gitlink, declared_url in entries:
         url = _sub_receive_pack_url(cfg, container, repo_dir, path)
         sub_dir = f"{repo_dir}/{path}"
         created = not _container_subrepo_exists(incus, container, repo_dir, path, uid=uid)
@@ -1808,7 +1839,7 @@ def transport_submodules_to_container(
                 incus,
                 container,
                 sub_dir,
-                origin_url=_submodule_upstream_url(repo_root / path),
+                origin_url=_submodule_upstream_url(host_root) or declared_url,
                 uid=uid,
                 gid=cfg.container_user.gid,
             )
@@ -1816,12 +1847,12 @@ def transport_submodules_to_container(
         head_ref = f"{ns}/HEAD"
         if source_ns == "host":
             refspecs = [
-                f"+HEAD:{head_ref}",
+                f"+{gitlink}:{head_ref}",
                 f"+refs/heads/*:{ns}/heads/*",
             ]
         else:
             refspecs = [f"+{ns}/HEAD:{head_ref}", f"+{ns}/heads/*:{ns}/heads/*"]
-        git.push_url_multi(repo_root / path, url, refspecs)
+        git.push_url_multi(host_root, url, refspecs)
         if created:
             incus.exec(
                 container,
