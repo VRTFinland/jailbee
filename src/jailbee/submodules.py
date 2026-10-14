@@ -973,31 +973,81 @@ def locate_host_subrepo(parent: HostSubRepo, leaf: str, name: str) -> HostSubRep
     candidate = parent.gitdir / "modules" / name
     if not (candidate / "HEAD").is_file():
         return None
-    git.run_capture(
+    has_worktree, _ = git.run_capture(
         str(parent.gitdir),
-        ["config", "--file", str(candidate / "config"), "--unset", "core.worktree"],
+        ["config", "--file", str(candidate / "config"), "--get", "core.worktree"],
     )
+    if has_worktree:
+        repaired, _ = git.run_capture(
+            str(parent.gitdir),
+            ["config", "--file", str(candidate / "config"), "--unset", "core.worktree"],
+        )
+        still_has_worktree, _ = git.run_capture(
+            str(parent.gitdir),
+            ["config", "--file", str(candidate / "config"), "--get", "core.worktree"],
+        )
+        if not repaired or still_has_worktree:
+            raise SubmoduleError(
+                f"Cannot repair stale core.worktree in submodule gitdir '{candidate}'; "
+                "check config.lock and permissions"
+            )
     return HostSubRepo(path=path, gitdir=candidate, worktree=None)
 
 
+def _locate_default_nested(
+    parent: HostSubRepo, remaining: str, selected_commit: str
+) -> HostSubRepo | None:
+    """Resolve default-name modules without splitting declared slash paths blindly."""
+    direct = locate_host_subrepo(parent, remaining, remaining)
+    if direct is not None:
+        return direct
+    if not remaining:
+        return None
+    parts = remaining.split("/")
+    for index in range(1, len(parts)):
+        prefix = "/".join(parts[:index])
+        child = locate_host_subrepo(parent, prefix, prefix)
+        if child is None:
+            continue
+        oid = _gitlink_at(git.run_capture, str(parent.root), selected_commit, prefix)
+        # A branch without this gitlink has no selected child tree; the local
+        # gitdir's HEAD is the only available declaration source for fallback.
+        child_commit = oid or "HEAD"
+        resolved = _resolve_host_subrepo(child, "/".join(parts[index:]), child_commit)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _resolve_host_subrepo(level: HostSubRepo, remaining: str, commit: str) -> HostSubRepo | None:
+    object_ok, _ = git.run_capture(
+        str(level.root), ["rev-parse", "--verify", f"{commit}^{{commit}}"]
+    )
+    if not object_ok and commit != "HEAD":
+        raise SubmoduleError(
+            f"Cannot inspect submodule tree '{commit}' in '{level.root}'; "
+            "the referenced commit object is unavailable"
+        )
+    entries = _gitmodules_paths_at(git.run_capture, str(level.root), commit)
+    for name, path in entries:
+        if path == remaining:
+            return locate_host_subrepo(level, path, name)
+        if remaining.startswith(f"{path}/"):
+            child = locate_host_subrepo(level, path, name)
+            if child is None:
+                return None
+            gitlink = _gitlink_at(git.run_capture, str(level.root), commit, path)
+            if gitlink is None:
+                raise SubmoduleError(
+                    f"Cannot resolve gitlink '{path}' from commit '{commit}' in '{level.root}'"
+                )
+            return _resolve_host_subrepo(child, remaining[len(path) + 1 :], gitlink)
+    return _locate_default_nested(level, remaining, commit)
+
+
 def resolve_host_subrepo(repo_root: Path, subpath: str, *, at: str = "HEAD") -> HostSubRepo | None:
-    """Locate top-relative `subpath`, descending one `.gitmodules` level at a time."""
-    level = superproject_subrepo(repo_root)
-    commit = at
-    remaining = subpath
-    while True:
-        entries = _gitmodules_paths_at(git.run_capture, str(level.root), commit)
-        for name, path in entries:
-            if path == remaining:
-                return locate_host_subrepo(level, path, name)
-            if remaining.startswith(f"{path}/"):
-                child = locate_host_subrepo(level, path, name)
-                if child is None:
-                    return None
-                level, commit, remaining = child, "HEAD", remaining[len(path) + 1 :]
-                break
-        else:
-            return locate_host_subrepo(level, remaining, remaining)
+    """Locate top-relative `subpath` by declarations and gitlinks in commit trees."""
+    return _resolve_host_subrepo(superproject_subrepo(repo_root), subpath, at)
 
 
 def host_subrepo_root(repo_root: Path, subpath: str) -> Path:

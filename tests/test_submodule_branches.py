@@ -57,7 +57,7 @@ def rig(tmp_path: Path) -> Rig:
     (subup / "d" / "f").write_text("1\n")
     _git(subup, "add", ".")
     _git(subup, "commit", "-q", "-m", "s1")
-    _git(subup, "submodule", "add", "-q", str(inup), "inner")
+    _git(subup, "submodule", "add", "-q", "--name", "inner-custom", str(inup), "inner")
     _git(subup, "commit", "-q", "-m", "add inner")
 
     top = tmp_path / "top"
@@ -98,7 +98,27 @@ def test_locate_finds_a_nested_gitdir(rig: Rig) -> None:
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
     inner = submodules.resolve_host_subrepo(rig.top, "sub/inner", at="dev")
     assert inner is not None
-    assert inner.gitdir == rig.top / ".git" / "modules" / "sub" / "modules" / "inner"
+    assert inner.gitdir == rig.top / ".git" / "modules" / "sub" / "modules" / "inner-custom"
+
+
+def test_nested_lookup_uses_pinned_parent_commit_not_child_head(rig: Rig) -> None:
+    sub = rig.top / "sub"
+    pinned = _git(sub, "rev-parse", "HEAD")
+    _git(sub, "checkout", "-q", "-b", "other")
+    (sub / ".gitmodules").write_text('[submodule "other-custom"]\n\tpath = inner\n\turl = unused\n')
+    _git(sub, "add", ".gitmodules")
+    _git(sub, "commit", "-q", "-m", "different nested declaration")
+    child_head = _git(sub, "rev-parse", "HEAD")
+    import shutil
+
+    shutil.rmtree(sub)
+    _git(rig.top, "checkout", "-q", "main")
+
+    inner = submodules.resolve_host_subrepo(rig.top, "sub/inner", at="dev")
+
+    assert child_head != pinned
+    assert inner is not None
+    assert inner.gitdir == rig.top / ".git" / "modules" / "sub" / "modules" / "inner-custom"
 
 
 def test_locate_heals_a_stale_core_worktree(rig: Rig) -> None:
@@ -123,6 +143,26 @@ def test_locate_uses_the_declared_name_not_the_path(tmp_path: Path, rig: Rig) ->
 
 def test_locate_returns_none_for_an_unknown_submodule(rig: Rig) -> None:
     assert submodules.resolve_host_subrepo(rig.top, "nope") is None
+
+
+def test_locate_raises_when_stale_worktree_repair_is_locked(rig: Rig) -> None:
+    import shutil
+
+    _git(rig.top, "checkout", "-q", "main")
+    shutil.rmtree(rig.top / "sub")
+    gitdir = rig.top / ".git" / "modules" / "sub"
+    (gitdir / "config.lock").write_text("locked")
+    with pytest.raises(submodules.SubmoduleError, match="core.worktree"):
+        submodules.resolve_host_subrepo(rig.top, "sub", at="dev")
+
+
+def test_nested_default_name_lookup_without_declaration_commit(rig: Rig) -> None:
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+
+    inner = submodules.resolve_host_subrepo(rig.top, "sub/inner")
+
+    assert inner is not None
+    assert inner.gitdir == rig.top / ".git" / "modules" / "sub" / "modules" / "inner-custom"
 
 
 def test_host_subrepo_exists_is_true_for_a_gitdir_only_submodule(rig: Rig) -> None:
