@@ -3366,7 +3366,9 @@ The network fetch runs outside the foreground command. `jailbee ls` / `new` /
 `shell` read the state database and, when the cached result is missing or at
 least a day old, spawn a detached process to fetch
 `https://pypi.org/pypi/jailbee/json` for a later run. The foreground still does
-local config/database work and may start that process. Concurrent commands
+local config/database work and may start that process. The dashboard's state
+service does the same once a minute, so a dashboard left open keeps the cache
+fresh without any command being run. Concurrent commands
 can spawn more than one probe before a result is recorded. JailBee sends no
 repo contents, paths or explicit user identifier; PyPI still sees the request's
 source IP and the `jailbee/<version>` User-Agent. A failed fetch records the
@@ -3382,10 +3384,17 @@ When a newer release is known, one line appears on stderr:
 
 The upgrade command is derived from how JailBee was installed (`uv tool`,
 `pipx`, or plain `pip`). An **editable install** is never advised: it runs
-from a checkout, so no upgrade command would give you what you want. The
-same release is mentioned at most once a day, and `jailbee dismiss update`
-silences it until a release newer still appears. `jailbee doctor` reports it
-either way — including the dismissal — under `update check`.
+from a checkout, so no upgrade command would give you what you want. The line
+is printed on every one of those commands until you upgrade or dismiss it.
+
+The dashboard shows the same advice on a row below the table, with a
+clickable **[dismiss]** label. Remote SSH dashboards do not show it: whoever is
+connected cannot upgrade the host's JailBee.
+
+`jailbee dismiss update`, or the **[dismiss]** label, silences the release
+until a release newer still appears; both write the same record, so either
+one silences the other. `jailbee doctor` reports it either way — including the
+dismissal — under `update check`.
 
 ### `agent_instructions`
 

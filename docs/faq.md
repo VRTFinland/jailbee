@@ -80,9 +80,11 @@ refuses a bare `pip install` (PEP 668).
 ### How do I know when a new release is out?
 
 When a newer release is cached from PyPI, `jailbee ls` / `new` / `shell`
-periodically print a hint on stderr naming the version and the upgrade
-command for your install (`uv tool upgrade jailbee`, `pipx upgrade jailbee`,
-…). `jailbee dismiss update` silences one release; `update_check: false` in
+print a hint on stderr naming the version and the upgrade command for your
+install (`uv tool upgrade jailbee`, `pipx upgrade jailbee`, …), and the
+dashboard shows the same advice on a row of its own. Both stay until you
+upgrade or dismiss: `jailbee dismiss update`, or the **[dismiss]** label on
+the dashboard's row, silences that release; `update_check: false` in
 `~/.config/jailbee/global.yaml` — or `JAILBEE_NO_UPDATE_CHECK=1` for one
 command — turns the whole thing off.
 

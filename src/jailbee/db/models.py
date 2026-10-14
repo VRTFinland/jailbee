@@ -339,10 +339,10 @@ class UpdateCheckState(SQLModel, table=True):
     Not per repo: which jailbee is installed is a property of the machine,
     like `HostSetupState`. Two pairs of columns, written by two different
     processes: `checked_at` / `latest_version` by the detached probe
-    (`update_check.run_probe`), `hint_shown_at` / `hint_shown_version` by the
-    foreground command that printed the advice. Keeping them apart is what
-    lets the hint be rate-limited per release without re-fetching, and lets a
-    failed fetch stamp `checked_at` while leaving the last known version in
+    (`update_check.run_probe`), `hint_shown_at` / `hint_shown_version`, which
+    once rate-limited the hint and are no longer read or written (the hint now
+    stands until dismissed; the columns stay so no migration is needed). A
+    failed fetch stamps `checked_at` while leaving the last known version in
     place — see `update_check.record_check`.
 
     Every column is nullable: a row exists as soon as either half has

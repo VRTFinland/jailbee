@@ -1127,10 +1127,12 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   Warnings that answer the command you just typed (what `jailbee config
   validate` reports, `jailbee base build`'s `golden.python` line, a deprecated
   alias) are deliberately not dismissible.
-- **Update notice:** `jailbee ls`/`new`/`shell` print one stderr line when a
-  newer JailBee is on PyPI, naming the upgrade command for the install at
-  hand. The version is fetched by a detached background process at most once
-  a day, never on the command's own path, and `update_check: false` in
+- **Update notice:** `jailbee ls`/`new`/`shell` print one stderr line on every
+  run, and the dashboard shows a row with a clickable `[dismiss]`, while a
+  newer JailBee is on PyPI and not dismissed (`jailbee dismiss update`),
+  naming the upgrade command for the install at hand. The version is fetched
+  by a detached background process at most once a day, never on the
+  command's own path, and `update_check: false` in
   `~/.config/jailbee/global.yaml` (or `JAILBEE_NO_UPDATE_CHECK=1` for one
   command) turns it off. An editable install is never advised.
 - **Background jobs:** `jailbee job ls [--all-repos]` (in-flight/failed jobs with
