@@ -2946,10 +2946,13 @@ jailbee branch dev                  # restore the host's dev submodule checkout
 # From the container's superproject root, add a sibling submodule, then commit.
 jailbee exec branch-smoke -- git submodule add https://github.com/octocat/Spoon-Knife libs/spoon
 jailbee exec branch-smoke -- git commit -m "add spoon"
-git checkout main
-jailbee git pull branch-smoke --into dev  # host stays on main; populate gitdir, no checkout
+jailbee branch main                  # prune libs/hello before testing pull
+git status --porcelain               # clean; libs/hello is absent
+test ! -e libs/hello
+test -d .git/modules/libs/hello      # its gitdir remains available
+jailbee git pull branch-smoke --into dev --no-cleanup  # host stays on main
 test -d .git/modules/libs/spoon && echo "spoon gitdir present"
-git status --porcelain              # clean; no new checkout on main
+git status --porcelain               # clean; no new checkout on main
 jailbee branch dev                  # libs/hello and libs/spoon appear at container commits
 
 echo x > libs/hello/untracked
