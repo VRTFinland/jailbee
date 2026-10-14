@@ -771,3 +771,50 @@ def test_push_rejects_unreadable_nested_declarations_before_writes(
     exec_spy.assert_not_called()
     push.assert_not_called()
     assert not (ctr / "sub/.git").exists()
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_push_preserves_equal_and_space_in_declared_names_and_paths(
+    rig, tmp_path, push_urls, monkeypatch, missing
+):
+    from unittest.mock import Mock
+
+    path = "libs/extra=module"
+    name = "custom=name with space"
+    _git(rig.top, "submodule", "add", "-q", "--name", name, str(rig.inup), path)
+    _git(rig.top, "commit", "-qam", "add unusual declared name")
+    commit = _git(rig.top, "rev-parse", "dev")
+    sha = _git(rig.top, "rev-parse", f"dev:{path}")
+    ctr = _container_clone(tmp_path, rig, "dev")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    cfg = _transport_cfg(rig)
+    incus = LocalIncus()
+    if missing:
+        gitdir = rig.top / ".git/modules" / name
+        (gitdir / "objects" / sha[:2] / sha[2:]).unlink()
+        exec_spy = Mock(wraps=incus.exec)
+        incus.exec = exec_spy
+        push = Mock()
+        monkeypatch.setattr(submodules.git, "push_url_multi", push)
+        with pytest.raises(submodules.SubmoduleError, match="not on the host"):
+            submodules.transport_submodules_to_container(cfg, incus, "ctr", repo_dir=str(ctr), commit=commit)
+        exec_spy.assert_not_called()
+        push.assert_not_called()
+        assert not (ctr / "sub/.git").exists()
+    else:
+        submodules.transport_submodules_to_container(cfg, incus, "ctr", repo_dir=str(ctr), commit=commit)
+        assert _git(ctr / path, "rev-parse", f"refs/jailbee-sub/host/{path}/HEAD") == sha
+        assert _git(ctr / path, "rev-parse", "HEAD") == sha
+
+
+def test_strict_declarations_preserve_spaces_and_equals_in_values(rig):
+    path = "libs/extra = module"
+    name = "custom=name with space"
+    _git(rig.top, "submodule", "add", "-q", "--name", name, str(rig.inup), path)
+    _git(rig.top, "commit", "-qam", "add spaced path")
+    entries = submodules.host_submodules_at(rig.top, "dev", strict=True)
+    entry = next(sub for sub in entries if sub.name == name)
+    assert entry.path == path
+    assert entry.gitlink == _git(rig.top, "rev-parse", f"dev:{path}")
+    assert entry.repo is not None
+    assert entry.repo.gitdir == rig.top / ".git/modules" / name

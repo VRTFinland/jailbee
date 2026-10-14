@@ -190,16 +190,16 @@ def _gitmodules_paths_at(
             )
         if not tree.strip():
             return []
-        # A no-match exit is normal for an empty config, but not for an
-        # unreadable or malformed existing blob. Validate it separately.
-        ok, parsed = run(repo_dir, ["config", "--blob", f"{commit}:.gitmodules", "--list"])
+        # NUL-framed records separate key and value with a newline, so
+        # subsection names containing equals signs or spaces stay intact.
+        ok, parsed = run(repo_dir, ["config", "--null", "--blob", f"{commit}:.gitmodules", "--list"])
         if not ok:
             raise SubmoduleError(
                 f"Cannot inspect .gitmodules in commit '{commit}' in '{repo_dir}': {parsed.strip()}"
             )
         strict_result = []
-        for line in parsed.splitlines():
-            key, _, path = line.partition("=")
+        for record in parsed.split("\0"):
+            key, _, path = record.partition("\n")
             if key.startswith("submodule.") and key.endswith(".path") and path:
                 strict_result.append((key[len("submodule.") : -len(".path")], path))
         return strict_result
