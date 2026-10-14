@@ -25,7 +25,7 @@ def _stub_hint(mocker, lines=None):
     """Patch the read path, not the DB: these tests are about plumbing —
     is it called, where does it print, what silences it."""
     return mocker.patch(
-        "jailbee.update_check.consume_hint",
+        "jailbee.update_check.pending_hint",
         return_value=_HINT_SENTINEL if lines is None else lines,
     )
 
@@ -90,7 +90,7 @@ def test_a_broken_state_database_cannot_fail_the_command(mocker, capsys) -> None
     """Advice is a courtesy — the same contract `_advise_upgrade` holds to."""
     from jailbee.cli import _advise_update
 
-    mocker.patch("jailbee.update_check.consume_hint", side_effect=RuntimeError("locked"))
+    mocker.patch("jailbee.update_check.pending_hint", side_effect=RuntimeError("locked"))
     mocker.patch("jailbee.update_check.maybe_probe")
 
     _advise_update()  # must not raise

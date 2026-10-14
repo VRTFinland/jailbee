@@ -181,13 +181,13 @@ def test_a_failed_fetch_still_stamps_the_check(db_session: Session) -> None:
 
 
 def test_a_failed_fetch_keeps_the_last_known_version(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
     record_check(db_session, None, now=NOW + timedelta(days=1))
 
-    lines = consume_hint(
-        db_session, "1.4.0", now=NOW + timedelta(days=1), install=Install("uv", "cmd")
+    lines = pending_hint(
+        db_session, "1.4.0", install=Install("uv", "cmd")
     )
     assert lines != []
 
@@ -196,73 +196,57 @@ def test_a_failed_fetch_keeps_the_last_known_version(db_session: Session) -> Non
 
 
 def test_no_hint_before_anything_has_been_fetched(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint
+    from jailbee.update_check import Install, pending_hint
 
-    assert consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd")) == []
+    assert pending_hint(db_session, "1.4.0", install=Install("uv", "cmd")) == []
 
 
 def test_a_cached_newer_release_produces_a_hint(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
 
-    lines = consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    lines = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     assert any("1.5.0" in line for line in lines)
 
 
-def test_the_same_release_is_not_advertised_twice_in_a_row(db_session: Session) -> None:
-    """`jailbee ls` runs many times a day; one line per day per release is
-    advice, one line per invocation is nagging."""
-    from jailbee.update_check import Install, consume_hint, record_check
+def test_the_hint_repeats_on_every_command_until_dismissed(db_session: Session) -> None:
+    """No rate limit: the advice stands until the user upgrades or says they
+    have heard it with `jb dismiss update`."""
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
-    consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    first = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
 
-    again = consume_hint(
-        db_session, "1.4.0", now=NOW + timedelta(hours=1), install=Install("uv", "cmd")
-    )
-    assert again == []
+    again = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
+    assert again == first != []
 
 
-def test_the_hint_returns_once_the_interval_has_passed(db_session: Session) -> None:
-    from jailbee.update_check import HINT_INTERVAL, Install, consume_hint, record_check
+def test_a_newer_release_replaces_the_one_advertised(db_session: Session) -> None:
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
-    consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
-
-    again = consume_hint(db_session, "1.4.0", now=NOW + HINT_INTERVAL, install=Install("uv", "cmd"))
-    assert again != []
-
-
-def test_a_newer_release_is_advertised_without_waiting_out_the_interval(
-    db_session: Session,
-) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
-
-    record_check(db_session, "1.5.0", now=NOW)
-    consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     record_check(db_session, "1.6.0", now=NOW + timedelta(hours=1))
 
-    lines = consume_hint(
-        db_session, "1.4.0", now=NOW + timedelta(hours=1), install=Install("uv", "cmd")
-    )
+    lines = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     assert any("1.6.0" in line for line in lines)
 
 
 def test_an_editable_install_is_never_advertised_to(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
 
-    assert consume_hint(db_session, "1.4.0", now=NOW, install=Install("editable", None)) == []
+    assert pending_hint(db_session, "1.4.0", install=Install("editable", None)) == []
 
 
 def test_the_hint_stops_once_the_user_has_upgraded(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
 
-    assert consume_hint(db_session, "1.5.0", now=NOW, install=Install("uv", "cmd")) == []
+    assert pending_hint(db_session, "1.5.0", install=Install("uv", "cmd")) == []
 
 
 # --- fetching --------------------------------------------------------------
@@ -370,8 +354,8 @@ def test_run_probe_records_what_it_fetched(db_engine: Engine, mocker) -> None:
 
     with Session(db_engine) as session:
         assert update_check.needs_probe(session, now=NOW) is False
-        lines = update_check.consume_hint(
-            session, "1.4.0", now=NOW, install=update_check.Install("uv", "cmd")
+        lines = update_check.pending_hint(
+            session, "1.4.0", install=update_check.Install("uv", "cmd")
         )
     assert any("1.5.0" in line for line in lines)
 
@@ -408,23 +392,23 @@ def _dismiss(session: Session, fingerprint: str, *, at: datetime = NOW) -> None:
 
 
 def test_the_hint_invites_the_user_to_dismiss_it(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
 
-    lines = consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    lines = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     assert lines[-1].strip() == "Or `jb dismiss update` to stop repeating this."
 
 
 def test_a_dismissed_release_is_not_advertised_again(db_session: Session) -> None:
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
     _dismiss(db_session, "1.5.0")
 
     assert (
-        consume_hint(
-            db_session, "1.4.0", now=NOW + timedelta(days=30), install=Install("uv", "cmd")
+        pending_hint(
+            db_session, "1.4.0", install=Install("uv", "cmd")
         )
         == []
     )
@@ -433,12 +417,12 @@ def test_a_dismissed_release_is_not_advertised_again(db_session: Session) -> Non
 def test_a_release_newer_than_the_dismissed_one_speaks_again(db_session: Session) -> None:
     """A dismissal acknowledges the release it was shown for, not every
     release after it — the same rule the upgrade advice follows."""
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     _dismiss(db_session, "1.5.0")
     record_check(db_session, "1.6.0", now=NOW)
 
-    lines = consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    lines = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     assert any("1.6.0" in line for line in lines)
 
 
@@ -447,12 +431,48 @@ def test_an_unparseable_dismissal_fingerprint_does_not_silence_anything(
 ) -> None:
     """A row that cannot be compared must fail towards speaking: a dismissal
     nobody can evaluate is not consent to hide the advice forever."""
-    from jailbee.update_check import Install, consume_hint, record_check
+    from jailbee.update_check import Install, pending_hint, record_check
 
     record_check(db_session, "1.5.0", now=NOW)
     _dismiss(db_session, "not-a-version")
 
-    assert consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd")) != []
+    assert pending_hint(db_session, "1.4.0", install=Install("uv", "cmd")) != []
+
+
+# --- the structured answer the dashboard reads ------------------------------
+
+
+def test_pending_names_both_versions_and_the_command(db_session: Session) -> None:
+    from jailbee.update_check import Install, UpdateNotice, pending, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+
+    assert pending(db_session, "1.4.0", install=Install("uv", "uv tool upgrade jailbee")) == (
+        UpdateNotice(current="1.4.0", latest="1.5.0", command="uv tool upgrade jailbee")
+    )
+
+
+def test_pending_is_none_once_the_release_is_dismissed(db_session: Session) -> None:
+    from jailbee.update_check import Install, pending, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+    _dismiss(db_session, "1.5.0")
+
+    assert pending(db_session, "1.4.0", install=Install("uv", "cmd")) is None
+
+
+def test_pending_is_none_for_an_editable_install(db_session: Session) -> None:
+    from jailbee.update_check import Install, pending, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+
+    assert pending(db_session, "1.4.0", install=Install("editable", None)) is None
+
+
+def test_pending_is_none_before_anything_has_been_fetched(db_session: Session) -> None:
+    from jailbee.update_check import Install, pending
+
+    assert pending(db_session, "1.4.0", install=Install("uv", "cmd")) is None
 
 
 # --- what the other surfaces read -----------------------------------------

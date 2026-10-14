@@ -676,7 +676,7 @@ def _advise_update() -> None:
         )
         now = _now()
         with Session(get_engine()) as session:
-            lines = update_check.consume_hint(session, __version__, now=now) if enabled else []
+            lines = update_check.pending_hint(session, __version__) if enabled else []
             update_check.maybe_probe(session, now=now, enabled=enabled)
         hint(lines)
     except Exception:  # advice is a courtesy; must never fail the command

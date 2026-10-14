@@ -60,9 +60,6 @@ FETCH_TIMEOUT = 5.0
 CACHE_TTL = timedelta(hours=24)
 """How long a fetched answer is reused before a fresh probe is started."""
 
-HINT_INTERVAL = timedelta(hours=24)
-"""How often the *same* release may be advertised. A newer one ignores it."""
-
 ENV_DISABLE = "JAILBEE_NO_UPDATE_CHECK"
 """Off switch for scripts and CI, which cannot edit the user's config file."""
 
@@ -211,61 +208,67 @@ def record_check(session: Session, latest: str | None, *, now: datetime) -> None
     session.commit()
 
 
-def consume_hint(
-    session: Session,
-    current: str,
-    *,
-    now: datetime,
-    install: Install | None = None,
-    interval: timedelta = HINT_INTERVAL,
-) -> list[str]:
-    """The read path: the lines to print, and the record that they were.
+@dataclass(frozen=True)
+class UpdateNotice:
+    """A newer release worth advertising, in the parts a surface renders.
 
-    Returns `[]` unless a strictly newer release is cached, this install can
-    be advised at all, the release has not been dismissed, and the same
-    release was not already advertised within `interval`. A *different*
-    release ignores the interval — the point of the rate limit is to stop
-    `jailbee ls` repeating itself, not to sit on news.
+    The dashboard draws this itself (it has a click target to place), the CLI
+    turns it into `hint_lines`; both get it from `pending`, so they cannot
+    disagree about when there is something to say.
+    """
 
-    Two limits rather than one because they answer different things: the
-    interval is how often an undismissed release may be mentioned, the
-    dismissal is the user saying they have heard it. Either alone leaves a
-    gap — without the interval a user who has not met `jailbee dismiss` gets
-    the line on every command, and without the dismissal one who has still
-    gets it daily until they upgrade.
+    current: str
+    latest: str
+    command: str
+
+
+def pending(
+    session: Session, current: str, *, install: Install | None = None
+) -> UpdateNotice | None:
+    """The release to advertise now, or `None` when there is nothing to say.
+
+    `None` unless a strictly newer release is cached, this install can be
+    advised at all, and the release has not been dismissed. There is no rate
+    limit: the advice stands until the user upgrades or dismisses it, because
+    `jailbee dismiss update` is what ends it — a limit on top would only make
+    the line vanish on a day the user happened to be looking elsewhere.
 
     The dismissal is read from the store directly rather than through
     `notices.dismissals()`: that cache is populated during config loading and
     kept for the life of the process, which is the wrong lifetime for a row
-    `jailbee dismiss` may have written seconds ago.
+    `jailbee dismiss` may have written seconds ago — or, for the state
+    service, minutes.
     """
     from jailbee import notices
 
     row = _row(session)
     if row is None:
-        return []
+        return None
     latest = newer_version(current, row.latest_version)
     if latest is None:
-        return []
+        return None
     dismissal = notices.load_all(session).get((NOTICE_KEY, NOTICE_SCOPE))
     if dismissal is not None and dismissal_silences(dismissal.fingerprint, latest):
+        return None
+    command = (install if install is not None else detect_install()).upgrade_command
+    if command is None:
+        return None
+    return UpdateNotice(current=current, latest=latest, command=command)
+
+
+def pending_hint(
+    session: Session, current: str, *, install: Install | None = None
+) -> list[str]:
+    """The lines the CLI prints, or nothing.
+
+    The footer is added here, not in `hint_lines`: `jailbee dismiss` and
+    `jailbee doctor` render the same advice and must not invite a dismissal
+    — one is the dismissal, the other is where a dismissal stays visible.
+    """
+    notice = pending(session, current, install=install)
+    if notice is None:
         return []
-    if (
-        row.hint_shown_version == latest
-        and row.hint_shown_at is not None
-        and now - row.hint_shown_at < interval
-    ):
-        return []
-    lines = hint_lines(current, latest, install if install is not None else detect_install())
-    if not lines:
-        return []
-    row.hint_shown_at = now
-    row.hint_shown_version = latest
-    session.add(row)
-    session.commit()
-    # The footer is added here, not in `hint_lines`: `jailbee dismiss` and
-    # `jailbee doctor` render the same advice and must not invite a dismissal
-    # — one is the dismissal, the other is where a dismissal stays visible.
+    lines = hint_lines(notice.current, notice.latest, Install("unknown", notice.command))
     return [*lines, f"    Or `jb dismiss {NOTICE_KEY}` to stop repeating this."]
 
 
