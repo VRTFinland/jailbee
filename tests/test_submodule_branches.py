@@ -496,3 +496,84 @@ def test_custom_named_submodule_prunes(rig: Rig) -> None:
     )
     assert not (rig.top / "libs/core").exists()
     assert (rig.top / ".git/modules/lib-core/HEAD").exists()
+
+
+def _cfg(rig: Rig):
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock()
+    cfg.repo_root = rig.top
+    return cfg
+
+
+def test_jb_branch_round_trip_leaves_no_debris(rig: Rig) -> None:
+    from jailbee import sync
+
+    sync.checkout_submodules_on_host(_cfg(rig), branch="main", switch_superproject=True)
+    assert not (rig.top / "sub").exists()
+    assert _git(rig.top, "status", "--porcelain") == ""
+    sync.checkout_submodules_on_host(_cfg(rig), branch="dev", switch_superproject=True)
+    assert (rig.top / "sub" / "inner" / "i").exists()
+    assert _git(rig.top, "status", "--porcelain") == ""
+
+
+def test_jb_branch_refuses_dirty_submodule(rig: Rig) -> None:
+    from jailbee import sync
+
+    (rig.top / "sub" / "untracked.txt").write_text("x\n")
+    with pytest.raises(sync.SyncError, match="local changes"):
+        sync.checkout_submodules_on_host(_cfg(rig), branch="main", switch_superproject=True)
+    assert _git(rig.top, "branch", "--show-current") == "dev"
+    assert (rig.top / "sub" / "untracked.txt").read_text() == "x\n"
+
+
+def test_a_failed_operation_prunes_nothing(rig: Rig) -> None:
+    from jailbee import sync
+
+    def op() -> None:
+        raise sync.SyncError("conflict")
+
+    with pytest.raises(sync.SyncError, match="conflict"):
+        sync._move_host_head(_cfg(rig), target="main", op=op, label="main")
+    assert (rig.top / "sub" / "d" / "f").exists()
+    assert (rig.top / "sub" / ".git").is_file()
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_move_host_head_real_merge_deletion_and_conflict(rig: Rig, conflict: bool) -> None:
+    from jailbee import git, sync
+
+    (rig.top / "shared").write_text("base\n")
+    _git(rig.top, "add", "shared")
+    _git(rig.top, "commit", "-qm", "base")
+    base = _git(rig.top, "rev-parse", "HEAD")
+    _git(rig.top, "checkout", "-qb", "incoming")
+    _git(rig.top, "update-index", "--force-remove", "sub")
+    _git(rig.top, "rm", ".gitmodules")
+    (rig.top / "shared").write_text("incoming\n")
+    _git(rig.top, "add", "shared")
+    _git(rig.top, "commit", "-qm", "remove sub")
+    _git(rig.top, "checkout", "-q", "dev")
+    if conflict:
+        (rig.top / "shared").write_text("local\n")
+        _git(rig.top, "add", "shared")
+        _git(rig.top, "commit", "-qm", "local edit")
+
+    def op() -> None:
+        try:
+            git.merge_ref(rig.top, "incoming", message="merge", no_ff=True, ff_only=False)
+        except git.GitError:
+            sync._resolve_gitlinks_and_commit_host(_cfg(rig), branch="dev", location=str(rig.top))
+
+    if conflict:
+        with pytest.raises(sync.SyncError):
+            sync._move_host_head(_cfg(rig), target="incoming", base=base, label="dev", op=op)
+        assert _git(rig.top, "ls-files", "-u")
+        assert (rig.top / ".git" / "MERGE_HEAD").exists()
+        assert (rig.top / "sub" / "inner" / "i").exists()
+        assert (rig.top / "sub" / ".git").is_file()
+    else:
+        sync._move_host_head(_cfg(rig), target="incoming", base=base, label="dev", op=op)
+        assert not (rig.top / "sub").exists()
+        assert _git(rig.top, "status", "--porcelain") == ""
+        assert len(_git(rig.top, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3

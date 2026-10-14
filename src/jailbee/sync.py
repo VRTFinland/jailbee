@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, assert_never
+from typing import TYPE_CHECKING, Literal, TypeVar, assert_never
 
 from jailbee import git, prompting, submodules
 from jailbee.incus import IncusError
@@ -1430,6 +1430,46 @@ def sync_refs_from_container(
     )
 
 
+_T = TypeVar("_T")
+
+
+def _move_host_head(
+    cfg: Config, *, target: str, base: str | None = None, op: Callable[[], _T], label: str
+) -> _T:
+    """Precheck disappearing submodules, move HEAD, then prune their worktrees.
+
+    A failed operation (including an unresolved merge) never prunes. Merge
+    callers supply the merge base so only incoming deletions are considered.
+    """
+    top = str(Path(cfg.repo_root).resolve())
+    head = git.rev_parse(cfg.repo_root, "HEAD")
+    try:
+        vanishing = (
+            submodules.vanishing_submodules(
+                git.run_capture, top, head=head, target=target, base=base
+            )
+            if head is not None
+            else []
+        )
+        submodules.assert_vanishing_clean(git.run_capture, top, vanishing, target_label=label)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
+    result = op()
+    if vanishing:
+        try:
+            submodules.prune_vanished_worktrees(
+                git.run_capture, top, vanishing, fs=submodules.HostFs(), target_label=label
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
+    return result
+
+
+def _merge_base(cfg: Config, ref: str) -> str | None:
+    ok, out = git.run_capture(str(cfg.repo_root), ["merge-base", "HEAD", ref])
+    return out.strip() if ok and out.strip() else None
+
+
 def _place_host_branch(
     cfg: Config, *, target: str, new_oid: str, fetched_ref: str, force: bool
 ) -> BranchPlacement:
@@ -1488,7 +1528,14 @@ def _place_host_branch(
             "branch on the host first.",
         )
         try:
-            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+            _move_host_head(
+                cfg,
+                target=fetched_ref,
+                label=target,
+                op=lambda: git.merge_ref(
+                    cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True
+                ),
+            )
         except git.GitError:
             if git.host_tree_dirty(cfg.repo_root):
                 # Git declined because local modifications are in the way,
@@ -1677,7 +1724,12 @@ def checkout_from_container(
         git.set_upstream(cfg.repo_root, target, f"{cfg.upstream_remote}/{target}")
 
     if git.get_current_branch(cfg.repo_root) != target:
-        git.checkout_branch(cfg.repo_root, target)
+        _move_host_head(
+            cfg,
+            target=target,
+            label=target,
+            op=lambda: git.checkout_branch(cfg.repo_root, target),
+        )
 
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
@@ -1724,7 +1776,12 @@ def checkout_submodules_on_host(
         )
     if switch_superproject:
         try:
-            git.checkout_branch(cfg.repo_root, resolved)
+            _move_host_head(
+                cfg,
+                target=resolved,
+                label=resolved,
+                op=lambda: git.checkout_branch(cfg.repo_root, resolved),
+            )
         except git.GitError as exc:
             raise SyncError(f"could not check out '{resolved}' in the superproject: {exc}") from exc
     submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
@@ -1863,24 +1920,34 @@ def merge_from_container(
     if target == current:
         # In-place path: HEAD IS the target branch.
         pre_merge_head = git.rev_parse(cfg.repo_root, "HEAD")
-        if ff == "always":
-            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
-        else:
-            # `auto` passes neither flag, which is git's own default: fast-forward
-            # when the target is strictly behind, merge commit otherwise. The
-            # message is passed either way — git ignores `-m` on a fast-forward.
-            try:
-                git.merge_ref(
-                    cfg.repo_root,
-                    fetched_ref,
-                    message=f"Merge branch '{container_branch}' from container {short}",
-                    no_ff=(ff == "never"),
-                    ff_only=False,
-                )
-            except git.GitError:
-                _resolve_gitlinks_and_commit_host(
-                    cfg, branch=container_branch, location=f"cd {cfg.repo_root}"
-                )
+
+        def _do_merge() -> None:
+            if ff == "always":
+                git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+            else:
+                # `auto` passes neither flag, which is git's own default: fast-forward
+                # when the target is strictly behind, merge commit otherwise. The
+                # message is passed either way — git ignores `-m` on a fast-forward.
+                try:
+                    git.merge_ref(
+                        cfg.repo_root,
+                        fetched_ref,
+                        message=f"Merge branch '{container_branch}' from container {short}",
+                        no_ff=(ff == "never"),
+                        ff_only=False,
+                    )
+                except git.GitError:
+                    _resolve_gitlinks_and_commit_host(
+                        cfg, branch=container_branch, location=f"cd {cfg.repo_root}"
+                    )
+
+        _move_host_head(
+            cfg,
+            target=fetched_ref,
+            base=_merge_base(cfg, fetched_ref),
+            label=target or fetched_ref,
+            op=_do_merge,
+        )
         head_oid = git.rev_parse(cfg.repo_root, "HEAD")
         if head_oid is None:
             raise SyncError("merge succeeded but HEAD did not resolve")
@@ -1911,7 +1978,12 @@ def merge_from_container(
         if head_oid is None:
             raise SyncError("fast-forward succeeded but ref did not resolve")
         if allow_checkout:
-            git.checkout_branch(cfg.repo_root, target)
+            _move_host_head(
+                cfg,
+                target=target,
+                label=target,
+                op=lambda: git.checkout_branch(cfg.repo_root, target),
+            )
             submodules.update_submodules_on_host(cfg.repo_root, branch=target)
         result = MergeResult(
             fetch=fetch_result,
@@ -1968,23 +2040,38 @@ def _merge_via_checkout(
     conflict the host is left on ``target`` in merge state so the user can
     resolve it; a ``SyncError`` carries the hint.
     """
-    git.checkout_branch(cfg.repo_root, target)
-    try:
-        git.merge_ref(
-            cfg.repo_root,
-            fetched_ref,
-            message=f"Merge branch '{container_branch}' from container {short}",
-            no_ff=(ff == "never"),
-            ff_only=False,
-        )
-    except git.GitError:
-        # Auto-resolve submodule gitlink pointers; on remaining conflicts the host
-        # is left on `target` in merge state (SyncError tells the user how to finish).
-        _resolve_gitlinks_and_commit_host(
-            cfg,
-            branch=container_branch,
-            location=f"cd {cfg.repo_root}  # on '{target}' in merge state; resolve, commit",
-        )
+    _move_host_head(
+        cfg,
+        target=target,
+        label=target,
+        op=lambda: git.checkout_branch(cfg.repo_root, target),
+    )
+
+    def _do_merge() -> None:
+        try:
+            git.merge_ref(
+                cfg.repo_root,
+                fetched_ref,
+                message=f"Merge branch '{container_branch}' from container {short}",
+                no_ff=(ff == "never"),
+                ff_only=False,
+            )
+        except git.GitError:
+            # Auto-resolve submodule gitlink pointers; on remaining conflicts the host
+            # is left on `target` in merge state (SyncError tells the user how to finish).
+            _resolve_gitlinks_and_commit_host(
+                cfg,
+                branch=container_branch,
+                location=f"cd {cfg.repo_root}  # on '{target}' in merge state; resolve, commit",
+            )
+
+    _move_host_head(
+        cfg,
+        target=fetched_ref,
+        base=_merge_base(cfg, fetched_ref),
+        label=target,
+        op=_do_merge,
+    )
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
         raise SyncError("merge succeeded but HEAD did not resolve")
