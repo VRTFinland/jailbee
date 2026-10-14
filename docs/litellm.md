@@ -1,14 +1,16 @@
 # Claude Code through LiteLLM
 
 `claude-jb` runs Claude Code on non-Anthropic models through a LiteLLM proxy in
-the dedicated `jailbee-litellm` Incus container. Plain `claude` remains native
-and uses your Claude subscription; both commands can run side by side in the
-same dev container. Gateway sessions share Claude Code's per-repo configuration
-and history, but neither command changes the other's environment.
+the dedicated `jailbee-litellm` Incus container. Plain `claude` keeps its normal
+authentication and environment; the wrapper does not redirect it. With a native
+Claude login and no separate gateway settings, it uses your Claude subscription.
+Both commands can run side by side in the same dev container. Gateway sessions
+share Claude Code's per-repo configuration and history; the wrapper changes only
+its own process environment, not the calling shell's.
 
 This is the recommended way to use models or subscriptions other than
-Anthropic's in JailBee, and it is tested with both a ChatGPT (Codex) and a
-SuperGrok subscription.
+Anthropic's in JailBee. Earlier live checks used ChatGPT (Codex) and SuperGrok
+subscriptions; provider compatibility and entitlements can change.
 
 Several ChatGPT accounts can run side by side (one proxy instance each), and
 routes can use any LiteLLM provider with an API key. LiteLLM settings belong in
@@ -37,22 +39,29 @@ committed `.jailbee/config.yaml`. See [Configuration](config.md#litellm) and
 3. Run `jailbee base build` in each repo that needs `claude-jb` (the wrapper is
    installed in the golden image). Run `jailbee apply` in each such repo to
    populate `/etc/jailbee/litellm.json` and its proxy key in existing running
-   containers; new containers receive them at `jailbee new`. Recreate any old
-   container whose image predates the wrapper: `apply` does not install binaries
-   into existing containers.
+   containers; new containers receive them at `jailbee new`. For a container
+   whose image predates the wrapper, preserve its work before replacing it with
+   one from the rebuilt image: `apply` does not install binaries into existing
+   containers.
 4. Inside a dev container, run `claude-jb` instead of `claude`. Select a tier
    with Claude Code's `--model` flag, for example `claude-jb --model haiku`.
    Use `jailbee litellm status` on the host to inspect health and login state.
 
 `jailbee litellm down` stops the proxy and withdraws its dev-container ACL
-allowance; the container and its state volume (logins and settings) are kept, and
-`jailbee litellm up` starts it again. `jailbee litellm up --recreate` deletes the
-container and builds it again with the volume attached; `jailbee litellm down
---purge` deletes the container and the volume.
-Run `jailbee apply` in each affected repo afterward: it
-removes stale dev-container proxy settings, and `claude-jb` then fails clearly
-instead of silently falling back to native Claude. Bring the proxy back with
-`jailbee litellm up` and re-apply to restore access.
+allowance. The container and state volume (logins and settings) are kept;
+`jailbee litellm up` starts it again. Dev-container settings remain, so
+`claude-jb` reports the proxy as unreachable. `apply` neither starts the stopped
+proxy container nor removes its payload just because it is stopped.
+
+`jailbee litellm up --recreate` deletes and rebuilds the proxy container with
+its state volume attached, interrupting active requests. `jailbee litellm down
+--purge` also deletes discovered state volumes and their logins; preserve any
+state you need first. After purging, run `jailbee apply` in each affected repo
+to remove stale proxy settings from its **running** dev containers. Start any
+stopped dev containers before applying if their settings need cleanup too.
+`claude-jb` then reports missing configuration, never silently falling back to
+native Claude. To restore access, run `jailbee litellm up`, log in again if
+needed, and re-apply.
 
 ## Quick start by provider
 
@@ -133,10 +142,12 @@ X Premium+ subscription can serve routes too — see
 ## xAI subscription
 
 A SuperGrok or X Premium+ subscription can serve routes through LiteLLM's xAI
-OAuth provider. Mark the route `oauth: true`:
+OAuth provider. Mark the route `oauth: true` and select its profile:
 
 ```yaml
 litellm:
+  enabled: true
+  default_profile: grok
   routes:
     grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}
   profiles:
@@ -144,9 +155,9 @@ litellm:
     codex: {fable: grok, opus: grok, sonnet: grok, haiku: grok}   # no ChatGPT subscription
 ```
 
-Remapping `codex` keeps the built-in `default` account from also needing a
-ChatGPT login: an account is held back until it has a login for every provider
-its mapped routes use.
+Remapping `codex` removes its ChatGPT login requirement. A missing ChatGPT
+login holds the account's instance stopped; a missing xAI login does not block
+startup, but its OAuth routes cannot work until you log in.
 
 Run `jailbee litellm up`, then `jailbee litellm login --provider xai` on the
 host: it prints a URL; open it in a browser on the same machine and approve.
@@ -167,9 +178,10 @@ fail, and `jailbee litellm up`, `status` and `doctor` say so. `--provider` may
 be left out here, since no route of `default` needs a ChatGPT login; an account
 whose routes use both providers needs `--provider chatgpt` or `--provider xai`.
 
-This uses LiteLLM's xAI OAuth provider and is tested against a live SuperGrok
-subscription. Grok models LiteLLM's
-local model map does not list as reasoning models drop the `effort` setting.
+Earlier live checks exercised LiteLLM's xAI OAuth provider with a SuperGrok
+subscription, not every login fallback or account entitlement. In that
+integration, Grok models absent from LiteLLM's local reasoning-model map dropped
+the `effort` setting; a fixed route effort does not guarantee provider support.
 `oauth` is refused together with `api_key` or `api_base`, and secret names
 starting with `XAI_` are reserved (an `XAI_API_KEY` in the proxy would silently
 take precedence over the subscription).
@@ -181,7 +193,8 @@ mix them instead, which keeps the built-in `codex` profile untouched. `mix`
 below sends fable and opus to the ChatGPT subscription and sonnet and haiku to
 the SuperGrok one.
 
-A new profile inherits nothing, so every tier names its route. The routes
+A new profile inherits no tier mappings; name a route for each tier you want to
+use (at least one is required). The routes
 themselves are different: the four ChatGPT routes (`astra`, `sol-high`,
 `sol-medium`, `luna-high`) are built in and exist without being written here —
 naming one is enough. Only `grok` is new, so only it needs a `model`. The
@@ -282,15 +295,20 @@ served by every account. A profile may mix providers freely, but its
 subscription routes must all belong to one account, since one proxy instance
 serves a session.
 
-`effort` **fixes** the reasoning effort on every request; `min_effort` only
-raises requests below its floor. They cannot be set together on a route. The
+For Anthropic Messages requests, `effort` **fixes** the reasoning effort and
+`min_effort` raises requests below its floor. They cannot be set together on a route. The
 profile's `effort` sets the session's default `--effort` unless supplied by the
-user. Claude Code always sends a session effort, so a LiteLLM deployment's
-`reasoning_effort` alone cannot differentiate Opus and Sonnet when both use Sol:
-fixed route efforts do. On a fixed-effort tier, Claude Code's `/effort` has no
-effect. An explicitly `null` tier removes that mapping; unmapped requests may
-hit the proxy's `claude-*` catch-all, which uses the default profile's cheapest
-mapped tier.
+user. Claude Code's request-level effort can override a LiteLLM deployment's
+`reasoning_effort`; JailBee's callback applies the fixed value or floor to
+Anthropic Messages requests instead. On a fixed-effort tier, `/effort` does not
+change that route's requested effort. Other API endpoints bypass this callback.
+
+An explicitly `null` tier removes that mapping. Unmapped `claude-*` requests may
+hit an instance's host-level catch-all, not the repo's default profile. It uses
+the host default profile if that instance serves all its routes, otherwise the
+first host profile by name bound to that account. It picks the first mapped
+tier in Haiku, Sonnet, Opus, Fable order, without comparing model prices.
+Without a suitable host profile there is no catch-all.
 
 Profile selection order is `claude-jb -P NAME` (or `--profile NAME`), then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (default `codex`).
@@ -306,8 +324,10 @@ ceiling) or `default`; the last flag wins. It is `-C`, not `-c`: lowercase is
 Claude Code's `--continue`, which passes through. Without the flag the session
 uses the profile's default window, so a larger one is always a choice.
 
-A larger window costs more per request, and `claude-jb` says so on stderr. The
-ceiling is each route's `max_context_window`: 1,050,000 for the built-in
+Selecting a larger window prints a cost warning on stderr. It permits more
+context per request; actual billing or subscription usage depends on the
+provider and tokens sent, not just the selected limit. The configured ceiling
+is each route's `max_context_window`: 1,050,000 for the built-in
 `chatgpt/gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna` routes, and for any other
 route its `context_window` unless you set one. A profile's ceiling is the smallest
 of its routes', since Claude Code takes one window per session; a value above it
@@ -321,9 +341,11 @@ litellm:
 ```
 
 `jailbee litellm ls` shows `272000 tokens (up to 1050000)` for a route that can be
-raised. The ceiling reaches containers with `jailbee apply`; the flag itself needs
-`jailbee base build`. Until then `claude-jb` accepts only the default and tells you
-to re-run `jailbee apply`.
+raised. The ceiling reaches running containers with `jailbee apply`. The flag itself
+requires an image containing the updated wrapper: `jailbee base build` updates
+the image for future containers, not existing ones. An updated wrapper reading
+an older config without a ceiling accepts only windows at or below the default
+and suggests `jailbee apply` when a larger value is requested.
 
 ### Profile instructions
 
@@ -363,10 +385,13 @@ and the name comes from the profile and tier, not from the route:
 `jb.<profile>.<level>`, where the level is `most-capable` (Fable), `capable`
 (Opus), `standard` (Sonnet) or `cheap` (Haiku). The built-in profile's Opus
 tier is `jb.codex.capable`. A running session keeps the names it started with,
-and the proxy answers each one with whichever route the profile maps that tier
-to now. So after `jailbee apply` you can rename, replace or remap routes, and
-every open session continues on the new route. What still breaks an open
-session is renaming or removing the profile itself, unmapping the tier, or
+and, after a successful proxy reload, subsequent requests use the route the
+profile now maps that tier to. Renaming, replacing or remapping a route therefore
+does not require a new session solely to change its model name. Existing
+sessions retain their original context window, instructions and environment;
+restart them if those must change. Reload/restart and login caveats are described
+under [Per-repo overrides](#per-repo-overrides). Renaming or removing the profile
+itself can still break a session, as can unmapping the tier or
 moving the profile to another account — which happens when every one of its
 subscription routes moves to that account, since a profile is served by one
 account's instance. The levels do not
@@ -374,19 +399,23 @@ repeat Claude
 family names because Claude Code reads `opus`, `haiku` and similar from a model
 name and changes its requests to match.
 
-The proxy also serves every route under its own name, `jb-default-<route>`,
-for `/model` and for sessions started before tier names existed. Profile names
+The proxy also exposes eligible host routes as `jb-default-<route>` for
+`/model` and sessions started before tier names existed. Subscription routes
+appear only on their account's instance and only when a profile maps them;
+API-key routes are served by every instance. Profile names
 follow the same rule as route names (`[a-z0-9][a-z0-9_-]{0,63}`).
 
 The built-in models default to a **272,000-token context window** (`astra`,
-`sol-*`, `luna-high`): the ChatGPT subscription backend's maximum input, not
-the API's 1.05M total. Claude Code compacts a fixed reserve below the window it
-is told about, so a larger value would compact only after the backend had
-refused the prompt. A new model needs an explicit `context_window`. Claude Code
-takes one window for the whole session, whichever tier answers, so the wrapper
-exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the **smallest** window among the
-selected profile's mapped routes; a larger window on one route takes effect
-only in a profile whose every route has it.
+`sol-*`, `luna-high`). This is JailBee's configured default, not a live check of
+your subscription's input limit. The higher opt-in ceilings described above
+are configuration limits too; they do not guarantee that a provider accepts
+that many tokens. Verify the backend's current input and output limits before
+raising the window, or requests may fail before Claude Code compacts them.
+A model absent from JailBee's built-in table needs an explicit `context_window`.
+The wrapper exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the **smallest** default
+window among the selected profile's mapped routes, unless `--context` selects
+another value within the profile's ceiling. A higher default on just one route
+does not raise the profile's default.
 
 ## Adding a new model
 
@@ -422,12 +451,14 @@ reach is a config edit away.
        codex: {opus: nova}   # other tiers keep their routes
    ```
 
-4. **Apply it**: `jailbee apply` in any repo loads route and profile edits into
-   the running proxy without a restart, and open `claude-jb` sessions continue
-   on the new model, since they hold tier names, not route names. A new route
-   to another provider widens the egress allowlist in the same run, and a new
-   secret is loaded the same way; only an edit that changes nothing but
-   `egress` needs `jailbee litellm up` ([details](#per-repo-overrides)).
+4. **Apply it**: `jailbee apply` in any valid repo attempts to load route and
+   profile edits into the shared running proxy without a restart. After a
+   successful reload, open sessions using unchanged tier names use the new
+   route on subsequent requests; their context window and environment do not
+   change. Missing ChatGPT logins, reload failures and restart-only changes
+   can interrupt access ([details](#per-repo-overrides)). A new route to another
+   provider updates the egress allowlist in the same run, and referenced new
+   secrets are loaded too. An egress-only edit needs `jailbee litellm up`.
 5. **Check it**: `jailbee litellm ls` shows each tier's model, effort and
    window; `claude-jb -p 'say hi' --model opus` sends one request.
 
@@ -477,16 +508,28 @@ container prefixes, so no two of these forms can collide. Inspect the result
 with `jailbee litellm ls`.
 
 After editing an override, run `jailbee apply` in that repo. It re-renders the
-proxy configuration and syncs the repo's running containers. Edits to routes
-and profiles (a model, `context_window`, `effort`, `api_base`, a new route, a new or changed API key) are **loaded into the running proxy without a restart**:
-open `claude-jb` sessions keep going, and a stream in flight finishes on the
-route it started on. Anything the proxy only reads at start (`extra`
-outside its `model_list` and any secret it names, the proxy's settings, the callback itself) restarts the instance that changed,
-saying which. If the proxy does not confirm a reload within about ten seconds,
-or refuses it, `apply` restarts the instance instead and says why.
-`jailbee apply --no-restart` still applies reloads, since they interrupt
-nothing, and leaves an instance that needs a restart (or whose reload was not
-confirmed) pending, with a warning; a later plain `jailbee apply` restarts it.
+shared proxy configuration and syncs the repo's running containers. Edits to
+routes and profiles (a model, `context_window`, `effort`, `api_base`, a new route,
+a new or changed API key) normally use a **hot reload without a restart**. A
+successful hot reload does not deliberately terminate in-flight streams; new
+requests use the updated routes. It does not change the window or environment
+of an already-running Claude Code process.
+
+Changes the proxy only reads at start (`extra` outside its `model_list`, any
+secret that section names, proxy settings or the callback itself) restart the
+changed instance. If a reload is refused or not confirmed within about ten
+seconds, `apply` falls back to a restart and says why. These proxy restarts do
+not use the dev-container restart confirmation. `jailbee apply --no-restart`
+still attempts hot reloads, but leaves restart-dependent instances pending with
+a warning. An unconfirmed reload is not a rollback: the running proxy may have
+loaded some or all of the change. A later plain `jailbee apply` retries it.
+
+**Login exception:** if a changed instance now serves a `chatgpt/` route but
+has no ChatGPT login, it is stopped and disabled, even with `--no-restart`.
+This interrupts every route on that account, including API-key and xAI routes.
+Log in and run `jailbee litellm up` to start it again. Missing xAI login alone
+does not stop the instance.
+
 `jailbee new` does not update the proxy, with one exception: the first container in a
 scratch directory runs an `apply` to create its profiles, and that run can apply a pending
 route reload (waiting up to about ten seconds per instance) but never restarts an instance.
@@ -501,12 +544,16 @@ allowlist along with reloading or restarting the instance. If the proxy needs mo
 restart (a different LiteLLM version, a new account, an unattached state
 volume), `apply` says so and points at `jailbee litellm up`.
 
-A broken override does not stop the proxy: `jailbee litellm up`, `jailbee
-litellm ls` and `jailbee apply` run from another repo skip it with a warning
-naming the file, and `claude-jb` in the broken repo's containers cannot use the
-override until it is fixed. Every command run in the broken repo itself,
-`jailbee apply` included, fails to load its config and names the same file, so
-fix the file first.
+A malformed override is skipped with a warning naming its file when
+host-level commands collect repo scopes. `jailbee litellm up` and `jailbee
+litellm ls` can still run from that repo; commands that load its configuration,
+including `jailbee apply`, fail until it is fixed. An `apply` from another valid
+repo can update the shared proxy while skipping the broken override.
+
+Breaking the host file does not immediately change existing sessions: they
+may keep using the last applied override. The next successful proxy update
+omits the broken scope, so requests using its scoped aliases can then fail.
+Fix the file and re-apply in the affected repo to restore its configuration.
 
 `jailbee config edit --local` offers the four keys in the repo's local layer.
 
@@ -514,11 +561,17 @@ fix the file first.
 
 `litellm.autostart: true` (in `global.yaml`, overridable per repo as above)
 starts the Claude autostart window with `claude-jb` instead of `claude`. It
-needs `litellm.enabled` and the Claude agent with `autostart` on. Only a command
-whose first word is `claude`, or a path ending in `claude`, is rewritten and its
-flags are kept; anything else (`env X=1 claude`, a wrapper script) is left as
-configured. The profile is `claude-jb`'s own selection, so the repo's
-`default_profile` applies.
+needs `litellm.enabled` and an enabled Claude agent with `autostart` on. Only a
+command starting with `claude`, or a path whose basename is `claude`, followed
+by a space or the end of the command is rewritten; its flags are kept.
+Anything else (`env X=1 claude`, a wrapper script) is left as configured. The
+profile is `claude-jb`'s own selection, so the repo's `default_profile` applies
+unless a flag or environment variable overrides it.
+
+This setting also redirects a Claude headless command selected by
+`pr.agent: auto` through the same rewrite, even when no Claude autostart window
+is enabled. An explicit `pr.agent` uses its own selection instead; see
+[PR configuration](config.md#pr).
 
 ## Accounts
 
@@ -557,9 +610,10 @@ key is now rejected with a pointer here.
 
 Any LiteLLM model string works as a route ([quick starts](#quick-start-by-provider)
 for OpenRouter and xAI). API keys live in
-`~/.config/jailbee/litellm/secrets.env` (mode `0600`, `NAME=value` lines; `export NAME=value` and quoted values are
-accepted, but a value may not contain a quote, backslash or NUL); the config
-names the variable, never the key:
+`~/.config/jailbee/litellm/secrets.env` (mode `0600`, one `NAME=value` per line).
+`export NAME=value` is accepted, and matching surrounding single or double
+quotes are stripped. The resulting value may not contain a single quote,
+backslash or NUL. The config names the variable, never the key:
 
 ```yaml
 litellm:
@@ -590,7 +644,8 @@ fragment. `jailbee litellm up` deep-merges it into every instance's config
 last: mappings merge, every list appends to jailbee's list of the same key (for
 example `model_list`, `litellm_settings.callbacks` or
 `router_settings.fallbacks`), and other values replace jailbee's. `up` refuses a
-fragment that defines `jb-*` or `claude-*` models, sets
+fragment that defines model names starting with `jb-` or `jb.`, or the exact
+catch-all name `claude-*`, sets
 `general_settings.master_key`, makes `general_settings`, `litellm_settings`,
 `router_settings` or `environment_variables` a non-mapping, or makes
 `model_list` or `litellm_settings.callbacks` a non-list. Secrets it needs are
@@ -603,18 +658,28 @@ back on; that is your choice.
 
 ## Security and limitations
 
-- The proxy's state (ChatGPT OAuth tokens, rendered configs and the API keys
-  it was given) lives in the Incus custom volume `jailbee-litellm-state` on the
-  default storage pool, mounted only in the proxy container. It is never on the
-  host filesystem, and the proxy container maps no host user (`raw.idmap`).
-  Jailbee writes the rendered files into the volume through `incus exec`'s
-  standard input. `jailbee litellm down` keeps the volume, so logins survive a
-  stop or a `--recreate`; `jailbee litellm down --purge` deletes it. On the host, only
-  `~/.local/share/jailbee/litellm/` remains, holding the port map, each
-  account's proxy key (`0600`) and its `applied.sha256` and `applied-hot.sha256` stamps. Dev containers get only the proxy keys, one
+- The proxy's state (ChatGPT and xAI OAuth tokens, rendered configs and the
+  provider keys it was given) lives in the Incus custom volume
+  `jailbee-litellm-state`, attached by JailBee only to the proxy container. This
+  is Incus-managed storage, not a host-directory bind mount; it is still
+  accessible to the host's administrators. The proxy maps no host user via
+  `raw.idmap`. JailBee writes rendered files through `incus exec`'s standard
+  input. New volumes use `defaults.storage_pool` from `global.yaml`, falling back to the
+  default Incus profile's root pool; changing the setting does not migrate an
+  existing volume. Discovery checks those candidate pools, not every pool;
+  see [Storage migration](storage.md#making-jailbee-use-it).
+- `jailbee litellm down` preserves the volume and `--recreate` reattaches it.
+  `down --purge` deletes the container and discovered state volumes, including
+  their logins. It does **not** remove host configuration or provider keys in
+  `~/.config/jailbee/litellm/secrets.env`. Host-side state in
+  `~/.local/share/jailbee/litellm/` also remains: the port map, account proxy
+  keys (`0600`) and `applied.sha256` / `applied-hot.sha256` stamps. Dev containers
+  receive gateway configuration and proxy keys, not provider tokens: one
   `/etc/jailbee/litellm-<account>.key` (`0640`, readable by the dev group) per
-  account. `jailbee litellm logout [ACCOUNT] [--provider chatgpt|xai]` deletes that
-  account's token for that provider.
+  served account. Those keys authorize use of the shared proxy; they are not
+  per-repo spending or access boundaries. `jailbee litellm logout [ACCOUNT]
+  [--provider chatgpt|xai]` deletes that account's stored token for the provider,
+  rather than removing the host's API-key source.
 - The proxy has default-deny egress restricted to the hosts the routes need
   (see [Other providers](#other-providers-and-api-keys)) plus `litellm.egress`
   after installation. During installation and reinstall,
@@ -627,18 +692,20 @@ back on; that is your choice.
   lock and emits a warning. Prompt/message logging and the remote model-cost
   map fetch are disabled. Treat this as risk reduction, not a guarantee that
   vendor traffic or the running service cannot expose sensitive prompts.
-- Non-streaming requests to the ChatGPT backend fail with the current LiteLLM
-  integration; Claude Code streams. Tool-call quality depends on the model;
-  large tool arguments have been reported to corrupt on Codex routes.
-- Claude Code's claude.ai connectors are disabled in gateway sessions.
-  Resuming a native session with signed Opus thinking blocks through
-  `claude-jb` is untested.
-- Changing a route reloads it into the account's running instance; changing
-  `litellm.extra` outside its `model_list` (or any secret it names) or the proxy's own settings restarts it, interrupting
-  every container's streams on that account (`jailbee litellm up`, or
-  `jailbee apply` in any repo). `apply --no-restart` defers the restart.
-  An instance that serves no route at all cannot take its first route by
-  reload and is restarted.
+- Earlier integration checks found non-streaming ChatGPT requests failed;
+  Claude Code uses streaming. Tool-call quality depends on the model, and
+  large tool arguments have been reported to corrupt on Codex routes. Treat
+  these as version-dependent observations, not checks performed by `up`.
+- Do not rely on Claude Code's claude.ai connectors in gateway sessions; earlier
+  checks found them unavailable. The wrapper sets the gateway environment but
+  does not independently enforce a connector policy. Resuming a native session
+  with signed Opus thinking blocks through `claude-jb` remains unverified.
+- Reloads and restarts affect the shared account instance, not just the repo
+  running `up` or `apply`. Restart-only changes and failed reloads can interrupt
+  every container's streams on that account. `apply --no-restart` defers those
+  restarts, but not the missing-ChatGPT-login stop described under
+  [Per-repo overrides](#per-repo-overrides). An instance serving no routes needs
+  a restart to take its first route.
 
 ## Troubleshooting
 
@@ -670,9 +737,10 @@ On the host, use `jailbee litellm ls` (profiles, tiers, routes, efforts and
 context windows, globally and per repo override), `jailbee litellm status`,
 `jailbee litellm logs [ACCOUNT] [-f]`, and `jailbee doctor`. Doctor reports a broken repo override (one `litellm repo override` row
 per skipped file), unreadable LiteLLM inputs (`secrets.env`,
-`extra`), one `litellm version` row for the installed-versus-configured
-version, and per account an instance row (not set up, or unhealthy) and a login
-row. A missing login fails doctor only for the account that serves the default
+`extra`), and, when the proxy container is running, a `litellm version` failure
+row if the installed version differs from the configured one. It also reports
+account instance and login state when the proxy is available for inspection.
+A missing login fails doctor only for the account that serves the default
 profile, and only when that profile maps a `chatgpt/` route (missing ChatGPT login) or
 an `oauth` xAI route (missing xAI login); for another account
 whose profiles need a login the row passes and names those profiles. A login
