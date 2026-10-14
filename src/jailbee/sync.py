@@ -1399,7 +1399,10 @@ def sync_refs_from_container(
     repo_dir = container_repo_dir(cfg, incus, full_name)
     # Objects first: the submodule refs placed below name commits that have to
     # already exist in the host sub-repos.
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    try:
+        submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     target = as_name or _container_pr_branch(incus, full_name) or fetch_result.branch
     fetched_ref = f"refs/jailbee/{short}/{fetch_result.branch}"
@@ -1912,7 +1915,10 @@ def merge_from_container(
     fetched_ref = f"refs/jailbee/{short}/{container_branch}"
 
     repo_dir = container_repo_dir(cfg, incus, full_name)
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    try:
+        submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     if target == current:
         # In-place path: HEAD IS the target branch.
@@ -3060,19 +3066,24 @@ def merge_container_into_container(
     fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch, tags="none")
     source_full = resolve_container_name(cfg, incus, source_short)
     source_repo_dir = container_repo_dir(cfg, incus, source_full)
-    submodules.transport_submodules_to_host(
-        cfg, incus, source_full, source_short, repo_dir=source_repo_dir
-    )
-    sub_paths = submodules._container_submodule_paths(incus, source_full, source_repo_dir, uid=uid)
-    if sub_paths:
-        submodules.transport_submodules_to_container(
-            cfg,
-            incus,
-            target_full,
-            repo_dir=target_repo_dir,
-            source_ns=source_short,
-            paths=sub_paths,
+    try:
+        host_repos = submodules.transport_submodules_to_host(
+            cfg, incus, source_full, source_short, repo_dir=source_repo_dir
         )
+        sub_paths = submodules._container_submodule_paths(incus, source_full, source_repo_dir, uid=uid)
+        if sub_paths:
+            submodules.transport_submodules_to_container(
+                cfg,
+                incus,
+                target_full,
+                repo_dir=target_repo_dir,
+                source_ns=source_short,
+                mode="relay",
+                host_repos=host_repos,
+                paths=sub_paths,
+            )
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     push_result = push_to_container(
         cfg,

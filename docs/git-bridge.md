@@ -486,6 +486,11 @@ block once per source, comparing the target's HEAD before and after that
 integration. It reads the commits inside the target, where any newly created
 merge commit exists; a fast-forward need not create a merge commit at all.
 
+**Path limitation.** Module paths containing spaces are not supported by the
+transport ref namespace (`refs/jailbee-sub/<source>/<path>/...`), because Git
+ref names cannot contain spaces. This is distinct from declared module names:
+a name containing spaces or `=` works when its module path has no spaces.
+
 **Container-side limitation.** The transported submodules for `jailbee git
 merge`, `fetch`, `pull` and `checkout` are enumerated from the container's
 checked-out state, not from a branch selected with `-b` / `--branch`. A

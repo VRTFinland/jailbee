@@ -159,17 +159,11 @@ def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
     """
     ok, out = run(
         top_dir,
-        ["config", "-f", f"{top_dir}/.gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+        ["config", "--null", "-f", f"{top_dir}/.gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
     )
     if not ok:
         return []
-    result: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        key, _, path = line.strip().partition(" ")
-        if key.startswith("submodule.") and key.endswith(".path") and path:
-            name = key[len("submodule.") : -len(".path")]
-            result.append((name, path))
-    return result
+    return _parse_gitmodules_paths(out)
 
 
 def _gitmodules_paths_at(
@@ -200,27 +194,19 @@ def _gitmodules_paths_at(
             raise SubmoduleError(
                 f"Cannot inspect .gitmodules in commit '{commit}' in '{repo_dir}': {parsed.strip()}"
             )
-        strict_result = []
-        for record in parsed.split("\0"):
-            key, _, path = record.partition("\n")
-            if key.startswith("submodule.") and key.endswith(".path") and path:
-                strict_result.append((key[len("submodule.") : -len(".path")], path))
-        return strict_result
+        return _parse_gitmodules_paths(parsed)
     ok, out = run(
         repo_dir,
-        [
-            "config",
-            "--blob",
-            f"{commit}:.gitmodules",
-            "--get-regexp",
-            r"^submodule\..*\.path$",
-        ],
+        ["config", "--null", "--blob", f"{commit}:.gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
     )
-    if not ok:
-        return []
-    result: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        key, _, path = line.strip().partition(" ")
+    return _parse_gitmodules_paths(out) if ok else []
+
+
+def _parse_gitmodules_paths(out: str) -> list[tuple[str, str]]:
+    """Git config -z frames records with NUL and separates keys with newline."""
+    result = []
+    for record in out.split("\0"):
+        key, _, path = record.partition("\n")
         if key.startswith("submodule.") and key.endswith(".path") and path:
             result.append((key[len("submodule.") : -len(".path")], path))
     return result
@@ -335,7 +321,7 @@ def _gitlink_at(
     ``commit``. ``commit`` is resolved in ``repo_dir``'s object store. None when
     ``path`` is not a gitlink there, or the lookup fails.
     """
-    ok, out = run(repo_dir, ["ls-tree", commit, "--", path])
+    ok, out = run(repo_dir, ["ls-tree", "-z", commit, "--", path])
     if not ok:
         if strict:
             raise SubmoduleError(
@@ -470,7 +456,7 @@ def place_branches_from_commit(
       each submodule's *current HEAD* as the gitlink, and both assumptions are
       exactly what the no-checkout caller (a host branch placed from a
       container fetch, without moving the working tree) lacks.
-    * *A sub-repo* keeps its own HEAD, index and working tree. Host submodules
+    * A checked-out sub-repo keeps its own HEAD, index and working tree. Host submodules
       are frequently sitting on a branch rather than detached —
       `update_submodules_on_host` puts them there — so a sub-repo already
       checked out on `branch` is a normal state, and `git.place_branch`
@@ -805,6 +791,7 @@ def _list_gitmodules(
                     if at_head
                     else ["git", "config", "-f", f"{level_dir}/.gitmodules"]
                 ),
+                "--null",
                 "--get-regexp",
                 r"^submodule\..*\.path$",
             ],
@@ -813,13 +800,7 @@ def _list_gitmodules(
     except IncusError:
         return []
 
-    result: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        key, _, path = line.strip().partition(" ")
-        if key.startswith("submodule.") and key.endswith(".path") and path:
-            name = key[len("submodule.") : -len(".path")]
-            result.append((name, path))
-    return result
+    return _parse_gitmodules_paths(out)
 
 
 def init_submodules_in_container(
@@ -1007,9 +988,14 @@ class WorktreeFs(Protocol):
     def remove_file(self, path: str) -> None: ...
     def remove_empty_dirs(self, path: str) -> None: ...
     def list_files(self, path: str) -> list[str]: ...
+    def uninitialized(self, path: str) -> bool: ...
 
 
 class HostFs:
+    def uninitialized(self, path: str) -> bool:
+        root = Path(path)
+        return not root.is_symlink() and (not root.exists() or root.is_dir() and not any(root.iterdir()))
+
     def remove_file(self, path: str) -> None:
         Path(path).unlink(missing_ok=True)
 
@@ -1047,6 +1033,18 @@ class ContainerFs:
     def _exec(self, cmd: list[str]) -> str:
         return self._incus.exec(self._container, cmd, uid=self._uid)
 
+    def uninitialized(self, path: str) -> bool:
+        out = self._exec([
+            "sh", "-c",
+            'if [ -L "$1" ]; then exit; fi; '
+            'if [ ! -e "$1" ]; then printf yes; '
+            'elif [ -d "$1" ]; then '
+            'entries=$(find "$1" -mindepth 1 -maxdepth 1 -print -quit) || exit 1; '
+            '[ -n "$entries" ] || printf yes; fi',
+            "sh", path,
+        ])
+        return out == "yes"
+
     def remove_file(self, path: str) -> None:
         self._exec(["rm", "-f", "--", path])
 
@@ -1079,10 +1077,10 @@ def _require_git(run: GitRun, cwd: str, args: list[str]) -> str:
 
 def gitlinks_at(run: GitRun, top_dir: str, commit: str) -> set[str]:
     """This level's gitlinks from a commit; unreadable trees are never empty."""
-    out = _require_git(run, top_dir, ["ls-tree", "-r", commit])
+    out = _require_git(run, top_dir, ["ls-tree", "-rz", commit])
     found: set[str] = set()
-    for line in out.splitlines():
-        meta, _, path = line.partition("\t")
+    for record in out.split("\0"):
+        meta, _, path = record.partition("\t")
         if meta.split()[:2] == ["160000", "commit"]:
             found.add(_normalize_declared_path(path))
     return found
@@ -1126,7 +1124,9 @@ def _external_gitdir(run: GitRun, sub: str) -> str:
     return gitdir
 
 
-def _owned_prune_tree(run: GitRun, parent: str, path: str, *, before_move: bool) -> bool:
+def _owned_prune_tree(
+    run: GitRun, parent: str, path: str, *, before_move: bool, fs: WorktreeFs | None = None
+) -> bool:
     """Validate the whole ownership chain before absorption or any tree writes."""
     sub = f"{parent}/{path}"
     if not _has_own_worktree(run, sub):
@@ -1157,10 +1157,11 @@ def _owned_prune_tree(run: GitRun, parent: str, path: str, *, before_move: bool)
         _warn(f"Submodule '{sub}': foreign or ambiguous git directory; left in place")
         return False
     for nested in sorted(gitlinks_at(run, sub, "HEAD")):
-        if before_move and not _has_own_worktree(run, f"{sub}/{nested}"):
-            # Uninitialized children have nothing for absorbgitdirs to move.
-            continue
-        if not _owned_prune_tree(run, sub, nested, before_move=before_move):
+        if not _has_own_worktree(run, f"{sub}/{nested}"):
+            # Only an absent or genuinely empty child is safe to skip after the move.
+            if before_move or fs is not None and fs.uninitialized(f"{sub}/{nested}"):
+                continue
+        if not _owned_prune_tree(run, sub, nested, before_move=before_move, fs=fs):
             return False
     return True
 
@@ -1197,6 +1198,8 @@ def _prune_one(run: GitRun, sub: str, fs: WorktreeFs) -> None:
     for nested in sorted(gitlinks_at(run, sub, "HEAD")):
         child = f"{sub}/{nested}"
         if not _has_own_worktree(run, child):
+            if fs.uninitialized(child):
+                continue
             raise SubmoduleError(f"Submodule '{child}': no own worktree; parent left in place")
         _prune_one(run, child, fs)
     _require_git(run, sub, ["read-tree", "-u", "--reset", git.EMPTY_TREE])
@@ -1226,7 +1229,7 @@ def prune_vanished_worktrees(
         if not _has_own_worktree(run, sub):
             _warn(f"Submodule '{path}': no own worktree; left in place")
             continue
-        if not _owned_prune_tree(run, top_dir, path, before_move=False):
+        if not _owned_prune_tree(run, top_dir, path, before_move=False, fs=fs):
             continue
         _check_prune_tree(run, sub, target_label)
         _prune_one(run, sub, fs)
@@ -1341,15 +1344,36 @@ def _heal_worktreeless(cwd: Path, gitdir: Path) -> None:
             )
 
 
+def _safe_subrepo_target(parent: HostSubRepo, leaf: str, name: str) -> Path:
+    """Validate lexical names and canonical paths before any host lookup/write."""
+    _normalize_declared_path(leaf)
+    _normalize_declared_path(name)
+    modules = parent.gitdir.resolve() / "modules"
+    candidate = parent.gitdir / "modules" / name
+    if not candidate.resolve().is_relative_to(modules):
+        raise SubmoduleError(f"Submodule name '{name}' resolves outside the host modules directory")
+    if parent.worktree is not None:
+        worktree = parent.worktree / leaf
+        if not worktree.resolve().is_relative_to(parent.worktree.resolve()):
+            raise SubmoduleError(f"Submodule path '{leaf}' resolves outside the host repository")
+        gitdir = _gitdir_of(worktree)
+        if gitdir is not None and not (
+            gitdir.resolve().is_relative_to(modules)
+            or gitdir.resolve() == (worktree / ".git").absolute() and (worktree / ".git").is_dir()
+        ):
+            raise SubmoduleError(f"Submodule path '{leaf}' gitdir resolves outside the host repository")
+    return candidate
+
+
 def locate_host_subrepo(parent: HostSubRepo, leaf: str, name: str) -> HostSubRepo | None:
     """Find submodule `leaf` relative to `parent`, using its declared `name`."""
+    candidate = _safe_subrepo_target(parent, leaf, name)
     path = posixpath.join(parent.path, leaf) if parent.path else leaf
     if parent.worktree is not None:
         worktree = parent.worktree / leaf
         gitdir = _gitdir_of(worktree)
         if gitdir is not None:
             return HostSubRepo(path=path, gitdir=gitdir, worktree=worktree)
-    candidate = parent.gitdir / "modules" / name
     if not (candidate / "HEAD").is_file():
         return None
     _heal_worktreeless(parent.gitdir, candidate)
@@ -1652,7 +1676,7 @@ def _repoint_cloned_subrepo(
 ) -> None:
     """Give a freshly created gitdir-only host sub-repo a usable upstream.
 
-    Initializing with the transport URL leaves origin pointing at the container:
+    The initial transport URL leaves origin pointing at the container:
     a remote that pushes into the container and breaks once it is destroyed.
     The upstream is looked for in order:
 
@@ -1719,15 +1743,26 @@ def transport_submodules_to_host(
     uid = cfg.container_user.uid
     repo_root = Path(cfg.repo_root)
     located = {"": superproject_subrepo(repo_root)}
-    for path in _container_submodule_paths(incus, container, repo_dir, uid=uid):
+    planned: list[tuple[str, str, str, str]] = []
+    projected = dict(located)
+    for raw_path in _container_submodule_paths(incus, container, repo_dir, uid=uid):
+        path = _normalize_declared_path(raw_path)
         if only is not None and path != only and not only.startswith(f"{path}/"):
             continue
-        # Recursive status lists parents before children. Fetch parents first,
-        # including the ancestors of an explicitly selected nested leaf.
-        parent_path = max((p for p in located if not p or path.startswith(f"{p}/")), key=len)
-        parent = located[parent_path]
+        parent_path = max((p for p in projected if not p or path.startswith(f"{p}/")), key=len)
+        parent = projected[parent_path]
         leaf = path[len(parent_path) + 1 :] if parent_path else path
         name = _container_submodule_name(incus, container, repo_dir, parent_path, leaf, uid=uid)
+        candidate = _safe_subrepo_target(parent, leaf, name)
+        worktree = parent.worktree / leaf if parent.worktree is not None else None
+        existing_gitdir = _gitdir_of(worktree) if worktree is not None else None
+        projected[path] = HostSubRepo(path, existing_gitdir or candidate, worktree if existing_gitdir else None)
+        planned.append((path, parent_path, leaf, name))
+    for path, parent_path, leaf, name in planned:
+        # A restricted session may have skipped a new ancestor.
+        if parent_path not in located:
+            continue
+        parent = located[parent_path]
         url = _sub_upload_pack_url(cfg, container, repo_dir, path)
         sub = locate_host_subrepo(parent, leaf, name)
         created = sub is None
@@ -1740,7 +1775,7 @@ def transport_submodules_to_host(
                     f"onto the host over remote SSH — run this on the host to bring it in."
                 )
                 continue
-            gitdir = parent.gitdir / "modules" / name
+            gitdir = _safe_subrepo_target(parent, leaf, name)
             git.init_subrepo_gitdir(gitdir, url)
             sub = HostSubRepo(path=path, gitdir=gitdir, worktree=None)
         located[path] = sub
@@ -1769,6 +1804,23 @@ def transport_submodules_to_host(
                 parent_path=parent_path,
                 at_head=True,
             )
+            try:
+                default = incus.exec(
+                    container,
+                    ["git", "-C", f"{repo_dir}/{path}", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                    uid=uid,
+                ).strip()
+            except IncusError:
+                default = ""
+            if default.startswith("refs/remotes/origin/"):
+                valid, _ = git.run_capture(str(sub.root), ["check-ref-format", default])
+                if valid:
+                    ok, error = git.run_capture(
+                        str(sub.root), ["symbolic-ref", "refs/remotes/origin/HEAD", default]
+                    )
+                    if not ok:
+                        raise SubmoduleError(f"Submodule '{path}': could not preserve upstream default ({error})")
+
 
     return {path: repo for path, repo in located.items() if path}
 
@@ -1831,16 +1883,18 @@ def transport_submodules_to_container(
     source_ns: str = "host",
     paths: list[str] | None = None,
     commit: str | None = None,
+    mode: Literal["host", "relay"] = "host",
+    host_repos: dict[str, HostSubRepo] | None = None,
 ) -> None:
     """Push submodule objects into `container`'s matching sub-repos.
 
     `source_ns` names whose objects these are, and becomes the
     `refs/jailbee-sub/<source_ns>/<path>/...` namespace inside the target sub-repo.
-    The default "host" enumerates the pushed commit's trees recursively and
+    `mode="host"` enumerates the pushed commit's trees recursively and
     pushes its pinned gitlinks, not the host worktree's current HEADs.
     Every source repo and commit is validated before any target is created.
 
-    A non-host `source_ns` relays another container's work instead. Those
+    `mode="relay"` relays another container's work, even if its name is "host". Those
     objects were fetched into the host sub-repos under
     `refs/jailbee-sub/<source_ns>/<path>/*` by `transport_submodules_to_host`
     and live in *neither* default refspec, so the refspecs become
@@ -1850,8 +1904,7 @@ def transport_submodules_to_container(
     given explicitly.
 
     For a submodule the target container has no repo for yet, creates one
-    first (mirror of `transport_submodules_to_host`'s clone-from-container
-    fallback) and checks out the pushed tip: `git receive-pack` needs the repo
+    first (mirror of `transport_submodules_to_host`'s gitdir initialization) and checks out the pushed tip: `git receive-pack` needs the repo
     to exist, and the later `submodule update --init` needs a current
     revision in it — an unborn HEAD fails with "Unable to find current
     revision in submodule path". The checkout target is always the ref that
@@ -1867,7 +1920,7 @@ def transport_submodules_to_container(
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
     entries: list[tuple[str, Path, str | None, str | None]]
-    if source_ns == "host":
+    if mode == "host":
         if commit is None:
             raise ValueError("transport_submodules_to_container: commit is required for 'host'")
         if not git.has_commit(repo_root, commit):
@@ -1896,7 +1949,16 @@ def transport_submodules_to_container(
             if sub.repo is not None and sub.gitlink is not None
         ]
     else:
-        entries = [(path, host_subrepo_root(repo_root, path), None, None) for path in (paths or [])]
+        if host_repos is not None:
+            missing = [path for path in (paths or []) if path not in host_repos]
+            if missing:
+                raise SubmoduleError(
+                    f"Submodules {', '.join(missing)} were not brought onto the host; cannot relay them."
+                )
+        entries = [
+            (path, host_repos[path].root if host_repos is not None else host_subrepo_root(repo_root, path), None, None)
+            for path in (paths or [])
+        ]
     for path, host_root, gitlink, declared_url in entries:
         url = _sub_receive_pack_url(cfg, container, repo_dir, path)
         sub_dir = f"{repo_dir}/{path}"
@@ -1912,7 +1974,7 @@ def transport_submodules_to_container(
             )
         ns = f"refs/jailbee-sub/{source_ns}/{path}"
         head_ref = f"{ns}/HEAD"
-        if source_ns == "host":
+        if mode == "host":
             refspecs = [
                 f"+{gitlink}:{head_ref}",
                 f"+refs/heads/*:{ns}/heads/*",

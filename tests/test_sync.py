@@ -8103,7 +8103,11 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     sub_paths = mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["sub"])
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     call_order: list[str] = []
-    to_host.side_effect = lambda *a, **k: call_order.append("to_host")
+    roots = {"sub": sync.submodules.HostSubRepo("sub", tmp_path / ".git/modules/custom", None)}
+    def fetch_submodules(*args, **kwargs):
+        call_order.append("to_host")
+        return roots
+    to_host.side_effect = fetch_submodules
     to_container.side_effect = lambda *a, **k: call_order.append("to_container")
     push = mocker.patch(
         "jailbee.sync.push_to_container",
@@ -8133,6 +8137,8 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     assert merge.call_args.kwargs.get("short") == "c2"
     # The source container's submodule refs must be relayed under ITS namespace.
     assert to_container.call_args.kwargs.get("source_ns") == "c1"
+    assert to_container.call_args.kwargs.get("mode") == "relay"
+    assert to_container.call_args.kwargs.get("host_repos") is roots
     assert to_container.call_args.kwargs.get("paths") == ["sub"]
     assert push.call_args.kwargs.get("namespace") == "from/c1"
     assert push.call_args.kwargs.get("source_ref") == "refs/jailbee/c1/feat/a"
@@ -9255,3 +9261,23 @@ def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
         )
         expected = [("incoming", None)]
     assert [(c.kwargs["target"], c.kwargs.get("base")) for c in move.call_args_list] == expected
+
+
+def test_relay_surfaces_unsafe_submodule_as_sync_error(mocker, make_cfg, tmp_path):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+    with pytest.raises(sync.SyncError, match="unsafe submodule"):
+        sync.merge_container_into_container(cfg, incus, "host", "c2")
+
+
+@pytest.mark.parametrize("command", ["fetch", "pull"])
+def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp_path, command):
+    mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+    with pytest.raises(sync.SyncError, match="unsafe submodule"):
+        if command == "fetch":
+            cfg = make_cfg(tmp_path)
+            incus, _ = _sync_refs_setup(mocker, cfg)
+            mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+            sync.sync_refs_from_container(cfg, incus, "feat-foo")
+        else:
+            _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")

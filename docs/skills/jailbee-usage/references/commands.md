@@ -1534,6 +1534,10 @@ branch` and then behaves identically, including the same `--submodules-only`
 
 ## Submodules
 
+Module paths containing spaces cannot be transported: the path is part of a
+Git ref namespace, and Git ref names cannot contain spaces. Declared module
+names containing spaces or `=` work when their paths have no spaces.
+
 ### `jailbee submodule pr [NAME] [PATH]`
 
 Create or update a GitHub PR in a **submodule's own** repository, from commits

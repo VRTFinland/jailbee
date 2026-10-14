@@ -87,7 +87,7 @@ def test_declared_submodule_remotes_rejects_canonical_directory_cycle(tmp_path, 
         ),
     )
 
-    with pytest.raises(submodules.SubmoduleError, match="revisits host directory"):
+    with pytest.raises(submodules.SubmoduleError, match="outside the host repository"):
         submodules.declared_submodule_remotes(repo_root)
 
 
@@ -187,8 +187,8 @@ def test_host_submodule_paths_returns_top_relative_paths_recursively(tmp_path, m
         assert isinstance(cwd, str)
         assert args[-1] == r"^submodule\..*\.path$"
         paths = {
-            str(repo_root): "submodule.a.path libs/a\n",
-            str(repo_root / "libs/a"): "submodule.b.path vendor/b\n",
+            str(repo_root): "submodule.a.path\nlibs/a\0",
+            str(repo_root / "libs/a"): "submodule.b.path\nvendor/b\0",
             str(repo_root / "libs/a/vendor/b"): "",
         }
         return (bool(paths[cwd]), paths[cwd])
@@ -205,7 +205,7 @@ def test_host_submodule_paths_omits_uninitialized_declared_checkout(tmp_path, mo
     def run_capture(cwd, _args):
         assert isinstance(cwd, str)
         paths = {
-            str(repo_root): "submodule.a.path libs/a\nsubmodule.missing.path libs/missing\n",
+            str(repo_root): "submodule.a.path\nlibs/a\0submodule.missing.path\nlibs/missing\0",
             str(repo_root / "libs/a"): "",
             str(repo_root / "libs/missing"): "",
         }
@@ -257,11 +257,11 @@ def test_init_single_submodule_runs_config_update_sync():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             (
-                "config -f /home/dev/repo/lib/.gitmodules --get-regexp",
+                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
                 IncusError("no nested .gitmodules"),
             ),
             ("test -e /mnt/host-source/lib/.git", ""),
@@ -287,8 +287,8 @@ def test_init_forces_checkout_past_update_none():
     incus = MagicMock()
     incus.exec.side_effect = _exec_router(
         [
-            ("config -f /home/dev/repo/.gitmodules --get-regexp", "submodule.lib.path lib\n"),
-            ("config -f /home/dev/repo/lib/.gitmodules --get-regexp", IncusError("none")),
+            ("config -f /home/dev/repo/.gitmodules --null --get-regexp", "submodule.lib.path\nlib\0"),
+            ("config -f /home/dev/repo/lib/.gitmodules --null --get-regexp", IncusError("none")),
         ]
     )
 
@@ -306,8 +306,8 @@ def test_init_hard_fails_when_host_submodule_uninitialized():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             ("test -e /mnt/host-source/lib/.git", IncusError("missing")),
         ]
@@ -326,17 +326,17 @@ def test_init_two_level_recursion():
         [
             # Top-level .gitmodules: one submodule lib
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             # lib's .gitmodules: one nested submodule inner
             (
-                "config -f /home/dev/repo/lib/.gitmodules --get-regexp",
-                "submodule.inner.path inner\n",
+                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
+                "submodule.inner.path\ninner\0",
             ),
             # inner has no further submodules
             (
-                "config -f /home/dev/repo/lib/inner/.gitmodules --get-regexp",
+                "config -f /home/dev/repo/lib/inner/.gitmodules --null --get-regexp",
                 IncusError("no .gitmodules"),
             ),
             # host source existence checks
@@ -513,7 +513,7 @@ def _container_exec_stub(status: str, gitmodules: dict[str, dict[str, str]]):
             if entries is None:
                 raise IncusError(f"no .gitmodules at {cmd[3]}")
             if "--get-regexp" in cmd:
-                return "".join(f"submodule.{n}.path {n}\n" for n in entries)
+                return "".join(f"submodule.{n}.path\n{n}\0" for n in entries)
             key = cmd[cmd.index("--get") + 1]
             name = key[len("submodule.") : -len(".url")]
             return f"{entries[name]}\n"
@@ -874,7 +874,7 @@ def test_transport_to_container_relays_another_containers_refs(mocker, tmp_path)
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
     assert push.call_args.args[0] == tmp_path / ".git/modules/custom"
@@ -901,7 +901,7 @@ def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocke
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
     enumerate_host.assert_not_called()
@@ -928,7 +928,7 @@ def test_transport_to_container_relay_created_subrepo_checks_out_source_namespac
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
     checkout_call = next(c for c in incus.exec.call_args_list if "checkout" in c.args[1])
@@ -1152,11 +1152,11 @@ def test_walk_reads_gitlink_from_parent_tree():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     def ls_tree(cwd, args):
-        if cwd == "/repo" and args[1:] == ["HEAD", "--", "lib"]:
+        if cwd == "/repo" and args[1:] == ["-z", "HEAD", "--", "lib"]:
             return (True, "160000 commit fresh\tlib\n")
         return (True, "")
 
@@ -1181,7 +1181,7 @@ def test_walk_skips_submodule_without_gitlink():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     run = _FakeRun(
@@ -1202,7 +1202,7 @@ def test_walk_skips_submodule_without_gitlink():
 def test_walk_no_branch_declared_does_not_check_out():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")  # submodule.lib.branch not set
 
     run = _FakeRun(
@@ -1223,7 +1223,7 @@ def test_walk_no_branch_declared_does_not_check_out():
 def test_walk_branch_dot_is_skipped():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (True, ".\n")  # branch = .
 
     run = _FakeRun(
@@ -1245,9 +1245,9 @@ def test_walk_places_branch_per_level():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         # branch declarations, read from the parent level's .gitmodules
         if args[-1] == "submodule.lib.branch":
@@ -1278,9 +1278,9 @@ def test_walk_with_branch_places_all_recursively():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")  # NO submodule.<name>.branch declarations anywhere
 
@@ -1306,7 +1306,7 @@ def test_walk_none_branch_keeps_legacy_gitmodules_behaviour():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")  # submodule.lib.branch not set
 
     run = _FakeRun(
@@ -1362,9 +1362,9 @@ def test_report_submodule_branches_flat_and_nested():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")
 
@@ -1711,7 +1711,7 @@ def test_detect_default_final_fallback_main():
 def test_seed_pins_both_anchors():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "master\n")
         return (False, "")
@@ -1730,7 +1730,7 @@ def test_seed_pins_both_anchors():
 def test_seed_skips_local_default_when_equal_to_container_branch():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "feat/foo\n")  # submodule default == container branch
         return (False, "")
@@ -1749,7 +1749,7 @@ def test_seed_skips_local_default_when_equal_to_container_branch():
 def test_seed_skips_unresolvable_gitlink():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     run = _FakeRun({"config": config, "ls-tree": (False, "")})  # base ref/path missing
@@ -1849,9 +1849,9 @@ def test_delete_submodule_base_anchors_recursive():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")
 
@@ -1874,7 +1874,7 @@ def test_seed_local_default_not_rewound_when_b_sub_not_ff():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "main\n")
         return (False, "")
@@ -1914,7 +1914,7 @@ def test_seed_local_default_created_when_absent():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "main\n")
         return (False, "")
@@ -1951,16 +1951,16 @@ def test_seed_recurses_into_nested_submodule():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         # No submodule.<name>.branch declarations.
         return (False, "")
 
     def ls_tree(cwd, args):
-        # args: ["ls-tree", <commit>, "--", <path>]
-        commit, path = args[1], args[3]
+        # args: ["ls-tree", "-z", <commit>, "--", <path>]
+        commit, path = args[2], args[4]
         if cwd == "/repo" and commit == "refs/jailbee/base/main" and path == "lib":
             return (True, "160000 commit AAAAAA\tlib\n")
         if cwd == "/repo/lib" and commit == "AAAAAA" and path == "inner":
@@ -2035,7 +2035,7 @@ def test_declared_branch_for_path_reads_the_gitmodules_entry():
     def run(cwd, args):
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if "submodule.lib.branch" in joined:
             return (True, "release\n")
         return (False, "")
@@ -2047,7 +2047,7 @@ def test_declared_branch_for_path_treats_dot_as_undeclared():
     def run(cwd, args):
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if "submodule.lib.branch" in joined:
             return (True, ".\n")
         return (False, "")
@@ -2058,7 +2058,7 @@ def test_declared_branch_for_path_treats_dot_as_undeclared():
 def test_declared_branch_for_path_returns_none_for_an_unknown_leaf():
     def run(cwd, args):
         if "--get-regexp" in " ".join(args):
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         return (False, "")
 
     assert submodules.declared_branch_for_path(run, "/repo", "other") is None
@@ -2072,7 +2072,7 @@ def test_declared_branch_for_top_relative_path_matches_a_top_level_entry_directl
         assert cwd == "/repo"
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.foo.path libs/foo\n")
+            return (True, "submodule.foo.path\nlibs/foo\0")
         if "submodule.foo.branch" in joined:
             return (True, "release/2.x\n")
         return (False, "")
@@ -2086,9 +2086,9 @@ def test_declared_branch_for_top_relative_path_descends_into_a_nested_level():
     def run(cwd, args):
         joined = " ".join(args)
         if cwd == "/repo" and "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if cwd == "/repo/lib" and "--get-regexp" in joined:
-            return (True, "submodule.a.path a\n")
+            return (True, "submodule.a.path\na\0")
         if cwd == "/repo/lib" and "submodule.a.branch" in joined:
             return (True, "develop\n")
         return (False, "")
@@ -2377,10 +2377,10 @@ def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_
 
 
 def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
-    run = mocker.MagicMock(return_value=(True, "submodule.sub.path sub\n"))
+    run = mocker.MagicMock(return_value=(True, "submodule.sub.path\nsub\0"))
     assert submodules._gitmodules_paths_at(run, "/repo", "deadbeef") == [("sub", "sub")]
     args = run.call_args[0][1]
-    assert args[:3] == ["config", "--blob", "deadbeef:.gitmodules"]
+    assert args[:4] == ["config", "--null", "--blob", "deadbeef:.gitmodules"]
 
 
 def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
@@ -2449,6 +2449,32 @@ def test_transport_to_container_reports_enumeration_errors_before_writes(mocker,
     with pytest.raises(submodules.SubmoduleError, match=r"Cannot inspect.*unavailable tree"):
         submodules.transport_submodules_to_container(
             _cfg_repo(tmp_path), incus, "c", repo_dir="/r", commit="c0"
+        )
+    incus.exec.assert_not_called()
+    push.assert_not_called()
+
+
+@pytest.mark.parametrize("output", ["", "yes", "no"])
+def test_container_fs_skips_only_confirmed_uninitialized_child(output):
+    incus = MagicMock()
+    incus.exec.return_value = output
+    assert submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner") is (output == "yes")
+
+
+def test_container_fs_uninitialized_check_surfaces_failure():
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("cannot inspect child")
+    with pytest.raises(IncusError, match="cannot inspect"):
+        submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner")
+
+
+def test_relay_missing_authoritative_repo_refuses_before_any_target_write(mocker, tmp_path):
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+    incus = MagicMock()
+    with pytest.raises(submodules.SubmoduleError, match="not brought onto the host"):
+        submodules.transport_submodules_to_container(
+            _cfg_repo(tmp_path), incus, "target", repo_dir="/repo", mode="relay",
+            source_ns="host", paths=["new"], host_repos={},
         )
     incus.exec.assert_not_called()
     push.assert_not_called()
