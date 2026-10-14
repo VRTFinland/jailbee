@@ -1308,10 +1308,18 @@ def superproject_subrepo(repo_root: Path) -> HostSubRepo:
 
 def _heal_worktreeless(cwd: Path, gitdir: Path) -> None:
     """Remove stale core.worktree only; run config outside the affected gitdir."""
+    config = str(gitdir / "config")
+    valid, _ = git.run_capture(str(cwd), ["config", "--file", config, "--list"])
+    if not valid:
+        raise SubmoduleError(f"Cannot read submodule config '{config}'")
     has_worktree, worktree = git.run_capture(
         str(cwd),
         ["config", "--file", str(gitdir / "config"), "--get", "core.worktree"],
     )
+    if not has_worktree:
+        valid, _ = git.run_capture(str(cwd), ["config", "--file", config, "--list"])
+        if not valid:
+            raise SubmoduleError(f"Cannot read submodule config '{config}'")
     if has_worktree and worktree.strip() and not (gitdir / worktree.strip()).resolve().exists():
         repaired, _ = git.run_capture(
             str(cwd),
@@ -1321,7 +1329,8 @@ def _heal_worktreeless(cwd: Path, gitdir: Path) -> None:
             str(cwd),
             ["config", "--file", str(gitdir / "config"), "--get", "core.worktree"],
         )
-        if not repaired or still_has_worktree:
+        valid, _ = git.run_capture(str(cwd), ["config", "--file", config, "--list"])
+        if not repaired or still_has_worktree or not valid:
             raise SubmoduleError(
                 f"Cannot repair stale core.worktree in submodule gitdir '{gitdir}'; "
                 "check config.lock and permissions"
@@ -1693,14 +1702,15 @@ def transport_submodules_to_host(
     *,
     repo_dir: str,
     only: str | None = None,
-) -> None:
+) -> dict[str, HostSubRepo]:
     """Fetch container submodules without materialising any host worktree.
 
     New repos live under their parent's gitdir/modules/<declared name> and
     receive the container HEAD before nested repos are processed. Existing
     repos keep their origin and HEAD. `only` also includes required ancestors,
     but never creates unrelated repos. All fetched repos receive the namespaced
-    HEAD and branch refs used by later placement and publication.
+    HEAD and branch refs used by later placement and publication. Return the
+    authoritative located repos so consumers need not rediscover container names.
     """
     uid = cfg.container_user.uid
     repo_root = Path(cfg.repo_root)
@@ -1753,6 +1763,8 @@ def transport_submodules_to_host(
                 incus, container, repo_dir, path, sub.root, uid=uid,
                 parent_path=parent_path, at_head=True,
             )
+
+    return {path: repo for path, repo in located.items() if path}
 
 
 def _container_subrepo_exists(

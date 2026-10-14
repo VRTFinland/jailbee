@@ -965,3 +965,52 @@ def test_prune_host_submodule_refs_raises_when_refs_cannot_be_read(rig: Rig, moc
     mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
     with pytest.raises(submodules.SubmoduleError, match="cannot list refs"):
         submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
+
+
+@pytest.mark.parametrize("broken", ["malformed", "directory"])
+def test_locate_rejects_unreadable_worktree_config(rig, broken):
+    import shutil
+
+    shutil.rmtree(rig.top / "sub")
+    config = rig.top / ".git/modules/sub/config"
+    if broken == "malformed":
+        config.write_text("[invalid\n")
+    else:
+        config.unlink()
+        config.mkdir()
+    with pytest.raises(submodules.SubmoduleError, match="config"):
+        submodules.resolve_host_subrepo(rig.top, "sub", at="dev")
+
+
+def test_custom_absent_host_head_transport_context_drives_pr(rig, tmp_path, local_urls, mocker):
+    from jailbee import pr_flow, submodule_pr
+
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
+    _git(ctr, "submodule", "add", "-q", "--name", "outer-custom", str(rig.inup), "lib")
+    _git(ctr, "commit", "-qam", "custom")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    cfg = _transport_cfg(rig)
+    context = submodule_pr.transport_submodule_to_host(
+        cfg, LocalIncus(), "ctr", "c1", subpath="lib", repo_dir=str(ctr)
+    )
+    root = rig.top / ".git/modules/outer-custom"
+    assert context is not None and context.root == root
+    _git(root, "remote", "rename", "origin", "upstream")
+    _git(root, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk")
+    # A default-name decoy must never replace the authoritative transport root.
+    decoy = rig.top / ".git/modules/lib"
+    _git(rig.top, "init", "-q", "--bare", str(decoy))
+    _git(decoy, "remote", "add", "origin", "unused")
+    assert submodule_pr.resolve_remote(rig.top, "lib", host_root=root) == "upstream"
+    assert submodule_pr.resolve_base_branch(rig.top, "lib", override=None, host_root=root) == "trunk"
+    assert pr_flow.PrScope.for_submodule(cfg, "lib", host_root=root).repo_root == root
+    push = mocker.patch("jailbee.git.push_to_remote")
+    lease = mocker.patch("jailbee.git.remote_branch_sha", return_value="lease")
+    submodule_pr.publish_submodule_branch(
+        cfg, "c1", subpath="lib", branch=None, publish_name="published",
+        remote="upstream", force=True, host_root=root,
+    )
+    assert push.call_args.args[:3] == (root, "upstream", "refs/jailbee-sub/c1/lib/HEAD")
+    assert lease.call_args.args[0] == root
+    assert _git(rig.top, "status", "--porcelain") == ""

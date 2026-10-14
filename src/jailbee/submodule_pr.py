@@ -248,18 +248,22 @@ class SubmodulePrPlan:
 STATE_KEY = "user.jailbee.sub_pr"
 
 
-def resolve_remote(repo_root: Path, subpath: str) -> str:
+def resolve_remote(repo_root: Path, subpath: str, *, host_root: Path | None = None) -> str:
     """The upstream remote of the host sub-repo at `subpath`.
 
     Resolved against the submodule's own directory rather than inherited from
     `cfg.upstream_remote`: a submodule is a separate repository and may name
     its upstream something the superproject does not.
     """
-    host_sub = submodules.host_subrepo_root(repo_root, subpath)
+    host_sub = (
+        host_root if host_root is not None else submodules.host_subrepo_root(repo_root, subpath)
+    )
     return git.detect_upstream_remote(host_sub) or git.DEFAULT_REMOTE
 
 
-def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) -> str:
+def resolve_base_branch(
+    repo_root: Path, subpath: str, *, override: str | None, host_root: Path | None = None
+) -> str:
     """The branch a submodule PR targets in the submodule's own repository.
 
     Order: `--base` > `submodule.<name>.branch` (found by descending the
@@ -277,8 +281,10 @@ def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) 
     )
     if declared:
         return declared
-    host_sub = submodules.host_subrepo_root(repo_root, subpath)
-    remote = resolve_remote(repo_root, subpath)
+    host_sub = (
+        host_root if host_root is not None else submodules.host_subrepo_root(repo_root, subpath)
+    )
+    remote = resolve_remote(repo_root, subpath, host_root=host_root)
     ok, out = git.run_capture(
         str(host_sub), ["symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"]
     )
@@ -408,7 +414,7 @@ def transport_submodule_to_host(
     *,
     subpath: str,
     repo_dir: str,
-) -> None:
+) -> submodules.HostSubRepo | None:
     """Fetch `subpath`'s objects into the host sub-repo, creating it if needed.
 
     A thin wrapper over `submodules.transport_submodules_to_host` restricted
@@ -424,9 +430,10 @@ def transport_submodule_to_host(
     the GitHub check's `git remote get-url` in a missing directory raises
     `FileNotFoundError`, reported as "git is not installed".
     """
-    submodules.transport_submodules_to_host(
+    located = submodules.transport_submodules_to_host(
         cfg, incus, full, short, repo_dir=repo_dir, only=subpath
     )
+    return located.get(subpath)
 
 
 def publish_submodule_branch(
@@ -438,6 +445,7 @@ def publish_submodule_branch(
     publish_name: str,
     remote: str,
     force: bool,
+    host_root: Path | None = None,
 ) -> SubPublishResult:
     """Push the submodule's already-transported objects upstream.
 
@@ -452,7 +460,11 @@ def publish_submodule_branch(
     """
     from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
-    host_sub = submodules.host_subrepo_root(Path(cfg.repo_root), subpath)
+    host_sub = (
+        host_root
+        if host_root is not None
+        else submodules.host_subrepo_root(Path(cfg.repo_root), subpath)
+    )
     src = source_ref(short, subpath, branch)
     if git.rev_parse(host_sub, src) is None:
         raise SubmodulePrError(
