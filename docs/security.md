@@ -2,51 +2,63 @@
 
 ## Security model
 
-Layering several mechanisms together — unprivileged, user-namespaced
-containers, read-only binds for secrets (GnuPG, SSH, and gitconfig are
-mounted read-only; note that user-declared `host_mounts` are read-write
-unless you set `readonly: true`), a kernel-level egress allowlist, and
-snapshot/rollback — gives stronger isolation than an in-process sandbox on
-the host.
+JailBee combines unprivileged, user-namespaced Incus containers, selective
+host mounts and a kernel-level network allowlist. It shares the host kernel:
+it is not a VM or a guarantee against hostile code. The dev user's UID/GID
+is mapped to the host user's UID/GID so shared files work, and nesting is
+enabled for workloads such as Docker. Host mounts, devices, sockets and
+credentials deliberately widen that boundary; review the effective config
+before running untrusted code. User-declared `host_mounts` default to
+read-write unless `readonly: true` is set. Container snapshots help recover
+container storage, not host bind mounts, separate shared volumes or external effects.
 
-**Keys stay on the host.** Where a secret has an agent, JailBee shares the
-agent's *socket* rather than the key: with `gpg.enabled`, the host
-gpg-agent's socket is attached to the container and `SSH_AUTH_SOCK` points
-at its SSH socket, so signing and SSH authentication are performed by the
-host agent. `ssh.enabled` seeds only `config`, `known_hosts` and
-`config.d/` into the shared `~/.ssh` — **private keys, `authorized_keys`
-and sockets are never seeded**. A process in the container can therefore
-ask the agent to sign for as long as it runs, but cannot take the key with
-it; on a smartcard-backed key each signature can still require a physical
-touch. This is the same "use it, don't hold it" property a credential proxy
-provides, and it does not extend to plain API tokens mounted or written
-into a container — those are ordinary files. That is why running an agent
-with its own guardrails off is reasonable *inside* a `jailbee` container —
-see [Running an agent without prompts](#running-an-agent-without-prompts).
+**Read-only does not mean secret.** With `gpg.enabled`, JailBee shares both
+the host's `~/.gnupg` directory read-only and gpg-agent sockets. Agent
+requests do not export private keys through the socket, but disk-stored key
+material in the mounted directory can still be read and copied. Processes
+can request signing or SSH authentication through the agent; confirmation,
+PIN and touch requirements depend on the agent and key configuration.
+Hardware-backed keys may avoid exposing private key material as files, but
+do not make every request require a touch.
+
+`ssh.enabled` seeds the top-level `config`, `known_hosts` and `config.d/`
+into an initially empty shared `~/.ssh`. It excludes other top-level files,
+not secrets recursively: `config.d/` is copied recursively and symlinks are
+followed, so audit those sources for keys or other sensitive content. The
+shared SSH directory is **read-write**, and disabling `ssh.enabled` skips
+seeding and permission setup, not the default shared-cache mount. Plain API
+tokens, OAuth credentials and key files exposed inside a container are
+readable credentials, not agent-only capabilities. See
+[Running an agent without prompts](#running-an-agent-without-prompts).
 
 Host-local per-repo settings live outside the checkout at
 `~/.config/jailbee/repos/<container_prefix>.yaml` (or under
 `$XDG_CONFIG_HOME`). This is the supported location for per-repo secrets such
 as `github.token`; JailBee creates the directory as `0700` and each local
-config file as `0600`. A file carrying `github.token` is rejected unless it
-has mode `0600`. The legacy `github.api_tokens` map remains in
-`~/.config/jailbee/global.yaml` until migrated; that file must also be `0600`
-while it contains tokens. Keep both files private. `container.env` is not
-secret storage: values are written into the Incus profile and are visible
-with `incus profile show`.
+config file as `0600` when writing through JailBee. Loading a token file
+with group/other access warns rather than rejecting it; `jailbee doctor`
+reports insecure permissions as a failure. Keep token files at `0600`,
+including `~/.config/jailbee/global.yaml` while it contains the legacy
+`github.api_tokens` map. `container.env` is not secret storage: values are
+written into the Incus profile and are visible with `incus profile show`.
+Arbitrary `agents.<name>.env` values are not masked by `config show` either.
+Injected `GH_TOKEN` is also written into the container's
+`/etc/profile.d/jailbee-github.sh`; disabling the integration does not remove
+an existing copy. Revoke exposed credentials at the provider when needed.
 
 ### Remote SSH
 
 The optional SSH server is a capability boundary inside the current user's
 account, not a second kernel sandbox. The service runs as the same Unix UID
 that runs the local `jailbee` CLI and has the same Incus access. With
-`remote.ssh.restrict_host` at its default, a remote session reaches the
-containers and the host repo's refs, and every host-reaching path JailBee
-knows of is closed (listed below), whatever `commands.mode` says. What an
-enabled command does to Incus containers is otherwise its normal behavior.
-The two settings are separate axes: `commands.mode` picks which commands a
-remote caller may run, `restrict_host` whether any of them may reach past
-the containers and the git bridge into the host.
+`remote.ssh.restrict_host` at its default, JailBee restricts host-reaching
+commands and arguments as described below, whatever `commands.mode` says.
+It still permits container operations, ref transfers and confirmed GitHub
+publication with the host's credentials. It does not remove capabilities
+already exposed inside containers. The two settings are separate axes:
+`commands.mode` selects callable commands; `restrict_host` adds host-access
+checks to those commands. Neither is a substitute for reviewing mounts,
+credentials and display access.
 
 Every authorized client key has identical access. There are no per-key repos,
 roles or command policies, and the fixed SSH username `jailbee` does not map
@@ -74,8 +86,10 @@ aggregates such as `ls --all`, `job ls --all-repos`, `review ls --all-repos`,
 visible repos; filtering is applied before probing, rendering, totals, or
 actions. Unknown and excluded repo selections give the same error. This is one
 host-wide visibility boundary for all keys, not per-key authorization, and it
-does not alter local CLI, TUI, or Qt behavior. Each new SSH channel takes a
-policy snapshot; a running channel keeps that snapshot until it ends.
+does not alter local CLI, TUI, or Qt behavior. Each new command channel takes
+a routing/repo-scope policy snapshot; a running channel keeps that snapshot.
+Mount grants are checked separately against freshly loaded host policy at
+mount time, and new GUI forwarding requests re-read the GUI flag.
 
 With exclusions active, commands whose output or effects cannot safely be
 scoped are refused instead of exposing host-wide data: `config show --layer
@@ -105,9 +119,10 @@ what would reach the host beyond that — the config editor (a config decides
 host mounts and this very policy), the diff pager (a pager can start a
 shell), "Open PR" and GUI app launches (a browser or window would open on
 the host's display; with `remote.ssh.gui` on, launches go to the shared RDP
-display instead). Every process the service starts is marked as remote
-(`JAILBEE_REMOTE_SSH=1`, inherited by everything it starts in turn) and runs
-with `LESSSECURE=1`. Every SSH session, restricted or not, also carries
+display instead). The admitted `exec --gui` route is an exception to the
+named GUI-launcher restrictions, described below. Restricted child processes
+carry `JAILBEE_REMOTE_SSH=1` and `LESSSECURE=1`, inherited by their children.
+Every SSH session, restricted or not, also carries
 `JAILBEE_SSH_SESSION=1`, which keeps the dashboard to registered repos, the
 Qt dashboard refused and the post-install setup offer unmade: the one at the
 other end is not at this host.
@@ -130,9 +145,9 @@ With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
 `net egress rm` only narrow a container and are always permitted; `--repo` on
 `net egress add`/`rm` is refused regardless, because it writes the host-local
 repo layer.
-The startup log names any allowlisted command that stays refused this way, and every
-public command is classified one way or the other by the test suite, so a
-new one cannot land unclassified.
+The startup log names allowlisted commands still refused by these restrictions.
+A regression test checks that every public leaf has a host/container
+classification; restricted routing also rejects unclassified commands at runtime.
 
 `commands.mode: full` is a high-trust setting. In restricted sessions it
 grants classified public JailBee commands, and newly added or unclassified
@@ -210,33 +225,41 @@ tree, `.git` included, so a restricted session may neither create one nor
 enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
 mount-mode container, and clone-mode containers are unaffected.
 
-One host resource stays reachable from inside a container on purpose: the
-Wayland display socket, attached on a container's first GUI launch (or every
-boot with `gui.wayland: always`; [`gui`](config.md#gui)). Once attached, any
-process in the container — a remote session's shell included — can open a
-window on the host's screen with it, and JailBee's own GUI launchers are
-withheld remotely (unless `remote.ssh.gui` is on) only because a window there
-helps no remote user. A Wayland client draws its own surfaces and cannot read or drive other
-windows, and no X11 socket is shared. The host's session D-Bus and
-PulseAudio sockets, which do reach further, are opt-in
-([`gui`](config.md#gui)). With `remote.ssh.gui` on, a second such resource
-exists: the shared display directory, mounted read-only into every container,
-through which any process can draw on the shared RDP display (see
-[Remote GUI](#remote-gui)).
+Host display access is a separate capability. The Wayland socket is
+attached on a container's first GUI launch (or every boot with
+`gui.wayland: always`; [`gui`](config.md#gui)). Once attached, any process
+in that container can connect, including a remote shell. Named GUI launchers
+are restricted as described above, but **`exec -d --gui` is admitted**. Without
+a remote-GUI session marker it selects the host display and can attach its
+socket if the SSH service's environment provides a usable display; with the
+marker it selects the shared remote display. Do not treat the launcher
+restrictions as a guarantee that remote commands cannot open host windows.
 
-A server imports its routing and session marking when it starts, so one left
-running across an upgrade would enforce the old version's rules. It
-therefore restarts itself when the installed version changes, before
-serving another session (see [Installation](installation.md#optional-ssh-service)).
+JailBee shares no X11 socket. Wayland normally isolates clients' surfaces,
+but the compositor and its supported protocols remain part of the trust
+boundary; socket access is not a guarantee against display-server bugs or
+additional compositor capabilities. Host session D-Bus and PulseAudio
+sockets are opt-in ([`gui`](config.md#gui)). With `remote.ssh.gui` on,
+boot-time setup can also attach the shared display directory read-only to
+dev containers, allowing their processes to draw on the shared RDP display
+(see [Remote GUI](#remote-gui)).
+
+A server imports its routing and session marking when it starts. Its version
+watcher detects installed-version changes, refuses new command sessions and
+exits after draining existing work; the systemd service restarts it. A
+foreground `serve` process exits with code 75 rather than restarting itself.
+This detects version changes, not every editable-source modification (see
+[Installation](installation.md#optional-ssh-service)).
 
 `remote.ssh.restrict_host: false` (or `jb remote ssh serve
---no-restrict-host` for one run) lifts every host restriction above and in
-the dashboard paragraph at once: no argument check, no session marker, no
-`LESSSECURE`, and an allowed command then reaches the host exactly as it
-does locally. It is one switch on purpose — a partly lifted boundary is
-harder to reason about than either state — and the startup log announces
-`host restrictions: OFF`. A server started from inside a restricted
-session inherits its marker and stays restricted whatever the setting says.
+--no-restrict-host` for one run) disables the host-restriction command and
+argument checks and stops adding `JAILBEE_REMOTE_SSH` and `LESSSECURE` to
+child processes. Treat admitted commands as host-user capabilities. It does
+not disable the command policy, reserved/internal-route checks or the general
+`JAILBEE_SSH_SESSION` marker: the dashboard still lists registered repos only,
+Qt is refused and the setup offer stays suppressed. The startup log announces
+`host restrictions: OFF`. A server started from inside a restricted session
+inherits its restricted marker and stays restricted whatever the setting says.
 
 The user journal records source address, authorized-key fingerprint, bounded
 route/repository/command identifiers, decision and exit status. It does not
@@ -248,21 +271,23 @@ rotation, service status, journal inspection and recovery operations.
 
 `remote.ssh.files: true` lets an authorized key use `sftp` and `scp` against a
 container's repository directory, in both directions. It is a single switch for
-reading and writing together, and it is off by default. Changing it needs `jb
-remote ssh restart`.
+reading and writing together, and it is off by default. Enabling it requires
+`jb remote ssh restart` if the server started without file-transfer support.
+Disabling it refuses new SFTP channels without a restart; existing channels
+retain their scope. Close those channels or restart the service to end them.
 
 The server is not a stock SFTP server, which would expose the host's
 filesystem. It presents a virtual tree: `/` lists the running containers of
-non-excluded repositories, and `/<container>/...` is that container's
-repository directory. The host filesystem is never read or written by it, and
-the rest of the container (home directory, credentials, agent state) is out of
-reach:
+non-excluded repositories, and `/<full-container-name>/...` is that
+container's repository directory. File operations run inside the container,
+not directly against the host filesystem. The path checks reject targets
+resolving outside the repository:
 
 - every operation is one `incus exec` of a fixed script; names and offsets
   reach it as arguments, never as script text;
 - the target is resolved inside the container and refused when it leaves the
-  repository, so a symlink to `/etc` or `../..` is seen but never followed,
-  read, written or removed through (`lstat` shows the link itself);
+  repository; `lstat` can show an escaping symlink and unlink can remove the
+  link itself without removing its target;
 - links cannot be created, file names must be UTF-8, the top of the tree is
   read-only, and files cannot be moved between containers;
 - files are written as the user who owns the repository (never root), a file
@@ -277,8 +302,12 @@ reach:
   (and the new path of a rename), operation and outcome; path canonicalisation,
   `close` and `fsync` touch nothing and are not audited.
 
-Submodules and anything mounted inside the repository directory are part of it
-and are reachable. Rsync is not supported.
+This is not an inode-level or race-free boundary against a process already
+running inside the container: path resolution and the operation are separate,
+so concurrent symlink changes can race the check. Existing hardlinks and
+mounts inside the repository remain reachable, including host data exposed
+by those mounts. Submodules are part of the tree too. Keep secrets out of
+that reachable tree; Rsync is not supported.
 
 ### Remote mounts
 
@@ -290,9 +319,11 @@ A match qualifies only when `os.path.realpath(mount.host)` equals the root's
 Incus is the root's own spelling, not the repo config's. A root entry may
 declare `readonly: true` (the default), in which case the mount is attached
 read-only even if the `optional_mounts` entry says otherwise. The effective
-readonly flag is `mount.readonly or root.readonly`. A non-empty `mount_roots`
-requires `restrict_host: true`; a `repos` list (when present) only scopes which
-registered repos may attach that root.
+readonly flag is `mount.readonly or root.readonly` for a newly added device.
+An already attached mount gets only its deadline updated: its existing source
+and read-only setting are not reconciled. Detach and reattach to apply a
+changed grant. A non-empty `mount_roots` requires `restrict_host: true`; a
+`repos` list (when present) only scopes which registered repos may attach that root.
 
 `remote.ssh.mounts: true` grants every `optional_mounts` entry as defined,
 with no path check and no readonly override; the repo config alone decides
@@ -331,13 +362,15 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   binding would protect nothing.
 - All containers share one screen and the RDP clipboard: one container can
   draw over another's windows and read what is on the clipboard.
-- The shared display directory is mounted into the client containers
-  read-only, and only while `remote.ssh.gui` is on. Every client shares the
-  host user's idmap, so a writable mount would let a compromised container
+- Boot-time attachment of the shared display directory requires
+  `remote.ssh.gui` and an existing display directory. The client mount is
+  read-only. Turning the flag off does not detach existing mounts or revoke
+  old sessions and tunnels. Every client shares the host user's idmap, so a
+  writable mount would let a compromised container
   delete or replace weston's socket with its own and capture every other
   container's windows, keystrokes and clipboard; read-only means a container
-  cannot replace the socket. Connecting to the socket needs no write access,
-  so any process in a container can still open a window on the shared
+  cannot replace the socket through this mount. A read-only bind still
+  permits socket connections, so any process in a container can open a window on the shared
   display. That is the exposure below, and it is why containers are not
   isolated from each other on this screen.
 - The display container uses the dev user's idmap, like the client containers,
@@ -348,34 +381,34 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   shared directory, so any container can open a window through another
   container's server; that window carries the other container's title prefix.
   No two containers share a server process. Untrusted Wayland traffic is
-  parsed in `jailbee-display`, and the laptop's waypipe client only ever talks
-  to those servers.
+  parsed by those servers and the laptop's waypipe client processes the
+  forwarded protocol. The display container is an intermediary, not a
+  guarantee that hostile display traffic cannot affect the client.
 - With SSH repository exclusions active, the GUI launchers (`ide`, the
   browsers, `apps run`) are refused over SSH regardless of this setting.
   `exec -d --gui` is not: it is admitted as a command scoped to one container
-  of a repo the session may see. That is not a hole in the exclusion — the
-  display itself is one screen shared by every container, excluded repos'
-  included, and any session allowed to forward to it sees all of it.
+  of a repo the session may see. Repository exclusions do not isolate the
+  display: it is one screen shared by participating containers, including
+  excluded repos, and any session allowed to forward to it sees all of it.
+  Command allowlists and repo exclusions do not narrow this display access.
 
 ### Running an agent without prompts
 
-A coding agent asks before it acts because on your own host a wrong command
-is unbounded. Inside a container it is bounded by the container, so the
-prompts cost more than they buy, and turning them off is the intended mode
-rather than a corner you cut:
+Unattended agents are a supported use case, but a container does not make
+permission prompts or an agent's own sandbox redundant. Disabling them
+removes defense in depth: a mistaken or injected command can affect every
+mounted path, shared login and reachable service available to the process.
 
-- **Permission prompts** — `claude --dangerously-skip-permissions` (or
-  `--permission-mode bypassPermissions`). JailBee itself runs Claude this
-  way for `jailbee pr`. Put it in `agents.claude.command` and every container's
-  autostart window comes up in that mode.
-- **The agent's in-process sandbox** — a separate switch on the same axis
-  (Claude Code's `dangerouslyDisableSandbox` opts a single bash command out
-  of its own sandbox). Redundant inside a container that is already the
-  boundary.
+The bundled Claude preset's headless PR command uses
+`--dangerously-skip-permissions`. Setting that flag in
+`agents.claude.command` also opts the agent's autostart invocation out of
+its permission prompts; it is not needed for ordinary container use. An
+agent's own sandbox is a separate control, and disabling it is a separate
+trust decision. Check the installed agent's supported options before changing
+either.
 
-The point of the trade is that you size the blast radius *before* the run,
-with the container's config, instead of adjudicating it prompt by prompt.
-So it is worth knowing exactly what you sized:
+Size the exposure *before* an unattended run, rather than assuming container
+isolation covers every action:
 
 **Reachable by an unattended agent.** The container's own clone of the repo,
 or the host working tree itself in `--mount` mode. By default, an existing
@@ -388,18 +421,22 @@ holds Claude's settings and the shared `~/.ssh` holds whatever you put there,
 and damage to either is not contained to one container. Claude's login lives
 in that directory too, unless the repo is in a credential group — then it is
 the group's directory, mounted at `~/.claude-creds` and shared with every
-other repo in the group. In `loose`
-mode, the network — including a push to `origin`. With `github.enabled`, the
-container's own `GH_TOKEN` — see the limitation below.
+other repo in the group. Pooled caches have per-container slots, but some
+cache subtrees use hardlinks; they are not isolation from hostile peers.
+Read-write shared directories can also carry modified scripts or settings
+back to host tools. Network destinations allowed in `strict` are reachable,
+and `loose` widens that access. Either mode can permit a push to `origin`
+when transport and credentials allow it. With `github.enabled`, the
+container also holds its own `GH_TOKEN` — see the limitation below.
 
 **GitHub token scope is a documentation contract, not an enforced one.**
-The recommended fine-grained PAT (`github.token`, injected as
-`GH_TOKEN`) is read-only by design — Contents, Issues, Pull requests, and
-Metadata all set to Read — so that every GitHub write an in-container agent
-proposes must go through the host-side outbox (`jailbee issue apply` /
-`jailbee review apply` / `jailbee outbox apply`), reviewed and applied with
-the host's *own*,
-independently authenticated `gh`. **jailbee cannot verify a fine-grained
+Configure the fine-grained PAT (`github.token`, injected as `GH_TOKEN`)
+with Contents, Issues, Pull requests and Metadata set to Read. This is a
+recommendation, not a permission JailBee assigns. With no other write
+credential exposed, the intended publication path is the host's independently
+authenticated `gh`: `jailbee pr` for PRs and the reviewed host-side outbox
+(`jailbee issue apply` / `jailbee review apply` / `jailbee outbox apply`) for
+queued issues and reviews. **jailbee cannot verify a fine-grained
 PAT's effective permissions** — `jailbee doctor` reminds you of the intended
 scope but never probes GitHub to check it. A PAT you (or an org policy)
 scope wider than read-only lets an agent (or anything running as it) write
@@ -428,15 +465,21 @@ can share an allowed IP. Wildcard names are checked by the HTTP(S)
 [egress proxy](#egress-proxy), not by the NIC ACL. Host sockets and declared
 [port forwards](#port-forwards) are separate access paths outside that ACL.
 
-**Shared across repos, by design.** Two things deliberately cross the
-per-repo line. A credential group shares one agent login between every repo
-in it (see [`credentials`](config.md#credentials)); an agent in any member
-repo can use, and spend, that account. And with `litellm.enabled`, every
-strict container of every repo reaches the one host-wide LiteLLM proxy
-through the `jailbee-services` ACL, holding a proxy key per account
-(`/etc/jailbee/litellm-<account>.key`); a container can spend those
-subscriptions and API keys through the proxy, though it never sees the
-provider tokens themselves. See
+**Shared across repos, by design.** Credential groups and LiteLLM are
+additional cross-repo channels, alongside any shared paths or displays. A
+credential group shares the configured agent's login across its members
+(Claude is currently the supported account-pool adapter; see
+[`credentials`](config.md#credentials)). A process in a member container
+can read, use or modify that shared credential.
+
+When LiteLLM is configured and provisioned, its service ACL exposes the
+host-wide proxy ports to strict containers across repos. Dev-container
+settings include keys for accounts used by served profiles
+(`/etc/jailbee/litellm-<account>.key`). These are shared account credentials,
+not per-repo authorization boundaries: a holder can spend the account's
+subscriptions and API keys through the proxy. Provider tokens are not part
+of that dev-container payload, but remain accessible to host administrators;
+API secrets also remain in host-side `secrets.env`. See
 [LiteLLM security and limitations](litellm.md#security-and-limitations).
 
 The practical shape, then: stay in `strict`, bind read-only what the build
@@ -449,13 +492,13 @@ Some work needs a secret for a while: an API key for one tool, cloud
 credentials for one deploy. Writing it into the container leaves it there for
 as long as the container lives, readable by every agent run that follows.
 Declare it as an [`optional_mounts`](config.md#optional_mounts) entry instead
-and keep the secret on the host: it reaches a container only when you attach
-it, and leaves on its own.
+to control when that host path is attached. Automatic detachment is
+best-effort cleanup, not credential revocation.
 
 ```yaml
 optional_mounts:
   openai:
-    host: ~/.config/openai          # holds api-key; stays on the host
+    host: ~/.config/openai          # contents become readable while mounted
     container: /home/dev/.config/openai
     readonly: true                  # the default, stated for the reader
     description: "OpenAI API key"
@@ -467,22 +510,35 @@ optional_mounts:
 ```
 
 ```bash
-jailbee mount openai feat-login           # attach, until auto_unmount_after
-jailbee mount aws feat-login --for 30m    # or say how long this time
-jailbee unmount aws feat-login            # done early
+jailbee mount openai feat-login --for 1h  # record an auto-unmount deadline
+jailbee mount aws feat-login --for 30m    # override this mount's default
+jailbee unmount aws feat-login           # detach early
 ```
 
 The **MOUNT** column in `jailbee ls` and the dashboards shows that a container
-has one attached and how long until it detaches (`● 12m`, or `● ∞` for one
+has one attached and its recorded deadline (`● 12m`, or `● ∞` for one
 with no deadline); the details panel names which, and the dashboard's
-container menu has Mounts…. An [autostart](project-config.md#5-define-autostart-steps) stage can attach one for its own
-duration only (`mounts: [aws]`).
+container menu has Mounts…. Without `--for`, an interactive call asks for
+the duration using the configured default; non-interactive calls use that
+default. A disabled `mount_auto_revert` disables the configured default,
+though an explicit `--for` can still record a deadline.
+
+Detachment requires a registered repo and a working
+`jailbee-net-refresh.timer`; it occurs on a successful refresh after expiry,
+not at an exact instant. Autostart can defer it, and failed removals are
+retried. Verify the mount is gone when the boundary matters. An
+[autostart](project-config.md#5-define-autostart-steps) stage can request
+`mounts: [aws]` and attempts to remove mounts it added when the stage finishes.
+This is stage-scoped cleanup, not a guarantee after a crash or for the lifetime
+of a background process; copies made by commands remain accessible.
 
 - **Mount the directory, not the file.** A bind mount of a single file pins
   that file's inode, so a host editor or tool that replaces it atomically —
   most of them — leaves the container reading the old one.
-- **Read-only** keeps the container from rewriting the secret or the
-  directory it sits in; it can still read and use it.
+- **Read-only** prevents writes through that mount, not reads, copies or
+  connections to sockets inside it. A separate writable mount of the same
+  data still permits changes. Re-running `jailbee mount` on an attached mount
+  changes only its deadline, not its source or read-only flag.
 - **Where to declare it:** in `~/.config/jailbee/global.yaml` for a
   credential that is yours on every repo; in the repo's own config when a tool
   in the repo reads it from a fixed path, as `website/video/render.py` does
@@ -490,38 +546,45 @@ duration only (`mounts: [aws]`).
   itself never goes in either file.
 
 What this buys is a window, not a broker. While the mount is attached,
-anything running in the container can read the secret and use it, and in
-`strict` mode only towards the hosts the allowlist names. Detaching removes
-the mount, not a copy something inside made while it was there. Attach it for
-the task that needs it, and keep `auto_unmount_after` short.
+anything running in the container can read and copy the secret. Strict
+network rules constrain destinations, not what data may be sent to an
+allowed endpoint; shared sockets and port forwards provide other paths.
+Detaching removes the mount, not copies or access already obtained with the
+credential. Attach it for the task that needs it, keep `auto_unmount_after`
+short, and use provider-side expiry or revocation for a real credential
+lifetime limit.
 
 ### Git remote & push
 
-After `jailbee new` clones the source repo into the container, the clone's
-`origin` is rewritten from the RO mount path (`/mnt/host-source`) to the host
-repo's real upstream URL, and branch tracking is set explicitly so
-`git push`/`fetch`/`gh` work without `-u` once the network ACL allows
-them. The `--shared` clone semantics survive — objects continue to read
-from the mount through `.git/objects/info/alternates`.
+After `jailbee new` clones the source repo into the container, it rewrites
+`origin` from the RO mount path (`/mnt/host-source`) to the host's selected
+upstream URL when one exists, and configures branch tracking. Without an
+upstream URL, the source mount remains the remote. Network access,
+authentication and repository permissions still determine whether remote
+operations succeed. The `--shared` clone semantics survive — objects continue
+to read from the mount through `.git/objects/info/alternates`. This mount also
+makes the host source tree readable; the clone is not the only repository
+data exposed.
 
 The container's remote is always named `origin`, whatever the host calls its
 own upstream (see [Which remote is the
 upstream?](config.md#which-remote-is-the-upstream)) — the clone is jailbee's
 own, so its naming is jailbee's invariant rather than something inherited.
 
-**By design, a strict container cannot push to GitHub.** `github.com` is not
-in the base strict-mode `egress_allow`, and only HTTPS is ever added:
-`api.github.com:443` while `github.enabled` is on, and `github.com:443` with
-GitHub's content hosts while Claude Code's plugins are on
-(`agents.claude.plugins_enabled`, the default when Claude is enabled), so its
-plugin installs and updates work. The GitHub token a container gets is
-read-only (see [GitHub CLI inside
-containers](git-bridge.md#github-cli-gh-inside-containers)), so `gh` reads
-work in strict mode while pushes and `gh` writes do not. Push from the host
-(`jailbee git checkout <name>`, then `git push`, or `jailbee pr <name>`), or
-switch to loose with `jailbee net loose <name>` for the write and back with
-`jailbee net strict <name>`. This keeps unattended agent runs from producing
-surprise pushes.
+**Strict restricts destinations, not GitHub operations.** GitHub integration
+adds `api.github.com:443`; Claude's plugin support also adds GitHub HTTPS
+destinations, including `github.com:443`. User allowlist entries can add
+other transports. An allowed HTTPS connection can carry a read, a push or an
+API write: a write-capable credential can therefore bypass the intended
+host-side review workflow even in strict mode. The recommended read-only PAT
+is an operator-configured permission boundary, not something JailBee verifies
+(see [GitHub CLI inside
+containers](git-bridge.md#github-cli-gh-inside-containers)).
+
+Prefer publishing from the host after review (`jailbee pr <name>`, or
+`jailbee git checkout <name>` followed by `git push`). Switching to loose
+changes reachability, not credential permissions, and is not required merely
+because an operation writes to GitHub.
 
 ### Port forwards
 
@@ -543,9 +606,11 @@ recipe in [project-config.md](project-config.md#talking-to-android-devices-over-
 lets the container reach a host service that the egress deny would
 otherwise have blocked. A `to-host` forward lets something on the host
 reach into the container — traffic the ingress deny would otherwise have
-blocked. The `to-host` direction does **not** give the container any new
-outbound reach: the host is the one initiating the connection, into a port
-the container is already listening on.
+blocked. A `to-host` listener defaults to `127.0.0.1`; choosing a wildcard
+or non-loopback `--host-address` can expose the container service to other
+machines, subject to host routing and firewall rules. The forward adds no
+application authentication. It does **not** itself give the container new
+outbound reach: a client initiates the connection to the published service.
 
 It is opt-in either way — a forward exists only because it is declared in
 `host_ports` or because someone ran `jailbee port`. `jailbee net status`
@@ -567,42 +632,40 @@ chains](config.md#stages-and-chains).
 `user.jailbee.autostart_in_progress` is what keeps `jailbee-net-refresh`'s
 TTL revert from racing a stage's own network swap (see
 [`loose_auto_revert`](config.md#loose_auto_revert)). For a **detached**
-stage the flag carries the supervisor's own pid rather than a bare `"1"`,
-so a supervisor that dies mid-run without reaching its own cleanup —
-killed, OOM, a host reboot — stops pinning the container loose:
-`jailbee-net-refresh` sees no live process behind the pid and reverts on
-schedule instead of leaving the container exposed indefinitely. A `"1"`
-written by an older `jailbee` (before the pid was tracked) still reads as
-held, so an in-flight run started before an upgrade isn't reverted out from
-under itself.
+stage the flag carries the supervisor's pid rather than a bare `"1"`.
+If no live process remains behind that pid, the flag no longer blocks an
+existing TTL. That is not automatic crash recovery: the stage's network
+switch does not itself create a loose deadline. Reversion needs a recorded
+deadline and a working refresh service for a registered, loadable repo. A
+legacy `"1"` flag is still treated as held. A killed supervisor can therefore
+leave a container loose; check its actual mode after an interrupted run.
 
-Restoring the entry network mode after a detached stage is
-**compare-and-swap**: the supervisor re-reads the container's current mode
-first and only restores if it's still the mode *this stage* set. Run
-`jailbee net strict`/`jailbee net loose` by hand while a detached stage is
-mid-run and your choice stands — the stage's own restore, whenever it
-finally happens, silently no-ops instead of clobbering it (`jailbee net`
-itself only warns and proceeds; it does not refuse). The foreground path
-has no such race to guard against — nothing can run concurrently with a
-stage the CLI is blocking on — so it keeps the old unconditional restore.
+A detached stage makes a **best-effort mode check** before restoring the
+entry mode. It skips restoration if the observed mode differs from the one
+the stage set. This is not atomic compare-and-swap: same-mode operator changes
+and changes racing the check are not protected. `jailbee net` warns about
+an active autostart but proceeds. Foreground stages restore the entry mode
+unconditionally, so a change from another shell during the stage can be
+overwritten. Avoid concurrent network changes when the resulting boundary
+matters, and verify it afterward.
 
 ## Egress overrides
 
 `jailbee net egress add` widens a container's, or a repo's, strict-mode
-allowlist **without passing code review**. That is the point of the feature
-and also its risk: unlike `egress_allow` in `.jailbee/config.yaml`, an
-override is never seen by a teammate, a reviewer, or CI — it lives in the
-container's own `user.jailbee.egress_extra` label (container scope, the
-default) or in host-local state (`--repo`, applying to every container of
-the repo on this machine).
+allowlist **without requiring code review**. Unlike tracked `egress_allow`
+in `.jailbee/config.yaml`, an override is not automatically visible in the
+checkout or its review/CI workflow. It lives in the container's own
+`user.jailbee.egress_extra` label (container scope, the default) or in
+host-local state (`--repo`, applying to every container of the repo on
+this machine).
 
 The mitigation is visibility, not a prompt: `jailbee net egress ls` shows
 every applicable entry and where it came from (`config`, `repo-override`,
 `container`), and `jailbee net status` lists the overrides for **the repo
-whose checkout you run it from** — both host-local sections that never leave
-the machine, so they can only be read by someone who already has a shell
-there. `jailbee net status` (like its other sections) is cwd-scoped, not a
-host-wide audit: to see another repo's overrides, run it from that repo's
+whose checkout you run it from**. These are local inspection commands, not
+tracked records; remote SSH callers can also inspect them when their command
+and repo policy permits. `jailbee net status` is repo-scoped, not a host-wide
+audit: to see another repo's overrides, select that repo or run from its
 checkout. `--repo` is the wider of the two scopes; the flag itself is the
 confirmation that the change is repo-wide rather than one container.
 
@@ -615,16 +678,17 @@ for pasting over the config to promote a durable one into git; the
 overrides it just promoted can then be dropped with `jailbee net egress
 rm` now that `config.yaml` covers them.
 
-**No container can grant itself egress.** A container holds no `jailbee`
-binary and no access to the host's Incus socket, so code inside it —
-including an agent, and including the untrusted head checked out by
-`jailbee new --pr` for review — cannot reach these commands. That is the
-first question a security reviewer should ask, and the answer is
-structural, not policy: there is nothing to invoke. This is unrelated to
-the `branch_config` escalation gate, which weighs what a branch's
-*committed* autostart configuration is allowed to grant itself on
-`jailbee new`; `jailbee net egress` is the operator, at a host shell,
-typing a command.
+**Host control is not exposed by default.** Standard dev containers are not
+given access to the host's Incus API. Installing or running JailBee inside a
+container does not grant that access. This boundary assumes custom mounts,
+remote API credentials or other host-control channels have not exposed it;
+never mount the host's Incus socket into an untrusted container. Container
+code can also influence an operator or agent using host tools, so review
+requests to widen access rather than treating them as trusted instructions.
+
+The `branch_config` escalation gate is separate: it checks privilege-widening
+*committed* autostart settings during `jailbee new`. It does not authorize
+later host-side `jailbee net egress` changes.
 
 ## Egress proxy
 
@@ -635,9 +699,9 @@ user-facing behaviour. The security properties:
 
 - **The proxy is trusted infrastructure.** It sits on `jailbee-loose`, which has
   no egress ACL, so its own upstream traffic is unrestricted. Anyone who can
-  run code inside it, or change its Squid configuration, can reach anything.
-  Containers cannot: they hold no Incus access and reach the proxy only on
-  port 3128.
+  run code inside it, or change its Squid configuration, has that upstream
+  access. Standard dev containers have no host Incus access and the strict
+  service rule exposes only the proxy's port 3128, not its management plane.
 - **Identity is the source IP.** Squid decides per client address. The proxy has
   one NIC on each client bridge (`incusbr0`, and `jailbee-work` when it
   exists) so it sees each container's own address; a single leg on another
@@ -654,29 +718,32 @@ user-facing behaviour. The security properties:
   container (see the services rule below). A process with root in one strict
   container can therefore assign itself another container's address and
   inherit that repo's whole Squid allowlist, wildcards and hostname entries
-  alike. The address can be a stopped container's (it stays in the fragment for
-  up to the 60 s refresh interval) or a live one's, if the impostor wins the
-  ARP race. Repos that use wildcards should run `jailbee net migrate`: the work
+  alike. The address can be a stopped container's (it stays in the fragment
+  until a successful refresh removes it) or a live one's, if the impostor wins
+  the ARP race. Repos that use wildcards should run `jailbee net migrate`: the work
   network filters spoofed source addresses at the NIC.
 - **Always-on on the work network.** With
   [`egress_proxy_always`](config.md#egress_proxy_always) (default), every
   work-network container is a proxy client. Strict sources get their repo's and
   their own entries as rules; loose sources get an unconditional allow,
   matching the loose NIC rule. A source is in exactly one of the two at a time,
-  and the mode switch moves it. If a loose-to-strict switch's proxy-rule sync fails,
-  the container stays in the open proxy scope until the next 60 s refresh.
-- **Blast radius.** A stopped or broken proxy now fails every proxy-honouring
-  HTTP(S) client of every always-on container, Claude Code's API traffic
-  included, not only wildcard destinations. `jailbee doctor` reports it
-  (`jailbee net status` too when the proxy is stopped or a wildcard is
-  configured) and `jailbee apply` repairs it; starting or restarting an
-  always-on container also restarts a stopped proxy. The environment is
-  deliberately not cleared on failure: an always-on container whose proxy
-  cannot be found, or whose network mode is unknown, keeps its variables.
-- **Proxy-bypassing tools fail closed.** The environment variables are advice
-  (set on every always-on container even without wildcards); the NIC ACL is the
-  enforcement. A tool that ignores them connects directly and is rejected
-  unless the destination is in the ACL.
+  and a successful mode sync moves it. If a loose-to-strict switch's proxy-rule
+  sync fails, stale loose access can remain until a later successful sync.
+  The refresh timer normally retries every 60 seconds; that is an attempt
+  interval, not a bound on exposure. Verify proxy state as well as NIC mode.
+- **Blast radius.** A stopped or broken proxy can break HTTP(S) traffic
+  directed through it across all always-on containers, not just wildcard
+  destinations. `jailbee doctor` reports proxy problems (`jailbee net status`
+  also reports a stopped proxy or configured wildcards). `jailbee apply`
+  attempts repair, and container start/restart attempts to start a stopped
+  proxy, but proxy synchronization failures warn rather than abort startup.
+  Existing proxy variables are retained on failure; an initial setup failure
+  can leave a new container without them. The strict NIC ACL still applies.
+- **Direct traffic remains ACL-filtered in strict mode.** Proxy environment
+  variables are advice, normally configured for always-on containers even
+  without wildcards. A tool that ignores them connects directly and is
+  rejected unless its destination is allowed by the ACL. Loose mode does not
+  provide that default-deny boundary.
 - **The services rule is host-wide.** Reaching the proxy needs a rule in the
   host-global `jailbee-services` ACL, so every strict container on the host can
   open a connection to port 3128. Squid then denies any source that no repo
@@ -698,10 +765,12 @@ loose-created flow (for example, a long-lived TCP session). Do not treat
 strict as immediate session revocation; stop the workload or container when
 immediate termination is required. See [work-network activation](installation.md#optional-work-network-activation-and-rollback).
 
-- Linux host only
-- One IDEA at a time across containers (shared JetBrains profile). Chrome,
-  Firefox, Gradle and Maven run per-container from their own pool slot
-  instead, seeded from the most recent slot — see `jailbee pool ls` /
-  `jailbee pool prune` to inspect or clean (`jailbee chrome-pool ls/prune`
-  is a deprecated alias scoped to Chrome).
+- Incus requires a Linux runtime; [macOS support](macos.md) delegates to a
+  Linux VM rather than running native macOS containers.
+- Default JetBrains mounts share IDE state across containers; avoid concurrent
+  IDEA instances using that shared profile. Chrome and Firefox use separate
+  pool slots. Gradle and Maven are pooled by default but can be configured as
+  shared caches; hardlinked pool content is not a security boundary. See
+  `jailbee pool ls` / `jailbee pool prune` to inspect or clean
+  (`jailbee chrome-pool ls/prune` is a deprecated alias scoped to Chrome).
 - NVIDIA GPU passthrough requires extra setup (not covered by `jailbee init`)
