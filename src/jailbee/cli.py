@@ -5378,9 +5378,7 @@ def destroy(
                 # Vanished from the listing between resolve and here — there
                 # is nothing to probe, but silence is never safety: say so
                 # explicitly rather than skipping the guard outright.
-                if not confirm_destroy_risk(
-                    [short_name(cfg, resolved)], [], question=question
-                ):
+                if not confirm_destroy_risk([short_name(cfg, resolved)], [], question=question):
                     raise typer.Abort()
             else:
                 from jailbee.git import get_head_sha
