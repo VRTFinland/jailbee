@@ -2111,9 +2111,10 @@ new:
 | `background` | bool | `false` | Run `jailbee new` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. An explicit `--attach shell`/`--attach tmux`, `--tmux`, or `--shell` also forces foreground, since a detached run has no terminal to attach; `--attach none` / `--no-attach` don't, and combine fine with `--background`. |
 | `submodules` | bool | `true` | Initialize the superproject's git submodules (recursively, offline from the host bind mount) in the new container. Set `false` to skip. |
 
-When creating a missing branch, `--base X` uses the local branch if present,
-otherwise its upstream-tracking copy. If the requested container branch already
-exists, that branch remains the source and `--base` records the comparison base.
+When creating a missing branch, the `BASE` positional (`jailbee new NAME BASE`)
+uses the local branch if present, otherwise its upstream-tracking copy. If the
+requested container branch already exists, that branch remains the source and
+`BASE` records the comparison base.
 `--pr N` performs its own fetch and is unaffected by this source preference.
 `background` is independent of source selection; submodule initialization
 applies to clone mode, not a full-repo mount.
