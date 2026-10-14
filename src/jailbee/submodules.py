@@ -341,13 +341,76 @@ class SubBranchPlacement:
     new_oid: str
 
 
+def _gitmodules_url_at(run: GitRun, repo_dir: str, commit: str, name: str) -> str | None:
+    ok, out = run(
+        repo_dir,
+        ["config", "--blob", f"{commit}:.gitmodules", "--get", f"submodule.{name}.url"],
+    )
+    return (out.strip() or None) if ok else None
+
+
+@dataclass(frozen=True)
+class CommitSubmodule:
+    """One submodule as a superproject commit records it, located on the host."""
+
+    path: str
+    name: str
+    gitlink: str | None
+    url: str | None
+    repo: HostSubRepo | None
+
+
+def host_submodules_at(repo_root: Path, commit: str) -> list[CommitSubmodule]:
+    """Every submodule `commit` records, recursively, parents before children.
+
+    Reads `.gitmodules` and gitlinks from the commit's trees, never from the
+    working tree — the host may be on a branch without these submodules.
+    A child level is read from the parent's gitdir at the parent's gitlink,
+    so it is only descended into when that sub-repo is on the host.
+    """
+    out: list[CommitSubmodule] = []
+
+    def walk(level: HostSubRepo, at: str) -> None:
+        root = str(level.root)
+        for name, leaf in _gitmodules_paths_at(git.run_capture, root, at):
+            sha = _gitlink_at(git.run_capture, root, at, leaf)
+            repo = locate_host_subrepo(level, leaf, name)
+            path = posixpath.join(level.path, leaf) if level.path else leaf
+            url = _gitmodules_url_at(git.run_capture, root, at, name)
+            out.append(CommitSubmodule(path, name, sha, url, repo))
+            if repo is not None and sha is not None:
+                walk(repo, sha)
+
+    walk(superproject_subrepo(repo_root), commit)
+    return out
+
+
+def _detach_worktreeless_head(repo: HostSubRepo) -> None:
+    """Detach a gitdir-only sub-repo's HEAD at its current commit.
+
+    With no worktree there is no index or tree a moved branch could desync,
+    but `git.place_branch` still refuses to move the branch HEAD names.
+    Detaching first lets placement proceed; the next `submodule update`
+    checks out the gitlink detached anyway.
+    """
+    root = str(repo.root)
+    on_branch, _ = git.run_capture(root, ["symbolic-ref", "-q", "HEAD"])
+    if not on_branch:
+        return
+    ok, sha = git.run_capture(root, ["rev-parse", "--verify", "-q", "HEAD"])
+    if ok and sha.strip():
+        git.run_capture(root, ["update-ref", "--no-deref", "HEAD", sha.strip()])
+
+
 def place_branches_from_commit(
     repo_root: Path, commit: str, branch: str, *, force: bool = False
 ) -> list[SubBranchPlacement]:
     """Point every submodule's `refs/heads/<branch>` at the gitlink `commit` records.
 
-    Ref writes only: no submodule HEAD, index or working tree is touched. The
-    guarantee is about **both** repos, and each half is load-bearing:
+    Ref writes only for checked-out sub-repos: their HEAD, index and working
+    tree are untouched. A gitdir-only sub-repo's symbolic HEAD is detached at
+    its current commit before moving the branch it named. The guarantee is
+    about **both** repos, and each half is load-bearing:
 
     * *The superproject* need not be checked out on `branch`, or on anything —
       the gitlinks come from `commit`'s trees (`_gitlink_at`) and `.gitmodules`
@@ -373,22 +436,16 @@ def place_branches_from_commit(
     "detached".
     """
     out: list[SubBranchPlacement] = []
-
-    def walk(repo_dir: Path, at_commit: str, prefix: str) -> None:
-        for _name, path in _gitmodules_paths_at(git.run_capture, str(repo_dir), at_commit):
-            display = f"{prefix}{path}"
-            sub_dir = repo_dir / path
-            sha = _gitlink_at(git.run_capture, str(repo_dir), at_commit, path)
-            if sha is None:
-                out.append(SubBranchPlacement(display, "failed", None, ""))
-                continue
-            if not (sub_dir / ".git").exists():
-                out.append(SubBranchPlacement(display, "unreachable", None, sha))
-                continue
-            out.append(_place_ref(sub_dir, display, branch, sha, force=force))
-            walk(sub_dir, sha, f"{display}/")
-
-    walk(Path(repo_root), commit, "")
+    for sub in host_submodules_at(Path(repo_root), commit):
+        if sub.gitlink is None:
+            out.append(SubBranchPlacement(sub.path, "failed", None, ""))
+            continue
+        if sub.repo is None:
+            out.append(SubBranchPlacement(sub.path, "unreachable", None, sub.gitlink))
+            continue
+        if sub.repo.worktree is None:
+            _detach_worktreeless_head(sub.repo)
+        out.append(_place_ref(sub.repo.root, sub.path, branch, sub.gitlink, force=force))
     return out
 
 

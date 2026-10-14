@@ -2188,7 +2188,10 @@ def test_place_branches_from_commit_refuses_a_subrepo_on_the_target_branch(mocke
     # that up the way a checkout would.
     assert [(p.path, p.status, p.old_oid) for p in result] == [("sub", "checked-out", "oldsha")]
     update.assert_not_called()
-    run_capture.assert_not_called()
+    run_capture.assert_called_once_with(
+        str(tmp_path),
+        ["config", "--blob", "topsha:.gitmodules", "--get", "submodule.sub.url"],
+    )
 
 
 def test_place_branches_from_commit_refuses_a_checked_out_subrepo_under_force(mocker, tmp_path):

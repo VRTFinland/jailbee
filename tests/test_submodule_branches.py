@@ -165,6 +165,41 @@ def test_nested_default_name_lookup_without_declaration_commit(rig: Rig) -> None
     assert inner.gitdir == rig.top / ".git" / "modules" / "sub" / "modules" / "inner-custom"
 
 
+def test_host_submodules_at_reads_the_commit_not_the_checkout(rig: Rig) -> None:
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+
+    subs = submodules.host_submodules_at(rig.top, "dev")
+
+    assert [s.path for s in subs] == ["sub", "sub/inner"]
+    assert subs[0].gitlink == _git(rig.top, "rev-parse", "dev:sub")
+    assert subs[0].url == str(rig.subup)
+    assert subs[0].repo is not None and subs[0].repo.worktree is None
+    assert submodules.host_submodules_at(rig.top, "main") == []
+
+
+def test_place_branches_places_a_gitdir_only_submodule(rig: Rig) -> None:
+    gitdir = rig.top / ".git" / "modules" / "sub"
+    old = _git(rig.top / "sub", "rev-parse", "HEAD")
+    (rig.subup / "d" / "f").write_text("2\n")
+    _git(rig.subup, "commit", "-qam", "s2")
+    _git(rig.top / "sub", "fetch", "-q", "origin")
+    new = _git(rig.top / "sub", "rev-parse", "origin/main")
+    _git(rig.top / "sub", "checkout", "-q", "-B", "dev", new)
+    _git(rig.top, "add", "sub")
+    _git(rig.top, "commit", "-q", "-m", "bump sub")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    _git(gitdir, "update-ref", "refs/heads/dev", old)
+
+    out = submodules.place_branches_from_commit(rig.top, "dev", "dev")
+
+    by_path = {placement.path: placement for placement in out}
+    assert by_path["sub"].status == "fast-forwarded"
+    assert _git(gitdir, "rev-parse", "refs/heads/dev") == new
+    assert subprocess.run(
+        ["git", "symbolic-ref", "-q", "HEAD"], cwd=gitdir, check=False
+    ).returncode != 0
+
+
 def test_host_subrepo_exists_is_true_for_a_gitdir_only_submodule(rig: Rig) -> None:
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
     assert submodules.host_subrepo_exists(rig.top, "sub")
