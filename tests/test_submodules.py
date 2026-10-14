@@ -938,16 +938,23 @@ def test_transport_to_container_relay_created_subrepo_checks_out_source_namespac
 
 def test_prune_host_submodule_refs_deletes_each(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
-    mocker.patch(
-        "jailbee.submodules.git.list_refs",
-        return_value=["refs/jailbee-sub/feat-x/lib/HEAD"],
+    root = tmp_path / "lib"
+    ref = "refs/jailbee-sub/feat-x/lib/HEAD"
+    mocker.patch("jailbee.submodules.all_host_subrepo_roots", return_value=[root])
+    run_capture = mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        side_effect=[(True, f"{ref}\n"), (True, "")],
     )
-    delete = mocker.patch("jailbee.submodules.git.delete_ref")
 
     submodules.prune_host_submodule_refs(cfg, "feat-x")
 
-    delete.assert_called_once_with(tmp_path / "lib", "refs/jailbee-sub/feat-x/lib/HEAD")
+    assert run_capture.call_args_list == [
+        mocker.call(
+            str(root),
+            ["for-each-ref", "--format=%(refname)", "refs/jailbee-sub/feat-x/"],
+        ),
+        mocker.call(str(root), ["update-ref", "-d", ref]),
+    ]
 
 
 def test_container_runner_success_returns_stdout():
