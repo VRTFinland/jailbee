@@ -34,7 +34,7 @@ Install the SSH extra, authorize the Mac's public key (paste the contents of
 the Mac's `~/.ssh/id_ed25519.pub` when asked) and start the service:
 
 ```bash
-uv tool install 'jailbee[ssh]'
+uv tool install --force 'jailbee[ssh]'
 jb remote ssh key add
 jb remote ssh enable
 ```
@@ -50,9 +50,11 @@ remote:
     default_entrypoint: dashboard  # optional: a bare `ssh -t jb` opens the dashboard
 ```
 
-`files` is read at start-up, so run `jb remote ssh restart` after changing
-it; `gui` and `default_entrypoint` take effect on the next connection. Then
-start the display:
+Enabling `files` requires `jb remote ssh restart` so the service registers
+file-transfer support. Disabling it blocks new file-transfer channels without
+a restart, but does not close existing ones. Restart after changing it to
+apply the setting consistently. `gui` and `default_entrypoint` are reloaded for
+new requests. Then start the display:
 
 ```bash
 jb display up
@@ -74,18 +76,21 @@ Host jb
   User jailbee
   ProxyJump you@devbox
   HostKeyAlias jailbee-devbox
-  LocalForward 3389 127.0.0.1:13389
+  LocalForward 127.0.0.1:3389 127.0.0.1:13389
 ```
 
 - `ProxyJump` connects to the host's `sshd` first and from there to the
   JailBee service on the host's loopback.
 - `HostKeyAlias` keeps the service's host key apart from anything else you
   reach as `127.0.0.1:8022`.
-- `LocalForward` carries the shared display to the Mac's `localhost:3389` for
-  as long as any `ssh jb` session is open. A second session opened alongside
-  prints `bind ... Address already in use` for the forward; that is harmless,
-  the first session's forward is still there. The destination must be written
-  `127.0.0.1`, not `localhost` (see [Remote GUI](remote-gui.md#troubleshooting)).
+- `LocalForward` binds the display tunnel to the Mac's `127.0.0.1:3389` and
+  keeps it open for the lifetime of the SSH connection that created it.
+  Another session may warn `bind ... Address already in use`; if your first
+  session owns that port, its tunnel still works. Otherwise choose a free
+  local port and use that port in Windows App too. With
+  `ExitOnForwardFailure yes`, a duplicate forward can prevent the second SSH
+  connection. The destination must be written `127.0.0.1`, not `localhost`
+  (see [Remote GUI](remote-gui.md#troubleshooting)).
 
 `ssh jb help` now lists what the service offers.
 
@@ -94,7 +99,7 @@ Host jb
 Install Windows App (formerly Microsoft Remote Desktop) from the App Store,
 then:
 
-1. **+** → **Add PC**. PC name: `localhost:3389`.
+1. **+** → **Add PC**. PC name: `127.0.0.1:3389`.
 2. Leave the credentials at *Ask when required*. If asked, any user name and
    password will do — the display checks none (see
    [Security](security.md#remote-gui)).
@@ -122,11 +127,12 @@ brew trust --tap J-x-Z/tap
 brew install cocoa-way waypipe-darwin
 ```
 
-The tap is a single developer's repository, not reviewed by Homebrew, and
-`brew trust` lets its formulae run as you whenever Homebrew loads them,
-including on every later `brew upgrade`. Homebrew can also trust single
-formulae (`brew trust --formula J-x-Z/tap/cocoa-way`); building both from
-source at a pinned tag avoids the tap altogether.
+The tap is a third-party repository, not part of Homebrew's official formulae.
+`brew trust` permits Homebrew to load its Ruby code as your user, including
+updated formulae in later upgrades; it is not a security review or a version
+pin. Homebrew can also trust individual formulae (`brew trust --formula
+J-x-Z/tap/cocoa-way`, and likewise for `waypipe-darwin`). Building both from
+reviewed, pinned source avoids the tap but still runs third-party build code.
 
 Start the compositor in rootless mode, so every app window becomes a macOS
 window of its own:
@@ -139,13 +145,17 @@ Without the variable, every app opens inside a single Cocoa-Way window. The
 variable is read by Cocoa-Way 2.0.3 but not documented upstream, so check it
 after an upgrade.
 
-Cocoa-Way does not export its socket to your terminal, and a plain
-`waypipe ssh` fails with `WAYLAND_DISPLAY is not set`. Add this to
-`~/.zshrc`; it finds the socket Cocoa-Way creates under `$TMPDIR/cocoa-way/`:
+Cocoa-Way does not export its socket to your terminal, so a plain
+`waypipe ssh` can fail with `WAYLAND_DISPLAY is not set`. For the default
+socket location, add this to `~/.zshrc`, then open a new terminal or run
+`source ~/.zshrc`. It selects the first socket under `$TMPDIR/cocoa-way/`;
+use an explicit socket instead if you run several compositor instances or
+set a custom runtime directory:
 
 ```bash
 cwaypipe() {
-  local dir="${TMPDIR%/}/cocoa-way"
+  local dir="${TMPDIR:-/tmp}"
+  dir="${dir%/}/cocoa-way"
   local sock
   sock=$(find "$dir" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | sort | head -n1)
   [ -n "$sock" ] || { echo "Cocoa-Way is not running (no socket in $dir)" >&2; return 1; }
@@ -162,11 +172,13 @@ cwaypipe jb chrome <container> --repo PREFIX     # or one app directly
 ```
 
 With `--repo` after the command, no client `--` separator is needed. It stays
-open until the app exits. Window titles carry a `[<container>] ` prefix. The
-rest of [Native windows with waypipe](remote-gui.md#native-windows-with-waypipe)
+open until the app exits. Window titles carry the full Incus name, for example
+`[PREFIX-feat-x] `. The rest of
+[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe)
 applies unchanged, including `-o ControlMaster=no` if your ssh config shares
-connections. Cocoa-Way's repository ships a `run_waypipe.sh` doing the same
-as the function; Homebrew does not install it.
+connections. Cocoa-Way's repository also ships `run_waypipe.sh`, which handles
+additional runtime locations and display selection; the function above is
+only a minimal default-location helper.
 
 ## Setup B: a Linux VM on the Mac (Colima)
 
@@ -179,9 +191,10 @@ Mac; the git repo stays on the macOS filesystem and is shared into the VM. You
 type `jailbee` in the macOS terminal, and the builtin macOS bridge re-runs it
 inside the VM.
 
-[Colima](https://colima.run/) wraps Lima and ships an Ubuntu VM with Incus
-preinstalled, using the Apple `Virtualization.framework` backend and virtiofs
-for host-folder sharing.
+[Colima](https://colima.run/) wraps Lima. Its Incus runtime uses an Ubuntu
+guest image with Incus preinstalled. The recipe below selects Apple's
+`Virtualization.framework` backend (`vz`, requiring macOS 13 or later) and
+virtiofs for host-folder sharing.
 
 ### 1. Install the tools on macOS
 
@@ -197,10 +210,16 @@ colima start --runtime=incus --vm-type=vz --mount-type=virtiofs \
   --cpu 4 --memory 8 --disk 60
 ```
 
-This boots an Ubuntu guest (stock kernel — AppArmor, nftables, and btrfs all
-present, so strict-egress ACLs, container confinement, and copy-on-write
-`jailbee new` all work), starts the Incus daemon, and mounts your macOS `$HOME`
-into the VM read-write via virtiofs.
+For a new default Colima profile, this starts the Incus VM and shares your
+macOS home directory read-write through virtiofs. Existing profiles may have
+custom mounts or storage settings. Confirm that the repo is accessible inside
+the VM at the **same absolute path** as on the Mac.
+
+Do not infer working confinement, strict-egress filtering or copy-on-write
+from the guest OS alone. Check the guest's AppArmor and networking support,
+and inspect the Incus storage pool before relying on them. Colima's current
+Incus initialization uses ZFS for a new pool, not btrfs; existing pools may
+differ. See [Storage](storage.md) and the setup B verification checklist.
 
 ### 3. Install JailBee inside the VM once
 
@@ -208,7 +227,17 @@ into the VM read-write via virtiofs.
 jailbee mac bootstrap
 ```
 
-This installs JailBee in the VM and configures the bridge transport.
+This installs or upgrades JailBee inside the already-running VM, installing
+`uv` there if needed. It installs from JailBee's Git repository, not a pinned
+copy of the Mac's PyPI release; a version mismatch produces a warning, not an
+automatic version sync. The bridge uses `colima ssh` by default; bootstrap does
+not write or change its transport configuration.
+
+Bootstrap only installs the package. Complete the Linux-side
+[installation](installation.md) and [first-time setup](getting-started.md)
+inside the VM, including the base image and repository profiles, before
+creating a configured-repo container. Set the GPG option described below
+before setup if you do not have a signing agent inside the VM.
 
 ### 4. Use JailBee from any repo under your macOS $HOME
 
@@ -219,12 +248,18 @@ jailbee new feat/x
 jailbee shell feat-x
 ```
 
-Commands are delegated transparently via the bridge. Diagnose the bridge with
-`jailbee mac doctor` (checks that the transport is configured, the VM is running,
-JailBee is installed in the VM, and your working directory is under the shared
-mount). For non-Colima transports or custom settings, edit
+Commands are delegated via the bridge, with the Mac's working-directory path
+passed unchanged to the guest. `jailbee mac doctor` checks the transport
+executable, VM reachability, guest JailBee availability, and whether the local
+working directory is under the configured `shared_root`. It does **not** check
+that the directory is actually mounted in the VM.
+
+For non-Colima transports or custom settings, edit
 `~/.config/jailbee/macos.yaml` with keys: `transport`, `tty_flag`, `workdir_flag`,
-`shared_root`.
+`shared_root`. `shared_root` defaults to the Mac's home directory; changing it
+neither creates a VM mount nor translates paths. The default transport requests
+a PTY with `tty_flag: ['-t']`; if your transport version rejects that flag,
+adjust it (or set `tty_flag: []`) and verify interactive commands separately.
 
 ### 5. GUI apps: go through the SSH service
 
@@ -254,50 +289,61 @@ $USER` there), and which of the two routes in step 2 works, are open.
 
 ### GPG signing
 
-There is no gpg-agent socket to bridge from macOS into the VM, so turn GPG
-signing off in `.jailbee/config.yaml` (see [config reference](config.md)):
+The macOS bridge does not forward the Mac's gpg-agent socket into the VM.
+Unless you arrange a signing agent inside the VM, disable JailBee's automatic
+GPG integration in `.jailbee/config.yaml` (see [config reference](config.md)):
 
 ```yaml
 gpg:
   enabled: false
 ```
 
-If you do not use the shared display at all, you can likewise set
+This disables the automatic GPG directory/socket mounts, not Git's signing
+settings or manually configured mounts. If the Git configuration visible in
+the container enables `commit.gpgsign`, disable signing separately or provide
+a working signing setup.
+
+If you do not use GUI apps through either RDP or waypipe, you can also set
 `jetbrains.enabled: false` and `browsers.chrome.enabled` /
 `browsers.firefox.enabled: false` to drop those apps from the image.
 
 ### Known rough edges (setup B)
 
-These are the parts specific to the macOS-shared-folder path that need
-attention; the rest of JailBee behaves as on a native Linux host.
+These are additional checks for the macOS-shared-folder path, not guarantees
+that the rest of the VM setup is equivalent to a tested Linux host.
 
-- **uid / gid mapping across virtiofs.** virtiofs collapses file ownership to
-  a single guest user, while JailBee assumes the container user's uid equals the
-  VM user's uid (it emits `raw.idmap: uid <uid> <uid>`). `jailbee doctor` reports
-  a mismatch if this is off. You may need `shift=true` / a `raw.idmap` entry on
-  the repo disk device so files written in a container show sane ownership back
-  on macOS and vice-versa. Confirm this on your setup before relying on it.
-- **`git clone --shared` over the share.** In the default (clone) mode a
-  container clones the repo with `--shared`, so its
-  `.git/objects/info/alternates` points at the host repo's object store and
-  every git operation reads objects through the virtiofs mount for the life of
-  the container. This works but a large `.git` over virtiofs can be slow.
-  `jailbee new --mount` (bind the repo directly as the working tree) is an
-  alternative to evaluate.
-- **Performance.** Large trees (`node_modules`, build output) on virtiofs are
-  slower than a native Linux disk. Prefer keeping heavy caches on the VM's own
-  disk (JailBee's `<shared_dir>` lives in the VM, not on the share) rather than on
-  the macOS-shared path.
+- **UID/GID mapping across virtiofs.** JailBee maps the configured container
+  UID and GID to the same IDs on the VM host. `jailbee doctor` compares them
+  with the VM user's IDs and checks subordinate-ID delegation; it does not
+  validate ownership across virtiofs. Test file creation and permissions from
+  both macOS and the container. Do not assume a `shift=true` device option or
+  a different `raw.idmap` is a working remedy on your backend.
+- **`git clone --shared` over the share.** In the default clone mode, Git
+  borrows objects from the source repository through
+  `.git/objects/info/alternates`. Reads of borrowed objects cross virtiofs, and
+  the clone depends on that source object store unless dissociated. Check
+  performance and the [shared-clone cautions](git-bridge.md) on your setup.
+  `jailbee new --mount` uses the host repo directly as the working tree; it is
+  not an equivalent isolated clone and is unavailable through the restricted
+  SSH service.
+- **Performance and cache placement.** Large trees (`node_modules`, build
+  output) on virtiofs may be slower than a native Linux disk. Keep heavy caches
+  on VM-local storage. JailBee's default `shared_dir` is the guest's
+  `$XDG_DATA_HOME/jailbee/shared/<prefix>` (normally under `~/.local/share`),
+  but an explicit setting can point elsewhere. Verify the selected path is
+  not on the macOS share; configure a VM-local path if needed.
 
 ### Alternative VM hosts
 
 | Host | Notes |
 |---|---|
-| **Colima `--runtime=incus`** | Recommended above. Incus preinstalled, least setup. |
-| **Lima (vz backend)** | Same engine and kernel as Colima; install Incus yourself (`apt`, or the [zabbly](https://github.com/zabbly/incus) repo for 7.x). More control over guest tuning. |
-| **multipass** | Works (`apt install incus`), but host-folder sharing is sshfs/9p only — noticeably slower than virtiofs for I/O-heavy repos. |
-| **UTM** | Fully manual OS + Incus install; arm64 virtiofs has been flaky. Not recommended for this workflow. |
-| **Apple `container`** | Can host a persistent systemd VM (a "container machine") with an rw `--volume` mount, and its kernel has everything Incus *system* containers need — **except** AppArmor (no LSM at all), loadable modules, and btrfs/zfs (so `dir` storage only, no copy-on-write, and Incus runs unconfined). Viable if you specifically want Apple's own tool and accept the degradation, or build a custom kernel (`--kernel`) with `CONFIG_SECURITY_APPARMOR=y` / `CONFIG_BTRFS_FS=y` / `CONFIG_MODULES=y`. Requires macOS 26. No known precedent of Incus running inside it — expect to debug. |
+| **Colima `--runtime=incus`** | The experimental recipe above; supplies an Incus guest image. |
+| **Lima (vz backend)** | Configure a suitable Linux guest, install Incus, and provide same-path repo mounts. The selected image and kernel need not match Colima's. |
+| **Multipass or UTM** | Candidate Linux VM hosts, not verified JailBee recipes. Check guest kernel facilities, Incus setup, same-path folder sharing, ownership and I/O performance. |
+| **Apple `container`** | Not a verified Incus host. Do not assume its Linux container VMs provide the systemd, kernel security, networking and storage facilities needed for this setup; a custom kernel alone is not proof of compatibility. |
+
+These alternatives require their own transport configuration and end-to-end
+validation; they are not supported substitutes merely because they run Linux.
 
 ## Daily use from the Mac
 
@@ -311,7 +357,7 @@ With the `jb` entry from setup A (or B), from a macOS terminal:
 | Get a shell inside a container | `ssh -t jb shell feat-x --repo PREFIX` |
 | Open the IDE or a browser on the shared display | `ssh jb ide feat-x --repo PREFIX`, `ssh jb chrome feat-x [url] --repo PREFIX`, `ssh jb apps run APP --container feat-x --repo PREFIX` |
 | Open them as native macOS windows instead ([step 4](#4-on-the-mac-native-windows-optional)) | `cwaypipe -t jb dashboard`, or `cwaypipe jb chrome feat-x --repo PREFIX` |
-| Copy files in or out (`files: true`) | `sftp jb` (the top level lists the running containers), or `scp ./notes.md jb:/<container>/docs/` |
+| Copy files in or out (`files: true`) | `sftp jb`, or `scp ./notes.md jb:/PREFIX-feat-x/docs/` (the destination directory must exist) |
 | Copy and paste | Works between the Mac and the shared display through Windows App |
 
 `PREFIX` is the repo's `container_prefix`; the console and dashboard let you
@@ -319,12 +365,18 @@ pick it instead. `ssh jb repos` lists visible repos and `ssh jb help` lists
 allowed commands. One-shot commands without `--repo` use the only visible repo,
 or ask with `ssh -t` when there are several (without a PTY: exit 2 lists them).
 The old `ssh jb -- --repo PREFIX COMMAND` form still works; its `--` keeps
-OpenSSH from reading `--repo` as its own option. If no RDP client is connected when a GUI app is launched, the command
-prints the connection recipe and waits up to two minutes for one, so you can
-launch first and open Windows App second.
+OpenSSH from reading `--repo` as its own option. When launching onto the shared
+RDP display with no RDP client connected, the command prints the connection
+recipe and waits up to two minutes for one. Native waypipe launches do not
+need an RDP connection.
 
-The remote surface is deliberately narrower than a local terminal: host
-management commands (`apply`, `config edit`, `display up`, ...) are refused,
+File transfer lists eligible running clone-mode containers from visible repos
+by their **full Incus names**. `/PREFIX-feat-x/` maps to that container's repo
+directory, not its root filesystem. Mount-mode containers are excluded.
+
+With the default `restrict_host: true`, the remote surface is deliberately
+narrower than a local terminal: host management commands (`apply`,
+`config edit`, `display up`, ...) are refused,
 the git bridge moves refs but never the host's checked-out tree, and a
 `--mount` container cannot be entered. Run those on the host itself (setup A)
 or through the bridge (setup B). The full list is in
@@ -334,13 +386,39 @@ or through the bridge (setup B). The full list is in
 
 | Not available from the Mac | Instead |
 |---|---|
-| VS Code or JetBrains *Remote-SSH* into a container (the service offers no shell, exec channel or general port forwarding) | Run the IDE in the container: `jb ide` onto the shared display |
-| Forwarding a container's dev server port (`:3000`) to the Mac's browser | Open it in the container's own browser on the shared display: `jb chrome feat-x http://localhost:3000` |
+| VS Code or JetBrains *Remote-SSH* through the JailBee service (it routes JailBee commands, not a general-purpose shell/exec environment or arbitrary port forwards) | Run the IDE in the container through `ssh jb ide feat-x --repo PREFIX`, on RDP or via waypipe |
+| Arbitrary TCP forwarding through the JailBee SSH service | Use the container's browser, or publish the port to the Linux host and tunnel it through the host's ordinary SSH service (example below) |
 | Telling windows apart by container on the shared display | Window titles do not name the container; keep one app per container on screen, or check the address bar / project name. [Native windows](#4-on-the-mac-native-windows-optional) carry a `[<container>] ` prefix |
 | Audio, GPU acceleration | None; the display renders in software |
 | A separate screen per container | One shared screen and clipboard for every container (see [Security](security.md#remote-gui)) |
 | GPG signing with a key held on the Mac (e.g. a YubiKey) | Not bridged. In setup A, containers sign with the Linux host's gpg-agent as usual |
 | The Qt dashboard (`jb gui`) | Host only; use `ssh -t jb dashboard` |
+
+### A dev server in the Mac's browser (setup A)
+
+With the dev server listening on port 3000 inside `feat-x`, publish it to the
+Linux host's loopback, then open a tunnel through the host's ordinary `sshd`:
+
+```bash
+ssh jb port to-host 3000 feat-x --repo PREFIX
+ssh -o ExitOnForwardFailure=yes -N -L 127.0.0.1:3000:127.0.0.1:3000 you@devbox
+```
+
+Keep the second command running and open `http://127.0.0.1:3000` on the Mac.
+This is **not** a tunnel through `ssh jb`: that service's TCP forwarding is
+restricted to the shared RDP display (waypipe uses a separate Unix-socket
+forward). Both examples bind to loopback; do not switch to `0.0.0.0` unless
+you intend to expose the service. If port 3000 is occupied on the Linux host,
+choose another `--host-port` and adjust the tunnel's destination. If it is
+occupied on the Mac, change the first `3000` in `-L` and the browser URL.
+The Incus forward persists after the SSH tunnel closes; remove the TCP
+to-host device for container port 3000 when finished:
+
+```bash
+ssh jb port rm port-th-tcp-3000 feat-x --repo PREFIX
+```
+
+See the [command reference](commands.md) for the full `port` command set.
 
 ## Why not native macOS
 
