@@ -1910,9 +1910,9 @@ def test_transport_to_host_only_filters_to_one_submodule(mocker, tmp_path):
         [("submodule status --recursive", " abc lib/a heads\n def lib/b heads\n")]
     )
     (tmp_path / "lib" / "a").mkdir(parents=True)
-    (tmp_path / "lib" / "a" / ".git").write_text("")
+    (tmp_path / "lib" / "a" / ".git").mkdir()
     (tmp_path / "lib" / "b").mkdir(parents=True)
-    (tmp_path / "lib" / "b" / ".git").write_text("")
+    (tmp_path / "lib" / "b" / ".git").mkdir()
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
 
     submodules.transport_submodules_to_host(

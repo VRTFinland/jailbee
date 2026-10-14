@@ -925,16 +925,90 @@ def _container_submodule_paths(
     return paths
 
 
-def host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
-    """True when `subpath` is already a real git checkout on the host.
+@dataclass(frozen=True)
+class HostSubRepo:
+    """A host repo found by its gitdir; the worktree is optional.
 
-    Public: `jailbee submodule pr` uses this as the predicate for whether it
-    may resolve the submodule's base and remote yet. Resolving them before
-    the host has cloned the sub-repo would both misreport (the resolvers
-    fall back to `main`/`origin`) and read a sub-repo that transport has not
-    created yet.
+    `root` is the directory every `git.py` helper is run in: the worktree
+    when it is checked out, else the gitdir itself. Git accepts a gitdir as
+    the cwd for ref and object commands as long as `core.worktree` does not
+    name a missing directory — `locate_host_subrepo` guarantees that.
     """
-    return (repo_root / subpath / ".git").exists()
+
+    path: str
+    gitdir: Path
+    worktree: Path | None
+
+    @property
+    def root(self) -> Path:
+        return self.worktree if self.worktree is not None else self.gitdir
+
+
+def _gitdir_of(worktree: Path) -> Path | None:
+    """The gitdir a worktree's `.git` names (a `gitdir:` file or legacy dir)."""
+    dot_git = worktree / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    if dot_git.is_file():
+        text = dot_git.read_text().strip()
+        if text.startswith("gitdir:"):
+            return (worktree / text[len("gitdir:") :].strip()).resolve()
+    return None
+
+
+def superproject_subrepo(repo_root: Path) -> HostSubRepo:
+    """The superproject itself, as the root level of a locator walk."""
+    gitdir = _gitdir_of(repo_root) or repo_root / ".git"
+    return HostSubRepo(path="", gitdir=gitdir, worktree=repo_root)
+
+
+def locate_host_subrepo(parent: HostSubRepo, leaf: str, name: str) -> HostSubRepo | None:
+    """Find submodule `leaf` relative to `parent`, using its declared `name`."""
+    path = posixpath.join(parent.path, leaf) if parent.path else leaf
+    if parent.worktree is not None:
+        worktree = parent.worktree / leaf
+        gitdir = _gitdir_of(worktree)
+        if gitdir is not None:
+            return HostSubRepo(path=path, gitdir=gitdir, worktree=worktree)
+    candidate = parent.gitdir / "modules" / name
+    if not (candidate / "HEAD").is_file():
+        return None
+    git.run_capture(
+        str(parent.gitdir),
+        ["config", "--file", str(candidate / "config"), "--unset", "core.worktree"],
+    )
+    return HostSubRepo(path=path, gitdir=candidate, worktree=None)
+
+
+def resolve_host_subrepo(repo_root: Path, subpath: str, *, at: str = "HEAD") -> HostSubRepo | None:
+    """Locate top-relative `subpath`, descending one `.gitmodules` level at a time."""
+    level = superproject_subrepo(repo_root)
+    commit = at
+    remaining = subpath
+    while True:
+        entries = _gitmodules_paths_at(git.run_capture, str(level.root), commit)
+        for name, path in entries:
+            if path == remaining:
+                return locate_host_subrepo(level, path, name)
+            if remaining.startswith(f"{path}/"):
+                child = locate_host_subrepo(level, path, name)
+                if child is None:
+                    return None
+                level, commit, remaining = child, "HEAD", remaining[len(path) + 1 :]
+                break
+        else:
+            return locate_host_subrepo(level, remaining, remaining)
+
+
+def host_subrepo_root(repo_root: Path, subpath: str) -> Path:
+    """Located host sub-repo root, or the path for a missing sub-repo."""
+    sub = resolve_host_subrepo(repo_root, subpath)
+    return sub.root if sub is not None else Path(repo_root) / subpath
+
+
+def host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
+    """True when the host has `subpath`'s sub-repo, checked out or gitdir only."""
+    return resolve_host_subrepo(repo_root, subpath) is not None
 
 
 def _declared_submodules_at(repo_dir: Path) -> tuple[tuple[str, str], ...]:
