@@ -159,7 +159,14 @@ def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
     """
     ok, out = run(
         top_dir,
-        ["config", "--null", "-f", f"{top_dir}/.gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+        [
+            "config",
+            "--null",
+            "-f",
+            f"{top_dir}/.gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
     )
     if not ok:
         return []
@@ -197,7 +204,14 @@ def _gitmodules_paths_at(
         return _parse_gitmodules_paths(parsed)
     ok, out = run(
         repo_dir,
-        ["config", "--null", "--blob", f"{commit}:.gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+        [
+            "config",
+            "--null",
+            "--blob",
+            f"{commit}:.gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
     )
     return _parse_gitmodules_paths(out) if ok else []
 
@@ -994,7 +1008,9 @@ class WorktreeFs(Protocol):
 class HostFs:
     def uninitialized(self, path: str) -> bool:
         root = Path(path)
-        return not root.is_symlink() and (not root.exists() or root.is_dir() and not any(root.iterdir()))
+        return not root.is_symlink() and (
+            not root.exists() or (root.is_dir() and not any(root.iterdir()))
+        )
 
     def remove_file(self, path: str) -> None:
         Path(path).unlink(missing_ok=True)
@@ -1034,15 +1050,19 @@ class ContainerFs:
         return self._incus.exec(self._container, cmd, uid=self._uid)
 
     def uninitialized(self, path: str) -> bool:
-        out = self._exec([
-            "sh", "-c",
-            'if [ -L "$1" ]; then exit; fi; '
-            'if [ ! -e "$1" ]; then printf yes; '
-            'elif [ -d "$1" ]; then '
-            'entries=$(find "$1" -mindepth 1 -maxdepth 1 -print -quit) || exit 1; '
-            '[ -n "$entries" ] || printf yes; fi',
-            "sh", path,
-        ])
+        out = self._exec(
+            [
+                "sh",
+                "-c",
+                'if [ -L "$1" ]; then exit; fi; '
+                'if [ ! -e "$1" ]; then printf yes; '
+                'elif [ -d "$1" ]; then '
+                'entries=$(find "$1" -mindepth 1 -maxdepth 1 -print -quit) || exit 1; '
+                '[ -n "$entries" ] || printf yes; fi',
+                "sh",
+                path,
+            ]
+        )
         return out == "yes"
 
     def remove_file(self, path: str) -> None:
@@ -1159,7 +1179,7 @@ def _owned_prune_tree(
     for nested in sorted(gitlinks_at(run, sub, "HEAD")):
         if not _has_own_worktree(run, f"{sub}/{nested}"):
             # Only an absent or genuinely empty child is safe to skip after the move.
-            if before_move or fs is not None and fs.uninitialized(f"{sub}/{nested}"):
+            if before_move or (fs is not None and fs.uninitialized(f"{sub}/{nested}")):
                 continue
         if not _owned_prune_tree(run, sub, nested, before_move=before_move, fs=fs):
             return False
@@ -1359,9 +1379,11 @@ def _safe_subrepo_target(parent: HostSubRepo, leaf: str, name: str) -> Path:
         gitdir = _gitdir_of(worktree)
         if gitdir is not None and not (
             gitdir.resolve().is_relative_to(modules)
-            or gitdir.resolve() == (worktree / ".git").absolute() and (worktree / ".git").is_dir()
+            or (gitdir.resolve() == (worktree / ".git").absolute() and (worktree / ".git").is_dir())
         ):
-            raise SubmoduleError(f"Submodule path '{leaf}' gitdir resolves outside the host repository")
+            raise SubmoduleError(
+                f"Submodule path '{leaf}' gitdir resolves outside the host repository"
+            )
     return candidate
 
 
@@ -1756,7 +1778,9 @@ def transport_submodules_to_host(
         candidate = _safe_subrepo_target(parent, leaf, name)
         worktree = parent.worktree / leaf if parent.worktree is not None else None
         existing_gitdir = _gitdir_of(worktree) if worktree is not None else None
-        projected[path] = HostSubRepo(path, existing_gitdir or candidate, worktree if existing_gitdir else None)
+        projected[path] = HostSubRepo(
+            path, existing_gitdir or candidate, worktree if existing_gitdir else None
+        )
         planned.append((path, parent_path, leaf, name))
     for path, parent_path, leaf, name in planned:
         # A restricted session may have skipped a new ancestor.
@@ -1819,8 +1843,9 @@ def transport_submodules_to_host(
                         str(sub.root), ["symbolic-ref", "refs/remotes/origin/HEAD", default]
                     )
                     if not ok:
-                        raise SubmoduleError(f"Submodule '{path}': could not preserve upstream default ({error})")
-
+                        raise SubmoduleError(
+                            f"Submodule '{path}': could not preserve upstream default ({error})"
+                        )
 
     return {path: repo for path, repo in located.items() if path}
 
@@ -1904,7 +1929,8 @@ def transport_submodules_to_container(
     given explicitly.
 
     For a submodule the target container has no repo for yet, creates one
-    first (mirror of `transport_submodules_to_host`'s gitdir initialization) and checks out the pushed tip: `git receive-pack` needs the repo
+    first (mirror of `transport_submodules_to_host`'s gitdir initialization)
+    and checks out the pushed tip: `git receive-pack` needs the repo
     to exist, and the later `submodule update --init` needs a current
     revision in it — an unborn HEAD fails with "Unable to find current
     revision in submodule path". The checkout target is always the ref that
@@ -1953,10 +1979,18 @@ def transport_submodules_to_container(
             missing = [path for path in (paths or []) if path not in host_repos]
             if missing:
                 raise SubmoduleError(
-                    f"Submodules {', '.join(missing)} were not brought onto the host; cannot relay them."
+                    f"Submodules {', '.join(missing)} were not brought onto the host; "
+                    "cannot relay them."
                 )
         entries = [
-            (path, host_repos[path].root if host_repos is not None else host_subrepo_root(repo_root, path), None, None)
+            (
+                path,
+                host_repos[path].root
+                if host_repos is not None
+                else host_subrepo_root(repo_root, path),
+                None,
+                None,
+            )
             for path in (paths or [])
         ]
     for path, host_root, gitlink, declared_url in entries:

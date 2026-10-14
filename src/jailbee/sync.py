@@ -3070,7 +3070,9 @@ def merge_container_into_container(
         host_repos = submodules.transport_submodules_to_host(
             cfg, incus, source_full, source_short, repo_dir=source_repo_dir
         )
-        sub_paths = submodules._container_submodule_paths(incus, source_full, source_repo_dir, uid=uid)
+        sub_paths = submodules._container_submodule_paths(
+            incus, source_full, source_repo_dir, uid=uid
+        )
         if sub_paths:
             submodules.transport_submodules_to_container(
                 cfg,

@@ -699,7 +699,9 @@ def test_pull_fetches_existing_gitdir_without_rewriting_origin(rig, tmp_path, lo
         ctr / "sub", "rev-parse", "HEAD"
     )
     assert _git(gitdir, "remote", "get-url", "origin") == "preserved"
-    assert _git(gitdir, "symbolic-ref", "refs/remotes/origin/HEAD") == "refs/remotes/origin/preserved"
+    assert (
+        _git(gitdir, "symbolic-ref", "refs/remotes/origin/HEAD") == "refs/remotes/origin/preserved"
+    )
     assert not (rig.top / "sub").exists()
     assert not (gitdir / "modules/sub").exists()
 
@@ -1106,14 +1108,32 @@ def test_pull_rejects_committed_unsafe_name_before_any_host_writes(
     ctr = _container_clone(tmp_path, rig, "dev")
     _git(ctr, "submodule", "update", "-q", "--init", "--recursive")
     _git(ctr, "submodule", "add", "-q", "--name", "normal", str(rig.inup), "extra")
-    _git(ctr, "config", "-f", ".gitmodules", "--rename-section", "submodule.normal", f"submodule.{name}")
+    _git(
+        ctr,
+        "config",
+        "-f",
+        ".gitmodules",
+        "--rename-section",
+        "submodule.normal",
+        f"submodule.{name}",
+    )
     _git(ctr, "commit", "-qam", "unsafe committed name")
-    _git(ctr, "config", "-f", ".gitmodules", "--rename-section", f"submodule.{name}", "submodule.normal")
+    _git(
+        ctr,
+        "config",
+        "-f",
+        ".gitmodules",
+        "--rename-section",
+        f"submodule.{name}",
+        "submodule.normal",
+    )
     before = sorted(str(p) for p in rig.top.rglob("*"))
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
     init = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     with pytest.raises(submodules.SubmoduleError, match="unsafe submodule"):
-        submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "c", "c", repo_dir=str(ctr))
+        submodules.transport_submodules_to_host(
+            _transport_cfg(rig), LocalIncus(), "c", "c", repo_dir=str(ctr)
+        )
     fetch.assert_not_called()
     init.assert_not_called()
     assert sorted(str(p) for p in rig.top.rglob("*")) == before
@@ -1147,12 +1167,20 @@ def test_relay_retains_nested_custom_container_roots_without_host_declarations(
     _git(ctr, "submodule", "update", "-q", "--init", "--recursive")
     _git(ctr, "commit", "-qam", "new parent")
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
-    roots = submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "c", source, repo_dir=str(ctr))
+    roots = submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "c", source, repo_dir=str(ctr)
+    )
     target = tmp_path / "target"
     _git(tmp_path, "init", "-q", str(target))
     submodules.transport_submodules_to_container(
-        _transport_cfg(rig), LocalIncus(), "target", repo_dir=str(target),
-        source_ns=source, mode="relay", paths=list(roots), host_repos=roots,
+        _transport_cfg(rig),
+        LocalIncus(),
+        "target",
+        repo_dir=str(target),
+        source_ns=source,
+        mode="relay",
+        paths=list(roots),
+        host_repos=roots,
     )
     for path in ("new-parent", "new-parent/inner"):
         assert _git(target / path, "rev-parse", "HEAD") == _git(ctr / path, "rev-parse", "HEAD")
@@ -1198,14 +1226,20 @@ def test_new_pull_preserves_container_upstream_default_for_pr_offline(rig, tmp_p
     _git(ctr, "submodule", "add", "-q", "--name", "new-custom", str(rig.inup), "extra")
     _git(ctr, "commit", "-qam", "new module")
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
-    roots = submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "c", "c1", repo_dir=str(ctr), only="extra")
+    roots = submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "c", "c1", repo_dir=str(ctr), only="extra"
+    )
     root = roots["extra"].root
     assert _git(root, "symbolic-ref", "refs/remotes/origin/HEAD") == "refs/remotes/origin/trunk"
-    assert submodule_pr.resolve_base_branch(rig.top, "extra", override=None, host_root=root) == "trunk"
+    assert (
+        submodule_pr.resolve_base_branch(rig.top, "extra", override=None, host_root=root) == "trunk"
+    )
 
 
 @pytest.mark.parametrize("target", ["modules", "worktree"])
-def test_pull_rejects_symlink_escape_before_fetch_or_init(rig, tmp_path, local_urls, mocker, target):
+def test_pull_rejects_symlink_escape_before_fetch_or_init(
+    rig, tmp_path, local_urls, mocker, target
+):
     ctr = _container_clone(tmp_path, rig, "dev")
     _git(ctr, "submodule", "add", "-q", "--name", "new-custom", str(rig.inup), "extra")
     _git(ctr, "commit", "-qam", "new module")
@@ -1216,7 +1250,9 @@ def test_pull_rejects_symlink_escape_before_fetch_or_init(rig, tmp_path, local_u
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
     init = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     with pytest.raises(submodules.SubmoduleError, match="outside"):
-        submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "c", "c1", repo_dir=str(ctr))
+        submodules.transport_submodules_to_host(
+            _transport_cfg(rig), LocalIncus(), "c", "c1", repo_dir=str(ctr)
+        )
     fetch.assert_not_called()
     init.assert_not_called()
     assert list(outside.iterdir()) == []
@@ -1225,14 +1261,26 @@ def test_pull_rejects_symlink_escape_before_fetch_or_init(rig, tmp_path, local_u
 @pytest.mark.parametrize("reader", ["worktree", "commit", "strict", "container"])
 @pytest.mark.parametrize("name", ["custom name", "custom=name"])
 def test_declaration_readers_share_unambiguous_framing(rig, reader, name):
-    _git(rig.top, "config", "-f", ".gitmodules", "--rename-section", "submodule.sub", f"submodule.{name}")
+    _git(
+        rig.top,
+        "config",
+        "-f",
+        ".gitmodules",
+        "--rename-section",
+        "submodule.sub",
+        f"submodule.{name}",
+    )
     _git(rig.top, "commit", "-qam", "unusual name")
     if reader == "worktree":
         entries = submodules._gitmodules_paths(_host_run, str(rig.top))
     elif reader == "container":
-        entries = submodules._list_gitmodules(LocalIncus(), "c", str(rig.top), uid=None, at_head=True)
+        entries = submodules._list_gitmodules(
+            LocalIncus(), "c", str(rig.top), uid=None, at_head=True
+        )
     else:
-        entries = submodules._gitmodules_paths_at(_host_run, str(rig.top), "HEAD", strict=reader == "strict")
+        entries = submodules._gitmodules_paths_at(
+            _host_run, str(rig.top), "HEAD", strict=reader == "strict"
+        )
     assert entries == [(name, "sub")]
 
 

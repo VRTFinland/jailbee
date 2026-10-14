@@ -287,7 +287,10 @@ def test_init_forces_checkout_past_update_none():
     incus = MagicMock()
     incus.exec.side_effect = _exec_router(
         [
-            ("config -f /home/dev/repo/.gitmodules --null --get-regexp", "submodule.lib.path\nlib\0"),
+            (
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
+            ),
             ("config -f /home/dev/repo/lib/.gitmodules --null --get-regexp", IncusError("none")),
         ]
     )
@@ -2458,7 +2461,9 @@ def test_transport_to_container_reports_enumeration_errors_before_writes(mocker,
 def test_container_fs_skips_only_confirmed_uninitialized_child(output):
     incus = MagicMock()
     incus.exec.return_value = output
-    assert submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner") is (output == "yes")
+    assert submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner") is (
+        output == "yes"
+    )
 
 
 def test_container_fs_uninitialized_check_surfaces_failure():
@@ -2473,8 +2478,14 @@ def test_relay_missing_authoritative_repo_refuses_before_any_target_write(mocker
     incus = MagicMock()
     with pytest.raises(submodules.SubmoduleError, match="not brought onto the host"):
         submodules.transport_submodules_to_container(
-            _cfg_repo(tmp_path), incus, "target", repo_dir="/repo", mode="relay",
-            source_ns="host", paths=["new"], host_repos={},
+            _cfg_repo(tmp_path),
+            incus,
+            "target",
+            repo_dir="/repo",
+            mode="relay",
+            source_ns="host",
+            paths=["new"],
+            host_repos={},
         )
     incus.exec.assert_not_called()
     push.assert_not_called()

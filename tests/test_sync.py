@@ -8104,9 +8104,11 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     call_order: list[str] = []
     roots = {"sub": sync.submodules.HostSubRepo("sub", tmp_path / ".git/modules/custom", None)}
+
     def fetch_submodules(*args, **kwargs):
         call_order.append("to_host")
         return roots
+
     to_host.side_effect = fetch_submodules
     to_container.side_effect = lambda *a, **k: call_order.append("to_container")
     push = mocker.patch(
@@ -9265,19 +9267,28 @@ def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
 
 def test_relay_surfaces_unsafe_submodule_as_sync_error(mocker, make_cfg, tmp_path):
     cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
-    mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+    mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host",
+        side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+    )
     with pytest.raises(sync.SyncError, match="unsafe submodule"):
         sync.merge_container_into_container(cfg, incus, "host", "c2")
 
 
 @pytest.mark.parametrize("command", ["fetch", "pull"])
 def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp_path, command):
-    mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+    mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host",
+        side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+    )
     with pytest.raises(sync.SyncError, match="unsafe submodule"):
         if command == "fetch":
             cfg = make_cfg(tmp_path)
             incus, _ = _sync_refs_setup(mocker, cfg)
-            mocker.patch("jailbee.submodules.transport_submodules_to_host", side_effect=sync.submodules.SubmoduleError("unsafe submodule name"))
+            mocker.patch(
+                "jailbee.submodules.transport_submodules_to_host",
+                side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+            )
             sync.sync_refs_from_container(cfg, incus, "feat-foo")
         else:
             _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
