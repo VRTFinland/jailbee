@@ -396,10 +396,10 @@ container to merge into instead of quietly merging into the host.
   - `-b <branch>` — read this branch from the source container (only valid with
     one source). **Not submodule-safe:** the submodule transport enumerates the
     source's *checked-out* state, so a submodule that exists only on `<branch>`
-    (or a gitlink no local sub-repo branch reaches) never travels, and the
-    target's `submodule update` fails *after* the merge commit is written. For
-    a repo without submodules it is unaffected; otherwise check the branch out
-    in the container first and merge without `-b`.
+    (or a gitlink no local sub-repo branch reaches) may not travel, and the
+    target's `submodule update` can fail *after* the merge commit is written.
+    For a repo without submodules it is unaffected; otherwise check the branch
+    out in the container first and merge without `-b`.
   - `--plain` — transport the refs only; run no merge. The summary then says
     "transported", not "merged" — `--plain` is not a kind of merge.
   - `--ff` / `--no-ff` — the merge fast-forwards when the target is on the
@@ -514,7 +514,9 @@ scripting.
   the whole tree back to `master` is one command; `--submodules-only` keeps the
   superproject where it is. A container's branch is its identity, so BRANCH
   never switches it there, and `--submodules-only` combined with `--container`
-  is rejected (exit 2). No `-c` short form: `-c` is `--config` on every jailbee
+  is rejected (exit 2). `jailbee branch <b>` removes submodules `<b>` lacks
+  (refuses if they have local changes) and restores them on return. No `-c`
+  short form: `-c` is `--config` on every jailbee
   command. `jailbee submodule checkout` is a hidden alias kept for
   compatibility; it prints a pointer to `jailbee branch`.
 

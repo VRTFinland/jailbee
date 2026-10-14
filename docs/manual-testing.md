@@ -2922,6 +2922,52 @@ jailbee destroy feat-new-submod --force
 git reset --hard HEAD~1   # drop the local "add libs/hello submodule" commit
 ```
 
+## Branch-only submodule smoke test
+
+Needs a disposable checkout and a real container. The host's `main` starts
+without submodules; `dev` adds `libs/hello`.
+
+```bash
+cd ~/SampleApp
+git checkout main
+git status --porcelain             # must be clean
+jailbee new main --name branch-smoke
+
+git checkout -b dev
+git submodule add https://github.com/octocat/Hello-World libs/hello
+git commit -m "add hello"
+jailbee branch main                  # remove libs/hello, retaining its gitdir
+jailbee git push branch-smoke --from dev --from-local --plain
+# Push from host main while the container receives dev and its submodule objects.
+jailbee exec branch-smoke -- git checkout dev
+jailbee exec branch-smoke -- git -C libs/hello log -1  # transported commit is available
+jailbee branch dev                  # restore the host's dev submodule checkout
+
+# From the container's superproject root, add a sibling submodule, then commit.
+jailbee exec branch-smoke -- git submodule add https://github.com/octocat/Spoon-Knife libs/spoon
+jailbee exec branch-smoke -- git commit -m "add spoon"
+git checkout main
+jailbee git pull branch-smoke --into dev  # host stays on main; populate gitdir, no checkout
+test -d .git/modules/libs/spoon && echo "spoon gitdir present"
+git status --porcelain              # clean; no new checkout on main
+jailbee branch dev                  # libs/hello and libs/spoon appear at container commits
+
+echo x > libs/hello/untracked
+jailbee branch main                  # refused; still on dev, nothing changed
+rm libs/hello/untracked
+```
+
+Expected: each successful operation leaves `git status --porcelain` empty;
+the refused switch leaves the branch and files unchanged. The push selects
+`dev` explicitly while the host is checked out on `main`, and the container's
+checkout and `git log` confirm the selected branch and submodule commit arrived.
+The pull checks that the previously unseen sibling submodule is stored in
+`.git/modules` without a working-tree checkout on the host's current branch.
+After switching back to `dev`, verify both gitlinks resolve to the commits
+recorded by the container. The recipe deliberately creates `libs/spoon` beside
+`libs/hello` from the superproject root; do not `cd libs` when adding it, or the
+recorded path will differ.
+
 ## `jailbee new` clone source (`new.clone_from` / `new.autofetch`) smoke test
 
 ```bash
