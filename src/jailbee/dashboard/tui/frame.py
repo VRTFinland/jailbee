@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from rich.style import Style
 from rich.text import Text
 
 from jailbee.dashboard import accounts as da
@@ -24,6 +25,7 @@ from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.tui.keys import KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
+from jailbee.update_check import UpdateNotice
 
 INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
 
@@ -62,6 +64,26 @@ def notice_parts(notice: str | None, *, wraps: bool = True) -> tuple[Text | None
         return None, Text(notice, style="yellow")
     # Keep the verdict at the start when the border is narrower than the notice.
     return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
+
+
+def update_line(notice: UpdateNotice, *, hover: dhit.Hit | None = None) -> Text:
+    """The standing "newer jailbee" row, its `[dismiss]` label a click target.
+
+    A row of its own rather than the notice border: the border is one slot
+    shared with refusals and running jobs, and cannot carry a click target.
+    """
+    dismiss = dhit.Hit("dismiss-update")
+    label = Style(
+        bold=True,
+        underline=hover == dismiss,
+        meta={dhit.HIT_KEY: dismiss.meta_value()},
+    )
+    line = Text(
+        f"jailbee {notice.latest} available (running {notice.current}) — {notice.command}   ",
+        style="yellow",
+    )
+    line.append("[dismiss]", style=label)
+    return line
 
 
 _MENU_LETTERS_NOTE = (
@@ -179,3 +201,5 @@ class DashboardView:
     ineligible: frozenset[str] = frozenset()
     # False for a standing status line, kept on the border however long (`notice_parts`).
     notice_wraps: bool = True
+    # A newer jailbee release to advertise on a row of its own (`update_line`).
+    update: UpdateNotice | None = None

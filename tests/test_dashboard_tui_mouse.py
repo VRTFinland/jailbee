@@ -17,7 +17,9 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import NativeState
 from tests.dashboard_fixtures import WIDE, ci, wide_group
+from jailbee.update_check import UpdateNotice
 from tests.dashboard_pilot import (
+    FakeStateClient,
     NATIVE_LIST,
     Click,
     Pick,
@@ -355,3 +357,50 @@ def test_the_app_starts_with_the_configured_mouse_setting(mocker):
     run = mocker.patch.object(tapp.DashboardApp, "run", return_value=0)
     assert tapp.run(mocker.Mock(), None) == 0
     run.assert_called_once_with(mouse=False)
+
+
+UPDATE = UpdateNotice(current="1.7.2", latest="1.7.3", command="uv tool upgrade jailbee")
+
+
+def test_the_view_carries_the_update_notice(mocker, tmp_path):
+    client = FakeStateClient([_two(tmp_path)], update=UPDATE)
+    run = drive(mocker, [], client=client)
+    assert run.trace[0].update == UPDATE
+
+
+def test_a_remote_ssh_dashboard_never_shows_the_update_notice(mocker, tmp_path):
+    """Whoever is connected cannot upgrade the host's jailbee."""
+    client = FakeStateClient([_two(tmp_path)], update=UPDATE)
+    run = drive(mocker, [], client=client, over_ssh=True)
+    assert run.trace[0].update is None
+
+
+def test_the_update_line_is_on_screen_with_a_dismiss_label(mocker, tmp_path):
+    client = FakeStateClient([_two(tmp_path)], update=UPDATE)
+    run = drive(mocker, [], client=client, screens=True, size=(110, 25))
+    screen = run.screens[0]
+    assert "1.7.3 available" in screen and "uv tool upgrade jailbee" in screen
+    assert "[dismiss]" in screen
+
+
+def test_clicking_dismiss_records_the_dismissal_and_refreshes(mocker, tmp_path):
+    dismiss = mocker.patch.object(tsession, "dismiss_update")
+    client = FakeStateClient([_two(tmp_path)], update=UPDATE)
+    run = drive(mocker, [Click(Hit("dismiss-update"))], client=client)
+    dismiss.assert_called_once_with(UPDATE)
+    assert ("refresh",) in run.client.events
+
+
+def test_a_failing_dismissal_is_reported_not_raised(mocker, tmp_path):
+    mocker.patch.object(tsession, "dismiss_update", side_effect=OSError("database is locked"))
+    client = FakeStateClient([_two(tmp_path)], update=UPDATE)
+    run = drive(mocker, [Click(Hit("dismiss-update"))], client=client)
+    assert any(n and "database is locked" in n for n in run.notices())
+
+
+def test_a_stale_dismiss_click_without_a_notice_does_nothing(mocker, tmp_path):
+    dismiss = mocker.patch.object(tsession, "dismiss_update")
+    session = _bare_session(mocker, tmp_path)
+    session.click(Hit("dismiss-update"))
+    dismiss.assert_not_called()
+    assert session.overlay is None

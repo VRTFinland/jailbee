@@ -37,6 +37,7 @@ from jailbee.dashboard.tui.frame import (
     _hint_line,
     frame_title,
     notice_parts,
+    update_line,
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
@@ -489,6 +490,10 @@ class DashboardFrame(Vertical):
             marked=len(view.marked),
         )
         subtitle, inline = notice_parts(view.notice, wraps=view.notice_wraps)
+        if view.update is not None:
+            # Below any wrapped notice, so a crop from the top keeps the row.
+            update = update_line(view.update, hover=view.hover)
+            inline = update if inline is None else Text("\n").join([inline, update])
         self.border_subtitle = subtitle if subtitle is not None else ""
         overlay = view.overlay
         box = self._sync_native(overlay)
@@ -564,7 +569,7 @@ class DashboardFrame(Vertical):
         notice = self.query_one("#notice", Static)
         notice.display = inline is not None and layout.notice_rows > 0
         if inline is not None:
-            notice_input = (view.notice, width, layout.notice_rows)
+            notice_input = (view.notice, view.update, view.hover, width, layout.notice_rows)
             if notice_input != self._notice_input:
                 notice.update(_CropTop(inline, max(0, lines(inline, width) - layout.notice_rows)))
                 self._notice_input = notice_input

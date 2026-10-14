@@ -526,3 +526,21 @@ def test_current_notice_is_none_and_silent_when_the_check_is_disabled(
 
     assert update_check.current_notice(now=NOW) is None
     spawn.assert_not_called()
+
+
+def test_dismissing_the_notice_silences_it_until_a_newer_release(db_engine: Engine, mocker) -> None:
+    from jailbee import update_check
+
+    mocker.patch.object(update_check, "get_engine", return_value=db_engine)
+    install = update_check.Install("uv", "cmd")
+    with Session(db_engine) as session:
+        update_check.record_check(session, "1.5.0", now=NOW)
+        notice = update_check.pending(session, "1.4.0", install=install)
+    assert notice is not None
+
+    update_check.dismiss(notice, now=NOW)
+
+    with Session(db_engine) as session:
+        assert update_check.pending(session, "1.4.0", install=install) is None
+        update_check.record_check(session, "1.6.0", now=NOW)
+        assert update_check.pending(session, "1.4.0", install=install) is not None

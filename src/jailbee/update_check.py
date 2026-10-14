@@ -278,6 +278,34 @@ def current_notice(*, now: datetime | None = None) -> UpdateNotice | None:
         return pending(session, __version__)
 
 
+def dismiss(notice: UpdateNotice, *, now: datetime | None = None) -> None:
+    """Record that the user has heard about `notice.latest`, like `jb dismiss update`.
+
+    The same row the CLI writes (`NOTICE_KEY`/`NOTICE_SCOPE`, fingerprinted with
+    the release), so either surface's dismissal silences the other. The
+    dashboard calls this rather than running `jailbee dismiss`: that command
+    loads a repo's config first, and a dashboard started outside any repo has
+    none to load.
+    """
+    from datetime import UTC
+    from datetime import datetime as datetime_
+
+    from sqlmodel import Session
+
+    from jailbee import notices
+
+    with Session(get_engine()) as session:
+        notices.save(
+            session,
+            NOTICE_KEY,
+            NOTICE_SCOPE,
+            fingerprint=notice.latest,
+            version=notice.current,
+            now=now if now is not None else datetime_.now(UTC),
+        )
+    notices.reset_caches()
+
+
 def pending_hint(session: Session, current: str, *, install: Install | None = None) -> list[str]:
     """The lines the CLI prints, or nothing.
 

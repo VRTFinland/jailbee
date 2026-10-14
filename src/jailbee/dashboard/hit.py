@@ -26,6 +26,7 @@ HitKind = Literal[
     "fold",
     "scroll",
     "sort",
+    "dismiss-update",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 

@@ -137,6 +137,7 @@ from jailbee.dashboard.sorting import (
     sort_notice,
 )
 from jailbee.dashboard.tui.frame import DashboardView
+from jailbee.update_check import dismiss as dismiss_update
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -369,6 +370,7 @@ class DashboardSession:
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
         self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
+        self.update = None if over_ssh else snapshot.update
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -395,6 +397,7 @@ class DashboardSession:
         self.presented = present(snapshot.groups, self.cwd_root, self.scope)
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
+        self.update = None if self.over_ssh else snapshot.update
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -451,6 +454,7 @@ class DashboardSession:
             overlay=self.overlay,
             notice=notice,
             notice_wraps=notice_wraps,
+            update=self.update,
             folded=self.folded,
             column_offset=self.column_offset,
             hidden_by_preferences=bool(self.all_groups) and not self.groups,
@@ -2500,6 +2504,9 @@ class DashboardSession:
 
         Ctrl+click (``toggle``) marks or unmarks a container row while nothing is open.
         """
+        if hit is not None and hit.kind == "dismiss-update":
+            self.dismiss_update_notice()
+            return
         if self.merge_pick is not None:
             self._merge_pick_click(hit, toggle=toggle)
             return
@@ -2534,6 +2541,23 @@ class DashboardSession:
             self.select(Row("container" if hit.kind == "row" else "repo", str(hit.args[0])))
             if double or right:
                 self.activate()
+
+    def dismiss_update_notice(self) -> None:
+        """Dismiss the advertised release, as `jb dismiss update` would.
+
+        Works in any mode, an overlay or the merge-target pick included: the
+        row sits outside the table, and a click on it is never a table click.
+        """
+        notice = self.update
+        if notice is None:
+            return
+        try:
+            dismiss_update(notice)
+        except Exception as exc:  # a locked state DB must not take the dashboard down
+            self.set_notice(f"could not dismiss the update notice: {exc}")
+            return
+        self.update = None
+        self.client.refresh()  # the next snapshot drops the row for every client
 
     def _listed(self, hit: Hit) -> bool:
         """Whether a row, heading or fold marker still names something on screen."""

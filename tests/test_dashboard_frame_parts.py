@@ -8,7 +8,9 @@ import pytest
 from rich.console import Console
 
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.tui.frame import INLINE_NOTICE_MAX, frame_title, notice_parts
+from jailbee.dashboard.hit import HIT_KEY, Hit
+from jailbee.dashboard.tui.frame import INLINE_NOTICE_MAX, frame_title, notice_parts, update_line
+from jailbee.update_check import UpdateNotice
 from tests.dashboard_fixtures import ci
 
 NOW = datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC)
@@ -69,3 +71,35 @@ def test_long_status_notice_stays_on_the_border_ellipsized():
     subtitle, inline = notice_parts(notice, wraps=False)
     assert inline is None and subtitle is not None
     assert subtitle.plain == notice and subtitle.overflow == "ellipsis"
+
+
+NOTICE = UpdateNotice(current="1.7.2", latest="1.7.3", command="uv tool upgrade jailbee")
+
+
+def test_the_update_line_names_both_versions_and_the_command():
+    text = update_line(NOTICE).plain
+    assert "1.7.3" in text and "1.7.2" in text and "uv tool upgrade jailbee" in text
+
+
+def test_only_the_dismiss_label_is_a_click_target():
+    line = update_line(NOTICE)
+    tagged = [
+        line.plain[span.start : span.end]
+        for span in line.spans
+        if not isinstance(span.style, str) and span.style.meta.get(HIT_KEY)
+    ]
+    assert tagged == ["[dismiss]"]
+    span = next(s for s in line.spans if not isinstance(s.style, str) and s.style.meta.get(HIT_KEY))
+    assert Hit.of(span.style.meta) == Hit("dismiss-update")
+
+
+def test_a_hovered_dismiss_label_is_underlined_and_an_idle_one_is_not():
+    def label_style(hover):
+        line = update_line(NOTICE, hover=hover)
+        span = next(
+            s for s in line.spans if not isinstance(s.style, str) and s.style.meta.get(HIT_KEY)
+        )
+        return span.style
+
+    assert label_style(Hit("dismiss-update")).underline is True
+    assert not label_style(None).underline
