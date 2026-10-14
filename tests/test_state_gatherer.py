@@ -7,8 +7,9 @@ from jailbee.dashboard.model import RepoGroup
 from jailbee.git_status import GitStatus
 from jailbee.global_config import DashboardRefresh
 from jailbee.lifecycle import ContainerInfo
-from jailbee.state_service.gatherer import Cadence, Gatherer, refresh_due
+from jailbee.state_service.gatherer import UPDATE_INTERVAL, Cadence, Gatherer, refresh_due
 from jailbee.state_service.protocol import GatherError, Snapshot
+from jailbee.update_check import UpdateNotice
 
 CAD = Cadence(interval=3.0, git_interval=10.0, git=True)
 
@@ -189,3 +190,78 @@ def test_the_gatherer_reads_activity_only_when_the_setting_is_on(mocker):
     readers = [c.args[2] if len(c.args) > 2 else None for c in sample.call_args_list]
     assert readers[0] is not None  # `on`
     assert readers[-1] is None  # `off`
+
+
+# --- the update notice -------------------------------------------------------
+
+NOTICE = UpdateNotice(current="1.4.0", latest="1.5.0", command="uv tool upgrade jailbee")
+
+
+def _with_update(mocker, update, clock):
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    return Gatherer(
+        mocker.Mock(),
+        CAD,
+        gather=lambda *a, **k: [],
+        clock=clock,
+        sleep=lambda _s: None,
+        update=update,
+    )
+
+
+def test_a_snapshot_carries_the_update_notice(mocker):
+    g = _with_update(mocker, lambda: NOTICE, _Clock())
+
+    snapshot = g.tick(active=True, refresh=False, roots=[])
+
+    assert snapshot.update == NOTICE
+
+
+def test_the_notice_is_read_once_a_minute_not_every_gather(mocker):
+    clock = _Clock()
+    update = mocker.Mock(return_value=NOTICE)
+    g = _with_update(mocker, update, clock)
+
+    for _ in range(4):  # 0 s, 3 s, 6 s, 9 s
+        g.tick(active=True, refresh=False, roots=[])
+        clock.t += 3.0
+    assert update.call_count == 1
+
+    clock.t = UPDATE_INTERVAL
+    g.tick(active=True, refresh=False, roots=[])
+    assert update.call_count == 2
+
+
+def test_the_notice_between_reads_is_the_last_one_read(mocker):
+    clock = _Clock()
+    update = mocker.Mock(side_effect=[NOTICE, None])
+    g = _with_update(mocker, update, clock)
+
+    first = g.tick(active=True, refresh=False, roots=[])
+    clock.t = 3.0
+    second = g.tick(active=True, refresh=False, roots=[])
+
+    assert first.update == second.update == NOTICE
+
+
+def test_a_refresh_reads_the_notice_again(mocker):
+    """The dashboard asks for one right after a dismissal; the row must be
+    gone from the very next snapshot, not a minute later."""
+    clock = _Clock()
+    update = mocker.Mock(side_effect=[NOTICE, None])
+    g = _with_update(mocker, update, clock)
+
+    g.tick(active=True, refresh=False, roots=[])
+    clock.t = 1.0
+    after = g.tick(active=True, refresh=True, roots=[])
+
+    assert after.update is None
+
+
+def test_a_failing_notice_read_cannot_fail_the_gather(mocker):
+    g = _with_update(mocker, mocker.Mock(side_effect=RuntimeError("locked")), _Clock())
+
+    snapshot = g.tick(active=True, refresh=False, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.update is None

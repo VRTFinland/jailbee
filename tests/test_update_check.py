@@ -487,3 +487,42 @@ def test_available_is_none_when_the_running_version_is_current(db_session: Sessi
     record_check(db_session, "1.5.0", now=NOW)
 
     assert available(db_session, "1.5.0") is None
+
+
+# --- the state service's read ----------------------------------------------
+
+
+def test_current_notice_reads_the_cache_and_starts_a_probe_when_it_is_stale(
+    db_engine: Engine, mocker
+) -> None:
+    from jailbee import update_check
+
+    mocker.patch.object(update_check, "get_engine", return_value=db_engine)
+    mocker.patch.object(update_check, "configured_enabled", return_value=True)
+    mocker.patch.object(
+        update_check, "detect_install", return_value=update_check.Install("uv", "cmd")
+    )
+    mocker.patch.object(update_check, "__version__", "1.4.0")
+    spawn = mocker.patch.object(update_check, "spawn_probe")
+    with Session(db_engine) as session:
+        update_check.record_check(session, "1.5.0", now=NOW - timedelta(days=2))
+
+    notice = update_check.current_notice(now=NOW)
+
+    assert notice == update_check.UpdateNotice(current="1.4.0", latest="1.5.0", command="cmd")
+    spawn.assert_called_once_with()
+
+
+def test_current_notice_is_none_and_silent_when_the_check_is_disabled(
+    db_engine: Engine, mocker
+) -> None:
+    from jailbee import update_check
+
+    mocker.patch.object(update_check, "get_engine", return_value=db_engine)
+    mocker.patch.object(update_check, "configured_enabled", return_value=False)
+    spawn = mocker.patch.object(update_check, "spawn_probe")
+    with Session(db_engine) as session:
+        update_check.record_check(session, "1.5.0", now=NOW)
+
+    assert update_check.current_notice(now=NOW) is None
+    spawn.assert_not_called()

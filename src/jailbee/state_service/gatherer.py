@@ -19,6 +19,7 @@ from jailbee.agent_activity import ActivityReader
 from jailbee.dashboard.model import carry_forward_git_status, gather_live, sample_activity
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
+from jailbee.update_check import current_notice
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,8 +27,12 @@ if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
+    from jailbee.update_check import UpdateNotice
 
 log = logging.getLogger(__name__)
+
+UPDATE_INTERVAL = 60.0
+"""Seconds between reads of the update notice. A refresh reads it at once."""
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,7 @@ class Gatherer:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        update: Callable[[], UpdateNotice | None] = current_notice,
     ) -> None:
         self._incus = incus
         self.cadence = cadence
@@ -105,6 +111,9 @@ class Gatherer:
         self._last_full: float | None = None
         self._prev: list[RepoGroup] = []
         self._seq = 0
+        self._update = update
+        self._update_notice: UpdateNotice | None = None
+        self._last_update: float | None = None
         # The message of the failure being logged, so an outage that lasts
         # all night writes one traceback, not one every few seconds.
         self._failing: str | None = None
@@ -152,7 +161,13 @@ class Gatherer:
                 self._failing = None
             self._prev = groups
             self._seq += 1
-            result = Snapshot(self._seq, self._wall_clock(), self.cadence.git, groups)
+            result = Snapshot(
+                self._seq,
+                self._wall_clock(),
+                self.cadence.git,
+                groups,
+                self._update_notice_now(refresh=refresh),
+            )
         stamp = self._clock()
         self._last_base = stamp
         # A failure stamps the git tier too: otherwise a failed first (base-only)
@@ -160,3 +175,20 @@ class Gatherer:
         if do_git or isinstance(result, GatherError):
             self._last_full = stamp
         return result
+
+    def _update_notice_now(self, *, refresh: bool) -> UpdateNotice | None:
+        """The update notice, re-read once a minute or when a client asks.
+
+        A courtesy never fails a gather: a read that raises keeps nothing and
+        is retried on the next interval.
+        """
+        now = self._clock()
+        due = self._last_update is None or refresh or now - self._last_update >= UPDATE_INTERVAL
+        if due:
+            self._last_update = now
+            try:
+                self._update_notice = self._update()
+            except Exception:
+                log.debug("update notice read failed", exc_info=True)
+                self._update_notice = None
+        return self._update_notice

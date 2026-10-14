@@ -256,6 +256,28 @@ def pending(
     return UpdateNotice(current=current, latest=latest, command=command)
 
 
+def current_notice(*, now: datetime | None = None) -> UpdateNotice | None:
+    """What the state service shows: the pending notice, and keep the cache fresh.
+
+    The service is the one long-lived process the dashboards share, so it is
+    also where the probe is started from when nobody is running `jb ls`. It
+    opens its own session each time — the row `jailbee dismiss` writes lives
+    in another process, and a session held open would read it stale.
+    """
+    from datetime import UTC
+    from datetime import datetime as datetime_
+
+    from sqlmodel import Session
+
+    enabled = check_enabled(configured=configured_enabled(), env=os.environ)
+    if not enabled:
+        return None
+    moment = now if now is not None else datetime_.now(UTC)
+    with Session(get_engine()) as session:
+        maybe_probe(session, now=moment, enabled=enabled, spawn=spawn_probe)
+        return pending(session, __version__)
+
+
 def pending_hint(session: Session, current: str, *, install: Install | None = None) -> list[str]:
     """The lines the CLI prints, or nothing.
 

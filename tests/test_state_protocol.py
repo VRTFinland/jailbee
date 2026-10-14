@@ -27,6 +27,7 @@ from jailbee.state_service.protocol import (
     decode,
     encode,
 )
+from jailbee.update_check import UpdateNotice
 
 T0 = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
 
@@ -174,6 +175,17 @@ def test_every_message_round_trips(message):
     assert decode(line) == message
 
 
+def test_snapshot_round_trips_the_update_notice():
+    notice = UpdateNotice(current="1.4.0", latest="1.5.0", command="uv tool upgrade jailbee")
+    snapshot = dataclasses.replace(_full_snapshot(), update=notice)
+
+    assert decode(encode(snapshot)).update == notice
+
+
+def test_a_snapshot_without_an_update_notice_decodes_to_none():
+    assert decode(encode(_full_snapshot())).update is None
+
+
 def test_snapshot_preserves_mount_ttl_defaults():
     snapshot = _full_snapshot()
     snapshot.groups[0].mount_ttl_defaults = {"aws": "15m", "docs": None}
@@ -228,7 +240,7 @@ def test_garbage_is_a_protocol_error(line):
 
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at.
-    assert PROTOCOL == 6
+    assert PROTOCOL == 7
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
     assert protocol._NAMESPACE["ActivityEvent"] is ActivityEvent

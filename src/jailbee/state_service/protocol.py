@@ -23,9 +23,10 @@ from jailbee.dashboard.model import AppMenuEntry, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity
+from jailbee.update_check import UpdateNotice
 
 # Bumped on any change a client of another version could misread.
-PROTOCOL = 6
+PROTOCOL = 7
 
 
 class ProtocolError(ValueError):
@@ -60,12 +61,16 @@ class Shutdown:
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One complete gather. ``git_enabled`` is the server's cadence setting."""
+    """One complete gather. ``git_enabled`` is the server's cadence setting.
+
+    ``update`` is a newer jailbee release to advertise, or None.
+    """
 
     seq: int
     gathered_at: datetime
     git_enabled: bool
     groups: list[RepoGroup]
+    update: UpdateNotice | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ _NAMESPACE: dict[str, Any] = {
         ProcessActivity,
         RepoGroup,
         SubmoduleChange,
+        UpdateNotice,
         datetime,
     )
 }
