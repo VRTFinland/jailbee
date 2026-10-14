@@ -1306,6 +1306,28 @@ def superproject_subrepo(repo_root: Path) -> HostSubRepo:
     return HostSubRepo(path="", gitdir=gitdir, worktree=repo_root)
 
 
+def _heal_worktreeless(cwd: Path, gitdir: Path) -> None:
+    """Remove stale core.worktree only; run config outside the affected gitdir."""
+    has_worktree, worktree = git.run_capture(
+        str(cwd),
+        ["config", "--file", str(gitdir / "config"), "--get", "core.worktree"],
+    )
+    if has_worktree and worktree.strip() and not (gitdir / worktree.strip()).resolve().exists():
+        repaired, _ = git.run_capture(
+            str(cwd),
+            ["config", "--file", str(gitdir / "config"), "--unset", "core.worktree"],
+        )
+        still_has_worktree, _ = git.run_capture(
+            str(cwd),
+            ["config", "--file", str(gitdir / "config"), "--get", "core.worktree"],
+        )
+        if not repaired or still_has_worktree:
+            raise SubmoduleError(
+                f"Cannot repair stale core.worktree in submodule gitdir '{gitdir}'; "
+                "check config.lock and permissions"
+            )
+
+
 def locate_host_subrepo(parent: HostSubRepo, leaf: str, name: str) -> HostSubRepo | None:
     """Find submodule `leaf` relative to `parent`, using its declared `name`."""
     path = posixpath.join(parent.path, leaf) if parent.path else leaf
@@ -1317,24 +1339,7 @@ def locate_host_subrepo(parent: HostSubRepo, leaf: str, name: str) -> HostSubRep
     candidate = parent.gitdir / "modules" / name
     if not (candidate / "HEAD").is_file():
         return None
-    has_worktree, _ = git.run_capture(
-        str(parent.gitdir),
-        ["config", "--file", str(candidate / "config"), "--get", "core.worktree"],
-    )
-    if has_worktree:
-        repaired, _ = git.run_capture(
-            str(parent.gitdir),
-            ["config", "--file", str(candidate / "config"), "--unset", "core.worktree"],
-        )
-        still_has_worktree, _ = git.run_capture(
-            str(parent.gitdir),
-            ["config", "--file", str(candidate / "config"), "--get", "core.worktree"],
-        )
-        if not repaired or still_has_worktree:
-            raise SubmoduleError(
-                f"Cannot repair stale core.worktree in submodule gitdir '{candidate}'; "
-                "check config.lock and permissions"
-            )
+    _heal_worktreeless(parent.gitdir, candidate)
     return HostSubRepo(path=path, gitdir=candidate, worktree=None)
 
 
@@ -1913,10 +1918,34 @@ def transport_submodules_to_container(
             )
 
 
-def prune_host_submodule_refs(cfg: Config, short: str) -> None:
-    """Delete `refs/jailbee-sub/<short>/*` from each host submodule repo. Best-effort."""
-    repo_root = Path(cfg.repo_root)
+def all_host_subrepo_roots(repo_root: Path) -> list[Path]:
+    """Stored module gitdirs (including nested/custom names) and legacy repos."""
+    repo_root = Path(repo_root)
+    gitdir = superproject_subrepo(repo_root).gitdir
+    roots = {
+        head.parent
+        for head in (gitdir / "modules").rglob("HEAD")
+        if (head.parent / "objects").is_dir()
+    }
+    for root in sorted(roots):
+        _heal_worktreeless(gitdir, root)
     for path in git.submodule_status_paths(repo_root):
-        host_sub = repo_root / path
-        for ref in git.list_refs(host_sub, f"refs/jailbee-sub/{short}/"):
-            git.delete_ref(host_sub, ref)
+        root = repo_root / path
+        if (root / ".git").is_dir():
+            roots.add(root)
+    return sorted(roots)
+
+
+def prune_host_submodule_refs(cfg: Config, short: str) -> None:
+    """Delete this container's transfer refs; surface failed reads and deletes."""
+    for root in all_host_subrepo_roots(Path(cfg.repo_root)):
+        ok, output = git.run_capture(
+            str(root), ["for-each-ref", "--format=%(refname)", f"refs/jailbee-sub/{short}/"]
+        )
+        if not ok:
+            raise SubmoduleError(f"Cannot prune submodule refs in '{root}': cannot list refs")
+        for ref in output.splitlines():
+            if ref.strip():
+                ok, _ = git.run_capture(str(root), ["update-ref", "-d", ref])
+                if not ok:
+                    raise SubmoduleError(f"Cannot prune submodule ref '{ref}' in '{root}'")

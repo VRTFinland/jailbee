@@ -92,7 +92,7 @@ def resolve_repo_targets(cfg: Config) -> Mapping[str, RepoTarget]:
     }
     remote_urls = {".": root_url}
     for declared in submodules.declared_submodule_remotes(cfg.repo_root):
-        repo_root = cfg.repo_root / declared.path
+        repo_root = submodules.host_subrepo_root(cfg.repo_root, declared.path)
         if submodules.host_subrepo_exists(cfg.repo_root, declared.path):
             remote = git.detect_upstream_remote(repo_root)
             if remote is None:

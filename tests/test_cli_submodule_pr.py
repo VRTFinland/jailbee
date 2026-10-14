@@ -600,6 +600,7 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
         return CompletedProcess(cmd, 1 if outcome == "failed_edit" else 0, "", "edit denied")
 
     # The synthetic fixture has no Git commit tree for the host locator.
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=tmp_path / "lib/a")
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("subprocess.run", side_effect=run)
     result = runner.invoke(app, ["submodule", "pr", "feat-foo"])

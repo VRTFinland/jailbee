@@ -255,7 +255,8 @@ def resolve_remote(repo_root: Path, subpath: str) -> str:
     `cfg.upstream_remote`: a submodule is a separate repository and may name
     its upstream something the superproject does not.
     """
-    return git.detect_upstream_remote(repo_root / subpath) or git.DEFAULT_REMOTE
+    host_sub = submodules.host_subrepo_root(repo_root, subpath)
+    return git.detect_upstream_remote(host_sub) or git.DEFAULT_REMOTE
 
 
 def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) -> str:
@@ -276,7 +277,7 @@ def resolve_base_branch(repo_root: Path, subpath: str, *, override: str | None) 
     )
     if declared:
         return declared
-    host_sub = repo_root / subpath
+    host_sub = submodules.host_subrepo_root(repo_root, subpath)
     remote = resolve_remote(repo_root, subpath)
     ok, out = git.run_capture(
         str(host_sub), ["symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"]
@@ -414,7 +415,7 @@ def transport_submodule_to_host(
     to one submodule (`only=subpath`). Split out as its own step — rather than
     folded into `publish_submodule_branch` — because it must run BEFORE
     `resolve_remote`, `resolve_base_branch` and the GitHub upstream check:
-    all three read the host sub-repo at `cfg.repo_root / subpath`, which for a
+    all three read the located host sub-repo, which for a
     submodule the host has never seen (added inside the container, or a host
     clone where `git submodule update --init` never ran for this path) does
     not exist until this call creates it. Running the transport after those
@@ -451,7 +452,7 @@ def publish_submodule_branch(
     """
     from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
-    host_sub = Path(cfg.repo_root) / subpath
+    host_sub = submodules.host_subrepo_root(Path(cfg.repo_root), subpath)
     src = source_ref(short, subpath, branch)
     if git.rev_parse(host_sub, src) is None:
         raise SubmodulePrError(

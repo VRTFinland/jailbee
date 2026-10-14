@@ -65,10 +65,10 @@ class PrScope:
 
     @classmethod
     def for_submodule(cls, cfg: Config, subpath: str) -> PrScope:
-        from jailbee import submodule_pr
+        from jailbee import submodule_pr, submodules
 
         return cls(
-            repo_root=cfg.repo_root / subpath,
+            repo_root=submodules.host_subrepo_root(cfg.repo_root, subpath),
             remote=submodule_pr.resolve_remote(cfg.repo_root, subpath),
             prefix=f"submodule '{subpath}': ",
             subpath=subpath,

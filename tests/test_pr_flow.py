@@ -2010,3 +2010,11 @@ def test_confirm_branch_name_prompts_when_there_is_no_source_branch(mocker):
 
     assert pr_flow.confirm_pr_branch_name("feat/x", None) == "feat/typed"
     prompt.assert_called_once()
+
+
+def test_scope_for_submodule_uses_located_root(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    root = tmp_path / ".git/modules/custom"
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    assert pr_flow.PrScope.for_submodule(cfg, "lib").repo_root == root

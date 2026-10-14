@@ -847,3 +847,121 @@ def test_strict_declarations_preserve_spaces_and_equals_in_values(rig):
     assert entry.gitlink == _git(rig.top, "rev-parse", f"dev:{path}")
     assert entry.repo is not None
     assert entry.repo.gitdir == rig.top / ".git/modules" / name
+
+
+def test_submodule_pr_resolvers_work_on_a_gitdir_only_submodule(rig: Rig) -> None:
+    from jailbee import submodule_pr
+
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    root = rig.top / ".git/modules/sub"
+    _git(root, "remote", "rename", "origin", "upstream")
+    _git(root, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk")
+    assert submodule_pr.resolve_remote(rig.top, "sub") == "upstream"
+    assert submodule_pr.resolve_base_branch(rig.top, "sub", override=None) == "trunk"
+    assert submodules.host_subrepo_root(rig.top, "sub") == rig.top / ".git/modules/sub"
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_prune_host_submodule_refs_reaches_nested_custom_gitdirs(rig: Rig, stale: bool) -> None:
+    import shutil
+    from unittest.mock import MagicMock
+
+    _git(rig.top, "submodule", "add", "-q", "--name", "outer-custom", str(rig.inup), "lib")
+    _git(rig.top, "commit", "-qam", "custom module")
+    for path in ["sub", "sub/inner", "lib"]:
+        _git(rig.top / path, "update-ref", "refs/jailbee-sub/c1/test/HEAD", "HEAD")
+        _git(rig.top / path, "update-ref", "refs/jailbee-sub/c2/test/HEAD", "HEAD")
+    if stale:
+        _git(rig.top, "checkout", "-q", "main")
+        shutil.rmtree(rig.top / "sub")
+        shutil.rmtree(rig.top / "lib")
+    else:
+        _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
+    for root in [
+        rig.top / ".git/modules/sub",
+        rig.top / ".git/modules/sub/modules/inner-custom",
+        rig.top / ".git/modules/outer-custom",
+    ]:
+        assert _git(root, "for-each-ref", "refs/jailbee-sub/c1/") == ""
+        assert _git(root, "for-each-ref", "refs/jailbee-sub/c2/")
+
+
+def test_all_host_subrepo_roots_keeps_extant_worktrees_and_legacy(rig: Rig) -> None:
+    import shutil
+
+    legacy = rig.top / "legacy"
+    _git(rig.top, "submodule", "add", "-q", str(rig.inup), "legacy")
+    stored = rig.top / ".git/modules/legacy"
+    (legacy / ".git").unlink()
+    shutil.move(str(stored), str(legacy / ".git"))
+    _git(rig.top, "config", "--file", str(legacy / ".git/config"), "--unset", "core.worktree")
+    gitdir = rig.top / ".git/modules/sub"
+    before = _git(rig.top, "config", "--file", str(gitdir / "config"), "--get", "core.worktree")
+    roots = submodules.all_host_subrepo_roots(rig.top)
+    assert legacy in roots
+    assert gitdir in roots
+    assert gitdir / "modules/inner-custom" in roots
+    after = _git(rig.top, "config", "--file", str(gitdir / "config"), "--get", "core.worktree")
+    assert after == before
+
+
+def test_prune_host_submodule_refs_raises_when_stale_repair_is_locked(rig: Rig) -> None:
+    import shutil
+    from unittest.mock import MagicMock
+
+    shutil.rmtree(rig.top / "sub")
+    (rig.top / ".git/modules/sub/config.lock").write_text("locked")
+    with pytest.raises(submodules.SubmoduleError, match="core.worktree"):
+        submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
+
+
+def test_prune_host_submodule_refs_raises_when_ref_is_locked(rig: Rig) -> None:
+    from unittest.mock import MagicMock
+
+    ref = "refs/jailbee-sub/c1/test/HEAD"
+    _git(rig.top / "sub", "update-ref", ref, "HEAD")
+    (rig.top / ".git/modules/sub" / (ref + ".lock")).write_text("locked")
+    with pytest.raises(submodules.SubmoduleError, match="prune"):
+        submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
+
+
+def test_locate_does_not_unset_extant_core_worktree(rig: Rig) -> None:
+    parent = submodules.superproject_subrepo(rig.top)
+    parent = submodules.HostSubRepo(parent.path, parent.gitdir, None)
+    gitdir = rig.top / ".git/modules/sub"
+    before = _git(rig.top, "config", "--file", str(gitdir / "config"), "--get", "core.worktree")
+    assert submodules.locate_host_subrepo(parent, "sub", "sub") is not None
+    after = _git(rig.top, "config", "--file", str(gitdir / "config"), "--get", "core.worktree")
+    assert after == before
+
+
+def test_pr_and_issue_roots_reach_custom_gitdir_with_current_declaration(rig: Rig, make_cfg) -> None:
+    from jailbee import issue_outbox, pr_flow, submodule_pr
+
+    _git(rig.top, "submodule", "add", "-q", "--name", "outer-custom", str(rig.inup), "lib")
+    _git(rig.top, "commit", "-qam", "custom module")
+    _git(rig.top, "remote", "add", "origin", "https://github.com/acme/app.git")
+    _git(rig.top / "lib", "remote", "set-url", "origin", "https://github.com/acme/lib.git")
+    _git(rig.top / "lib", "remote", "rename", "origin", "upstream")
+    _git(rig.top / "sub", "remote", "set-url", "origin", "https://github.com/acme/sub.git")
+    _git(rig.top / "sub/inner", "remote", "set-url", "origin", "https://github.com/acme/inner.git")
+    _git(rig.top, "submodule", "deinit", "-q", "-f", "lib")
+    cfg = make_cfg(rig.top)
+    root = rig.top / ".git/modules/outer-custom"
+
+    assert submodule_pr.resolve_remote(rig.top, "lib") == "upstream"
+    assert pr_flow.PrScope.for_submodule(cfg, "lib").repo_root == root
+    target = issue_outbox.resolve_repo_targets(cfg)["lib"]
+    assert target.repo_root == root
+    assert target.slug == "acme/lib"
+
+
+def test_prune_host_submodule_refs_raises_when_refs_cannot_be_read(rig: Rig, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    root = rig.top / ".git/modules/sub"
+    mocker.patch("jailbee.submodules.all_host_subrepo_roots", return_value=[root])
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    with pytest.raises(submodules.SubmoduleError, match="cannot list refs"):
+        submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
