@@ -448,3 +448,51 @@ def test_prune_filesystem_failure_stops_parent_cleanup(rig: Rig, mocker) -> None
         )
     assert (rig.top / "sub" / "d" / "f").exists()
     assert (rig.top / "sub" / ".git").exists()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("precheck", [False, True])
+def test_foreign_linked_worktree_is_preserved(rig: Rig, nested: bool, precheck: bool, mocker) -> None:
+    import shutil
+
+    candidate = rig.top / "sub" / "inner" if nested else rig.top / "sub"
+    shutil.rmtree(candidate)
+    foreign = rig.top.parent / "foreign"
+    _git(rig.top.parent, "init", "-q", "-b", "main", str(foreign))
+    (foreign / "valuable").write_text("keep\n")
+    _git(foreign, "add", ".")
+    _git(foreign, "commit", "-q", "-m", "foreign")
+    _git(foreign, "worktree", "add", "-q", "-b", "linked", str(candidate))
+    index = _git(candidate, "ls-files", "--stage")
+    dot_git = (candidate / ".git").read_bytes()
+    warn = mocker.patch("jailbee.submodules._warn")
+    if precheck:
+        # Nested foreign worktrees can make the parent look dirty; refusal is safe.
+        try:
+            submodules.assert_vanishing_clean(_host_run, str(rig.top), ["sub"], target_label="main")
+        except submodules.SubmoduleError:
+            pass
+    else:
+        _git(rig.top, "checkout", "-q", "main")
+        submodules.prune_vanished_worktrees(
+            _host_run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+        )
+    assert (candidate / "valuable").read_text() == "keep\n"
+    assert _git(candidate, "ls-files", "--stage") == index
+    assert (candidate / ".git").read_bytes() == dot_git
+    assert warn.called
+    if nested:
+        assert (rig.top / "sub" / "d" / "f").exists()
+
+
+def test_custom_named_submodule_prunes(rig: Rig) -> None:
+    _git(rig.top, "submodule", "add", "-q", "--name", "lib-core", str(rig.inup), "libs/core")
+    _git(rig.top, "commit", "-q", "-m", "custom")
+    paths = submodules.vanishing_submodules(_host_run, str(rig.top), head="dev", target="main")
+    submodules.assert_vanishing_clean(_host_run, str(rig.top), paths, target_label="main")
+    _git(rig.top, "checkout", "-q", "main")
+    submodules.prune_vanished_worktrees(
+        _host_run, str(rig.top), paths, fs=submodules.HostFs(), target_label="main"
+    )
+    assert not (rig.top / "libs/core").exists()
+    assert (rig.top / ".git/modules/lib-core/HEAD").exists()

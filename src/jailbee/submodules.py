@@ -1074,6 +1074,47 @@ def _external_gitdir(run: GitRun, sub: str) -> str:
     return gitdir
 
 
+def _owned_prune_tree(
+    run: GitRun, parent: str, path: str, *, before_move: bool
+) -> bool:
+    """Validate the whole ownership chain before absorption or any tree writes."""
+    sub = f"{parent}/{path}"
+    if not _has_own_worktree(run, sub):
+        _warn(f"Submodule '{sub}': no own worktree; left in place")
+        return False
+    gitdir = _require_git(run, sub, ["rev-parse", "--absolute-git-dir"]).strip()
+    parent_gitdir = _require_git(run, parent, ["rev-parse", "--absolute-git-dir"]).strip()
+    modules = f"{parent_gitdir}/modules/"
+    declared = dict((leaf, name) for name, leaf in _gitmodules_paths_at(run, parent, "HEAD"))
+    name = declared.get(path)
+    legacy = gitdir == f"{sub}/.git"
+    if legacy:
+        if not before_move:
+            _external_gitdir(run, sub)
+        # Legacy directories may only be absorbed while their declaration exists.
+        owned = before_move and name is not None and path in gitlinks_at(run, parent, "HEAD")
+    else:
+        owned = gitdir.startswith(modules)
+        if name is not None:
+            owned = owned and gitdir == posixpath.normpath(f"{modules}{name}")
+        if owned:
+            worktree = _require_git(
+                run, sub, ["config", "--file", f"{gitdir}/config", "--get", "core.worktree"]
+            ).strip()
+            associated = posixpath.normpath(posixpath.join(gitdir, worktree))
+            owned = bool(worktree) and associated == sub
+    if not owned:
+        _warn(f"Submodule '{sub}': foreign or ambiguous git directory; left in place")
+        return False
+    for nested in sorted(gitlinks_at(run, sub, "HEAD")):
+        if before_move and not _has_own_worktree(run, f"{sub}/{nested}"):
+            # Uninitialized children have nothing for absorbgitdirs to move.
+            continue
+        if not _owned_prune_tree(run, sub, nested, before_move=before_move):
+            return False
+    return True
+
+
 def assert_vanishing_clean(
     run: GitRun, top_dir: str, paths: list[str], *, target_label: str
 ) -> None:
@@ -1083,6 +1124,8 @@ def assert_vanishing_clean(
         sub = f"{top_dir}/{path}"
         if not _has_own_worktree(run, sub):
             _warn(f"Submodule '{path}': no own worktree; left in place")
+            continue
+        if not _owned_prune_tree(run, top_dir, path, before_move=True):
             continue
         _assert_clean_worktree(run, sub, target_label, display=path)
         # Git absorbs nested legacy gitdirs recursively while declarations exist.
@@ -1132,6 +1175,8 @@ def prune_vanished_worktrees(
             continue
         if not _has_own_worktree(run, sub):
             _warn(f"Submodule '{path}': no own worktree; left in place")
+            continue
+        if not _owned_prune_tree(run, top_dir, path, before_move=False):
             continue
         _check_prune_tree(run, sub, target_label)
         _prune_one(run, sub, fs)
