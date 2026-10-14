@@ -17,8 +17,8 @@ Run `jailbee config init` in a repo to generate a per-repo template.
 
 ## Configuration layers
 
-`jailbee` loads configuration from its defaults and three YAML layers and
-deep-merges them:
+`jailbee` deep-merges three explicit YAML layers, then supplies schema
+defaults for omitted fields:
 
 | Layer | Path | Purpose |
 |---|---|---|
@@ -26,7 +26,11 @@ deep-merges them:
 | Repo | `<repo>/.jailbee/config.yaml` | Per-repo configuration (stack versions, autostart, repo-specific egress, resources). |
 | Host-local repo | `~/.config/jailbee/repos/<container_prefix>.yaml` (or `$XDG_CONFIG_HOME/jailbee/repos/<container_prefix>.yaml`) | Per-repo, per-host overrides and credentials; never committed. |
 
-Precedence is **defaults < global < repo < host-local repo**. The effective `Config` Python object passed to every `jailbee` command is the merged result.
+Precedence is **global < repo < host-local repo**, with schema defaults as
+the fallback. List append/reset rules apply between YAML layers, not between a
+schema-default list and its first explicit value. Agent presets are a separate
+base for agent entries (see [`agents`](#agents)). The effective `Config` object
+contains the validated result.
 
 ## Host-local overrides
 
@@ -52,8 +56,9 @@ github:
   token: github_pat_...
 ```
 
-The local file containing `github.token` must be mode `0600`; JailBee rejects
-it if group or other permissions are present. `github.token` remains visible
+Keep the local file containing `github.token` private, normally mode `0600`.
+JailBee warns if group or other permissions are present; loading does not reject
+it. `jailbee doctor` reports insecure token-file permissions. `github.token` remains visible
 as a masked, disabled row in the interactive config editor; edit the YAML file
 directly to change it. `github.api_tokens` is deprecated and will be removed in 2.0.0;
 move entries with [`jailbee config migrate`](#migrating-older-per-repo-settings).
@@ -75,8 +80,8 @@ credentials:
 2.0.0; migrate its entries into the local `credentials.group` field.
 
 Lists follow the ordinary layering rule: the local list appends to what the
-global and committed repo layers grant. To clear all grants from those layers,
-set the local list to `[]`:
+global and committed repo layers provide. To clear their accumulated explicit
+entries, set the local list to `[]`:
 
 ```yaml
 egress_allow:
@@ -89,7 +94,8 @@ egress_allow: []
 
 A local list cannot replace the lower-layer list with *only* its own entries;
 it can append entries or clear the accumulated list, but not express a
-replacement subset.
+replacement subset. Clearing `egress_allow` does not remove destinations added
+by enabled agents, JetBrains or GitHub; those integrations have their own gates.
 
 The local file is a per-repo overlay, not another host-global config. It
 rejects `container_prefix`, computed fields such as `credential_group` and
@@ -116,11 +122,13 @@ blocks found in `global.yaml` or host-local files to `browsers.chrome`; a
 It renames global `claude_credentials:` to
 `credentials:`, moves `github.api_tokens` and `credentials.repos` entries into
 the matching local files, and repo-scoped egress overrides from `state.sqlite`
-into local `egress_allow` lists. Existing edited files are backed up as `.bak`
-files.
-Conflicting values, malformed local lists, and invalid repo prefixes are
-reported and left in place for manual resolution; a conflict does not discard
-either value. After migration, run `jailbee apply` in affected repos to apply
+into local `egress_allow` lists. It also moves legacy PR settings into `pr:`
+and renames `remote.ssh.shell` to `console`. Existing edited files are backed up
+as `.bak` files.
+Conflicts while moving tokens, credential groups and egress entries, malformed
+local lists, and invalid repo prefixes are reported for manual resolution.
+Legacy PR aliases differ: an explicit `pr:` value wins and the old spelling is
+removed even when its value differs. Review the preview before applying. After migration, run `jailbee apply` in affected repos to apply
 egress changes. Legacy settings remain readable until migrated (the deprecated
 spellings are scheduled for removal in 2.0.0).
 
@@ -128,9 +136,9 @@ spellings are scheduled for removal in 2.0.0).
 
 | Source type | Rule | How to reset |
 |---|---|---|
-| Scalar (`str`, `int`, `bool`, `Path`, enum) | Higher layer replaces lower layer | `null` in the higher layer clears |
+| Scalar (`str`, `int`, `bool`, `Path`, enum) | Higher layer replaces lower layer | `null` is valid only for nullable fields; it does not automatically restore a default |
 | List | Each higher-layer list appends to lower-layer lists (exception: `apps.<name>.command` replaces instead — see [`apps` layering](#apps-layering)) | `[]` in a higher layer replaces the accumulated list with an empty list |
-| Map / dict | Recursive deep-merge per key | No bulk reset — set an individual key to `null` to clear it (an empty `{}` is a no-op) |
+| Map / dict | Recursive deep-merge per key | An empty `{}` is a no-op. `null` replaces a value; it does not delete a key and must pass that field's schema |
 
 Example: a global `host_mounts` entry plus a repo-level one yields two mounts after merge. A layer cannot both clear and re-list in one step — `[]` resets and any non-empty list appends — so to *exclude* lower-layer entries, put `host_mounts: []` in the layer that should start over and re-list the entries to keep in the layers above it. The local layer follows this rule too.
 
@@ -170,7 +178,9 @@ Several keys are exempt from this pipeline — see [Keys that bypass the deep-me
 | `container.path` | repo | The repo's own `scripts/`, `bin/`; global for a personal `~/bin`, repo appends |
 | `shared_dir` | repo only (auto-derived) | Setting globally forces all repos to share the same dir |
 
-All fields are technically legal at either layer. The table above is convention.
+The table is a placement convention for ordinary mergeable fields, not
+permission to put every key in every layer. Host-only keys, credentials,
+GitHub settings and LiteLLM have the restrictions described separately.
 
 ### Host-level `docker_registry_mirror`
 
@@ -210,14 +220,16 @@ See [`update_check`](#update_check),
 [`remote.ssh`](#remotessh) and [`litellm`](#litellm).
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
-`dashboard:` values it shows come from the repo file only. Use `jailbee config
+`dashboard:` values it shows come from the repo and host-local overlay, not
+from the global display preferences. Use `jailbee config
 show --layer global` to see what the global file contributes.
 
 ### Inspecting the layers
 
 - `jailbee config show --layer global` — print the raw user-level YAML.
 - `jailbee config show --layer repo` — print the raw repo YAML.
-- `jailbee config show --layer local` — print the raw host-local file for this repo.
+- `jailbee config show --layer local` — print reserialized host-local YAML with
+  `github.token` masked; comments are not preserved.
 - `jailbee config show` (or `--layer effective`) — print the merged result.
 - `jailbee config edit --local` — edit the host-local file interactively.
 
@@ -236,9 +248,10 @@ It also **masks Ubuntu's automatic apt machinery** in the image —
 A background upgrade in a branch container takes the dpkg lock out from
 under your own `apt-get`, and one still running at shutdown can block
 systemd long enough for a stop to time out. Containers get their updates
-from a rebuilt golden image (`jailbee base build`) instead; if you need the
-timers back in a particular repo, `systemctl unmask` them from an
-`install.d/` snippet.
+through new containers created from a rebuilt golden image (`jailbee base
+build`); rebuilding does not update existing container filesystems. If you need
+automatic updates, unmask and enable the appropriate units in your provisioning
+and verify their state in the resulting container.
 
 ### Resolution order
 
@@ -259,7 +272,11 @@ wheel:
 | Bundled (always-on) | `src/jailbee/provision/install.d/*.sh` (shipped in the wheel) | lowest |
 | Bundled (opt-in, if enabled) | `src/jailbee/provision/install.d.available/*.sh` (shipped in the wheel; staged via `golden.stacks` or `golden.enable_snippets`) | above always-on, below user/repo |
 | User | `~/.config/jailbee/install.d/*.sh` | overrides bundled by filename |
-| Repo | `<repo>/.jailbee/install.d/*.sh` | overrides user (and bundled) by filename |
+| Repo | `<repo>/.jailbee/install.d/*.sh` | overrides user (and bundled) by filename; ignored for synthesized scratch configs |
+
+Repo snippets and empty repo shadows apply only to file-backed configs.
+Scratch directories use bundled and host-user snippets; create a repo config
+if the directory needs its own provisioning.
 
 The effective set is computed at `jailbee base build`. New filenames from user or repo are simply added; same-filename files at a higher tier **replace** the lower-tier file. After resolution, names listed in `golden.disable_snippets` are dropped (suffix `.sh` is optional in the list — both `"75-github-cli"` and `"75-github-cli.sh"` work); `disable_snippets` wins over `enable_snippets` if the same name appears in both.
 
@@ -332,7 +349,7 @@ golden:
 | `20-openjdk.sh` | `openjdk` | OpenJDK from the Ubuntu archive | `JAVA_PACKAGE` |
 | `20-corretto.sh` | `corretto` | Amazon Corretto JDK | `JAVA_PACKAGE` |
 | `30-nodejs.sh` | `nodejs` | Node.js + per-user `~/.npmrc` | `NODE_MAJOR`, `JAILBEE_USER_HOME`, `CONTAINER_USER` |
-| `40-python.sh` | `python` | `python${PYTHON_VERSION}` + venv + pip | `PYTHON_VERSION` (no auto-source — set via `provision_env`; `golden.python` is deprecated and does *not* feed it) |
+| `40-python.sh` | `python` | System `python3` + venv + pip | — |
 | `50-docker.sh` | `docker` | Docker Engine + AppArmor systemd override; adds dev user to docker group | `CONTAINER_USER` |
 | `70-chrome.sh` | `chrome` | Google Chrome from Google's own apt repository | — |
 | `70-firefox.sh` | `firefox` | Mozilla Firefox from Mozilla's own apt repository, pinned above Ubuntu's transitional/snap package | — |
@@ -346,10 +363,10 @@ enabled. `golden.stacks` auto-stages `registry-mirror-ca` whenever both
 Unknown names in `enable_snippets` are ignored with a warning at
 `jailbee base build` time.
 
-`70-chrome.sh` and `70-firefox.sh` are not staged via `enable_snippets` at
-all: `golden.browser_snippet_names` derives them straight from
-`browsers.<name>.source` — a browser enabled with `source: image` gets its
-snippet automatically, with no separate toggle to keep in sync. Both run
+`jailbee.golden.browser_snippet_names` automatically stages `70-chrome.sh` and
+`70-firefox.sh` for enabled browsers with `source: image`. Explicit
+`enable_snippets` entries can also stage them, but automatic derivation keeps
+installation and browser configuration in sync. Both run
 after the always-on `60-gui-libs.sh`, which installs the shared X11/Wayland/EGL
 libraries and fonts a browser needs to render at all. `70-chrome.sh` fails
 the build outright on an arm64 golden-image host — Google publishes no
@@ -369,11 +386,14 @@ set -euo pipefail
 # ...
 ```
 
-Guaranteed environment variables (set by `jailbee base build` regardless of which snippet you author):
+Environment available to snippets run by the bundled `install.sh`:
+`jailbee base build` supplies the reserved variables below, and `install.sh`
+adds `CONTAINER_USER=dev`. A replacement script must define the latter itself
+if it needs it.
 
 | Variable | Source | Notes |
 |---|---|---|
-| `CONTAINER_USER` | hardcoded `dev` | The unix username inside the container. |
+| `CONTAINER_USER` | bundled `install.sh` exports `dev` | The fixed Unix username inside the container; not supplied by the Python build command. |
 | `CONTAINER_UID`, `CONTAINER_GID` | `container_user.{uid,gid}` | Match host uid/gid for bind-mount readability. |
 | `JAVA_PACKAGE` | `golden.stacks.java` (preferred) or `golden.java` (mapped) | apt package name (e.g. `java-17-amazon-corretto-jdk`). |
 | `NODE_MAJOR` | `golden.stacks.node` (preferred) or `golden.node` | Major version for NodeSource (e.g. `24`). |
@@ -383,7 +403,8 @@ Guaranteed environment variables (set by `jailbee base build` regardless of whic
 
 Custom env vars can be passed via `golden.provision_env`. All of the above
 except `CONTAINER_USER` are reserved — passing one via `provision_env`
-raises `ConfigError`. `CONTAINER_USER` is always `dev`.
+raises `ConfigError`. The bundled script overwrites `CONTAINER_USER` with
+`dev`; a replacement script receives any value explicitly supplied for it.
 
 ### Disabling bundled snippets
 
@@ -407,11 +428,17 @@ Two ways:
 
 The config approach makes the choice visible in `jailbee config show`; the shadow approach is useful when you want to inspect the disable state via the filesystem.
 
-Note: `90-registry-mirror-ca.sh` depends on `keytool` from the JDK installed by `20-corretto.sh`/`20-openjdk.sh`. If you disable whichever JDK snippet your `golden.stacks.java`/`golden.enable_snippets` staged, also disable `90-registry-mirror-ca.sh` (or `keytool` won't be on PATH and the snippet will fail).
+Disable `60-gui-libs` only for a headless setup or when custom provisioning
+supplies equivalent runtime libraries and fonts; enabled GUI apps may otherwise
+fail to launch.
+
+`90-registry-mirror-ca.sh` needs the JDK's `keytool` when a mirror CA file is
+present. If you disable the JDK snippet, disable this snippet too unless your
+own provisioning supplies `keytool`. With no readable CA file it is a no-op.
 
 ### Full provisioning override
 
-`golden.provision_script` (path, relative to repo root) replaces the bundled `install.sh` entirely. When set, `install.d/` snippets are **not** staged — the custom script owns the whole provisioning surface. This escape hatch exists for repos that need to do something fundamentally different (e.g. a non-Ubuntu base image).
+`golden.provision_script` (path, relative to repo root) replaces the bundled `install.sh` entirely. When set, `install.d/` snippets are **not** staged — the custom script owns the whole provisioning surface. Use it for a substantially different provisioning workflow. It does not change base-image selection: the build still starts `images:ubuntu/<golden.ubuntu_version>`.
 
 A replacement script inherits nothing from `install.sh`, including the `apparmor` package. On a host that sets `kernel.apparmor_restrict_unprivileged_userns=1` (Ubuntu 24.04 and later), the dev user can only create a user namespace if AppArmor policy is loaded inside the container. Without that policy, Chrome aborts at launch with `credentials.cc … Permission denied`, and bwrap and rootless podman fail too. A custom script should install `apparmor`, as `install.sh` does. Its comment explains why.
 
@@ -497,11 +524,14 @@ Entries are prepended in the order written, so the first one wins a name
 collision. An entry may not be blank or contain a `:` (the `PATH` separator
 itself) or a newline — those are rejected at load time.
 
-Because `container.path` lands in the Incus base profile, it reaches **every**
-way into the container: `jailbee shell`, `jailbee exec`, tmux windows,
-autostart steps, and GUI launches like `jailbee ide` / `jailbee apps run`
-(which do not go through a login shell). `jailbee apply` is enough to pick it
-up — no image rebuild, and no container restart.
+`container.path` lands in the Incus base profile and supplies `PATH` to newly
+started Incus exec processes, including direct GUI launches. Shell startup
+files and applications can change it further. Existing shells and tmux servers
+retain their environment; a new window in an old tmux server need not inherit
+the updated profile. No image rebuild is needed, but `jailbee apply` currently
+offers a restart for a changed base profile, including a PATH-only edit.
+`--no-restart` skips that restart; reopen sessions or restart their tmux server
+as needed.
 
 Two consequences of that mechanism, both deliberate:
 
@@ -514,8 +544,8 @@ Two consequences of that mechanism, both deliberate:
   that has not opted in is unaffected.
 - **`~/.local/bin` is not in that system half.** It reaches `PATH` through
   `/etc/profile.d/local-bin.sh`, which every login shell sources on top of this
-  value — so login shells keep it, and a non-login `incus exec` resolves
-  exactly what it resolved before.
+  value. Non-login launches do not source that file; list the directory
+  explicitly if those launches need tools installed there.
 
 `container.env.PATH` overrides `container.path` outright. Setting both is not
 an error, but the `container.path` entries are then ignored and
@@ -553,19 +583,21 @@ List of bind mounts added to every container.
 |---|---|---|---|
 | `host` | path | — | Host path (`~` expanded). |
 | `container` | string | — | In-container mount target. |
-| `readonly` | bool | `false` | **Read-write unless set to `true`** — set `true` for anything sensitive. |
+| `readonly` | bool | `false` | **Read-write unless set to `true`**. Read-only prevents filesystem writes, not reading/copying secrets or communicating through mounted sockets. |
 
 ### `optional_mounts`
 
-Named mounts, attached per-container with `jailbee new --mount NAME`.
+Named mounts, attached with `jailbee mount <name> <container>` or an autostart
+stage's `mounts` list. `jailbee new --mount` is different: it shares the entire
+host repository read-write and takes no mount name.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `host` | path | — | Host path (`~` expanded). |
 | `container` | string | — | In-container mount target. |
 | `readonly` | bool | `true` | Read-only by default. |
-| `description` | string | `""` | Shown in the `jailbee new --mount` picker. |
-| `auto_unmount_after` | duration | policy default | Overrides `mount_auto_revert.after` for this mount; `never` disables its deadline. A disabled policy also disables automatic detach. |
+| `description` | string | `""` | Human-readable description of the optional mount. |
+| `auto_unmount_after` | duration | policy default | Overrides `mount_auto_revert.after` for this mount; `never` disables its deadline. A disabled policy suppresses the default deadline, not existing or explicitly requested deadlines. |
 
 ```yaml
 optional_mounts:
@@ -583,7 +615,9 @@ optional_mounts:
 minutes, or `never`.
 
 An optional mount is also the way to lend a container a credential for a
-while — an API key, `~/.aws` — without writing it into the container. See
+while — an API key, `~/.aws` — without deliberately copying it into the
+container. Processes can still copy or use it while mounted; detaching does not
+revoke credentials or erase copies. See
 [Lending a container a credential](security.md#lending-a-container-a-credential).
 
 ### `host_devices`
@@ -621,9 +655,10 @@ the Incus profile set. (Verified: neither the profile `mode` nor an in-container
 udev override survives this; only group membership does.) So JailBee adds the `dev`
 user to the device's owning group:
 
-- When `group` is **unset** (default), JailBee auto-derives it from the host source
-  node's owning group — `/dev/kvm` → `kvm`. Zero-config: `{ path: /dev/kvm }`
-  just works.
+- When `group` is **unset** (default), JailBee looks up the host source node's
+  owning group. Automatic access requires a resolvable non-root group with the
+  appropriate name already present inside the container. Missing groups are
+  skipped, not created; verify the resulting node ownership and `id` output.
 - Set `group` explicitly to override (e.g. when the host and container group
   names differ): `{ path: /dev/kvm, group: kvm }`.
 - `mode`/`gid`/`uid` still apply to the Incus profile device and remain useful
@@ -760,7 +795,7 @@ the matching `golden.enable_snippets` entry.
 > Claude Code's global config (`.claude.json`) lives **inside** the shared
 > `~/.claude` mount: the golden image exports
 > `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads
-> `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. See `### claude` below.
+> `(CLAUDE_CONFIG_DIR \|\| $HOME)/.claude.json`. See `### claude` below.
 >
 > `chrome-profile` (`chrome-pool` → `~/.config/google-chrome`) and
 > `firefox-profile` (`firefox-pool` → `~/.mozilla/firefox`) are appended the
@@ -772,14 +807,16 @@ the matching `golden.enable_snippets` entry.
 The container then has RW access to its own `~/.ssh/` — ControlMaster
 sockets work, `known_hosts` updates persist, and users can drop their
 own keys into `<shared_dir>/ssh/` if they don't want to use the host
-gpg-agent. Private keys, `authorized_keys`, and sockets are **never**
-seeded — they live outside the strict allowlist. The dir is forced to
-mode 0700 on every `jailbee init` (SSH refuses `~/.ssh` with looser bits).
-Disable seeding with `ssh.seed_from_host: false`, or skip the whole
-SSH integration with `ssh.enabled: false`.
+gpg-agent. Other top-level files, including private keys and `authorized_keys`,
+are excluded, but the entire `config.d/` tree and its symlink targets are
+copied: keep secrets and sockets out of that tree. With `ssh.enabled: true`,
+`jailbee init` enforces mode `0700`. `ssh.seed_from_host: false` skips seeding;
+`ssh.enabled: false` skips SSH setup but does not remove a configured/default
+`ssh` shared-cache mount.
 
-Set `shared_caches: []` to disable, or override with your own list for
-non-JVM/Node stacks. `name` must match `[a-z0-9][a-z0-9-]*` and be
+`shared_caches: []` clears the explicit/default list, including its SSH entry.
+Enabled stacks and integrations still add their own caches. A non-empty list
+replaces schema defaults but appends to explicit lists from lower YAML layers. `name` must match `[a-z0-9][a-z0-9-]*` and be
 unique. `container_path` must be absolute or start with `~`.
 
 An entry can carry its own `pool:` block instead of relying on
@@ -818,8 +855,9 @@ A key absent from `pooled_caches` follows the preset's own `default_on`:
 per key (the generic dict rule from [Merge rules](#merge-rules)) instead of
 one layer's list appending to the other's.
 
-A fresh slot is seeded by copying the warmest existing slot (the one whose
-`warmth_file` — or, absent that, whose directory — has the newest mtime).
+A fresh slot is seeded from the warmest existing slot: the one with the newest
+configured `warmth_file` mtime. A missing configured file scores zero;
+directory mtime is used only when no `warmth_file` is configured.
 `link_paths` names subtrees hardlinked from the seed source instead of
 copied, so a multi-gigabyte artifact store (Gradle's module cache, Maven's
 `repository/`) costs close to nothing per extra container. **`link_paths`
@@ -833,6 +871,11 @@ stale lock files an unclean exit left behind, respectively. Both accept
 glob patterns; `wipe_paths` needs them for Firefox, whose profile
 directory carries a random `<id>.default-release/` component that no
 literal path can name (`*/cache2`).
+
+Pooling separates lock files and mutable cache state, not trust boundaries.
+Hardlinked artifacts remain shared writable inodes: an in-place modification
+in one slot can affect another. Do not treat slots as isolation between
+mutually untrusted containers.
 
 To pool a cache with no builtin preset — including one of your own
 `shared_caches` entries — give that entry an explicit `pool:` block
@@ -920,10 +963,11 @@ container's own resolver answers with exactly the addresses the ACL permits
 instead of drifting to an IP the ACL will drop. `jailbee apply --no-restart`
 forces the same refresh immediately, live, without restarting a container.
 
-**Error handling:** if any hostname fails to resolve, the entire ACL
-apply is aborted with a non-zero exit code — the previous ACL remains
-in place. The list is meant to be minimal; a broken entry is treated
-as a real config error, not a soft warning.
+**Error handling:** initial `jailbee init` fails if any hostname cannot
+resolve. `jailbee apply` and periodic refresh tolerate partial failures with
+warnings and update the repo ACL/hosts using the cumulative pool. If all
+hostname lookups fail, they leave that repo's ACL/hosts unchanged and `apply`
+fails. This is not an atomic rollback of other work already done by `apply`.
 
 **Limitations:** IPv6 is not supported (a single `:` is the host/port
 separator, which would clash with IPv6 syntax). The `host:port` form is
@@ -942,8 +986,10 @@ Every start, restart, network-mode switch and egress change of such an
 always-on container (one whose network mode is known) also starts the proxy if
 it is stopped, or adds the missing NIC if it was created on another network;
 `jailbee new` and `jailbee restart` therefore bring it back on their own. If it
-cannot be started, they warn to run `jailbee apply` and leave the container's
-environment as it is. Things to know:
+cannot be started, they warn rather than abort. Synchronization may still
+update proxy settings if an endpoint is discoverable; otherwise an always-on
+container retains its existing settings. Neither outcome guarantees a usable
+proxy. Things to know:
 
 - **The apex is included.** `*.github.com` matches `github.com` itself as well
   as `api.github.com` and every deeper subdomain. It needs at least two labels
@@ -994,9 +1040,10 @@ intentionally **not** in the base `egress_allow`. Only HTTPS is added
 automatically — `api.github.com:443` with [`github.enabled`](#github), and
 `github.com:443` plus GitHub's content hosts with
 `agents.claude.plugins_enabled` (on by default) — and the container's token
-is read-only, so strict-mode work can read GitHub but not push to it. Why
-this is the gate against unattended agents producing surprise pushes, and how
-to push instead, is documented in
+should be scoped read-only by you. JailBee cannot verify or enforce its
+effective permissions. Strict mode filters destinations, not Git operations:
+when `github.com:443` is reachable, a write-capable credential can permit
+HTTPS pushes. The intended host-side publication workflow is documented in
 [Git remote & push](security.md#git-remote--push).
 
 **Widening the list without editing it.** This key is the committed,
@@ -1047,11 +1094,12 @@ written: `user.jailbee.loose_until` (ISO8601 expiry) and
 `user.jailbee.loose_revert_to` (the mode in effect before the switch).
 The existing `jailbee-net-refresh.timer` (already runs every 60 s) reverts
 the container when the deadline passes — unless `user.jailbee.autostart_in_progress`
-is set, in which case the check is deferred to the next tick so an
-autostart stage can finish its own network swap without racing the
-timer. See [Security](security.md#autostart-and-the-network-exposure-window)
-for what carries that flag for a *detached* stage, and why a dead
-supervisor can no longer pin a container loose.
+is held by autostart, in which case the check is deferred. Deadlines require
+the user refresh timer to be installed and running; they are checked on ticks,
+not enforced by the network itself. PID-based flags allow stale-owner detection,
+but legacy `1` and malformed flags can continue deferring expiry. See
+[Security](security.md#autostart-and-the-network-exposure-window) for detached
+stage ownership.
 
 `jailbee net strict <c>` always clears the labels.
 
@@ -1108,9 +1156,13 @@ mount_auto_revert:
 ```
 
 The `jailbee-net-refresh.timer` (the same timer used for loose-mode
-reverts) detaches expired mounts. A mount attached before this release has no
-deadline. Running `jailbee mount` again for an already attached kind only
-changes its TTL; `jailbee unmount` clears the deadline.
+reverts) detaches expired mounts on refresh ticks, provided it is installed
+and running. Autostart ownership can defer detachment. Mounts without a recorded
+deadline do not expire. Running `jailbee mount` again for an already attached
+kind only changes its TTL, not its source or read-only properties;
+`jailbee unmount` clears the deadline. Disabling the policy stops default TTL
+scheduling, but existing and explicit `--for` deadlines remain effective.
+Use `--no-revert` when attaching or retiming a mount to clear its deadline.
 
 ### `defaults`
 
@@ -1127,14 +1179,15 @@ Per-container defaults.
 
 Golden image build params.
 
-The golden image is **stack-neutral by default**: only locale, prompt,
-GUI libs, and GitHub CLI are installed out of the box (see
-[Provisioning snippets](#provisioning-snippets-installd) below).
-Language runtimes and cloud helpers (Java, Node, Python, Docker, ECR
-helper, registry-mirror CA) ship in the image but stay off until
-enabled — via `golden.stacks` (recommended, see
-[Stacks](#stacks-goldenstacks)) or directly via `golden.enable_snippets`
-(low-level).
+The golden image is **stack-neutral by default**: essential development and
+container plumbing (including Git, build tools, tmux, OpenSSH and AppArmor)
+plus the default snippets for locale, prompt, GUI libraries and GitHub CLI.
+Additional runtimes and cloud helpers ship as opt-in provisioning snippets,
+not preinstalled disabled software. Enable them with `golden.stacks`
+(recommended; see [Stacks](#stacks-goldenstacks)) or the lower-level
+`golden.enable_snippets`. The Python stack adds system Python venv/pip tooling.
+Stack-derived Java/Node values override `golden.java`/`golden.node`, including
+`stacks.java: true` selecting `default-jdk` and `stacks.node: true` selecting 24.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -1152,21 +1205,22 @@ enabled — via `golden.stacks` (recommended, see
 
 ### Master switches — opt-in by default
 
-Every host-tooling block (`gpg`, `ssh`, `jetbrains`, and each browser under
-`browsers`) ships with `enabled: false`. None of them does anything until
-the user opts in, typically at the global layer
+Host-tooling blocks (`gpg`, `ssh`, `jetbrains`, and each browser under
+`browsers`) ship with `enabled: false`. Their automatic integration work is
+opt-in, typically at the global layer
 (`~/.config/jailbee/global.yaml`). Per-repo overrides can also turn a block
 on for repos that need it. The point is to keep the container minimal
-until the user explicitly says "yes, wire this host integration in."
+until the user opts in. Explicit mounts and caches are independent: notably,
+the default `ssh` cache remains mounted even when `ssh.enabled` is false.
 
 `jailbee config init --global` writes a file that flips `gpg`, `ssh`,
 `jetbrains` and `browsers.chrome` to `enabled: true` — a working starting
 point for a typical developer setup, not a literal echo of the built-in
 defaults. `browsers.firefox` is left off in that seed; enable it by hand if
 you want it too. The file itself is generated, not hand-written: its
-comments are each field's own schema description
-(`config_writer.render_documented`), so they cannot drift from this
-document or the code the way a hand-maintained template could.
+comments come from schema descriptions (`config_writer.render_documented`).
+That reduces template duplication, but descriptions and this reference can
+still lag the implementation.
 
 ### `gpg`
 
@@ -1191,8 +1245,12 @@ socket fully usable, since a unix-socket client needs no writable filesystem,
 and the host stays free to re-create its own sockets. The golden image also
 masks those user units, so the container does not even try.
 
-With `enabled: false` nothing gpg-related reaches the container: no
-`~/.gnupg` mount, no `gpg-socket` device, and no `SSH_AUTH_SOCK`. The
+Read-only does not hide the host keyring: the full `~/.gnupg` directory can
+be read and disk-stored secret keys copied. Mounted agent sockets remain usable.
+
+With `enabled: false`, JailBee omits its automatic `~/.gnupg` mount,
+`gpg-socket` device and `SSH_AUTH_SOCK` default. Explicit `host_mounts` and
+`container.env` overrides still apply. The
 golden image's `/etc/profile.d/jailbee-env.sh` fallback only sets
 `SSH_AUTH_SOCK` when the variable is still unset *and* the gpg-agent
 socket is actually present, so login shells stay clean on hosts that run
@@ -1211,10 +1269,12 @@ run` draw through. By default (`wayland: on-demand`) it is attached when the
 first of them — or `jailbee exec -d --gui`, or `jailbee display attach` — runs
 in the container, so a container that never opens a window cannot reach the
 host compositor at all. Each such launch also replaces a socket that a
-restarted compositor (a re-login) left dead. A GUI app started some other way
-— from `jailbee shell`, an agent — needs `jailbee display attach` first. One
-started at boot, such as an autostart step, runs before anyone can attach, so
-it needs `wayland: always`, which attaches the socket on every boot as before. A window is all the socket gives the container.
+restarted compositor (a re-login) left dead. A GUI app started directly from
+a shell or agent needs an attached display first. A direct GUI command in an autostart shell step needs `wayland: always`
+or an explicit attachment. Registry autostart (`jetbrains.autostart`, browser
+and `apps` entries) attaches the display on launch and works with `on-demand`.
+The socket exposes the compositor's client protocol, not a filesystem-only
+window handle; treat attaching it as access to the host desktop interface.
 
 `dbus` and `audio` came in alongside it as a desktop bundle but do
 more than draw. The session bus is the host desktop's control channel —
@@ -1230,8 +1290,8 @@ the next GUI launch), no `jailbee apply` needed.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Bind-mount `<shared_dir>/ssh` as the container user's `~/.ssh` and enforce `0700` on each `jailbee init`. `false` skips the mount and the perms check; the container will have no `~/.ssh`. |
-| `seed_from_host` | bool | `true` | On first `jailbee init`, copy host `~/.ssh/{config, known_hosts, config.d/}` into the shared dir. Private keys, `authorized_keys`, and sockets are never seeded. Ignored if `enabled: false`. |
+| `enabled` | bool | `false` | Enable SSH seeding and `0700` setup on `jailbee init`. `false` skips that setup, but does not remove the default/configured `ssh` shared-cache mount. |
+| `seed_from_host` | bool | `true` | Seed host `~/.ssh/{config, known_hosts, config.d/}` into the shared dir. Other top-level files are excluded, but `config.d/` is copied recursively, following symlinks; keep secrets and sockets out of it. Ignored if `enabled: false`. |
 
 ### `jetbrains`
 
@@ -1286,16 +1346,18 @@ Chrome and Firefox as registry entries — see [`apps`](#apps) below for the
 umbrella both feed into, and [Provisioning snippets](#provisioning-snippets-installd)
 above for how `source: image` reaches the golden image.
 
-**Turning on a browser for the first time needs `jailbee base build` too,
-not only a later `source` change.** Under the default `source: image`
+**Turning on an image-sourced browser needs `jailbee base build` and a new
+container, not just enabling it in config.** Under the default `source: image`
 (Firefox), setting `enabled: true` alone does nothing to an already-built
-image — the browser is only installed by `jailbee base build`. `jailbee
+image — the browser is installed into the new image only by `jailbee base
+build`. `jailbee
 <browser>` on a container from an older image starts, prints its usual
 "Launching …" line, and exits 0: the launch is detached, so a missing
 binary fails silently *inside the container*, visible only in
 `/tmp/jailbee-app-<name>.log` or as `missing` in `jailbee apps ls
 <container>`. Run `jailbee base build` after enabling, the same as after
-changing `source` to `image`.
+changing `source` to `image`, then create a new container from that image.
+Rebuilding does not install the browser into existing containers.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -1310,7 +1372,7 @@ shape:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. When `false`, `jailbee chrome` / `jailbee firefox` exits 2 with a clear message, the browser is hidden from `jailbee apps ls`, autostart skips its launch, and the `host_path` auto-mount is omitted from `effective_host_mounts`. |
-| `source` | `host` \| `image` | `host` for Chrome, `image` for Firefox | `host` RO-mounts an existing host install (see `host_path`); `image` installs the browser into the golden image during `jailbee base build` — no host install needed. **Changing `source` needs a re-run to take effect: `jailbee base build` for `image`, `jailbee apply` for `host`.** Firefox defaults to `image` because on Ubuntu the host's Firefox is a snap and `/snap/firefox` is not usefully mountable into a container; Chrome defaults to `host`, matching how it has always worked. |
+| `source` | `host` \| `image` | `host` for Chrome, `image` for Firefox | `host` RO-mounts an existing host install (see `host_path`); `image` installs the browser into the golden image during `jailbee base build` — no host install needed. **For `image`, run `jailbee base build` and create a new container; for `host`, run `jailbee apply` to update mounts.** Firefox defaults to `image` because on Ubuntu the host's Firefox is a snap and `/snap/firefox` is not usefully mountable into a container; Chrome defaults to `host`, matching how it has always worked. |
 | `host_path` | path \| null | `/opt/google/chrome` for Chrome, `null` for Firefox | Host path RO-mounted into the container when `source: host` (must be `null` under `source: image`). The container-side mount target is hardcoded per browser (`/opt/google/chrome`, `/opt/firefox`) — `browsers.py`'s `BROWSER_BINARIES` map is what actually invokes the binary there. Override for a non-standard install (e.g. a chromium dir); `null` disables the auto-mount. Ignored when `enabled: false`. A manual `host_mounts` entry with a matching `container:` wins. Firefox has no default here because its host install is normally a snap — but setting `host_path` on Firefox without also setting `source` implies `source: host`, so naming a real install is enough. |
 | `url` | string \| null | `null` | URL this browser opens on launch, overriding the shared `browsers.url`. `null` (default) inherits `browsers.url`, and means no URL when that is unset too. `jailbee chrome <name> <URL>` / `jailbee firefox <name> <URL>` override both per-call. |
 | `dark_mode` | bool | `false` | Force a dark theme — **asymmetric between the two browsers**. Chrome gets `--force-dark-mode --enable-features=WebContentsForceDark`, which darkens page content as well as the browser chrome. Firefox has no equivalent flag, so it gets `GTK_THEME=Adwaita:dark` instead, which darkens the browser UI only — pages render exactly as the site sends them; forcing dark page content in Firefox is an extension's job, not jailbee's. |
@@ -1323,9 +1385,9 @@ directory.
 
 **The top-level `chrome:` block from before 1.3.0 still works**, folded into
 `browsers.chrome` at load time with a deprecation hint on stderr naming
-`docs/config.md` — once per process, however many times the config is
-loaded. Unlike the `agents`/`claude` legacy alias, defining both is not an
-error: an explicit `browsers.chrome` overlays the folded legacy block
+`docs/config.md` and the source file — once per source file per process,
+however many times the config is loaded. Unlike the `agents`/`claude` legacy
+alias, defining both is not an error: an explicit `browsers.chrome` overlays the folded legacy block
 field-by-field, so a half-migrated config behaves the way the newer spelling
 says. It is removed entirely in 2.0.0, alongside `.gie/config.yaml` —
 migrate to `browsers.chrome`.
@@ -1514,13 +1576,13 @@ out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `platform.claude.com:443` (the `/login` token exchange) + `mcp-proxy.anthropic.com:443` (claude.ai connectors) + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` adopts a login the repo's credential group already holds), and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `platform.claude.com:443` (the `/login` token exchange) + `mcp-proxy.anthropic.com:443` (claude.ai connectors) + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR \|\| $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` seeds onboarding from an existing credential file), and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; the first `jailbee tmux <c>` lands in that window (later attaches keep the window you detached from). `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
 | `claude.agent_view` | bool | `false` | When `false`, containers get `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, which turns off Claude Code's agent view (`claude agents`, `--bg`, `/background`) and its on-demand background daemon. The daemon's `daemon.lock` lives in the `~/.claude` every container of the repo shares, so daemons in two containers take it from each other and background jobs die. Set to `true` if you run one container of the repo at a time. Takes effect on `jailbee apply`. Has no effect when `claude.enabled: false`. See [agents.md](agents.md#what-the-containers-of-a-repo-share). |
-| `claude.seed_onboarding` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded (`hasCompletedOnboarding`) and accept the trust dialog for the repo's in-container path, but only when this repo's credential group (see [`credentials`](#credentials)) already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this every new container — and every scratch directory, which has no repo config to inherit state from — asks for a `/login` the shared credential has already answered. With no shared login there is nothing to adopt and the wizard runs as before, which is what walks the user through the login that does have to happen. A config home Claude Code has already written is never touched. Has no effect when `claude.enabled: false`. |
+| `claude.seed_onboarding` | bool | `true` | When enabled with Claude, `jailbee init` / `apply` seed `hasCompletedOnboarding` and repository trust in `<shared_dir>/claude/.claude.json` if the resolved credential holder contains a credential file (grouped or repo-local). The credential is not validated. Existing JSON containing `hasCompletedOnboarding` or `oauthAccount` is left alone; otherwise the fields are added while preserving other keys. Unreadable or malformed JSON is not overwritten. Set `false` to leave onboarding and trust acceptance to the agent session. |
 
 Example global config:
 
@@ -1578,10 +1640,11 @@ pr:
 
 #### Encoding a project's PR standard
 
-`jailbee pr` already reads `.github/pull_request_template.md`, the spec or
-issue a branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md`
-before writing anything. `pr.prompt` is for the rules that live in
-none of those files — commit them to the repo's `.jailbee/config.yaml` so
+`jailbee pr` instructs the selected agent to read
+`.github/pull_request_template.md`, the spec or issue a branch implements,
+and `CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md` before drafting. This is a
+prompt instruction, not proof that every agent read every file. `pr.prompt`
+is for the rules that live in none of those files — commit them to the repo's `.jailbee/config.yaml` so
 every container generates descriptions the same way:
 
 ```yaml
@@ -1595,9 +1658,10 @@ pr:
     name as `[ABC-123](https://example.atlassian.net/browse/ABC-123)`.
 ```
 
-These instructions win over JailBee's generic guidance where the two
-disagree, which is why the block cannot break generation: the response
-format the agent has to return is stated after it and stays JailBee's.
+The prompt gives these instructions priority over JailBee's generic guidance,
+then states JailBee's JSON response contract. That ordering is not a guarantee
+of model compliance; contradictory instructions or malformed output can still
+make generation fail and fall back to a placeholder.
 
 ### `terminal` / `terminal.kitty`
 
@@ -1631,8 +1695,10 @@ Top-level keys:
 
 #### Stages and chains
 
-A **stage** is one milestone of a run. Stages execute in list order — a
-stage starts only once the previous one has fully finished. **A stage owns
+A **stage** is one milestone of a run. Stages execute in list order, waiting
+for foreground steps and background-step startup probes, not for background
+processes to exit. Stage-scoped mounts and temporary network settings are
+restored while those processes may still be running. **A stage owns
 the network profile and the mounts for all of its chains**: it switches the
 network once on entry and restores it once on exit, attaches its
 `optional_mounts` once and detaches them once, and nothing inside its
@@ -1726,10 +1792,12 @@ before, so the CLI hands you the session (shell, tmux, or just the prompt
 back, per `after_new`/`--attach`) right after the last blocking stage
 finishes, while the rest continues in the background.
 
-`--wait` (run every stage in the foreground, ignoring `detach: true` — the
-pre-1.4 behaviour) and `--no-wait` (run only the first stage before handing
-over, whatever the config says) on `jailbee new`/`jailbee start`/`jailbee
-restart` override this per invocation; the two are mutually exclusive. See
+`--wait` runs every stage in the foreground, ignoring `detach: true`.
+`--no-wait` splits each trigger after its first stage; an implicitly generated
+agents stage also stays on the blocking side. If `on_create` leaves deferred
+stages, the entire `on_start` trigger runs in the supervisor. These flags on
+`jailbee new`/`jailbee start`/`jailbee restart` override the config per invocation
+and are mutually exclusive. See
 [Commands](commands.md) for `jailbee autostart status`/`cancel`, which
 inspect and stop a detached run, and [Security](security.md#autostart-and-the-network-exposure-window)
 for what a stage's network switch means while it's running unattended.
@@ -1952,8 +2020,10 @@ mounts each step *effectively* runs with. So moving an unchanged `loose` step
 into a `loose` stage is neither a widening nor a reported change: the only line
 it produces is the new stage itself.
 
-`--yes`/`-y` accepts without asking (in addition to its original job of
-skipping the "branch already exists" prompt). `--no-autostart` skips the branch
+Locally, `--yes`/`-y` accepts without asking (in addition to skipping the
+"branch already exists" prompt). Over remote SSH, changes requiring this
+privilege confirmation are refused even with `--yes`; approve and provision
+them locally. `--no-autostart` skips the branch
 config entirely: none of its steps run, so there is nothing to diff or confirm.
 
 With `jailbee new --background` the question is asked **before** the run detaches,
@@ -2021,9 +2091,9 @@ other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
 
 ### `new`
 
-Policy for what state `jailbee new` starts a new container from when the
-container's branch does not already exist in the source repo (the
-"default-branch fallback" path).
+Policy for selecting the source commit when `jailbee new` clones a repository.
+The `origin` policy name means the resolved `upstream_remote`, not necessarily
+a remote literally named `origin`.
 
 ```yaml
 new:
@@ -2035,35 +2105,29 @@ new:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `clone_from` | enum | `origin` | With `origin`, the new container is checked out at `refs/remotes/origin/<default_branch>` on the host, so the working tree reflects the upstream tip. With `local`, the classic behaviour applies: `refs/heads/<default_branch>` (whatever the host's local default branch points at). |
-| `autofetch` | bool | `true` | When `true` and `clone_from='origin'`, `jailbee new` runs `git fetch origin <default_branch>` on the host before resolving the ref, so a stale host doesn't propagate into the container. Set `false` to skip and rely on whatever the host already has. |
+| `clone_from` | enum | `origin` | With no explicit base and the default branch selected as source, prefer `refs/remotes/<upstream_remote>/<default_branch>` (including an existing requested default branch). `local` prefers the local source branch. A source available only as a remote-tracking branch uses upstream mode regardless. |
+| `autofetch` | bool | `true` | In upstream mode, fetch the selected source branch from `upstream_remote` before resolving its tracking ref. Applies to default-branch preference and upstream-only sources, not to an explicit local base or an existing local feature branch. `false` uses the refs already present. |
 | `background` | bool | `false` | Run `jailbee new` detached in the background by default. Overridable per-invocation with `--background` / `--no-background`. An explicit `--attach shell`/`--attach tmux`, `--tmux`, or `--shell` also forces foreground, since a detached run has no terminal to attach; `--attach none` / `--no-attach` don't, and combine fine with `--background`. |
 | `submodules` | bool | `true` | Initialize the superproject's git submodules (recursively, offline from the host bind mount) in the new container. Set `false` to skip. |
 
-Scope of `clone_from` / `autofetch`: these two apply **only** to the
-default-branch fallback path — i.e. when no `--base` is given and the
-requested branch does not yet exist in the source repo. `--base <X>`
-always uses `refs/heads/<X>` (local) by design, since the user has
-explicitly picked a local starting point. `--pr <N>` performs its own
-fetch (`gh`-driven) and is unaffected. `background` and `submodules`
-apply to every `jailbee new` invocation regardless of the starting-point
-path.
+When creating a missing branch, `--base X` uses the local branch if present,
+otherwise its upstream-tracking copy. If the requested container branch already
+exists, that branch remains the source and `--base` records the comparison base.
+`--pr N` performs its own fetch and is unaffected by this source preference.
+`background` is independent of source selection; submodule initialization
+applies to clone mode, not a full-repo mount.
 
 Errors:
 
 - If `autofetch=true` and the fetch fails (no network, ACL denial,
   bad credentials, …), `jailbee new` aborts before touching Incus state.
   Resolve the underlying issue or set `autofetch: false`.
-- If `clone_from='origin'` but `refs/remotes/origin/<default_branch>`
-  does not exist in the host repo, `jailbee new` aborts. Fetch first, or
-  set `clone_from: local`.
-- A repo with **no such remote at all** is not that case: `origin` is only
-  a fallback name (see [`upstream_remote`](#which-remote-is-the-upstream)), so a
-  local-only repo — `git init`, no remote, the ordinary shape of a scratch
-  directory — has no upstream tip to prefer. `jailbee new` uses
-  `refs/heads/<default_branch>` there without being told to, and aborts only
-  when the branch exists neither locally nor on a remote, naming `--base` as
-  the way to start from a branch the repo does have.
+- If upstream mode selects a tracking ref that is missing while the remote
+  exists, `jailbee new` aborts. Fetch first or select a local source.
+- With `autofetch: false`, a missing upstream remote falls back to the local
+  source branch. With autofetch enabled, the fetch runs first and can fail
+  before that fallback. For a local-only repo, use `clone_from: local` or
+  disable autofetch; a source commit must still exist.
 
 ### `destroy`
 
@@ -2121,7 +2185,11 @@ merge target for a single invocation with `--into <branch>`.
 | `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git pull` merges the container's branch. `"auto"` fast-forwards when the host branch is strictly behind and writes a merge commit otherwise (the behaviour before 1.4.0 was always a merge commit — set `"never"` to keep it); `"always"` demands a fast-forward and fails on divergence. A target branch that isn't checked out is fast-forwarded at ref level regardless of this key. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
 
 `--cleanup` on the CLI forces both cleanup keys to `always`; `--no-cleanup`
-forces both to `never`. Cleanup failures are warnings, not errors. `--ff`/
+forces both to `never`. `destroy_container: always` and `--cleanup` force
+destruction without the interactive work-loss guard: uncommitted container
+changes can be lost even after the committed history was merged. `prompt`
+adds that safety check. All cleanup is skipped when the known target HEAD
+remains unchanged. Cleanup failures are warnings, not errors. `--ff`/
 `--no-ff` override `ff` for one run; `--tags`/`--follow-tags`/`--no-tags`
 override `tags` for one run (mutually exclusive within each pair).
 
@@ -2150,11 +2218,11 @@ defaults to `"base"`.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `default_action` | `"merge"` \| `"rebase"` \| `"plain"` \| `"ask"` | `"ask"` | What to do after pushing the ref. `"plain"` is transport-only (no merge/rebase). |
-| `default_source` | `"default-branch"` \| `"current"` \| `"base"` \| `"ask"` | `"base"` | Which branch to push. `"base"` resolves to each container's recorded base branch (`user.jailbee.base_branch`), so the host pushes exactly what the container was branched from. `"default-branch"` always uses the repo's default branch, regardless of the container's base. `"current"` uses `git symbolic-ref --short HEAD`. `"ask"` opens an interactive picker every time. |
-| `push_from` | `"origin"` \| `"local"` | `"origin"` | Which *copy* of that branch to push. `"origin"` sends `refs/remotes/origin/<source>` and falls back to `refs/heads/<source>` when the branch has no upstream copy; `"local"` reverses the order. |
-| `autofetch` | bool | `true` | Run `git fetch origin <source>` on the host before resolving the ref, so the remote-tracking copy is current. Only applies in `push_from: origin` mode. Best-effort — the push proceeds with the refs already present; a failure is reported only when the origin ref is what ended up travelling (and may therefore be stale), not when resolution fell back to the local branch because the source simply isn't on origin. |
+| `default_source` | `"default-branch"` \| `"current"` \| `"base"` \| `"ask"` | `"base"` | Which branch to push. `"base"` resolves to each container's recorded base branch (`user.jailbee.base_branch`), so it selects that branch's current ref, not necessarily the original branch-off commit. `"default-branch"` always uses the repo's default branch, regardless of the container's base. `"current"` uses `git symbolic-ref --short HEAD`. `"ask"` opens an interactive picker every time. |
+| `push_from` | `"origin"` \| `"local"` | `"origin"` | Which *copy* of that branch to push. `"origin"` sends `refs/remotes/<upstream_remote>/<source>` and falls back to `refs/heads/<source>` when the branch has no upstream copy; `"local"` reverses the order. |
+| `autofetch` | bool | `true` | Run `git fetch <upstream_remote> <source>` on the host before resolving the ref, so the remote-tracking copy is current. Only applies in `push_from: origin` mode. Best-effort — the push proceeds with the refs already present; a failure is reported only when the origin ref is what ended up travelling (and may therefore be stale), not when resolution fell back to the local branch because the source simply isn't on origin. |
 | `tags` | `"none"` \| `"reachable"` \| `"all"` | `"none"` | Which tags travel from the host into a container. `"none"` sends none; `"reachable"` sends the tags reachable from the pushed branch (computed with `git tag --merged`, not `--follow-tags`, so lightweight tags survive); `"all"` mirrors every tag the host has. Never re-points a tag that already exists in the container, and never reaches the GitHub origin — `jailbee pr` is unaffected. See [Tags](git-bridge.md#tags). |
-| `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git push --merge` merges inside the container. `"auto"` fast-forwards when the container is already on the pushed branch and writes a merge commit otherwise, asking first (TTY) or erroring (no TTY) if that fast-forward turns out to be impossible; `"always"` demands a fast-forward and fails on divergence; `"never"` always writes a merge commit. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
+| `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git push --merge` merges inside the container. `"auto"` tries fast-forward-only when already on the source branch, asking (TTY) or failing (no TTY) on divergence; on another branch it permits a normal merge. `"always"` requires fast-forward-only. `"never"` permits a normal merge, but currently does **not** force a merge commit: the container merge command omits `--no-ff`. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
 
 CLI flags (`--merge`, `--rebase`, `--plain`, `--from`, `--current`,
 `--from-origin`, `--from-local`, `--fetch`/`--no-fetch`, `--ff`/`--no-ff`,
@@ -2215,7 +2283,9 @@ push:
 
 With the above, `jailbee git push feat-foo` runs `git merge` in the
 container using the host's currently checked-out branch as the
-source — no prompts, and no fetch (`current` implies the local ref).
+source, skipping the action/source pickers and the fetch (`current` implies
+the local ref). The automatic fast-forward policy may still ask for confirmation
+when the container is on that same branch and the histories have diverged.
 
 ### `ls:` / `dashboard:` — remembered columns
 
@@ -2333,7 +2403,12 @@ and restores the built-in default set. Column choice is a personal
 preference, so the normal home is `global.yaml`; a repo that sets the block
 does so for everyone working in that repo — deliberate, and rare.
 
-`--fields` on the CLI beats both `ls:` blocks outright — this is a
+Host-local `ls` settings first merge into the repo block using ordinary
+deep-merge rules: non-empty lists append, `[]` clears, and `null` replaces.
+The resulting repo/local block then overrides global preferences field by
+field. This differs from the global-to-repo list replacement described above.
+
+`--fields` on the CLI beats the configured `ls:` blocks outright — this is a
 remembered preference, not a lock.
 
 ### The dashboards remember their own columns
@@ -2442,7 +2517,7 @@ dashboard:
   mouse: false   # leave the mouse to the terminal (text selection)
 ```
 
-With the mouse on, most terminals still select text with Shift-drag. `m` in
+With the mouse on, most terminals still select text with Shift-drag. `M` in
 the dashboard turns the mouse off or on for that session only.
 
 ## Computed attributes
@@ -2546,22 +2621,26 @@ PAT is scoped to its owner and selected repositories.
 `github.token` belongs in the host-local per-repo file. A `github` block in
 committed `.jailbee/config.yaml` is rejected to avoid committing a secret.
 
-**Permissions:** a local file containing `github.token` must be mode `0600`.
-`jailbee config validate` / `load_config` fail otherwise; run
+**Permissions:** use mode `0600` for a local file containing `github.token`.
+Loading warns if group or other permissions are present; it does not reject
+the config. `jailbee doctor` reports insecure permissions. Run
 `chmod 600 ~/.config/jailbee/repos/<container_prefix>.yaml` after editing.
 
 **Token shape:** prefer fine-grained PATs (`github_pat_*`) scoped to
 "Only select repositories" with **Contents: Read, Issues: Read,
 Pull requests: Read, Metadata: Read — read-only.** Classic PATs (`ghp_*`) get
-a doctor warning because they cannot be scoped per-repo. Every GitHub write
-(issue create/edit/comment/label/close/reopen; PR review/comment/description)
-goes through the host's own `gh`, applying a manifest an in-container agent
-staged into `~/.jailbee/issue-outbox` or `~/.jailbee/pr-outbox` — see
+a doctor warning because they cannot be scoped per-repo. JailBee's outbox
+workflows publish issue and PR changes through the host's own `gh`, applying
+a manifest an in-container agent staged into `~/.jailbee/issue-outbox` or
+`~/.jailbee/pr-outbox` — see
 [`jailbee issue`](git-bridge.md#issue-management) and the
 `jailbee-issue-management` / `jailbee-pr-review` skills. This token
-authenticates the container's own `gh`, which never writes; jailbee cannot
-verify a fine-grained PAT's *effective* permissions, so a token scoped wider
-than this silently bypasses that review gate.
+authenticates the container's own `gh`, which has whatever permissions the PAT
+grants. JailBee cannot verify a fine-grained PAT's *effective* permissions;
+a write-capable token can bypass the intended host review gate. Network
+allowlists do not distinguish GitHub reads from writes. Disabling the integration
+or removing its token does not erase an already-written profile script or a
+credential copied by a process; revoke exposed tokens separately.
 
 Field defaults:
 
@@ -2571,10 +2650,11 @@ Field defaults:
 | `token` | SecretStr | unset | This repo's GitHub PAT; set only in the host-local file. Masked in output and read-only in the interactive config editor. |
 | `api_tokens` | dict[str, SecretStr] | `{}` | **Deprecated; removed in 2.0.0.** Legacy map from `container_prefix` to PAT; migrate to local `github.token` with `jailbee config migrate`. |
 
-`enabled: true` requires at least one applicable token at config-load time:
-either a legacy `github.api_tokens` entry or this repo's local `github.token`.
-Without one, loading the config fails and asks you to set a token. With a
-valid token, `jailbee doctor` checks its presence and permissions.
+`enabled: true` requires this repo's local token or a non-empty legacy
+`github.api_tokens` map. The legacy map need not contain this repo's prefix;
+without an applicable token its containers receive no GitHub authentication.
+With neither source, loading fails and asks for a token. Doctor checks local
+presence, file permissions and token shape, not effective GitHub authorization.
 
 ## Agent-wide instructions (`~/.config/jailbee/AGENTS.md`)
 
@@ -2598,8 +2678,8 @@ model-policy enforcement; they do not configure the agent running on the host.
   `jailbee start`/`restart`, `jailbee ls`, `jailbee shell` and `jailbee tmux`.
   A session reads it when it starts, so an edit reaches the next agent session,
   not one already running. No `jailbee apply` needed after the first.
-- **No file:** the mount is an empty directory; nothing is loaded. Removing
-  the source removes the staged copy on the next refresh, not the directory.
+- **No file:** the staged directory is empty; no host instruction file is
+  supplied. Removing the source removes the staged copy on the next refresh, not the directory.
   Each (agent, file name) pair has its own staging directory, so a repo that
   sets an unusual `global_instructions.file` only adds that file to its own
   containers.
@@ -2714,10 +2794,17 @@ keys that change the provider, endpoint or credential, such as `model`,
 `api_base`, `api_key` or `extra_headers`, are rejected there: use the route's own
 fields). A route's `egress`, like `litellm.egress`, reaches the proxy's allowlist
 whenever `jailbee apply` reloads or restarts an instance for another reason; an edit that
-changes nothing else needs `jailbee litellm up`. Profiles also accept `account` (from `accounts`; required when the
-profile maps a `chatgpt/` route) and `effort` as the default session effort, and `instructions` (model-policy text appended to Claude Code's system prompt; see [Profile instructions](litellm.md#profile-instructions)). `jailbee litellm up` renders changes
-and restarts the instance if needed; `jailbee apply` also re-renders the proxy,
-reloads route changes into the running instances (restarting only for
+changes nothing else needs `jailbee litellm up`. Subscription routes
+(`chatgpt/` or `oauth: true`) also accept `account`, defaulting to the first
+entry in `accounts`. All subscription routes in one profile must use the same
+account. Profiles derive their account from those routes and reject a profile-level
+`account` key. They accept `effort` as the default session effort and
+`instructions` (model-policy text appended to Claude Code's system prompt; see
+[Profile instructions](litellm.md#profile-instructions)). `jailbee litellm up` renders changes
+and restarts the instance if needed; `jailbee apply` reconciles an enabled,
+already-running proxy, but does not start a missing or stopped one. Use
+`litellm up` for version/account-list changes too. Apply re-renders and reloads
+route changes into running instances (restarting only for
 `extra` outside its `model_list`, settings or an unconfirmed reload; `--no-restart` defers only the
 restarts), and
 synchronizes the gateway file/key into each running dev container.
@@ -2803,10 +2890,10 @@ remote:
 | `console` | bool | `true` | Permit the reserved `console [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
 | `exec` | bool | `true` | Permit one-shot `COMMAND [ARGS...] [--repo PREFIX]` execution and `repos`. This switch affects only the one-shot entry point. |
 | `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
-| `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
-| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `mount`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
-| `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
-| `network` | bool | `false` | Let remote sessions widen a container's network: `net loose`, `new --net loose` and container-scope `net egress add`. Either can open the host's LAN to the container, which is why it is opt-in. Narrowing (`net strict`, `net egress rm`) is always allowed; `--repo` on `net egress add`/`rm` never is, since it writes the host-local repo layer and affects every container of the repo. See [Security](security.md#remote-ssh). |
+| `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. While host restrictions apply, a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount`, regardless of command mode — see [Security](security.md#remote-ssh). |
+| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, app commands use RDP or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
+| `gui` | bool | `false` | Permit remote GUI app launches on the shared RDP display or, in a `waypipe ssh` session, on the client's display. Allows forwarding to the shared display's TCP port and one constrained reverse Unix-socket forward for waypipe; other forwarding remains refused. See [Remote GUI](remote-gui.md). |
+| `network` | bool | `false` | Let remote sessions widen a container's network: `net loose`, `new --net loose` and container-scope `net egress add`. Either can open the host's LAN to the container, which is why it is opt-in. Narrowing (`net strict`, `net egress rm`) does not need this opt-in, but still requires command-policy permission; `--repo` on `net egress add`/`rm` never is, since it writes the host-local repo layer and affects every container of the repo. See [Security](security.md#remote-ssh). |
 | `files` | bool | `false` | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
 | `mounts` | bool | `false` | Let remote sessions attach every `optional_mounts` entry as defined, with no path check. The repo config then decides which host path a remote session reaches; prefer `mount_roots`. |
 | `mount_roots` | list | `[]` | "Host directories a restricted session may attach with `jailbee mount`: an `optional_mounts` entry qualifies only when its host path resolves to exactly one of them (no subdirectories). Each entry: `path` (absolute, fully resolved), `readonly` (default `true`: attached read-only whatever the mount says), `repos` (container prefixes; empty = all). Requires `restrict_host: true`. See [Security](security.md#remote-ssh)." |
@@ -2926,9 +3013,10 @@ host that already has several logged-in repos means answering the
 two-credential prompt below on every repo but the first, which is a
 migration, not a default. To opt a whole host out, set `group: null`.
 
-Only the *credential* is shared — each repo keeps its own agent config home
-(for Claude, `~/.claude`), so project history, MCP config, sessions and
-onboarding state never cross repos. See [Shared credential groups](agents.md#shared-credential-groups-credentials)
+The group mechanism shares the credential, not the whole config home. With
+separate `shared_dir` paths, each repo retains its own agent config home
+(for Claude, `~/.claude`). Explicitly sharing those paths or adding mounts can
+also share history, MCP config, sessions and onboarding state. See [Shared credential groups](agents.md#shared-credential-groups-credentials)
 in `agents.md` for the mechanism.
 
 > **Compatibility.** The old `claude_credentials:` spelling of this key is
@@ -2965,11 +3053,11 @@ is skipped and `apply` refuses instead, changing nothing.
 Every *successful* join leaves
 this repo's own config home with no `.credentials.json` of its own — either
 it had none to begin with, or the move took it. There is no restore-on-leave:
-leaving a group (remove the key, re-run `apply`) unmounts the shared
-directory and the repo's config home is still empty, so the container finds
-no credential and needs one `/login`. This is deliberate — moving a
-credential back on leave would have to guess which of several repos that
-have been sharing it should get it, and a `/login` is cheap.
+opting out with local `credentials.group: null` (or `jailbee account group
+set none`) and applying the change removes the group mount. The repo then
+needs its own login if none exists. Removing the override or using `group
+unset` instead restores the host default, which may still be a shared group.
+No credential is copied back automatically: other repos may still be using it.
 `jailbee doctor` names the group, its directory, and the other member
 repos.
 
@@ -3033,9 +3121,14 @@ its own.
 The override lives on the Incus instance, not in any file under version
 control: it **dies with the container**, a recreated same-named container
 starts without it, and it is **not committable and cannot reach a
-teammate** — there is nothing to `git add`. Restarting the agent in the
-affected container is still required to pick up the new login either way;
-none of these commands touch a running session.
+teammate** — there is nothing to `git add`.
+
+Group `use`/`reset` refuse when a running pooled agent is detected in the target
+container; `set`/`unset` check the repo's containers. Close those sessions first.
+The probe is best-effort, not proof that no process is using the credential.
+`--force` bypasses the precaution; changing a credential mount beneath a live
+process can conflict with a later token refresh. Commands do not terminate
+sessions. Restart the agent after a successful group change.
 
 `jailbee account use` and `jailbee account park` take a `-g/--group <name>`
 flag that points the command at that group's holder instead of the repo's
@@ -3049,19 +3142,21 @@ listing is host-wide, so every group and the account it holds is already
 visible without the flag, including a group reachable only as a container
 override.
 
-**`-a/--agent` picks the pool.** A host can have more than one pooled agent,
-so `account ls`, `use`, `park` and `rm` act on every enabled agent by default
-and `-a <agent>` narrows them to one. A typed account reference that matches
-in more than one agent's store is ambiguous, and off a TTY the error names
+**`-a/--agent` picks the pool.** `account ls` lists enabled pooled agents by
+default. `use`, `park` and `rm` consider candidates across them, then operate on
+one selected login in one agent's pool. `-a <agent>` limits selection to that
+adapter and can explicitly select one disabled in this repo. A typed account
+reference that matches in more than one agent's store is ambiguous, and off a TTY the error names
 the `-a` values to pass; `account park` with several agents live opens a
 picker on a TTY and refuses with the candidates off one. `account group`
 commands act on every enabled agent already — a group name is shared — so
 they take no `-a`.
 
-**A `-g` command does not touch this repo's own config home.** A repo is a
-member of the holder its `credentials` entry resolves to, and of no
-other: its `~/.claude` records the account of *that* group's login, so a
-command aimed elsewhere neither reads it (it would name the wrong account)
+**A `-g` command targeting a different group does not rewrite this repo's
+recorded account.** If it names the repo's own permanent group, account records
+are updated or invalidated normally. A repo is a member of the holder its
+`credentials` entry resolves to, and of no other: its `~/.claude` records the
+account of *that* group's login, so a command aimed elsewhere neither reads it (it would name the wrong account)
 nor rewrites it (it would destroy the name of the login this repo does use).
 The account of a login in such a holder is known from the note JailBee keeps
 beside a login it activated there itself; one that arrived by `/login` in a
@@ -3098,9 +3193,10 @@ A synthesized config is layered exactly like a real one, outermost last:
 
 | Layer | Source | Applies to |
 |---|---|---|
-| 1 | jailbee's built-in field defaults | every repo |
+| Fallback | schema defaults for omitted fields, not an appended YAML layer | every repo |
 | 2 | `global.yaml`'s config layer (`gpg`, `ssh`, `agents.claude`, `host_mounts`, …) | every repo, already today |
 | 3 | `global.yaml` → `scratch.config` | synthesized configs only |
+| 4 | `repos/<derived-container_prefix>.yaml` | host-local overrides for this scratch directory, if present |
 
 Layer 2 is not new here — it is the same set of keys [Recommended
 placement](#recommended-placement) already lists as living in `global.yaml`,
@@ -3123,11 +3219,14 @@ merges on top:
   out empty (nothing but punctuation survives), synthesis fails naming the
   directory and pointing at `jailbee config init`, where `container_prefix:`
   can be set explicitly.
-- **`golden.alias`** — pinned to `jailbee-scratch-base`, so every scratch
-  directory on the host shares one golden image instead of building its own.
-  Because the alias is shared, the image's *content* comes only from
-  `global.yaml` (layers 2 and 3) — no per-directory input reaches it, which
-  is what makes one shared image sound rather than merely convenient.
+- **`golden.alias`** — defaults to `jailbee-scratch-base`, so scratch
+  directories normally reuse one golden image. Repo-local `install.d/`
+  snippets are excluded from synthetic builds; bundled and host-user snippets
+  still apply. `scratch.config` and the host-local overlay can override the
+  alias or build settings. If a local overlay changes image contents, give it
+  a distinct alias too: reusing the shared alias does not verify that an
+  existing image matches those settings. A custom `provision_script` is still
+  resolved relative to this directory when its path is relative.
 
 `scratch.config.container_prefix` still wins if set, since layer 3 merges
 normally over the derived default — but setting it makes **every** scratch
@@ -3143,19 +3242,20 @@ container bind-mounting the user's whole home (or, one level up, everyone's).
 **Moving a scratch directory changes its identity.** The same mechanism seen
 from the other side: the digest is taken of the path, so `mv ~/a/tutkimus
 ~/b/` derives a new `container_prefix`, and the containers and profiles created
-under the old path are left behind. The registry row cleans itself up — the
-next `jailbee apply` or `jailbee new` drops the stale one, and until then the
-refresh timer logs `prefix changed to <new>; run jailbee apply to migrate` and
-skips the repo rather than refreshing it under the wrong name. Everything else
-has to be removed by hand; see [Removing a scratch directory's
-containers](#removing-a-scratch-directorys-containers). A repo with a
+under the old path are left behind. The refresh timer removes a registration
+whose directory no longer exists. A prefix change at the *same* path is
+different: the timer warns and skips it until `jailbee apply` or `jailbee new`
+re-registers that path and drops its old row. Neither case deletes Incus
+resources or shared data. Remove those separately; see
+[Removing a scratch directory's containers](#removing-a-scratch-directorys-containers). A repo with a
 `.jailbee/config.yaml` is unaffected — its prefix comes from the file (or, left
 unset, from the directory name), never from the path.
 
-**A scratch directory never displaces a configured repo.** The derived prefix
-cannot collide with anything, but `scratch.config.container_prefix` set
-host-wide can: if that prefix already belongs to a directory that *has* a
-`.jailbee/config.yaml`, `jailbee new` and `jailbee apply` refuse in the scratch
+**A scratch directory cannot take over a registered configured repo.** The
+six-hex-digit digest reduces accidental collisions; it does not make them
+impossible, and an explicit `scratch.config.container_prefix` can collide too.
+If the prefix is already registered to another, non-synthetic repo,
+`jailbee init`, `jailbee new` and `jailbee apply` refuse in the scratch
 directory, naming both paths. Taking the registration over would repoint the
 refresh timer at the scratch directory and silently re-render the configured
 repo's egress allowlist from scratch defaults. Run `jailbee config init` in the
@@ -3168,18 +3268,28 @@ A scratch directory owns no config file to delete, and nothing prunes its
 Incus objects when its `container_prefix` changes — after a `mv`, or on the
 upgrade to 1.5.0, which added the path digest to every synthesized prefix.
 `jailbee dashboard` shows the leftovers as their own group, labelled by the
-old prefix and with no repo behind it; removing them is manual:
+old prefix and with no repo behind it. Before deleting anything, preserve
+uncommitted files, unpublished commits, outboxes and any shared credentials or
+cache state you need. Prefer guarded `jailbee destroy --no-background <name>`
+from a config that still resolves the old prefix. If that config is no longer
+available, raw Incus deletion bypasses JailBee's work-loss checks:
 
 ```bash
-OLD=tutkimus                        # the old prefix, as the dashboard shows it
-
-incus list -f csv -c n | grep "^$OLD-"          # what is still there
-incus delete -f "$OLD-<branch>"                 # once per container listed
-incus profile delete "$OLD-base" "$OLD-binds" \
-                     "$OLD-net-strict" "$OLD-net-loose"
-incus network acl delete "$OLD" "$OLD-container-extras"
-rm -rf ~/.local/share/jailbee/shared/"$OLD"
+OLD=tutkimus                        # the exact old prefix
+incus list -f csv -c n | grep "^$OLD-"   # candidates only; prefixes can overlap
+incus config show "$OLD-<branch>"       # inspect profiles, devices and labels
+# After backing up work and checking the exact container:
+incus stop "$OLD-<branch>"
+incus delete "$OLD-<branch>"
 ```
+
+Delete only the old repo's unused profiles and ACLs after inspecting their
+`used_by` references (`incus profile show`, `incus network acl show`). Network
+generation and per-container egress overrides determine which objects exist;
+there is no universal four-profile/two-ACL list. Inspect device source paths
+before removing shared data: `shared_dir` may be customized or shared with
+another repo. Do not remove host-wide bridges or service containers as part of
+one scratch directory's cleanup.
 
 Delete the containers *before* the profiles, and not only because Incus
 refuses to remove a profile still in use: jailbee recognises a container by
@@ -3187,9 +3297,9 @@ the `<prefix>-base` profile it carries, so a container whose profiles are gone
 disappears from `jailbee ls` and `jailbee dashboard` entirely and has to be
 found with `incus list`.
 
-The golden image is *not* among them: every scratch directory shares the one
-`jailbee-scratch-base` alias, so it survives any prefix change and must not be
-deleted alongside.
+Do not delete the default `jailbee-scratch-base` image alongside those
+resources: other scratch directories reuse it. Check any custom alias for
+other users too.
 
 **One command genuinely needs a file.** `jailbee net egress export` prints a
 replacement for the repo config's `egress_allow:` key, and there is no such
@@ -3217,7 +3327,9 @@ config_edit:
 |---|---|---|
 | `write_policy` | `auto` | How a save writes the file. `patch` touches only the keys you changed and leaves comments, key order and formatting alone. `regenerate` rewrites the whole file with jailbee's own generated comments — which drops anything you wrote in it by hand. `auto` picks per layer: `regenerate` for this file, which jailbee owns and nobody reviews, and `patch` for a repo config, which is committed and read as a PR diff. |
 
-`jailbee config edit --write patch|regenerate` overrides the key for one run.
+`jailbee config edit --write patch|regenerate` overrides the key for one run,
+except for the host-local layer: local files always use `patch`, even with
+`--write regenerate` or a global `regenerate` policy.
 A `regenerate` that would drop hand-written comment lines always shows the
 diff and asks first — that confirmation cannot be turned off.
 
@@ -3248,13 +3360,15 @@ update_check: true      # true (default) | false
 |---|---|---|
 | `update_check` | `true` | `false` stops both the hint and the fetch behind it. `JAILBEE_NO_UPDATE_CHECK=1` does the same for a single command, for scripts and CI that cannot edit this file. |
 
-The check never runs on a command's path. `jailbee ls` / `new` / `shell` read
-the last answer out of the state database and, when it is over a day old,
-start a detached background process that fetches
-`https://pypi.org/pypi/jailbee/json` for the *next* run to read. Nothing
-identifying you, your host or your repos is sent — the request carries a
-`jailbee/<version>` user agent and nothing else — and an offline host simply
-keeps showing the last answer it had.
+The network fetch runs outside the foreground command. `jailbee ls` / `new` /
+`shell` read the state database and, when the cached result is missing or at
+least a day old, spawn a detached process to fetch
+`https://pypi.org/pypi/jailbee/json` for a later run. The foreground still does
+local config/database work and may start that process. Concurrent commands
+can spawn more than one probe before a result is recorded. JailBee sends no
+repo contents, paths or explicit user identifier; PyPI still sees the request's
+source IP and the `jailbee/<version>` User-Agent. A failed fetch records the
+attempt time and retains the last successful answer.
 
 When a newer release is known, one line appears on stderr:
 
@@ -3300,8 +3414,9 @@ install_host_skills: false      # false (default) | true
 |---|---|---|
 | `install_host_skills` | `false` | `true` makes the `skills` step of `jailbee setup` detect every skill-capable agent on the host (`claude`, `codex`, `gemini`, `opencode` — found via `shutil.which`) and copy the bundled skills into each one's own skills directory (`~/.claude/skills`, `~/.codex/skills`, …). `jailbee doctor` then verifies them. A host with none of these agents owes nothing, and `false` reports the step as opted out rather than missing. |
 
-The containers' skills are independent of this key and always installed
-for every enabled skill-capable agent — see
+The containers' skills are independent of this key: they are copied for an
+enabled agent only when `install_jailbee_skills` is true and its `skills_dir`
+is covered by a shared mount. Copy failures warn rather than abort. See
 [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The step
 used to install Claude's host-side skills unconditionally; it is now
 opt-in, so an upgraded host that wants them must set this key.
