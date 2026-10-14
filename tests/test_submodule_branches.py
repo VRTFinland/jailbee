@@ -209,3 +209,242 @@ def test_host_subrepo_root_prefers_the_located_root_and_falls_back_to_the_path(r
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
     assert submodules.host_subrepo_root(rig.top, "sub") == rig.top / ".git" / "modules" / "sub"
     assert submodules.host_subrepo_root(rig.top, "nope") == rig.top / "nope"
+
+
+def _host_run(cwd: str, args: list[str]) -> tuple[bool, str]:
+    from jailbee import git
+
+    return git.run_capture(cwd, args)
+
+
+def test_vanishing_lists_submodules_absent_from_the_target(rig: Rig) -> None:
+    top = str(rig.top)
+    assert submodules.vanishing_submodules(_host_run, top, head="dev", target="main") == ["sub"]
+    assert submodules.vanishing_submodules(_host_run, top, head="main", target="dev") == []
+
+
+def test_vanishing_for_a_merge_counts_only_deletions_by_the_other_side(rig: Rig) -> None:
+    top = str(rig.top)
+    # base == head: the other side (main) never had sub, so nothing is deleted by it.
+    assert (
+        submodules.vanishing_submodules(_host_run, top, head="dev", target="main", base="main")
+        == []
+    )
+
+
+def test_switch_dev_main_dev_leaves_a_clean_tree_and_keeps_ignored_files(rig: Rig) -> None:
+    (rig.top / "sub" / ".env").write_text("SECRET\n")
+    gitdir = rig.top / ".git" / "modules" / "sub"
+    _git(rig.top / "sub", "remote", "add", "myfork", "https://example.invalid/f.git")
+    _git(rig.top / "sub", "branch", "feature-x")
+    top = str(rig.top)
+
+    paths = submodules.vanishing_submodules(_host_run, top, head="dev", target="main")
+    submodules.assert_vanishing_clean(_host_run, top, paths, target_label="main")
+    _git(rig.top, "checkout", "-q", "main")
+    kept = submodules.prune_vanished_worktrees(
+        _host_run, top, paths, fs=submodules.HostFs(), target_label="main"
+    )
+
+    assert kept == {"sub": [str(rig.top / "sub" / ".env")]}
+    assert sorted(p.name for p in (rig.top / "sub").iterdir()) == [".env"]
+    assert "myfork" in _git(gitdir, "remote")
+    assert "feature-x" in _git(gitdir, "branch")
+
+    _git(rig.top, "checkout", "-q", "dev")
+    _git(rig.top, "submodule", "update", "-q", "--init", "--checkout", "--recursive")
+    assert _git(rig.top, "status", "--porcelain") == ""
+    assert _git(rig.top / "sub", "status", "--porcelain") == ""
+    assert _git(rig.top / "sub" / "inner", "status", "--porcelain") == ""
+    assert (rig.top / "sub" / ".env").read_text() == "SECRET\n"
+    assert (rig.top / "sub" / "inner" / "i").exists()
+
+
+def test_clean_switch_removes_the_directory_entirely(rig: Rig) -> None:
+    top = str(rig.top)
+    paths = submodules.vanishing_submodules(_host_run, top, head="dev", target="main")
+    _git(rig.top, "checkout", "-q", "main")
+    submodules.prune_vanished_worktrees(
+        _host_run, top, paths, fs=submodules.HostFs(), target_label="main"
+    )
+    assert not (rig.top / "sub").exists()
+    assert _git(rig.top, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    "dirty",
+    [
+        lambda s: (s / "d" / "f").write_text("changed\n"),
+        lambda s: (s / "untracked.txt").write_text("x\n"),
+        lambda s: (s / "inner" / "i").write_text("changed\n"),
+    ],
+    ids=["tracked", "untracked", "nested"],
+)
+def test_dirty_vanishing_submodule_is_refused(rig: Rig, dirty) -> None:
+    dirty(rig.top / "sub")
+    top = str(rig.top)
+    paths = submodules.vanishing_submodules(_host_run, top, head="dev", target="main")
+    with pytest.raises(submodules.SubmoduleError, match=r"'sub'"):
+        submodules.assert_vanishing_clean(_host_run, top, paths, target_label="main")
+
+
+def test_legacy_gitdir_is_absorbed_before_the_switch(rig: Rig) -> None:
+    import shutil
+
+    sub = rig.top / "sub"
+    shutil.rmtree(sub)
+    shutil.rmtree(rig.top / ".git" / "modules" / "sub")
+    _git(rig.top, "clone", "-q", str(rig.subup), "sub")
+    _git(sub, "checkout", "-q", _git(rig.top, "rev-parse", "dev:sub"))
+    _git(sub, "branch", "keep-me")
+    top = str(rig.top)
+
+    paths = submodules.vanishing_submodules(_host_run, top, head="dev", target="main")
+    submodules.assert_vanishing_clean(_host_run, top, paths, target_label="main")
+
+    assert (sub / ".git").is_file()
+    assert "keep-me" in _git(rig.top / ".git" / "modules" / "sub", "branch")
+
+
+@pytest.mark.parametrize("legacy", ["sub", "sub/inner"])
+def test_prune_preserves_legacy_git_directory(rig: Rig, legacy: str) -> None:
+    import shutil
+
+    sub = rig.top / legacy
+    gitdir = Path(_git(sub, "rev-parse", "--absolute-git-dir"))
+    _git(sub, "config", "--unset", "core.worktree")
+    (sub / ".git").unlink()
+    shutil.move(str(gitdir), str(sub / ".git"))
+    if legacy == "sub":
+        (sub / "inner" / ".git").write_text("gitdir: ../.git/modules/inner-custom\n")
+    _git(rig.top, "checkout", "-q", "main")
+    with pytest.raises(submodules.SubmoduleError, match="git directory"):
+        submodules.prune_vanished_worktrees(
+            _host_run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+        )
+    assert (sub / ".git" / "HEAD").exists()
+    assert (rig.top / "sub" / "d" / "f").exists()
+
+
+def test_precheck_absorbs_nested_legacy_git_directory(rig: Rig) -> None:
+    import shutil
+
+    inner = rig.top / "sub" / "inner"
+    gitdir = Path(_git(inner, "rev-parse", "--absolute-git-dir"))
+    _git(inner, "config", "--unset", "core.worktree")
+    (inner / ".git").unlink()
+    shutil.move(str(gitdir), str(inner / ".git"))
+    _git(inner, "branch", "keep-nested")
+    submodules.assert_vanishing_clean(_host_run, str(rig.top), ["sub"], target_label="main")
+    assert (inner / ".git").is_file()
+    assert "keep-nested" in _git(inner, "branch")
+
+
+@pytest.mark.parametrize("operation", ["ls-tree", "status", "read-tree", "config"])
+def test_prune_errors_stop_parent_cleanup(rig: Rig, operation: str) -> None:
+    _git(rig.top, "checkout", "-q", "main")
+    inner = str(rig.top / "sub" / "inner")
+
+    def run(cwd: str, args: list[str]) -> tuple[bool, str]:
+        if cwd == inner and args[0] == operation:
+            return False, "permission denied"
+        return _host_run(cwd, args)
+
+    with pytest.raises(submodules.SubmoduleError):
+        submodules.prune_vanished_worktrees(
+            run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+        )
+    assert (rig.top / "sub" / "d" / "f").exists()
+    assert (rig.top / "sub" / ".git").exists()
+
+
+def test_unreadable_target_tree_is_not_empty(rig: Rig) -> None:
+    with pytest.raises(submodules.SubmoduleError):
+        submodules.vanishing_submodules(_host_run, str(rig.top), head="dev", target="invalid")
+
+
+def test_precheck_refuses_unreadable_status(rig: Rig) -> None:
+    def run(cwd: str, args: list[str]) -> tuple[bool, str]:
+        if args[0] == "status":
+            return False, "permission denied"
+        return _host_run(cwd, args)
+
+    with pytest.raises(submodules.SubmoduleError, match="status"):
+        submodules.assert_vanishing_clean(run, str(rig.top), ["sub"], target_label="main")
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_prune_missing_or_foreign_worktree_warns_and_preserves(rig: Rig, foreign: bool, mocker) -> None:
+    sub = rig.top / "sub"
+    if foreign:
+        (sub / ".git").unlink()
+    else:
+        import shutil
+
+        shutil.rmtree(sub)
+    _git(rig.top, "checkout", "-q", "main")
+    warn = mocker.patch("jailbee.submodules._warn")
+    submodules.prune_vanished_worktrees(
+        _host_run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+    )
+    warn.assert_called_once()
+    if foreign:
+        assert (sub / "d" / "f").exists()
+
+
+def test_host_fs_does_not_follow_directory_symlinks(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (outside / "empty").mkdir()
+    (outside / "secret").write_text("keep")
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    fs = submodules.HostFs()
+    fs.remove_empty_dirs(str(root))
+    assert fs.list_files(str(root)) == [str(root / "link")]
+    assert (outside / "empty").exists()
+    fs.remove_empty_dirs(str(root / "link"))
+    assert fs.list_files(str(root / "link")) == [str(root / "link")]
+    assert (outside / "empty").exists()
+
+
+def test_switch_keeps_ignored_symlink(rig: Rig) -> None:
+    link = rig.top / "sub" / ".env"
+    link.symlink_to(rig.inup, target_is_directory=True)
+    submodules.assert_vanishing_clean(_host_run, str(rig.top), ["sub"], target_label="main")
+    _git(rig.top, "checkout", "-q", "main")
+    kept = submodules.prune_vanished_worktrees(
+        _host_run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+    )
+    assert kept == {"sub": [str(link)]}
+    assert link.is_symlink()
+    assert (rig.inup / "i").exists()
+
+
+def test_prune_skips_conflicted_superproject(rig: Rig, mocker) -> None:
+    _git(rig.top, "checkout", "-q", "main")
+
+    def run(cwd: str, args: list[str]) -> tuple[bool, str]:
+        if cwd == str(rig.top) and args == ["ls-files", "-u"]:
+            return True, "160000 abc 1\tsub\n"
+        return _host_run(cwd, args)
+
+    warn = mocker.patch("jailbee.submodules._warn")
+    assert submodules.prune_vanished_worktrees(
+        run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+    ) == {}
+    assert (rig.top / "sub" / "d" / "f").exists()
+    warn.assert_called_once()
+
+
+def test_prune_filesystem_failure_stops_parent_cleanup(rig: Rig, mocker) -> None:
+    _git(rig.top, "checkout", "-q", "main")
+    fs = submodules.HostFs()
+    mocker.patch.object(fs, "remove_file", side_effect=PermissionError("denied"))
+    with pytest.raises(PermissionError):
+        submodules.prune_vanished_worktrees(
+            _host_run, str(rig.top), ["sub"], fs=fs, target_label="main"
+        )
+    assert (rig.top / "sub" / "d" / "f").exists()
+    assert (rig.top / "sub" / ".git").exists()

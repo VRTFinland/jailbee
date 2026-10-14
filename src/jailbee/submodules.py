@@ -20,7 +20,7 @@ import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from jailbee import git
 from jailbee.incus import IncusError
@@ -947,6 +947,202 @@ def update_submodules_on_host(repo_root: Path, branch: str | None = None) -> Non
     # earlier versions on the next pull, without anyone having to notice.
     git.submodule_absorb_gitdirs(repo_root)
     _place_submodule_branches(git.run_capture, str(repo_root), branch)
+
+
+class WorktreeFs(Protocol):
+    """Non-git worktree operations, on the host or in a container."""
+
+    def remove_file(self, path: str) -> None: ...
+    def remove_empty_dirs(self, path: str) -> None: ...
+    def list_files(self, path: str) -> list[str]: ...
+
+
+class HostFs:
+    def remove_file(self, path: str) -> None:
+        Path(path).unlink(missing_ok=True)
+
+    def remove_empty_dirs(self, path: str) -> None:
+        root = Path(path)
+        if root.is_symlink() or not root.exists():
+            return
+        for directory, _dirs, _files in root.walk(top_down=False, on_error=_raise_fs_error):
+            if not any(directory.iterdir()):
+                directory.rmdir()
+
+    def list_files(self, path: str) -> list[str]:
+        root = Path(path)
+        if root.is_symlink():
+            return [str(root)]
+        if not root.exists():
+            return []
+        return sorted(
+            str(directory / name)
+            for directory, _dirs, files in root.walk(on_error=_raise_fs_error)
+            for name in files
+        )
+
+
+def _raise_fs_error(exc: OSError) -> None:
+    raise exc
+
+
+class ContainerFs:
+    def __init__(self, incus: Incus, container: str, *, uid: int) -> None:
+        self._incus = incus
+        self._container = container
+        self._uid = uid
+
+    def _exec(self, cmd: list[str]) -> str:
+        return self._incus.exec(self._container, cmd, uid=self._uid)
+
+    def remove_file(self, path: str) -> None:
+        self._exec(["rm", "-f", "--", path])
+
+    def remove_empty_dirs(self, path: str) -> None:
+        self._exec(["find", path, "-depth", "-type", "d", "-empty", "-delete"])
+
+    def list_files(self, path: str) -> list[str]:
+        # find does not follow symlinks; a missing root alone is benign.
+        out = self._exec(
+            [
+                "sh",
+                "-c",
+                'if [ -e "$1" ] || [ -L "$1" ]; then find "$1" ! -type d; fi',
+                "sh",
+                path,
+            ]
+        )
+        return sorted(line for line in out.splitlines() if line)
+
+
+def _require_git(run: GitRun, cwd: str, args: list[str]) -> str:
+    ok, out = run(cwd, args)
+    if not ok:
+        raise SubmoduleError(
+            f"Cannot run git {args[0]} in '{cwd}': {out.strip() or 'command failed'}. "
+            "Check repository objects, locks and permissions before retrying."
+        )
+    return out
+
+
+def gitlinks_at(run: GitRun, top_dir: str, commit: str) -> set[str]:
+    """This level's gitlinks from a commit; unreadable trees are never empty."""
+    out = _require_git(run, top_dir, ["ls-tree", "-r", commit])
+    found: set[str] = set()
+    for line in out.splitlines():
+        meta, _, path = line.partition("\t")
+        if meta.split()[:2] == ["160000", "commit"]:
+            found.add(_normalize_declared_path(path))
+    return found
+
+
+def vanishing_submodules(
+    run: GitRun, top_dir: str, *, head: str, target: str, base: str | None = None
+) -> list[str]:
+    """Gitlinks removed by checkout, or deleted by the other side of a merge."""
+    in_head = gitlinks_at(run, top_dir, head)
+    in_target = gitlinks_at(run, top_dir, target)
+    candidates = in_head if base is None else in_head & gitlinks_at(run, top_dir, base)
+    return sorted(candidates - in_target)
+
+
+def _has_own_worktree(run: GitRun, sub: str) -> bool:
+    ok, top = run(sub, ["rev-parse", "--show-toplevel"])
+    return ok and top.strip() == sub
+
+
+def _assert_clean_worktree(
+    run: GitRun, sub: str, label: str, *, display: str | None = None
+) -> None:
+    out = _require_git(
+        run, sub, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]
+    )
+    if out.strip():
+        raise SubmoduleError(
+            f"Cannot switch to '{label}': submodule '{display or sub}' has local changes. "
+            "Commit, stash or remove them first."
+        )
+
+
+def _external_gitdir(run: GitRun, sub: str) -> str:
+    gitdir = _require_git(run, sub, ["rev-parse", "--absolute-git-dir"]).strip()
+    if not gitdir or gitdir == sub or gitdir.startswith(f"{sub}/"):
+        raise SubmoduleError(
+            f"Submodule '{sub}' keeps its git directory inside the working tree. "
+            "Run 'git submodule absorbgitdirs' before switching and retry."
+        )
+    return gitdir
+
+
+def assert_vanishing_clean(
+    run: GitRun, top_dir: str, paths: list[str], *, target_label: str
+) -> None:
+    """Refuse dirty removals and absorb legacy gitdirs before the HEAD move."""
+    for path in paths:
+        path = _normalize_declared_path(path)
+        sub = f"{top_dir}/{path}"
+        if not _has_own_worktree(run, sub):
+            _warn(f"Submodule '{path}': no own worktree; left in place")
+            continue
+        _assert_clean_worktree(run, sub, target_label, display=path)
+        # Git absorbs nested legacy gitdirs recursively while declarations exist.
+        _require_git(run, top_dir, ["submodule", "absorbgitdirs", "--", path])
+        _check_prune_tree(run, sub, target_label)
+
+
+def _check_prune_tree(run: GitRun, sub: str, label: str) -> None:
+    _external_gitdir(run, sub)
+    _assert_clean_worktree(run, sub, label)
+    for nested in sorted(gitlinks_at(run, sub, "HEAD")):
+        child = f"{sub}/{nested}"
+        if _has_own_worktree(run, child):
+            _check_prune_tree(run, child, label)
+
+
+def _prune_one(run: GitRun, sub: str, fs: WorktreeFs) -> None:
+    gitdir = _external_gitdir(run, sub)
+    for nested in sorted(gitlinks_at(run, sub, "HEAD")):
+        child = f"{sub}/{nested}"
+        if not _has_own_worktree(run, child):
+            raise SubmoduleError(f"Submodule '{child}': no own worktree; parent left in place")
+        _prune_one(run, child, fs)
+    _require_git(run, sub, ["read-tree", "-u", "--reset", git.EMPTY_TREE])
+    _require_git(run, sub, ["config", "--file", f"{gitdir}/config", "--unset", "core.worktree"])
+    fs.remove_file(f"{sub}/.git")
+    fs.remove_empty_dirs(sub)
+
+
+def prune_vanished_worktrees(
+    run: GitRun, top_dir: str, paths: list[str], *, fs: WorktreeFs, target_label: str
+) -> dict[str, list[str]]:
+    """Prune tracked files only, preserving repositories and ignored leftovers.
+
+    A nested failure aborts its parent cleanup. Missing or foreign worktrees
+    are warned and preserved; unreadable trees/status and write failures raise.
+    """
+    if _require_git(run, top_dir, ["ls-files", "-u"]).strip():
+        _warn(f"Cannot prune submodules on '{target_label}': resolve merge conflicts first")
+        return {}
+    still = gitlinks_at(run, top_dir, "HEAD")
+    kept: dict[str, list[str]] = {}
+    for path in paths:
+        path = _normalize_declared_path(path)
+        sub = f"{top_dir}/{path}"
+        if path in still:
+            continue
+        if not _has_own_worktree(run, sub):
+            _warn(f"Submodule '{path}': no own worktree; left in place")
+            continue
+        _check_prune_tree(run, sub, target_label)
+        _prune_one(run, sub, fs)
+        leftovers = fs.list_files(sub)
+        if leftovers:
+            kept[path] = leftovers
+            _warn(
+                f"Submodule '{path}' is not on '{target_label}'; its ignored files were kept:\n"
+                + "\n".join(f"  {file}" for file in leftovers)
+            )
+    return kept
 
 
 def _sub_upload_pack_url(cfg: Config, container: str, repo_dir: str, subpath: str) -> str:

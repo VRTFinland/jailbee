@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
     from jailbee.config.models_behaviour import TagPolicy
 
+#: Empty tree: read-tree removes tracked files, preserving ignored files.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 _FALLBACK_BRANCH = "main"
 
 # Local config discovery only; network, merge and publication keep their budgets.

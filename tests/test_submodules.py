@@ -2319,3 +2319,32 @@ def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
     # Rich wraps at the console width; compare with the line breaks joined.
     printed = " ".join(capsys.readouterr().out.split())
     assert "not cloned into the host tree over remote SSH" in printed
+
+
+def test_container_fs_runs_rm_and_find_in_the_container():
+    incus = MagicMock()
+    incus.exec.return_value = "/r/sub/.env\n/r/sub/link\n"
+    fs = submodules.ContainerFs(incus, "full-c", uid=1000)
+    fs.remove_file("/r/sub/.git")
+    fs.remove_empty_dirs("/r/sub")
+    assert fs.list_files("/r/sub") == ["/r/sub/.env", "/r/sub/link"]
+    cmds = [c.args[1] for c in incus.exec.call_args_list]
+    assert cmds[0] == ["rm", "-f", "--", "/r/sub/.git"]
+    assert cmds[1] == ["find", "/r/sub", "-depth", "-type", "d", "-empty", "-delete"]
+    assert cmds[2] == [
+        "sh",
+        "-c",
+        'if [ -e "$1" ] || [ -L "$1" ]; then find "$1" ! -type d; fi',
+        "sh",
+        "/r/sub",
+    ]
+    assert all(c.kwargs == {"uid": 1000} for c in incus.exec.call_args_list)
+
+
+@pytest.mark.parametrize("method", ["remove_file", "remove_empty_dirs", "list_files"])
+def test_container_fs_surfaces_failures(method):
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("permission denied")
+    fs = submodules.ContainerFs(incus, "full-c", uid=1000)
+    with pytest.raises(IncusError):
+        getattr(fs, method)("/r/sub")
