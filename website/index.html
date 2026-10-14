@@ -298,9 +298,8 @@
               <figcaption>
                 <code>jailbee dashboard</code>
                 <p>
-                  <strong>Which agent needs you.</strong> For Claude Code sessions, compact marks
-                  show working, waiting, idle, or idle with a shell job still running, plus recent
-                  activity. A container can show several states. Scan the column, not the terminals.
+                  <strong>Which agent needs you.</strong> See which Claude Code sessions are
+                  working, waiting for you or idle. Scan the column, not the terminals.
                 </p>
                 <p class="demo__note">A real screenshot from daily use; one internal repository name is blurred.</p>
               </figcaption>
@@ -312,9 +311,9 @@
               <figcaption>
                 <code>jailbee dashboard &middot; details panel</code>
                 <p>
-                  <strong>What it is doing.</strong> Under the table, the selected container: the
-                  branch and changed submodules against their base, plus Claude Code session
-                  details &mdash; how long it has been busy, its last tool call, its last message.
+                  <strong>What it is doing.</strong> Inspect the branch and changed submodules,
+                  then catch up on Claude Code's latest tool call and message &mdash; without
+                  opening another terminal.
                 </p>
                 <p class="demo__note">A real screenshot from daily use.</p>
               </figcaption>
@@ -554,27 +553,19 @@
         <div class="split__body">
           <h2>A guarded entrance, not a sealed box.</h2>
           <p>
-            The question was never whether a container reaches the network — it is how wide you
-            leave the opening. <code>jailbee net strict</code> resolves explicit host names
-            into IP-and-port rules for direct traffic, including <code>ssh</code> and database
-            connections. With the host refresh timer running, those rules track DNS changes.
-            They allow an address, not an exclusive host identity: other hosts can share the same IP.
+            Choose what your containers can reach. Strict mode limits direct traffic by IP and
+            port; an HTTP(S) proxy handles hostname rules, including wildcards, for tools that
+            use it. Two layers, covering different kinds of traffic.
           </p>
           <p>
-            Wildcards such as <code>*.example.com</code> take a different route: an HTTP(S)
-            proxy, for tools that honour <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code>.
-            They do not grant arbitrary protocols access to every matching host.
-            <code>jailbee net loose</code> can widen access temporarily. Set an expiry and keep
-            the host refresh timer running for automatic return to strict mode; active startup
-            stages can defer that return (<a href="docs/config/#loose_auto_revert">expiry rules</a>).
+            Need wider access for an install or an experiment? Switch to loose mode, with
+            optional timed return to strict mode. The
+            <a href="docs/config/#loose_auto_revert">network guide</a> covers setup and expiry.
           </p>
           <p>
-            Some of what a container needs sits on the host rather than out on the network —
-            an adb server with a phone plugged into it, a database you already run. One line of
-            config makes it reachable on each container's localhost by default, and
-            <code>jailbee port</code> adds or removes forwards on demand. A forward goes around the
-            allowlist by design, so <code>jailbee net status</code> lists the open ones next to it:
-            the real size of the opening stays one command to read.
+            Need a database or an adb server on the host? Add an explicit port forward.
+            These connections bypass the allowlist by design, and <code>jailbee net status</code>
+            shows them alongside it, so you can see the access you have opened.
           </p>
         </div>
       </div>
@@ -584,12 +575,11 @@
       <div class="wrap">
         <h2>Your IDE and your browser, from inside the container.</h2>
         <p>
-          With the integrations configured, <code>jailbee ide</code> runs a JetBrains IDE inside
-          the container on your Wayland desktop, normally using a mounted host Toolbox installation.
-          <code>jailbee chrome</code> runs a browser against the container's own localhost.
-          <code>jailbee gui</code>, with the GUI extra installed, opens a host-wide Qt dashboard.
-          GUI-enabled JailBee SSH sessions can use a compatible RDP client or native windows through
-          <code>waypipe ssh</code> (<a href="docs/remote-gui/">remote GUI</a>).
+          Enable the desktop integrations to run your JetBrains IDE and browser inside the
+          container, with native windows on your Wayland desktop and the branch's own localhost.
+          Prefer a graphical overview? The optional Qt dashboard brings your projects together.
+          You can also work remotely through RDP or <code>waypipe ssh</code>
+          (<a href="docs/remote-gui/">setup guide</a>).
         </p>
       </div>
     </section>
@@ -653,10 +643,9 @@
           </div>
           <div class="card">
             <p>
-              <strong>Set up once, reuse across branches.</strong> Configured caches, tool
-              settings and agent logins persist outside disposable containers, so new branches
-              can start warm. Some state is shared live; pooled browser and IDE profiles use
-              separate slots. Changes to shared state can affect other containers.
+              <strong>Set up once, reuse across branches.</strong> Reuse configured caches,
+              tool settings and agent logins instead of starting from scratch. That shared state
+              survives when you throw a container away.
             </p>
           </div>
           <div class="card">
