@@ -8,6 +8,22 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- **Submodules that exist on only some branches.** `jailbee branch`,
+  `jailbee git checkout` and pulls that check out or merge now remove a
+  submodule the target branch does not have (keeping its git data and any
+  ignored files) and bring it back on return; before, its directory stayed
+  behind as untracked. The switch is refused if that submodule has uncommitted
+  or untracked changes. `jailbee git push` sends the submodules of the commit
+  being pushed rather than of the host's checked-out branch, and
+  `jailbee git pull` no longer clones a new submodule into the host working
+  tree when the host is on a branch without it. New submodule objects are
+  stored under `.git/modules/<declared name>` without creating a checkout on
+  the current branch; nested submodules are fetched parent-first, including
+  ancestors of a selected leaf, and existing host submodule remotes remain
+  unchanged.
+
 ## 1.7.3 - 2026-10-14
 
 ### Fixed

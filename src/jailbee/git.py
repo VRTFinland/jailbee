@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
     from jailbee.config.models_behaviour import TagPolicy
 
+#: Empty tree: read-tree removes tracked files, preserving ignored files.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 _FALLBACK_BRANCH = "main"
 
 # Local config discovery only; network, merge and publication keep their budgets.
@@ -617,7 +620,7 @@ def _refuse_host_tree_write(action: str) -> None:
     """Raise `HostTreeWriteRefusedError` inside a restricted remote session.
 
     Guards every primitive here that writes the host's checked-out tree:
-    `checkout_branch`, `merge_ref`, `submodule_update` and `clone_url`.
+    `checkout_branch`, `merge_ref`, `submodule_update` and `init_subrepo_gitdir`.
     """
     from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
 
@@ -1301,31 +1304,22 @@ def push_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
         raise GitError(f"git push failed (exit {returncode})")
 
 
-def clone_url(url: str, dest: Path) -> None:
-    """`git clone <url> <dest>` over the ext:: transport (dest.parent must exist).
+def init_subrepo_gitdir(gitdir: Path, origin_url: str) -> None:
+    """Create a gitdir without a worktree, ready for submodule update --init.
 
-    ``--no-recurse-submodules``: a brand-new submodule's own nested submodules
-    (if any) are initialized separately and offline; cloning must not try to
-    reach their upstreams.
-
-    Always into the host's working tree (a new submodule's checkout), so it
-    is refused in a restricted remote session like the other tree writers.
+    A non-bare gitdir can later adopt core.worktree without Git rejecting the
+    combination of core.bare and core.worktree. Writes only under the gitdir.
     """
-    _refuse_host_tree_write(f"Cloning a new submodule into '{dest}'")
-    returncode = subprocess.call(
-        [
-            "git",
-            "-c",
-            "protocol.ext.allow=always",
-            "clone",
-            "--no-recurse-submodules",
-            url,
-            str(dest),
-        ],
-        cwd=dest.parent,
-    )
-    if returncode != 0:
-        raise GitError(f"git clone failed (exit {returncode})")
+    _refuse_host_tree_write(f"Creating a new submodule gitdir '{gitdir}'")
+    gitdir.parent.mkdir(parents=True, exist_ok=True)
+    for args in (
+        ["init", "-q", "--bare", str(gitdir)],
+        ["--git-dir", str(gitdir), "config", "core.bare", "false"],
+        ["--git-dir", str(gitdir), "remote", "add", "origin", origin_url],
+    ):
+        result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise GitError(f"git {args[0]} failed: {result.stderr.strip()}")
 
 
 def submodule_status_paths(repo_root: Path) -> list[str]:

@@ -87,7 +87,7 @@ def test_declared_submodule_remotes_rejects_canonical_directory_cycle(tmp_path, 
         ),
     )
 
-    with pytest.raises(submodules.SubmoduleError, match="revisits host directory"):
+    with pytest.raises(submodules.SubmoduleError, match="outside the host repository"):
         submodules.declared_submodule_remotes(repo_root)
 
 
@@ -187,8 +187,8 @@ def test_host_submodule_paths_returns_top_relative_paths_recursively(tmp_path, m
         assert isinstance(cwd, str)
         assert args[-1] == r"^submodule\..*\.path$"
         paths = {
-            str(repo_root): "submodule.a.path libs/a\n",
-            str(repo_root / "libs/a"): "submodule.b.path vendor/b\n",
+            str(repo_root): "submodule.a.path\nlibs/a\0",
+            str(repo_root / "libs/a"): "submodule.b.path\nvendor/b\0",
             str(repo_root / "libs/a/vendor/b"): "",
         }
         return (bool(paths[cwd]), paths[cwd])
@@ -205,7 +205,7 @@ def test_host_submodule_paths_omits_uninitialized_declared_checkout(tmp_path, mo
     def run_capture(cwd, _args):
         assert isinstance(cwd, str)
         paths = {
-            str(repo_root): "submodule.a.path libs/a\nsubmodule.missing.path libs/missing\n",
+            str(repo_root): "submodule.a.path\nlibs/a\0submodule.missing.path\nlibs/missing\0",
             str(repo_root / "libs/a"): "",
             str(repo_root / "libs/missing"): "",
         }
@@ -257,11 +257,11 @@ def test_init_single_submodule_runs_config_update_sync():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             (
-                "config -f /home/dev/repo/lib/.gitmodules --get-regexp",
+                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
                 IncusError("no nested .gitmodules"),
             ),
             ("test -e /mnt/host-source/lib/.git", ""),
@@ -287,8 +287,11 @@ def test_init_forces_checkout_past_update_none():
     incus = MagicMock()
     incus.exec.side_effect = _exec_router(
         [
-            ("config -f /home/dev/repo/.gitmodules --get-regexp", "submodule.lib.path lib\n"),
-            ("config -f /home/dev/repo/lib/.gitmodules --get-regexp", IncusError("none")),
+            (
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
+            ),
+            ("config -f /home/dev/repo/lib/.gitmodules --null --get-regexp", IncusError("none")),
         ]
     )
 
@@ -306,8 +309,8 @@ def test_init_hard_fails_when_host_submodule_uninitialized():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             ("test -e /mnt/host-source/lib/.git", IncusError("missing")),
         ]
@@ -326,17 +329,17 @@ def test_init_two_level_recursion():
         [
             # Top-level .gitmodules: one submodule lib
             (
-                "config -f /home/dev/repo/.gitmodules --get-regexp",
-                "submodule.lib.path lib\n",
+                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "submodule.lib.path\nlib\0",
             ),
             # lib's .gitmodules: one nested submodule inner
             (
-                "config -f /home/dev/repo/lib/.gitmodules --get-regexp",
-                "submodule.inner.path inner\n",
+                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
+                "submodule.inner.path\ninner\0",
             ),
             # inner has no further submodules
             (
-                "config -f /home/dev/repo/lib/inner/.gitmodules --get-regexp",
+                "config -f /home/dev/repo/lib/inner/.gitmodules --null --get-regexp",
                 IncusError("no .gitmodules"),
             ),
             # host source existence checks
@@ -441,9 +444,15 @@ def test_transport_to_host_fetches_each_container_submodule(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 lib (v1)\n"
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.locate_host_subrepo",
+        return_value=submodules.HostSubRepo(
+            path="lib", gitdir=tmp_path / ".git/modules/lib", worktree=tmp_path / "lib"
+        ),
+    )
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
-    clone = mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    clone = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
 
     submodules.transport_submodules_to_host(
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
@@ -460,13 +469,14 @@ def test_transport_to_host_fetches_each_container_submodule(mocker, tmp_path):
     ]
 
 
-def test_transport_to_host_clones_missing_host_subrepo(mocker, tmp_path):
+def test_transport_to_host_creates_gitdir_for_missing_host_subrepo(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 lib (v1)\n"
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
-    clone = mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    clone = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules._repoint_cloned_subrepo")
 
     submodules.transport_submodules_to_host(
@@ -474,15 +484,15 @@ def test_transport_to_host_clones_missing_host_subrepo(mocker, tmp_path):
     )
 
     clone.assert_called_once()
-    url_arg, dest_arg = clone.call_args.args
+    dest_arg, url_arg = clone.call_args.args
     assert "upload-pack /home/dev/repo/lib" in url_arg
-    assert str(dest_arg) == str(tmp_path / "lib")
-    # A freshly cloned sub-repo is fetched into as well, so its
+    assert str(dest_arg) == str(tmp_path / ".git/modules/lib")
+    # A freshly initialized sub-repo is fetched into as well, so its
     # refs/jailbee-sub/<short>/<path>/{HEAD,heads/*} exist even though the
     # host had never seen this submodule before this call.
     fetch.assert_called_once()
     repo_arg, fetch_url_arg, refspecs = fetch.call_args.args
-    assert str(repo_arg) == str(tmp_path / "lib")
+    assert str(repo_arg) == str(tmp_path / ".git/modules/lib")
     assert "upload-pack /home/dev/repo/lib" in fetch_url_arg
     assert refspecs == [
         "+HEAD:refs/jailbee-sub/feat-x/lib/HEAD",
@@ -500,12 +510,13 @@ def _container_exec_stub(status: str, gitmodules: dict[str, dict[str, str]]):
     def _exec(_name, cmd, **_kw):
         if cmd[:2] == ["git", "-C"] and "submodule" in cmd:
             return status
-        if cmd[:3] == ["git", "config", "-f"]:
-            entries = gitmodules.get(cmd[3])
+        if "config" in cmd and ("-f" in cmd or "--blob" in cmd):
+            file = cmd[3] if "-f" in cmd else f"{cmd[2]}/.gitmodules"
+            entries = gitmodules.get(file)
             if entries is None:
                 raise IncusError(f"no .gitmodules at {cmd[3]}")
             if "--get-regexp" in cmd:
-                return "".join(f"submodule.{n}.path {n}\n" for n in entries)
+                return "".join(f"submodule.{n}.path\n{n}\0" for n in entries)
             key = cmd[cmd.index("--get") + 1]
             name = key[len("submodule.") : -len(".url")]
             return f"{entries[name]}\n"
@@ -514,8 +525,8 @@ def _container_exec_stub(status: str, gitmodules: dict[str, dict[str, str]]):
     return _exec
 
 
-def test_transport_to_host_points_a_cloned_subrepo_at_its_real_url(mocker, tmp_path):
-    """Cloning from the container leaves `origin` on the ext:: URL — a remote
+def test_transport_to_host_points_a_new_gitdir_at_its_real_url(mocker, tmp_path):
+    """Initializing with the transport URL leaves `origin` on the ext:: URL — a remote
     that pushes into the container and dies with it. Repoint it at the URL the
     container's .gitmodules records, which is what every other clone of the
     superproject gets.
@@ -526,8 +537,9 @@ def test_transport_to_host_points_a_cloned_subrepo_at_its_real_url(mocker, tmp_p
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
-    mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
 
@@ -535,7 +547,7 @@ def test_transport_to_host_points_a_cloned_subrepo_at_its_real_url(mocker, tmp_p
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
     )
 
-    set_origin.assert_called_once_with(tmp_path / "lib", "git@github.com:acme/lib.git")
+    set_origin.assert_called_once_with(tmp_path / ".git/modules/lib", "git@github.com:acme/lib.git")
 
 
 def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocker, tmp_path):
@@ -545,14 +557,15 @@ def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocke
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.side_effect = _container_exec_stub(
-        " 1111 lib/nested (v1)\n",
+        " 1111 lib (v1)\n 2222 lib/nested (v1)\n",
         {
             "/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"},
             "/home/dev/repo/lib/.gitmodules": {"nested": "git@github.com:acme/nested.git"},
         },
     )
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
-    mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
 
@@ -560,19 +573,23 @@ def test_transport_to_host_reads_a_nested_submodule_url_from_its_own_level(mocke
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
     )
 
-    set_origin.assert_called_once_with(tmp_path / "lib/nested", "git@github.com:acme/nested.git")
+    assert set_origin.call_args_list[-1].args == (
+        tmp_path / ".git/modules/lib/modules/nested",
+        "git@github.com:acme/nested.git",
+    )
 
 
 def test_transport_to_host_removes_origin_when_no_url_is_recorded(mocker, tmp_path):
     """No .gitmodules entry and no container sub-repo origin → remove the ext::
-    origin left by the clone, which would push into the container and dies
+    origin left by initialization, which would push into the container and dies
     with it.
     """
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.side_effect = _container_exec_stub(" 1111 lib (v1)\n", {})
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
-    mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
     remove_origin = mocker.patch("jailbee.submodules.git.remove_origin")
@@ -582,7 +599,7 @@ def test_transport_to_host_removes_origin_when_no_url_is_recorded(mocker, tmp_pa
     )
 
     set_origin.assert_not_called()
-    remove_origin.assert_called_once_with(tmp_path / "lib")
+    remove_origin.assert_called_once_with(tmp_path / ".git/modules/lib")
 
 
 def test_transport_to_host_never_rewrites_an_existing_subrepos_origin(mocker, tmp_path):
@@ -595,7 +612,12 @@ def test_transport_to_host_never_rewrites_an_existing_subrepos_origin(mocker, tm
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.locate_host_subrepo",
+        return_value=submodules.HostSubRepo(
+            path="lib", gitdir=tmp_path / ".git/modules/lib", worktree=tmp_path / "lib"
+        ),
+    )
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     set_origin = mocker.patch("jailbee.submodules.git.set_origin_url")
 
@@ -618,8 +640,9 @@ def test_transport_to_host_survives_a_failing_origin_rewrite(mocker, tmp_path):
         " 1111 lib (v1)\n",
         {"/home/dev/repo/.gitmodules": {"lib": "git@github.com:acme/lib.git"}},
     )
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
-    mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules.git.fetch_url_multi")
     mocker.patch(
         "jailbee.submodules.git.set_origin_url",
@@ -634,23 +657,47 @@ def test_transport_to_host_survives_a_failing_origin_rewrite(mocker, tmp_path):
     assert warn.call_count == 1
 
 
+def _commit_subs(tmp_path, *paths):
+    return [
+        submodules.CommitSubmodule(
+            p,
+            p,
+            "1" * 40,
+            None,
+            submodules.HostSubRepo(p, tmp_path / p / ".git", tmp_path / p),
+        )
+        for p in paths
+    ]
+
+
+def test_transport_to_container_requires_commit(tmp_path):
+    with pytest.raises(ValueError):
+        submodules.transport_submodules_to_container(
+            _cfg_repo(tmp_path), MagicMock(), "c", repo_dir="/r"
+        )
+
+
 def test_transport_to_container_pushes_each_host_submodule(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     mocker.patch(
-        "jailbee.submodules.git.submodule_status_paths",
-        return_value=["lib", "lib/nested"],
+        "jailbee.submodules.host_submodules_at",
+        return_value=_commit_subs(tmp_path, "lib", "lib/nested"),
     )
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+    submodules.transport_submodules_to_container(
+        cfg, incus, "full-c", repo_dir="/home/dev/repo", commit="c0"
+    )
 
     assert push.call_count == 2
     first_repo, first_url, first_refspecs = push.call_args_list[0].args
     assert str(first_repo) == str(tmp_path / "lib")
     assert "receive-pack /home/dev/repo/lib" in first_url
     assert first_refspecs == [
-        "+HEAD:refs/jailbee-sub/host/lib/HEAD",
+        f"+{'1' * 40}:refs/jailbee-sub/host/lib/HEAD",
         "+refs/heads/*:refs/jailbee-sub/host/lib/heads/*",
     ]
 
@@ -676,14 +723,20 @@ def test_transport_to_container_creates_a_subrepo_the_container_lacks(mocker, tm
     later `submodule update --init` needs a current revision to work from.
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     calls, exec_stub = _exec_recorder(missing={"/home/dev/repo/lib/.git"})
     incus.exec.side_effect = exec_stub
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "lib")
+    )
     mocker.patch("jailbee.submodules.git.get_remote_url", return_value=None)
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+    submodules.transport_submodules_to_container(
+        cfg, incus, "full-c", repo_dir="/home/dev/repo", commit="c0"
+    )
 
     init = next(c for c in calls if c[:2] == ["git", "init"])
     assert init[-1] == "/home/dev/repo/lib"
@@ -708,17 +761,23 @@ def test_transport_to_container_points_a_new_subrepo_at_the_real_origin(mocker, 
     the same upstream `init_submodules_in_container` ends up with.
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     calls, exec_stub = _exec_recorder(missing={"/home/dev/repo/lib/.git"})
     incus.exec.side_effect = exec_stub
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "lib")
+    )
     origin = mocker.patch(
         "jailbee.submodules.git.get_remote_url",
         return_value="git@github.com:acme/lib.git",
     )
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+    submodules.transport_submodules_to_container(
+        cfg, incus, "full-c", repo_dir="/home/dev/repo", commit="c0"
+    )
 
     assert origin.call_args.args[0] == tmp_path / "lib"
     assert [
@@ -738,10 +797,14 @@ def test_transport_to_container_resolves_the_submodules_own_remote_name(mocker, 
     directory, not inherited from `cfg.upstream_remote`.
     """
     cfg = _cfg_repo(tmp_path, upstream_remote="public")
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     _calls, exec_stub = _exec_recorder(missing={"/home/dev/repo/lib/.git"})
     incus.exec.side_effect = exec_stub
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "lib")
+    )
     mocker.patch("jailbee.submodules.git.detect_upstream_remote", return_value="fork")
     url = mocker.patch(
         "jailbee.submodules.git.get_remote_url",
@@ -749,7 +812,9 @@ def test_transport_to_container_resolves_the_submodules_own_remote_name(mocker, 
     )
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+    submodules.transport_submodules_to_container(
+        cfg, incus, "full-c", repo_dir="/home/dev/repo", commit="c0"
+    )
 
     assert url.call_args.args == (tmp_path / "lib", "fork")
 
@@ -759,13 +824,19 @@ def test_transport_to_container_never_touches_an_existing_subrepo(mocker, tmp_pa
     sub-repo is pushed into and otherwise left alone (no init, no checkout).
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     calls, exec_stub = _exec_recorder()
     incus.exec.side_effect = exec_stub
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "lib")
+    )
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "full-c", repo_dir="/home/dev/repo")
+    submodules.transport_submodules_to_container(
+        cfg, incus, "full-c", repo_dir="/home/dev/repo", commit="c0"
+    )
 
     assert not any(c[:2] == ["git", "init"] for c in calls)
     assert not any("checkout" in c for c in calls)
@@ -773,19 +844,21 @@ def test_transport_to_container_never_touches_an_existing_subrepo(mocker, tmp_pa
 
 
 def test_transport_to_container_defaults_to_the_host_namespace(mocker, tmp_path):
-    """Default `source_ns="host"` must keep the original refspecs — the fix
-    for the relay case must not silently invert the common case.
-    """
+    """Default `source_ns="host"` sends pinned gitlinks and host branches."""
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["sub"])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "sub")
+    )
     mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
-    submodules.transport_submodules_to_container(cfg, incus, "c", repo_dir="/repo")
+    submodules.transport_submodules_to_container(cfg, incus, "c", repo_dir="/repo", commit="c0")
 
     refspecs = push.call_args[0][2]
-    assert "+HEAD:refs/jailbee-sub/host/sub/HEAD" in refspecs
+    assert f"+{'1' * 40}:refs/jailbee-sub/host/sub/HEAD" in refspecs
     assert "+refs/heads/*:refs/jailbee-sub/host/sub/heads/*" in refspecs
 
 
@@ -795,14 +868,19 @@ def test_transport_to_container_relays_another_containers_refs(mocker, tmp_path)
     sub-repo's own HEAD/branches, which may not even be on the same commit.
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.host_subrepo_root", return_value=tmp_path / ".git/modules/custom"
+    )
     incus = MagicMock()
     mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
     push = mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
+    assert push.call_args.args[0] == tmp_path / ".git/modules/custom"
     refspecs = push.call_args[0][2]
     # The objects fetched from c1 live under refs/jailbee-sub/c1/*, so THOSE
     # are what must travel — not the host sub-repo's own branches.
@@ -818,13 +896,15 @@ def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocke
     `paths` must bypass `git.submodule_status_paths` entirely.
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
-    enumerate_host = mocker.patch("jailbee.submodules.git.submodule_status_paths")
+    enumerate_host = mocker.patch("jailbee.submodules.host_submodules_at")
     mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
     enumerate_host.assert_not_called()
@@ -840,6 +920,8 @@ def test_transport_to_container_relay_created_subrepo_checks_out_source_namespac
     serve this missing-sub-repo case.
     """
     cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
     mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=False)
     # Avoid the real _submodule_upstream_url -> git.detect_upstream_remote /
@@ -849,7 +931,7 @@ def test_transport_to_container_relay_created_subrepo_checks_out_source_namespac
     mocker.patch("jailbee.submodules.git.push_url_multi")
 
     submodules.transport_submodules_to_container(
-        cfg, incus, "target", repo_dir="/repo", source_ns="c1", paths=["sub"]
+        cfg, incus, "target", repo_dir="/repo", source_ns="c1", mode="relay", paths=["sub"]
     )
 
     checkout_call = next(c for c in incus.exec.call_args_list if "checkout" in c.args[1])
@@ -859,16 +941,23 @@ def test_transport_to_container_relay_created_subrepo_checks_out_source_namespac
 
 def test_prune_host_submodule_refs_deletes_each(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
-    mocker.patch("jailbee.submodules.git.submodule_status_paths", return_value=["lib"])
-    mocker.patch(
-        "jailbee.submodules.git.list_refs",
-        return_value=["refs/jailbee-sub/feat-x/lib/HEAD"],
+    root = tmp_path / "lib"
+    ref = "refs/jailbee-sub/feat-x/lib/HEAD"
+    mocker.patch("jailbee.submodules.all_host_subrepo_roots", return_value=[root])
+    run_capture = mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        side_effect=[(True, f"{ref}\n"), (True, "")],
     )
-    delete = mocker.patch("jailbee.submodules.git.delete_ref")
 
     submodules.prune_host_submodule_refs(cfg, "feat-x")
 
-    delete.assert_called_once_with(tmp_path / "lib", "refs/jailbee-sub/feat-x/lib/HEAD")
+    assert run_capture.call_args_list == [
+        mocker.call(
+            str(root),
+            ["for-each-ref", "--format=%(refname)", "refs/jailbee-sub/feat-x/"],
+        ),
+        mocker.call(str(root), ["update-ref", "-d", ref]),
+    ]
 
 
 def test_container_runner_success_returns_stdout():
@@ -1066,11 +1155,11 @@ def test_walk_reads_gitlink_from_parent_tree():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     def ls_tree(cwd, args):
-        if cwd == "/repo" and args[1:] == ["HEAD", "--", "lib"]:
+        if cwd == "/repo" and args[1:] == ["-z", "HEAD", "--", "lib"]:
             return (True, "160000 commit fresh\tlib\n")
         return (True, "")
 
@@ -1095,7 +1184,7 @@ def test_walk_skips_submodule_without_gitlink():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     run = _FakeRun(
@@ -1116,7 +1205,7 @@ def test_walk_skips_submodule_without_gitlink():
 def test_walk_no_branch_declared_does_not_check_out():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")  # submodule.lib.branch not set
 
     run = _FakeRun(
@@ -1137,7 +1226,7 @@ def test_walk_no_branch_declared_does_not_check_out():
 def test_walk_branch_dot_is_skipped():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (True, ".\n")  # branch = .
 
     run = _FakeRun(
@@ -1159,9 +1248,9 @@ def test_walk_places_branch_per_level():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         # branch declarations, read from the parent level's .gitmodules
         if args[-1] == "submodule.lib.branch":
@@ -1192,9 +1281,9 @@ def test_walk_with_branch_places_all_recursively():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")  # NO submodule.<name>.branch declarations anywhere
 
@@ -1220,7 +1309,7 @@ def test_walk_none_branch_keeps_legacy_gitmodules_behaviour():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")  # submodule.lib.branch not set
 
     run = _FakeRun(
@@ -1276,9 +1365,9 @@ def test_report_submodule_branches_flat_and_nested():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")
 
@@ -1625,7 +1714,7 @@ def test_detect_default_final_fallback_main():
 def test_seed_pins_both_anchors():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "master\n")
         return (False, "")
@@ -1644,7 +1733,7 @@ def test_seed_pins_both_anchors():
 def test_seed_skips_local_default_when_equal_to_container_branch():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "feat/foo\n")  # submodule default == container branch
         return (False, "")
@@ -1663,7 +1752,7 @@ def test_seed_skips_local_default_when_equal_to_container_branch():
 def test_seed_skips_unresolvable_gitlink():
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         return (False, "")
 
     run = _FakeRun({"config": config, "ls-tree": (False, "")})  # base ref/path missing
@@ -1763,9 +1852,9 @@ def test_delete_submodule_base_anchors_recursive():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         return (False, "")
 
@@ -1788,7 +1877,7 @@ def test_seed_local_default_not_rewound_when_b_sub_not_ff():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "main\n")
         return (False, "")
@@ -1828,7 +1917,7 @@ def test_seed_local_default_created_when_absent():
 
     def config(cwd, args):
         if "--get-regexp" in args:
-            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+            return (True, "submodule.lib.path\nlib\0") if cwd == "/repo" else (False, "")
         if args[-1] == "submodule.lib.branch":
             return (True, "main\n")
         return (False, "")
@@ -1865,16 +1954,16 @@ def test_seed_recurses_into_nested_submodule():
     def config(cwd, args):
         if "--get-regexp" in args:
             if cwd == "/repo":
-                return (True, "submodule.lib.path lib\n")
+                return (True, "submodule.lib.path\nlib\0")
             if cwd == "/repo/lib":
-                return (True, "submodule.inner.path inner\n")
+                return (True, "submodule.inner.path\ninner\0")
             return (False, "")
         # No submodule.<name>.branch declarations.
         return (False, "")
 
     def ls_tree(cwd, args):
-        # args: ["ls-tree", <commit>, "--", <path>]
-        commit, path = args[1], args[3]
+        # args: ["ls-tree", "-z", <commit>, "--", <path>]
+        commit, path = args[2], args[4]
         if cwd == "/repo" and commit == "refs/jailbee/base/main" and path == "lib":
             return (True, "160000 commit AAAAAA\tlib\n")
         if cwd == "/repo/lib" and commit == "AAAAAA" and path == "inner":
@@ -1910,9 +1999,9 @@ def test_transport_to_host_only_filters_to_one_submodule(mocker, tmp_path):
         [("submodule status --recursive", " abc lib/a heads\n def lib/b heads\n")]
     )
     (tmp_path / "lib" / "a").mkdir(parents=True)
-    (tmp_path / "lib" / "a" / ".git").write_text("")
+    (tmp_path / "lib" / "a" / ".git").mkdir()
     (tmp_path / "lib" / "b").mkdir(parents=True)
-    (tmp_path / "lib" / "b" / ".git").write_text("")
+    (tmp_path / "lib" / "b" / ".git").mkdir()
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
 
     submodules.transport_submodules_to_host(
@@ -1927,11 +2016,13 @@ def test_transport_to_host_only_filters_to_one_submodule(mocker, tmp_path):
     assert [str(call.args[0]) for call in fetch.call_args_list] == [str(tmp_path / "lib" / "b")]
 
 
-def test_transport_to_host_fetches_the_jailbee_refs_after_cloning(mocker, tmp_path):
+def test_transport_to_host_fetches_the_jailbee_refs_after_initializing(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.side_effect = _exec_router([("submodule status --recursive", " abc lib/a heads\n")])
-    clone = mocker.patch("jailbee.submodules.git.clone_url")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    clone = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
     mocker.patch("jailbee.submodules._repoint_cloned_subrepo")
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
 
@@ -1947,7 +2038,7 @@ def test_declared_branch_for_path_reads_the_gitmodules_entry():
     def run(cwd, args):
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if "submodule.lib.branch" in joined:
             return (True, "release\n")
         return (False, "")
@@ -1959,7 +2050,7 @@ def test_declared_branch_for_path_treats_dot_as_undeclared():
     def run(cwd, args):
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if "submodule.lib.branch" in joined:
             return (True, ".\n")
         return (False, "")
@@ -1970,7 +2061,7 @@ def test_declared_branch_for_path_treats_dot_as_undeclared():
 def test_declared_branch_for_path_returns_none_for_an_unknown_leaf():
     def run(cwd, args):
         if "--get-regexp" in " ".join(args):
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         return (False, "")
 
     assert submodules.declared_branch_for_path(run, "/repo", "other") is None
@@ -1984,7 +2075,7 @@ def test_declared_branch_for_top_relative_path_matches_a_top_level_entry_directl
         assert cwd == "/repo"
         joined = " ".join(args)
         if "--get-regexp" in joined:
-            return (True, "submodule.foo.path libs/foo\n")
+            return (True, "submodule.foo.path\nlibs/foo\0")
         if "submodule.foo.branch" in joined:
             return (True, "release/2.x\n")
         return (False, "")
@@ -1998,9 +2089,9 @@ def test_declared_branch_for_top_relative_path_descends_into_a_nested_level():
     def run(cwd, args):
         joined = " ".join(args)
         if cwd == "/repo" and "--get-regexp" in joined:
-            return (True, "submodule.lib.path lib\n")
+            return (True, "submodule.lib.path\nlib\0")
         if cwd == "/repo/lib" and "--get-regexp" in joined:
-            return (True, "submodule.a.path a\n")
+            return (True, "submodule.a.path\na\0")
         if cwd == "/repo/lib" and "submodule.a.branch" in joined:
             return (True, "develop\n")
         return (False, "")
@@ -2188,7 +2279,10 @@ def test_place_branches_from_commit_refuses_a_subrepo_on_the_target_branch(mocke
     # that up the way a checkout would.
     assert [(p.path, p.status, p.old_oid) for p in result] == [("sub", "checked-out", "oldsha")]
     update.assert_not_called()
-    run_capture.assert_not_called()
+    run_capture.assert_called_once_with(
+        str(tmp_path),
+        ["config", "--blob", "topsha:.gitmodules", "--get", "submodule.sub.url"],
+    )
 
 
 def test_place_branches_from_commit_refuses_a_checked_out_subrepo_under_force(mocker, tmp_path):
@@ -2286,25 +2380,25 @@ def test_place_branches_from_commit_recurses_into_nested_submodules(mocker, tmp_
 
 
 def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
-    run = mocker.MagicMock(return_value=(True, "submodule.sub.path sub\n"))
+    run = mocker.MagicMock(return_value=(True, "submodule.sub.path\nsub\0"))
     assert submodules._gitmodules_paths_at(run, "/repo", "deadbeef") == [("sub", "sub")]
     args = run.call_args[0][1]
-    assert args[:3] == ["config", "--blob", "deadbeef:.gitmodules"]
+    assert args[:4] == ["config", "--null", "--blob", "deadbeef:.gitmodules"]
 
 
 def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
     mocker, tmp_path, monkeypatch, capsys
 ):
-    """Cloning is a checkout into the host tree. Over remote SSH the new
+    """Creating new host sub-repos is forbidden over remote SSH. The new
     submodule is skipped with a warning — not a fatal error that would sink
     the ref-only transfer of everything else — and no directory is made."""
     monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 libs/new (v1)\n"
-    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
     fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
-    clone = mocker.patch("jailbee.submodules.git.clone_url")
+    clone = mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
 
     submodules.transport_submodules_to_host(
         cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
@@ -2315,4 +2409,83 @@ def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
     assert not (tmp_path / "libs").exists()
     # Rich wraps at the console width; compare with the line breaks joined.
     printed = " ".join(capsys.readouterr().out.split())
-    assert "not cloned into the host tree over remote SSH" in printed
+    assert "not brought onto the host over remote SSH" in printed
+
+
+def test_container_fs_runs_rm_and_find_in_the_container():
+    incus = MagicMock()
+    incus.exec.return_value = "/r/sub/.env\n/r/sub/link\n"
+    fs = submodules.ContainerFs(incus, "full-c", uid=1000)
+    fs.remove_file("/r/sub/.git")
+    fs.remove_empty_dirs("/r/sub")
+    assert fs.list_files("/r/sub") == ["/r/sub/.env", "/r/sub/link"]
+    cmds = [c.args[1] for c in incus.exec.call_args_list]
+    assert cmds[0] == ["rm", "-f", "--", "/r/sub/.git"]
+    assert cmds[1] == ["find", "/r/sub", "-depth", "-type", "d", "-empty", "-delete"]
+    assert cmds[2] == [
+        "sh",
+        "-c",
+        'if [ -e "$1" ] || [ -L "$1" ]; then find "$1" ! -type d; fi',
+        "sh",
+        "/r/sub",
+    ]
+    assert all(c.kwargs == {"uid": 1000} for c in incus.exec.call_args_list)
+
+
+@pytest.mark.parametrize("method", ["remove_file", "remove_empty_dirs", "list_files"])
+def test_container_fs_surfaces_failures(method):
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("permission denied")
+    fs = submodules.ContainerFs(incus, "full-c", uid=1000)
+    with pytest.raises(IncusError):
+        getattr(fs, method)("/r/sub")
+
+
+def test_transport_to_container_reports_enumeration_errors_before_writes(mocker, tmp_path):
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at",
+        side_effect=submodules.git.GitError("unavailable tree"),
+    )
+    incus = MagicMock()
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+    with pytest.raises(submodules.SubmoduleError, match=r"Cannot inspect.*unavailable tree"):
+        submodules.transport_submodules_to_container(
+            _cfg_repo(tmp_path), incus, "c", repo_dir="/r", commit="c0"
+        )
+    incus.exec.assert_not_called()
+    push.assert_not_called()
+
+
+@pytest.mark.parametrize("output", ["", "yes", "no"])
+def test_container_fs_skips_only_confirmed_uninitialized_child(output):
+    incus = MagicMock()
+    incus.exec.return_value = output
+    assert submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner") is (
+        output == "yes"
+    )
+
+
+def test_container_fs_uninitialized_check_surfaces_failure():
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("cannot inspect child")
+    with pytest.raises(IncusError, match="cannot inspect"):
+        submodules.ContainerFs(incus, "c", uid=1000).uninitialized("/repo/sub/inner")
+
+
+def test_relay_missing_authoritative_repo_refuses_before_any_target_write(mocker, tmp_path):
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+    incus = MagicMock()
+    with pytest.raises(submodules.SubmoduleError, match="not brought onto the host"):
+        submodules.transport_submodules_to_container(
+            _cfg_repo(tmp_path),
+            incus,
+            "target",
+            repo_dir="/repo",
+            mode="relay",
+            source_ns="host",
+            paths=["new"],
+            host_repos={},
+        )
+    incus.exec.assert_not_called()
+    push.assert_not_called()

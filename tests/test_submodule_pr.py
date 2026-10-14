@@ -574,3 +574,15 @@ def test_submodule_pr_plan_is_frozen():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         _plan().base = "other"
+
+
+def test_publish_uses_located_gitdir_for_source_lease_and_push(tmp_path, mocker):
+    root = tmp_path / ".git/modules/custom"
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    source = mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    lease = mocker.patch("jailbee.git.remote_branch_sha", return_value="deadbee")
+    push = mocker.patch("jailbee.git.push_to_remote")
+    _publish(tmp_path, mocker, force=True)
+    assert source.call_args.args[0] == root
+    assert lease.call_args.args[0] == root
+    assert push.call_args.args[0] == root

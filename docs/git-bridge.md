@@ -486,39 +486,41 @@ block once per source, comparing the target's HEAD before and after that
 integration. It reads the commits inside the target, where any newly created
 merge commit exists; a fast-forward need not create a merge commit at all.
 
-**Limitation: the transported submodules come from the sender's checked-out
-state, not from the commit being sent.** Both transports enumerate submodules
-with `git submodule status --recursive` in the sender's working tree, and move
-only what is reachable from each sub-repo's `HEAD` and its *local* branches.
-This normally covers the checked-out commit, but can miss required objects
-when the selected source differs from the sender's checkout:
+**Path limitation.** Module paths containing spaces are not supported by the
+transport ref namespace (`refs/jailbee-sub/<source>/<path>/...`), because Git
+ref names cannot contain spaces. This is distinct from declared module names:
+a name containing spaces or `=` works when its module path has no spaces.
 
-- **`-b <branch>` / `--branch <branch>`** on `jailbee git merge`, `fetch`,
-  `pull` and `checkout` names a branch in the container other than the one
-  checked out. A submodule that exists only on that branch is never
-  enumerated, and a gitlink it pins that no local branch of the sub-repo
-  reaches is never transported.
-- **`jailbee git push`** selects the host source with `--from`, `--current`
-  or `--pr`. Otherwise `push.default_source` applies: the built-in default is
-  the container's recorded **base branch**, with origin preference. That
-  source can differ from the host checkout even without flags. A required
-  submodule or commit may therefore be absent from the transported set.
+**Container-side limitation.** The transported submodules for `jailbee git
+merge`, `fetch`, `pull` and `checkout` are enumerated from the container's
+checked-out state, not from a branch selected with `-b` / `--branch`. A
+submodule that exists only on that other branch, or a gitlink commit that no
+local sub-repo branch reaches, may therefore be absent. The superproject merge
+can succeed despite a missing submodule commit: a gitlink is a tree entry, not
+a guarantee that its object is present in the sub-repo. A later
+`submodule update --init --recursive --checkout` can fail **after the
+superproject has advanced**, reporting a missing commit or uninitialized
+submodule. It can also fall back to upstream when that endpoint and the
+necessary credentials are available, whether on the host or under the
+container's egress policy. Strict mode does not universally forbid this; it
+depends on the allowlist. Upstream cannot supply a commit never pushed there.
 
-The superproject merge can succeed despite a missing submodule commit: a
-gitlink is a tree entry, not a guarantee that its object is present in the
-sub-repo. A later `submodule update --init --recursive --checkout` can fail
-**after the superproject has advanced**, reporting a missing commit or
-uninitialized submodule. It can also fall back to upstream when that endpoint
-and the necessary credentials are available, whether on the host or under the
-container's egress policy. Strict mode does not universally forbid this;
-it depends on the allowlist. Upstream cannot supply a commit never pushed
-there.
+Use `-b` only when you know that branch's submodule set matches the container's
+checkout — for a repo with no submodules it is unaffected. To move a branch
+that is not checked out *with* its submodules, check it out in the container
+first (`jailbee shell <name>`, `git checkout <branch>`), then run the bridge
+command without `-b`.
 
-So use `-b` only when you know that branch's submodule set matches the
-container's checkout — for a repo with no submodules it is unaffected. To move
-a branch that is not checked out *with* its submodules, check it out in the
-container first (`jailbee shell <name>`, `git checkout <branch>`), then run the
-bridge command without `-b`.
+**Submodules that exist on some branches only.** A host sub-repo lives in its
+gitdir (`.git/modules/<name>`); the working tree is optional. Switching the
+host to a branch without a submodule (`jailbee branch`, `jailbee git checkout`,
+or a pull that checks out or merges) removes that submodule's files and keeps
+its gitdir — branches, remotes and stash included — so switching back restores
+it. Ignored files (`.env`, build output) are kept and listed. The switch is
+refused before anything changes when a vanishing submodule has uncommitted or
+untracked changes. A pull brings a submodule the host has not seen into a new
+gitdir without touching the working tree, whatever branch the host has checked
+out.
 
 **Conflicting gitlinks.** When both sides moved the same submodule, git stops
 at `CONFLICT (submodule)` and leaves the pointer to you. JailBee merges it

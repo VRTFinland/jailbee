@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jailbee import sync
+from jailbee import submodules, sync
 
 
 def test_build_ext_url_format(mocker, make_cfg, tmp_path):
@@ -547,6 +547,7 @@ def test_sync_refs_forces_a_diverged_branch_that_is_not_checked_out(mocker, make
 
 
 def test_sync_refs_refuses_to_force_the_checked_out_branch(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -583,6 +584,7 @@ def test_sync_refs_refuses_the_checked_out_branch_when_the_tree_is_dirty(
     `host_tree_dirty` short-circuit is gone — so this test's job is only the
     post-failure classification, not whether the merge runs.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -614,6 +616,7 @@ def test_sync_refs_fast_forwards_the_checked_out_branch_even_with_a_dirty_tree(
     is not consulted here — `host_tree_dirty` is only ever read *after* the
     merge fails, never before attempting it.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -634,6 +637,7 @@ def test_sync_refs_fast_forwards_the_checked_out_branch_even_with_a_dirty_tree(
 
 
 def test_sync_refs_fast_forwards_the_checked_out_branch_in_place(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -725,6 +729,7 @@ def test_sync_refs_as_name_wins_over_the_pr_branch_label(mocker, make_cfg, tmp_p
     would actually be observable; every "created" test only ever passes
     `new_oid` to `place_branch`, never `fetched_ref` itself.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -837,6 +842,7 @@ def _synced_result(
 
 
 def test_checkout_delegates_to_sync_refs_and_then_switches(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -951,6 +957,7 @@ def test_checkout_still_raises_on_the_checked_out_backstop(mocker, make_cfg, tmp
 
 
 def test_checkout_sets_tracking_when_created_and_origin_branch_exists(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -975,6 +982,7 @@ def test_checkout_sets_tracking_when_created_and_origin_branch_exists(mocker, ma
 
 
 def test_checkout_skips_tracking_when_origin_branch_missing(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -1003,6 +1011,7 @@ def test_checkout_never_probes_tracking_for_an_existing_branch(mocker, make_cfg,
     every other test here and still silently touch tracking on every
     fast-forward.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -1045,6 +1054,7 @@ def test_checkout_skips_the_switch_when_already_on_target(mocker, make_cfg, tmp_
 
 
 def test_checkout_switches_when_not_on_target(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -1077,6 +1087,7 @@ def test_checkout_forwards_branch_and_as_name_without_forcing(mocker, make_cfg, 
     would end up on the wrong branch and submodules would be updated for the
     wrong one.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -1106,6 +1117,7 @@ def test_checkout_forwards_branch_and_as_name_without_forcing(mocker, make_cfg, 
 
 
 def test_checkout_updates_submodules_last(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -1999,6 +2011,7 @@ def _drive_merge_via_checkout(mocker, tmp_path, make_cfg, *, ff):
     ],
 )
 def test_merge_in_place_honours_the_ff_policy(mocker, tmp_path, make_cfg, policy, expected):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     merge_ref = mocker.patch("jailbee.git.merge_ref")
     _drive_merge_in_place(mocker, tmp_path, make_cfg, ff=policy)  # target == current
 
@@ -2008,6 +2021,7 @@ def test_merge_in_place_honours_the_ff_policy(mocker, tmp_path, make_cfg, policy
 
 def test_auto_keeps_the_provenance_message(mocker, tmp_path, make_cfg):
     """`-m` is ignored by git on a fast-forward, so `auto` still passes it."""
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     merge_ref = mocker.patch("jailbee.git.merge_ref")
     _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
 
@@ -2016,6 +2030,7 @@ def test_auto_keeps_the_provenance_message(mocker, tmp_path, make_cfg):
 
 def test_checkout_path_honours_the_ff_policy(mocker, tmp_path, make_cfg):
     """Pre-existing defect: _merge_via_checkout used to force no_ff regardless."""
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     merge_ref = mocker.patch("jailbee.git.merge_ref")
     _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="auto")
 
@@ -2029,6 +2044,7 @@ def test_checkout_path_honours_ff_never(mocker, tmp_path, make_cfg):
     above only exercises `auto`, so this is the only test asserting `no_ff=True`
     actually reaches `git.merge_ref` on this path.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     merge_ref = mocker.patch("jailbee.git.merge_ref")
     _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="never")
 
@@ -2042,6 +2058,7 @@ def test_checkout_path_refuses_under_always(mocker, tmp_path, make_cfg):
 
 
 def test_merge_returns_merge_result(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import MergeResult, merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2061,6 +2078,7 @@ def test_merge_returns_merge_result(mocker, make_cfg, tmp_path):
 
 def test_merge_captures_pre_merge_head_distinct_from_post(mocker, make_cfg, tmp_path):
     """`pre_merge_head` must be read *before* `git.merge_ref` is called."""
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import FetchResult, merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2090,6 +2108,7 @@ def test_merge_captures_pre_merge_head_distinct_from_post(mocker, make_cfg, tmp_
 
 
 def test_merge_runs_no_ff_with_message(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2113,6 +2132,7 @@ def test_merge_runs_no_ff_with_message(mocker, make_cfg, tmp_path):
 
 
 def test_merge_ff_only_passes_through(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2134,6 +2154,7 @@ def test_merge_ff_only_passes_through(mocker, make_cfg, tmp_path):
 
 
 def test_merge_ff_only_propagates_git_error(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.git import GitError
     from jailbee.sync import merge_from_container
 
@@ -2154,6 +2175,7 @@ def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_pa
     """Host and container branches are independent histories even when
     they share a name — merging is allowed without a confirmation prompt.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2170,6 +2192,7 @@ def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_pa
 
 
 def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -2188,6 +2211,7 @@ def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg
 def test_merge_conflict_surfaces_sync_error(mocker, make_cfg, tmp_path):
     """A host merge conflict the resolver can't clear surfaces a SyncError summary
     (not a raw GitError) after the gitlink resolver is attempted."""
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync as sync_mod
     from jailbee.git import GitError
     from jailbee.submodules import GitlinkResolution
@@ -2226,6 +2250,7 @@ def _fake_fetch(branch: str):
 
 
 def test_merge_targets_base_branch_when_current(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
@@ -2243,6 +2268,24 @@ def test_merge_targets_base_branch_when_current(mocker, make_cfg, tmp_path):
     merge_ref.assert_called_once()  # merged in place
 
 
+def test_merge_ff_without_checkout_places_submodule_branches(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="bbb")
+    mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+    mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
+    place = mocker.patch("jailbee.sync.submodules.place_branches_from_commit", return_value=[])
+    from jailbee import sync
+
+    sync.merge_from_container(cfg, incus, "feat-x")
+
+    place.assert_called_once_with(cfg.repo_root, "bbb", "dev")
+
+
 def test_merge_ff_without_checkout_when_base_not_current(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
@@ -2253,6 +2296,7 @@ def test_merge_ff_without_checkout_when_base_not_current(mocker, make_cfg, tmp_p
     mocker.patch("jailbee.sync.git.rev_parse", return_value="bbb")
     ff = mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
     checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.place_branches_from_commit", return_value=[])
     mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
     upd = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
     from jailbee import sync
@@ -2296,6 +2340,7 @@ def test_merge_checkout_path_refuses_dirty_tree(mocker, make_cfg, tmp_path):
 
 
 def test_merge_checkout_path_merges_and_stays(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
@@ -2319,6 +2364,7 @@ def test_merge_checkout_path_merges_and_stays(mocker, make_cfg, tmp_path):
 
 
 def test_merge_ff_with_checkout_checks_out_target(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
@@ -2359,6 +2405,7 @@ def test_merge_ff_with_checkout_refuses_dirty_tree(mocker, make_cfg, tmp_path):
 
 def test_merge_checkout_from_detached_head_allowed(mocker, make_cfg, tmp_path):
     """Detached HEAD no longer refuses --checkout — there is nothing to restore."""
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
@@ -2380,6 +2427,7 @@ def test_merge_checkout_from_detached_head_allowed(mocker, make_cfg, tmp_path):
 
 
 def test_pull_re_anchors_every_container_on_the_into_branch(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -2402,6 +2450,7 @@ def test_pull_re_anchors_every_container_on_the_into_branch(mocker, make_cfg, tm
 
 
 def test_pull_into_another_branch_re_anchors_that_branch(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -2550,7 +2599,14 @@ def test_push_to_container_happy_path_local_branch(mocker, make_cfg, tmp_path):
         "jailbee.sync.git.rev_parse",
         side_effect=lambda root, ref: "host-oid" if ref == "refs/heads/main" else None,
     )
-    mock_push = mocker.patch("jailbee.sync.git.push_url")
+    order = []
+    tr = mocker.patch(
+        "jailbee.sync.submodules.transport_submodules_to_container",
+        side_effect=lambda *a, **k: order.append("submodules"),
+    )
+    mock_push = mocker.patch(
+        "jailbee.sync.git.push_url", side_effect=lambda *a, **k: order.append("superproject")
+    )
 
     result = push_to_container(cfg, incus, "feat-foo")
 
@@ -2567,10 +2623,46 @@ def test_push_to_container_happy_path_local_branch(mocker, make_cfg, tmp_path):
     assert "git receive-pack /home/dev/repo" in args[1]
     assert args[2] == "+refs/heads/main:refs/jailbee/host/main"
 
+    assert tr.call_args.kwargs["commit"] == "host-oid"
+    assert order == ["submodules", "superproject"]
+
+
+def test_push_to_container_missing_submodule_is_sync_error(mocker, make_cfg, tmp_path):
+    from jailbee.submodules import SubmoduleError
+    from jailbee.sync import SyncError, push_to_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None  # not mount mode
+    incus.exec.return_value = ""  # no prior refs/jailbee/host/main inside container
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.local_branch_exists", return_value=True)
+    # No origin ref: the local branch is the only candidate.
+    mocker.patch("jailbee.sync.git.remote_ref_exists", return_value=False)
+    mocker.patch("jailbee.sync.git.fetch_remote_ref")
+    mocker.patch(
+        "jailbee.sync.git.rev_parse",
+        side_effect=lambda root, ref: "host-oid" if ref == "refs/heads/main" else None,
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.transport_submodules_to_container",
+        side_effect=SubmoduleError("Submodule 'sub' commit is not on the host"),
+    )
+    mock_push = mocker.patch("jailbee.sync.git.push_url")
+    with pytest.raises(SyncError, match="not on the host"):
+        push_to_container(cfg, incus, "feat-foo")
+    mock_push.assert_not_called()
+
 
 def test_push_to_container_uses_origin_when_local_absent(mocker, make_cfg, tmp_path):
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2601,6 +2693,7 @@ def test_push_to_container_uses_origin_when_local_absent(mocker, make_cfg, tmp_p
 def test_push_to_container_explicit_from_overrides_default(mocker, make_cfg, tmp_path):
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2632,6 +2725,7 @@ def test_push_to_container_pushes_an_explicit_source_ref(mocker, make_cfg, tmp_p
     """
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2672,6 +2766,7 @@ def test_push_to_container_pushes_an_explicit_source_ref(mocker, make_cfg, tmp_p
 def test_push_to_container_explicit_source_ref_missing_raises(mocker, make_cfg, tmp_path):
     from jailbee.sync import SyncError, push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2697,6 +2792,7 @@ def test_push_to_container_explicit_source_ref_missing_raises(mocker, make_cfg, 
 def test_push_to_container_stopped_raises(mocker, make_cfg, tmp_path):
     from jailbee.sync import SyncError, push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2712,6 +2808,7 @@ def test_push_to_container_stopped_raises(mocker, make_cfg, tmp_path):
 def test_push_to_container_mount_mode_raises(mocker, make_cfg, tmp_path):
     from jailbee.sync import SyncError, push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2726,6 +2823,7 @@ def test_push_to_container_mount_mode_raises(mocker, make_cfg, tmp_path):
 def test_push_to_container_missing_source_branch_raises(mocker, make_cfg, tmp_path):
     from jailbee.sync import SyncError, push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2747,6 +2845,7 @@ def test_push_to_container_records_prior_oid(mocker, make_cfg, tmp_path):
     """If container already has refs/jailbee/host/<source>, capture it as old_oid."""
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2776,6 +2875,7 @@ def test_push_to_container_refreshes_base_when_source_is_base(mocker, make_cfg, 
     """
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2809,6 +2909,7 @@ def test_push_to_container_refreshes_base_when_source_is_base(mocker, make_cfg, 
 def test_push_to_container_no_base_refspec_when_source_not_base(mocker, make_cfg, tmp_path):
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -2844,6 +2945,7 @@ def test_push_to_container_uses_the_from_namespace(mocker, make_cfg, tmp_path):
     """
     from jailbee import sync
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-target"
@@ -2880,6 +2982,7 @@ def test_push_to_container_does_not_advance_base_across_containers(mocker, make_
     """
     from jailbee import sync
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-target"
@@ -3074,6 +3177,7 @@ def test_push_to_container_fast_forwards_the_pushed_local_branch(mocker, make_cf
     """Wiring: the transport reports what happened to the container's own branch."""
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -3119,6 +3223,7 @@ def test_push_to_container_survives_a_failed_local_branch_update(mocker, make_cf
     from jailbee.incus import IncusError
     from jailbee.sync import push_to_container
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -3165,6 +3270,7 @@ def _stub_push_env(mocker, cfg, incus, *, base_branch=None, local=True, origin=T
     per-ref sentinel oid so tests can tell which ref was actually pushed.
     Returns the mocks the assertions need.
     """
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     full = f"{cfg.container_prefix}-feat-foo"
     _mock_container_running(incus, full)
     incus.config_get.side_effect = lambda n, k: (
@@ -3366,7 +3472,7 @@ def _exec_dispatcher(responses):
 
     Keys: status, merge_head, rebase_merge, rebase_apply, head_branch,
     rev_parse_gie, rev_parse_local, rev_parse_head, rev_list_count,
-    merge_base, update_ref, merge, rebase, reset.
+    merge_base, ls_tree, update_ref, merge, rebase, reset.
 
     The rev_parse_local / merge_base / update_ref trio belongs to
     `ff_container_branch`; their defaults ("" = success, empty stdout) make it
@@ -3403,6 +3509,8 @@ def _exec_dispatcher(responses):
             key = "rev_parse_local"
         elif "rev-parse" in joined and "HEAD" in joined:
             key = "rev_parse_head"
+        elif "ls-tree" in cmd:
+            key = "ls_tree"
         elif "ls-files" in cmd:
             key = "ls_files"
         elif "commit" in cmd:
@@ -3480,7 +3588,7 @@ def test_push_and_merge_happy_path(mocker, make_cfg, tmp_path):
 
     _common_push_patches(mocker, cfg, full)
     mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
-    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    tr = mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
 
     result = push_and_merge(cfg, incus, "feat-foo")
     assert result.push.source == "main"
@@ -3498,6 +3606,9 @@ def test_push_and_merge_happy_path(mocker, make_cfg, tmp_path):
     assert "merge" in merge_cmd
     assert "--ff-only" not in merge_cmd
     assert "refs/jailbee/host/main" in merge_cmd
+
+    assert tr.call_count == 1
+    assert "commit" in tr.call_args.kwargs
 
 
 def test_push_and_merge_runs_container_git_as_dev_user(mocker, make_cfg, tmp_path):
@@ -3826,6 +3937,7 @@ def test_push_and_merge_merge_in_progress_raises(mocker, make_cfg, tmp_path):
     from jailbee.submodules import GitlinkResolution
     from jailbee.sync import SyncError, push_and_merge
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -3907,6 +4019,7 @@ def test_push_and_merge_leaves_state_when_unresolved(mocker, make_cfg, tmp_path)
     from jailbee.submodules import GitlinkResolution, UnresolvedSub
     from jailbee.sync import SyncError, push_and_merge
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-foo"
@@ -4118,7 +4231,7 @@ def test_push_and_rebase_happy_path(mocker, make_cfg, tmp_path):
 
     _common_push_patches(mocker, cfg, full)
     mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
-    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    tr = mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
 
     result = push_and_rebase(cfg, incus, "feat-foo")
     assert result.container_branch == "feat/foo"
@@ -4131,6 +4244,9 @@ def test_push_and_rebase_happy_path(mocker, make_cfg, tmp_path):
     ]
     assert len(rebase_calls) == 1
     assert "refs/jailbee/host/main" in rebase_calls[0].args[1]
+
+    assert tr.call_count == 1
+    assert "commit" in tr.call_args.kwargs
 
 
 def test_push_and_rebase_sets_home_for_git_rebase(mocker, make_cfg, tmp_path):
@@ -4278,7 +4394,7 @@ def test_push_and_reset_happy_path(mocker, make_cfg, tmp_path):
     )
 
     _common_push_patches(mocker, cfg, full)
-    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    tr = mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
 
     result = push_and_reset(cfg, incus, "feat-foo")
@@ -4297,6 +4413,9 @@ def test_push_and_reset_happy_path(mocker, make_cfg, tmp_path):
     reset_cmd = reset_calls[0].args[1]
     assert "--hard" in reset_cmd
     assert "refs/jailbee/host/main" in reset_cmd
+
+    assert tr.call_count == 1
+    assert "commit" in tr.call_args.kwargs
 
 
 def test_push_and_reset_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
@@ -5394,6 +5513,7 @@ def test_merge_ff_path_pre_merge_head_is_target_old_tip(mocker, make_cfg, tmp_pa
 
 
 def test_merge_from_container_updates_host_submodules(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-x"
@@ -5440,6 +5560,145 @@ def test_checkout_existing_branch_updates_host_submodules(mocker, make_cfg, tmp_
     checkout_from_container(cfg, incus, "feat-foo")
 
     upd.assert_called_once_with(cfg.repo_root, branch="feat/foo")
+
+
+def test_container_merge_prechecks_and_prunes_vanishing_submodules(mocker):
+    incus = mocker.MagicMock()
+    order: list[str] = []
+    mocker.patch("jailbee.sync._container_head_oid", side_effect=["new", "merged"])
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    runner = mocker.MagicMock(return_value=(True, "base"))
+    run = mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch(
+        "jailbee.sync._exec_container_git_write", side_effect=lambda *a, **k: order.append("merge")
+    )
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch(
+        "jailbee.sync.submodules.vanishing_submodules",
+        side_effect=lambda *a, **k: order.append("vanishing") or ["lib"],
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=lambda *a, **k: order.append("precheck"),
+    )
+    prune = mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=lambda *a, **k: order.append("prune") or {},
+    )
+
+    sync._merge_ref_in_container(
+        incus,
+        "full-c",
+        "/r",
+        ref="refs/jailbee/host/main",
+        label="main",
+        message="m",
+        short="c",
+        uid=1000,
+        ff_only=False,
+    )
+
+    assert order == ["vanishing", "precheck", "merge", "prune"]
+    assert prune.call_args.kwargs["fs"].__class__ is submodules.ContainerFs
+    assert run.call_count == 1
+
+
+def test_container_merge_refuses_a_dirty_vanishing_submodule(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=submodules.SubmoduleError("dirty lib"),
+    )
+    write = mocker.patch("jailbee.sync._exec_container_git_write")
+    with pytest.raises(sync.SyncError, match="dirty lib"):
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+        )
+    write.assert_not_called()
+
+
+def test_container_merge_wraps_prune_failure(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="merged")
+    runner = mocker.MagicMock(return_value=(True, ""))
+    mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=submodules.SubmoduleError("cannot prune lib"),
+    )
+
+    with pytest.raises(sync.SyncError, match="cannot prune lib"):
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+        )
+
+
+def test_container_merge_failure_does_not_prune(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("failed"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=False)
+    prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
+    with pytest.raises(sync.SyncError):
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+        )
+    prune.assert_not_called()
+
+
+def test_container_merge_conflict_does_not_prune(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("conflict"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
+    mocker.patch("jailbee.sync.submodules._has_unmerged", return_value=True)
+    prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
+    with pytest.raises(sync.MergeConflictError):
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+        )
+    prune.assert_not_called()
 
 
 def test_push_and_merge_updates_container_submodules(mocker, make_cfg, tmp_path):
@@ -5500,6 +5759,7 @@ def test_push_and_rebase_updates_container_submodules(mocker, make_cfg, tmp_path
 
 
 def test_merge_from_container_transports_submodules_before_update(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-x"
@@ -5522,7 +5782,7 @@ def test_merge_from_container_transports_submodules_before_update(mocker, make_c
     tr.assert_called_once_with(cfg, incus, full, "feat-x", repo_dir="/home/dev/repo")
 
 
-def test_push_and_merge_transports_submodules_to_container(mocker, make_cfg, tmp_path):
+def test_push_and_merge_does_not_duplicate_submodule_transport(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     full = f"{cfg.container_prefix}-feat-x"
@@ -5547,7 +5807,7 @@ def test_push_and_merge_transports_submodules_to_container(mocker, make_cfg, tmp
 
     sync.push_and_merge(cfg, incus, "feat-x")
 
-    tr.assert_called_once_with(cfg, incus, full, repo_dir="/home/dev/repo")
+    tr.assert_not_called()
 
 
 # test_checkout_from_container_transports_submodules removed (Task 7): the
@@ -5615,6 +5875,7 @@ def test_merge_in_place_leaves_state_when_unresolved(mocker, make_cfg, tmp_path)
 
 
 def test_ff_only_pull_never_invokes_resolver(mocker, make_cfg, tmp_path):
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee.sync import merge_from_container
 
     cfg = make_cfg(tmp_path)
@@ -7842,7 +8103,13 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     sub_paths = mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["sub"])
     to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     call_order: list[str] = []
-    to_host.side_effect = lambda *a, **k: call_order.append("to_host")
+    roots = {"sub": sync.submodules.HostSubRepo("sub", tmp_path / ".git/modules/custom", None)}
+
+    def fetch_submodules(*args, **kwargs):
+        call_order.append("to_host")
+        return roots
+
+    to_host.side_effect = fetch_submodules
     to_container.side_effect = lambda *a, **k: call_order.append("to_container")
     push = mocker.patch(
         "jailbee.sync.push_to_container",
@@ -7872,6 +8139,8 @@ def test_merge_container_into_container_relays_through_the_host(mocker, make_cfg
     assert merge.call_args.kwargs.get("short") == "c2"
     # The source container's submodule refs must be relayed under ITS namespace.
     assert to_container.call_args.kwargs.get("source_ns") == "c1"
+    assert to_container.call_args.kwargs.get("mode") == "relay"
+    assert to_container.call_args.kwargs.get("host_repos") is roots
     assert to_container.call_args.kwargs.get("paths") == ["sub"]
     assert push.call_args.kwargs.get("namespace") == "from/c1"
     assert push.call_args.kwargs.get("source_ref") == "refs/jailbee/c1/feat/a"
@@ -8571,6 +8840,7 @@ def test_merge_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path
     submodules`, the existing happy-path test for this function's in-place
     merge branch.
     """
+    mocker.patch("jailbee.sync._move_host_head", side_effect=lambda cfg, *, op, **kw: op())
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
@@ -8670,6 +8940,7 @@ def _drive_push(mocker, tmp_path, make_cfg, *, tags="none"):
     that skips origin/local resolution entirely — fewer mocks, same refspecs."""
     from jailbee import sync
 
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     # mode label -> not "mount"; base_branch label -> None, so the base-advance
@@ -8765,15 +9036,18 @@ def remote_session(monkeypatch):
 
 
 def test_remote_checkout_refuses_before_fetching(mocker, make_cfg, tmp_path, remote_session):
+    precheck = mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
     refs = mocker.patch("jailbee.sync.sync_refs_from_container")
 
     with pytest.raises(sync.SyncError, match=r"`jailbee git checkout`.*git fetch"):
         sync.checkout_from_container(make_cfg(tmp_path), mocker.MagicMock(), "feat-foo")
 
     refs.assert_not_called()
+    precheck.assert_not_called()
 
 
 def test_remote_host_branch_alignment_refuses(mocker, make_cfg, tmp_path, remote_session):
+    precheck = mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
     checkout = mocker.patch("jailbee.sync.git.checkout_branch")
     update = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
@@ -8784,20 +9058,24 @@ def test_remote_host_branch_alignment_refuses(mocker, make_cfg, tmp_path, remote
 
     checkout.assert_not_called()
     update.assert_not_called()
+    precheck.assert_not_called()
 
 
 def test_remote_pull_into_the_checked_out_branch_refuses(
     mocker, make_cfg, tmp_path, remote_session
 ):
+    precheck = mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
     merge_ref = mocker.patch("jailbee.git.merge_ref")
 
     with pytest.raises(sync.SyncError, match=r"checked out on the host.*--into"):
         _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
 
     merge_ref.assert_not_called()
+    precheck.assert_not_called()
 
 
 def test_remote_pull_with_checkout_refuses(mocker, make_cfg, tmp_path, remote_session):
+    precheck = mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
     merge_ref = mocker.patch("jailbee.git.merge_ref")
 
     with pytest.raises(sync.SyncError, match="`--checkout`"):
@@ -8805,6 +9083,7 @@ def test_remote_pull_with_checkout_refuses(mocker, make_cfg, tmp_path, remote_se
 
     merge_ref.assert_not_called()
     sync.git.checkout_branch.assert_not_called()
+    precheck.assert_not_called()
 
 
 def test_remote_pull_into_another_branch_still_fast_forwards_the_ref(
@@ -8836,6 +9115,7 @@ def test_remote_fetch_refuses_to_move_the_checked_out_branch(
 ):
     """Refused by name — not left to `merge_ref`'s GitError, which the
     placement would misreport as a dirty tree."""
+    precheck = mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
     cfg = make_cfg(tmp_path)
     incus, _ = _sync_refs_setup(mocker, cfg)
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
@@ -8848,6 +9128,7 @@ def test_remote_fetch_refuses_to_move_the_checked_out_branch(
 
     merge.assert_not_called()
     dirty.assert_not_called()
+    precheck.assert_not_called()
 
 
 def test_remote_fetch_still_creates_a_branch_that_is_not_checked_out(
@@ -8880,3 +9161,134 @@ def test_remote_pull_refuses_before_fetching_anything(mocker, make_cfg, tmp_path
 
     fetch.assert_not_called()
     transport.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [None, "precheck", "prune", "op"])
+def test_move_host_head_order_and_error_contract(mocker, make_cfg, tmp_path, failure):
+    from jailbee import submodules
+
+    cfg = make_cfg(tmp_path)
+    order = []
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="old")
+    vanishing = mocker.patch(
+        "jailbee.sync.submodules.vanishing_submodules",
+        side_effect=lambda *a, **kw: order.append("vanishing") or ["sub"],
+    )
+
+    def step(name):
+        order.append(name)
+        if failure == name:
+            if name == "op":
+                raise sync.SyncError("op failed")
+            raise submodules.SubmoduleError(f"{name} failed")
+        return 7
+
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=lambda *a, **kw: step("precheck"),
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=lambda *a, **kw: step("prune"),
+    )
+    if failure:
+        with pytest.raises(sync.SyncError, match=f"{failure} failed"):
+            sync._move_host_head(
+                cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op")
+            )
+    else:
+        assert (
+            sync._move_host_head(
+                cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op")
+            )
+            == 7
+        )
+    expected = ["vanishing", "precheck", "op", "prune"]
+    assert order == (expected[: expected.index(failure) + 1] if failure else expected)
+    vanishing.assert_called_once_with(
+        sync.git.run_capture,
+        str(cfg.repo_root.resolve()),
+        head="old",
+        target="incoming",
+        base="ancestor",
+    )
+
+
+@pytest.mark.parametrize(
+    "site", ["branch", "checkout", "in-place", "ff-checkout", "merge-checkout", "checked-out-ff"]
+)
+def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
+    cfg = make_cfg(tmp_path)
+    move = mocker.patch(
+        "jailbee.sync._move_host_head", create=True, side_effect=lambda cfg, *, op, **kw: op()
+    )
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.git.merge_ref")
+    mocker.patch("jailbee.sync.git.run_capture", return_value=(True, "ancestor\n"))
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="old")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    mocker.patch("jailbee.sync.submodules.report_submodule_branches", return_value=[])
+    if site == "branch":
+        sync.checkout_submodules_on_host(cfg, branch="main", switch_superproject=True)
+        expected = [("main", None)]
+    elif site == "checkout":
+        mocker.patch(
+            "jailbee.sync.sync_refs_from_container",
+            return_value=_synced_result(status="up-to-date"),
+        )
+        mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
+        sync.checkout_from_container(cfg, mocker.MagicMock(), "feat-foo")
+        expected = [("feat/foo", None)]
+    elif site == "in-place":
+        _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
+        expected = [("refs/jailbee/feat-foo/feat/foo", "ancestor")]
+    elif site == "merge-checkout":
+        _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="auto")
+        expected = [("dev", None), ("refs/jailbee/feat-x/feat/x", "ancestor")]
+    elif site == "ff-checkout":
+        incus = mocker.MagicMock()
+        incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+        mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+        mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+        mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
+        mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+        mocker.patch("jailbee.sync.git.host_tree_dirty", return_value=False)
+        mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
+        sync.merge_from_container(cfg, incus, "feat-x", allow_checkout=True)
+        expected = [("dev", None)]
+    else:
+        mocker.patch("jailbee.sync.git.get_current_branch", return_value="dev")
+        sync._place_host_branch(
+            cfg, target="dev", new_oid="new", fetched_ref="incoming", force=False
+        )
+        expected = [("incoming", None)]
+    assert [(c.kwargs["target"], c.kwargs.get("base")) for c in move.call_args_list] == expected
+
+
+def test_relay_surfaces_unsafe_submodule_as_sync_error(mocker, make_cfg, tmp_path):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host",
+        side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+    )
+    with pytest.raises(sync.SyncError, match="unsafe submodule"):
+        sync.merge_container_into_container(cfg, incus, "host", "c2")
+
+
+@pytest.mark.parametrize("command", ["fetch", "pull"])
+def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp_path, command):
+    mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host",
+        side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+    )
+    with pytest.raises(sync.SyncError, match="unsafe submodule"):
+        if command == "fetch":
+            cfg = make_cfg(tmp_path)
+            incus, _ = _sync_refs_setup(mocker, cfg)
+            mocker.patch(
+                "jailbee.submodules.transport_submodules_to_host",
+                side_effect=sync.submodules.SubmoduleError("unsafe submodule name"),
+            )
+            sync.sync_refs_from_container(cfg, incus, "feat-foo")
+        else:
+            _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")

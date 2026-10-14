@@ -10823,3 +10823,22 @@ def test_agent_compact_age_uses_event_time_not_status_duration():
         )
         == "[dim]○[/dim]"
     )
+
+
+def test_destroy_warns_when_submodule_ref_cleanup_fails(tmp_path, mocker):
+    from jailbee.submodules import SubmoduleError
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    full = f"{cfg.container_prefix}-feat-foo"
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
+    mocker.patch("jailbee.git.list_refs", return_value=[])
+    mocker.patch(
+        "jailbee.submodules.prune_host_submodule_refs",
+        side_effect=SubmoduleError("config unreadable"),
+    )
+    warning = mocker.patch("jailbee.lifecycle.warn")
+    destroy_container(cfg, incus, full, force=True)
+    incus.delete.assert_called_once()
+    assert any("config unreadable" in call.args[0] for call in warning.call_args_list)

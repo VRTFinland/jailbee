@@ -2349,3 +2349,26 @@ def test_foreign_question_is_none_without_foreign_actions(preflight):
     from jailbee.issue_outbox import foreign_question
 
     assert foreign_question(preflight["prepare"]({"a.json": [_comment()]})) is None
+
+
+def test_resolve_repo_targets_uses_located_gitdir(tmp_path, mocker, make_cfg):
+    from jailbee.issue_outbox import resolve_repo_targets
+    from jailbee.submodules import DeclaredSubmodule
+
+    root = tmp_path / ".git/modules/custom"
+    mocker.patch(
+        "jailbee.submodules.declared_submodule_remotes",
+        return_value=(DeclaredSubmodule("lib", "unused"),),
+    )
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
+    mocker.patch(
+        "jailbee.git.get_remote_url",
+        side_effect=lambda cwd, remote: (
+            "https://github.com/acme/lib.git" if cwd == root else "https://github.com/acme/app.git"
+        ),
+    )
+    target = resolve_repo_targets(make_cfg(tmp_path))["lib"]
+    assert target.repo_root == root
+    assert target.slug == "acme/lib"

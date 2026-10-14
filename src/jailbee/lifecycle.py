@@ -2519,8 +2519,8 @@ def destroy_container(
         from jailbee.submodules import prune_host_submodule_refs
 
         prune_host_submodule_refs(cfg, short)
-    except Exception:
-        pass
+    except Exception as exc:
+        warn(f"Could not prune transfer refs for '{name}' (continuing): {exc}")
 
     _phase("deleting")
     incus.delete(name, force=force)
