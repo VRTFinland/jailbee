@@ -1313,6 +1313,7 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
         branch_policy="never",
     )
 
+    confirm.assert_called_once()
     mock_destroy.assert_not_called()
     assert result.destroyed is False
 
