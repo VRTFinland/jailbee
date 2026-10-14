@@ -721,3 +721,53 @@ def test_push_refuses_missing_superproject_object_before_creation(rig, tmp_path,
     with pytest.raises(submodules.SubmoduleError, match="commit.*not on the host"):
         submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit="1" * 40)
     assert not (ctr / "sub/.git").exists()
+
+
+@pytest.mark.parametrize("broken", ["malformed", "blob", "tree", "gitlink-tree", "nested-commit"])
+def test_push_rejects_unreadable_nested_declarations_before_writes(
+    rig, tmp_path, push_urls, monkeypatch, broken
+):
+    from unittest.mock import Mock
+
+    ctr = _container_clone(tmp_path, rig, "dev")
+    parent = rig.top / "sub"
+    if broken == "malformed":
+        (parent / ".gitmodules").write_text("[unterminated\n")
+        _git(parent, "commit", "-qam", "malformed nested declaration")
+        _git(rig.top, "commit", "-qam", "pin malformed parent")
+    if broken == "gitlink-tree":
+        _git(parent, "update-index", "--force-remove", "inner")
+        _git(parent, "update-index", "--add", "--cacheinfo", "160000", _git(parent, "rev-parse", "HEAD:inner"), "libs/inner")
+        _git(parent, "config", "-f", ".gitmodules", "submodule.inner-custom.path", "libs/inner")
+        _git(parent, "add", ".gitmodules")
+        _git(parent, "commit", "-qm", "move inner gitlink into subtree")
+        _git(rig.top, "add", "sub")
+        _git(rig.top, "commit", "-qm", "pin moved inner")
+    commit = _git(rig.top, "rev-parse", "dev")
+    parent_sha = _git(rig.top, "rev-parse", "dev:sub")
+    blob = _git(parent, "rev-parse", f"{parent_sha}:.gitmodules")
+    tree = _git(parent, "rev-parse", f"{parent_sha}^{{tree}}")
+    inner_path = "libs/inner" if broken == "gitlink-tree" else "inner"
+    inner_sha = _git(parent, "rev-parse", f"{parent_sha}:{inner_path}")
+    gitlink_tree = _git(parent, "rev-parse", f"{parent_sha}:libs") if broken == "gitlink-tree" else tree
+    import shutil
+
+    shutil.rmtree(parent)
+    _git(rig.top, "checkout", "-q", "main")
+    gitdir = rig.top / ".git/modules/sub"
+    if broken != "malformed":
+        oid = {"blob": blob, "tree": tree, "gitlink-tree": gitlink_tree, "nested-commit": inner_sha}[broken]
+        store = gitdir / "modules/inner-custom" if broken == "nested-commit" else gitdir
+        (store / "objects" / oid[:2] / oid[2:]).unlink()
+    incus = LocalIncus()
+    exec_spy = Mock(wraps=incus.exec)
+    incus.exec = exec_spy
+    push = Mock()
+    monkeypatch.setattr(submodules.git, "push_url_multi", push)
+    with pytest.raises(submodules.SubmoduleError, match="(Cannot inspect|not on the host)"):
+        submodules.transport_submodules_to_container(
+            _transport_cfg(rig), incus, "ctr", repo_dir=str(ctr), commit=commit
+        )
+    exec_spy.assert_not_called()
+    push.assert_not_called()
+    assert not (ctr / "sub/.git").exists()

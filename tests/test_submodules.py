@@ -857,7 +857,7 @@ def test_transport_to_container_with_explicit_paths_skips_host_enumeration(mocke
     mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     incus = MagicMock()
-    enumerate_host = mocker.patch("jailbee.submodules.git.submodule_status_paths")
+    enumerate_host = mocker.patch("jailbee.submodules.host_submodules_at")
     mocker.patch("jailbee.submodules._container_subrepo_exists", return_value=True)
     mocker.patch("jailbee.submodules.git.push_url_multi")
 

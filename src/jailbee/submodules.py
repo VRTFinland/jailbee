@@ -172,7 +172,9 @@ def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
     return result
 
 
-def _gitmodules_paths_at(run: GitRun, repo_dir: str, commit: str) -> list[tuple[str, str]]:
+def _gitmodules_paths_at(
+    run: GitRun, repo_dir: str, commit: str, *, strict: bool = False
+) -> list[tuple[str, str]]:
     """`.gitmodules` entries as recorded in `commit` -> [(name, path)].
 
     The working-tree twin of this is `_gitmodules_paths`. This one reads the
@@ -180,6 +182,27 @@ def _gitmodules_paths_at(run: GitRun, repo_dir: str, commit: str) -> list[tuple[
     path runs while the working tree is on a different branch — which may not
     have the same submodules, or any.
     """
+    if strict:
+        ok, tree = run(repo_dir, ["ls-tree", commit, "--", ".gitmodules"])
+        if not ok:
+            raise SubmoduleError(
+                f"Cannot inspect declaration tree in commit '{commit}' in '{repo_dir}': {tree.strip()}"
+            )
+        if not tree.strip():
+            return []
+        # A no-match exit is normal for an empty config, but not for an
+        # unreadable or malformed existing blob. Validate it separately.
+        ok, parsed = run(repo_dir, ["config", "--blob", f"{commit}:.gitmodules", "--list"])
+        if not ok:
+            raise SubmoduleError(
+                f"Cannot inspect .gitmodules in commit '{commit}' in '{repo_dir}': {parsed.strip()}"
+            )
+        strict_result = []
+        for line in parsed.splitlines():
+            key, _, path = line.partition("=")
+            if key.startswith("submodule.") and key.endswith(".path") and path:
+                strict_result.append((key[len("submodule.") : -len(".path")], path))
+        return strict_result
     ok, out = run(
         repo_dir,
         [
@@ -302,13 +325,19 @@ def _place_submodule_branches(run: GitRun, top_dir: str, branch: str | None = No
         _place_submodule_branches(run, sub, branch)
 
 
-def _gitlink_at(run: GitRun, repo_dir: str, commit: str, path: str) -> str | None:
+def _gitlink_at(
+    run: GitRun, repo_dir: str, commit: str, path: str, *, strict: bool = False
+) -> str | None:
     """Return the submodule (gitlink) commit recorded for ``path`` in tree
     ``commit``. ``commit`` is resolved in ``repo_dir``'s object store. None when
     ``path`` is not a gitlink there, or the lookup fails.
     """
     ok, out = run(repo_dir, ["ls-tree", commit, "--", path])
     if not ok:
+        if strict:
+            raise SubmoduleError(
+                f"Cannot inspect gitlink '{path}' in commit '{commit}' in '{repo_dir}': {out.strip()}"
+            )
         return None
     # "<mode> <type> <sha>\t<path>" -> ["160000", "commit", "<sha>", "<path>"]
     parts = out.split()
@@ -360,20 +389,35 @@ class CommitSubmodule:
     repo: HostSubRepo | None
 
 
-def host_submodules_at(repo_root: Path, commit: str) -> list[CommitSubmodule]:
+def host_submodules_at(
+    repo_root: Path, commit: str, *, strict: bool = False
+) -> list[CommitSubmodule]:
     """Every submodule `commit` records, recursively, parents before children.
 
     Reads `.gitmodules` and gitlinks from the commit's trees, never from the
     working tree — the host may be on a branch without these submodules.
     A child level is read from the parent's gitdir at the parent's gitlink,
     so it is only descended into when that sub-repo is on the host.
+    `strict` rejects unreadable commits, declarations and trees for push;
+    placement callers retain their best-effort enumeration contract.
     """
     out: list[CommitSubmodule] = []
 
     def walk(level: HostSubRepo, at: str) -> None:
         root = str(level.root)
-        for name, leaf in _gitmodules_paths_at(git.run_capture, root, at):
-            sha = _gitlink_at(git.run_capture, root, at, leaf)
+        if strict and not git.has_commit(level.root, at):
+            raise SubmoduleError(
+                f"Submodule '{level.path or '.'}' commit '{at}' is not on the host. Fetch it first."
+            )
+        declarations = (
+            _gitmodules_paths_at(git.run_capture, root, at, strict=True)
+            if strict else _gitmodules_paths_at(git.run_capture, root, at)
+        )
+        for name, leaf in declarations:
+            sha = (
+                _gitlink_at(git.run_capture, root, at, leaf, strict=True)
+                if strict else _gitlink_at(git.run_capture, root, at, leaf)
+            )
             repo = locate_host_subrepo(level, leaf, name)
             path = posixpath.join(level.path, leaf) if level.path else leaf
             url = _gitmodules_url_at(git.run_capture, root, at, name)
@@ -1806,7 +1850,7 @@ def transport_submodules_to_container(
         if not git.has_commit(repo_root, commit):
             raise SubmoduleError(f"Source commit '{commit}' is not on the host. Fetch it first.")
         try:
-            subs = host_submodules_at(repo_root, commit)
+            subs = host_submodules_at(repo_root, commit, strict=True)
         except git.GitError as exc:
             raise SubmoduleError(f"Cannot inspect submodules in commit '{commit}': {exc}") from exc
         missing = [
