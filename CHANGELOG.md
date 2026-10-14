@@ -8,6 +8,12 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.3 - 2026-10-14
+
+### Fixed
+
+- **`jailbee destroy` asks only once.** Before, `jb destroy <name>`, `jb destroy --all` and the cleanup prompt after `jb git pull` asked "Destroy container …?", then checked git status, and asked a second time ("Destroying loses this. Continue?") if the container had unpushed work. Now the git check runs first and prints what would be lost, then the single "Destroy …?" prompt follows.
+
 ## 1.7.2 - 2026-10-13
 
 No user-facing changes in this range, so there are no entries to add under Unreleased. Both commits are internal: a docs comparison note and a flaky-test fix.
