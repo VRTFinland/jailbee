@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar, assert_never
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, prompting, submodules
 from jailbee.incus import IncusError
@@ -1430,12 +1430,9 @@ def sync_refs_from_container(
     )
 
 
-_T = TypeVar("_T")
-
-
-def _move_host_head(
-    cfg: Config, *, target: str, base: str | None = None, op: Callable[[], _T], label: str
-) -> _T:
+def _move_host_head[T](
+    cfg: Config, *, target: str, base: str | None = None, op: Callable[[], T], label: str
+) -> T:
     """Precheck disappearing submodules, move HEAD, then prune their worktrees.
 
     A failed operation (including an unresolved merge) never prunes. Merge

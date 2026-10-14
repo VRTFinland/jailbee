@@ -186,13 +186,16 @@ def _gitmodules_paths_at(
         ok, tree = run(repo_dir, ["ls-tree", commit, "--", ".gitmodules"])
         if not ok:
             raise SubmoduleError(
-                f"Cannot inspect declaration tree in commit '{commit}' in '{repo_dir}': {tree.strip()}"
+                f"Cannot inspect declaration tree in commit '{commit}' in '{repo_dir}': "
+                f"{tree.strip()}"
             )
         if not tree.strip():
             return []
         # NUL-framed records separate key and value with a newline, so
         # subsection names containing equals signs or spaces stay intact.
-        ok, parsed = run(repo_dir, ["config", "--null", "--blob", f"{commit}:.gitmodules", "--list"])
+        ok, parsed = run(
+            repo_dir, ["config", "--null", "--blob", f"{commit}:.gitmodules", "--list"]
+        )
         if not ok:
             raise SubmoduleError(
                 f"Cannot inspect .gitmodules in commit '{commit}' in '{repo_dir}': {parsed.strip()}"
@@ -336,7 +339,8 @@ def _gitlink_at(
     if not ok:
         if strict:
             raise SubmoduleError(
-                f"Cannot inspect gitlink '{path}' in commit '{commit}' in '{repo_dir}': {out.strip()}"
+                f"Cannot inspect gitlink '{path}' in commit '{commit}' in '{repo_dir}': "
+                f"{out.strip()}"
             )
         return None
     # "<mode> <type> <sha>\t<path>" -> ["160000", "commit", "<sha>", "<path>"]
@@ -411,12 +415,14 @@ def host_submodules_at(
             )
         declarations = (
             _gitmodules_paths_at(git.run_capture, root, at, strict=True)
-            if strict else _gitmodules_paths_at(git.run_capture, root, at)
+            if strict
+            else _gitmodules_paths_at(git.run_capture, root, at)
         )
         for name, leaf in declarations:
             sha = (
                 _gitlink_at(git.run_capture, root, at, leaf, strict=True)
-                if strict else _gitlink_at(git.run_capture, root, at, leaf)
+                if strict
+                else _gitlink_at(git.run_capture, root, at, leaf)
             )
             repo = locate_host_subrepo(level, leaf, name)
             path = posixpath.join(level.path, leaf) if level.path else leaf
@@ -1120,9 +1126,7 @@ def _external_gitdir(run: GitRun, sub: str) -> str:
     return gitdir
 
 
-def _owned_prune_tree(
-    run: GitRun, parent: str, path: str, *, before_move: bool
-) -> bool:
+def _owned_prune_tree(run: GitRun, parent: str, path: str, *, before_move: bool) -> bool:
     """Validate the whole ownership chain before absorption or any tree writes."""
     sub = f"{parent}/{path}"
     if not _has_own_worktree(run, sub):
@@ -1720,14 +1724,10 @@ def transport_submodules_to_host(
             continue
         # Recursive status lists parents before children. Fetch parents first,
         # including the ancestors of an explicitly selected nested leaf.
-        parent_path = max(
-            (p for p in located if not p or path.startswith(f"{p}/")), key=len
-        )
+        parent_path = max((p for p in located if not p or path.startswith(f"{p}/")), key=len)
         parent = located[parent_path]
         leaf = path[len(parent_path) + 1 :] if parent_path else path
-        name = _container_submodule_name(
-            incus, container, repo_dir, parent_path, leaf, uid=uid
-        )
+        name = _container_submodule_name(incus, container, repo_dir, parent_path, leaf, uid=uid)
         url = _sub_upload_pack_url(cfg, container, repo_dir, path)
         sub = locate_host_subrepo(parent, leaf, name)
         created = sub is None
@@ -1760,8 +1760,14 @@ def transport_submodules_to_host(
             if not ok:
                 raise git.GitError(f"submodule '{path}': could not initialize HEAD ({error})")
             _repoint_cloned_subrepo(
-                incus, container, repo_dir, path, sub.root, uid=uid,
-                parent_path=parent_path, at_head=True,
+                incus,
+                container,
+                repo_dir,
+                path,
+                sub.root,
+                uid=uid,
+                parent_path=parent_path,
+                at_head=True,
             )
 
     return {path: repo for path, repo in located.items() if path}

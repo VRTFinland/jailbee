@@ -152,7 +152,7 @@ def test_locate_raises_when_stale_worktree_repair_is_locked(rig: Rig) -> None:
     shutil.rmtree(rig.top / "sub")
     gitdir = rig.top / ".git" / "modules" / "sub"
     (gitdir / "config.lock").write_text("locked")
-    with pytest.raises(submodules.SubmoduleError, match="core.worktree"):
+    with pytest.raises(submodules.SubmoduleError, match=r"core.worktree"):
         submodules.resolve_host_subrepo(rig.top, "sub", at="dev")
 
 
@@ -195,9 +195,10 @@ def test_place_branches_places_a_gitdir_only_submodule(rig: Rig) -> None:
     by_path = {placement.path: placement for placement in out}
     assert by_path["sub"].status == "fast-forwarded"
     assert _git(gitdir, "rev-parse", "refs/heads/dev") == new
-    assert subprocess.run(
-        ["git", "symbolic-ref", "-q", "HEAD"], cwd=gitdir, check=False
-    ).returncode != 0
+    assert (
+        subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=gitdir, check=False).returncode
+        != 0
+    )
 
 
 def test_host_subrepo_exists_is_true_for_a_gitdir_only_submodule(rig: Rig) -> None:
@@ -374,7 +375,9 @@ def test_precheck_refuses_unreadable_status(rig: Rig) -> None:
 
 
 @pytest.mark.parametrize("foreign", [False, True])
-def test_prune_missing_or_foreign_worktree_warns_and_preserves(rig: Rig, foreign: bool, mocker) -> None:
+def test_prune_missing_or_foreign_worktree_warns_and_preserves(
+    rig: Rig, foreign: bool, mocker
+) -> None:
     sub = rig.top / "sub"
     if foreign:
         (sub / ".git").unlink()
@@ -431,9 +434,12 @@ def test_prune_skips_conflicted_superproject(rig: Rig, mocker) -> None:
         return _host_run(cwd, args)
 
     warn = mocker.patch("jailbee.submodules._warn")
-    assert submodules.prune_vanished_worktrees(
-        run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
-    ) == {}
+    assert (
+        submodules.prune_vanished_worktrees(
+            run, str(rig.top), ["sub"], fs=submodules.HostFs(), target_label="main"
+        )
+        == {}
+    )
     assert (rig.top / "sub" / "d" / "f").exists()
     warn.assert_called_once()
 
@@ -452,7 +458,9 @@ def test_prune_filesystem_failure_stops_parent_cleanup(rig: Rig, mocker) -> None
 
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("precheck", [False, True])
-def test_foreign_linked_worktree_is_preserved(rig: Rig, nested: bool, precheck: bool, mocker) -> None:
+def test_foreign_linked_worktree_is_preserved(
+    rig: Rig, nested: bool, precheck: bool, mocker
+) -> None:
     import shutil
 
     candidate = rig.top / "sub" / "inner" if nested else rig.top / "sub"
@@ -596,7 +604,9 @@ class LocalIncus:
 
 @pytest.fixture
 def local_urls(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(submodules, "_sub_upload_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}")
+    monkeypatch.setattr(
+        submodules, "_sub_upload_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}"
+    )
 
 
 def _transport_cfg(rig: Rig):
@@ -616,13 +626,25 @@ def test_pull_container_born_submodule_preserves_host_tree(rig, tmp_path, local_
     _git(ctr, "submodule", "add", "-q", "--name", name, str(rig.inup), "libs/extra")
     _git(ctr, "commit", "-q", "-m", "add extra")
     # An uncommitted rename must not change the transport gitdir name.
-    _git(ctr, "config", "-f", ".gitmodules", "--rename-section", f"submodule.{name}", "submodule.wrong")
+    _git(
+        ctr,
+        "config",
+        "-f",
+        ".gitmodules",
+        "--rename-section",
+        f"submodule.{name}",
+        "submodule.wrong",
+    )
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
-    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr))
+    submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr)
+    )
     assert _git(rig.top, "status", "--porcelain") == ""
     assert not (rig.top / "libs").exists()
     gitdir = rig.top / ".git/modules" / name
-    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/libs/extra/HEAD") == _git(ctr / "libs/extra", "rev-parse", "HEAD")
+    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/libs/extra/HEAD") == _git(
+        ctr / "libs/extra", "rev-parse", "HEAD"
+    )
     assert _git(gitdir, "remote", "get-url", "origin") == str(rig.inup)
     _git(rig.top, "fetch", "-q", str(ctr), "dev:dev", "--update-head-ok")
     from jailbee import sync
@@ -669,8 +691,12 @@ def test_pull_fetches_existing_gitdir_without_rewriting_origin(rig, tmp_path, lo
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
     gitdir = rig.top / ".git/modules/sub"
     _git(gitdir, "remote", "set-url", "origin", "preserved")
-    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr))
-    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/sub/HEAD") == _git(ctr / "sub", "rev-parse", "HEAD")
+    submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr)
+    )
+    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/sub/HEAD") == _git(
+        ctr / "sub", "rev-parse", "HEAD"
+    )
     assert _git(gitdir, "remote", "get-url", "origin") == "preserved"
     assert not (rig.top / "sub").exists()
     assert not (gitdir / "modules/sub").exists()
@@ -684,11 +710,15 @@ def test_pull_only_nested_container_born_leaf_fetches_parents_first(rig, tmp_pat
     _git(ctr, "submodule", "add", "-q", str(rig.inup), "unrelated")
     _git(ctr, "commit", "-q", "-m", "new modules")
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
-    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr), only="new-parent/inner")
+    submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr), only="new-parent/inner"
+    )
     parent = rig.top / ".git/modules/parent-custom"
     child = parent / "modules/inner-custom"
     assert _git(parent, "rev-parse", "HEAD") == _git(ctr / "new-parent", "rev-parse", "HEAD")
-    assert _git(child, "rev-parse", "refs/jailbee-sub/c1/new-parent/inner/HEAD") == _git(ctr / "new-parent/inner", "rev-parse", "HEAD")
+    assert _git(child, "rev-parse", "refs/jailbee-sub/c1/new-parent/inner/HEAD") == _git(
+        ctr / "new-parent/inner", "rev-parse", "HEAD"
+    )
     assert not (rig.top / ".git/modules/unrelated").exists()
     assert not (rig.top / "new-parent").exists()
     assert _git(rig.top, "status", "--porcelain") == ""
@@ -696,7 +726,9 @@ def test_pull_only_nested_container_born_leaf_fetches_parents_first(rig, tmp_pat
 
 @pytest.fixture
 def push_urls(monkeypatch):
-    monkeypatch.setattr(submodules, "_sub_receive_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}")
+    monkeypatch.setattr(
+        submodules, "_sub_receive_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}"
+    )
 
 
 def _container_clone(tmp_path, rig, branch):
@@ -713,7 +745,13 @@ def test_push_dev_from_host_main_sends_pinned_nested_submodules(rig, tmp_path, p
     _git(rig.top / "sub/inner", "commit", "-qam", "unrelated inner head")
     _git(rig.top / "sub", "commit", "-qam", "unrelated parent head")
     _git(rig.top, "checkout", "-q", "--recurse-submodules", "--force", "main")
-    submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "dev"))
+    submodules.transport_submodules_to_container(
+        _transport_cfg(rig),
+        LocalIncus(),
+        "ctr",
+        repo_dir=str(ctr),
+        commit=_git(rig.top, "rev-parse", "dev"),
+    )
     for path, sha in [("sub", parent), ("sub/inner", inner)]:
         assert _git(ctr / path, "rev-parse", f"refs/jailbee-sub/host/{path}/HEAD") == sha
         assert _git(ctr / path, "rev-parse", "HEAD") == sha
@@ -722,7 +760,13 @@ def test_push_dev_from_host_main_sends_pinned_nested_submodules(rig, tmp_path, p
 
 def test_push_main_from_host_dev_creates_no_stray_subrepo(rig, tmp_path, push_urls):
     ctr = _container_clone(tmp_path, rig, "main")
-    submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "main"))
+    submodules.transport_submodules_to_container(
+        _transport_cfg(rig),
+        LocalIncus(),
+        "ctr",
+        repo_dir=str(ctr),
+        commit=_git(rig.top, "rev-parse", "main"),
+    )
     assert not (ctr / "sub").exists()
 
 
@@ -740,15 +784,23 @@ def test_push_refuses_missing_host_submodule_before_creation(rig, tmp_path, push
     else:
         sha = _git(rig.top, "rev-parse", "dev:sub")
         (parent / "objects" / sha[:2] / sha[2:]).unlink()
-    with pytest.raises(submodules.SubmoduleError, match="sub.*not on the host"):
-        submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit=_git(rig.top, "rev-parse", "dev"))
+    with pytest.raises(submodules.SubmoduleError, match=r"sub.*not on the host"):
+        submodules.transport_submodules_to_container(
+            _transport_cfg(rig),
+            LocalIncus(),
+            "ctr",
+            repo_dir=str(ctr),
+            commit=_git(rig.top, "rev-parse", "dev"),
+        )
     assert not (ctr / "sub/.git").exists()
 
 
 def test_push_refuses_missing_superproject_object_before_creation(rig, tmp_path, push_urls):
     ctr = _container_clone(tmp_path, rig, "dev")
-    with pytest.raises(submodules.SubmoduleError, match="commit.*not on the host"):
-        submodules.transport_submodules_to_container(_transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit="1" * 40)
+    with pytest.raises(submodules.SubmoduleError, match=r"commit.*not on the host"):
+        submodules.transport_submodules_to_container(
+            _transport_cfg(rig), LocalIncus(), "ctr", repo_dir=str(ctr), commit="1" * 40
+        )
     assert not (ctr / "sub/.git").exists()
 
 
@@ -766,7 +818,15 @@ def test_push_rejects_unreadable_nested_declarations_before_writes(
         _git(rig.top, "commit", "-qam", "pin malformed parent")
     if broken == "gitlink-tree":
         _git(parent, "update-index", "--force-remove", "inner")
-        _git(parent, "update-index", "--add", "--cacheinfo", "160000", _git(parent, "rev-parse", "HEAD:inner"), "libs/inner")
+        _git(
+            parent,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            _git(parent, "rev-parse", "HEAD:inner"),
+            "libs/inner",
+        )
         _git(parent, "config", "-f", ".gitmodules", "submodule.inner-custom.path", "libs/inner")
         _git(parent, "add", ".gitmodules")
         _git(parent, "commit", "-qm", "move inner gitlink into subtree")
@@ -778,14 +838,21 @@ def test_push_rejects_unreadable_nested_declarations_before_writes(
     tree = _git(parent, "rev-parse", f"{parent_sha}^{{tree}}")
     inner_path = "libs/inner" if broken == "gitlink-tree" else "inner"
     inner_sha = _git(parent, "rev-parse", f"{parent_sha}:{inner_path}")
-    gitlink_tree = _git(parent, "rev-parse", f"{parent_sha}:libs") if broken == "gitlink-tree" else tree
+    gitlink_tree = (
+        _git(parent, "rev-parse", f"{parent_sha}:libs") if broken == "gitlink-tree" else tree
+    )
     import shutil
 
     shutil.rmtree(parent)
     _git(rig.top, "checkout", "-q", "main")
     gitdir = rig.top / ".git/modules/sub"
     if broken != "malformed":
-        oid = {"blob": blob, "tree": tree, "gitlink-tree": gitlink_tree, "nested-commit": inner_sha}[broken]
+        oid = {
+            "blob": blob,
+            "tree": tree,
+            "gitlink-tree": gitlink_tree,
+            "nested-commit": inner_sha,
+        }[broken]
         store = gitdir / "modules/inner-custom" if broken == "nested-commit" else gitdir
         (store / "objects" / oid[:2] / oid[2:]).unlink()
     incus = LocalIncus()
@@ -793,7 +860,7 @@ def test_push_rejects_unreadable_nested_declarations_before_writes(
     incus.exec = exec_spy
     push = Mock()
     monkeypatch.setattr(submodules.git, "push_url_multi", push)
-    with pytest.raises(submodules.SubmoduleError, match="(Cannot inspect|not on the host)"):
+    with pytest.raises(submodules.SubmoduleError, match=r"(Cannot inspect|not on the host)"):
         submodules.transport_submodules_to_container(
             _transport_cfg(rig), incus, "ctr", repo_dir=str(ctr), commit=commit
         )
@@ -826,12 +893,16 @@ def test_push_preserves_equal_and_space_in_declared_names_and_paths(
         push = Mock()
         monkeypatch.setattr(submodules.git, "push_url_multi", push)
         with pytest.raises(submodules.SubmoduleError, match="not on the host"):
-            submodules.transport_submodules_to_container(cfg, incus, "ctr", repo_dir=str(ctr), commit=commit)
+            submodules.transport_submodules_to_container(
+                cfg, incus, "ctr", repo_dir=str(ctr), commit=commit
+            )
         exec_spy.assert_not_called()
         push.assert_not_called()
         assert not (ctr / "sub/.git").exists()
     else:
-        submodules.transport_submodules_to_container(cfg, incus, "ctr", repo_dir=str(ctr), commit=commit)
+        submodules.transport_submodules_to_container(
+            cfg, incus, "ctr", repo_dir=str(ctr), commit=commit
+        )
         assert _git(ctr / path, "rev-parse", f"refs/jailbee-sub/host/{path}/HEAD") == sha
         assert _git(ctr / path, "rev-parse", "HEAD") == sha
 
@@ -912,7 +983,7 @@ def test_prune_host_submodule_refs_raises_when_stale_repair_is_locked(rig: Rig) 
 
     shutil.rmtree(rig.top / "sub")
     (rig.top / ".git/modules/sub/config.lock").write_text("locked")
-    with pytest.raises(submodules.SubmoduleError, match="core.worktree"):
+    with pytest.raises(submodules.SubmoduleError, match=r"core.worktree"):
         submodules.prune_host_submodule_refs(MagicMock(repo_root=rig.top), "c1")
 
 
@@ -936,7 +1007,9 @@ def test_locate_does_not_unset_extant_core_worktree(rig: Rig) -> None:
     assert after == before
 
 
-def test_pr_and_issue_roots_reach_custom_gitdir_with_current_declaration(rig: Rig, make_cfg) -> None:
+def test_pr_and_issue_roots_reach_custom_gitdir_with_current_declaration(
+    rig: Rig, make_cfg
+) -> None:
     from jailbee import issue_outbox, pr_flow, submodule_pr
 
     _git(rig.top, "submodule", "add", "-q", "--name", "outer-custom", str(rig.inup), "lib")
@@ -1003,13 +1076,21 @@ def test_custom_absent_host_head_transport_context_drives_pr(rig, tmp_path, loca
     _git(rig.top, "init", "-q", "--bare", str(decoy))
     _git(decoy, "remote", "add", "origin", "unused")
     assert submodule_pr.resolve_remote(rig.top, "lib", host_root=root) == "upstream"
-    assert submodule_pr.resolve_base_branch(rig.top, "lib", override=None, host_root=root) == "trunk"
+    assert (
+        submodule_pr.resolve_base_branch(rig.top, "lib", override=None, host_root=root) == "trunk"
+    )
     assert pr_flow.PrScope.for_submodule(cfg, "lib", host_root=root).repo_root == root
     push = mocker.patch("jailbee.git.push_to_remote")
     lease = mocker.patch("jailbee.git.remote_branch_sha", return_value="lease")
     submodule_pr.publish_submodule_branch(
-        cfg, "c1", subpath="lib", branch=None, publish_name="published",
-        remote="upstream", force=True, host_root=root,
+        cfg,
+        "c1",
+        subpath="lib",
+        branch=None,
+        publish_name="published",
+        remote="upstream",
+        force=True,
+        host_root=root,
     )
     assert push.call_args.args[:3] == (root, "upstream", "refs/jailbee-sub/c1/lib/HEAD")
     assert lease.call_args.args[0] == root

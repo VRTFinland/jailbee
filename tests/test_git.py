@@ -1929,7 +1929,10 @@ _TREE_WRITERS = [
         lambda: git.merge_ref(Path("/repo"), "refs/x", message=None, no_ff=False, ff_only=True),
     ),
     ("submodule_update", lambda: git.submodule_update(Path("/repo"))),
-    ("init_subrepo_gitdir", lambda: git.init_subrepo_gitdir(Path("/repo/.git/modules/sub"), "ext::x")),
+    (
+        "init_subrepo_gitdir",
+        lambda: git.init_subrepo_gitdir(Path("/repo/.git/modules/sub"), "ext::x"),
+    ),
 ]
 
 

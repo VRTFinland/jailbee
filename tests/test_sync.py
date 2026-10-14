@@ -2628,8 +2628,8 @@ def test_push_to_container_happy_path_local_branch(mocker, make_cfg, tmp_path):
 
 
 def test_push_to_container_missing_submodule_is_sync_error(mocker, make_cfg, tmp_path):
-    from jailbee.sync import SyncError, push_to_container
     from jailbee.submodules import SubmoduleError
+    from jailbee.sync import SyncError, push_to_container
 
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
@@ -5569,7 +5569,9 @@ def test_container_merge_prechecks_and_prunes_vanishing_submodules(mocker):
     mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
     runner = mocker.MagicMock(return_value=(True, "base"))
     run = mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
-    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=lambda *a, **k: order.append("merge"))
+    mocker.patch(
+        "jailbee.sync._exec_container_git_write", side_effect=lambda *a, **k: order.append("merge")
+    )
     mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
     mocker.patch(
         "jailbee.sync.submodules.vanishing_submodules",
@@ -5585,8 +5587,15 @@ def test_container_merge_prechecks_and_prunes_vanishing_submodules(mocker):
     )
 
     sync._merge_ref_in_container(
-        incus, "full-c", "/r", ref="refs/jailbee/host/main", label="main",
-        message="m", short="c", uid=1000, ff_only=False,
+        incus,
+        "full-c",
+        "/r",
+        ref="refs/jailbee/host/main",
+        label="main",
+        message="m",
+        short="c",
+        uid=1000,
+        ff_only=False,
     )
 
     assert order == ["vanishing", "precheck", "merge", "prune"]
@@ -5605,8 +5614,15 @@ def test_container_merge_refuses_a_dirty_vanishing_submodule(mocker):
     write = mocker.patch("jailbee.sync._exec_container_git_write")
     with pytest.raises(sync.SyncError, match="dirty lib"):
         sync._merge_ref_in_container(
-            incus, "full-c", "/r", ref="r", label="main", message="m",
-            short="c", uid=1000, ff_only=False,
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
         )
     write.assert_not_called()
 
@@ -5627,8 +5643,15 @@ def test_container_merge_wraps_prune_failure(mocker):
 
     with pytest.raises(sync.SyncError, match="cannot prune lib"):
         sync._merge_ref_in_container(
-            incus, "full-c", "/r", ref="r", label="main", message="m",
-            short="c", uid=1000, ff_only=False,
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
         )
 
 
@@ -5641,8 +5664,15 @@ def test_container_merge_failure_does_not_prune(mocker):
     prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
     with pytest.raises(sync.SyncError):
         sync._merge_ref_in_container(
-            incus, "full-c", "/r", ref="r", label="main", message="m",
-            short="c", uid=1000, ff_only=False,
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
         )
     prune.assert_not_called()
 
@@ -5658,8 +5688,15 @@ def test_container_merge_conflict_does_not_prune(mocker):
     prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
     with pytest.raises(sync.MergeConflictError):
         sync._merge_ref_in_container(
-            incus, "full-c", "/r", ref="r", label="main", message="m",
-            short="c", uid=1000, ff_only=False,
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
         )
     prune.assert_not_called()
 
@@ -9125,7 +9162,10 @@ def test_move_host_head_order_and_error_contract(mocker, make_cfg, tmp_path, fai
     cfg = make_cfg(tmp_path)
     order = []
     mocker.patch("jailbee.sync.git.rev_parse", return_value="old")
-    vanishing = mocker.patch("jailbee.sync.submodules.vanishing_submodules", side_effect=lambda *a, **kw: order.append("vanishing") or ["sub"])
+    vanishing = mocker.patch(
+        "jailbee.sync.submodules.vanishing_submodules",
+        side_effect=lambda *a, **kw: order.append("vanishing") or ["sub"],
+    )
 
     def step(name):
         order.append(name)
@@ -9135,22 +9175,45 @@ def test_move_host_head_order_and_error_contract(mocker, make_cfg, tmp_path, fai
             raise submodules.SubmoduleError(f"{name} failed")
         return 7
 
-    mocker.patch("jailbee.sync.submodules.assert_vanishing_clean", side_effect=lambda *a, **kw: step("precheck"))
-    mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees", side_effect=lambda *a, **kw: step("prune"))
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=lambda *a, **kw: step("precheck"),
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=lambda *a, **kw: step("prune"),
+    )
     if failure:
         with pytest.raises(sync.SyncError, match=f"{failure} failed"):
-            sync._move_host_head(cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op"))
+            sync._move_host_head(
+                cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op")
+            )
     else:
-        assert sync._move_host_head(cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op")) == 7
+        assert (
+            sync._move_host_head(
+                cfg, target="incoming", base="ancestor", label="dev", op=lambda: step("op")
+            )
+            == 7
+        )
     expected = ["vanishing", "precheck", "op", "prune"]
-    assert order == (expected[:expected.index(failure) + 1] if failure else expected)
-    vanishing.assert_called_once_with(sync.git.run_capture, str(cfg.repo_root.resolve()), head="old", target="incoming", base="ancestor")
+    assert order == (expected[: expected.index(failure) + 1] if failure else expected)
+    vanishing.assert_called_once_with(
+        sync.git.run_capture,
+        str(cfg.repo_root.resolve()),
+        head="old",
+        target="incoming",
+        base="ancestor",
+    )
 
 
-@pytest.mark.parametrize("site", ["branch", "checkout", "in-place", "ff-checkout", "merge-checkout", "checked-out-ff"])
+@pytest.mark.parametrize(
+    "site", ["branch", "checkout", "in-place", "ff-checkout", "merge-checkout", "checked-out-ff"]
+)
 def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
     cfg = make_cfg(tmp_path)
-    move = mocker.patch("jailbee.sync._move_host_head", create=True, side_effect=lambda cfg, *, op, **kw: op())
+    move = mocker.patch(
+        "jailbee.sync._move_host_head", create=True, side_effect=lambda cfg, *, op, **kw: op()
+    )
     mocker.patch("jailbee.sync.git.checkout_branch")
     mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.git.run_capture", return_value=(True, "ancestor\n"))
@@ -9161,7 +9224,10 @@ def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
         sync.checkout_submodules_on_host(cfg, branch="main", switch_superproject=True)
         expected = [("main", None)]
     elif site == "checkout":
-        mocker.patch("jailbee.sync.sync_refs_from_container", return_value=_synced_result(status="up-to-date"))
+        mocker.patch(
+            "jailbee.sync.sync_refs_from_container",
+            return_value=_synced_result(status="up-to-date"),
+        )
         mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
         sync.checkout_from_container(cfg, mocker.MagicMock(), "feat-foo")
         expected = [("feat/foo", None)]
@@ -9184,6 +9250,8 @@ def test_move_host_head_wired_targets(mocker, make_cfg, tmp_path, site):
         expected = [("dev", None)]
     else:
         mocker.patch("jailbee.sync.git.get_current_branch", return_value="dev")
-        sync._place_host_branch(cfg, target="dev", new_oid="new", fetched_ref="incoming", force=False)
+        sync._place_host_branch(
+            cfg, target="dev", new_oid="new", fetched_ref="incoming", force=False
+        )
         expected = [("incoming", None)]
     assert [(c.kwargs["target"], c.kwargs.get("base")) for c in move.call_args_list] == expected

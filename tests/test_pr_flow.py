@@ -51,7 +51,9 @@ def test_candidate_scopes_returns_repo_then_sorted_submodules(tmp_path, mocker):
     mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a"])
     mocker.patch(
         "jailbee.submodule_pr.resolve_remote",
-        side_effect=lambda _repo_root, subpath, **kwargs: {"a": "a-upstream", "z": "z-origin"}[subpath],
+        side_effect=lambda _repo_root, subpath, **kwargs: {"a": "a-upstream", "z": "z-origin"}[
+            subpath
+        ],
     )
 
     scopes = pr_flow.candidate_scopes(cfg)

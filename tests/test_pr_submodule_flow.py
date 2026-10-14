@@ -617,8 +617,15 @@ def test_flow_propagates_authoritative_transport_root(mocker, tmp_path):
     )
     github = mocker.patch("jailbee.pr.assert_github_remote")
     publish_submodule_pr(
-        cfg, incus, "sampleapp-feat-foo", "feat-foo", _candidate(), SubPrOptions(),
-        repo_dir="/home/dev/repo", confirm_plan=None, offer_comments=lambda *args: 0,
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        "feat-foo",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/home/dev/repo",
+        confirm_plan=None,
+        offer_comments=lambda *args: 0,
     )
     assert remote.call_args.kwargs["host_root"] == root
     assert base.call_args.kwargs["host_root"] == root

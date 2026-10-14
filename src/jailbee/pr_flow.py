@@ -64,9 +64,7 @@ class PrScope:
         )
 
     @classmethod
-    def for_submodule(
-        cls, cfg: Config, subpath: str, *, host_root: Path | None = None
-    ) -> PrScope:
+    def for_submodule(cls, cfg: Config, subpath: str, *, host_root: Path | None = None) -> PrScope:
         from jailbee import submodule_pr, submodules
 
         return cls(
