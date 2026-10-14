@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- Pulling a submodule created in a container stores its objects under the host's
+  `.git/modules/<declared name>` without creating a checkout on the current
+  branch. Nested submodules are fetched parent-first, including the ancestors
+  of a selected leaf; existing host submodule remotes remain unchanged.
+
 ## 1.7.3 - 2026-10-14
 
 ### Fixed

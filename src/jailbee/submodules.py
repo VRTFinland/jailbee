@@ -734,7 +734,7 @@ class SubmoduleError(RuntimeError):
 
 
 def _list_gitmodules(
-    incus: Incus, container: str, level_dir: str, *, uid: int
+    incus: Incus, container: str, level_dir: str, *, uid: int, at_head: bool = False
 ) -> list[tuple[str, str]]:
     """Parse one level's `.gitmodules` -> list of (name, path).
 
@@ -743,16 +743,18 @@ def _list_gitmodules(
     when there is no `.gitmodules` (the `git config` call exits non-zero,
     which surfaces as `IncusError`).
 
+    `at_head` reads the committed blob rather than an edited worktree file.
     Reads pass only `uid` (no `gid`) since they don't write group-owned files.
     """
     try:
         out = incus.exec(
             container,
             [
-                "git",
-                "config",
-                "-f",
-                f"{level_dir}/.gitmodules",
+                *(
+                    ["git", "-C", level_dir, "config", "--blob", "HEAD:.gitmodules"]
+                    if at_head
+                    else ["git", "config", "-f", f"{level_dir}/.gitmodules"]
+                ),
                 "--get-regexp",
                 r"^submodule\..*\.path$",
             ],
@@ -1500,8 +1502,26 @@ def host_submodule_paths(repo_root: Path) -> list[str]:
     return [path for path in paths if host_subrepo_exists(repo_root, path)]
 
 
+def _container_submodule_name(
+    incus: Incus, container: str, repo_dir: str, parent_path: str, leaf: str, *, uid: int
+) -> str:
+    """Resolve a leaf's declared name from the container parent's commit."""
+    level_dir = f"{repo_dir}/{parent_path}" if parent_path else repo_dir
+    for name, path in _list_gitmodules(incus, container, level_dir, uid=uid, at_head=True):
+        if path == leaf:
+            return name
+    return leaf
+
+
 def _container_submodule_url(
-    incus: Incus, container: str, repo_dir: str, subpath: str, *, uid: int
+    incus: Incus,
+    container: str,
+    repo_dir: str,
+    subpath: str,
+    *,
+    uid: int,
+    parent_path: str | None = None,
+    at_head: bool = False,
 ) -> str | None:
     """URL recorded for `subpath` in the container's `.gitmodules`, or None.
 
@@ -1509,18 +1529,22 @@ def _container_submodule_url(
     *parent* level's `.gitmodules`, keyed by the leaf path.
     """
     parent, _, leaf = subpath.rpartition("/")
+    if parent_path is not None:
+        parent = parent_path
+        leaf = subpath[len(parent) + 1 :] if parent else subpath
     level_dir = f"{repo_dir}/{parent}" if parent else repo_dir
-    for name, path in _list_gitmodules(incus, container, level_dir, uid=uid):
+    for name, path in _list_gitmodules(incus, container, level_dir, uid=uid, at_head=at_head):
         if path != leaf:
             continue
         try:
             out = incus.exec(
                 container,
                 [
-                    "git",
-                    "config",
-                    "-f",
-                    f"{level_dir}/.gitmodules",
+                    *(
+                        ["git", "-C", level_dir, "config", "--blob", "HEAD:.gitmodules"]
+                        if at_head
+                        else ["git", "config", "-f", f"{level_dir}/.gitmodules"]
+                    ),
                     "--get",
                     f"submodule.{name}.url",
                 ],
@@ -1554,11 +1578,19 @@ def _container_subrepo_origin_url(
 
 
 def _repoint_cloned_subrepo(
-    incus: Incus, container: str, repo_dir: str, subpath: str, host_sub: Path, *, uid: int
+    incus: Incus,
+    container: str,
+    repo_dir: str,
+    subpath: str,
+    host_sub: Path,
+    *,
+    uid: int,
+    parent_path: str | None = None,
+    at_head: bool = False,
 ) -> None:
-    """Give a just-cloned host sub-repo a usable upstream, or none at all.
+    """Give a freshly created gitdir-only host sub-repo a usable upstream.
 
-    `git clone` over `ext::` leaves origin pointing at `incus exec … container`:
+    Initializing with the transport URL leaves origin pointing at the container:
     a remote that pushes into the container and breaks once it is destroyed.
     The upstream is looked for in order:
 
@@ -1579,7 +1611,9 @@ def _repoint_cloned_subrepo(
     Failure here is cosmetic — the objects are already across — so every
     branch warns instead of failing the pull.
     """
-    url = _container_submodule_url(incus, container, repo_dir, subpath, uid=uid)
+    url = _container_submodule_url(
+        incus, container, repo_dir, subpath, uid=uid, parent_path=parent_path, at_head=at_head
+    )
     if not url:
         candidate = _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
         if candidate and not candidate.startswith("ext::"):
@@ -1611,59 +1645,65 @@ def transport_submodules_to_host(
     repo_dir: str,
     only: str | None = None,
 ) -> None:
-    """Fetch each container submodule's objects into the matching host sub-repo.
+    """Fetch container submodules without materialising any host worktree.
 
-    Enumerates submodule paths on the container (sender). For a brand-new
-    submodule the host has no repo for — one added inside the container —
-    clones it from the container over ext:: so the later host-side
-    `submodule update` can check it out, then repoints the clone's origin at
-    the upstream `.gitmodules` names instead of the ext:: URL it was cloned
-    from. An *existing* host sub-repo is only fetched into: its remotes are
-    the user's own and are left alone.
-
-    `only` restricts the transport to one submodule path (used by
-    `jailbee submodule pr`, which publishes exactly one sub-repo).
-
-    Postcondition, uniform across both branches below: every transported
-    submodule has `refs/jailbee-sub/<short>/<path>/HEAD` and
-    `.../heads/*` in its host sub-repo. A freshly cloned sub-repo is fetched
-    into as well — `git clone` over ext:: leaves those refs absent, and callers
-    that publish from them (`jailbee submodule pr`) would otherwise find nothing
-    to push for a submodule the host had never seen.
+    New repos live under their parent's gitdir/modules/<declared name> and
+    receive the container HEAD before nested repos are processed. Existing
+    repos keep their origin and HEAD. `only` also includes required ancestors,
+    but never creates unrelated repos. All fetched repos receive the namespaced
+    HEAD and branch refs used by later placement and publication.
     """
     uid = cfg.container_user.uid
     repo_root = Path(cfg.repo_root)
+    located = {"": superproject_subrepo(repo_root)}
     for path in _container_submodule_paths(incus, container, repo_dir, uid=uid):
-        if only is not None and path != only:
+        if only is not None and path != only and not only.startswith(f"{path}/"):
             continue
+        # Recursive status lists parents before children. Fetch parents first,
+        # including the ancestors of an explicitly selected nested leaf.
+        parent_path = max(
+            (p for p in located if not p or path.startswith(f"{p}/")), key=len
+        )
+        parent = located[parent_path]
+        leaf = path[len(parent_path) + 1 :] if parent_path else path
+        name = _container_submodule_name(
+            incus, container, repo_dir, parent_path, leaf, uid=uid
+        )
         url = _sub_upload_pack_url(cfg, container, repo_dir, path)
-        host_sub = repo_root / path
-        if not host_subrepo_exists(repo_root, path):
+        sub = locate_host_subrepo(parent, leaf, name)
+        created = sub is None
+        if sub is None:
             from jailbee.remote_ssh.session import is_remote_session
 
             if is_remote_session():
-                # A clone is a checkout into the host tree, which a restricted
-                # remote session never writes (`git.clone_url` refuses it).
-                # Skipped rather than fatal, so the ref-only transfer of
-                # everything else still happens; the placement then reports
-                # this submodule "unreachable".
                 _warn(
-                    f"submodule '{path}' is new in the container; it is not cloned "
-                    f"into the host tree over remote SSH — run this on the host to "
-                    f"bring it in."
+                    f"submodule '{path}' is new in the container; it is not brought "
+                    f"onto the host over remote SSH — run this on the host to bring it in."
                 )
                 continue
-            host_sub.parent.mkdir(parents=True, exist_ok=True)
-            git.clone_url(url, host_sub)
-            _repoint_cloned_subrepo(incus, container, repo_dir, path, host_sub, uid=uid)
+            gitdir = parent.gitdir / "modules" / name
+            git.init_subrepo_gitdir(gitdir, url)
+            sub = HostSubRepo(path=path, gitdir=gitdir, worktree=None)
+        located[path] = sub
         git.fetch_url_multi(
-            host_sub,
+            sub.root,
             url,
             [
                 f"+HEAD:refs/jailbee-sub/{short}/{path}/HEAD",
                 f"+refs/heads/*:refs/jailbee-sub/{short}/{path}/heads/*",
             ],
         )
+        if created:
+            ok, error = git.run_capture(
+                str(sub.root),
+                ["update-ref", "--no-deref", "HEAD", f"refs/jailbee-sub/{short}/{path}/HEAD"],
+            )
+            if not ok:
+                raise git.GitError(f"submodule '{path}': could not initialize HEAD ({error})")
+            _repoint_cloned_subrepo(
+                incus, container, repo_dir, path, sub.root, uid=uid,
+                parent_path=parent_path, at_head=True,
+            )
 
 
 def _container_subrepo_exists(

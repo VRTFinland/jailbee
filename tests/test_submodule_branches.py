@@ -577,3 +577,89 @@ def test_move_host_head_real_merge_deletion_and_conflict(rig: Rig, conflict: boo
         assert not (rig.top / "sub").exists()
         assert _git(rig.top, "status", "--porcelain") == ""
         assert len(_git(rig.top, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+
+
+class LocalIncus:
+    """Run container commands in a temporary local clone."""
+
+    def exec(self, _container, cmd, *, uid=None, gid=None, env=None):
+        from jailbee.incus import IncusError
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise IncusError(result.stderr)
+        return result.stdout
+
+    def config_get(self, _container, _key):
+        return None
+
+
+@pytest.fixture
+def local_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(submodules, "_sub_upload_pack_url", lambda cfg, c, repo_dir, sub: f"{repo_dir}/{sub}")
+
+
+def _transport_cfg(rig: Rig):
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock()
+    cfg.repo_root = rig.top
+    cfg.container_user.uid = None
+    cfg.container_user.gid = None
+    return cfg
+
+
+@pytest.mark.parametrize("name", ["extra", "extra-custom"])
+def test_pull_container_born_submodule_preserves_host_tree(rig, tmp_path, local_urls, name):
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
+    _git(ctr, "submodule", "add", "-q", "--name", name, str(rig.inup), "libs/extra")
+    _git(ctr, "commit", "-q", "-m", "add extra")
+    # An uncommitted rename must not change the transport gitdir name.
+    _git(ctr, "config", "-f", ".gitmodules", "--rename-section", f"submodule.{name}", "submodule.wrong")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr))
+    assert _git(rig.top, "status", "--porcelain") == ""
+    assert not (rig.top / "libs").exists()
+    gitdir = rig.top / ".git/modules" / name
+    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/libs/extra/HEAD") == _git(ctr / "libs/extra", "rev-parse", "HEAD")
+    assert _git(gitdir, "remote", "get-url", "origin") == str(rig.inup)
+    _git(rig.top, "fetch", "-q", str(ctr), "dev:dev", "--update-head-ok")
+    from jailbee import sync
+
+    sync.checkout_submodules_on_host(_cfg(rig), branch="dev", switch_superproject=True)
+    assert (rig.top / "libs/extra/i").exists()
+    assert _git(rig.top, "status", "--porcelain") == ""
+
+
+def test_pull_fetches_existing_gitdir_without_rewriting_origin(rig, tmp_path, local_urls):
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
+    (ctr / "sub/d/f").write_text("ctr\n")
+    _git(ctr / "sub", "commit", "-qam", "ctr work")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    gitdir = rig.top / ".git/modules/sub"
+    _git(gitdir, "remote", "set-url", "origin", "preserved")
+    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr))
+    assert _git(gitdir, "rev-parse", "refs/jailbee-sub/c1/sub/HEAD") == _git(ctr / "sub", "rev-parse", "HEAD")
+    assert _git(gitdir, "remote", "get-url", "origin") == "preserved"
+    assert not (rig.top / "sub").exists()
+    assert not (gitdir / "modules/sub").exists()
+
+
+def test_pull_only_nested_container_born_leaf_fetches_parents_first(rig, tmp_path, local_urls):
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
+    _git(ctr, "submodule", "add", "-q", "--name", "parent-custom", str(rig.subup), "new-parent")
+    _git(ctr, "submodule", "update", "-q", "--init", "--recursive")
+    _git(ctr, "submodule", "add", "-q", str(rig.inup), "unrelated")
+    _git(ctr, "commit", "-q", "-m", "new modules")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+    submodules.transport_submodules_to_host(_transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr), only="new-parent/inner")
+    parent = rig.top / ".git/modules/parent-custom"
+    child = parent / "modules/inner-custom"
+    assert _git(parent, "rev-parse", "HEAD") == _git(ctr / "new-parent", "rev-parse", "HEAD")
+    assert _git(child, "rev-parse", "refs/jailbee-sub/c1/new-parent/inner/HEAD") == _git(ctr / "new-parent/inner", "rev-parse", "HEAD")
+    assert not (rig.top / ".git/modules/unrelated").exists()
+    assert not (rig.top / "new-parent").exists()
+    assert _git(rig.top, "status", "--porcelain") == ""

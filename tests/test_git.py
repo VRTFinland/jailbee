@@ -1192,21 +1192,23 @@ def test_push_url_multi_raises_on_failure(mocker, tmp_path):
         git.push_url_multi(tmp_path, "ext::url", ["+HEAD:refs/y/HEAD"])
 
 
-def test_clone_url_invokes_clone_with_ext_protocol(mocker, tmp_path):
+def test_init_subrepo_gitdir_creates_non_bare_gitdir_with_origin(tmp_path, monkeypatch):
     from jailbee import git
 
-    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
-    git.clone_url("ext::url", tmp_path / "sub")
-    args = call.call_args.args[0]
-    assert args[:5] == [
-        "git",
-        "-c",
-        "protocol.ext.allow=always",
-        "clone",
-        "--no-recurse-submodules",
-    ]
-    assert args[5] == "ext::url"
-    assert args[6] == str(tmp_path / "sub")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(var, "t")
+    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(var, "t@t")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    gitdir = tmp_path / ".git/modules/lib"
+    git.init_subrepo_gitdir(gitdir, "https://example.invalid/lib.git")
+    assert git.run_capture(str(gitdir), ["config", "--get", "core.bare"]) == (True, "false\n")
+    assert git.get_remote_url(gitdir, "origin") == "https://example.invalid/lib.git"
+    assert not (tmp_path / "lib").exists()
 
 
 def test_submodule_status_paths_parses_recursive_output(mocker, tmp_path):
@@ -1927,7 +1929,7 @@ _TREE_WRITERS = [
         lambda: git.merge_ref(Path("/repo"), "refs/x", message=None, no_ff=False, ff_only=True),
     ),
     ("submodule_update", lambda: git.submodule_update(Path("/repo"))),
-    ("clone_url", lambda: git.clone_url("ext::x", Path("/repo/sub"))),
+    ("init_subrepo_gitdir", lambda: git.init_subrepo_gitdir(Path("/repo/.git/modules/sub"), "ext::x")),
 ]
 
 
@@ -1947,9 +1949,14 @@ def test_tree_writers_run_outside_a_remote_session(mocker, monkeypatch, name, ca
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     spawn = mocker.patch("jailbee.git.subprocess.call", return_value=0)
 
-    call()
-
-    spawn.assert_called_once()
+    if name == "init_subrepo_gitdir":
+        mocker.patch("pathlib.Path.mkdir")
+        run = mocker.patch("jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=0))
+        call()
+        assert run.call_count == 3
+    else:
+        call()
+        spawn.assert_called_once()
 
 
 @pytest.mark.parametrize(
