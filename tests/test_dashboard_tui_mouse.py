@@ -16,12 +16,12 @@ from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import NativeState
-from tests.dashboard_fixtures import WIDE, ci, wide_group
 from jailbee.update_check import UpdateNotice
+from tests.dashboard_fixtures import WIDE, ci, wide_group
 from tests.dashboard_pilot import (
-    FakeStateClient,
     NATIVE_LIST,
     Click,
+    FakeStateClient,
     Pick,
     PickTab,
     Wheel,
