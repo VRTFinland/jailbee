@@ -12,19 +12,19 @@
 
 **JailBee gives each git branch its own Linux development environment.** Run
 several full stacks on one host — services, databases, Docker, browsers and
-IDEs — without making each branch compete for the same ports or Docker names.
-The environments are [Incus](https://linuxcontainers.org/incus/) system
-containers, not VMs: each has its own userland and network stack, but shares
-the host kernel.
+IDEs — without branches competing for ports or Docker names. The
+environments are [Incus](https://linuxcontainers.org/incus/) system
+containers: each has its own userland and network stack and shares the host
+kernel, which makes them far lighter than VMs.
 
 That makes parallel coding-agent work practical: give each attempt its own
-working tree and runtime, see which Claude Code session needs you in the
-terminal dashboard, and bring commits back through a local git bridge.
-The same workflow works for development and review without an agent.
+working tree and runtime, see from the terminal dashboard which Claude Code
+session needs you, and bring commits back through a local git bridge. The
+same workflow serves development and review without an agent.
 
-The CLI is `jailbee`, or **`jb`** for short. It requires a **Linux host with
-Incus**. JailBee is project-agnostic: a repo's `.jailbee/config.yaml` describes
-its environment. Built at GISGRO, but not tied to GISGRO's stack.
+The CLI is `jailbee`, or **`jb`** for short. It needs a **Linux host with
+Incus**. A repo's `.jailbee/config.yaml` describes its environment, so JailBee
+is project-agnostic — built at GISGRO, usable with any stack.
 
 ## See it work
 
@@ -45,75 +45,67 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
 
 ## What you get
 
-- **A whole stack per branch.** Containers have their own services and, when
-  enabled, their own Docker daemon. A browser inside each container reaches
-  that branch's app on the same `localhost` port, without host port forwarding.
-  Configure provisioning and autostart once, then reuse a golden image for
-  new environments. The default image includes general development tools;
-  additional language stacks and Docker are opt-in. A copy-on-write storage
-  backend such as btrfs makes image reuse and snapshots efficient.
+- **A whole stack per branch.** Each container runs its own services and,
+  when enabled, its own Docker daemon; a browser inside it reaches that
+  branch's app on `localhost` with no port forwarding. Provisioning and
+  autostart are configured once and baked into a reusable golden image —
+  general development tools by default, language stacks and Docker opt-in.
+  On a copy-on-write backend such as btrfs, new environments and snapshots
+  are cheap.
   [Stacks](https://jailbee.gisgro.io/docs/config/#golden) ·
   [Storage](https://jailbee.gisgro.io/docs/storage/)
 
-- **A local git workflow, not a trip through GitHub.** `jb git push` and
-  `jb git pull` move commits between host and container; `jb git merge`
-  merges one container's branch into another. The transfer is local, though
-  `jb git push` attempts an upstream fetch on the host by default. `jb fork`
-  starts another environment from a container's committed work, not its running
-  services or database. Submodules initialized on the host travel with the repo, and
-  `jb pr` can coordinate submodule PRs before the superproject's.
+- **A local git workflow.** `jb git push` and `jb git pull` move commits
+  between host and container without a round trip through GitHub;
+  `jb git merge` merges one container's branch into another, and `jb fork`
+  starts a new environment from a container's committed work. Submodules
+  initialized on the host travel with the repo, and `jb pr` can open
+  submodule PRs before the superproject's.
   [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/)
 
-- **A terminal dashboard for parallel work.** Bare `jb` opens the TUI on an
-  interactive terminal by default. It spans registered repos, shows git and
-  resource status, and tracks Claude Code's state and recent tool calls and
-  messages. Attach a session, inspect a diff, open a PR or start and stop
-  selected containers from the same view. Claude Code has a dedicated
-  integration; Codex, Gemini, Aider, OpenCode and Grok presets are best-effort
-  starting points, not equally tested integrations. For other providers'
-  models, `claude-jb` routes Claude Code through a separate LiteLLM proxy
-  container; plain `claude` keeps its normal authentication and environment.
+- **A terminal dashboard for parallel work.** Bare `jb` opens the TUI. It
+  spans every registered repo, shows git and resource status, and tracks
+  Claude Code's state, recent tool calls and messages. Attach a session,
+  inspect a diff, open a PR, or start and stop containers from the same
+  view. Claude Code has a dedicated integration; Codex, Gemini, Aider,
+  OpenCode and Grok presets are best-effort starting points. For other
+  providers' models, `claude-jb` routes Claude Code through a LiteLLM proxy
+  container.
   [Agents](https://jailbee.gisgro.io/docs/agents/) ·
   [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/)
 
-- **Explicit network policy and a GitHub outbox.** Strict mode is the default:
-  destination IP allowlists, with optional TCP-port restrictions, filter
-  container network traffic. An HTTP(S) egress proxy adds hostname rules,
-  including wildcards; loose mode removes JailBee's allowlist filtering.
-  Agents can stage proposed PR and issue changes for you to inspect and
-  publish with the host's `gh`, instead of posting directly. Configure a
-  read-only container token for that workflow — the outbox does not enforce
-  the token's permissions.
+- **Explicit network policy and a GitHub outbox.** Strict mode is the
+  default: a destination IP allowlist, optionally per TCP port, filters
+  container traffic, and an HTTP(S) egress proxy adds hostname rules with
+  wildcards. Loose mode lifts the allowlist. Agents stage proposed PR and
+  issue changes in an outbox for you to inspect and publish with the host's
+  `gh`; pair it with a read-only container token.
   [Security and limitations](https://jailbee.gisgro.io/docs/security/) ·
   [Outbox commands](https://jailbee.gisgro.io/docs/commands/)
 
 - **Desktop tools inside the environment, local or remote.** Launch a
-  JetBrains IDE, Chrome, Firefox or a configured app inside a container, with
-  its window on your Wayland desktop. Declare host devices and forwarded
-  services when needed — for example, adb on container localhost. Optional
-  SSH access exposes the TUI and policy-controlled commands, with host
-  management restricted by default. Remote GUI apps can use `waypipe ssh`
-  or a shared RDP display.
+  JetBrains IDE, Chrome, Firefox or a configured app inside a container with
+  its window on your Wayland desktop; declare host devices and forwarded
+  services (adb, say) when a project needs them. Optional SSH access exposes
+  the TUI and policy-controlled commands, and remote GUI apps run over
+  `waypipe ssh` or a shared RDP display.
   [GUI apps](https://jailbee.gisgro.io/docs/config/#apps) ·
   [Remote GUI](https://jailbee.gisgro.io/docs/remote-gui/)
 
 - **Reusable state, personal settings outside git.** Shared caches and
-  settings outlive individual containers; pooled caches give each container
-  a separate slot, but selected artifacts may be hardlinked across slots.
-  Claude settings are shared within a repo; credential groups share its login
-  across repos. The generated global config selects the `default` group.
-  This wiring uses JailBee-managed directories rather than your personal host
-  `~/.claude`. Keep environment settings in the repo,
-  personal defaults in `~/.config/jailbee/global.yaml`, and host-local repo
-  overrides in `~/.config/jailbee/repos/<prefix>.yaml`.
+  agent settings outlive individual containers, and credential groups share
+  one Claude login across repos — in JailBee-managed directories, never your
+  host `~/.claude`. Environment settings live in the repo, personal defaults
+  in `~/.config/jailbee/global.yaml`, and host-local repo overrides in
+  `~/.config/jailbee/repos/<prefix>.yaml`.
   [Configuration layers](https://jailbee.gisgro.io/docs/config/#configuration-layers) ·
   [Credential groups](https://jailbee.gisgro.io/docs/agents/#shared-credential-groups-credentials)
 
-JailBee is most useful when **the runtime is the hard part**: several services,
-Docker stacks, desktop tools or agents running in parallel. If worktrees alone
-solve your problem, you may not need it. See
-[Who JailBee is for](https://jailbee.gisgro.io/docs/comparison/) for trade-offs
-and alternatives.
+JailBee earns its place when **the runtime is the hard part**: several
+services, Docker stacks, desktop tools or agents in parallel. If worktrees
+alone solve your problem, you may not need it — see
+[Who JailBee is for](https://jailbee.gisgro.io/docs/comparison/) for
+trade-offs and alternatives.
 
 ## Getting started
 
@@ -126,116 +118,99 @@ Install the CLI with [`uv`](https://docs.astral.sh/uv/) or
 uv tool install jailbee      # or: pipx install jailbee
 ```
 
-Then follow **[Installation](https://jailbee.gisgro.io/docs/installation/)**
-for Incus, storage and UID/GID delegation, plus any firewall or kernel-limit
-adjustments your host needs. This is a real setup step, not something
-installing the Python package does for you.
-
-Run `jb setup` to install shell completion and the network-refresh user timer,
-with optional JailBee skills for host agents. It does not install Incus or
-configure the host prerequisites.
+Incus, a storage pool and UID/GID delegation are host setup, separate from
+the Python package: follow
+**[Installation](https://jailbee.gisgro.io/docs/installation/)**, which also
+covers the firewall and kernel-limit adjustments some hosts need. Then run
+`jb setup` for shell completion, the network-refresh user timer and,
+optionally, JailBee skills for agents on the host.
 
 ### Try it without a repo config
 
-Once the host is ready, open a git repo with a fetchable upstream and
-**without** `.jailbee/config.yaml`:
+From any git repo with a fetchable upstream and no `.jailbee/config.yaml`:
 
 ```bash
 jb new work                 # create a scratch environment
 jb                          # open the terminal dashboard
 ```
 
-With scratch mode enabled (the default), JailBee synthesizes a config and
-creates the repo's Incus profiles. On an interactive terminal it offers to
-build the scratch image if missing; later scratch environments reuse that
-image by default. The image supplies the configured tools, not automatic
-detection or setup of your app's stack.
+Scratch mode (on by default) synthesizes a config, creates the repo's Incus
+profiles and, on an interactive terminal, offers to build a scratch image
+that later scratch environments reuse. The image carries the configured
+tools; your app's own stack is set up in the next step.
 
-For a local-only git repo, use `jb new work --base <local-branch>` with an
-existing committed branch to avoid the default upstream fetch.
-For a directory that is not a git repo, use `jb new --mount work` instead.
-**Mount mode shares the host directory read-write**; it is not a separate
-working tree. Scratch skips repo configuration, not host preparation.
+For a local-only repo, `jb new work <local-branch>` starts from an existing
+committed branch and skips the upstream fetch. For a directory that is not a
+git repo, `jb new --mount work` shares the host directory read-write into
+the container instead of cloning it.
 [Scratch configuration](https://jailbee.gisgro.io/docs/config/#scratch)
 
 ### Configure a repeatable project environment
 
-For a fresh project setup, use this path instead of scratch mode. From the
-repo you want to manage:
+From the repo you want to manage:
 
 ```bash
 jb config init              # generate .jailbee/config.yaml
 # Edit the config: enable the stacks and integrations your project needs.
 jb doctor                   # check host prerequisites and config
 jb init                     # create the repo's profiles, ACLs and shared dirs
-jb registry up              # if this project uses the registry mirror (see below)
+jb registry up              # only if the project uses the registry mirror
 jb base build               # build its reusable image; allow several minutes
 jb new feat/my-branch       # create the branch environment
 jb                          # manage it in the terminal dashboard
 ```
 
-With the default `auto` mirror setting, projects enabling Docker, ECR support
-or extra registries need the mirror running before their first strict-mode
-`jb new`. Other projects can skip `jb registry up`.
+Projects that enable Docker, ECR or extra registries need the mirror running
+before their first strict-mode `jb new`; others skip `jb registry up`. Add
+provisioning and autostart steps for your dependencies, database and dev
+server —
+[Getting started](https://jailbee.gisgro.io/docs/getting-started/) walks
+through a complete config and a typical day. If you tried scratch mode in
+the same repo first, see
+[Scratch configuration](https://jailbee.gisgro.io/docs/config/#scratch) for
+keeping its containers under the new config.
 
-Add provisioning and autostart steps for your dependencies, database and dev
-server; those are project-specific, not inferred by JailBee. See
-[Getting started](https://jailbee.gisgro.io/docs/getting-started/) for the full
-walkthrough and a typical day's workflow.
-
-**Already tried scratch in this repo?** `jb config init` writes a template;
-it does not adopt the scratch environment. The template normally resolves to
-a different container prefix, leaving the old containers under their scratch
-identity. To keep that identity, explicitly carry over its `container_prefix`
-and use `jb apply` instead of `jb init`. Review the scratch settings you want
-to retain before applying the new config. See
-[Scratch configuration](https://jailbee.gisgro.io/docs/config/#scratch).
-
-The TUI is the primary interface; `jb console` is an alternative command
-prompt. An optional Qt dashboard is available as `jb gui` with the `gui`
-extra (`uv tool install 'jailbee[gui]'`). This is separate from launching
-browsers and IDEs inside containers, which does not require that extra.
+Besides the TUI, `jb console` offers an interactive command prompt, and
+`uv tool install 'jailbee[gui]'` adds an optional Qt dashboard (`jb gui`).
 
 ## Know the boundary
 
-JailBee uses unprivileged system containers, **not a separate guest kernel**.
-It is not a hostile multi-tenant isolation boundary. Before leaving an agent
-running without permission prompts, review what that environment can reach:
+JailBee uses unprivileged system containers that share the host kernel. It
+is a workspace boundary, not a hostile multi-tenant one. Before leaving an
+agent running without permission prompts, review what its environment can
+reach:
 
-- **Working trees and mounts.** Clone mode gives the container a separate
-  working tree; `--mount` does not. The clone still borrows Git objects from
-  the read-only host-source mount, so it is not a self-contained repository
-  copy. Shared caches, agent settings and writable host mounts can affect
-  other environments. By default, an existing repo `.local/` directory is
-  also shared read-write. Container snapshots do not roll back external
-  bind-mounted data.
+- **Working trees and mounts.** Clone mode gives the container its own
+  working tree; `--mount` shares the host's. A clone still borrows Git
+  objects from the read-only host-source mount. Shared caches, agent
+  settings, writable host mounts and — by default — the repo's `.local/`
+  directory are visible across environments, and container snapshots do not
+  roll back bind-mounted data.
 - **Credentials and host services.** Readable token files can be copied.
-  GPG integration, when enabled, exposes the host's entire `~/.gnupg` directory
-  read-only, including any readable secret-key files. Agent sockets can
-  authorize signing or authentication even when mounted read-only. Devices,
-  desktop sockets and port forwards expose host capabilities beyond the
-  private runtime; attach only what you need.
-- **Network policy.** The direct-traffic ACL works with IPs, not HTTP paths or
-  content; different hosts can share an allowed IP. Wildcards apply through
-  the HTTP(S) proxy, not to arbitrary protocols. Host sockets and declared
-  port forwards are separate access paths, not covered by the NIC ACL.
-- **GitHub publication.** Use a correctly scoped read-only token inside
-  containers. JailBee does not verify its effective permissions: a
-  write-capable token can bypass the outbox review step.
+  GPG integration mounts the host's `~/.gnupg` read-only, secret keys
+  included, and a forwarded agent socket can sign or authenticate even
+  through a read-only mount. Devices, desktop sockets and port forwards
+  extend the container's reach into the host; attach only what you need.
+- **Network policy.** The NIC ACL filters by IP, not hostname or HTTP path,
+  and different hosts can share an allowed IP. Hostname wildcards apply only
+  through the HTTP(S) proxy. Host sockets and declared port forwards bypass
+  the ACL.
+- **GitHub publication.** The outbox is a review step, not an enforcement
+  point: a write-capable token inside a container can publish directly. Use
+  a read-only token.
 
-Read [Security and limitations](https://jailbee.gisgro.io/docs/security/),
-especially [Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts),
-for the controls and their limits.
+[Security and limitations](https://jailbee.gisgro.io/docs/security/),
+especially
+[Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts),
+covers the controls and their limits.
 
 ## Updates and documentation
 
-After updating the CLI package, re-run `jb setup` for its host integrations.
-`jb upgrade --dry-run` shows which registered repos need an image rebuild or
-profile update according to the release's upgrade notes; `jb upgrade` performs
-those steps without restarting development containers or dockerd.
-Restart-dependent changes remain pending; LiteLLM reconciliation can still
-reload routes or stop a proxy missing its required ChatGPT login.
-The command does not update the CLI package itself.
+After updating the CLI package, re-run `jb setup`. `jb upgrade --dry-run`
+lists the registered repos whose image or profiles the release's upgrade
+notes say to rebuild; `jb upgrade` runs those steps without restarting
+development containers or dockerd, and names anything that still needs a
+restart.
 
 The full, searchable documentation is at
 **[jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/)**.
