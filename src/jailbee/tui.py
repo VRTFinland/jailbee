@@ -322,7 +322,12 @@ def choose_shared_credential(
     return "group" if result == "group" else "repo"
 
 
-def confirm_destroy_risk(unknown: Sequence[str], summaries: Sequence[RiskSummary]) -> bool:
+def confirm_destroy_risk(
+    unknown: Sequence[str],
+    summaries: Sequence[RiskSummary],
+    *,
+    question: str | None = None,
+) -> bool:
     """Print what a destroy would discard and ask; return True to proceed.
 
     Shared "print the summary and confirm" step for every destroy path
@@ -340,15 +345,24 @@ def confirm_destroy_risk(unknown: Sequence[str], summaries: Sequence[RiskSummary
     `destroy_guard.unknown_status_warning` so the Qt dashboard's confirm
     dialog says the same thing about the same container. Never refuses
     outright: the worst outcome is one more prompt.
+
+    With ``question`` (the caller's own "Destroy …?"), the summary is
+    printed first and ``question`` is the one prompt, asked whether or not
+    anything is at risk — so a caller that has not asked yet never stacks
+    its confirmation on top of this one.
     """
     if unknown:
         from jailbee.destroy_guard import unknown_status_warning
 
         warn(unknown_status_warning(unknown))
-    if not summaries:
-        return True
     for summary in summaries:
         warn(summary.line)
+    if question is not None:
+        if summaries:
+            typer.echo("   Destroying loses this.")
+        return typer.confirm(question, default=False)
+    if not summaries:
+        return True
     return typer.confirm("   Destroying loses this. Continue?", default=False)
 
 

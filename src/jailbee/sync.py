@@ -3223,7 +3223,9 @@ def push_and_reset(
     )
 
 
-def _warn_before_container_destroy(cfg: Config, incus: Incus, full_name: str, short: str) -> bool:
+def _warn_before_container_destroy(
+    cfg: Config, incus: Incus, full_name: str, short: str, *, question: str | None = None
+) -> bool:
     """Probe ``full_name``'s git status and guard its destroy; True to proceed.
 
     Mirrors `jailbee destroy`'s single-name guard shape: one `incus exec`, the
@@ -3231,7 +3233,7 @@ def _warn_before_container_destroy(cfg: Config, incus: Incus, full_name: str, sh
     right beside the one call site that needs it (`run_post_merge_cleanup`
     doesn't already have a `ContainerInfo`, unlike the CLI's `--all`/picker
     paths); only the "print the summary and confirm" step is shared, via
-    `tui.confirm_destroy_risk`.
+    `tui.confirm_destroy_risk`. ``question`` makes it the one prompt.
     """
     from jailbee import lifecycle as _lifecycle
     from jailbee.destroy_guard import assess, status_is_unknown
@@ -3245,7 +3247,7 @@ def _warn_before_container_destroy(cfg: Config, incus: Incus, full_name: str, sh
     if ci is None:
         # Vanished from the listing between resolve and here — nothing to
         # probe, but silence is never safety: say so explicitly.
-        return confirm_destroy_risk([short], [])
+        return confirm_destroy_risk([short], [], question=question)
 
     if ci.state == "Running" and ci.mode != "mount" and ci.repo_dir:
         ci.git_status = probe_container_git(
@@ -3263,7 +3265,9 @@ def _warn_before_container_destroy(cfg: Config, incus: Incus, full_name: str, sh
 
     unknown = [short] if status_is_unknown(ci) else []
     summary = assess(cfg, ci)
-    return confirm_destroy_risk(unknown, [summary] if summary is not None else [])
+    return confirm_destroy_risk(
+        unknown, [summary] if summary is not None else [], question=question
+    )
 
 
 def run_post_merge_cleanup(
@@ -3328,16 +3332,17 @@ def run_post_merge_cleanup(
     # above already knows whether uncommitted edits remain on top of the
     # merged commits. The "HEAD didn't move" skip only catches a
     # wholesale no-op merge, not that case. So this destroy is guarded too.
-    should_destroy = _should_run_cleanup_step(
-        prompt=f"Destroy container '{short}'? [y/N] ",
-        policy=destroy_policy,
-    )
-    # Only the interactive "prompt" policy needs the second guard prompt:
-    # "always" is this call's --force equivalent (must never block, exactly
-    # like `jailbee destroy --force`), and "never" or a declined/non-TTY
-    # "prompt" already leave `should_destroy` False — nothing to probe for.
-    if should_destroy and destroy_policy == "prompt":
-        should_destroy = _warn_before_container_destroy(cfg, incus, full_name, short)
+    # Only the interactive "prompt" policy runs the guard, and it asks
+    # once: the risk summary is printed above the "Destroy …?" question
+    # rather than as a second prompt after it. "always" is this call's
+    # --force equivalent (must never block, exactly like `jailbee destroy
+    # --force`), and "never" or a non-TTY "prompt" skip without probing.
+    if destroy_policy == "prompt" and prompting.is_interactive():
+        should_destroy = _warn_before_container_destroy(
+            cfg, incus, full_name, short, question=f"Destroy container '{short}'?"
+        )
+    else:
+        should_destroy = _should_run_cleanup_step(prompt="", policy=destroy_policy)
     if should_destroy:
         try:
             _lifecycle.destroy_container(cfg, incus, full_name, force=True)

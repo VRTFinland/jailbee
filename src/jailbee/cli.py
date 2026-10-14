@@ -5237,20 +5237,23 @@ def _prune_orphan_job(cfg: "Config", name: str) -> str | None:
     return None
 
 
-def _warn_before_destroy(cfg: "Config", infos: list["ContainerInfo"]) -> bool:
+def _warn_before_destroy(
+    cfg: "Config", infos: list["ContainerInfo"], *, question: str | None = None
+) -> bool:
     """Show what destroying ``infos`` would discard; return True to proceed.
 
     Gather-and-assess step for the CLI's destroy paths, which already hold
     a `ContainerInfo` per container (probed or not). The shared "print the
     summary and confirm" step lives in `tui.confirm_destroy_risk` so every
     destroy path — this one and `jailbee git pull`'s post-merge cleanup in
-    `sync.py` — renders "risky to destroy" the same way.
+    `sync.py` — renders "risky to destroy" the same way. ``question`` makes
+    it the one prompt (see `confirm_destroy_risk`).
     """
     from jailbee.destroy_guard import assess, status_is_unknown
 
     unknown = [c.display_name for c in infos if status_is_unknown(c)]
     summaries = [s for c in infos if (s := assess(cfg, c)) is not None]
-    return confirm_destroy_risk(unknown, summaries)
+    return confirm_destroy_risk(unknown, summaries, question=question)
 
 
 @app.command()
@@ -5362,10 +5365,11 @@ def destroy(
             error(str(e))
             raise typer.Exit(1) from e
         if not force:
-            if not typer.confirm(f"Destroy container '{short_name(cfg, resolved)}'?"):
-                raise typer.Abort()
-            # The single-name path never fetched git status; probe just this
-            # one container (one `incus exec`, same timeout as `jailbee ls`).
+            # Probe before asking, so the risk summary and the confirmation
+            # are one prompt. The single-name path never fetched git status;
+            # probe just this one container (one `incus exec`, same timeout
+            # as `jailbee ls`).
+            question = f"Destroy container '{short_name(cfg, resolved)}'?"
             info_ = next(
                 (c for c in list_containers(cfg, incus) if c.name == resolved),
                 None,
@@ -5374,7 +5378,9 @@ def destroy(
                 # Vanished from the listing between resolve and here — there
                 # is nothing to probe, but silence is never safety: say so
                 # explicitly rather than skipping the guard outright.
-                if not confirm_destroy_risk([short_name(cfg, resolved)], []):
+                if not confirm_destroy_risk(
+                    [short_name(cfg, resolved)], [], question=question
+                ):
                     raise typer.Abort()
             else:
                 from jailbee.git import get_head_sha
@@ -5393,7 +5399,7 @@ def destroy(
                             (cfg.container_prefix, info_.base_branch or cfg.default_branch)
                         ],
                     )
-                if not _warn_before_destroy(cfg, [info_]):
+                if not _warn_before_destroy(cfg, [info_], question=question):
                     raise typer.Abort()
         if run_in_background:
             _spawn_destroy_worker(cfg, config_path, resolved)
@@ -5420,10 +5426,9 @@ def destroy(
         targets = [c.name for c in containers]
         if not force:
             shorts = ", ".join(short_name(cfg, n) for n in targets)
-            if not typer.confirm(f"Destroy {len(targets)} container(s) ({shorts})?"):
-                raise typer.Abort()
-            target_set = set(targets)
-            if not _warn_before_destroy(cfg, [c for c in containers if c.name in target_set]):
+            if not _warn_before_destroy(
+                cfg, containers, question=f"Destroy {len(targets)} container(s) ({shorts})?"
+            ):
                 raise typer.Abort()
         if run_in_background:
             for n in targets:

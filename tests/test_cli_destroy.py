@@ -68,12 +68,28 @@ def test_destroy_single_probes_and_warns_about_stranded_work(tmp_path, mocker):
     probe = mocker.patch("jailbee.git_status.probe_container_git", return_value=_at_risk())
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
 
-    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="y\nn\n")
+    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="n\n")
 
     assert probe.call_count == 1
     assert "working tree +12 -3" in result.stdout
-    # The first `y` answered the plain confirmation; the guard's prompt got `n`.
     assert result.exit_code != 0
+
+
+def test_destroy_single_at_risk_asks_once_with_summary_first(tmp_path, mocker):
+    """The risk summary is printed above the one "Destroy …?" prompt, not
+    as a second prompt after it: a single `y` destroys."""
+    incus, destroy_mock = _setup(tmp_path, mocker, [])
+    incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
+    mocker.patch("jailbee.git_status.probe_container_git", return_value=_at_risk())
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+
+    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="y\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout.count("[y/N]") == 1
+    assert result.stdout.index("working tree +12 -3") < result.stdout.index("Destroy container")
+    destroy_mock.assert_called_once()
 
 
 def test_destroy_single_probe_uses_live_target_without_changing_risk(tmp_path, mocker):
@@ -87,7 +103,7 @@ def test_destroy_single_probe_uses_live_target_without_changing_risk(tmp_path, m
     probe = mocker.patch("jailbee.git_status.probe_container_git", return_value=_at_risk())
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
 
-    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="y\nn\n")
+    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="n\n")
 
     assert result.exit_code != 0
     assert "working tree +12 -3" in result.stdout
@@ -103,19 +119,19 @@ def test_destroy_declining_the_risk_prompt_destroys_nothing(tmp_path, mocker):
     mocker.patch("jailbee.git_status.probe_container_git", return_value=_at_risk())
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
 
-    CliRunner().invoke(app, ["destroy", "feat-a"], input="y\nn\n")
+    CliRunner().invoke(app, ["destroy", "feat-a"], input="n\n")
 
     destroy_mock.assert_not_called()
 
 
-def test_destroy_accepting_both_prompts_destroys(tmp_path, mocker):
+def test_destroy_accepting_the_prompt_destroys(tmp_path, mocker):
     incus, destroy_mock = _setup(tmp_path, mocker, [])
     incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
     mocker.patch("jailbee.git_status.probe_container_git", return_value=_at_risk())
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
 
-    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="y\ny\n")
+    result = CliRunner().invoke(app, ["destroy", "feat-a"], input="y\n")
 
     assert result.exit_code == 0, result.stdout
     destroy_mock.assert_called_once()
@@ -216,11 +232,12 @@ def test_destroy_all_lists_at_risk_containers_without_probing(tmp_path, mocker):
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
 
-    result = CliRunner().invoke(app, ["destroy", "--all"], input="y\nn\n")
+    result = CliRunner().invoke(app, ["destroy", "--all"], input="n\n")
 
     probe.assert_not_called()
     assert "feat-a" in result.stdout
     assert "Destroying loses this" in result.stdout
+    assert result.stdout.count("[y/N]") == 1
     destroy_mock.assert_not_called()
 
 
@@ -247,7 +264,7 @@ def test_destroy_all_without_force_still_probes_for_the_risk_summary(tmp_path, m
     incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
     probe = mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={})
 
-    result = CliRunner().invoke(app, ["destroy", "--all"], input="y\ny\n")
+    result = CliRunner().invoke(app, ["destroy", "--all"], input="y\n")
 
     assert result.exit_code == 0, result.stdout
     probe.assert_called_once()

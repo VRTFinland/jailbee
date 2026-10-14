@@ -1272,7 +1272,8 @@ def test_cleanup_destroy_prompts_in_tty_yes(mocker, make_cfg, tmp_path):
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1280,9 +1281,10 @@ def test_cleanup_destroy_prompts_in_tty_yes(mocker, make_cfg, tmp_path):
         "feat-foo",
         _merge_result(make_cfg, tmp_path),
         destroy_policy="prompt",
-        branch_policy="prompt",
+        branch_policy="never",
     )
 
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, f"{cfg.container_prefix}-feat-foo", force=True)
     assert result.destroyed is True
 
@@ -1299,7 +1301,8 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="")
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1307,7 +1310,7 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
         "feat-foo",
         _merge_result(make_cfg, tmp_path),
         destroy_policy="prompt",
-        branch_policy="prompt",
+        branch_policy="never",
     )
 
     mock_destroy.assert_not_called()
@@ -1361,9 +1364,9 @@ def test_cleanup_always_policy_skips_the_destroy_guard(mocker, make_cfg, tmp_pat
     confirm.assert_not_called()
 
 
-def test_cleanup_destroy_guard_skips_second_prompt_when_clean(mocker, make_cfg, tmp_path):
-    """Nothing at risk: the guard prints nothing and asks nothing extra —
-    the plain first prompt stays the only one."""
+def test_cleanup_destroy_guard_asks_once_when_clean(mocker, make_cfg, tmp_path):
+    """Nothing at risk: the guard prints nothing and "Destroy …?" is the
+    only prompt."""
     from jailbee.git_status import GitStatus
     from jailbee.sync import run_post_merge_cleanup
 
@@ -1374,7 +1377,6 @@ def test_cleanup_destroy_guard_skips_second_prompt_when_clean(mocker, make_cfg, 
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_guarded_container_info(full_name, cfg)],
@@ -1383,7 +1385,7 @@ def test_cleanup_destroy_guard_skips_second_prompt_when_clean(mocker, make_cfg, 
         "jailbee.git_status.probe_container_git",
         return_value=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1394,7 +1396,7 @@ def test_cleanup_destroy_guard_skips_second_prompt_when_clean(mocker, make_cfg, 
         branch_policy="never",
     )
 
-    confirm.assert_not_called()
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, full_name, force=True)
     assert result.destroyed is True
 
@@ -1427,9 +1429,8 @@ def test_cleanup_guard_probes_live_target_but_still_blocks_stranded_work(
     assert confirm.call_count == 1
 
 
-def test_cleanup_destroy_guard_declines_second_prompt_keeps_container(mocker, make_cfg, tmp_path):
-    """At risk + second prompt declined (the guard's own default): the
-    container survives even though the plain first prompt said yes."""
+def test_cleanup_destroy_guard_declined_keeps_container(mocker, make_cfg, tmp_path):
+    """At risk + the one prompt declined: the container survives."""
     from jailbee.git_status import GitStatus
     from jailbee.sync import run_post_merge_cleanup
 
@@ -1440,7 +1441,6 @@ def test_cleanup_destroy_guard_declines_second_prompt_keeps_container(mocker, ma
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_guarded_container_info(full_name, cfg)],
@@ -1450,7 +1450,7 @@ def test_cleanup_destroy_guard_declines_second_prompt_keeps_container(mocker, ma
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    mocker.patch("jailbee.tui.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1461,12 +1461,14 @@ def test_cleanup_destroy_guard_declines_second_prompt_keeps_container(mocker, ma
         branch_policy="never",
     )
 
+    confirm.assert_called_once()
     mock_destroy.assert_not_called()
     assert result.destroyed is False
 
 
-def test_cleanup_destroy_guard_accepts_second_prompt_destroys(mocker, make_cfg, tmp_path):
-    """At risk + second prompt accepted: the destroy proceeds."""
+def test_cleanup_destroy_guard_accepted_destroys_after_one_prompt(mocker, make_cfg, tmp_path):
+    """At risk + the one prompt accepted: the destroy proceeds, and the risk
+    summary did not add a second prompt on top of "Destroy …?"."""
     from jailbee.git_status import GitStatus
     from jailbee.sync import run_post_merge_cleanup
 
@@ -1477,7 +1479,6 @@ def test_cleanup_destroy_guard_accepts_second_prompt_destroys(mocker, make_cfg, 
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_guarded_container_info(full_name, cfg)],
@@ -1487,7 +1488,7 @@ def test_cleanup_destroy_guard_accepts_second_prompt_destroys(mocker, make_cfg, 
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1498,6 +1499,7 @@ def test_cleanup_destroy_guard_accepts_second_prompt_destroys(mocker, make_cfg, 
         branch_policy="never",
     )
 
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, full_name, force=True)
     assert result.destroyed is True
 
@@ -1506,8 +1508,7 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
     mocker, make_cfg, tmp_path, capsys
 ):
     """A stopped container is never probed — the guard notes the status is
-    unknown rather than reading silence as safety, but still doesn't add a
-    second prompt (nothing measurable to weigh)."""
+    unknown rather than reading silence as safety, above the one prompt."""
     from jailbee.sync import run_post_merge_cleanup
 
     cfg = make_cfg(tmp_path)
@@ -1517,13 +1518,12 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_guarded_container_info(full_name, cfg, state="Stopped")],
     )
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1535,7 +1535,7 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
     )
 
     probe.assert_not_called()
-    confirm.assert_not_called()
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, full_name, force=True)
     assert result.destroyed is True
     assert "git status unknown" in capsys.readouterr().out.lower()
@@ -1555,10 +1555,9 @@ def test_cleanup_destroy_guard_notes_unknown_when_container_missing_from_listing
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1570,7 +1569,7 @@ def test_cleanup_destroy_guard_notes_unknown_when_container_missing_from_listing
     )
 
     probe.assert_not_called()
-    confirm.assert_not_called()
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, full_name, force=True)
     assert result.destroyed is True
     assert "git status unknown" in capsys.readouterr().out.lower()
@@ -1596,7 +1595,6 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
     mount_info = ContainerInfo(
         name=full_name,
         state="Running",
@@ -1610,7 +1608,7 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[mount_info])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1622,7 +1620,7 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     )
 
     probe.assert_not_called()  # mode == "mount" skips the probe too
-    confirm.assert_not_called()
+    confirm.assert_called_once()
     mock_destroy.assert_called_once_with(cfg, incus, full_name, force=True)
     assert result.destroyed is True
     assert "git status unknown" not in capsys.readouterr().out.lower()
