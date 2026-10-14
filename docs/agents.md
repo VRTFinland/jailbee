@@ -3,8 +3,9 @@
 `jailbee` wires terminal coding agents (Claude Code, and a handful of others)
 into the container lifecycle through one declarative key: `agents:`. It is a
 mapping keyed by agent name — `{codex: {...}, gemini: {...}}` — rather than a
-list, because the deep-merge pipeline that combines `~/.config/jailbee/global.yaml`
-and `<repo>/.jailbee/config.yaml` *appends* lists (see
+list, because the deep-merge pipeline that combines `~/.config/jailbee/global.yaml`,
+`<repo>/.jailbee/config.yaml` and the host-local
+`~/.config/jailbee/repos/<container_prefix>.yaml` *appends* lists (see
 [Merge rules](config.md#merge-rules)). As a list, a global entry and a repo
 entry for the same agent would produce two duplicate entries instead of one
 adjusted one; as a mapping, the repo layer can tweak a single field of an
@@ -12,8 +13,10 @@ agent the global layer already defined.
 
 Six presets ship built in (`claude`, `codex`, `gemini`, `aider`, `opencode`,
 `grok`), and you can define an agent that isn't one of them from scratch.
-**Only `claude` is exercised in production.** The other five are untested
-templates — see [The five templates](#8-the-five-templates) below.
+**Claude is the recommended integration.** The other five are best-effort
+templates with varying verification coverage, from vendor-document checks
+to live install and sign-in probes — see
+[The five templates](#8-the-five-templates) below.
 
 > **Recommended setup.** Run Claude Code (the `claude` preset). To use models or
 > subscriptions other than Anthropic's, keep Claude Code and point it at them
@@ -36,10 +39,12 @@ For every agent with `enabled: true`, `jailbee`:
   whether the binary is already present; if not, `install` runs; if it is,
   `update` runs only when `auto_update` is true (`agents.ensure_agents`,
   called once from `lifecycle.new_container` — not from `jailbee apply` or
-  `jailbee start`). The step is named `install-<agent>` and is bounded by
-  `autostart.step_timeout` (default 600s), so a stuck installer costs that
-  much rather than hanging `jailbee new`; its output stays in the tmux window
-  afterwards, so `jailbee tmux <container>` is where you read what happened.
+  `jailbee start`). The `install-<agent>` tmux step is bounded by
+  `autostart.step_timeout` (default 600s); the preceding `install_check` and
+  shared-install lock wait are not covered by that timeout. Successful
+  steps close their windows. Failed steps normally retain their output for
+  inspection with `jailbee tmux <container>` (`remain-on-exit failed`
+  requires a compatible tmux version).
 - **Launches it** in a background tmux window when `autostart: true`
   (`autostart.agent_autostart_steps`).
 - **Checks its shared dirs** as part of `jailbee doctor`'s `shared_dir tree`
@@ -56,18 +61,18 @@ three.
 
 Installs are infrastructure rather than user autostart steps, so they run
 under `jailbee new --no-autostart` as well — `ensure_agents` starts the
-container's autostart tmux session itself when nothing else has yet. That is
-why `jailbee tmux` on a `--no-autostart` container finds a session with an
-`install-<agent>` window in it rather than nothing. The agent's own launch
-window is a different matter: that one is an autostart step, and
+container's autostart tmux session itself when an install/update step needs
+it. A running or failed `install-<agent>` window may therefore exist even
+with `--no-autostart`; a successful step closes its window. The agent's own
+launch window is a different matter: that one is an autostart step, and
 `--no-autostart` skips it.
 
-> **Install happens only at `jailbee new`.** Enabling an agent for a
-> container that already exists and then running `jailbee apply` attaches the
-> mount and widens egress, but never installs the binary — so the autostart
-> window fails with exit 127 ("command not found") until the container is
-> recreated. Destroy and re-create the container after enabling an agent, or
-> install it by hand inside the container.
+> **Install happens only at `jailbee new`.** Enabling an agent and running
+> `jailbee apply` updates its mounts and egress configuration, subject to the
+> normal restart requirements, but does not run its installer. If the binary
+> is absent, the autostart launch will fail. Install it manually inside the
+> existing container, or preserve your work and create a replacement; do not
+> destroy a container just to retry installation.
 
 > **`<agent>` and `install-<agent>` are effectively reserved tmux window
 > names.** Both windows are killed and re-created on each run, so an
@@ -96,17 +101,18 @@ explicit `stage: agents` may and may not carry, why it's a no-op under
 `on_create`, and the `on_create`-already-detached case — live in
 [The reserved `agents` stage](config.md#the-reserved-agents-stage). In the
 legacy flat form there is no reserved slot: a step literally named `agents`
-is just an ordinary step, and the generated steps are appended after all of
-your own `on_start` steps regardless.
+is just an ordinary step. Generated steps normally follow your own
+`on_start` steps, but `--no-wait` or an already-deferred `on_create` changes
+the insertion point to the computed hand-off boundary.
 
 Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
 on depends on whether you have been in the session before:
 
-- **The first attach** picks a window **by name** — the last *autostarting*
-  agent (one with `autostart: true`), `claude` sorted last among them — not
-  by tmux's own "most recently created" default. So the `agents` stage's
-  position only controls *when* the agent's window comes up relative to the
-  hand-off, not which window ends up focused once you're in.
+- **The first attach** tries to select a window **by name** — the last
+  *autostarting* agent (one with `autostart: true`), `claude` sorted last
+  among them. If that window does not exist yet or its launch failed,
+  attach falls back to tmux's current window. Stage position controls when
+  the window becomes available, not the preferred agent's name.
 - **Every attach after that** lands on the window you detached from. tmux
   tracks that itself; jailbee simply stops overriding it once
   `#{session_last_attached}` says a client has been there. Switch to `codex`,
@@ -136,29 +142,22 @@ template; see [Claude](#9-claude) below for its own switches.
 
 A preset is a base layer, not a fixed answer. Resolution order per agent is:
 
-**preset → (global + repo, already merged)**
+**preset → ((global + repo) + host-local, already merged)**
 
-Two merges, not three: `global.yaml` and the repo config combine with each
-other first, and the preset is merged under that single combined result —
-which is what the ordering note below is about. Both steps use the same
-[deep-merge](config.md#merge-rules) rules used
-everywhere else in `jailbee`'s config: scalars from the later layer win;
+The global and repo configurations combine first, then the host-local
+`~/.config/jailbee/repos/<container_prefix>.yaml` overlay is applied. Finally,
+`resolve_agents_raw` in `config/loader.py` merges each preset under that
+combined result. Agent lists follow the ordinary
+[deep-merge](config.md#merge-rules) rules: scalars from the later layer win;
 lists **append**; an explicit empty list (`egress_allow: []`) **resets** to
-empty instead of appending. Resetting is the only operation `deep_merge`
-offers besides append — there's no "replace with a different non-empty list"
-primitive, so to drop a preset's hosts entirely you set `egress_allow: []`
-(at repo layer, ordinarily — see the note below) rather than trying to list a
-smaller replacement set.
+empty instead of appending. There is no replacement operation for a
+non-empty list, so a shorter list does not remove a preset's hosts.
 
-> **Ordering note.** The presets are merged in *after* the global and repo
-> layers have already been combined with each other (`resolve_agents_raw` in
-> `config.py` runs once, on the merged global+repo dict). So an
-> `egress_allow: []` written only in `global.yaml`, with the repo layer later
-> appending its own hosts, does not stick — the repo's non-empty list makes
-> the combined global+repo value non-empty again, and that non-empty value
-> then *appends onto* the preset instead of replacing it. Put the reset in
-> whichever layer has the last word for that agent — usually the repo layer,
-> since repo is applied after global in every other case too.
+> **Ordering note.** A reset must survive into the combined user
+> configuration. If global sets `egress_allow: []` but repo adds hosts, the
+> result is non-empty and is then appended to the preset's hosts. Likewise,
+> a host-local addition can undo a repo-level reset. Put `[]` in the last
+> layer that defines this list if you want to discard the preset's entries.
 
 This resolution happens at the raw-dict level, before Pydantic validation, so
 a partial override (just one field) validates against the preset's completed
@@ -190,9 +189,9 @@ of re-deriving it by hand from `agent_presets.py`.
 
 ## 4. Writing your own agent
 
-An agent name that isn't one of the six shipped presets skips the preset
-merge entirely — your config is used as-is, no base layer, no forced
-append/reset semantics.
+An agent name that isn't one of the six shipped presets receives no preset
+base. Ordinary global/repo/host-local deep-merge rules, including list
+append/reset behavior, still apply.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -203,10 +202,10 @@ append/reset semantics.
 | `install_check` | string \| null | `null` | Command that decides install-vs-update. Defaults to `command -v <first token of command>` — the binary's bare name, so flags in `command` don't leak into the probe. |
 | `update` | string \| null | `null` | Shell command line run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
 | `auto_update` | bool | `true` | When `false`, an existing install is left untouched; a missing one is still installed. |
-| `install_network` | `"strict"` \| `"loose"` | `"strict"` | Network mode for the install/update step only — widen it when the installer's own hosts aren't known (see `grok` below). |
+| `install_network` | `"strict"` \| `"loose"` | `"strict"` | `loose` temporarily widens networking for the install/update step. `strict` leaves the container's current mode unchanged; it does not force a loose container into strict mode. |
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist; `private` (dir only) names subpaths inside the mount that stay per container — see §5. |
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
-| `env` | map[string, string] | `{}` | Env vars passed to the install/update step *and* the autostart launch step. |
+| `env` | map[string, string] | `{}` | Literal values passed to the install/update step and autostart launch, not to ordinary shells or the PR headless invocation. No `~` or `$HOME` expansion; values are not masked by `config show`. |
 | `headless` | string \| null | preset | One-shot command line that runs the agent once and prints its answer — what [`jailbee pr`](config.md#pr) uses to write PR text. Run in a `bash -lc` login shell in the repo directory; the prompt is in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL` — read both from the environment, never interpolate them. `$JAILBEE_PR_SESSION` holds a fresh UUID the agent may take as its session id, so a timed-out run's transcript can be found. Presets set it for `claude`, `codex`, `gemini` and `opencode`; leave unset for an agent with no one-shot mode, and `pr.agent: auto` skips it. |
 | `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the [bundled skills](#10-the-bundled-jailbee-skills) into the shared copy of it. Leave unset for an agent with no skills mechanism. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads host-wide instructions; `dir` is mounted read-only and must not overlap a `shared` mount in either direction, nor be `/`, `/etc`, `/usr`, `/home` or the home directory. `dir` is absolute or `~`-relative without `.`/`..` segments; `file` is a bare file name. Neither may contain a NUL byte. Only Claude's preset sets it today. |
@@ -229,7 +228,7 @@ agents:
     egress_allow:
       - api.my-agent.example:443
     env:
-      MY_AGENT_HOME: "~/.config/my-agent"
+      MY_AGENT_HOME: "/home/dev/.config/my-agent"
 ```
 
 `jailbee config validate` enforces a few cross-field rules beyond the schema
@@ -237,8 +236,8 @@ itself:
 
 - The agent name must match `[a-z0-9-]+` — it becomes a tmux window name and
   a doctor label. It does *not* become part of any Incus device name: those
-  are derived from each `shared[].subpath`. The two coincide for every
-  shipped preset only because each preset names its subpath after the agent.
+  are derived from each `shared[].subpath`. Some presets use the agent name
+  as a subpath; others declare separate install, config or skills subpaths.
 - `enabled: true` requires a non-empty `command`.
 - A `shared` subpath may not collide with a built-in shared subdir — the
   `constants.SHARED_SUBDIRS` names `jailbee` itself uses: `caches/pnpm-store`,
@@ -251,8 +250,11 @@ itself:
 
 ## 5. Which paths to share
 
-Share the agent's **auth and settings surface only** — never its caches,
-histories, or logs, and never a generically-named file.
+Prefer sharing the agent's **auth and settings surface only**, rather than
+caches, histories or logs, and avoid generically named files. Some shipped
+presets share an entire agent home, including history and logs; those files
+are consequently readable and writable by every container using that mount.
+Treat this as deliberate shared state, not an isolation boundary.
 
 The `aider` preset is the worked example. Aider writes four things into
 `HOME`:
@@ -324,10 +326,13 @@ carve-out up on their next `jailbee start` — there is no `jailbee apply` to
 run, because the devices are per-container rather than part of the binds
 profile.
 
-`jailbee doctor` reports any socket it finds in a shared agent mount that is
-not already carved out. The `gemini` and `grok` presets share a
-whole home directory too and ship unverified (see [§8](#8-the-five-templates)); that doctor row is
-what tells you if one of them grows a daemon.
+`jailbee doctor` checks for socket files visible on the host in enabled
+agents' shared directories, excluding paths configured as `private`. It
+does not detect PID/lock files or verify that an existing container has
+actually acquired its private mounts. A clean check is not proof of runtime
+isolation: restart existing containers through jailbee after adding a
+carve-out. The `gemini` and `grok` presets also share their agent config homes;
+check their runtime state when adopting or upgrading them.
 
 ## 6. Finding an agent's hosts
 
@@ -352,37 +357,44 @@ jailbee apply --no-restart   # push the narrowed egress_allow live
 # ... exercise the agent again ...
 ```
 
-If it breaks under `strict`, you missed a host — go back to `loose` and look
-harder rather than guessing at what to add.
+If it works in `loose` but fails in `strict`, investigate the denied
+connection rather than guessing at more hosts. Missing hosts, stale DNS/IP
+pools, ports and proxy behavior can all matter; a retry alone does not
+refresh the allowlist. Use the [troubleshooting guide](troubleshooting.md)
+for diagnostics.
 
 ## 7. Authentication in a container
 
 A browser-based OAuth or device-code sign-in is awkward inside a container:
 the login state usually lives in a path that's per-container by default, so
-it's lost on every rebuild unless that path is explicitly shared. Claude
-solves this by sharing the `~/.claude` directory (see [Claude](#9-claude)
-below) across every container of the repo. Where a vendor also offers a plain
-API key, that's the simpler and more portable path — no shared login-state
-file needed, and it works the same whether the container was just created or
-has been running for weeks.
+it's lost on rebuild unless that path is explicitly shared. Claude's
+integration shares the repo's config home and, when a credential group is
+selected, uses a separate shared credential directory (see
+[Claude](#9-claude) below). Where a vendor offers an API key, that can avoid a
+browser sign-in, but the key still needs secure storage and delivery to the
+specific process that uses it.
 
 | Preset | Env var | Notes |
 |---|---|---|
-| `claude` | — | Browser/device flow; solved via the shared `~/.claude` directory, not an API key. |
+| `claude` | — (shared-login setup) | This integration shares the saved login: repo-local in `~/.claude`, or in `~/.claude-creds` when a credential group is selected. See [Claude](#9-claude) and [LiteLLM](litellm.md) for the supported wiring. |
 | `codex` | `OPENAI_API_KEY` | The ChatGPT login (`codex login`, a device-code flow) works too: the preset allows the hosts it needs — `auth.openai.com` for the code and the token refreshes, `chatgpt.com` for the backend it then talks to. The credentials land in the shared `~/.codex`, so one login covers every container of the repo. |
-| `gemini` | `GEMINI_API_KEY` | API-key path only — the OAuth/Code Assist path uses a different set of hosts (see the table below) and has no key. |
+| `gemini` | `GEMINI_API_KEY` | API-key option. The preset also includes best-effort OAuth/Code Assist hosts (see the table below); their presence does not guarantee sign-in works with every version. |
 | `aider` | provider-dependent (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | Aider proxies whichever model backend you configure; the key follows that backend, not aider itself. |
 | `opencode` | provider-dependent, via `opencode auth login` | **Per container, not shared.** opencode keeps its whole session, auth tokens included, in a SQLite database in its config/data homes, so sharing them would hand every container the others' credentials. Each container configures and logs in on its own. To run ChatGPT or other providers' models across containers with one login, use `claude-jb` ([Claude Code through LiteLLM](litellm.md)) instead. |
 | `grok` | `XAI_API_KEY` | Verified against vendor docs. A third-party guide claims `GROK_CODE_XAI_API_KEY` instead — the vendor's own spelling wins; this exact discrepancy is why presets are templates, not guarantees. |
 
-Only the `grok` row above was checked directly against vendor documentation
-as part of building this feature; the rest follow standard per-vendor
-convention and should be treated with the same "untested template" caution
-as the rest of that preset.
+Authentication support varies by vendor version. The verification notes
+below distinguish vendor-document checks from recorded live probes; neither
+is a complete current compatibility test.
 
-A key can be passed to the container via `agents.<name>.env`, but don't put
-a real secret in a repo's committed `.jailbee/config.yaml` — put it in
-`~/.config/jailbee/global.yaml` instead, which is never committed:
+A key can be passed to an agent's install/update and autostart commands via
+`agents.<name>.env`. Do not put a real secret in a committed repo config.
+Use a host-only file such as `~/.config/jailbee/global.yaml` or the per-repo
+`~/.config/jailbee/repos/<container_prefix>.yaml`, protect its file permissions,
+and keep it out of version control. These values are **not masked by
+`jailbee config show`**. They are not added to ordinary container shells or
+the `jailbee pr` headless invocation; those need their own authentication
+source, such as the agent's saved login.
 
 ```yaml
 # ~/.config/jailbee/global.yaml
@@ -395,15 +407,15 @@ agents:
 ## 8. The five templates
 
 Package names, config paths, and — especially — host lists in the five
-non-`claude` presets are **best-effort**. The maintainer holds no accounts
-with any of these vendors; each preset is a documented starting point for
-whoever adopts it to correct, not a maintained integration. The override
-path in sections 2–4 above is what makes shipping them acceptable.
+non-`claude` presets are **best-effort**. The checks below record what was
+verified when each template was added or updated; they do not guarantee
+compatibility with later vendor releases. Use the override mechanism in
+sections 2–4 when your agent version needs different commands or hosts.
 
 | Preset | Install | Config paths | Egress | Verification status |
 | --- | --- | --- | --- | --- |
 | `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**), with `app-server-control/` and `app-server-daemon/` private per container | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
-| `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443`, `www.googleapis.com:443` (the account lookup after sign-in) | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
+| `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443`, `www.googleapis.com:443` (the account lookup after sign-in) | Install + config dir checked when the template was added; no authoritative complete host list was found in that review. Upstream issue #4552 was open without a list, and the reviewed Code Assist network doc named only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
 | `opencode` | `curl -fsSL https://opencode.ai/v2/install \| bash -s -- --no-modify-path` — **not npm** — followed by a `~/.local/bin/opencode` symlink | `~/.opencode` (dir — **the binary**) and `~/.config/opencode/skills` (dir) are shared; `~/.config/opencode` and `~/.local/share/opencode` are deliberately **not** — they hold the session database, auth tokens included, so each container keeps its own | `opencode.ai:443` (the built-in "zen" gateway at `/zen/v1/...`, and the version pointer a self-update reads); `models.opencode.ai:443` (the model catalogue fetched at startup; `models.dev:443`, which served it before, for older builds). **Provider hosts are yours to add** — opencode is a multi-provider client, so which inference host it needs follows the provider you configure, not opencode itself. `install_network: loose` for the installer's own hosts (`opencode.ai`, `registry.npmjs.org`) | Install verified end-to-end against the live installer (v2.0.9): it runs non-interactively, drops a 198MB static binary in `~/.opencode/bin`, and the preset's `~/.local/bin/opencode` link resolves to it; the `~/.local/bin` link, the already-installed short-circuit and the failed-download check are covered by unit tests. Used with a real account, which is how the shared session database was found to carry auth tokens; the runtime host list is still best-effort like the rest of this table. |
 | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` — **not npm** | `~/.grok` (dir — `config.toml`, `auth.json`) | `api.x.ai:443` (API-key path); `x.ai:443` (installer); `auth.x.ai:443` (OIDC device-code + refresh); `cli-chat-proxy.grok.com:443` (SuperGrok inference and hosted web_search). `install_network: loose` because the installer's redirect target is undocumented. This list is runtime hosts only — it does not open arbitrary HTTPS for `web_fetch`. | Install + config dir verified against vendor docs. SuperGrok hosts checked against a live device-auth session in a strict-mode container: without the chat proxy, inference retries `https://cli-chat-proxy.grok.com/v1/responses` until it fails. API key env var is `XAI_API_KEY` per vendor docs; a third-party guide claims `GROK_CODE_XAI_API_KEY` — the vendor spelling wins, and that discrepancy is exactly why presets are templates. |
@@ -412,13 +424,11 @@ Source of truth for the exact values: `src/jailbee/agent_presets.py`.
 
 ### A preset's install command needs a toolchain the image may not have
 
-An `install:` line is just a shell command run inside the container. Nothing
-checks that what it invokes exists, and a failed install step is only a
-warning `jailbee new` prints once and walks past — so enabling a preset whose
-installer is missing its toolchain is a **silent** no-op. The install step
-dies with `<tool>: command not found`, and the agent's autostart window then
-dies with `<agent>: not found`. The evidence lives in the container, not on
-the host:
+An `install:` line is a shell command run inside the container, without a
+separate toolchain prerequisite check. A failed install is non-fatal:
+`jailbee new` warns on the host and continues. A missing tool can therefore
+leave an otherwise created container without its agent; autostart may fail
+too. Inspect the failed tmux window for detailed installer output:
 
 ```bash
 jailbee exec <container> -- tmux capture-pane -p -t autostart:install-gemini
@@ -428,7 +438,7 @@ jailbee exec <container> -- tmux capture-pane -p -t autostart:install-gemini
 | --- | --- | --- |
 | `gemini` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
 | `aider` | `uv` | your own `install.d/` snippet installs it — jailbee's golden image does not ship `uv` |
-| `claude`, `codex`, `opencode`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
+| `claude`, `codex`, `opencode`, `grok` | vendor installer, curl and shell | no Node.js/npm/uv requirement in the preset command; the standard golden image supplies curl and the shells, but vendor-specific platform requirements still apply |
 
 For `gemini`, add the stack and rebuild the base image:
 
@@ -442,6 +452,10 @@ golden:
 jailbee base build
 ```
 
+Then create a new container from that image. Rebuilding the base does not
+add Node.js to existing containers; install the prerequisite there manually
+if you need to keep using them.
+
 `codex` and `opencode` used to be in the npm row and no longer are. If you
 added the node stack solely to get one of them working, you can drop it again;
 and if a container already has the npm install, remove it (`npm uninstall -g
@@ -451,11 +465,17 @@ new one.
 
 ### Pinning an install step back to strict
 
-`codex`, `opencode` and `grok` ask for `install_network: loose` because their
-installers' hosts are CDN-fronted and rotate their IPs, which is the case the
-strict ACL's resolve-at-apply-time pooling handles worst on a first run. To
-keep a step strict instead, name the hosts yourself and accept that the first
-attempt may need a retry while the pool fills:
+`codex`, `opencode` and `grok` default to `install_network: loose` so their
+installers are not limited to the preset's runtime hosts and currently
+resolved addresses. This widens networking for the whole container during
+the step, not just for the installer process.
+
+`install_network: strict` disables that temporary override; it **preserves
+the container's current mode**, rather than forcing strict mode. To install
+under strict restrictions, create the container in strict mode and configure
+all required installer hosts first. The following are starting points, not
+complete host lists; redirects or DNS changes may require additions and an
+allowlist refresh, not merely an installer retry:
 
 ```yaml
 agents:
@@ -479,7 +499,7 @@ appends, it has no install-only scope.
 `agents.claude` is the preferred spelling. A top-level `claude:` block is
 still accepted as a **legacy alias** — it's translated into `agents.claude`
 at config-load time, before validation. Defining **both** in the same
-merged config (global + repo combined) is a `ConfigError` naming both
+configuration (global, repo and host-local layers) is a `ConfigError` naming both
 spellings; pick one, and prefer `agents.claude`.
 
 Claude carries every generic field from the table in
@@ -494,9 +514,13 @@ egress, agent view, onboarding seeding):
 - `seed_onboarding`
 
 The AI-written PR descriptions are not Claude-only any more: they are the
-agent-neutral [`pr:` block](config.md#pr), whose `pr.agent` picks which agent
-runs (`auto` = the repo's own). Claude's `headless` command is what `jailbee pr`
-runs for it, and `claude-jb` runs the same command through the LiteLLM wrapper.
+agent-neutral [`pr:` block](config.md#pr), whose `pr.agent` picks the agent.
+`auto` prefers enabled autostart agents with a `headless` command, then other
+enabled headless-capable agents; within each set Claude comes first, then
+other names alphabetically. Run `jailbee pr` on the host: the AI command
+runs inside the container's repo directory, while GitHub publication uses
+the host's `gh` credentials. Selecting `pr.agent: claude-jb` runs Claude's
+headless command through the LiteLLM wrapper.
 
 Full field-by-field descriptions for these live in the
 [`claude` section of Configuration reference](config.md#claude) — that
@@ -506,17 +530,20 @@ page covers the generic `agents:` mechanism they sit on top of.
 Claude's preset also declares `global_instructions: {dir: /etc/claude-code,
 file: CLAUDE.md}`. The host's `~/.config/jailbee/AGENTS.md` reaches every repo's
 containers there as read-only managed-policy memory, before the shared and
-project CLAUDE.md files. Edits reach the next session after a refresh, not one
-already running. See [Agent-wide instructions](config.md#agent-wide-instructions-configjailbeeagentsmd)
+project CLAUDE.md files. Edits reach new sessions after a successful refresh,
+not sessions already running; a failed host-file read leaves the previous
+staged copy in place. See [Agent-wide instructions](config.md#agent-wide-instructions-configjailbeeagentsmd)
 for first-time apply, refresh commands and the host-wide opt-out.
 
 ### What the containers of a repo share
 
-Every container of a repo mounts the same `<shared_dir>/claude` as
-`~/.claude`, so memory (`projects/<path>/memory/`), transcripts and
-`/resume` across containers, settings, `CLAUDE.md`, skills and plugins are
-shared. Three subdirectories are **per container**, mounted over the shared
-ones from `<shared_dir>/.private/<container>/claude/`:
+With Claude enabled and the default mount layout, each container of a repo
+mounts the same `<shared_dir>/claude` as `~/.claude`. Memory
+(`projects/<path>/memory/`), transcripts and `/resume` across containers,
+settings, `CLAUDE.md`, skills and plugins are shared. The default
+`CLAUDE_CONFIG_DIR` also places `.claude.json` inside this shared directory.
+Three subdirectories are **per container**, mounted over the shared ones
+from `<shared_dir>/.private/<container>/claude/`:
 
 - `sessions/` — Claude Code's registry of running sessions, which peer
   messaging and the dashboard's AGENT column read;
@@ -586,26 +613,30 @@ documented by Anthropic:
   `Wiring.env` rather than returning an empty value, and
   `profiles.base_profile_yaml` drops the key outright if a `container.env`
   override would otherwise render it empty.
-- Account identity comes from the credential, not from seeding: a member
-  repo with a fresh `~/.claude` populates its own `oauthAccount` in
-  `.claude.json` the first time Claude Code runs, without jailbee writing
-  anything.
+- Account identity comes from the credential: in the observed Claude
+  version, a member repo with a fresh `~/.claude` populates its own
+  `oauthAccount` in `.claude.json` when Claude Code runs. Jailbee does not
+  seed that identity block. It does, by default, seed onboarding completion
+  and repo trust when the resolved credential file exists; existence is not
+  a validity check. Set `seed_onboarding: false` to disable that seeding.
 - Deleting the `oauthAccount` block from an **established** `.claude.json`
   — one whose onboarding is already complete — is repaired silently at the
   next start. Interactive `claude` (not just `claude -p`) repopulates the
   block from the credential before the first user turn: no login prompt, no
   onboarding flow, and `accountUuid` / `emailAddress` / `organizationUuid`
-  come back identical. The repair reads the credential without rotating it
-  — `.credentials.json` kept its mtime and size, and no
-  `.oauth_refresh.lock` was created — so it cannot disturb the other
-  members of a credential group. This is what makes deleting the block a
-  safe way to point a member repo at a changed group account.
+  came back identical in that probe. The observed repair did not rotate the
+  credential: `.credentials.json` kept its mtime and size, and no
+  `.oauth_refresh.lock` was created. Jailbee invalidates this identity block
+  when switching pooled accounts, but the vendor's repair behavior is a
+  version-specific observation, not a guaranteed API.
 - A **stale** `oauthAccount` in `.claude.json` does not break
   authentication, and jailbee does not correct it — only the credential
   in `CLAUDE_SECURESTORAGE_CONFIG_DIR` authenticates.
-- Only the credential is shared. Each repo keeps its own `~/.claude`, so
-  project history, MCP config and onboarding state never cross repos, and
-  running-session state does not cross containers either (see above).
+- The group shares the credential directory, not the whole Claude config
+  home. With separate repo shared directories and the default mount layout,
+  each repo keeps its own history, MCP config and onboarding state. Running
+  session registries are per container once its private mounts are attached
+  (see above); custom mounts and environment overrides can change this.
 
 ## 10. The bundled jailbee skills
 
@@ -623,12 +654,18 @@ them for every enabled agent that has a skills mechanism, not just Claude:
 | `opencode` | `~/.config/opencode/skills` | `opencode-skills` (the skills directory itself) |
 | `aider`, `grok` | — (no skills mechanism) | — |
 
-The copy happens on the *host* side, into `<shared_dir>/<subpath>/skills/`:
-each agent's config home is already a shared bind mount, and `raw.idmap` is
-1:1, so one host-side copy is visible in every container of the repo — no
-`incus exec`, no per-container work. `jailbee new` and `jailbee apply` both
-run it, so a jailbee upgrade reaches existing containers on the next
-`apply`.
+The copy happens on the *host* side at the shared-mount location corresponding
+to `skills_dir`: usually `<shared_dir>/<subpath>/skills/`, but directly in
+`<shared_dir>/opencode-skills/` for OpenCode. One host-side copy is visible
+to every container using that mount — no `incus exec` or per-container copy.
+`jailbee new` and `jailbee apply` both synchronize it, so a successful sync
+updates the files visible to existing containers.
+
+Sync replaces each bundled skill directory wholesale, preserving unrelated
+skills. Keep customizations in separately named skills; edits inside a
+bundled skill are overwritten. Opting out stops copies through that agent,
+but does not remove existing copies or prevent another enabled agent sharing
+the same destination from updating them.
 
 Two per-agent fields govern it (both in the
 [§4 table](#4-writing-your-own-agent)): `skills_dir` names the
