@@ -50,16 +50,17 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   that branch's app on the same `localhost` port, without host port forwarding.
   Configure provisioning and autostart once, then reuse a golden image for
   new environments. The default image includes general development tools;
-  language toolchains and Docker are opt-in. A copy-on-write storage backend
-  such as btrfs makes image reuse and snapshots efficient.
+  additional language stacks and Docker are opt-in. A copy-on-write storage
+  backend such as btrfs makes image reuse and snapshots efficient.
   [Stacks](https://jailbee.gisgro.io/docs/config/#golden) ·
   [Storage](https://jailbee.gisgro.io/docs/storage/)
 
 - **A local git workflow, not a trip through GitHub.** `jb git push` and
   `jb git pull` move commits between host and container; `jb git merge`
-  merges one container's branch into another. `jb fork` starts another
-  environment from a container's committed work, not its running services or
-  database. Submodules initialized on the host travel with the repo, and
+  merges one container's branch into another. The transfer is local, though
+  `jb git push` attempts an upstream fetch on the host by default. `jb fork`
+  starts another environment from a container's committed work, not its running
+  services or database. Submodules initialized on the host travel with the repo, and
   `jb pr` can coordinate submodule PRs before the superproject's.
   [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/)
 
@@ -71,7 +72,7 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   integration; Codex, Gemini, Aider, OpenCode and Grok presets are best-effort
   starting points, not equally tested integrations. For other providers'
   models, `claude-jb` routes Claude Code through a separate LiteLLM proxy
-  container; plain `claude` stays native.
+  container; plain `claude` keeps its normal authentication and environment.
   [Agents](https://jailbee.gisgro.io/docs/agents/) ·
   [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/)
 
@@ -98,10 +99,11 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
 
 - **Reusable state, personal settings outside git.** Shared caches and
   settings outlive individual containers; pooled caches give each container
-  a private slot seeded from existing data. Claude settings are shared
-  within a repo, while optional credential groups share its login across
-  repos. This default wiring uses JailBee-managed directories rather than
-  your personal host `~/.claude`. Keep environment settings in the repo,
+  a separate slot, but selected artifacts may be hardlinked across slots.
+  Claude settings are shared within a repo; credential groups share its login
+  across repos. The generated global config selects the `default` group.
+  This wiring uses JailBee-managed directories rather than your personal host
+  `~/.claude`. Keep environment settings in the repo,
   personal defaults in `~/.config/jailbee/global.yaml`, and host-local repo
   overrides in `~/.config/jailbee/repos/<prefix>.yaml`.
   [Configuration layers](https://jailbee.gisgro.io/docs/config/#configuration-layers) ·
@@ -135,7 +137,8 @@ configure the host prerequisites.
 
 ### Try it without a repo config
 
-Once the host is ready, open a git repo **without** `.jailbee/config.yaml`:
+Once the host is ready, open a git repo with a fetchable upstream and
+**without** `.jailbee/config.yaml`:
 
 ```bash
 jb new work                 # create a scratch environment
@@ -148,6 +151,8 @@ build the scratch image if missing; later scratch environments reuse that
 image by default. The image supplies the configured tools, not automatic
 detection or setup of your app's stack.
 
+For a local-only git repo, use `jb new work --base <local-branch>` with an
+existing committed branch to avoid the default upstream fetch.
 For a directory that is not a git repo, use `jb new --mount work` instead.
 **Mount mode shares the host directory read-write**; it is not a separate
 working tree. Scratch skips repo configuration, not host preparation.
@@ -163,15 +168,15 @@ jb config init              # generate .jailbee/config.yaml
 # Edit the config: enable the stacks and integrations your project needs.
 jb doctor                   # check host prerequisites and config
 jb init                     # create the repo's profiles, ACLs and shared dirs
-jb registry up              # Docker users only: start the registry mirror
+jb registry up              # if this project uses the registry mirror (see below)
 jb base build               # build its reusable image; allow several minutes
 jb new feat/my-branch       # create the branch environment
 jb                          # manage it in the terminal dashboard
 ```
 
-With the default mirror settings, Docker-enabled projects need the mirror
-running before their first strict-mode `jb new`. Projects without Docker
-skip `jb registry up`.
+With the default `auto` mirror setting, projects enabling Docker, ECR support
+or extra registries need the mirror running before their first strict-mode
+`jb new`. Other projects can skip `jb registry up`.
 
 Add provisioning and autostart steps for your dependencies, database and dev
 server; those are project-specific, not inferred by JailBee. See
@@ -198,14 +203,18 @@ It is not a hostile multi-tenant isolation boundary. Before leaving an agent
 running without permission prompts, review what that environment can reach:
 
 - **Working trees and mounts.** Clone mode gives the container a separate
-  working tree; `--mount` does not. Shared caches, agent settings and writable
-  host mounts can affect other environments. By default, an existing repo
-  `.local/` directory is also shared read-write. Container snapshots do not
-  roll back external bind-mounted data.
+  working tree; `--mount` does not. The clone still borrows Git objects from
+  the read-only host-source mount, so it is not a self-contained repository
+  copy. Shared caches, agent settings and writable host mounts can affect
+  other environments. By default, an existing repo `.local/` directory is
+  also shared read-write. Container snapshots do not roll back external
+  bind-mounted data.
 - **Credentials and host services.** Readable token files can be copied.
-  Agent sockets can authorize signing or authentication even when mounted
-  read-only. Devices, desktop sockets and port forwards expose host
-  capabilities beyond the private runtime; attach only what you need.
+  GPG integration, when enabled, exposes the host's entire `~/.gnupg` directory
+  read-only, including any readable secret-key files. Agent sockets can
+  authorize signing or authentication even when mounted read-only. Devices,
+  desktop sockets and port forwards expose host capabilities beyond the
+  private runtime; attach only what you need.
 - **Network policy.** The direct-traffic ACL works with IPs, not HTTP paths or
   content; different hosts can share an allowed IP. Wildcards apply through
   the HTTP(S) proxy, not to arbitrary protocols. Host sockets and declared
@@ -223,8 +232,10 @@ for the controls and their limits.
 After updating the CLI package, re-run `jb setup` for its host integrations.
 `jb upgrade --dry-run` shows which registered repos need an image rebuild or
 profile update according to the release's upgrade notes; `jb upgrade` performs
-those steps without restarting containers. It does not update the CLI package
-itself.
+those steps without restarting development containers or dockerd.
+Restart-dependent changes remain pending; LiteLLM reconciliation can still
+reload routes or stop a proxy missing its required ChatGPT login.
+The command does not update the CLI package itself.
 
 The full, searchable documentation is at
 **[jailbee.gisgro.io/docs](https://jailbee.gisgro.io/docs/)**.
