@@ -137,7 +137,6 @@ from jailbee.dashboard.sorting import (
     sort_notice,
 )
 from jailbee.dashboard.tui.frame import DashboardView
-from jailbee.update_check import dismiss as dismiss_update
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -162,6 +161,7 @@ from jailbee.remote_ssh.router import RouteError
 from jailbee.remote_ssh.session import host_restricted
 from jailbee.state_service import StateServiceUnavailable
 from jailbee.tui import console, error
+from jailbee.update_check import dismiss as dismiss_update
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
