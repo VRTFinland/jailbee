@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jailbee import sync
+from jailbee import submodules, sync
 
 
 def test_build_ext_url_format(mocker, make_cfg, tmp_path):
@@ -3396,7 +3396,7 @@ def _exec_dispatcher(responses):
 
     Keys: status, merge_head, rebase_merge, rebase_apply, head_branch,
     rev_parse_gie, rev_parse_local, rev_parse_head, rev_list_count,
-    merge_base, update_ref, merge, rebase, reset.
+    merge_base, ls_tree, update_ref, merge, rebase, reset.
 
     The rev_parse_local / merge_base / update_ref trio belongs to
     `ff_container_branch`; their defaults ("" = success, empty stdout) make it
@@ -3433,6 +3433,8 @@ def _exec_dispatcher(responses):
             key = "rev_parse_local"
         elif "rev-parse" in joined and "HEAD" in joined:
             key = "rev_parse_head"
+        elif "ls-tree" in cmd:
+            key = "ls_tree"
         elif "ls-files" in cmd:
             key = "ls_files"
         elif "commit" in cmd:
@@ -5471,6 +5473,108 @@ def test_checkout_existing_branch_updates_host_submodules(mocker, make_cfg, tmp_
     checkout_from_container(cfg, incus, "feat-foo")
 
     upd.assert_called_once_with(cfg.repo_root, branch="feat/foo")
+
+
+def test_container_merge_prechecks_and_prunes_vanishing_submodules(mocker):
+    incus = mocker.MagicMock()
+    order: list[str] = []
+    mocker.patch("jailbee.sync._container_head_oid", side_effect=["new", "merged"])
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    runner = mocker.MagicMock(return_value=(True, "base"))
+    run = mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=lambda *a, **k: order.append("merge"))
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch(
+        "jailbee.sync.submodules.vanishing_submodules",
+        side_effect=lambda *a, **k: order.append("vanishing") or ["lib"],
+    )
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=lambda *a, **k: order.append("precheck"),
+    )
+    prune = mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=lambda *a, **k: order.append("prune") or {},
+    )
+
+    sync._merge_ref_in_container(
+        incus, "full-c", "/r", ref="refs/jailbee/host/main", label="main",
+        message="m", short="c", uid=1000, ff_only=False,
+    )
+
+    assert order == ["vanishing", "precheck", "merge", "prune"]
+    assert prune.call_args.kwargs["fs"].__class__ is submodules.ContainerFs
+    assert run.call_count == 1
+
+
+def test_container_merge_refuses_a_dirty_vanishing_submodule(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch(
+        "jailbee.sync.submodules.assert_vanishing_clean",
+        side_effect=submodules.SubmoduleError("dirty lib"),
+    )
+    write = mocker.patch("jailbee.sync._exec_container_git_write")
+    with pytest.raises(sync.SyncError, match="dirty lib"):
+        sync._merge_ref_in_container(
+            incus, "full-c", "/r", ref="r", label="main", message="m",
+            short="c", uid=1000, ff_only=False,
+        )
+    write.assert_not_called()
+
+
+def test_container_merge_wraps_prune_failure(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="merged")
+    runner = mocker.MagicMock(return_value=(True, ""))
+    mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write")
+    mocker.patch("jailbee.sync.submodules.update_submodules_in_container")
+    mocker.patch(
+        "jailbee.sync.submodules.prune_vanished_worktrees",
+        side_effect=submodules.SubmoduleError("cannot prune lib"),
+    )
+
+    with pytest.raises(sync.SyncError, match="cannot prune lib"):
+        sync._merge_ref_in_container(
+            incus, "full-c", "/r", ref="r", label="main", message="m",
+            short="c", uid=1000, ff_only=False,
+        )
+
+
+def test_container_merge_failure_does_not_prune(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("failed"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=False)
+    prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
+    with pytest.raises(sync.SyncError):
+        sync._merge_ref_in_container(
+            incus, "full-c", "/r", ref="r", label="main", message="m",
+            short="c", uid=1000, ff_only=False,
+        )
+    prune.assert_not_called()
+
+
+def test_container_merge_conflict_does_not_prune(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=["lib"])
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("conflict"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
+    mocker.patch("jailbee.sync.submodules._has_unmerged", return_value=True)
+    prune = mocker.patch("jailbee.sync.submodules.prune_vanished_worktrees")
+    with pytest.raises(sync.MergeConflictError):
+        sync._merge_ref_in_container(
+            incus, "full-c", "/r", ref="r", label="main", message="m",
+            short="c", uid=1000, ff_only=False,
+        )
+    prune.assert_not_called()
 
 
 def test_push_and_merge_updates_container_submodules(mocker, make_cfg, tmp_path):

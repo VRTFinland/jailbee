@@ -2545,6 +2545,21 @@ def _merge_ref_in_container(
         "LOGNAME": CONTAINER_USERNAME,
     }
 
+    run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
+    head = _container_ref_oid(incus, full_name, repo_dir, "HEAD", uid=uid)
+    try:
+        ok, base_out = run(repo_dir, ["merge-base", "HEAD", ref])
+        vanishing = (
+            submodules.vanishing_submodules(
+                run, repo_dir, head=head, target=ref, base=base_out.strip() if ok else None
+            )
+            if head is not None
+            else []
+        )
+        submodules.assert_vanishing_clean(run, repo_dir, vanishing, target_label=label)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
+
     try:
         _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
     except IncusError as exc:
@@ -2556,7 +2571,6 @@ def _merge_ref_in_container(
             raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
-        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
         report = submodules.resolve_gitlink_conflicts(
             run, repo_dir, message=_sub_merge_message(label)
         )
@@ -2578,7 +2592,19 @@ def _merge_ref_in_container(
             uid=uid,
             env=git_env,
         )
-        # Fall through to the post-merge tail (update_submodules_in_container + head).
+        # Fall through to the post-merge tail (prune + update_submodules_in_container + head).
+
+    if vanishing:
+        try:
+            submodules.prune_vanished_worktrees(
+                run,
+                repo_dir,
+                vanishing,
+                fs=submodules.ContainerFs(incus, full_name, uid=uid),
+                target_label=label,
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
 
     submodules.update_submodules_in_container(
         incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
