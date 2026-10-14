@@ -6,12 +6,12 @@
     <title>JailBee — one container per branch</title>
     <meta
       name="description"
-      content="JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration."
+      content="JailBee gives each git branch its own Linux development environment in an Incus system container: separate services, optional Docker, IDE and browser, and per-container network rules for coding agents working in parallel."
     />
     <meta property="og:title" content="JailBee — one container per branch" />
     <meta
       property="og:description"
-      content="JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration."
+      content="JailBee gives each git branch its own Linux development environment in an Incus system container: separate services, optional Docker, IDE and browser, and per-container network rules for coding agents working in parallel."
     />
     <meta property="og:url" content="https://jailbee.gisgro.io/" />
     <meta property="og:type" content="website" />
@@ -63,7 +63,7 @@
         "codeRepository": "https://github.com/VRTFinland/jailbee",
         "downloadUrl": "https://pypi.org/project/jailbee/",
         "license": "https://www.gnu.org/licenses/gpl-3.0.html",
-        "description": "JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration.",
+        "description": "JailBee gives each git branch its own Linux development environment in an Incus system container: separate services, optional Docker, IDE and browser, and per-container network rules for coding agents working in parallel.",
         "offers": {
           "@type": "Offer",
           "price": "0",
@@ -176,10 +176,9 @@
             <p class="eyebrow eyebrow--solution">Isolated dev environments for Linux</p>
             <h1>One container per branch. All of them at once.</h1>
             <p class="hero__lead">
-              JailBee gives each branch a full system container: its own services and, with the
-              integrations enabled, its own Docker daemon, IDE and browser. Reuse one prepared
-              golden image and run several stacks in parallel on one host, each with its own
-              localhost.
+              JailBee gives each branch a full system container: its own services and, if you
+              enable them, its own Docker daemon, IDE and browser. Build one golden image, then
+              run several stacks in parallel on one host, each with its own localhost.
             </p>
 
             <div class="actions">
@@ -343,7 +342,7 @@
 <span class="p">$</span> jailbee tmux feat-login                  <span class="c"># attach to its agent</span>
 <span class="p">$</span> jailbee ls                               <span class="c"># containers and supported agent states</span>
 <span class="p">$</span> jailbee fork feat-login feat-login-2     <span class="c"># a second attempt</span>
-<span class="p">$</span> jailbee merge feat-login-2 --into feat-login
+<span class="p">$</span> jailbee git merge feat-login-2 --into feat-login
 <span class="p">$</span> jailbee git pull feat-login --no-cleanup <span class="c"># commits home; keep the container for PR</span>
 <span class="p">$</span> jailbee pr feat-login                    <span class="c"># open or update the PR</span>
 <span class="p">$</span> jailbee destroy feat-login               <span class="c"># warns about detected work at risk</span></code></pre>
@@ -359,9 +358,9 @@
                 <p>
                   <strong>Or from the command line.</strong> Everything the dashboard does is a
                   command &mdash; <code>jailbee</code>, or <code>jb</code> for short &mdash; so it
-                  scripts and works over SSH. On an interactive terminal, omitted required values
-                  are picked or prompted for; scripts should supply them explicitly.
-                  <code>jailbee console</code> adds completion and history.
+                  scripts and works over SSH. On a terminal, a value you leave out is asked for;
+                  scripts pass it explicitly. <code>jailbee console</code> adds completion and
+                  history.
                 </p>
                 <p class="demo__note">
                   Container names in the list are examples. The session is a real recording:
@@ -421,9 +420,9 @@
                them, and the illustration shows the same :8080 three times. -->
           <h2><span class="eyebrow eyebrow--solution">The solution</span>Parallel agents, separate stacks.</h2>
           <p>
-            Point a coding agent at a branch and it gets a container to itself. In the default
-            clone mode, each has its own working tree and services, without competing for the
-            same ports or database. Configured shared mounts and credentials stay shared.
+            Point a coding agent at a branch and it gets a container to itself: its own working
+            tree and its own services, with no other branch competing for the ports or the
+            database. What you choose to share — caches, logins — stays shared.
           </p>
           <p>
             The work stays one project the whole time. Each container is a branch of your
@@ -606,10 +605,11 @@
             (<a href="docs/litellm/">guide</a>).
           </p>
           <p>
-            A disposable container makes it easier to let an agent work with fewer prompts,
-            but it does not make every action safe. Shared files, credentials, host services and
-            the shared kernel remain part of the trust boundary. Review those connections before
-            reducing agent safeguards — <a href="docs/security/">read the security model</a>.
+            A disposable container makes it easier to let an agent work with fewer prompts. It
+            is a workspace boundary, not a hostile multi-tenant one: whatever you share with the
+            container — files, credentials, host services, and always the kernel — is within its
+            reach. Review those connections before turning safeguards off —
+            <a href="docs/security/">read the security model</a>.
           </p>
         </div>
         <img
@@ -635,9 +635,9 @@
           </div>
           <div class="card">
             <p>
-              <strong>Your own Docker daemon.</strong> Enable the Docker stack to run Docker and
-              Compose inside each container. Reuse your Compose setup without sharing the host
-              daemon; host paths, devices and network destinations still need configuration.
+              <strong>Your own Docker daemon.</strong> Enable the Docker stack and each container
+              runs Docker and Compose of its own. Your Compose setup works unchanged, and no
+              branch shares the host's daemon or its container names.
             </p>
           </div>
           <div class="card">
@@ -649,10 +649,10 @@
           </div>
           <div class="card">
             <p>
-              <strong>Build once, manage in one place.</strong> New containers reuse a golden
-              image, with copy-on-write efficiency on supported storage backends. Startup time
-              depends on your repo and startup steps. The terminal dashboard brings registered
-              projects together: open a shell, an IDE, a pull request or a diff from one place.
+              <strong>Build once, manage in one place.</strong> New containers start from a
+              golden image — cheap on a copy-on-write backend such as btrfs. The terminal
+              dashboard brings every registered project together: open a shell, an IDE, a pull
+              request or a diff from one place.
             </p>
           </div>
           <div class="card">
@@ -746,10 +746,10 @@
           </tbody>
         </table>
         <p class="compare__more">
-          JailBee is not a hostile multi-tenant isolation boundary: a host-kernel vulnerability
-          can allow an escape. Shared mounts, credentials, devices and host sockets also expose
-          capabilities beyond the private runtime. Review what you attach before leaving an
-          agent unattended — <a href="docs/security/">read the security model</a>.
+          The kernel is the trade-off: sharing it is what lets a JailBee container be a full
+          system without booting a second one, and also why a separate-kernel boundary is Docker
+          Sandboxes' to offer, not JailBee's — <a href="docs/security/">the security model</a>
+          spells out what that means for an unattended agent.
         </p>
         <p class="compare__more">
           <a href="docs/comparison/">Read the full comparison</a>
