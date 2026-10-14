@@ -803,8 +803,10 @@ Generic hook for terminal coding agents. A mapping keyed by agent name
 layer tweak one field of an agent the global layer already turned on
 without the deep-merge pipeline's list-append rule producing a duplicate
 entry. Six presets ship built in: `claude`, `codex`, `gemini`, `aider`,
-`opencode`, `grok`. **Only `claude` is exercised in production** — the
-other five are untested templates, correct as needed.
+`opencode`, `grok`. **`claude` is the recommended integration** — the
+other five are best-effort templates with varying verification (`codex` and
+`opencode` install and run with a real account; host lists are best-effort
+for all five), correct as needed.
 
 An agent name matching one of the six presets is deep-merged over that
 preset, with the same append/reset rules as every other list field; any

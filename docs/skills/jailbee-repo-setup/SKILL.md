@@ -260,7 +260,7 @@ auto-started in every container of this repo, add an `agents:` block.
 Six presets ship built in — `claude`, `codex`, `gemini`, `aider`,
 `opencode`, `grok` — each a starting point covering the install command,
 the shared auth/settings mount, and the egress hosts it needs. Recommend
-`claude`: it is the only preset exercised in production, and a user who wants
+`claude`: it is the most thoroughly exercised preset, and a user who wants
 non-Anthropic models or subscriptions should run it through the host's LiteLLM
 proxy (`claude-jb`, tested with ChatGPT and SuperGrok subscriptions) rather
 than switch agents. Turning one on is usually two lines:
@@ -272,10 +272,11 @@ agents:
     autostart: true
 ```
 
-`claude` (Claude Code) is the only preset exercised in production; the
-other five are untested templates the user should verify and correct
-against the vendor's own docs before relying on them (package name,
-config paths, host list). Enabling one they don't already use, without
+`claude` (Claude Code) is the recommended integration; the other five are
+best-effort templates with varying verification — `codex` and `opencode`
+have been installed and used with real accounts, the rest less so. The user
+should verify and correct them against the vendor's own docs before relying
+on them (package name, config paths, and especially the host list). Enabling one they don't already use, without
 double-checking those details, is worse than not enabling it.
 
 **Check that the preset's installer has a toolchain to run in.** Nothing

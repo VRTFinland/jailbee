@@ -5,9 +5,10 @@ Every value here is a *base layer* the user's own config is merged over
 the user's config and never needs a jailbee release. Data only — no imports
 from `config.py`, so `config.py` can import this at module level.
 
-Only `claude` is exercised in production. The rest are untested templates:
-package names, config paths and especially host lists are best-effort. See
-docs/agents.md for how to correct one.
+`claude` is the recommended integration. The rest are best-effort templates
+with varying verification (see docs/agents.md, "The five templates"):
+package names, config paths and especially host lists may drift with vendor
+releases. See docs/agents.md for how to correct one.
 """
 
 from jailbee.constants import CLAUDE_API_HOSTS

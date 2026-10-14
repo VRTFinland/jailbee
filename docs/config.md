@@ -1508,9 +1508,10 @@ host-wide app.
 
 ### `agents`
 
-Generic hook for terminal coding agents — Claude Code plus five untested
+Generic hook for terminal coding agents — Claude Code plus five best-effort
 templates (`codex`, `gemini`, `aider`, `opencode`, `grok`), or one you define
-yourself. A mapping keyed by agent name, valid at both this file and
+yourself. Claude is the recommended integration; how far each template has
+been verified is listed in [agents.md](agents.md#8-the-five-templates). A mapping keyed by agent name, valid at both this file and
 `~/.config/jailbee/global.yaml`, and it merges over a shipped preset
 (deep-merge — see [Merge rules](#merge-rules) above) rather than needing
 every field spelled out. Full mechanism, the preset table, the "which paths
@@ -1626,8 +1627,8 @@ it is enabled. When `litellm.autostart` is on, Claude runs as `claude-jb`, as it
 does in the autostart window. With no usable agent at all, AI generation is
 simply off — not an error. A pinned agent that is unusable *is* reported.
 
-Only Claude is exercised in production. The `codex`, `gemini` and `opencode`
-`headless` commands are taken from each tool's docs and have never been run
+Only Claude's `headless` command is exercised in production. The `codex`,
+`gemini` and `opencode` `headless` commands are taken from each tool's docs and have never been run
 against a live agent; if one is wrong, override it for that agent
 (`agents.<name>.headless`) — see [agents.md](agents.md#4-writing-your-own-agent).
 

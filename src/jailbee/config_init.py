@@ -107,8 +107,8 @@ host_ports: []
 # Coding agents. Each entry is merged over a shipped preset, so enabling one
 # is usually two lines. Every preset field is overridable here — see
 # docs/agents.md. Presets: claude, codex, gemini, aider, opencode, grok.
-# Only `claude` is exercised in production; the others are untested templates
-# — package names, config paths and host lists are best-effort.
+# `claude` is the recommended integration; the others are best-effort
+# templates — package names, config paths and host lists may need correcting.
 #
 # When enabled, jailbee for each agent:
 #   - bind-mounts its config/auth paths from <shared_dir> so credentials
@@ -264,7 +264,7 @@ GLOBAL_SEED: dict[str, object] = {
         },
     },
     "terminal": {"kitty": {"enabled": "auto", "host_terminfo_path": None}},
-    # `agents.claude` is the one exercised in production; enabling it here
+    # `agents.claude` is the recommended integration; enabling it here
     # (rather than leaving `agents` empty) mirrors the old template's
     # working example and keeps Claude Code usable out of the box.
     "agents": {"claude": {"enabled": True, "plugins_enabled": True}},

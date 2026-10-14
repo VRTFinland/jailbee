@@ -512,14 +512,14 @@ def test_repo_template_does_not_override_globally_enabled_claude(tmp_path):
 
 def test_repo_template_agents_comment_names_every_preset_and_docs():
     """The comment is the only place a user learns which presets exist and
-    that only `claude` has ever been run for real — pin the honest framing
-    so a future edit can't quietly soften or drop it."""
+    that `claude` is the recommended integration — pin the honest
+    framing so a future edit can't quietly soften or drop it."""
     from jailbee.config_init import _TEMPLATE
 
     for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
         assert preset in _TEMPLATE
     assert "docs/agents.md" in _TEMPLATE
-    assert "untested templates" in _TEMPLATE
+    assert "best-effort" in _TEMPLATE
     assert "agents.claude" in _TEMPLATE
 
 
@@ -551,7 +551,7 @@ def test_global_template_agents_block_enables_claude_by_default():
 
 def test_global_template_agents_comment_names_every_preset():
     """`Config.agents`'s own schema description names every preset and is
-    honest that only claude is exercised in production — pin that this
+    honest that the non-claude presets are best-effort — pin that this
     stays true of the *generated* comment, the way the old hand-written one
     was pinned. (The doc-file pointer and `agents.claude` spelling the old
     prose also carried are gone: they were hand-written elaboration with no
@@ -560,7 +560,7 @@ def test_global_template_agents_comment_names_every_preset():
 
     for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
         assert preset in text
-    assert "untested templates" in text
+    assert "best-effort templates" in text
 
 
 # --- Task 14: generated global.yaml (replaces the hand-written template) ----

@@ -282,7 +282,7 @@ class Config(BaseModel):
         default_factory=dict,
         description=(
             "Terminal coding agents wired into the container lifecycle, keyed by agent "
-            "name — Claude Code plus five untested templates (`codex`, `gemini`, "
+            "name — Claude Code plus five best-effort templates (`codex`, `gemini`, "
             "`aider`, `opencode`, `grok`), or one you define yourself. A repo's entry "
             "deep-merges over a matching shipped preset rather than requiring every "
             "field spelled out. Applies to every repo unless a repo overrides it."
