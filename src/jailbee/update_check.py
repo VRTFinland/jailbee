@@ -256,9 +256,7 @@ def pending(
     return UpdateNotice(current=current, latest=latest, command=command)
 
 
-def pending_hint(
-    session: Session, current: str, *, install: Install | None = None
-) -> list[str]:
+def pending_hint(session: Session, current: str, *, install: Install | None = None) -> list[str]:
     """The lines the CLI prints, or nothing.
 
     The footer is added here, not in `hint_lines`: `jailbee dismiss` and

@@ -186,9 +186,7 @@ def test_a_failed_fetch_keeps_the_last_known_version(db_session: Session) -> Non
     record_check(db_session, "1.5.0", now=NOW)
     record_check(db_session, None, now=NOW + timedelta(days=1))
 
-    lines = pending_hint(
-        db_session, "1.4.0", install=Install("uv", "cmd")
-    )
+    lines = pending_hint(db_session, "1.4.0", install=Install("uv", "cmd"))
     assert lines != []
 
 
@@ -406,12 +404,7 @@ def test_a_dismissed_release_is_not_advertised_again(db_session: Session) -> Non
     record_check(db_session, "1.5.0", now=NOW)
     _dismiss(db_session, "1.5.0")
 
-    assert (
-        pending_hint(
-            db_session, "1.4.0", install=Install("uv", "cmd")
-        )
-        == []
-    )
+    assert pending_hint(db_session, "1.4.0", install=Install("uv", "cmd")) == []
 
 
 def test_a_release_newer_than_the_dismissed_one_speaks_again(db_session: Session) -> None:
