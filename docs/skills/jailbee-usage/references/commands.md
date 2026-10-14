@@ -541,8 +541,9 @@ apply`/`jailbee issue apply`). Three outcomes:
 - **Something at risk** → a one-line summary per container (e.g. `feat-foo:
   working tree +3 -1 · 2 unapplied PR actions · 2 unapplied issue actions ·
   2 commits not on the host`)
-  and a second confirmation, `Destroying loses this. Continue?`, defaulting
-  to **No**. A submodule is named by which of its signals is set —
+  and `Destroying loses this.`, printed above the one `Destroy …?`
+  confirmation, which defaults to **No** (the interactive picker, whose
+  ticking is the selection, asks `Destroying loses this. Continue?` instead). A submodule is named by which of its signals is set —
   `submodule sub/bar (added)`, `(removed)`, `(committed +40 -2)`,
   `(uncommitted +1 -0)`, or a combination — never as a bare `+0 -0`. When the
   commit count itself is unmeasurable (`AHEAD ↑` shows `?`, e.g. a
@@ -556,13 +557,12 @@ apply`/`jailbee issue apply`). Three outcomes:
   probed field came back unmeasured — an `incus exec` failure/timeout) →
   the same treatment, with the reason `could not inspect the container`.
 - **Never probed** (`git_status is None` — the normal state for a **stopped**
-  container) → a `git status unknown for: …` note, but no extra
-  confirmation; the guard never reads silence as safety, but it also never
+  container) → a `git status unknown for: …` note above the confirmation; the guard never reads silence as safety, but it also never
   invents a risk it has no evidence for. **Mount-mode containers are
   excluded**: their working tree *is* the host directory, bind-mounted in, so
   it survives the destroy and there is nothing unknown to report.
 
-`--force` skips both the ordinary confirmation and the guard's assessment
+`--force` skips both the confirmation and the guard's assessment
 entirely, on the single-name, `--all` **and** interactive-picker paths. On
 the single-name and `--all` paths the underlying git-status probe is
 skipped along with it — nothing downstream would use it — so `--force`

@@ -3859,10 +3859,9 @@ jailbee ls --fields name,local_diff,local_count
 # its own clone, so the container-side probe answers directly)
 
 jailbee destroy feat-localdiffsmoke
-# expect: "Destroy container 'feat-localdiffsmoke'?" [y/N] -> y, then a risk
-# summary "feat-localdiffsmoke: 1 commits not on the host" and the second
-# confirmation "Destroying loses this. Continue? [y/N]" — decline (n) to
-# keep the container for step 2
+# expect: a risk summary "feat-localdiffsmoke: 1 commits not on the host",
+# "Destroying loses this." and then the one confirmation "Destroy container
+# 'feat-localdiffsmoke'? [y/N]" — decline (n) to keep the container for step 2
 
 # 2. Pull the work to the host (this fetches the container's branch into
 #    refs/jailbee/feat-localdiffsmoke/feat/localdiffsmoke before merging, which is
@@ -3873,9 +3872,9 @@ jailbee ls --fields name,local_diff,local_count
 # expect: LOCAL ±=clean, L↑=0 (the container's HEAD is now an ancestor of
 # the host's new merge commit, which the container can also read live)
 jailbee destroy feat-localdiffsmoke
-# expect: "Destroy container 'feat-localdiffsmoke'?" [y/N] -> y, then straight
-# to "Destroyed: feat-localdiffsmoke" — no risk summary, no second prompt (the
-# commit is reachable from the host now)
+# expect: no risk summary, just "Destroy container 'feat-localdiffsmoke'?"
+# [y/N] -> y, then "Destroyed: feat-localdiffsmoke" (the commit is reachable
+# from the host now)
 
 # 3. Force "?" deliberately, and exercise the guard's "could not inspect"
 #    branch at the same time: a container with no git repo at all still
@@ -3888,27 +3887,26 @@ jailbee ls --fields name,wt,target_diff,local_diff,local_count
 # "clean"
 
 jailbee destroy noclonesmoke
-# expect, in order: "Destroy container 'noclonesmoke'?" [y/N] -> y, then
-# "noclonesmoke: could not inspect the container" and the second
-# confirmation "Destroying loses this. Continue? [y/N]" — the guard treats
+# expect, in order: "noclonesmoke: could not inspect the container",
+# "Destroying loses this." and then the one confirmation "Destroy container
+# 'noclonesmoke'? [y/N]" — the guard treats
 # an all-unmeasured probe on a running container as a real risk it cannot
 # rule out, the same as a genuine probe failure would read; decline, then:
 jailbee destroy noclonesmoke --force
 
-# 4. --force skips both prompts and the probe entirely.
+# 4. --force skips the prompt and the probe entirely.
 jailbee new feat/forcesmoke2 --no-clone --no-autostart
 jailbee destroy feat-forcesmoke2 --force
 # expect: no confirmation, no risk summary, immediate "Destroyed: ..."
 
 # 5. A container that was never probed at all — the normal state for a
-#    STOPPED container — gets a note but no extra prompt: there is nothing
+#    STOPPED container — gets a note but no risk summary: there is nothing
 #    measured to call a risk, and the guard never invents one.
 jailbee new feat/stopsmoke --no-autostart
 jailbee stop feat-stopsmoke
 jailbee destroy feat-stopsmoke
-# expect: "Destroy container 'feat-stopsmoke'?" [y/N] -> y, then
-# "git status unknown for: feat-stopsmoke" and straight to "Destroyed: ..."
-# — no second confirmation
+# expect: "git status unknown for: feat-stopsmoke", then "Destroy container
+# 'feat-stopsmoke'? [y/N]" -> y and "Destroyed: ..." — one prompt only
 
 # 6. jailbee git pull's post-merge cleanup runs the identical guard — it only
 #    fetches the container's committed history, so it never sees
@@ -3920,10 +3918,10 @@ jailbee shell feat-pullguard
 cd ~/SampleApp && echo "not committed" >> z.txt && exit   # leave uncommitted work
 git checkout main
 jailbee git pull feat-pullguard
-# expect (after the merge output): "Destroy container 'feat-pullguard'?
-# [y/N]" -> y, then a risk summary "feat-pullguard: working tree +1 -0"
-# (exact numbers may vary) and "Destroying loses this. Continue? [y/N]"
-# decline both prompts to keep the container; verify it is still present:
+# expect (after the merge output): a risk summary "feat-pullguard: working
+# tree +1 -0" (exact numbers may vary), "Destroying loses this." and then the
+# one prompt "Destroy container 'feat-pullguard'? [y/N]" — decline it to keep
+# the container; verify it is still present:
 jailbee ls | grep feat-pullguard
 
 # `destroy_container: always` is this call's own --force equivalent and

@@ -1024,21 +1024,21 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   --force`, or `jailbee destroy --all` (whole repo,
   one confirmation), or `jailbee destroy` with no args for an interactive checkbox (exit 2 listing
   the candidates without a terminal — name the container).
-  Add `--background`/`-b` to detach. Before the usual confirmation, JailBee
+  Add `--background`/`-b` to detach. Before the confirmation, JailBee
   assesses what destroying would discard — a dirty working tree, a changed
   submodule, or commits that exist on neither the host nor a remote — and, if
-  anything is at risk, shows a one-line summary per container and a second
-  confirmation defaulting to **No**. Nothing fires it for work already pulled
+  anything is at risk, shows a one-line summary per container above the one
+  confirmation, which defaults to **No**. Nothing fires it for work already pulled
   to the host or pushed anywhere. Three outcomes: something at risk → the
-  summary and the second confirmation; a **running** container whose git
+  summary above the confirmation; a **running** container whose git
   status could not be read at all → treated the same way, with the reason
   "could not inspect the container" (unknown is never presented as safety);
   a container that was never probed to begin with — the normal state for a
-  **stopped** one — just gets a note, no extra prompt (mount mode is exempt:
+  **stopped** one — just gets a note (mount mode is exempt:
   its working tree is the host's and survives the destroy). An unmeasurable
   commit count (`AHEAD ↑` = `?`) still warns when the container's HEAD is on
-  neither the host nor a remote-tracking ref. `--force` skips both
-  confirmations and the assessment itself, on the single-name, `--all` and
+  neither the host nor a remote-tracking ref. `--force` skips the
+  confirmation and the assessment itself, on the single-name, `--all` and
   interactive-picker paths alike. `jailbee git pull`'s post-merge
   cleanup destroy runs the identical guard (its `always` cleanup policy is
   its own `--force`-equivalent bypass); the Qt dashboard (`jailbee gui`) shows

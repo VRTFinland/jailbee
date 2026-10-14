@@ -248,9 +248,9 @@ and stop the container before restoring.
 ### How do I tear a container down without losing work?
 
 First bring valuable commits to the host and preserve any uncommitted files.
-Then use `jailbee destroy <name>` (or `--all` for the repo). After the initial
-confirmation, JailBee checks available git status and warns about detected
-or uninspectable work, with a second confirmation defaulting to No.
+Then use `jailbee destroy <name>` (or `--all` for the repo). Before its
+confirmation (default No), JailBee checks available git status and warns
+about detected or uninspectable work.
 A stopped clone cannot be fully inspected. `--force` bypasses the safety
 prompts and assessment.
 
