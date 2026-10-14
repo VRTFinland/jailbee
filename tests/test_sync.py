@@ -2268,6 +2268,24 @@ def test_merge_targets_base_branch_when_current(mocker, make_cfg, tmp_path):
     merge_ref.assert_called_once()  # merged in place
 
 
+def test_merge_ff_without_checkout_places_submodule_branches(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="bbb")
+    mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+    mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
+    place = mocker.patch("jailbee.sync.submodules.place_branches_from_commit", return_value=[])
+    from jailbee import sync
+
+    sync.merge_from_container(cfg, incus, "feat-x")
+
+    place.assert_called_once_with(cfg.repo_root, "bbb", "dev")
+
+
 def test_merge_ff_without_checkout_when_base_not_current(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
@@ -2278,6 +2296,7 @@ def test_merge_ff_without_checkout_when_base_not_current(mocker, make_cfg, tmp_p
     mocker.patch("jailbee.sync.git.rev_parse", return_value="bbb")
     ff = mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
     checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.submodules.place_branches_from_commit", return_value=[])
     mocker.patch("jailbee.sync.refresh_bases_for", return_value=())
     upd = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
     from jailbee import sync

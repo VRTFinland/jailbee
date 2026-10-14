@@ -1977,6 +1977,8 @@ def merge_from_container(
         head_oid = git.rev_parse(cfg.repo_root, fetched_ref)
         if head_oid is None:
             raise SyncError("fast-forward succeeded but ref did not resolve")
+        # Keep submodule branches aligned without requiring a host checkout.
+        submodules.place_branches_from_commit(cfg.repo_root, head_oid, target)
         if allow_checkout:
             _move_host_head(
                 cfg,

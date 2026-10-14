@@ -632,6 +632,35 @@ def test_pull_container_born_submodule_preserves_host_tree(rig, tmp_path, local_
     assert _git(rig.top, "status", "--porcelain") == ""
 
 
+def test_ff_pull_into_dev_from_main_lands_submodule_work(
+    rig: Rig, tmp_path: Path, local_urls: None
+) -> None:
+    ctr = tmp_path / "ctr"
+    _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
+    (ctr / "sub" / "d" / "f").write_text("ctr\n")
+    _git(ctr / "sub", "commit", "-qam", "ctr work")
+    _git(ctr, "commit", "-qam", "bump sub")
+    _git(rig.top, "checkout", "-q", "--recurse-submodules", "main")
+
+    submodules.transport_submodules_to_host(
+        _transport_cfg(rig), LocalIncus(), "ctr", "c1", repo_dir=str(ctr)
+    )
+    _git(rig.top, "fetch", "-q", str(ctr), "dev:refs/jailbee/c1/dev")
+    _git(rig.top, "fetch", "-q", ".", "refs/jailbee/c1/dev:refs/heads/dev")
+    new = _git(rig.top, "rev-parse", "dev")
+    submodules.place_branches_from_commit(rig.top, new, "dev")
+
+    assert _git(rig.top, "status", "--porcelain") == ""
+    gitdir = rig.top / ".git" / "modules" / "sub"
+    assert _git(gitdir, "rev-parse", "refs/heads/dev") == _git(rig.top, "rev-parse", "dev:sub")
+
+    from jailbee import sync
+
+    sync.checkout_submodules_on_host(_cfg(rig), branch="dev", switch_superproject=True)
+    assert (rig.top / "sub" / "d" / "f").read_text() == "ctr\n"
+    assert _git(rig.top, "status", "--porcelain") == ""
+
+
 def test_pull_fetches_existing_gitdir_without_rewriting_origin(rig, tmp_path, local_urls):
     ctr = tmp_path / "ctr"
     _git(tmp_path, "clone", "-q", "-b", "dev", "--recurse-submodules", str(rig.top), str(ctr))
