@@ -6,12 +6,12 @@
     <title>JailBee — one container per branch</title>
     <meta
       name="description"
-      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for coding agents, Claude Code first among them, behind a strict network allowlist."
+      content="JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration."
     />
     <meta property="og:title" content="JailBee — one container per branch" />
     <meta
       property="og:description"
-      content="JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser — and a sandbox for coding agents, Claude Code first among them, behind a strict network allowlist."
+      content="JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration."
     />
     <meta property="og:url" content="https://jailbee.gisgro.io/" />
     <meta property="og:type" content="website" />
@@ -63,7 +63,7 @@
         "codeRepository": "https://github.com/VRTFinland/jailbee",
         "downloadUrl": "https://pypi.org/project/jailbee/",
         "license": "https://www.gnu.org/licenses/gpl-3.0.html",
-        "description": "JailBee runs isolated, per-branch development environments in Incus system containers. Every branch gets its own services, Docker daemon, IDE and browser, and a sandbox for coding agents behind a kernel-level egress allowlist.",
+        "description": "JailBee runs per-branch development environments in Incus system containers, with separate services and optional Docker, IDE and browser support. Run coding agents with configurable network rules and explicit host integration.",
         "offers": {
           "@type": "Offer",
           "price": "0",
@@ -176,10 +176,10 @@
             <p class="eyebrow eyebrow--solution">Isolated dev environments for Linux</p>
             <h1>One container per branch. All of them at once.</h1>
             <p class="hero__lead">
-              JailBee gives every git branch a full system container of its own: its own
-              services, its own Docker daemon if the repo uses one, its own IDE and browser, cloned copy-on-write from
-              one golden image. Several stacks run in parallel on one host, out of each other's
-              way.
+              JailBee gives each branch a full system container: its own services and, with the
+              integrations enabled, its own Docker daemon, IDE and browser. Reuse one prepared
+              golden image and run several stacks in parallel on one host, each with its own
+              localhost.
             </p>
 
             <div class="actions">
@@ -298,9 +298,9 @@
               <figcaption>
                 <code>jailbee dashboard</code>
                 <p>
-                  <strong>Which agent needs you.</strong> One mark per container: working,
-                  waiting for you, idle, or idle with a shell job still running, and how long
-                  ago it last did anything. Scan the column, not the terminals.
+                  <strong>Which agent needs you.</strong> For Claude Code sessions, compact marks
+                  show working, waiting, idle, or idle with a shell job still running, plus recent
+                  activity. A container can show several states. Scan the column, not the terminals.
                 </p>
                 <p class="demo__note">A real screenshot from daily use; one internal repository name is blurred.</p>
               </figcaption>
@@ -313,8 +313,8 @@
                 <code>jailbee dashboard &middot; details panel</code>
                 <p>
                   <strong>What it is doing.</strong> Under the table, the selected container: the
-                  branch and every submodule against its base, and the agent itself &mdash; how
-                  long it has been busy, its last tool call, its last message.
+                  branch and changed submodules against their base, plus Claude Code session
+                  details &mdash; how long it has been busy, its last tool call, its last message.
                 </p>
                 <p class="demo__note">A real screenshot from daily use.</p>
               </figcaption>
@@ -342,12 +342,12 @@
               <div class="demo__term">
                 <pre><code><span class="p">$</span> jailbee new feat/login                   <span class="c"># a container for the branch</span>
 <span class="p">$</span> jailbee tmux feat-login                  <span class="c"># attach to its agent</span>
-<span class="p">$</span> jailbee ls                               <span class="c"># every container, every agent</span>
+<span class="p">$</span> jailbee ls                               <span class="c"># containers and supported agent states</span>
 <span class="p">$</span> jailbee fork feat-login feat-login-2     <span class="c"># a second attempt</span>
 <span class="p">$</span> jailbee merge feat-login-2 --into feat-login
-<span class="p">$</span> jailbee git pull feat-login feat-ui      <span class="c"># commits home, several at once</span>
+<span class="p">$</span> jailbee git pull feat-login --no-cleanup <span class="c"># commits home; keep the container for PR</span>
 <span class="p">$</span> jailbee pr feat-login                    <span class="c"># open or update the PR</span>
-<span class="p">$</span> jailbee destroy feat-login               <span class="c"># asks first if anything would be lost</span></code></pre>
+<span class="p">$</span> jailbee destroy feat-login               <span class="c"># warns about detected work at risk</span></code></pre>
               </div>
               <!-- A real recording of the same flow (website/demo/, video A),
                    fetched only on click. With JavaScript it plays in this
@@ -360,9 +360,9 @@
                 <p>
                   <strong>Or from the command line.</strong> Everything the dashboard does is a
                   command &mdash; <code>jailbee</code>, or <code>jb</code> for short &mdash; so it
-                  scripts and works over SSH. Every command runs without arguments
-                  and asks for what it needs, and <code>jailbee console</code> is an interactive
-                  prompt with completion and history.
+                  scripts and works over SSH. On an interactive terminal, omitted required values
+                  are picked or prompted for; scripts should supply them explicitly.
+                  <code>jailbee console</code> adds completion and history.
                 </p>
                 <p class="demo__note">
                   Container names in the list are examples. The session is a real recording:
@@ -420,11 +420,11 @@
                repetition rather than to the point. The port, the database and
                the file are not re-listed here either — the cards above name
                them, and the illustration shows the same :8080 three times. -->
-          <h2><span class="eyebrow eyebrow--solution">The solution</span>Parallel agents that can't step on each other.</h2>
+          <h2><span class="eyebrow eyebrow--solution">The solution</span>Parallel agents, separate stacks.</h2>
           <p>
-            Point a coding agent at a branch and it gets a container to itself. Three can be
-            working at once, each against its own copy of the stack, and none of them can
-            reach what the others are doing.
+            Point a coding agent at a branch and it gets a container to itself. In the default
+            clone mode, each has its own working tree and services, without competing for the
+            same ports or database. Configured shared mounts and credentials stay shared.
           </p>
           <p>
             The work stays one project the whole time. Each container is a branch of your
@@ -557,21 +557,22 @@
             The question was never whether a container reaches the network — it is how wide you
             leave the opening. <code>jailbee net strict</code> resolves explicit host names
             into IP-and-port rules for direct traffic, including <code>ssh</code> and database
-            connections, and refreshes them as addresses change. Those rules allow an address,
-            not an exclusive host identity: other hosts can share the same IP.
+            connections. With the host refresh timer running, those rules track DNS changes.
+            They allow an address, not an exclusive host identity: other hosts can share the same IP.
           </p>
           <p>
             Wildcards such as <code>*.example.com</code> take a different route: an HTTP(S)
             proxy, for tools that honour <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code>.
             They do not grant arbitrary protocols access to every matching host.
-            <code>jailbee net loose</code> widens access temporarily; the host's network-refresh
-            timer restores strict mode when the configured time expires.
+            <code>jailbee net loose</code> can widen access temporarily. Set an expiry and keep
+            the host refresh timer running for automatic return to strict mode; active startup
+            stages can defer that return (<a href="docs/config/#loose_auto_revert">expiry rules</a>).
           </p>
           <p>
             Some of what a container needs sits on the host rather than out on the network —
             an adb server with a phone plugged into it, a database you already run. One line of
-            config makes it reachable on every container's own localhost, and
-            <code>jailbee port</code> opens or closes one on the spot. A forward goes around the
+            config makes it reachable on each container's localhost by default, and
+            <code>jailbee port</code> adds or removes forwards on demand. A forward goes around the
             allowlist by design, so <code>jailbee net status</code> lists the open ones next to it:
             the real size of the opening stays one command to read.
           </p>
@@ -583,12 +584,12 @@
       <div class="wrap">
         <h2>Your IDE and your browser, from inside the container.</h2>
         <p>
-          <code>jailbee ide</code> launches the JetBrains IDE that lives in the container onto your
-          own Wayland session. <code>jailbee chrome</code> does the same for a browser with its own
-          profile and its own localhost. <code>jailbee gui</code> opens a Qt dashboard that spans every
-          repo on the host. Working in one feels the same as working locally — and over SSH the
-          windows can show up in any RDP client, or as native windows on your own desktop
-          (<a href="docs/remote-gui/">remote GUI</a>).
+          With the integrations configured, <code>jailbee ide</code> runs a JetBrains IDE inside
+          the container on your Wayland desktop, normally using a mounted host Toolbox installation.
+          <code>jailbee chrome</code> runs a browser against the container's own localhost.
+          <code>jailbee gui</code>, with the GUI extra installed, opens a host-wide Qt dashboard.
+          GUI-enabled JailBee SSH sessions can use a compatible RDP client or native windows through
+          <code>waypipe ssh</code> (<a href="docs/remote-gui/">remote GUI</a>).
         </p>
       </div>
     </section>
@@ -603,23 +604,23 @@
           <p>
           JailBee has first-class support for
             <a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>: turn it on
-            once and every container comes with it installed, sharing one login across the whole
-            project, allowed through its own network rules, and taught to drive
+            once and JailBee installs it in new containers, reusing a shared login, adding its
+            required endpoints to the container's allowlist, and providing skills to drive
             <code>jailbee</code> itself. The same mechanism reaches other terminal coding agents
             too — see
             <a href="docs/agents/"
               >supported agents</a
             >
-            for the list and how to add your own. Have it start on its own and a container is
-            working the moment it boots. <code>claude-jb</code> runs the same Claude Code on other
+            for the list and how to add your own. Enable autostart to launch the agent as part of
+            the container's startup workflow. <code>claude-jb</code> runs the same Claude Code on other
             providers' models through a LiteLLM proxy
             (<a href="docs/litellm/">guide</a>).
           </p>
           <p>
-            The reason to run an agent here is that you stop having to be the safety mechanism.
-            It normally stops to ask before anything consequential; in a container you can turn
-            that off and let it work, because what it can break is the container — and how much
-            that is, you decide in advance by choosing what the container gets to see.
+            A disposable container makes it easier to let an agent work with fewer prompts,
+            but it does not make every action safe. Shared files, credentials, host services and
+            the shared kernel remain part of the trust boundary. Review those connections before
+            reducing agent safeguards — <a href="docs/security/">read the security model</a>.
           </p>
         </div>
         <img
@@ -645,40 +646,39 @@
           </div>
           <div class="card">
             <p>
-              <strong>Docker, unchanged.</strong> Docker and Docker Compose run normally inside
-              each container, so whatever you already use for local development keeps working
-              as-is.
+              <strong>Your own Docker daemon.</strong> Enable the Docker stack to run Docker and
+              Compose inside each container. Reuse your Compose setup without sharing the host
+              daemon; host paths, devices and network destinations still need configuration.
             </p>
           </div>
           <div class="card">
             <p>
-              <strong>Set up once, not once per branch.</strong> Every container in a project
-              shares the same downloaded packages, tool settings and logins. Configure
-              something in one and the rest have it, and the fifth branch you open starts
-              warm instead of fetching everything over again. Throwing a container away
-              leaves all of it in place.
+              <strong>Set up once, reuse across branches.</strong> Configured caches, tool
+              settings and agent logins persist outside disposable containers, so new branches
+              can start warm. Some state is shared live; pooled browser and IDE profiles use
+              separate slots. Changes to shared state can affect other containers.
             </p>
           </div>
           <div class="card">
             <p>
-              <strong>Fast to spin up, easy to run.</strong> New containers start in about a
-              minute because they're cheap copies of one shared image, and a live dashboard shows
-              every one of them across every project — and works them from there: a shell, the
-              IDE, the pull request, a diff, without going to look the command up.
+              <strong>Build once, manage in one place.</strong> New containers reuse a golden
+              image, with copy-on-write efficiency on supported storage backends. Startup time
+              depends on your repo and startup steps. The terminal dashboard brings registered
+              projects together: open a shell, an IDE, a pull request or a diff from one place.
             </p>
           </div>
           <div class="card">
             <p>
-              <strong>Submodules come along.</strong> If your project pulls in other repositories,
-              they are set up for you in every new container and travel with your commits in both
-              directions — nothing to prepare by hand on either side.
+              <strong>Submodules come along.</strong> Initialize them recursively on the host
+              first; JailBee then sets them up in new containers and transports their commits
+              in both directions. The git bridge handles the submodules as well as the parent repo.
             </p>
           </div>
           <div class="card">
             <p>
               <strong>Reach it from anywhere.</strong> An optional, key-only SSH service opens
               the dashboard, a restricted console or policy-limited commands from your laptop,
-              and GUI apps can show up in any RDP client or, through <code>waypipe ssh</code>, as
+              and GUI apps can show up in a compatible RDP client or, through <code>waypipe ssh</code>, as
               native windows on your own desktop (<a href="docs/remote-gui/">remote GUI</a>).
             </p>
           </div>
@@ -730,18 +730,18 @@
                 A fence around one agent process, with a separate policy per tool it calls.
               </td>
               <td data-label="Pick it instead when">
-                one agent needs fine-grained rules rather than a system of its own. It also runs
-                inside a JailBee container.
+                one agent needs fine-grained rules rather than a system of its own. It can also
+                be layered inside a container.
               </td>
             </tr>
             <tr>
               <th scope="row">Docker Sandboxes</th>
               <td data-label="What it is">
-                A microVM per agent run, with its own kernel and a deny-by-default network proxy.
+                A persistent microVM for an agent, with its own kernel and a deny-by-default network proxy.
               </td>
               <td data-label="Pick it instead when">
-                you want a hypervisor between the agent and your laptop. A stronger wall than
-                JailBee's — and a VM image per run to pay for it.
+                you need a separate-kernel boundary. Sandboxes persist across sessions, but do
+                not share their Docker images and layers.
               </td>
             </tr>
             <tr class="compare__self">
@@ -777,11 +777,11 @@
         <ul class="reqs">
           <li>
             <strong>A Linux host running Incus.</strong>
-            <span>Ubuntu 26.04 gives nested Docker out of the box.</span>
+            <span>Ubuntu 26.04 is the recommended host; nested Docker needs the setup below.</span>
           </li>
           <li>
-            <strong>pipx or uv.</strong>
-            <span>Either one installs the CLI.</span>
+            <strong>Python 3.12+ and pipx or uv.</strong>
+            <span>Either installer works; the Qt dashboard and SSH service need optional extras.</span>
           </li>
           <li>
             <strong>A one-time host setup.</strong>
@@ -832,7 +832,7 @@
             <a href="docs/commands/"
               >Commands</a
             >
-            <span>Every command and flag, in one reference table.</span>
+            <span>Command groups, common flags and links to detailed workflows.</span>
           </li>
           <li>
             <a href="docs/git-bridge/"
