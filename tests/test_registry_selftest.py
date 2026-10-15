@@ -55,8 +55,9 @@ def _serve(handler: Callable[[bytes], bytes | None]):
             except OSError:
                 return
 
-    threading.Thread(target=loop, daemon=True).start()
-    return srv, stop
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return srv, stop, thread
 
 
 @pytest.fixture
@@ -64,13 +65,15 @@ def fake_mirror():
     servers = []
 
     def start(handler):
-        srv, stop = _serve(handler)
-        servers.append((srv, stop))
+        srv, stop, thread = _serve(handler)
+        servers.append((srv, stop, thread))
         return srv.getsockname()
 
     yield start
-    for srv, stop in servers:
+    for srv, stop, thread in servers:
         stop.set()
+        # Closing under a pending accept() raises EBADF in the loop thread.
+        thread.join()
         srv.close()
 
 
