@@ -232,8 +232,9 @@ What turning it on gets you:
   (`seed_onboarding`).
 - **Strict mode still works.** The Anthropic API and CLI-update hosts are
   added to the egress allowlist automatically; `plugins_enabled` adds the
-  GitHub + npm hosts the plugin marketplace and skills reach. You don't
-  list them by hand.
+  GitHub hosts the plugin marketplace and skills reach. You don't
+  list them by hand. The npm registry is not among them: a plugin that
+  installs from npm needs `registry.npmjs.org:443` in `egress_allow`.
 - **The agents know JailBee.** JailBee's own `jailbee-usage`,
   `jailbee-repo-setup`, `jailbee-pr-review` and `jailbee-issue-management`
   skills are copied into the shared skills directory of every enabled agent

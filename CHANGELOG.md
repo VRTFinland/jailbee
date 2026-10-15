@@ -21,6 +21,14 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **`agents.claude.plugins_enabled` no longer opens the npm registry.**
+  `registry.npmjs.org` was on the allowlist of every strict-mode container
+  with Claude enabled, although a GitHub-sourced plugin of skills, hooks and
+  commands never reaches it — and since the egress filter sees only the
+  hostname, an open npm registry lets a container upload anything with
+  `npm publish`. A repo whose Claude plugins install from npm adds
+  `registry.npmjs.org:443` to `egress_allow`; run `jailbee apply` to drop it
+  from existing containers.
 - **The update notice stays until you upgrade or dismiss it.** A newer
   release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
   once a day, and the dashboard shows it on a row of its own with a clickable

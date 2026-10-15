@@ -63,6 +63,15 @@ def test_plugin_hosts_only_when_claude_plugins_enabled(tmp_path):
     assert CLAUDE_PLUGIN_HOSTS[0] not in spec_off.egress
 
 
+def test_plugin_hosts_leave_out_npm_registry(tmp_path):
+    """npm is a write-capable upload channel (`npm publish` with any token) and
+    a GitHub-sourced plugin of skills, hooks and commands never reaches it, so
+    `plugins_enabled` must not open it; a repo that needs it lists it itself."""
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    (spec,) = enabled_agent_specs(cfg)
+    assert not any(h.startswith("registry.npmjs.org") for h in spec.egress)
+
+
 def test_grok_install_runs_loose(tmp_path):
     cfg = make_cfg(tmp_path, agents={"grok": {"enabled": True}})
     (spec,) = enabled_agent_specs(cfg)

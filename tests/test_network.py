@@ -62,7 +62,6 @@ def mock_resolve(mocker):
         "objects.githubusercontent.com": ["185.199.108.134"],
         "release-assets.githubusercontent.com": ["185.199.108.135"],
         "codeload.github.com": ["140.82.121.10"],
-        "registry.npmjs.org": ["104.16.0.35"],
     }
 
     def fake_getaddrinfo(name, _port, **kwargs):

@@ -301,6 +301,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`--help` — nothing to rebuild unless you use `jailbee litellm`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 4),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`agents.claude.plugins_enabled` no longer opens `registry.npmjs.org`; "
+            "add it to `egress_allow` if a Claude plugin installs from npm"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

@@ -612,9 +612,12 @@ class ClaudeAgentConfig(AgentConfig):
         default=True,
         description=(
             "When true (default), also auto-extends the strict-mode egress allowlist with "
-            "`CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so Claude Code's plugin marketplace, "
-            "skills and SessionStart hooks load. Set to false to keep the API reachable "
-            "while blocking marketplace traffic. Has no effect when `enabled` is false."
+            "`CLAUDE_PLUGIN_HOSTS` (GitHub) so Claude Code's plugin marketplace, "
+            "skills and SessionStart hooks load. The npm registry is not included; "
+            "add `registry.npmjs.org:443` to `egress_allow` if a plugin needs it. "
+            "Set to false to keep the API reachable while blocking marketplace "
+            "traffic, which also closes GitHub as an upload path. Has no effect "
+            "when `enabled` is false."
         ),
     )
     agent_view: bool = Field(

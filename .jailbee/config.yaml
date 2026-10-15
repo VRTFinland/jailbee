@@ -68,9 +68,8 @@ optional_mounts:
 # Daily dev only needs the Claude API and JetBrains licence hosts, and those
 # need no entry here: enabling `agents.claude` / `jetbrains` (in global.yaml)
 # appends them automatically. Note that `claude.plugins_enabled` also appends
-# CLAUDE_PLUGIN_HOSTS (github.com, raw/objects/codeload.githubusercontent.com,
-# registry.npmjs.org), so GitHub is already reachable in strict mode without
-# an entry here.
+# CLAUDE_PLUGIN_HOSTS (github.com, raw/objects/codeload.githubusercontent.com),
+# so GitHub is already reachable in strict mode without an entry here.
 #
 # The list below exists for one purpose: running a **nested Incus rig** inside
 # a dogfood container to host-verify jailbee against a real daemon (see
