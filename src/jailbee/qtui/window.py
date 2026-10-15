@@ -45,6 +45,7 @@ from jailbee.qtui.model import (
     container_cells,
     field_tooltip,
     group_header,
+    group_header_warning,
 )
 
 if TYPE_CHECKING:
@@ -552,7 +553,10 @@ class MainWindow(QMainWindow):
             label, _is_orphan = group_header(g)
             if not g.containers:
                 label = f"{label}  (0 containers)"
-            group_item = QTreeWidgetItem([label])
+            warning = group_header_warning(g)
+            group_item = QTreeWidgetItem([f"{label} ⚠" if warning else label])
+            if warning:
+                group_item.setToolTip(0, warning)
             group_item.setFirstColumnSpanned(True)
             group_item.setData(0, _PREFIX_ROLE, g.prefix)
             self.tree.addTopLevelItem(group_item)

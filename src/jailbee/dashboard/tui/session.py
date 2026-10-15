@@ -102,7 +102,6 @@ from jailbee.dashboard.model import (
     collect_repo_roots,
     container_of,
     dashboard_config_migration_notice,
-    dashboard_group_notices,
     fold_target,
     global_config_or_defaults,
     move_selection,
@@ -154,7 +153,7 @@ from jailbee.dashboard.tui.overlay import (
 from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
-from jailbee.lifecycle import ContainerInfo, tracking_notices
+from jailbee.lifecycle import ContainerInfo
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
@@ -420,13 +419,12 @@ class DashboardSession:
 
     def view(self, hover: Hit | None = None) -> DashboardView:
         """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
-        tracking = tracking_notices([c for g in self.all_groups for c in g.containers])
-        tracking.extend(dashboard_group_notices(self.all_groups))
         # A refusal or a service failure may carry a remedy and wraps when long;
-        # running jobs and stale targets are status lines that stay on the border.
+        # running jobs are a status line that stays on the border. What is off
+        # about one repo or container lives in its own details panel.
         notice = self.notice or self.client.status()
         notice_wraps = notice is not None
-        notice = notice or "; ".join(self.jobs.active()) or ("; ".join(tracking) or None)
+        notice = notice or "; ".join(self.jobs.active()) or None
         marked = self.marked
         sources: frozenset[str] = frozenset()
         ineligible: frozenset[str] = frozenset()

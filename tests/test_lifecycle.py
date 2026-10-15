@@ -7825,6 +7825,20 @@ def test_tracking_fallback_base_marker_and_grouped_notices():
 _NOW = datetime(2026, 6, 8, tzinfo=UTC)
 
 
+def test_tracking_warning_is_per_container_and_names_no_repository():
+    from jailbee.lifecycle import tracking_warning
+
+    behind = _ci_with_status(tracking_relation="tracking-ahead", upstream_ref="origin/main")
+    diverged = _ci_with_status(tracking_relation="diverged", upstream_ref="origin/main")
+    equal = _ci_with_status(tracking_relation="equal", upstream_ref="origin/main")
+    local_ahead = _ci_with_status(tracking_relation="local-ahead", upstream_ref="origin/main")
+    assert tracking_warning(behind) == "local target behind fetched origin/main"
+    assert tracking_warning(diverged) == "local target diverged from fetched origin/main"
+    assert tracking_warning(equal) is None and tracking_warning(local_ahead) is None
+    behind.git_status = None
+    assert tracking_warning(behind) is None
+
+
 def _ci_with_status(**status_kwargs):
     from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ContainerInfo

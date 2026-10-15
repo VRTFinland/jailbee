@@ -29,6 +29,7 @@ from jailbee.lifecycle import (
     annotate_activity,
     annotate_agent_status,
     list_containers,
+    tracking_findings,
 )
 from jailbee.paths import repo_config_path
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -307,9 +308,19 @@ def dashboard_config_migration_notice() -> str | None:
     return "; ".join(retired) if retired else None
 
 
-def dashboard_group_notices(groups: Sequence[RepoGroup]) -> list[str]:
-    """Config migration notices from the already gathered repo configurations."""
-    return [f"{group.prefix}: {group.column_notice}" for group in groups if group.column_notice]
+def group_warnings(group: RepoGroup) -> list[tuple[str, str]]:
+    """``(label, text)`` warnings about one repository, for its heading.
+
+    The configuration's own migration notice, then one line per base whose
+    fetched remote-tracking ref is ahead of (or diverged from) the local one.
+    Built from the already gathered group, so it reads nothing new.
+    """
+    out: list[tuple[str, str]] = []
+    if group.column_notice:
+        out.append(("config note", group.column_notice))
+    for _repo, base, warning in tracking_findings(group.containers):
+        out.append(("target", f"{base}: {warning}"))
+    return out
 
 
 def gather_rows(

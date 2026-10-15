@@ -216,8 +216,10 @@ next status gather sees that new local tip automatically.
 When both local and tracking refs exist, local always wins. Tracking is only
 the last-fetched copy: if it is ahead of local, status reports `local target
 behind fetched <upstream>/<base>`; if the refs have diverged it reports
-`diverged`. These notices do not claim to know the remote server's current
-state. If neither ref exists, or the selected host commit object is unreadable
+`diverged`. `jailbee ls` prints them once per repository and base; the
+dashboard shows them in the affected container's details panel and card, and
+on the repository heading. These notices do not claim to know the remote
+server's current state. If neither ref exists, or the selected host commit object is unreadable
 from the container, comparison-dependent values are `?`; JailBee does not
 fall back to a pinned anchor or another branch. Live worktree and merge-state
 information remain independently available.

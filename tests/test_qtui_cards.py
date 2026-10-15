@@ -844,3 +844,42 @@ def test_default_card_shows_the_doing_line_without_the_doing_column(qtbot):
     view.set_groups(groups, now=datetime.now().astimezone(), columns=None)
 
     assert "pytest" in _label_texts(_card(view, "p-foo"))
+
+
+def test_card_shows_a_yellow_warning_line_in_both_styles(qtbot):
+    from jailbee.qtui.model import CardContent
+
+    cc = CardContent(
+        name="feat", state="Running", fields=[], warning="local target behind fetched origin/dev"
+    )
+    for style in ("compact", "grid"):
+        card = _Card("p-feat", cc, style=style, selected=False)
+        qtbot.addWidget(card)
+        assert "⚠ local target behind fetched origin/dev" in _label_texts(card)
+    clean = _Card("p-feat", CardContent(name="feat", state="Running", fields=[]), selected=False)
+    qtbot.addWidget(clean)
+    assert not any("⚠" in t for t in _label_texts(clean))
+
+
+def test_repo_header_is_marked_and_explains_its_warning_in_a_tooltip(qtbot):
+    from jailbee.git_status import GitStatus
+
+    groups = _groups()
+    behind = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        tracking_relation="tracking-ahead",
+        upstream_ref="origin/main",
+    )
+    groups[0].containers[0].git_status = behind
+    groups[0].containers[0].base_branch = "main"
+    view = CardView()
+    qtbot.addWidget(view)
+    view.set_groups(groups, now=datetime.now().astimezone())
+    header = _group_header(view, "p")
+    assert "⚠" in header.text()
+    assert "local target behind fetched origin/main" in header._title.toolTip()
+    assert any("⚠" in t for t in _label_texts(_card(view, "p-foo")))
+    assert not any("⚠" in t for t in _label_texts(_card(view, "p-bar")))

@@ -27,11 +27,13 @@ from rich.text import Text
 
 from jailbee.agent_activity import describe
 from jailbee.dashboard import format as dashboard_format
+from jailbee.dashboard.model import group_warnings
 from jailbee.lifecycle import (
     ContainerInfo,
     format_duration_short,
     ls_field_specs,
     submodule_sub_rows,
+    tracking_warning,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +84,9 @@ class ContainerPanel:
     repo's defaults (loose network, attached mounts, its own egress entries;
     empty: the line is not drawn), ``git`` its trees (None without a git
     status), ``footer`` one dim line of the rest. ``base`` names the branch
-    the git table's diff column compares with.
+    the git table's diff column compares with. ``warnings`` are yellow lines
+    under the exceptions line (the fetched target is behind, say); empty:
+    none are drawn.
     """
 
     summary: tuple[str, ...]
@@ -90,6 +94,7 @@ class ContainerPanel:
     git: tuple[GitRow, ...] | None
     footer: tuple[str, ...]
     exceptions: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,7 +107,8 @@ class DetailsView:
     view is guaranteed while any container has activity, so the table keeps
     its height as the cursor moves; the panel grows past it only into rows
     the table does not need. ``panel`` is a container's summary / git table /
-    footer, drawn in place of ``items``; a repo heading has none.
+    footer, drawn in place of ``items``; a repo heading has none. ``warnings``
+    are a repo heading's yellow lines under its grid, each as wide as the panel.
     """
 
     title: str
@@ -112,6 +118,7 @@ class DetailsView:
     message: str | None = None
     history: tuple[str, ...] = ()
     panel: ContainerPanel | None = None
+    warnings: tuple[str, ...] = ()
 
     @property
     def base_rows(self) -> int:
@@ -288,7 +295,14 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         git,
         tuple(footer),
         _exceptions(c, now, cell("ttl")),
+        _warnings(c),
     )
+
+
+def _warnings(c: ContainerInfo) -> tuple[str, ...]:
+    """Yellow lines for what is off about ``c``'s git target, as markup."""
+    warning = tracking_warning(c)
+    return () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
 
 
 def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
@@ -338,6 +352,15 @@ def repo_details(group: RepoGroup) -> list[DetailItem]:
     ]
 
 
+def repo_warnings(group: RepoGroup) -> tuple[str, ...]:
+    """A repo heading's warnings (a retired config key, a fetched target ahead of
+    the local one) as yellow markup lines."""
+    return tuple(
+        f"[yellow]⚠ {escape(label)}: {escape(text)}[/yellow]"
+        for label, text in group_warnings(group)
+    )
+
+
 def details_for(
     groups: Sequence[RepoGroup], selected: Row | None, now: datetime
 ) -> DetailsView | None:
@@ -362,7 +385,12 @@ def details_for(
         return (
             None
             if group is None
-            else DetailsView(group.prefix, tuple(repo_details(group)), reserve_rows=reserve)
+            else DetailsView(
+                group.prefix,
+                tuple(repo_details(group)),
+                reserve_rows=reserve,
+                warnings=repo_warnings(group),
+            )
         )
     for g in groups:
         for c in g.containers:
@@ -409,9 +437,11 @@ def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     Blank lines go first, then submodule rows, which one row then counts;
     the summary, the exceptions line and the footer stay. Only a panel too
     short for the table's head loses the table, and then the footer; the
-    summary and the exceptions line are never dropped.
+    summary, the exceptions line and the warnings stay, cut from the bottom
+    only by a cap below their own count.
     """
-    top = 2 if panel.exceptions else 1  # the summary, and the exceptions line under it
+    # the summary, then the exceptions line and the warnings under it
+    top = 1 + bool(panel.exceptions) + len(panel.warnings)
     subs = 0 if panel.git is None else len(panel.git) - 1
     head = 1 if panel.git is None else 2
     full = top + head + subs + 1
@@ -495,9 +525,12 @@ def _panel_lines(
     def one(markup: str) -> None:
         lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
 
-    one(_SUMMARY_GAP.join(panel.summary))
+    top = [_SUMMARY_GAP.join(panel.summary)]
     if panel.exceptions:
-        one(_SUMMARY_GAP.join(panel.exceptions))
+        top.append(_SUMMARY_GAP.join(panel.exceptions))
+    top.extend(panel.warnings)
+    for markup in top if cap is None else top[:cap]:  # a cap under the top lines cuts the last
+        one(markup)
     if fit.blanks:
         lines.append([_BLANK])
     if fit.git:
@@ -617,7 +650,13 @@ class _DetailsBody:
                 else:
                     cells += ["", ""]
             grid.add_row(*cells)
-        return console.render_lines(grid, options.update(height=None), pad=False)
+        lines = console.render_lines(grid, options.update(height=None), pad=False)
+        room = None if cap is None else max(0, cap - len(lines))
+        for markup in self.view.warnings if room is None else self.view.warnings[:room]:
+            lines += console.render_lines(_one_row(markup), options.update(height=None), pad=False)[
+                :1
+            ]
+        return lines
 
 
 @dataclass(frozen=True)

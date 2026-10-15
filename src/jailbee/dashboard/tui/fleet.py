@@ -22,7 +22,7 @@ from rich.text import Text
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
-from jailbee.dashboard.model import RepoGroup, Row, selectable_rows
+from jailbee.dashboard.model import RepoGroup, Row, group_warnings, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.viewport import column_viewport
@@ -61,8 +61,8 @@ class Entry:
     row: Row
     group: RepoGroup = field(compare=False, repr=False)
     container: ContainerInfo | None = None
-    heading: tuple[int, bool, int] | None = None
-    """For a heading: (container count, orphan, marked count) — what its text depends on."""
+    heading: tuple[int, bool, int, bool] | None = None
+    """For a heading: (container count, orphan, marked count, warned) — what its text depends on."""
     marked: bool = False
     running: bool = False
     source: bool = False
@@ -153,6 +153,7 @@ def table_model(
                     len(group.containers),
                     group.repo_root is None,
                     sum(1 for c in group.containers if c.name in marked),
+                    bool(group_warnings(group)),
                 ),
             )
         )
@@ -260,7 +261,11 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
 
 
 def repo_heading(
-    group: RepoGroup, selected: Row | None, folded: frozenset[str], marked: int = 0
+    group: RepoGroup,
+    selected: Row | None,
+    folded: frozenset[str],
+    marked: int = 0,
+    warned: bool = False,
 ) -> Text:
     """Render a repo heading independently of the table's data columns.
 
@@ -278,6 +283,8 @@ def repo_heading(
         rest += "  (orphan)"
     if marked:
         rest += f"  ●{marked}"
+    if warned:
+        rest += "  ⚠"  # the details panel, with the cursor on the heading, says what
     if selected == Row("repo", group.prefix):
         style = CURSOR_STYLE
     else:
@@ -303,6 +310,7 @@ def entry_line(
             entry.row if selected else None,
             folded,
             marked=entry.heading[2] if entry.heading else 0,
+            warned=entry.heading[3] if entry.heading else False,
         )
         heading.no_wrap = True
         heading.end = ""

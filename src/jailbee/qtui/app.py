@@ -34,12 +34,10 @@ from jailbee.dashboard.model import (
     RepoTarget,
     collect_repo_roots,
     dashboard_config_migration_notice,
-    dashboard_group_notices,
     present,
 )
 from jailbee.dashboard.sorting import SortSpec
 from jailbee.db.view_prefs import FRONTEND_QT
-from jailbee.lifecycle import tracking_notices
 from jailbee.qtui.actions import (
     ActionCommand,
     TerminalNotFoundError,
@@ -164,10 +162,6 @@ class AppController(QObject):
         now = datetime.now().astimezone()
         self._window.set_groups(groups, now=now)
         self._window.set_refresh_ok(at=now, git_enabled=self._git_enabled)
-        notices = tracking_notices([c for group in groups for c in group.containers])
-        notices.extend(dashboard_group_notices(groups))
-        if notices:
-            self._window.set_status("; ".join(notices))
 
     @Slot(str)
     def on_failed(self, msg: str) -> None:

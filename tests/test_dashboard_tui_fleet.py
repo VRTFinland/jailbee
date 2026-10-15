@@ -441,3 +441,25 @@ def test_hover_follows_the_pointer_after_a_wheel_scroll(mocker):
 def test_wheel_scroll_leaves_hover_cleared_when_mouse_is_off(mocker):
     seen = _scrolled_hover_script(mocker, mouse_on=False)
     assert seen["after"] is None and seen["table_hover"] is None
+
+
+def test_a_repo_heading_with_a_warning_is_marked_and_keeps_its_entry_key():
+    group = _model(2).entries[0].group
+    quiet = fleet.repo_heading(group, None, frozenset())
+    warned = fleet.repo_heading(group, None, frozenset(), warned=True)
+    assert "⚠" not in quiet.plain and warned.plain == quiet.plain + "  ⚠"
+
+    noted = replace(group, column_notice="ahead_diff retired")
+    model = fleet.table_model(
+        [noted],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+    assert model.entries[0].heading is not None and model.entries[0].heading[3] is True
+    assert _model(2).entries[0].heading[3] is False
