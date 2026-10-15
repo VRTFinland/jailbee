@@ -51,7 +51,9 @@ def test_candidate_scopes_returns_repo_then_sorted_submodules(tmp_path, mocker):
     mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a"])
     mocker.patch(
         "jailbee.submodule_pr.resolve_remote",
-        side_effect=lambda _repo_root, subpath: {"a": "a-upstream", "z": "z-origin"}[subpath],
+        side_effect=lambda _repo_root, subpath, **kwargs: {"a": "a-upstream", "z": "z-origin"}[
+            subpath
+        ],
     )
 
     scopes = pr_flow.candidate_scopes(cfg)
@@ -2010,3 +2012,13 @@ def test_confirm_branch_name_prompts_when_there_is_no_source_branch(mocker):
 
     assert pr_flow.confirm_pr_branch_name("feat/x", None) == "feat/typed"
     prompt.assert_called_once()
+
+
+def test_scope_for_submodule_uses_located_root(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    root = tmp_path / ".git/modules/custom"
+    locate = mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    remote = mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    assert pr_flow.PrScope.for_submodule(cfg, "lib").repo_root == root
+    locate.assert_called_once_with(cfg.repo_root, "lib")
+    remote.assert_called_once_with(cfg.repo_root, "lib", host_root=root)

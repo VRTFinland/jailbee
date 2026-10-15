@@ -40,7 +40,7 @@ def _env(mocker, tmp_path, *, record=None):
     ]
     incus.config_get.return_value = None
     mocker.patch("jailbee.pr_flow.validate_outbox_source")
-    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
     mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="develop")
     mocker.patch(
@@ -537,7 +537,7 @@ def test_confirmation_payload_and_abort_precede_transport(mocker, tmp_path):
 
     cfg, incus, create = _env(mocker, tmp_path)
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
-    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     confirm = mocker.Mock(side_effect=typer.Abort())
     with pytest.raises(typer.Abort):
         publish_submodule_pr(
@@ -598,3 +598,57 @@ def test_orchestration_isolates_known_errors_but_not_programming_errors(mocker, 
             ("lib/a", "failed"),
             ("lib/b", "created"),
         ]
+
+
+def test_flow_uses_container_declared_base_for_gitdir_only_module(mocker, tmp_path):
+    from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
+
+    cfg, incus, _ = _env(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value="release")
+    base = mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="release")
+    publish_submodule_pr(
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        "feat-foo",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/home/dev/repo",
+        confirm_plan=None,
+        offer_comments=lambda *args: 0,
+    )
+    assert base.call_args.kwargs["override"] == "release"
+
+
+def test_flow_propagates_authoritative_transport_root(mocker, tmp_path):
+    from jailbee import submodule_pr, submodules
+    from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
+
+    cfg, incus, _ = _env(mocker, tmp_path)
+    root = tmp_path / ".git/modules/outer-custom/modules/inner-custom"
+    context = submodules.HostSubRepo("lib/a", root, None)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=context)
+    remote = mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+    base = mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="trunk")
+    publish = mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=submodule_pr.SubPublishResult("r", "feat/foo", False),
+    )
+    github = mocker.patch("jailbee.pr.assert_github_remote")
+    publish_submodule_pr(
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        "feat-foo",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/home/dev/repo",
+        confirm_plan=None,
+        offer_comments=lambda *args: 0,
+    )
+    assert remote.call_args.kwargs["host_root"] == root
+    assert base.call_args.kwargs["host_root"] == root
+    assert publish.call_args.kwargs["host_root"] == root
+    assert github.call_args.args[:2] == (root, "upstream")

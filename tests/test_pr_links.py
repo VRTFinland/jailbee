@@ -112,6 +112,19 @@ def test_authored_superproject_gets_block_and_submodule_gets_part_of(mocker, tmp
     }
 
 
+def test_submodule_backlink_uses_located_gitdir(mocker, tmp_path):
+    from jailbee.pr_links import link_pr_family
+
+    cfg, incus, body, edit = _labels(
+        mocker, tmp_path, {"user.jailbee.pr": "34", "user.jailbee.pr_author": "1"}, SUB
+    )
+    root = tmp_path / ".git/modules/custom"
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    link_pr_family(cfg, incus, "c", "s")
+    assert body.call_args_list[-1].args == (root, 7)
+    assert edit.call_args_list[-1].args == (root, 7)
+
+
 def test_foreign_superproject_is_not_edited(mocker, tmp_path):
     from jailbee.pr_links import link_pr_family
 

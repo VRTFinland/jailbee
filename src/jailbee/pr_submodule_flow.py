@@ -317,13 +317,19 @@ def publish_submodule_pr(
     # host clone where `git submodule update --init` never ran for this
     # path), the sub-repo does not exist until this call clones it — see
     # `submodule_pr.transport_submodule_to_host`'s docstring.
-    submodule_pr.transport_submodule_to_host(
+    host_sub = submodule_pr.transport_submodule_to_host(
         cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
     )
 
-    scope = pr_flow.PrScope.for_submodule(cfg, subpath)
+    host_root = host_sub.root if host_sub is not None else None
+    scope = pr_flow.PrScope.for_submodule(cfg, subpath, host_root=host_root)
     remote = scope.remote
-    resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=opts.base)
+    declared_base = opts.base or submodules.declared_branch_for_top_relative_path(
+        submodules._container_runner(incus, full, uid=cfg.container_user.uid), repo_dir, subpath
+    )
+    resolved_base = submodule_pr.resolve_base_branch(
+        cfg.repo_root, subpath, override=declared_base, host_root=host_root
+    )
     if opts.pr_number is not None:
         # After the transport, not before: for a submodule the host has never
         # seen, `scope.repo_root` does not exist as a git repo until the
@@ -436,6 +442,7 @@ def publish_submodule_pr(
                     publish_name=publish_name,
                     remote=remote,
                     force=opts.force,
+                    host_root=scope.repo_root,
                 )
             except submodule_pr.SubmodulePrError as exc:
                 error(str(exc))

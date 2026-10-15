@@ -241,9 +241,13 @@ def test_resolve_base_descends_two_real_gitmodules_levels_for_a_nested_submodule
 
 def test_resolve_base_uses_the_remote_head(tmp_path, mocker):
     mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value=None)
-    mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
+    root = tmp_path / ".git/modules/custom"
+    locate = mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    detect = mocker.patch("jailbee.git.detect_upstream_remote", return_value="upstream")
     mocker.patch("jailbee.git.run_capture", return_value=(True, "upstream/trunk\n"))
     assert submodule_pr.resolve_base_branch(tmp_path, "lib/a", override=None) == "trunk"
+    locate.assert_called_once_with(tmp_path, "lib/a")
+    detect.assert_called_once_with(root)
 
 
 def test_resolve_base_falls_back_to_main(tmp_path, mocker):
@@ -574,3 +578,15 @@ def test_submodule_pr_plan_is_frozen():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         _plan().base = "other"
+
+
+def test_publish_uses_located_gitdir_for_source_lease_and_push(tmp_path, mocker):
+    root = tmp_path / ".git/modules/custom"
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    source = mocker.patch("jailbee.git.rev_parse", return_value="abc123")
+    lease = mocker.patch("jailbee.git.remote_branch_sha", return_value="deadbee")
+    push = mocker.patch("jailbee.git.push_to_remote")
+    _publish(tmp_path, mocker, force=True)
+    assert source.call_args.args[0] == root
+    assert lease.call_args.args[0] == root
+    assert push.call_args.args[0] == root

@@ -7,7 +7,7 @@ from subprocess import CompletedProcess
 import pytest
 from typer.testing import CliRunner
 
-from jailbee import pr_flow, pr_outbox
+from jailbee import pr_flow, pr_outbox, submodules
 from jailbee.cli import app
 from jailbee.outbox.models import OutboxChanged, StoreSnapshot
 from jailbee.outbox_io import ContainerIdentity
@@ -79,7 +79,11 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
                 )
             ],
         )
-        mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+        mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+        mocker.patch(
+            "jailbee.submodule_pr.transport_submodule_to_host",
+            return_value=submodules.HostSubRepo(path="lib/a", gitdir=root / ".git", worktree=root),
+        )
         mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
         mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="main")
         mocker.patch(

@@ -96,7 +96,7 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None, mock_state_r
     # resolve_base_branch/assert_github_remote (FIX 2 — see
     # test_transport_runs_before_the_steps_that_read_the_host_subrepo, which
     # gives it a real side_effect to check the ordering).
-    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
     mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="develop")
     mocker.patch(
@@ -599,6 +599,9 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
         assert cmd[:4] == ["gh", "pr", "edit", "123"]
         return CompletedProcess(cmd, 1 if outcome == "failed_edit" else 0, "", "edit denied")
 
+    # The synthetic fixture has no Git commit tree for the host locator.
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=tmp_path / "lib/a")
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("subprocess.run", side_effect=run)
     result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
 
@@ -987,7 +990,7 @@ def test_picking_a_zero_commit_submodule_proceeds_to_transport_and_publish(mocke
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/idle")
     mocker.patch("typer.confirm", return_value=True)
-    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
 
     result = runner.invoke(app, ["submodule", "pr"])
 
@@ -1020,7 +1023,7 @@ def test_cancelling_the_picker_aborts_without_transporting(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value=None)
-    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
 
     result = runner.invoke(app, ["submodule", "pr"])
 
@@ -1033,7 +1036,7 @@ def test_declining_the_confirmation_transports_nothing(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=False)
-    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
     result = runner.invoke(app, ["submodule", "pr"])

@@ -1399,7 +1399,10 @@ def sync_refs_from_container(
     repo_dir = container_repo_dir(cfg, incus, full_name)
     # Objects first: the submodule refs placed below name commits that have to
     # already exist in the host sub-repos.
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    try:
+        submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     target = as_name or _container_pr_branch(incus, full_name) or fetch_result.branch
     fetched_ref = f"refs/jailbee/{short}/{fetch_result.branch}"
@@ -1428,6 +1431,43 @@ def sync_refs_from_container(
         submodules=tuple(sub_placements),
         anchors_refreshed=anchors,
     )
+
+
+def _move_host_head[T](
+    cfg: Config, *, target: str, base: str | None = None, op: Callable[[], T], label: str
+) -> T:
+    """Precheck disappearing submodules, move HEAD, then prune their worktrees.
+
+    A failed operation (including an unresolved merge) never prunes. Merge
+    callers supply the merge base so only incoming deletions are considered.
+    """
+    top = str(Path(cfg.repo_root).resolve())
+    head = git.rev_parse(cfg.repo_root, "HEAD")
+    try:
+        vanishing = (
+            submodules.vanishing_submodules(
+                git.run_capture, top, head=head, target=target, base=base
+            )
+            if head is not None
+            else []
+        )
+        submodules.assert_vanishing_clean(git.run_capture, top, vanishing, target_label=label)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
+    result = op()
+    if vanishing:
+        try:
+            submodules.prune_vanished_worktrees(
+                git.run_capture, top, vanishing, fs=submodules.HostFs(), target_label=label
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
+    return result
+
+
+def _merge_base(cfg: Config, ref: str) -> str | None:
+    ok, out = git.run_capture(str(cfg.repo_root), ["merge-base", "HEAD", ref])
+    return out.strip() if ok and out.strip() else None
 
 
 def _place_host_branch(
@@ -1488,7 +1528,14 @@ def _place_host_branch(
             "branch on the host first.",
         )
         try:
-            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+            _move_host_head(
+                cfg,
+                target=fetched_ref,
+                label=target,
+                op=lambda: git.merge_ref(
+                    cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True
+                ),
+            )
         except git.GitError:
             if git.host_tree_dirty(cfg.repo_root):
                 # Git declined because local modifications are in the way,
@@ -1677,7 +1724,12 @@ def checkout_from_container(
         git.set_upstream(cfg.repo_root, target, f"{cfg.upstream_remote}/{target}")
 
     if git.get_current_branch(cfg.repo_root) != target:
-        git.checkout_branch(cfg.repo_root, target)
+        _move_host_head(
+            cfg,
+            target=target,
+            label=target,
+            op=lambda: git.checkout_branch(cfg.repo_root, target),
+        )
 
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
@@ -1724,7 +1776,12 @@ def checkout_submodules_on_host(
         )
     if switch_superproject:
         try:
-            git.checkout_branch(cfg.repo_root, resolved)
+            _move_host_head(
+                cfg,
+                target=resolved,
+                label=resolved,
+                op=lambda: git.checkout_branch(cfg.repo_root, resolved),
+            )
         except git.GitError as exc:
             raise SyncError(f"could not check out '{resolved}' in the superproject: {exc}") from exc
     submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
@@ -1858,29 +1915,24 @@ def merge_from_container(
     fetched_ref = f"refs/jailbee/{short}/{container_branch}"
 
     repo_dir = container_repo_dir(cfg, incus, full_name)
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    try:
+        submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     if target == current:
         # In-place path: HEAD IS the target branch.
         pre_merge_head = git.rev_parse(cfg.repo_root, "HEAD")
-        if ff == "always":
-            git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
-        else:
-            # `auto` passes neither flag, which is git's own default: fast-forward
-            # when the target is strictly behind, merge commit otherwise. The
-            # message is passed either way — git ignores `-m` on a fast-forward.
-            try:
-                git.merge_ref(
-                    cfg.repo_root,
-                    fetched_ref,
-                    message=f"Merge branch '{container_branch}' from container {short}",
-                    no_ff=(ff == "never"),
-                    ff_only=False,
-                )
-            except git.GitError:
-                _resolve_gitlinks_and_commit_host(
-                    cfg, branch=container_branch, location=f"cd {cfg.repo_root}"
-                )
+
+        _move_host_head(
+            cfg,
+            target=fetched_ref,
+            base=_merge_base(cfg, fetched_ref),
+            label=target or fetched_ref,
+            op=lambda: _merge_host_ref(
+                cfg, fetched_ref, container_branch, short, ff, location=f"cd {cfg.repo_root}"
+            ),
+        )
         head_oid = git.rev_parse(cfg.repo_root, "HEAD")
         if head_oid is None:
             raise SyncError("merge succeeded but HEAD did not resolve")
@@ -1910,8 +1962,15 @@ def merge_from_container(
         head_oid = git.rev_parse(cfg.repo_root, fetched_ref)
         if head_oid is None:
             raise SyncError("fast-forward succeeded but ref did not resolve")
+        # Keep submodule branches aligned without requiring a host checkout.
+        submodules.place_branches_from_commit(cfg.repo_root, head_oid, target)
         if allow_checkout:
-            git.checkout_branch(cfg.repo_root, target)
+            _move_host_head(
+                cfg,
+                target=target,
+                label=target,
+                op=lambda: git.checkout_branch(cfg.repo_root, target),
+            )
             submodules.update_submodules_on_host(cfg.repo_root, branch=target)
         result = MergeResult(
             fetch=fetch_result,
@@ -1950,6 +2009,31 @@ def merge_from_container(
     return _with_anchors(cfg, incus, result)
 
 
+def _merge_host_ref(
+    cfg: Config,
+    fetched_ref: str,
+    container_branch: str,
+    short: str,
+    ff: FfPolicy,
+    *,
+    location: str,
+) -> None:
+    """Merge a fetched ref, resolving gitlinks only when merge commits are allowed."""
+    if ff == "always":
+        git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+        return
+    try:
+        git.merge_ref(
+            cfg.repo_root,
+            fetched_ref,
+            message=f"Merge branch '{container_branch}' from container {short}",
+            no_ff=(ff == "never"),
+            ff_only=False,
+        )
+    except git.GitError:
+        _resolve_gitlinks_and_commit_host(cfg, branch=container_branch, location=location)
+
+
 def _merge_via_checkout(
     cfg: Config,
     fetch_result: FetchResult,
@@ -1968,23 +2052,27 @@ def _merge_via_checkout(
     conflict the host is left on ``target`` in merge state so the user can
     resolve it; a ``SyncError`` carries the hint.
     """
-    git.checkout_branch(cfg.repo_root, target)
-    try:
-        git.merge_ref(
-            cfg.repo_root,
-            fetched_ref,
-            message=f"Merge branch '{container_branch}' from container {short}",
-            no_ff=(ff == "never"),
-            ff_only=False,
-        )
-    except git.GitError:
-        # Auto-resolve submodule gitlink pointers; on remaining conflicts the host
-        # is left on `target` in merge state (SyncError tells the user how to finish).
-        _resolve_gitlinks_and_commit_host(
+    _move_host_head(
+        cfg,
+        target=target,
+        label=target,
+        op=lambda: git.checkout_branch(cfg.repo_root, target),
+    )
+
+    _move_host_head(
+        cfg,
+        target=fetched_ref,
+        base=_merge_base(cfg, fetched_ref),
+        label=target,
+        op=lambda: _merge_host_ref(
             cfg,
-            branch=container_branch,
+            fetched_ref,
+            container_branch,
+            short,
+            ff,
             location=f"cd {cfg.repo_root}  # on '{target}' in merge state; resolve, commit",
-        )
+        ),
+    )
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:
         raise SyncError("merge succeeded but HEAD did not resolve")
@@ -2376,6 +2464,15 @@ def push_to_container(
     else:
         assert_never(tags)
 
+    if namespace == "host":
+        # Transfer pinned submodule objects before the superproject ref.
+        try:
+            submodules.transport_submodules_to_container(
+                cfg, incus, full_name, repo_dir=repo_dir, commit=new_oid
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
+
     if len(refspecs) == 1:
         git.push_url(cfg.repo_root, url, refspecs[0])
     else:
@@ -2458,6 +2555,21 @@ def _merge_ref_in_container(
         "LOGNAME": CONTAINER_USERNAME,
     }
 
+    run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
+    head = _container_ref_oid(incus, full_name, repo_dir, "HEAD", uid=uid)
+    try:
+        ok, base_out = run(repo_dir, ["merge-base", "HEAD", ref])
+        vanishing = (
+            submodules.vanishing_submodules(
+                run, repo_dir, head=head, target=ref, base=base_out.strip() if ok else None
+            )
+            if head is not None
+            else []
+        )
+        submodules.assert_vanishing_clean(run, repo_dir, vanishing, target_label=label)
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
+
     try:
         _exec_container_git_write(incus, full_name, merge_cmd, uid=uid, env=git_env)
     except IncusError as exc:
@@ -2469,7 +2581,6 @@ def _merge_ref_in_container(
             raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
-        run = submodules._container_runner(incus, full_name, uid=uid, env=git_env)
         report = submodules.resolve_gitlink_conflicts(
             run, repo_dir, message=_sub_merge_message(label)
         )
@@ -2491,7 +2602,19 @@ def _merge_ref_in_container(
             uid=uid,
             env=git_env,
         )
-        # Fall through to the post-merge tail (update_submodules_in_container + head).
+        # Fall through to the post-merge tail (prune + update_submodules_in_container + head).
+
+    if vanishing:
+        try:
+            submodules.prune_vanished_worktrees(
+                run,
+                repo_dir,
+                vanishing,
+                fs=submodules.ContainerFs(incus, full_name, uid=uid),
+                target_label=label,
+            )
+        except submodules.SubmoduleError as exc:
+            raise SyncError(str(exc)) from exc
 
     submodules.update_submodules_in_container(
         incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
@@ -2808,7 +2931,6 @@ def push_and_merge(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,
@@ -2940,19 +3062,26 @@ def merge_container_into_container(
     fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch, tags="none")
     source_full = resolve_container_name(cfg, incus, source_short)
     source_repo_dir = container_repo_dir(cfg, incus, source_full)
-    submodules.transport_submodules_to_host(
-        cfg, incus, source_full, source_short, repo_dir=source_repo_dir
-    )
-    sub_paths = submodules._container_submodule_paths(incus, source_full, source_repo_dir, uid=uid)
-    if sub_paths:
-        submodules.transport_submodules_to_container(
-            cfg,
-            incus,
-            target_full,
-            repo_dir=target_repo_dir,
-            source_ns=source_short,
-            paths=sub_paths,
+    try:
+        host_repos = submodules.transport_submodules_to_host(
+            cfg, incus, source_full, source_short, repo_dir=source_repo_dir
         )
+        sub_paths = submodules._container_submodule_paths(
+            incus, source_full, source_repo_dir, uid=uid
+        )
+        if sub_paths:
+            submodules.transport_submodules_to_container(
+                cfg,
+                incus,
+                target_full,
+                repo_dir=target_repo_dir,
+                source_ns=source_short,
+                mode="relay",
+                host_repos=host_repos,
+                paths=sub_paths,
+            )
+    except submodules.SubmoduleError as exc:
+        raise SyncError(str(exc)) from exc
 
     push_result = push_to_container(
         cfg,
@@ -3059,7 +3188,6 @@ def push_and_rebase(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,
@@ -3150,7 +3278,6 @@ def push_and_reset(
     uid = cfg.container_user.uid
     container_branch = _run_container_preflights(incus, full_name, repo_dir, uid=uid)
 
-    submodules.transport_submodules_to_container(cfg, incus, full_name, repo_dir=repo_dir)
     push_result = push_to_container(
         cfg,
         incus,
