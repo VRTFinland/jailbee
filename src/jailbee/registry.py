@@ -706,5 +706,6 @@ def lockdown_report(incus: Incus, gcfg: GlobalConfig) -> tuple[bool | None, str]
     names = ", ".join(r.name for r in leaked)
     return False, (
         f"leaking: {names} ({'; '.join(r.detail for r in leaked)}) — run 'jailbee registry up' "
-        f"to sync the locked-down config, or 'jailbee registry up --recreate' if that does not fix it"
+        "to sync the locked-down config, or 'jailbee registry up --recreate' "
+        "if that does not fix it"
     )

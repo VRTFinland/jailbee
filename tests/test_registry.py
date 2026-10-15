@@ -663,6 +663,7 @@ _CURRENT_ENV = (
     "gcr.io ghcr.io quay.io registry.k8s.io\n"
 )
 
+
 def _mirror(env: str = "", nginx: str | None = None, unit: str | None = None) -> MagicMock:
     """An Incus mock whose `cat` reads return these mirror file contents.
 
@@ -765,7 +766,6 @@ def test_sync_leaves_a_converged_mirror_alone():
     assert _exec_bash_calls(incus) == []
 
 
-
 def test_sync_mirror_env_configures_a_fresh_mirror_without_extra_registries():
     """A repo with no extra registries still needs the tuning: IPv6 upstreams
     the host cannot reach, and nginx's 60 s connect timeout, are what push a
@@ -788,9 +788,7 @@ def test_sync_mirror_env_upgrades_a_file_written_by_an_older_jailbee():
     """Existing mirrors hold only REGISTRIES=. Nothing new is requested, but
     the tuning is missing — the file must still be rewritten, or the fix never
     reaches a mirror that predates it."""
-    incus = _mirror(env=(
-        "REGISTRIES=ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io\n"
-    ))
+    incus = _mirror(env=("REGISTRIES=ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io\n"))
 
     changed = sync_mirror_env(incus, [])
 
@@ -830,10 +828,12 @@ def test_sync_mirror_env_restores_a_hand_edited_tuning_value():
 def test_sync_mirror_env_preserves_keys_it_does_not_own():
     """rpardini reads more than jailbee sets (AUTH_REGISTRIES carries upstream
     credentials); a key added by hand must survive a rewrite."""
-    incus = _mirror(env=(
-        "AUTH_REGISTRIES=reg.example.com:user:secret\n"
-        "REGISTRIES=gcr.io ghcr.io quay.io registry.k8s.io\n"
-    ))
+    incus = _mirror(
+        env=(
+            "AUTH_REGISTRIES=reg.example.com:user:secret\n"
+            "REGISTRIES=gcr.io ghcr.io quay.io registry.k8s.io\n"
+        )
+    )
 
     sync_mirror_env(incus, [])
 

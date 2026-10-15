@@ -97,7 +97,9 @@ def _probe_connect(host: str, port: int, timeout: float) -> ProbeResult:
     sock, status, _ = _connect(host, port, timeout, "example.com")
     sock.close()
     if status == 200:
-        return ProbeResult("connect", ProbeOutcome.LEAKED, "CONNECT example.com:443 → tunnel opened")
+        return ProbeResult(
+            "connect", ProbeOutcome.LEAKED, "CONNECT example.com:443 → tunnel opened"
+        )
     return ProbeResult("connect", ProbeOutcome.REFUSED, f"CONNECT example.com:443 → {status}")
 
 
@@ -140,14 +142,24 @@ def run_selftest(
         (
             "host-header",
             lambda: _probe_in_tunnel(
-                host, port, timeout, tls_wrap, name="host-header", expect=403,
+                host,
+                port,
+                timeout,
+                tls_wrap,
+                name="host-header",
+                expect=403,
                 request="GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n",
             ),
         ),
         (
             "method",
             lambda: _probe_in_tunnel(
-                host, port, timeout, tls_wrap, name="method", expect=405,
+                host,
+                port,
+                timeout,
+                tls_wrap,
+                name="method",
+                expect=405,
                 request=(
                     f"PATCH /v2/ HTTP/1.1\r\nHost: {_REGISTRY}\r\n"
                     "Content-Length: 0\r\nConnection: close\r\n\r\n"
