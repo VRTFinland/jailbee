@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, assert_never
 
 from rich.markup import escape
+from rich.text import Text
 
 from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
@@ -1901,9 +1902,6 @@ def _print_plan(
         f"head {escape(target.pr.head_sha)}"
     )
     console.print(f"container {escape(short)} · manifest {escape(manifest.name)}")
-    warning = foreign_warning(target, short)
-    if warning is not None:
-        console.print(f"[bold yellow]⚠ {escape(warning)}[/bold yellow]")
     if target.stale:
         console.print("[yellow]the PR head has moved since this was written[/yellow]")
     already = [i for i in sorted(progress.applied) if i < len(manifest.actions)]
@@ -2419,9 +2417,6 @@ def _offer_locked(
             )
             console.print(f"Container: {safe_text(container)}", markup=False, highlight=False)
             console.print(f"Head: {safe_text(target.pr.head_sha)}", markup=False, highlight=False)
-            warning = foreign_warning(target, short)
-            if warning is not None:
-                console.print(f"Warning: {safe_text(warning)}", markup=False, highlight=False)
             print_lines(show_lines(displayed))
             if progress.applied:
                 console.print(f"Already published (skipped): {sorted(progress.applied)}")
@@ -2430,6 +2425,15 @@ def _offer_locked(
         else:
             _print_plan(cfg, short, target, progress, indices=idx)
     _print_identity(cfg, total)
+    # Last, directly above the question: at the top of a long plan a warning
+    # scrolls out of sight before anyone answers.
+    # The repository name comes from the container: strip control characters.
+    from jailbee.outbox.inspect import safe_text
+
+    for target, _, _ in plans:
+        warning = foreign_warning(target, short)
+        if warning is not None:
+            console.print(Text(f"⚠ {safe_text(warning)}", style="bold yellow"), highlight=False)
 
     if dry_run:
         info("Dry run: nothing was published.")

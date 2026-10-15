@@ -794,6 +794,46 @@ def test_pr_in_a_foreign_repo_publishes_with_foreign_and_warns(env, capsys):
     assert {c.kwargs["repo"] for c in env[4]["pr_comment"].call_args_list} == {"other/plugins"}
 
 
+@pytest.mark.parametrize(
+    ("repo", "label", "expected"),
+    [
+        ("other/plugins", "42", "which is not a repository of container"),
+        ("acme/repo", "43", "is not bound to container"),
+    ],
+)
+def test_foreign_warning_is_the_last_line_before_the_question(env, capsys, repo, label, expected):
+    """A warning at the top of a long plan scrolls away; it has to sit
+    directly above the question it qualifies."""
+    _retarget_pr_manifest(env, repo)
+    env[5]["user.jailbee.pr"] = label
+    asked: list[str] = []
+
+    def confirm(count):
+        asked.append(capsys.readouterr().out)
+        return True
+
+    assert selected(env, "pr", confirm=confirm, foreign=True) == 0
+    out = " ".join(asked[0].split())  # the warning may wrap
+    _, tail = out.split("will be published to GitHub as alice.")
+    assert tail.strip().startswith("⚠") and expected in tail
+    assert out.count(expected) == 1  # said once, not twice
+
+
+def test_foreign_warning_is_bold_yellow(env, mocker):
+    from rich.console import Console
+
+    from jailbee import pr_outbox
+
+    recorder = Console(record=True, force_terminal=True, width=200)
+    mocker.patch.object(pr_outbox, "console", recorder)
+    _retarget_pr_manifest(env, "other/plugins")
+
+    assert selected(env, "pr", foreign=True) == 0
+    styled = recorder.export_text(styles=True)
+    line = next(ln for ln in styled.splitlines() if "not a repository of container" in ln)
+    assert "\x1b[1;33m" in line
+
+
 def test_malformed_pr_repo_is_refused_without_offering_foreign(env, capsys):
     """--foreign cannot admit a slug gh would not take, so it is not named."""
     _retarget_pr_manifest(env, "a/b/c")

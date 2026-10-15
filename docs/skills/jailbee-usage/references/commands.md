@@ -1310,7 +1310,7 @@ manifest still references) and gets a line in
 `~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
 nothing left to publish for it — nothing double-posts. A manifest naming a
 PR of the same repo that the container does not own is published only after
-a warning at the top of its plan; with `-y` (nobody reads that warning) it is
+a warning directly above its confirmation; with `-y` (nobody reads that warning) it is
 a refusal unless `--foreign` is also given. A repo mismatch or a malformed
 field is always a refusal (exit non-zero). A `pr: null` manifest resolves to the container's
 own PR when exactly one is bound to it (opened by `jailbee pr`, or adopted
