@@ -8,6 +8,28 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **The outbox can publish a PR manifest to another repository.** A numbered
+  PR manifest that names a repository which is neither the superproject nor
+  one of its submodules was refused with no way through. `jailbee outbox
+  apply`, the terminal outbox browser and both dashboards' Outbox entries now
+  publish it after a warning that the repository is not the container's; the
+  confirmation, or `--foreign` with `-y`, is the consent. A `pr: null`
+  manifest is never sent elsewhere, and `jailbee pr` and `jailbee review
+  apply` keep the repository lock.
+
+### Changed
+
+- **The update notice stays until you upgrade or dismiss it.** A newer
+  release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
+  once a day, and the dashboard shows it on a row of its own with a clickable
+  **[dismiss]** that does the same as `jailbee dismiss update`.
+- **The warning for a PR the container does not own is printed directly
+  above the confirmation** in `jailbee outbox apply` and `jailbee review
+  apply`, instead of at the top of the plan where a long description diff
+  scrolled it out of sight.
+
 ### Fixed
 
 - **Submodules that exist on only some branches.** `jailbee branch`,
