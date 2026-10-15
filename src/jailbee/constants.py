@@ -43,13 +43,21 @@ CLAUDE_API_HOSTS: tuple[str, ...] = (
 
 # Hosts Claude Code's plugin/marketplace machinery reaches at session start
 # and on `/plugin install` / `/reload-plugins`: GitHub for marketplace clones
-# and content fetches, npm for plugin-bundled tools (LSP servers, etc.).
+# and content fetches.
 # Added automatically by `Config.effective_egress_allow()` when both
 # `claude.enabled` and `claude.plugins_enabled` are true so that skills,
 # SessionStart hooks and plugin updates work in strict-mode containers.
 # release-assets.githubusercontent.com is where a GitHub release download now
 # redirects; it shares objects.githubusercontent.com's IPs, so only the egress
 # proxy, which matches on the hostname, ever needed it listed.
+#
+# registry.npmjs.org is deliberately absent. A GitHub-sourced plugin of
+# skills, hooks and commands never reaches it; only an `npm`-sourced plugin,
+# a plugin shipping a package.json + lockfile, or an MCP server started with
+# `npx` does. And the egress filter sees only the hostname, so an open npm
+# registry is an upload channel (`npm publish` with any account's token). A
+# repo whose plugins need it lists it in `egress_allow`. GitHub is the same
+# kind of channel, which is why `plugins_enabled: false` exists.
 CLAUDE_PLUGIN_HOSTS: tuple[str, ...] = (
     "github.com:443",
     "api.github.com:443",
@@ -57,7 +65,6 @@ CLAUDE_PLUGIN_HOSTS: tuple[str, ...] = (
     "objects.githubusercontent.com:443",
     "release-assets.githubusercontent.com:443",
     "codeload.github.com:443",
-    "registry.npmjs.org:443",
 )
 
 # Pool roots are NOT listed here: which caches are pooled depends on the

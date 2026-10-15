@@ -1578,7 +1578,7 @@ out.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `platform.claude.com:443` (the `/login` token exchange) + `mcp-proxy.anthropic.com:443` (claude.ai connectors) + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR \|\| $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` seeds onboarding from an existing credential file), and subsequent containers in the same repo inherit that state via the shared cache. |
-| `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
+| `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `codeload.github.com`). The npm registry is deliberately not included: a GitHub-sourced plugin of skills, hooks and commands never reaches it, and an open `registry.npmjs.org` is an upload channel (`npm publish` with any account's token). Add `registry.npmjs.org:443` to `egress_allow` if a plugin needs it — an `npm`-sourced plugin, one shipping a `package.json` and lockfile, or an MCP server started with `npx`. GitHub is the same kind of channel (a push or gist with another account's token); set `false` to keep the API reachable while closing marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; the first `jailbee tmux <c>` lands in that window (later attaches keep the window you detached from). `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
@@ -2063,15 +2063,24 @@ docker_registry_mirror:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `extra_registries` | list[string] | `[]` | Extra registry hostnames this repo pulls images from but which rpardini does not cache out of the box. Entries must be bare hostnames, optionally with `:port` — no scheme, no path. |
+| `extra_registries` | list[string] | `[]` | Every registry hostname this repo pulls images from that is not one of rpardini's defaults. The mirror refuses any other registry. Entries must be exact hostnames — no wildcard (`*.example.com`, `.example.com`), no `:port` (the mirror serves registries on 443 only), no scheme, no path. Each entry becomes a key in the mirror's nginx host maps, where a wildcard would admit every host under it. |
 
-rpardini's image defaults cache only Docker Hub, `registry.k8s.io`,
-`gcr.io`, `quay.io`, and `ghcr.io`. Hostnames outside that set
-(notably AWS ECR — `*.dkr.ecr.<region>.amazonaws.com`) are
-CONNECT-tunneled without caching, so every `jailbee new` re-pulls those
-images from the internet. Listing them here pushes them into the
-mirror's `REGISTRIES` env on the next `jailbee new` / `jailbee apply`, after
-which pulls hit the rpardini cache on second run.
+rpardini's image defaults cover only Docker Hub, `registry.k8s.io`,
+`gcr.io`, `quay.io`, and `ghcr.io`. The mirror serves those and the
+hostnames listed here, and refuses everything else (see
+[Registry mirror](security.md#registry-mirror)) — so a repo that pulls from
+another registry (notably AWS ECR — `*.dkr.ecr.<region>.amazonaws.com`)
+must list it. Listing it pushes it into the mirror's `REGISTRIES` env on the
+next `jailbee new` / `jailbee apply`; pulls then go through the cache.
+
+A pull from an unlisted registry fails in dockerd with `Forbidden`:
+
+```text
+Error response from daemon: failed to resolve reference "public.ecr.aws/docker/library/alpine:3.20": failed to do request: Head "https://public.ecr.aws/v2/docker/library/alpine/manifests/3.20": Forbidden
+```
+
+Add the registry's hostname (`public.ecr.aws` here) to `extra_registries`
+and run `jailbee apply`.
 
 Mechanics: `jailbee new` and `jailbee apply` write the union of these entries
 into `/etc/jailbee-registry-proxy.env` inside the
@@ -2089,6 +2098,8 @@ upstreams the host may not be able to route) and `PROXY_CONNECT_TIMEOUT` /
 unresponsive upstream address cannot hold a pull past dockerd's patience.
 These three keys are jailbee's and a hand-edited value is put back; any
 other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
+The same sync also keeps the mirror's locked-down `nginx.conf` and its
+Quadlet unit at the versions this jailbee ships.
 
 ### `new`
 
@@ -2724,7 +2735,7 @@ one repo in its host-local file (above).
 docker_registry_mirror:
   enabled: auto                                  # auto | true | false
   port: 3128                                     # rpardini default
-  image: rpardini/docker-registry-proxy:0.6.5    # OCI image pin
+  image: rpardini/docker-registry-proxy:0.7.0    # OCI image pin
   data_dir: ~/.local/share/jailbee/registry          # cache + CA storage
 ```
 
@@ -2732,7 +2743,7 @@ docker_registry_mirror:
 |---|---|---|
 | `enabled` | `auto` | `auto` wires the mirror only into repos that ask for it: a golden image that would contain Docker (`golden.stacks.docker`, an `enable_snippets`/`install.d` `50-docker`, a `golden.extra_apt_packages` entry starting with `docker`, minus `disable_snippets`), a non-empty per-repo [`docker_registry_mirror.extra_registries`](#docker_registry_mirrorextra_registries), or `golden.stacks.ecr` (which stages a Docker credential helper). `true` forces it on, `false` skips all mirror-related work. **Both are host-global** — this file is host-level, so `true` set for one undetectable repo also re-imposes the strict-mode `jailbee new` abort on every other repo on the machine; `extra_registries` is the per-repo way to opt in. Mirror container lifecycle is unaffected either way (use `jailbee registry up/down`). |
 | `port` | `3128` | Port the rpardini proxy listens on inside the mirror container. |
-| `image` | `rpardini/docker-registry-proxy:0.6.5` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
+| `image` | `rpardini/docker-registry-proxy:0.7.0` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
 | `data_dir` | `~/.local/share/jailbee/registry` | Host directory bind-mounted into the mirror for cache + CA storage. |
 
 `auto` cannot see every route to Docker. A differently-named `install.d`

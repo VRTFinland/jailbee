@@ -21,6 +21,31 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **`agents.claude.plugins_enabled` no longer opens the npm registry.**
+  `registry.npmjs.org` was on the allowlist of every strict-mode container
+  with Claude enabled, although a GitHub-sourced plugin of skills, hooks and
+  commands never reaches it — and since the egress filter sees only the
+  hostname, an open npm registry lets a container upload anything with
+  `npm publish`. A repo whose Claude plugins install from npm adds
+  `registry.npmjs.org:443` to `egress_allow`; run `jailbee apply` to drop it
+  from existing containers.
+- **The registry mirror no longer reaches hosts other than registries.**
+  Through the mirror's port, which every strict container with Docker can
+  reach, a container could open a tunnel to any host or have the mirror fetch
+  any URL — bypassing strict mode. The mirror now serves only its registries
+  (rpardini's defaults and `extra_registries`), read-only. A registry outside
+  those now fails to pull (`Forbidden`) until it is listed in
+  `docker_registry_mirror.extra_registries`. `jailbee apply`, `jailbee new` or
+  `jailbee registry up` update an existing mirror, and `jailbee doctor`
+  reports whether it is locked down. `extra_registries` entries must now be
+  exact hostnames: a wildcard (`*.example.com`) or a `:port` is a config
+  error, since the mirror would admit every host under the wildcard and
+  cannot serve a registry on another port.
+- **The registry mirror runs rpardini/docker-registry-proxy 0.7.0** (was
+  0.6.5). Pulls from gcr.io work again — 0.6.5 failed on its relative blob
+  redirects — and Docker Hub's longer certificate chain verifies. The next
+  `jailbee apply`, `jailbee new` or `jailbee registry up` switches an existing
+  mirror over.
 - **The update notice stays until you upgrade or dismiss it.** A newer
   release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
   once a day, and the dashboard shows it on a row of its own with a clickable

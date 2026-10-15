@@ -301,6 +301,19 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`--help` — nothing to rebuild unless you use `jailbee litellm`"
         ),
     ),
+    # 1.7.4's `apply` reasons are folded into one entry: from 1.6.x an upgrade
+    # already shows four (`MAX_REASONS`).
+    UpgradeNote(
+        version=(1, 7, 4),
+        actions=frozenset({"apply"}),
+        reason=(
+            "egress is narrower: `agents.claude.plugins_enabled` no longer opens "
+            "`registry.npmjs.org` (add it to `egress_allow` if a Claude plugin "
+            "installs from npm), and the registry mirror (now rpardini 0.7.0, which "
+            "fixes gcr.io pulls) refuses every host but its registries — list "
+            "other registries in `extra_registries`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

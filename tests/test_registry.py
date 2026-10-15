@@ -664,12 +664,113 @@ _CURRENT_ENV = (
 )
 
 
+def _mirror(env: str = "", nginx: str | None = None, unit: str | None = None) -> MagicMock:
+    """An Incus mock whose `cat` reads return these mirror file contents.
+
+    `nginx`/`unit` default to the packaged files, i.e. a mirror whose conf
+    and unit are already current; pass "" for a mirror that predates them.
+    """
+    files = {
+        "/etc/jailbee-registry-proxy.env": env,
+        "/etc/jailbee-registry-proxy/nginx.conf": (
+            _read_provision_text("nginx.conf") if nginx is None else nginx
+        ),
+        "/etc/containers/systemd/jailbee-registry-proxy.container": (
+            _read_provision_text("jailbee-registry-proxy.container") if unit is None else unit
+        ),
+    }
+
+    def exec_(name, cmd, **_kw):
+        if cmd[:2] == ["sh", "-c"] and cmd[2].startswith("cat "):
+            return files[cmd[2].split()[1]]
+        return ""
+
+    incus = MagicMock()
+    incus.exec.side_effect = exec_
+    return incus
+
+
+def _commands(script: str) -> str:
+    """The sync script with heredoc bodies removed.
+
+    rpardini's nginx.conf itself contains `systemctl daemon-reload` and
+    `systemctl restart` (its /setup/systemd help text), so assertions about
+    what the script *runs* must not look inside the files it writes.
+    """
+    return re.sub(r"<<'(\w+)'\n.*?\n\1\n", "<<'\\1'\n", script, flags=re.S)
+
+
+def _written_file(incus_mock: MagicMock, marker: str) -> str:
+    body = _exec_bash_calls(incus_mock)[0]
+    return body.split(f"<<'{marker}'\n", 1)[1].split(f"\n{marker}", 1)[0]
+
+
+def test_sync_brings_an_old_mirror_the_lockdown_conf_and_unit():
+    """The upgrade path: a mirror provisioned before the lockdown has no
+    nginx.conf and the old unit. One sync must install both, reload systemd
+    (the unit changed) and restart once."""
+    incus = _mirror(env=_CURRENT_ENV, nginx="", unit="[Unit]\nold\n")
+
+    changed = sync_mirror_env(incus, [])
+
+    assert changed is True
+    (script,) = _exec_bash_calls(incus)
+    commands = _commands(script)
+    assert "/etc/jailbee-registry-proxy/nginx.conf" in commands
+    assert "systemctl daemon-reload" in commands
+    assert commands.count("systemctl restart") == 1
+    assert f"systemctl restart {MIRROR_SERVICE_NAME}" in commands
+
+
+def test_sync_writes_packaged_files_verbatim():
+    """nginx.conf is full of `$` and quotes; a mangled copy stops nginx and
+    every pull on the host with it."""
+    incus = _mirror(env=_CURRENT_ENV, nginx="", unit="")
+
+    sync_mirror_env(incus, [])
+
+    assert _written_file(incus, "JAILBEE_NGINX_EOF") == (
+        _read_provision_text("nginx.conf").rstrip("\n")
+    )
+    assert _written_file(incus, "JAILBEE_UNIT_EOF") == (
+        _read_provision_text("jailbee-registry-proxy.container").rstrip("\n")
+    )
+
+
+def test_sync_only_rewrites_changed_files():
+    """Conf drifted, unit and env current: rewrite the conf, no daemon-reload."""
+    incus = _mirror(env=_CURRENT_ENV, nginx="# hand-edited\n")
+
+    assert sync_mirror_env(incus, []) is True
+    (script,) = _exec_bash_calls(incus)
+    assert "JAILBEE_NGINX_EOF" in script
+    assert "JAILBEE_UNIT_EOF" not in script
+    assert "JAILBEE_ENV_EOF" not in script
+    assert "daemon-reload" not in _commands(script)
+
+
+def test_sync_restarts_once_when_everything_changed():
+    incus = _mirror(env="", nginx="", unit="")
+
+    sync_mirror_env(incus, ["ecr-b.example.com"])
+
+    scripts = _exec_bash_calls(incus)
+    assert len(scripts) == 1
+    assert _commands(scripts[0]).count("systemctl restart") == 1
+
+
+def test_sync_leaves_a_converged_mirror_alone():
+    incus = _mirror(env=_CURRENT_ENV)
+
+    assert sync_mirror_env(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com"]) is False
+    assert _exec_bash_calls(incus) == []
+
+
 def test_sync_mirror_env_configures_a_fresh_mirror_without_extra_registries():
     """A repo with no extra registries still needs the tuning: IPv6 upstreams
     the host cannot reach, and nginx's 60 s connect timeout, are what push a
     cold-cache pull past dockerd's patience."""
-    incus = MagicMock()
-    incus.exec.return_value = ""  # no env file yet → `cat … || true` prints nothing
+    incus = _mirror(env="")
 
     changed = sync_mirror_env(incus, [])
 
@@ -687,10 +788,7 @@ def test_sync_mirror_env_upgrades_a_file_written_by_an_older_jailbee():
     """Existing mirrors hold only REGISTRIES=. Nothing new is requested, but
     the tuning is missing — the file must still be rewritten, or the fix never
     reaches a mirror that predates it."""
-    incus = MagicMock()
-    incus.exec.return_value = (
-        "REGISTRIES=ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io\n"
-    )
+    incus = _mirror(env=("REGISTRIES=ecr-a.example.com gcr.io ghcr.io quay.io registry.k8s.io\n"))
 
     changed = sync_mirror_env(incus, [])
 
@@ -707,8 +805,7 @@ def test_sync_mirror_env_leaves_a_current_file_alone():
     """A restart drops every pull in flight through the mirror, from every
     container on the host — so an up-to-date file must mean no write and no
     restart, even when the caller's registries are all already covered."""
-    incus = MagicMock()
-    incus.exec.return_value = _CURRENT_ENV
+    incus = _mirror(env=_CURRENT_ENV)
 
     changed = sync_mirror_env(incus, ["803520778560.dkr.ecr.eu-north-1.amazonaws.com", "quay.io"])
 
@@ -718,9 +815,8 @@ def test_sync_mirror_env_leaves_a_current_file_alone():
 
 def test_sync_mirror_env_restores_a_hand_edited_tuning_value():
     """The tuning keys are jailbee's: a hand-set 60 s timeout is the bug."""
-    incus = MagicMock()
-    incus.exec.return_value = _CURRENT_ENV.replace(
-        "PROXY_CONNECT_TIMEOUT=5s", "PROXY_CONNECT_TIMEOUT=60s"
+    incus = _mirror(
+        env=_CURRENT_ENV.replace("PROXY_CONNECT_TIMEOUT=5s", "PROXY_CONNECT_TIMEOUT=60s")
     )
 
     changed = sync_mirror_env(incus, [])
@@ -732,10 +828,11 @@ def test_sync_mirror_env_restores_a_hand_edited_tuning_value():
 def test_sync_mirror_env_preserves_keys_it_does_not_own():
     """rpardini reads more than jailbee sets (AUTH_REGISTRIES carries upstream
     credentials); a key added by hand must survive a rewrite."""
-    incus = MagicMock()
-    incus.exec.return_value = (
-        "AUTH_REGISTRIES=reg.example.com:user:secret\n"
-        "REGISTRIES=gcr.io ghcr.io quay.io registry.k8s.io\n"
+    incus = _mirror(
+        env=(
+            "AUTH_REGISTRIES=reg.example.com:user:secret\n"
+            "REGISTRIES=gcr.io ghcr.io quay.io registry.k8s.io\n"
+        )
     )
 
     sync_mirror_env(incus, [])
@@ -744,8 +841,7 @@ def test_sync_mirror_env_preserves_keys_it_does_not_own():
 
 
 def test_sync_mirror_env_adds_a_new_registry_and_restarts():
-    incus = MagicMock()
-    incus.exec.return_value = _CURRENT_ENV
+    incus = _mirror(env=_CURRENT_ENV)
 
     changed = sync_mirror_env(incus, ["ecr-b.example.com"])
 
@@ -760,8 +856,7 @@ def test_sync_mirror_env_adds_a_new_registry_and_restarts():
 def test_sync_mirror_env_written_registries_include_rpardini_defaults():
     """EnvironmentFile= overrides the image's own ENV, so the file must
     carry the defaults too — otherwise rpardini drops k8s.io/gcr.io/quay/ghcr."""
-    incus = MagicMock()
-    incus.exec.return_value = ""
+    incus = _mirror(env="")
 
     sync_mirror_env(incus, ["example.com"])
 
@@ -773,8 +868,7 @@ def test_sync_mirror_env_written_registries_include_rpardini_defaults():
 def test_sync_mirror_env_writes_registries_sorted_and_deduplicated():
     """Sorted, deduplicated output keeps re-runs byte-identical — no spurious
     rewrites or restarts."""
-    incus = MagicMock()
-    incus.exec.return_value = ""
+    incus = _mirror(env="")
 
     sync_mirror_env(incus, ["zzz.example.com", "aaa.example.com", "zzz.example.com"])
 
@@ -792,6 +886,32 @@ def test_quadlet_unit_references_environment_file_with_absolute_path():
     body = _read_provision_text("jailbee-registry-proxy.container")
     assert "EnvironmentFile=/etc/jailbee-registry-proxy.env" in body
     assert "EnvironmentFile=-" not in body
+
+
+def test_quadlet_unit_mounts_the_jailbee_nginx_conf_read_only():
+    body = _read_provision_text("jailbee-registry-proxy.container")
+    assert "Volume=/etc/jailbee-registry-proxy/nginx.conf:/etc/nginx/nginx.conf:ro" in body
+
+
+def test_install_sh_installs_nginx_conf_before_starting_the_service():
+    """Podman refuses a bind mount whose source is missing, so the file must
+    exist before the first start."""
+    body = _read_provision_text("install.sh")
+    conf_idx = body.find("/etc/jailbee-registry-proxy/nginx.conf")
+    start_idx = body.find("systemctl start jailbee-registry-proxy.service")
+    assert conf_idx != -1 and start_idx != -1
+    assert conf_idx < start_idx
+
+
+def test_provision_pushes_the_nginx_conf(tmp_path):
+    incus = MagicMock()
+    from jailbee.registry import _provision_mirror
+
+    _provision_mirror(incus)
+
+    script = incus.exec.call_args.args[1][2]
+    assert "cat > /root/jailbee-registry-nginx.conf <<'JAILBEE_NGINX_EOF'" in script
+    assert _read_provision_text("nginx.conf").rstrip() in script
 
 
 def test_provision_creates_empty_env_file_before_service_start(tmp_path):
@@ -1284,3 +1404,70 @@ def test_up_creates_the_mirror_on_the_configured_service_pool(tmp_path):
     incus.init.assert_called_once_with(
         "images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME, storage_pool="cow"
     )
+
+
+def test_lockdown_report_names_each_leaking_probe(mocker):
+    from jailbee.registry import lockdown_report
+    from jailbee.registry_selftest import ProbeOutcome, ProbeResult
+
+    mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.2", 3128))
+    mocker.patch(
+        "jailbee.registry_selftest.run_selftest",
+        return_value=[
+            ProbeResult("connect", ProbeOutcome.LEAKED, "CONNECT example.com:443 → tunnel opened"),
+            ProbeResult("host-header", ProbeOutcome.REFUSED, ""),
+            ProbeResult("method", ProbeOutcome.LEAKED, "PATCH /v2/ → 404"),
+        ],
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is False
+    assert "connect" in detail and "method" in detail and "host-header" not in detail
+    assert "jailbee registry up" in detail
+
+
+def test_lockdown_report_inconclusive_when_mirror_has_no_endpoint(mocker):
+    from jailbee.registry import lockdown_report
+
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror is not running."),
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is None
+    assert "not running" in detail
+
+
+def test_sync_drops_stored_pattern_entries():
+    """A mirror synced by an older jailbee may hold an entry the validator now
+    refuses (a wildcard, a host:port). REGISTRIES only grows, so without this
+    it would stay an nginx `hostnames` pattern until the mirror is recreated."""
+    incus = _mirror(
+        env=_CURRENT_ENV.replace("REGISTRIES=", "REGISTRIES=*.amazonaws.com reg.local:5000 ")
+    )
+
+    assert sync_mirror_env(incus, []) is True
+
+    written = _written_env(incus)["REGISTRIES"].split()
+    assert "*.amazonaws.com" not in written
+    assert "reg.local:5000" not in written
+    assert "803520778560.dkr.ecr.eu-north-1.amazonaws.com" in written
+
+
+def test_lockdown_report_inconclusive_when_incus_fails(mocker):
+    """`jailbee doctor` runs this inline: an Incus hiccup must become an
+    inconclusive row, not a traceback that ends the whole report."""
+    from jailbee.registry import lockdown_report
+
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=IncusError(["incus", "list"], 1, "", "daemon not responding"),
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is None
+    assert detail.startswith("not probed")

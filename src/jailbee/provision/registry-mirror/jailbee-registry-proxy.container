@@ -2,10 +2,14 @@
 Description=jailbee Docker registry MITM caching proxy (rpardini)
 
 [Container]
-Image=docker.io/rpardini/docker-registry-proxy:0.6.5
+Image=docker.io/rpardini/docker-registry-proxy:0.7.0
 PublishPort=3128:3128
 Volume=/docker_mirror_cache:/docker_mirror_cache
 Volume=/ca:/ca
+# jailbee's locked-down nginx.conf (no blind CONNECT tunnels, allowlisted
+# Host, GET/HEAD only). Written by install.sh, kept current by
+# registry.sync_mirror_env.
+Volume=/etc/jailbee-registry-proxy/nginx.conf:/etc/nginx/nginx.conf:ro
 # Lets `sync_mirror_env` extend rpardini's REGISTRIES and set its tuning at runtime
 # (writes /etc/jailbee-registry-proxy.env on the mirror host, then restarts
 # this service). Quadlet lowers this to `podman run --env-file=...`,

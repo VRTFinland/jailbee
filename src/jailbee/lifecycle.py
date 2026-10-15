@@ -1869,9 +1869,10 @@ def new_container(
 
         # Push per-repo extra upstreams (e.g. ECR) into the mirror's
         # REGISTRIES before dockerd starts using the proxy, so the first
-        # pull through HTTPS_PROXY already hits the cache path. Also brings
-        # the host-global proxy tuning up to date. No-op when the env file
-        # already matches.
+        # pull through HTTPS_PROXY already hits the cache path (the
+        # locked-down mirror refuses unlisted hosts). Also brings the
+        # host-global proxy tuning and nginx.conf/unit up to date. No-op when
+        # everything already matches.
         sync_mirror_env(incus, cfg.docker_registry_mirror.extra_registries)
 
         _, port = opts.mirror_endpoint

@@ -75,7 +75,7 @@ class DockerRegistryMirror(BaseModel):
         ),
     )
     image: str = Field(
-        default="rpardini/docker-registry-proxy:0.6.5",
+        default="rpardini/docker-registry-proxy:0.7.0",
         description=(
             "OCI image tag the mirror container runs. Pinned to a specific tag rather "
             "than `latest`, since an upgrade should be deliberate."

@@ -389,7 +389,7 @@ Map by stack:
 
 ### `docker_registry_mirror.extra_registries` — non-default registries
 
-Only relevant if the repo's compose/Dockerfile pulls from registries outside the rpardini default set (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io). AWS ECR is the common one:
+Required if the repo's compose/Dockerfile pulls from registries outside the rpardini default set (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses any registry not in that set or this list, so such a pull fails with `Forbidden`. AWS ECR is the common one:
 
 ```yaml
 docker_registry_mirror:
@@ -397,7 +397,7 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Entries must be bare `host[:port]` — no scheme, no path. Setting this key is
+Entries must be exact hostnames — no wildcard, no `:port` (the mirror serves registries on 443 only), no scheme, no path. Setting this key is
 itself an opt-in to the registry mirror: with the default
 `docker_registry_mirror.enabled: auto`, a repo that names extra registries gets
 the mirror wired in even without `golden.stacks.docker`.

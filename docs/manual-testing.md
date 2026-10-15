@@ -4069,6 +4069,47 @@ Finally, on a host without IPv6 egress, pull an uncached image through any
 container and read the mirror's access log: `upstream_response_time` should no
 longer open with a run of `0.000` entries against `[2600:…]` addresses.
 
+## Registry mirror lockdown
+
+The mirror must serve its registries and nothing else: no CONNECT tunnel to
+another host, no fetching an arbitrary `Host` through the MITM layer, no
+method but GET/HEAD. The unit suite pins the config text and the self-test's
+logic; only a real mirror shows nginx enforcing them.
+
+On a mirror provisioned before the lockdown (or with stock rpardini config):
+
+```bash
+jailbee doctor
+# expect: "registry lockdown" red, naming connect, host-header and method
+jb apply                               # or `jailbee new` / `jailbee registry up`
+incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy/nginx.conf | head -1
+# expect: # derived from rpardini/docker-registry-proxy:0.7.0
+jailbee doctor
+# expect: "registry lockdown" green — no tunnels, allowlisted hosts only, GET/HEAD only
+# (right after the restart the probe may say "not probed — Connection refused"
+#  for a few seconds while rpardini's entrypoint regenerates its certificate)
+```
+
+From a strict container that uses the mirror (`M` is the mirror's proxy URL):
+
+```bash
+M=http://jailbee-registry-mirror.incus:3128
+for img in alpine:3.20 ghcr.io/linuxcontainers/alpine:latest gcr.io/distroless/static:latest \
+           quay.io/prometheus/busybox:latest registry.k8s.io/pause:3.10; do
+  docker pull -q "$img"; done
+# expect: all five pull (gcr.io needs rpardini >= 0.7.0: its blob redirects are relative)
+curl -sv -x $M https://example.com 2>&1 | grep -i "tunnel failed"
+# expect: CONNECT tunnel failed, response 403
+curl -sk -x $M https://registry-1.docker.io/ -H 'Host: example.com' -i | head -1
+# expect: HTTP/1.1 403 Forbidden (body: jailbee-refused: host not allowed)
+curl -sk -x $M -X PATCH https://registry-1.docker.io/v2/ -i | head -1
+# expect: HTTP/1.1 405 Not Allowed (body: jailbee-refused: method not allowed)
+docker pull public.ecr.aws/docker/library/alpine:3.20
+# expect: ... failed to do request: Head "https://public.ecr.aws/v2/...": Forbidden
+# then add public.ecr.aws to docker_registry_mirror.extra_registries, `jb apply`,
+# and the same pull succeeds
+```
+
 ## Registry cache verification
 
 Reproduces the corrupt-blob failure and its repair. Needs a running mirror
