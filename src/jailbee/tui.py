@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import string
 import threading
 import time
@@ -29,6 +30,27 @@ if TYPE_CHECKING:
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 hint_console = Console(stderr=True)
+
+#: Names a file that every warning and error line appends its kind to. Set by
+#: a caller that runs jailbee as a child and wants to know whether it warned:
+#: the dashboard keeps a command's output on screen only then.
+DIAGNOSTICS_ENV = "JAILBEE_DIAGNOSTICS_FILE"
+
+
+def _record_diagnostic(kind: Literal["warn", "error"]) -> None:
+    """Append ``kind`` to the :data:`DIAGNOSTICS_ENV` file, if one is named.
+
+    Best effort: the line itself has already been printed, and a file that
+    cannot be written must not turn a warning into a crash.
+    """
+    path = os.environ.get(DIAGNOSTICS_ENV)
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{kind}\n")
+    except OSError:
+        pass
 
 
 def format_elapsed(seconds: float) -> str:
@@ -149,6 +171,7 @@ def success_plain(msg: str) -> None:
 
 def warn(msg: str) -> None:
     console.print(f"[yellow]⚠[/yellow] {msg}")
+    _record_diagnostic("warn")
 
 
 def warn_plain(msg: str, *, stderr: bool = False) -> None:
@@ -168,6 +191,7 @@ def warn_plain(msg: str, *, stderr: bool = False) -> None:
     """
     output_console = hint_console if stderr else console
     output_console.print(Text.assemble(("⚠ ", "yellow"), msg), highlight=False)
+    _record_diagnostic("warn")
 
 
 def hint(lines: Sequence[str]) -> None:
@@ -186,10 +210,12 @@ def hint(lines: Sequence[str]) -> None:
     hint_console.print(Text.assemble(("⚠ ", "yellow"), lines[0]), highlight=False)
     for line in lines[1:]:
         hint_console.print(Text(line), highlight=False)
+    _record_diagnostic("warn")
 
 
 def error(msg: str) -> None:
     err_console.print(f"✗ {msg}")
+    _record_diagnostic("error")
 
 
 def error_plain(msg: str) -> None:
@@ -205,6 +231,7 @@ def error_plain(msg: str) -> None:
     The console's own ``bold red`` style still applies to the whole line.
     """
     err_console.print(Text(f"✗ {msg}"), highlight=False)
+    _record_diagnostic("error")
 
 
 ConfirmFn = Callable[[str], bool]

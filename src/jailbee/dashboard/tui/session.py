@@ -2644,15 +2644,20 @@ class DashboardSession:
         self.notice = None  # the mode's own line takes the notice slot
         self._snap_merge_cursor()
 
-    def _merge_pick_line(self, pick: MergePick) -> str:
+    def _merge_display(self, names: Sequence[str]) -> str:
+        """``names`` as the table shows them, comma-separated."""
+
         def short(name: str) -> str:
             found = self._listed_container(name)
             return found[1].display_name if found is not None else name
 
+        return ", ".join(short(n) for n in names)
+
+    def _merge_pick_line(self, pick: MergePick) -> str:
         targets = [name for name in self._listed_names() if name in pick.targets]
         return (
-            f"Merge {', '.join(short(n) for n in pick.sources)} into: "
-            f"{', '.join(short(n) for n in targets) or '—'}   {MERGE_PICK_KEYS}"
+            f"Merge {self._merge_display(pick.sources)} into: "
+            f"{self._merge_display(targets) or '—'}   {MERGE_PICK_KEYS}"
         )
 
     def _merge_pick_key(self, key: str) -> None:
@@ -2736,9 +2741,14 @@ class DashboardSession:
         ]
         self.merge_pick = None
         self.marked = pick.saved_marks
-        if self.run_dashboard_command(pick.sources[0], "container", argv) == 0:
+        # "report": a clean merge returns straight to the table, so the notice
+        # is what says it happened; a warning or failure keeps the output up.
+        if self.run_dashboard_command(pick.sources[0], "container", argv, style="report") == 0:
             # As a foreground bulk run does: what succeeded is unmarked.
             self.marked -= frozenset(pick.sources)
+            self.set_notice(
+                f"Merged {self._merge_display(pick.sources)} into {self._merge_display(ordered)}"
+            )
 
     def _prune_merge_pick(self, listed: set[str]) -> None:
         """After a refresh: drop vanished sources and targets, or end the mode with none left."""

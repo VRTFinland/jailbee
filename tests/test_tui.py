@@ -1053,3 +1053,34 @@ def test_questionary_initial_choice_accepts_a_value_and_points_the_cursor_there(
 
     assert ic.pointed_at == 1
     assert ic.selected_options == []
+
+
+def test_diagnostics_are_recorded_only_when_the_env_names_a_file(tmp_path, monkeypatch, capsys):
+    """Each warning and error line leaves a mark the dashboard can read back."""
+    from jailbee import tui
+
+    marker = tmp_path / "diagnostics"
+    monkeypatch.delenv(tui.DIAGNOSTICS_ENV, raising=False)
+    tui.warn("unrecorded")
+    assert not marker.exists()
+
+    monkeypatch.setenv(tui.DIAGNOSTICS_ENV, str(marker))
+    tui.info("fine")
+    tui.success("fine")
+    assert not marker.exists()
+
+    tui.warn("w")
+    tui.warn_plain("w", stderr=True)
+    tui.hint(["h"])
+    tui.error("e")
+    tui.error_plain("e")
+    assert marker.read_text().splitlines() == ["warn", "warn", "warn", "error", "error"]
+    capsys.readouterr()
+
+
+def test_an_unwritable_diagnostics_file_does_not_break_output(tmp_path, monkeypatch, capsys):
+    from jailbee import tui
+
+    monkeypatch.setenv(tui.DIAGNOSTICS_ENV, str(tmp_path / "missing" / "diagnostics"))
+    tui.warn_plain("still printed")
+    assert "still printed" in capsys.readouterr().out

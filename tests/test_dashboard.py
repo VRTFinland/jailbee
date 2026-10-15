@@ -9,11 +9,13 @@ import itertools
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from rich.console import Console, RenderableType
 from rich.style import Style
 
+from jailbee import tui
 from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.config.loader import _scratch_prefix
@@ -5349,6 +5351,56 @@ def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
     ddispatch._run_cli_foreground(_target(tmp_path), ["disk-usage"], style="plain")
 
     wait.assert_not_called()
+
+
+def _report_child(marks: str | None):  # type: ignore[no-untyped-def]
+    """A fake `subprocess.run` that writes ``marks`` where the env says, like `tui` does."""
+
+    def run(argv, *, check, cwd, env):  # type: ignore[no-untyped-def]
+        if marks is not None:
+            Path(env[tui.DIAGNOSTICS_ENV]).write_text(marks)
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    return run
+
+
+def test_run_cli_foreground_report_skips_the_pause_on_a_clean_success(mocker, tmp_path):
+    run = mocker.patch.object(tsession.subprocess, "run", side_effect=_report_child(None))
+    wait = patch_pause(mocker)
+
+    rc = ddispatch._run_cli_foreground(
+        _target(tmp_path), ["merge", "a", "--into", "b"], style="report"
+    )
+
+    assert rc == 0
+    wait.assert_not_called()
+    env = run.call_args.kwargs["env"]
+    assert env[tui.DIAGNOSTICS_ENV]
+    assert not Path(env[tui.DIAGNOSTICS_ENV]).parent.exists()  # cleaned up
+
+
+def test_run_cli_foreground_report_pauses_when_the_child_warned(mocker, tmp_path):
+    mocker.patch.object(tsession.subprocess, "run", side_effect=_report_child("warn\n"))
+    wait = patch_pause(mocker)
+
+    ddispatch._run_cli_foreground(_target(tmp_path), ["merge", "a", "--into", "b"], style="report")
+
+    wait.assert_called_once()
+
+
+def test_run_cli_foreground_report_pauses_on_a_failure(mocker, tmp_path):
+    run = mocker.patch.object(tsession.subprocess, "run")
+    run.return_value.returncode = 1
+    wait = patch_pause(mocker)
+
+    rc = ddispatch._run_cli_foreground(
+        _target(tmp_path), ["merge", "a", "--into", "b"], style="report"
+    )
+
+    assert rc == 1
+    wait.assert_called_once()
 
 
 @pytest.mark.parametrize(("remote", "over_ssh"), [(False, True), (True, False)])

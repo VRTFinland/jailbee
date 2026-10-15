@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
@@ -26,7 +27,7 @@ from jailbee.dashboard.commands import (
 from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS, _is_gui_verb
 from jailbee.dashboard.model import RepoTarget
 from jailbee.remote_ssh.session import waypipe_session
-from jailbee.tui import console
+from jailbee.tui import DIAGNOSTICS_ENV, console
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ log = logging.getLogger(__name__)
 _PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
 _OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS
 
-DispatchStyle = Literal["paged", "output", "plain"]
+# "report" is "output" whose pause is kept only for a failure or a warning:
+# a clean run has nothing the user still needs to read.
+DispatchStyle = Literal["paged", "output", "report", "plain"]
 
 
 def dispatch_style(verb: str) -> DispatchStyle:
@@ -82,6 +85,24 @@ def _wait_for_return() -> None:
         sys.stdin.readline()
     except (EOFError, KeyboardInterrupt):
         pass
+
+
+def _run_reporting(argv: list[str], cwd: Path) -> int:
+    """Run ``argv``; pause only when it failed or printed a warning or error.
+
+    The child is told through :data:`DIAGNOSTICS_ENV` where to note each
+    warning and error line `jailbee.tui` prints. A directory of our own holds
+    the file, so its absence before the run is guaranteed and it is cleaned up
+    with the directory.
+    """
+    with tempfile.TemporaryDirectory(prefix="jailbee-dashboard-") as tmp:
+        marker = Path(tmp) / "diagnostics"
+        env = {**os.environ, DIAGNOSTICS_ENV: str(marker)}
+        rc = subprocess.run(argv, check=False, cwd=cwd, env=env).returncode
+        noisy = marker.exists()
+    if rc != 0 or noisy:
+        _wait_for_return()
+    return rc
 
 
 class _PagerUnavailableError(OSError):
@@ -230,9 +251,11 @@ def _run_cli_foreground(
 
     ``argv`` is checked exactly as given, then addressed: ``--config`` goes
     before any ``--``, and nothing is added over SSH (`jailbee.dashboard.actions.addressed`).
-    ``style`` works as in :func:`_dispatch_action`. A remote session never gets
-    a pager, because a pager can run host commands, so it gets the pause. A
-    pager that cannot start also degrades to the pause.
+    ``style`` works as in :func:`_dispatch_action`, plus ``"report"``: the
+    pause only when the command failed or warned (see :func:`_run_reporting`).
+    A remote session never gets a pager, because a pager can run host
+    commands, so it gets the pause. A pager that cannot start also degrades to
+    the pause.
 
     Raises :class:`RouteError` before anything runs when the policy refuses
     ``argv``, and ``OSError`` when ``target.cwd()`` has vanished (the caller
@@ -249,6 +272,8 @@ def _run_cli_foreground(
                 return _run_paged(full, pager, target.cwd())
             except _PagerUnavailableError as exc:
                 log.debug("pager %s failed: %s", pager, exc)
+    if style == "report":
+        return _run_reporting(full, target.cwd())
     rc = subprocess.run(full, check=False, cwd=target.cwd()).returncode
     if style != "plain":
         _wait_for_return()
