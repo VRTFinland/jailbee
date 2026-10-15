@@ -40,6 +40,14 @@ def litellm_inputs_ok(mocker):
     return mocker.patch("jailbee.litellm_inputs.load_host_inputs")
 
 
+@pytest.fixture(autouse=True)
+def _mirror_locked():
+    """Doctor's lockdown probe opens sockets. Tests that care patch it again
+    inside; the inner `patch` wins."""
+    with patch("jailbee.doctor.lockdown_report", return_value=(True, "locked")):
+        yield
+
+
 def _cfg(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     return cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
@@ -4162,3 +4170,42 @@ def test_remote_mount_roots_check_passes_when_clear(tmp_path):
     (row,) = doctor._check_remote_mount_roots(gcfg, roots=lambda: [])
 
     assert row.ok is True and "1" in row.detail
+
+
+def test_doctor_mirror_lockdown_red_when_probe_leaks(tmp_path):
+    """A mirror provisioned before the lockdown and never re-synced: running,
+    but leaking. doctor must say so, not show green."""
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch(
+            "jailbee.doctor.lockdown_report",
+            return_value=(False, "leaking: connect — run 'jailbee registry up'"),
+        ),
+    ):
+        results = run_checks(_cfg(tmp_path), _baseline_incus())
+
+    row = next(r for r in results if r.name == "registry lockdown")
+    assert row.ok is False
+    assert "jailbee registry up" in row.detail
+
+
+def test_doctor_mirror_lockdown_not_red_when_inconclusive(tmp_path):
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING),
+        patch("jailbee.doctor.lockdown_report", return_value=(None, "not probed — timeout")),
+    ):
+        results = run_checks(_cfg(tmp_path), _baseline_incus())
+
+    row = next(r for r in results if r.name == "registry lockdown")
+    assert row.ok is True
+    assert row.detail.startswith("not probed")
+
+
+def test_doctor_does_not_probe_a_stopped_mirror(tmp_path):
+    with (
+        patch("jailbee.doctor.registry_status", return_value=MirrorStatus.STOPPED),
+        patch("jailbee.doctor.lockdown_report") as probe,
+    ):
+        run_checks(_cfg(tmp_path), _baseline_incus())
+
+    probe.assert_not_called()

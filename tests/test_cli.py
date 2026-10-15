@@ -9564,6 +9564,7 @@ def test_registry_up_drives_a_live_status_line(mocker, tmp_path):
         on_step("creating the container")
         on_step("installing the registry proxy")
 
+    mocker.patch("jailbee.registry.lockdown_report", return_value=(True, "locked"))
     mocker.patch("jailbee.registry.registry_up", side_effect=fake_up)
     status = mocker.MagicMock()
     mocker.patch("jailbee.tui.console.status", return_value=status)
@@ -9586,6 +9587,7 @@ def test_registry_up_reports_a_provisioning_failure_without_a_traceback(mocker):
 
     mocker.patch("jailbee.cli._load_or_exit")
     mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.registry.lockdown_report", return_value=(True, "locked"))
     mocker.patch(
         "jailbee.registry.registry_up",
         side_effect=IncusError("`incus exec jailbee-registry-mirror ...` timed out after 600s"),
@@ -9606,6 +9608,7 @@ def test_registry_up_reports_a_dead_service_without_a_traceback(mocker):
 
     mocker.patch("jailbee.cli._load_or_exit")
     mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.registry.lockdown_report", return_value=(True, "locked"))
     mocker.patch(
         "jailbee.registry.registry_up",
         side_effect=RuntimeError(
@@ -10911,3 +10914,33 @@ def test_main_callback_is_inert_under_resilient_parsing(mocker) -> None:
     ctx.resilient_parsing = True
     main(ctx)
     dash.assert_not_called()
+
+
+def test_registry_up_warns_when_lockdown_leaks(mocker):
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit")
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.registry.registry_up")
+    mocker.patch(
+        "jailbee.registry.lockdown_report",
+        return_value=(False, "leaking: connect — run 'jailbee registry up'"),
+    )
+
+    result = CliRunner().invoke(app, ["registry", "up"])
+
+    assert result.exit_code == 0, result.output  # pulls still work; protection is missing
+    assert "leaking: connect" in result.output
+
+
+def test_registry_up_silent_when_locked(mocker):
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit")
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.registry.registry_up")
+    mocker.patch("jailbee.registry.lockdown_report", return_value=(True, "locked"))
+
+    result = CliRunner().invoke(app, ["registry", "up"])
+
+    assert "not locked down" not in result.output

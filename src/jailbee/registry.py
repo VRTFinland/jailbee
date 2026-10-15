@@ -648,3 +648,33 @@ systemctl restart {MIRROR_SERVICE_NAME}
 """
     incus.exec(MIRROR_CONTAINER_NAME, ["bash", "-c", script], timeout=60)
     return True
+
+
+def lockdown_report(incus: Incus, gcfg: GlobalConfig) -> tuple[bool | None, str]:
+    """Probe the mirror's egress lockdown. ``(True|False|None, one-line detail)``.
+
+    ``None`` means not probed or inconclusive — the mirror's own state is
+    reported elsewhere, so an unreachable mirror is not a lockdown failure.
+    """
+    from jailbee import registry_selftest
+    from jailbee.docker_daemon import compute_mirror_endpoint
+
+    try:
+        host, port = compute_mirror_endpoint(incus, gcfg)
+    except ValueError as e:
+        return None, f"not probed — {e}"
+    results = registry_selftest.run_selftest(host, port)
+    ok = registry_selftest.verdict(results)
+    if ok is True:
+        return True, "no tunnels, allowlisted hosts only, GET/HEAD only"
+    if ok is None:
+        failed = "; ".join(
+            r.detail for r in results if r.outcome is registry_selftest.ProbeOutcome.UNREACHABLE
+        )
+        return None, f"not probed — {failed}"
+    leaked = [r for r in results if r.outcome is registry_selftest.ProbeOutcome.LEAKED]
+    names = ", ".join(r.name for r in leaked)
+    return False, (
+        f"leaking: {names} ({'; '.join(r.detail for r in leaked)}) — run 'jailbee registry up' "
+        f"to sync the locked-down config, or 'jailbee registry up --recreate' if that does not fix it"
+    )

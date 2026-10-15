@@ -1284,3 +1284,38 @@ def test_up_creates_the_mirror_on_the_configured_service_pool(tmp_path):
     incus.init.assert_called_once_with(
         "images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME, storage_pool="cow"
     )
+
+
+def test_lockdown_report_names_each_leaking_probe(mocker):
+    from jailbee.registry import lockdown_report
+    from jailbee.registry_selftest import ProbeOutcome, ProbeResult
+
+    mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.2", 3128))
+    mocker.patch(
+        "jailbee.registry_selftest.run_selftest",
+        return_value=[
+            ProbeResult("connect", ProbeOutcome.LEAKED, "CONNECT example.com:443 → tunnel opened"),
+            ProbeResult("host-header", ProbeOutcome.REFUSED, ""),
+            ProbeResult("method", ProbeOutcome.LEAKED, "PATCH /v2/ → 404"),
+        ],
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is False
+    assert "connect" in detail and "method" in detail and "host-header" not in detail
+    assert "jailbee registry up" in detail
+
+
+def test_lockdown_report_inconclusive_when_mirror_has_no_endpoint(mocker):
+    from jailbee.registry import lockdown_report
+
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=ValueError("jailbee-registry-mirror is not running."),
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is None
+    assert "not running" in detail

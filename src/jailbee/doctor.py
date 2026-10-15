@@ -30,6 +30,7 @@ from jailbee.registry import (
     MIRROR_CONTAINER_NAME,
     MirrorStatus,
     eth0_global_ipv4,
+    lockdown_report,
     registry_status,
 )
 
@@ -1239,6 +1240,11 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                         deferred=lambda on_progress: _verify_mirror_cache(incus, on_progress),
                     )
                 )
+                # Running is not the same as locked down: a mirror provisioned
+                # before the lockdown, and not re-synced since, still tunnels
+                # anywhere (see registry_selftest).
+                locked, detail = lockdown_report(incus, gcfg)
+                results.append(CheckResult("registry lockdown", locked is not False, detail))
             elif rstatus == MirrorStatus.DEGRADED:
                 results.append(
                     CheckResult(

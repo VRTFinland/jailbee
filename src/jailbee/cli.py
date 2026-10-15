@@ -11449,7 +11449,7 @@ def registry_up_cmd(
     """
     from jailbee.docker_daemon import MIRROR_DNS_NAME
     from jailbee.incus import Incus, IncusError
-    from jailbee.registry import registry_up
+    from jailbee.registry import lockdown_report, registry_up
     from jailbee.tui import status_with_elapsed
 
     _load_or_exit(config)
@@ -11476,6 +11476,9 @@ def registry_up_cmd(
         # which names `--recreate` as the next thing to try.
         error(str(e))
         raise typer.Exit(1) from e
+    locked, detail = lockdown_report(incus, gcfg)
+    if locked is False:
+        warn(f"Registry mirror is not locked down: {detail}")
     success(f"Registry mirror running on {MIRROR_DNS_NAME}:{gcfg.docker_registry_mirror.port}")
 
 
