@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.4 - 2026-10-15
+
 ### Added
 
 - **The outbox can publish a PR manifest to another repository.** A numbered
