@@ -37,7 +37,10 @@ before editing `## Unreleased`.
   those now fails to pull (`Forbidden`) until it is listed in
   `docker_registry_mirror.extra_registries`. `jailbee apply`, `jailbee new` or
   `jailbee registry up` update an existing mirror, and `jailbee doctor`
-  reports whether it is locked down.
+  reports whether it is locked down. `extra_registries` entries must now be
+  exact hostnames: a wildcard (`*.example.com`) or a `:port` is a config
+  error, since the mirror would admit every host under the wildcard and
+  cannot serve a registry on another port.
 - **The update notice stays until you upgrade or dismiss it.** A newer
   release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
   once a day, and the dashboard shows it on a row of its own with a clickable
