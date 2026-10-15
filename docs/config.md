@@ -2082,6 +2082,21 @@ Error response from daemon: failed to resolve reference "public.ecr.aws/docker/l
 Add the registry's hostname (`public.ecr.aws` here) to `extra_registries`
 and run `jailbee apply`.
 
+Some registries issue their pull tokens from a different host. GitLab's
+`registry.gitlab.com`, for example, authenticates against `gitlab.com`.
+The mirror refuses that host too unless it is listed, and the pull then
+fails with the same `Forbidden`. List both:
+
+```yaml
+docker_registry_mirror:
+  extra_registries:
+    - registry.gitlab.com
+    - gitlab.com
+```
+
+To find a registry's token host, read the `realm` in its challenge:
+`curl -sI https://<registry>/v2/ | grep -i www-authenticate`.
+
 Mechanics: `jailbee new` and `jailbee apply` write the union of these entries
 into `/etc/jailbee-registry-proxy.env` inside the
 `jailbee-registry-mirror` container and restart `jailbee-registry-proxy.service`
