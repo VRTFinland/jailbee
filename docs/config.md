@@ -2735,7 +2735,7 @@ one repo in its host-local file (above).
 docker_registry_mirror:
   enabled: auto                                  # auto | true | false
   port: 3128                                     # rpardini default
-  image: rpardini/docker-registry-proxy:0.6.5    # OCI image pin
+  image: rpardini/docker-registry-proxy:0.7.0    # OCI image pin
   data_dir: ~/.local/share/jailbee/registry          # cache + CA storage
 ```
 
@@ -2743,7 +2743,7 @@ docker_registry_mirror:
 |---|---|---|
 | `enabled` | `auto` | `auto` wires the mirror only into repos that ask for it: a golden image that would contain Docker (`golden.stacks.docker`, an `enable_snippets`/`install.d` `50-docker`, a `golden.extra_apt_packages` entry starting with `docker`, minus `disable_snippets`), a non-empty per-repo [`docker_registry_mirror.extra_registries`](#docker_registry_mirrorextra_registries), or `golden.stacks.ecr` (which stages a Docker credential helper). `true` forces it on, `false` skips all mirror-related work. **Both are host-global** — this file is host-level, so `true` set for one undetectable repo also re-imposes the strict-mode `jailbee new` abort on every other repo on the machine; `extra_registries` is the per-repo way to opt in. Mirror container lifecycle is unaffected either way (use `jailbee registry up/down`). |
 | `port` | `3128` | Port the rpardini proxy listens on inside the mirror container. |
-| `image` | `rpardini/docker-registry-proxy:0.6.5` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
+| `image` | `rpardini/docker-registry-proxy:0.7.0` | OCI image podman runs inside the mirror Incus container. Pin to a specific tag — upgrades are deliberate. |
 | `data_dir` | `~/.local/share/jailbee/registry` | Host directory bind-mounted into the mirror for cache + CA storage. |
 
 `auto` cannot see every route to Docker. A differently-named `install.d`

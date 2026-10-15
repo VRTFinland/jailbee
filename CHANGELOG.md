@@ -41,6 +41,11 @@ before editing `## Unreleased`.
   exact hostnames: a wildcard (`*.example.com`) or a `:port` is a config
   error, since the mirror would admit every host under the wildcard and
   cannot serve a registry on another port.
+- **The registry mirror runs rpardini/docker-registry-proxy 0.7.0** (was
+  0.6.5). Pulls from gcr.io work again — 0.6.5 failed on its relative blob
+  redirects — and Docker Hub's longer certificate chain verifies. The next
+  `jailbee apply`, `jailbee new` or `jailbee registry up` switches an existing
+  mirror over.
 - **The update notice stays until you upgrade or dismiss it.** A newer
   release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
   once a day, and the dashboard shows it on a row of its own with a clickable

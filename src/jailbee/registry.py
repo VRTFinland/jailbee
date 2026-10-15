@@ -49,8 +49,9 @@ _SERVICE_WAIT_SECONDS = 60
 _PROVISION_PKG = "jailbee.provision"
 _PROVISION_SUBDIR = "registry-mirror"
 
-# rpardini/docker-registry-proxy:0.6.5 image ENV defaults (verified via
-# `podman exec ... env | grep REGISTRIES` on a running mirror). The
+# rpardini/docker-registry-proxy image ENV defaults (verified via `podman exec
+# ... env | grep REGISTRIES` on a running 0.6.5 mirror; the Dockerfile's ENV is
+# unchanged in 0.7.0). The
 # EnvironmentFile= override in jailbee-registry-proxy.container fully replaces
 # the image's REGISTRIES — so any per-repo additions must re-include these
 # or rpardini silently stops caching k8s.io/gcr.io/quay/ghcr pulls.

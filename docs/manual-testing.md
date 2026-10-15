@@ -4083,7 +4083,7 @@ jailbee doctor
 # expect: "registry lockdown" red, naming connect, host-header and method
 jb apply                               # or `jailbee new` / `jailbee registry up`
 incus exec jailbee-registry-mirror -- cat /etc/jailbee-registry-proxy/nginx.conf | head -1
-# expect: # derived from rpardini/docker-registry-proxy:0.6.5
+# expect: # derived from rpardini/docker-registry-proxy:0.7.0
 jailbee doctor
 # expect: "registry lockdown" green — no tunnels, allowlisted hosts only, GET/HEAD only
 # (right after the restart the probe may say "not probed — Connection refused"
@@ -4094,10 +4094,10 @@ From a strict container that uses the mirror (`M` is the mirror's proxy URL):
 
 ```bash
 M=http://jailbee-registry-mirror.incus:3128
-for img in alpine:3.20 ghcr.io/linuxcontainers/alpine:latest \
+for img in alpine:3.20 ghcr.io/linuxcontainers/alpine:latest gcr.io/distroless/static:latest \
            quay.io/prometheus/busybox:latest registry.k8s.io/pause:3.10; do
   docker pull -q "$img"; done
-# expect: all four pull
+# expect: all five pull (gcr.io needs rpardini >= 0.7.0: its blob redirects are relative)
 curl -sv -x $M https://example.com 2>&1 | grep -i "tunnel failed"
 # expect: CONNECT tunnel failed, response 403
 curl -sk -x $M https://registry-1.docker.io/ -H 'Host: example.com' -i | head -1
@@ -4109,10 +4109,6 @@ docker pull public.ecr.aws/docker/library/alpine:3.20
 # then add public.ecr.aws to docker_registry_mirror.extra_registries, `jb apply`,
 # and the same pull succeeds
 ```
-
-gcr.io is left out on purpose: rpardini 0.6.5 cannot follow gcr.io's relative
-blob redirects (`invalid URL prefix` in the mirror's log, 500 to dockerd),
-with or without the lockdown.
 
 ## Registry cache verification
 

@@ -309,8 +309,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason=(
             "egress is narrower: `agents.claude.plugins_enabled` no longer opens "
             "`registry.npmjs.org` (add it to `egress_allow` if a Claude plugin "
-            "installs from npm), and the registry mirror refuses every host but its "
-            "registries — list other registries in `extra_registries`"
+            "installs from npm), and the registry mirror (now rpardini 0.7.0, which "
+            "fixes gcr.io pulls) refuses every host but its registries — list "
+            "other registries in `extra_registries`"
         ),
     ),
 )

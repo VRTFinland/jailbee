@@ -66,3 +66,14 @@ def test_caching_layer_allows_only_get_and_head():
 def test_every_change_is_marked():
     """Re-deriving from a new upstream starts by grepping these."""
     assert _conf().count("# jailbee:") >= 3
+
+
+def test_relative_blob_redirects_are_made_absolute():
+    """gcr.io (Artifact Registry) answers blob requests with a relative
+    Location; rpardini before 0.7.0 failed those with `invalid URL prefix`.
+    The absolute URL is built on `$host`, which the caching layer has already
+    checked against the allowlist."""
+    conf = _conf()
+    redirects = conf[conf.index("location @handle_redirects") :]
+    assert 'if ($upstream_http_location !~* "^https?://")' in redirects
+    assert 'set $orig_loc "https://${host}${upstream_http_location}";' in redirects

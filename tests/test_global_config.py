@@ -182,7 +182,7 @@ def test_docker_registry_mirror_defaults_to_port_3128():
 
 def test_docker_registry_mirror_defaults_to_rpardini_image():
     gcfg = GlobalConfig()
-    assert gcfg.docker_registry_mirror.image == "rpardini/docker-registry-proxy:0.6.5"
+    assert gcfg.docker_registry_mirror.image == "rpardini/docker-registry-proxy:0.7.0"
 
 
 def test_docker_registry_mirror_accepts_overrides(tmp_path):

@@ -2,7 +2,7 @@
 Description=jailbee Docker registry MITM caching proxy (rpardini)
 
 [Container]
-Image=docker.io/rpardini/docker-registry-proxy:0.6.5
+Image=docker.io/rpardini/docker-registry-proxy:0.7.0
 PublishPort=3128:3128
 Volume=/docker_mirror_cache:/docker_mirror_cache
 Volume=/ca:/ca
