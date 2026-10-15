@@ -67,13 +67,14 @@ class PrScope:
     def for_submodule(cls, cfg: Config, subpath: str, *, host_root: Path | None = None) -> PrScope:
         from jailbee import submodule_pr, submodules
 
+        root = (
+            host_root
+            if host_root is not None
+            else submodules.host_subrepo_root(cfg.repo_root, subpath)
+        )
         return cls(
-            repo_root=(
-                host_root
-                if host_root is not None
-                else submodules.host_subrepo_root(cfg.repo_root, subpath)
-            ),
-            remote=submodule_pr.resolve_remote(cfg.repo_root, subpath, host_root=host_root),
+            repo_root=root,
+            remote=submodule_pr.resolve_remote(cfg.repo_root, subpath, host_root=root),
             prefix=f"submodule '{subpath}': ",
             subpath=subpath,
         )

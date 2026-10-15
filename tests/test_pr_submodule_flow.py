@@ -600,6 +600,27 @@ def test_orchestration_isolates_known_errors_but_not_programming_errors(mocker, 
         ]
 
 
+def test_flow_uses_container_declared_base_for_gitdir_only_module(mocker, tmp_path):
+    from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
+
+    cfg, incus, _ = _env(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    mocker.patch("jailbee.submodules.declared_branch_for_top_relative_path", return_value="release")
+    base = mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="release")
+    publish_submodule_pr(
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        "feat-foo",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/home/dev/repo",
+        confirm_plan=None,
+        offer_comments=lambda *args: 0,
+    )
+    assert base.call_args.kwargs["override"] == "release"
+
+
 def test_flow_propagates_authoritative_transport_root(mocker, tmp_path):
     from jailbee import submodule_pr, submodules
     from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr

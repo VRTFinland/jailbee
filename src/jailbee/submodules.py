@@ -151,12 +151,7 @@ def _place_one(run: GitRun, sub: str, branch: str, gitlink: str) -> None:
 
 
 def _gitmodules_paths(run: GitRun, top_dir: str) -> list[tuple[str, str]]:
-    """Parse `top_dir/.gitmodules` -> list of (name, path). [] if absent.
-
-    Intentionally separate from `_list_gitmodules`: that function calls
-    `incus.exec` directly with a uid argument; this one uses the `GitRun`
-    executor abstraction so it works for both host-side and container-side callers.
-    """
+    """Parse `top_dir/.gitmodules` -> list of (name, path). [] if absent."""
     ok, out = run(
         top_dir,
         [
@@ -796,25 +791,10 @@ def _list_gitmodules(
     `at_head` reads the committed blob rather than an edited worktree file.
     Reads pass only `uid` (no `gid`) since they don't write group-owned files.
     """
-    try:
-        out = incus.exec(
-            container,
-            [
-                *(
-                    ["git", "-C", level_dir, "config", "--blob", "HEAD:.gitmodules"]
-                    if at_head
-                    else ["git", "config", "-f", f"{level_dir}/.gitmodules"]
-                ),
-                "--null",
-                "--get-regexp",
-                r"^submodule\..*\.path$",
-            ],
-            uid=uid,
-        )
-    except IncusError:
-        return []
-
-    return _parse_gitmodules_paths(out)
+    run = _container_runner(incus, container, uid=uid)
+    if at_head:
+        return _gitmodules_paths_at(run, level_dir, "HEAD")
+    return _gitmodules_paths(run, level_dir)
 
 
 def init_submodules_in_container(
@@ -1113,7 +1093,15 @@ def vanishing_submodules(
     in_head = gitlinks_at(run, top_dir, head)
     in_target = gitlinks_at(run, top_dir, target)
     candidates = in_head if base is None else in_head & gitlinks_at(run, top_dir, base)
-    return sorted(candidates - in_target)
+    removed = sorted(candidates - in_target)
+    for path in removed:
+        replacement = _require_git(run, top_dir, ["ls-tree", "-z", target, "--", path])
+        if replacement.strip() and _has_own_worktree(run, f"{top_dir}/{path}"):
+            raise SubmoduleError(
+                f"Target '{target}' replaces submodule '{path}' with ordinary files. "
+                "Deinitialize that submodule before switching and retry."
+            )
+    return removed
 
 
 def _has_own_worktree(run: GitRun, sub: str) -> bool:
@@ -1610,17 +1598,6 @@ def host_submodule_paths(repo_root: Path) -> list[str]:
     return [path for path in paths if host_subrepo_exists(repo_root, path)]
 
 
-def _container_submodule_name(
-    incus: Incus, container: str, repo_dir: str, parent_path: str, leaf: str, *, uid: int
-) -> str:
-    """Resolve a leaf's declared name from the container parent's commit."""
-    level_dir = f"{repo_dir}/{parent_path}" if parent_path else repo_dir
-    for name, path in _list_gitmodules(incus, container, level_dir, uid=uid, at_head=True):
-        if path == leaf:
-            return name
-    return leaf
-
-
 def _container_submodule_url(
     incus: Incus,
     container: str,
@@ -1630,6 +1607,7 @@ def _container_submodule_url(
     uid: int,
     parent_path: str | None = None,
     at_head: bool = False,
+    name: str | None = None,
 ) -> str | None:
     """URL recorded for `subpath` in the container's `.gitmodules`, or None.
 
@@ -1641,27 +1619,26 @@ def _container_submodule_url(
         parent = parent_path
         leaf = subpath[len(parent) + 1 :] if parent else subpath
     level_dir = f"{repo_dir}/{parent}" if parent else repo_dir
-    for name, path in _list_gitmodules(incus, container, level_dir, uid=uid, at_head=at_head):
-        if path != leaf:
-            continue
-        try:
-            out = incus.exec(
-                container,
-                [
-                    *(
-                        ["git", "-C", level_dir, "config", "--blob", "HEAD:.gitmodules"]
-                        if at_head
-                        else ["git", "config", "-f", f"{level_dir}/.gitmodules"]
-                    ),
-                    "--get",
-                    f"submodule.{name}.url",
-                ],
-                uid=uid,
-            )
-        except IncusError:
-            return None
-        return out.strip() or None
-    return None
+    if name is None:
+        name = next(
+            (
+                declared_name
+                for declared_name, path in _list_gitmodules(
+                    incus, container, level_dir, uid=uid, at_head=at_head
+                )
+                if path == leaf
+            ),
+            None,
+        )
+    if name is None:
+        return None
+    run = _container_runner(incus, container, uid=uid)
+    if at_head:
+        return _gitmodules_url_at(run, level_dir, "HEAD", name)
+    ok, out = run(
+        level_dir, ["config", "-f", f"{level_dir}/.gitmodules", "--get", f"submodule.{name}.url"]
+    )
+    return (out.strip() or None) if ok else None
 
 
 def _container_subrepo_origin_url(
@@ -1695,6 +1672,7 @@ def _repoint_cloned_subrepo(
     uid: int,
     parent_path: str | None = None,
     at_head: bool = False,
+    name: str | None = None,
 ) -> None:
     """Give a freshly created gitdir-only host sub-repo a usable upstream.
 
@@ -1720,12 +1698,19 @@ def _repoint_cloned_subrepo(
     branch warns instead of failing the pull.
     """
     url = _container_submodule_url(
-        incus, container, repo_dir, subpath, uid=uid, parent_path=parent_path, at_head=at_head
+        incus,
+        container,
+        repo_dir,
+        subpath,
+        uid=uid,
+        parent_path=parent_path,
+        at_head=at_head,
+        name=name,
     )
-    if not url:
+    if not url or url.startswith(("./", "../")):
+        # Git already resolves relative declarations when initializing the source.
         candidate = _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
-        if candidate and not candidate.startswith("ext::"):
-            url = candidate
+        url = candidate if candidate and not candidate.startswith(("ext::", "./", "../")) else None
     if url:
         try:
             git.set_origin_url(host_sub, url)
@@ -1767,6 +1752,7 @@ def transport_submodules_to_host(
     located = {"": superproject_subrepo(repo_root)}
     planned: list[tuple[str, str, str, str]] = []
     projected = dict(located)
+    names_by_parent: dict[str, dict[str, str]] = {}
     for raw_path in _container_submodule_paths(incus, container, repo_dir, uid=uid):
         path = _normalize_declared_path(raw_path)
         if only is not None and path != only and not only.startswith(f"{path}/"):
@@ -1774,7 +1760,14 @@ def transport_submodules_to_host(
         parent_path = max((p for p in projected if not p or path.startswith(f"{p}/")), key=len)
         parent = projected[parent_path]
         leaf = path[len(parent_path) + 1 :] if parent_path else path
-        name = _container_submodule_name(incus, container, repo_dir, parent_path, leaf, uid=uid)
+        if parent_path not in names_by_parent:
+            level_dir = f"{repo_dir}/{parent_path}" if parent_path else repo_dir
+            names_by_parent[parent_path] = {}
+            for declared_name, declared_path in _list_gitmodules(
+                incus, container, level_dir, uid=uid, at_head=True
+            ):
+                names_by_parent[parent_path].setdefault(declared_path, declared_name)
+        name = names_by_parent[parent_path].get(leaf, leaf)
         candidate = _safe_subrepo_target(parent, leaf, name)
         worktree = parent.worktree / leaf if parent.worktree is not None else None
         existing_gitdir = _gitdir_of(worktree) if worktree is not None else None
@@ -1802,6 +1795,13 @@ def transport_submodules_to_host(
             gitdir = _safe_subrepo_target(parent, leaf, name)
             git.init_subrepo_gitdir(gitdir, url)
             sub = HostSubRepo(path=path, gitdir=gitdir, worktree=None)
+            _require_git(
+                git.run_capture, str(sub.root), ["config", "jailbee.incompleteTransport", "true"]
+            )
+        incomplete_ok, incomplete_value = git.run_capture(
+            str(sub.root), ["config", "--get", "jailbee.incompleteTransport"]
+        )
+        incomplete = incomplete_ok and incomplete_value.strip() == "true"
         located[path] = sub
         git.fetch_url_multi(
             sub.root,
@@ -1811,7 +1811,7 @@ def transport_submodules_to_host(
                 f"+refs/heads/*:refs/jailbee-sub/{short}/{path}/heads/*",
             ],
         )
-        if created:
+        if created or incomplete:
             ok, error = git.run_capture(
                 str(sub.root),
                 ["update-ref", "--no-deref", "HEAD", f"refs/jailbee-sub/{short}/{path}/HEAD"],
@@ -1827,6 +1827,7 @@ def transport_submodules_to_host(
                 uid=uid,
                 parent_path=parent_path,
                 at_head=True,
+                name=names_by_parent[parent_path].get(leaf),
             )
             try:
                 default = incus.exec(
@@ -1846,6 +1847,9 @@ def transport_submodules_to_host(
                         raise SubmoduleError(
                             f"Submodule '{path}': could not preserve upstream default ({error})"
                         )
+            _require_git(
+                git.run_capture, str(sub.root), ["config", "--unset", "jailbee.incompleteTransport"]
+            )
 
     return {path: repo for path, repo in located.items() if path}
 
@@ -1955,12 +1959,7 @@ def transport_submodules_to_container(
             subs = host_submodules_at(repo_root, commit, strict=True)
         except git.GitError as exc:
             raise SubmoduleError(f"Cannot inspect submodules in commit '{commit}': {exc}") from exc
-        missing = [
-            sub.path
-            for sub in subs
-            if sub.gitlink is not None
-            and (sub.repo is None or not git.has_commit(sub.repo.root, sub.gitlink))
-        ]
+        missing = [sub.path for sub in subs if sub.gitlink is not None and sub.repo is None]
         if missing:
             raise SubmoduleError(
                 "\n".join(
@@ -2036,11 +2035,18 @@ def all_host_subrepo_roots(repo_root: Path) -> list[Path]:
     """Stored module gitdirs (including nested/custom names) and legacy repos."""
     repo_root = Path(repo_root)
     gitdir = superproject_subrepo(repo_root).gitdir
-    roots = {
-        head.parent
-        for head in (gitdir / "modules").rglob("HEAD")
-        if (head.parent / "objects").is_dir()
-    }
+    roots: set[Path] = set()
+    pending = [gitdir / "modules"]
+    while pending:
+        directory = pending.pop()
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        if (directory / "HEAD").is_file() and (directory / "objects").is_dir():
+            roots.add(directory)
+            pending.append(directory / "modules")
+        else:
+            # Declared names can contain slashes; only descend until a repo is found.
+            pending.extend(child for child in directory.iterdir() if child.is_dir())
     for root in sorted(roots):
         _heal_worktreeless(gitdir, root)
     for path in git.submodule_status_paths(repo_root):
