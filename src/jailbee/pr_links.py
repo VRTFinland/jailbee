@@ -74,9 +74,10 @@ def link_pr_family(cfg: Config, incus: Incus, full: str, short: str) -> None:
             record = submodule_pr.SubmodulePrState(incus, full, path).read()
             if record.number is None:
                 continue
-            slug = pr_outbox.scope_slug(pr_flow.PrScope.for_submodule(cfg, path))
+            scope = pr_flow.PrScope.for_submodule(cfg, path)
+            slug = pr_outbox.scope_slug(scope)
             if slug:
-                entries.append((path, slug, record))
+                entries.append((path, slug, record, scope.repo_root))
     except (pr_flow.MalformedPrLabelError, IncusError) as exc:
         warn(f"Could not read the PR links for container '{short}': {exc}")
         return
@@ -100,18 +101,18 @@ def link_pr_family(cfg: Config, incus: Incus, full: str, short: str) -> None:
     if not super_record.author:
         info(
             f"Submodule PRs for PR #{super_number}: "
-            + ", ".join(f"{slug}#{record.number}" for _, slug, record in entries)
+            + ", ".join(f"{slug}#{record.number}" for _, slug, record, _root in entries)
         )
     elif super_slug:
         content = "**Submodule PRs** (merge these first):\n" + "\n".join(
-            f"- {slug}#{record.number} — `{path}`" for path, slug, record in entries
+            f"- {slug}#{record.number} — `{path}`" for path, slug, record, root in entries
         )
         update(cfg.repo_root, super_number, super_slug, SUBMODULE_PRS_MARKER, content)
     if super_slug:
-        for path, slug, record in entries:
+        for _path, slug, record, root in entries:
             if record.author and record.number is not None:
                 update(
-                    cfg.repo_root / path,
+                    root,
                     record.number,
                     slug,
                     SUPERPROJECT_PR_MARKER,

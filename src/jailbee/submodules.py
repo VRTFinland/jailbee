@@ -1113,7 +1113,15 @@ def vanishing_submodules(
     in_head = gitlinks_at(run, top_dir, head)
     in_target = gitlinks_at(run, top_dir, target)
     candidates = in_head if base is None else in_head & gitlinks_at(run, top_dir, base)
-    return sorted(candidates - in_target)
+    removed = sorted(candidates - in_target)
+    for path in removed:
+        replacement = _require_git(run, top_dir, ["ls-tree", "-z", target, "--", path])
+        if replacement.strip() and _has_own_worktree(run, f"{top_dir}/{path}"):
+            raise SubmoduleError(
+                f"Target '{target}' replaces submodule '{path}' with ordinary files. "
+                "Deinitialize that submodule before switching and retry."
+            )
+    return removed
 
 
 def _has_own_worktree(run: GitRun, sub: str) -> bool:
@@ -1722,10 +1730,10 @@ def _repoint_cloned_subrepo(
     url = _container_submodule_url(
         incus, container, repo_dir, subpath, uid=uid, parent_path=parent_path, at_head=at_head
     )
-    if not url:
+    if not url or url.startswith(("./", "../")):
+        # Git already resolves relative declarations when initializing the source.
         candidate = _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
-        if candidate and not candidate.startswith("ext::"):
-            url = candidate
+        url = candidate if candidate and not candidate.startswith(("ext::", "./", "../")) else None
     if url:
         try:
             git.set_origin_url(host_sub, url)
@@ -1802,6 +1810,13 @@ def transport_submodules_to_host(
             gitdir = _safe_subrepo_target(parent, leaf, name)
             git.init_subrepo_gitdir(gitdir, url)
             sub = HostSubRepo(path=path, gitdir=gitdir, worktree=None)
+            _require_git(
+                git.run_capture, str(sub.root), ["config", "jailbee.incompleteTransport", "true"]
+            )
+        incomplete_ok, incomplete_value = git.run_capture(
+            str(sub.root), ["config", "--get", "jailbee.incompleteTransport"]
+        )
+        incomplete = incomplete_ok and incomplete_value.strip() == "true"
         located[path] = sub
         git.fetch_url_multi(
             sub.root,
@@ -1811,7 +1826,7 @@ def transport_submodules_to_host(
                 f"+refs/heads/*:refs/jailbee-sub/{short}/{path}/heads/*",
             ],
         )
-        if created:
+        if created or incomplete:
             ok, error = git.run_capture(
                 str(sub.root),
                 ["update-ref", "--no-deref", "HEAD", f"refs/jailbee-sub/{short}/{path}/HEAD"],
@@ -1846,6 +1861,9 @@ def transport_submodules_to_host(
                         raise SubmoduleError(
                             f"Submodule '{path}': could not preserve upstream default ({error})"
                         )
+            _require_git(
+                git.run_capture, str(sub.root), ["config", "--unset", "jailbee.incompleteTransport"]
+            )
 
     return {path: repo for path, repo in located.items() if path}
 
@@ -2036,11 +2054,18 @@ def all_host_subrepo_roots(repo_root: Path) -> list[Path]:
     """Stored module gitdirs (including nested/custom names) and legacy repos."""
     repo_root = Path(repo_root)
     gitdir = superproject_subrepo(repo_root).gitdir
-    roots = {
-        head.parent
-        for head in (gitdir / "modules").rglob("HEAD")
-        if (head.parent / "objects").is_dir()
-    }
+    roots: set[Path] = set()
+    pending = [gitdir / "modules"]
+    while pending:
+        directory = pending.pop()
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        if (directory / "HEAD").is_file() and (directory / "objects").is_dir():
+            roots.add(directory)
+            pending.append(directory / "modules")
+        else:
+            # Declared names can contain slashes; only descend until a repo is found.
+            pending.extend(child for child in directory.iterdir() if child.is_dir())
     for root in sorted(roots):
         _heal_worktreeless(gitdir, root)
     for path in git.submodule_status_paths(repo_root):

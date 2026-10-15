@@ -324,8 +324,11 @@ def publish_submodule_pr(
     host_root = host_sub.root if host_sub is not None else None
     scope = pr_flow.PrScope.for_submodule(cfg, subpath, host_root=host_root)
     remote = scope.remote
+    declared_base = opts.base or submodules.declared_branch_for_top_relative_path(
+        submodules._container_runner(incus, full, uid=cfg.container_user.uid), repo_dir, subpath
+    )
     resolved_base = submodule_pr.resolve_base_branch(
-        cfg.repo_root, subpath, override=opts.base, host_root=host_root
+        cfg.repo_root, subpath, override=declared_base, host_root=host_root
     )
     if opts.pr_number is not None:
         # After the transport, not before: for a submodule the host has never

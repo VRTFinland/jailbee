@@ -670,6 +670,65 @@ def _commit_subs(tmp_path, *paths):
     ]
 
 
+def test_relative_new_subrepo_origin_uses_container_resolved_url(mocker, tmp_path):
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_submodule_url", return_value="../lib.git")
+    mocker.patch(
+        "jailbee.submodules._container_subrepo_origin_url",
+        return_value="https://github.com/acme/lib.git",
+    )
+    origin = mocker.patch("jailbee.git.set_origin_url")
+    submodules._repoint_cloned_subrepo(incus, "c", "/r", "lib", tmp_path, uid=1000)
+    origin.assert_called_once_with(tmp_path, "https://github.com/acme/lib.git")
+
+
+def test_retry_finishes_an_incomplete_subrepo_transport(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    sub = submodules.HostSubRepo("lib", tmp_path / ".git/modules/lib", None)
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["lib"])
+    mocker.patch("jailbee.submodules._container_submodule_name", return_value="lib")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=sub)
+    mocker.patch("jailbee.git.fetch_url_multi")
+    writes = []
+
+    def run(cwd, args):
+        writes.append(args)
+        if args[-2:] == ["--get", "jailbee.incompleteTransport"]:
+            return True, "true\n"
+        return True, ""
+
+    mocker.patch("jailbee.git.run_capture", side_effect=run)
+    repoint = mocker.patch("jailbee.submodules._repoint_cloned_subrepo")
+    submodules.transport_submodules_to_host(cfg, incus, "c", "c1", repo_dir="/r")
+    assert ["update-ref", "--no-deref", "HEAD", "refs/jailbee-sub/c1/lib/HEAD"] in writes
+    repoint.assert_called_once()
+
+
+def test_vanishing_replacement_is_refused_before_checkout(mocker):
+    run = mocker.Mock(return_value=(True, "040000 tree abc\tsub\0"))
+    mocker.patch("jailbee.submodules._has_own_worktree", return_value=True)
+    mocker.patch("jailbee.submodules.gitlinks_at", side_effect=[{"sub"}, set()])
+    with pytest.raises(submodules.SubmoduleError, match="replaces submodule"):
+        submodules.vanishing_submodules(run, "/r", head="old", target="new")
+
+
+def test_module_gitdir_scan_does_not_walk_objects(mocker, tmp_path):
+    modules = tmp_path / ".git/modules"
+    repo = modules / "custom/name"
+    (repo / "objects/decoy").mkdir(parents=True)
+    (repo / "HEAD").write_text("ref: refs/heads/main\n")
+    (repo / "objects/decoy/HEAD").write_text("not a repo")
+    (repo / "objects/decoy/objects").mkdir()
+    nested = repo / "modules/inner"
+    (nested / "objects").mkdir(parents=True)
+    (nested / "HEAD").write_text("ref: refs/heads/main\n")
+    mocker.patch("jailbee.submodules._heal_worktreeless")
+    mocker.patch("jailbee.git.submodule_status_paths", return_value=[])
+    assert submodules.all_host_subrepo_roots(tmp_path) == [repo, nested]
+
+
 def test_transport_to_container_requires_commit(tmp_path):
     with pytest.raises(ValueError):
         submodules.transport_submodules_to_container(
