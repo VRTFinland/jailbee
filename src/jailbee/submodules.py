@@ -1698,7 +1698,13 @@ def _repoint_cloned_subrepo(
     branch warns instead of failing the pull.
     """
     url = _container_submodule_url(
-        incus, container, repo_dir, subpath, uid=uid, parent_path=parent_path, at_head=at_head,
+        incus,
+        container,
+        repo_dir,
+        subpath,
+        uid=uid,
+        parent_path=parent_path,
+        at_head=at_head,
         name=name,
     )
     if not url or url.startswith(("./", "../")):
@@ -1953,11 +1959,7 @@ def transport_submodules_to_container(
             subs = host_submodules_at(repo_root, commit, strict=True)
         except git.GitError as exc:
             raise SubmoduleError(f"Cannot inspect submodules in commit '{commit}': {exc}") from exc
-        missing = [
-            sub.path
-            for sub in subs
-            if sub.gitlink is not None and sub.repo is None
-        ]
+        missing = [sub.path for sub in subs if sub.gitlink is not None and sub.repo is None]
         if missing:
             raise SubmoduleError(
                 "\n".join(

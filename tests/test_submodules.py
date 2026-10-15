@@ -493,12 +493,22 @@ def test_container_url_uses_an_already_resolved_name():
     incus = MagicMock()
     incus.exec.return_value = "https://example.com/lib.git\n"
 
-    assert submodules._container_submodule_url(
-        incus, "c", "/r", "lib", uid=1000, parent_path="", at_head=True, name="custom"
-    ) == "https://example.com/lib.git"
+    assert (
+        submodules._container_submodule_url(
+            incus, "c", "/r", "lib", uid=1000, parent_path="", at_head=True, name="custom"
+        )
+        == "https://example.com/lib.git"
+    )
     incus.exec.assert_called_once()
     assert incus.exec.call_args.args[1] == [
-        "git", "-C", "/r", "config", "--blob", "HEAD:.gitmodules", "--get", "submodule.custom.url"
+        "git",
+        "-C",
+        "/r",
+        "config",
+        "--blob",
+        "HEAD:.gitmodules",
+        "--get",
+        "submodule.custom.url",
     ]
 
 
