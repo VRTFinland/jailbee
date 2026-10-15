@@ -38,8 +38,9 @@ if TYPE_CHECKING:
 class PublishOptions:
     dry_run: bool = False
     force: bool = False
-    # Consent to a PR the container does not own, or to an issue action on a
-    # foreign repository (`github:<owner>/<name>`); the plan warns about both.
+    # Consent to a PR the container does not own (in any repository, its own
+    # or not), or to an issue action on a foreign repository
+    # (`github:<owner>/<name>`); the plan warns about each.
     foreign: bool = False
 
 
@@ -189,6 +190,9 @@ def publish_selected(
                     expected_revision=revision,
                     raise_errors=raise_errors,
                     allow_foreign=options.foreign,
+                    # The outbox alone relaxes the repository lock, under the
+                    # same consent: the plan names the repository it is not.
+                    allow_foreign_repo=options.foreign,
                 )
 
             batch = issue_outbox.prepare_batch(
