@@ -929,6 +929,21 @@ def test_allow_foreign_repo_admits_another_repository_and_marks_it(mocker, make_
     pr.resolve_pr.assert_called_once_with(cfg.repo_root, 7, remote="origin", repo="other/plugins")
 
 
+def test_repo_lock_matches_the_slug_case_insensitively(mocker, make_cfg, tmp_path):
+    """GitHub slugs are case-insensitive: a differently cased own repository
+    is the container's own, not a foreign one to warn about."""
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)  # remote acme/widgets, owns #1234
+    manifest = parse_manifest("001-x.json", _manifest_text(repo="ACME/Widgets"), {})
+
+    target = resolve_target(
+        make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign_repo=True
+    )
+
+    assert target.foreign_repo is False and target.foreign is False
+
+
 @pytest.mark.parametrize("repo", ["--repo=x/y", "a/b/c", "noslash"])
 def test_allow_foreign_repo_still_refuses_a_malformed_slug(mocker, make_cfg, tmp_path, repo):
     from jailbee.pr_outbox import ForeignRepoError, parse_manifest, resolve_target

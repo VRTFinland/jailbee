@@ -794,6 +794,41 @@ def test_pr_in_a_foreign_repo_publishes_with_foreign_and_warns(env, capsys):
     assert {c.kwargs["repo"] for c in env[4]["pr_comment"].call_args_list} == {"other/plugins"}
 
 
+def test_malformed_pr_repo_is_refused_without_offering_foreign(env, capsys):
+    """--foreign cannot admit a slug gh would not take, so it is not named."""
+    _retarget_pr_manifest(env, "a/b/c")
+
+    assert selected(env, "pr") == 1
+    assert_no_mutation(env)
+    assert "--foreign" not in capsys.readouterr().err
+
+
+def test_review_apply_keeps_the_repository_lock_even_with_foreign(env, capsys):
+    """`jailbee review apply --foreign` relaxes PR ownership only; another
+    repository is the unified outbox's call alone."""
+    from jailbee import pr_outbox
+
+    _retarget_pr_manifest(env, "other/plugins")
+    cfg, incus, *_ = env
+
+    failures = pr_outbox.offer_pending_comments(
+        cfg,
+        incus,
+        IDENTITY.full_name,
+        "feat",
+        pr_number=None,
+        confirm=lambda count: True,
+        outbox=pr_outbox.Outbox(files=env[2]["pr"].as_dict()),
+        allow_foreign=True,
+    )
+
+    # 002.json, for the container's own repository, still publishes.
+    assert failures == 1
+    assert {c.kwargs["repo"] for c in env[4]["pr_comment"].call_args_list} == {"acme/repo"}
+    err = capsys.readouterr().err
+    assert "other/plugins" in err and "--foreign" not in err
+
+
 def test_pr_ownership_revalidated_after_confirm(env):
     def confirm(count):
         env[5]["user.jailbee.pr"] = "43"

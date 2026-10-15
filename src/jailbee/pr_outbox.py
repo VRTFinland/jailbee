@@ -555,7 +555,12 @@ def resolve_target(
         (scope, scope_slug(scope))
         for scope in candidate_scopes(cfg, extra_paths=recorded_paths(incus, container))
     ]
-    matches = [scope for scope, slug in scopes if slug == manifest.repo]
+    # GitHub matches owner/name case-insensitively, and so does the lock.
+    matches = [
+        scope
+        for scope, slug in scopes
+        if slug is not None and slug.casefold() == manifest.repo.casefold()
+    ]
     foreign_repo = not matches
     if not foreign_repo:
         scope = matches[0]
@@ -2082,7 +2087,10 @@ def _gate_manifests(
             # --foreign relaxes the repository lock only on the unified
             # outbox's selected publication, and never for `pr: null`.
             foreign = isinstance(e, ForeignPrError) or (
-                isinstance(e, ForeignRepoError) and selected_publication and manifest.pr is not None
+                isinstance(e, ForeignRepoError)
+                and selected_publication
+                and manifest.pr is not None
+                and is_github_slug(manifest.repo)
             )
             if raise_errors:
                 if foreign:
