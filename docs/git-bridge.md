@@ -1207,8 +1207,8 @@ from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked
 (`--stacked`). It may also name **any other PR of the same repository** — a
 description fix or a reply on a neighbouring PR, say. The repository lock
 still holds; only the ownership check is relaxed, and never silently. The plan
-then opens with a warning naming the PR, its author and the container, and on
-a terminal the confirmation under it is the consent. With `-y` nobody reads
+ends with a highlighted warning naming the PR, its author and the container,
+directly above the confirmation, which on a terminal is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
 `jb outbox apply` and `jb review apply`).
 
