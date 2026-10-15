@@ -2082,9 +2082,7 @@ def _gate_manifests(
             # --foreign relaxes the repository lock only on the unified
             # outbox's selected publication, and never for `pr: null`.
             foreign = isinstance(e, ForeignPrError) or (
-                isinstance(e, ForeignRepoError)
-                and selected_publication
-                and manifest.pr is not None
+                isinstance(e, ForeignRepoError) and selected_publication and manifest.pr is not None
             )
             if raise_errors:
                 if foreign:
