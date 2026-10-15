@@ -558,7 +558,8 @@ def registry_up(
     )
     # After the wait: the sync restarts the service when it changes the file,
     # and a restart only means something once the service is up. No repo is
-    # in play here, so no extra registries — this is for the tuning.
+    # in play here, so no extra registries — this is for the tuning and the
+    # locked-down nginx.conf/unit.
     on_step("syncing the proxy settings")
     sync_mirror_env(incus, [])
 
@@ -581,19 +582,23 @@ def registry_down(incus: Incus) -> None:
     )
 
 
+def _read_mirror_file(incus: Incus, path: str) -> str:
+    """A mirror file's content, or "" if absent."""
+    return incus.exec(
+        MIRROR_CONTAINER_NAME,
+        ["sh", "-c", f"cat {path} 2>/dev/null || true"],
+        timeout=10,
+    )
+
+
 def _read_proxy_env_file(incus: Incus) -> dict[str, str]:
     """Parse the mirror's env file into ``KEY -> VALUE``. Empty if absent.
 
     Lines without ``=`` (blanks, comments) are dropped: the file is
     jailbee-written, and ``sync_mirror_env`` re-renders it from this dict.
     """
-    out = incus.exec(
-        MIRROR_CONTAINER_NAME,
-        ["sh", "-c", f"cat {_PROXY_ENV_FILE} 2>/dev/null || true"],
-        timeout=10,
-    )
     env: dict[str, str] = {}
-    for line in out.splitlines():
+    for line in _read_mirror_file(incus, _PROXY_ENV_FILE).splitlines():
         key, sep, value = line.partition("=")
         if sep and key and not key.startswith("#"):
             env[key] = value
@@ -601,31 +606,35 @@ def _read_proxy_env_file(incus: Incus) -> dict[str, str]:
 
 
 def sync_mirror_env(incus: Incus, registries: Iterable[str]) -> bool:
-    """Bring the running mirror's env file to what jailbee wants in it.
+    """Bring the running mirror's config files to what jailbee wants in them.
 
-    The file (``/etc/jailbee-registry-proxy.env``, read by the Quadlet unit's
-    ``EnvironmentFile=``) carries two kinds of setting:
+    Three files, each rewritten only when it differs:
 
-    - ``REGISTRIES``: rpardini's nginx generates MITM certs + ``proxy_cache``
-      upstreams only for hostnames listed here. Unlisted hostnames are
-      CONNECT-tunneled without caching — so per-repo upstreams (notably ECR
-      hosts) need adding, otherwise every ``jailbee new`` re-pulls them from
-      the internet. The written value is the union of rpardini's image
-      defaults, what the file already holds, and ``registries``: once-added
-      registries stick, and a repo whose ``extra_registries`` later shrinks
-      doesn't get them removed from the host-global mirror. To prune,
-      recreate the container.
-    - ``_PROXY_TUNING``: host-global, owned by jailbee, and forced — a
-      hand-edited value is put back.
+    - The env file (``/etc/jailbee-registry-proxy.env``, read by the Quadlet
+      unit's ``EnvironmentFile=``), with two kinds of setting:
 
-    Keys jailbee does not own (``AUTH_REGISTRIES``, say) are preserved.
+      - ``REGISTRIES``: rpardini's nginx generates MITM certs and intercepts
+        only hostnames listed here, and the locked-down ``nginx.conf`` refuses
+        every other host — so per-repo upstreams (notably ECR hosts) must be
+        added or their pulls fail. The written value is the union of
+        rpardini's image defaults, what the file already holds, and
+        ``registries``: once-added registries stick, and a repo whose
+        ``extra_registries`` later shrinks doesn't get them removed from the
+        host-global mirror. To prune, recreate the container.
+      - ``_PROXY_TUNING``: host-global, owned by jailbee, and forced — a
+        hand-edited value is put back.
 
-    Returns ``False`` and touches nothing when the file already matches.
-    Otherwise rewrites it, sorted for stable diffs, and restarts the proxy
-    service — which drops every pull in flight through the mirror, hence the
-    no-op path. Called with an empty ``registries`` it still applies the
-    tuning, which is how a mirror provisioned before the tuning existed
-    receives it.
+      Keys jailbee does not own (``AUTH_REGISTRIES``, say) are preserved.
+    - ``nginx.conf`` (``MIRROR_NGINX_CONF``) and the Quadlet unit: forced to
+      the packaged content. This is how a mirror provisioned before the
+      egress lockdown receives it; a changed unit also needs a
+      ``systemctl daemon-reload``.
+
+    Returns ``False`` and touches nothing when all three already match.
+    Otherwise writes what differs (sorted env, for stable diffs) and restarts
+    the proxy service once — which drops every pull in flight through the
+    mirror, hence the no-op path. Called with an empty ``registries`` it still
+    applies the tuning and the packaged files.
     """
     current = _read_proxy_env_file(incus)
     current_registries = set(current.get("REGISTRIES", "").split())
@@ -638,20 +647,36 @@ def sync_mirror_env(incus: Incus, registries: Iterable[str]) -> bool:
     if "REGISTRIES" in current:
         # Order-insensitive: a reordered but equal list is no reason to restart.
         current = {**current, "REGISTRIES": " ".join(sorted(current_registries))}
-    if wanted == current:
+
+    writes: list[tuple[str, str, str]] = []  # (path, heredoc marker, body)
+    if wanted != current:
+        env_body = "".join(f"{key}={value}\n" for key, value in sorted(wanted.items()))
+        writes.append((_PROXY_ENV_FILE, "JAILBEE_ENV_EOF", env_body))
+    unit_changed = False
+    for path, marker, packaged in (
+        (MIRROR_NGINX_CONF, "JAILBEE_NGINX_EOF", "nginx.conf"),
+        (_QUADLET_UNIT_PATH, "JAILBEE_UNIT_EOF", "jailbee-registry-proxy.container"),
+    ):
+        body = _read_provision_text(packaged)
+        if _read_mirror_file(incus, path).rstrip("\n") != body.rstrip("\n"):
+            writes.append((path, marker, body))
+            unit_changed = unit_changed or path == _QUADLET_UNIT_PATH
+    if not writes:
         return False
 
-    env_body = "".join(f"{key}={value}\n" for key, value in sorted(wanted.items()))
-    script = f"""\
-set -euo pipefail
-tmp=$(mktemp)
-cat > "$tmp" <<'JAILBEE_ENV_EOF'
-{env_body.rstrip()}
-JAILBEE_ENV_EOF
-mv "$tmp" {_PROXY_ENV_FILE}
-systemctl restart {MIRROR_SERVICE_NAME}
-"""
-    incus.exec(MIRROR_CONTAINER_NAME, ["bash", "-c", script], timeout=60)
+    parts = ["set -euo pipefail"]
+    for path, marker, body in writes:
+        parts.append(
+            f'mkdir -p "$(dirname {path})"\n'
+            "tmp=$(mktemp)\n"
+            f"cat > \"$tmp\" <<'{marker}'\n{body.rstrip(chr(10))}\n{marker}\n"
+            'chmod 0644 "$tmp"\n'
+            f'mv "$tmp" {path}'
+        )
+    if unit_changed:
+        parts.append("systemctl daemon-reload")
+    parts.append(f"systemctl restart {MIRROR_SERVICE_NAME}")
+    incus.exec(MIRROR_CONTAINER_NAME, ["bash", "-c", "\n".join(parts) + "\n"], timeout=60)
     return True
 
 

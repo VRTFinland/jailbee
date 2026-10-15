@@ -378,10 +378,11 @@ def run_apply(
     if maintain_legacy:
         _ensure_acl_attached_to_bridge(cfg, incus)
 
-    # Sync the mirror's env file once, before re-applying per-container
+    # Sync the mirror's config once, before re-applying per-container
     # dockerd proxy: the repo's extra upstream registries, plus the
-    # host-global proxy tuning — which is why this runs even for a repo with
-    # no extra registries. sync_mirror_env is a no-op when nothing changed.
+    # host-global proxy tuning and the locked-down nginx.conf/unit — which is
+    # why this runs even for a repo with no extra registries. sync_mirror_env
+    # is a no-op when nothing changed.
     if mirror_endpoint is not None:
         info("Syncing registry mirror settings...")
         from jailbee.registry import sync_mirror_env
