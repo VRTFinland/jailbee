@@ -1210,7 +1210,16 @@ still holds; only the ownership check is relaxed, and never silently. The plan
 then opens with a warning naming the PR, its author and the container, and on
 a terminal the confirmation under it is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
-`jb outbox apply` and `jb review apply`). For issue manifests, `--foreign`
+`jb outbox apply` and `jb review apply`).
+
+The unified outbox (`jb outbox apply`, the terminal browser and both
+dashboards' Outbox entries) goes one step further: a numbered PR manifest may
+name a PR in **a repository that is neither the superproject nor one of its
+submodules** — a description fix on a plugin repository the change also
+touches, say. Its plan warns that the repository is not the container's, and
+the same confirmation or `--foreign` is the consent. A `pr: null` manifest is
+never sent to another repository, and `jb review apply` and `jb pr` keep the
+repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
 The terminal

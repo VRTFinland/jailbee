@@ -28,7 +28,7 @@ from rich.markup import escape
 
 from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
-from jailbee.github_repo import github_slug
+from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
 from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.io import PrManagement
@@ -484,6 +484,15 @@ class ForeignPrError(GateError):
     """
 
 
+class ForeignRepoError(GateError):
+    """Gate 1 specifically: no host repository scope matches ``manifest.repo``.
+
+    Only ``allow_foreign_repo`` relaxes it, and only the unified outbox
+    passes that — so it is deliberately *not* a `ForeignPrError`, whose
+    ``--foreign`` remedy `jailbee review apply` would name in vain.
+    """
+
+
 @dataclass(frozen=True)
 class Target:
     """What one manifest resolves to, once the gates have run."""
@@ -495,6 +504,9 @@ class Target:
     # The manifest names a PR the container does not own, admitted only
     # because the caller passed `allow_foreign` (see `resolve_target`).
     foreign: bool = False
+    # The manifest's repository is none of the container's own (superproject
+    # or submodule), admitted only under `allow_foreign_repo`. Implies `foreign`.
+    foreign_repo: bool = False
 
 
 def resolve_target(
@@ -505,13 +517,18 @@ def resolve_target(
     *,
     force: bool,
     allow_foreign: bool = False,
+    allow_foreign_repo: bool = False,
 ) -> Target:
     """Run the validation gates for `manifest` and resolve what it targets.
 
     1. Repo lock: a host repository scope must have a GitHub remote whose
        slug matches ``manifest.repo``. This is the gate that matters most —
        without it a container could aim the host's `gh` at an unrelated
-       repository.
+       repository. ``allow_foreign_repo`` admits any other well-formed slug
+       for a numbered manifest, marked ``foreign_repo`` (and so ``foreign``)
+       for the plan's warning; ``gh`` then runs from the superproject with an
+       explicit ``--repo``. Only the unified outbox passes it, where a human
+       reads that warning — never `jailbee pr` or `jailbee review apply`.
     2. PR lock: ``manifest.pr`` must be among the numbers the container itself
        owns — its ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX``
        labels for the superproject, or a submodule's recorded PR. Numbered
@@ -539,13 +556,19 @@ def resolve_target(
         for scope in candidate_scopes(cfg, extra_paths=recorded_paths(incus, container))
     ]
     matches = [scope for scope, slug in scopes if slug == manifest.repo]
-    if not matches:
+    foreign_repo = not matches
+    if not foreign_repo:
+        scope = matches[0]
+    elif allow_foreign_repo and manifest.pr is not None and is_github_slug(manifest.repo):
+        # Nothing here owns a PR of that repository; the superproject is only
+        # where `gh` runs, every call naming `manifest.repo` explicitly.
+        scope = scopes[0][0]
+    else:
         known = ", ".join(sorted({slug for _, slug in scopes if slug is not None})) or "none"
-        raise GateError(
+        raise ForeignRepoError(
             f"manifest {manifest.name} targets {manifest.repo}, but no repository scope matches "
             f"(known GitHub repos: {known})"
         )
-    scope = matches[0]
 
     owned_numbers: set[int] = set()
     for matched in matches:
@@ -590,7 +613,7 @@ def resolve_target(
             return Target(manifest=manifest, pr=None, stale=False, scope=scope)
         number = next(iter(owned_numbers))
     else:
-        if manifest.pr not in owned_numbers and not allow_foreign:
+        if manifest.pr not in owned_numbers and not (allow_foreign or foreign_repo):
             raise ForeignPrError(
                 f"manifest {manifest.name} references PR #{manifest.pr}, which "
                 f"container {container} does not own"
@@ -607,7 +630,14 @@ def resolve_target(
             "(ask the agent to re-read the diff) or pass --force"
         )
 
-    return Target(manifest=manifest, pr=info, stale=stale, scope=scope, foreign=foreign)
+    return Target(
+        manifest=manifest,
+        pr=info,
+        stale=stale,
+        scope=scope,
+        foreign=foreign,
+        foreign_repo=foreign_repo,
+    )
 
 
 def foreign_warning(target: Target, short: str) -> str | None:
@@ -618,6 +648,11 @@ def foreign_warning(target: Target, short: str) -> str | None:
     if not target.foreign or target.pr is None:
         return None
     author = f" by @{target.pr.author_login}" if target.pr.author_login else ""
+    if target.foreign_repo:
+        return (
+            f"PR #{target.pr.number}{author} is in {target.manifest.repo}, which is not "
+            f"a repository of container {short}: check that this is where you mean to publish"
+        )
     return (
         f"PR #{target.pr.number}{author} is not bound to container {short}: "
         "check that this is the PR you mean to publish to"
@@ -1974,6 +2009,8 @@ def _gate_manifests(
     manifest_names: Sequence[str] | None = None,
     raise_errors: bool = False,
     allow_foreign: bool = False,
+    allow_foreign_repo: bool = False,
+    selected_publication: bool = False,
 ) -> tuple[list[Target], list[str], list[str]]:
     """Gate every pending manifest: (publishable targets, refusals, notes).
 
@@ -2033,13 +2070,25 @@ def _gate_manifests(
                 continue
         try:
             target = resolve_target(
-                cfg, incus, container, manifest, force=force, allow_foreign=allow_foreign
+                cfg,
+                incus,
+                container,
+                manifest,
+                force=force,
+                allow_foreign=allow_foreign,
+                allow_foreign_repo=allow_foreign_repo,
             )
         except GateError as e:
-            foreign = isinstance(e, ForeignPrError)
+            # --foreign relaxes the repository lock only on the unified
+            # outbox's selected publication, and never for `pr: null`.
+            foreign = isinstance(e, ForeignPrError) or (
+                isinstance(e, ForeignRepoError)
+                and selected_publication
+                and manifest.pr is not None
+            )
             if raise_errors:
                 if foreign:
-                    raise ForeignPrError(f"{e}; pass --foreign to publish to it anyway") from e
+                    raise type(e)(f"{e}; pass --foreign to publish to it anyway") from e
                 raise
             if comments_only:
                 # `--force` relaxes only `StaleError` and `--foreign` only
@@ -2141,6 +2190,7 @@ def offer_pending_comments(
     expected_revision: str | None = None,
     raise_errors: bool = False,
     allow_foreign: bool = False,
+    allow_foreign_repo: bool = False,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2150,6 +2200,8 @@ def offer_pending_comments(
     expected_revision is the shared inspection token for a single selected manifest.
     allow_foreign is the caller's consent to publish to a PR the container does
     not own (see `resolve_target`); the plan then warns about each such target.
+    allow_foreign_repo extends that consent to a repository that is none of the
+    container's own; only the unified outbox passes it.
     """
     from jailbee.outbox import io as store_io
     from jailbee.outbox.inspect import pr_progress_evidence
@@ -2216,6 +2268,7 @@ def offer_pending_comments(
                 selected_publication=explicit and pr_number is None,
                 raise_errors=raise_errors,
                 allow_foreign=allow_foreign,
+                allow_foreign_repo=allow_foreign_repo,
             )
     except (
         OutboxReadError,
@@ -2253,6 +2306,7 @@ def _offer_locked(
     selected_publication: bool = False,
     raise_errors: bool = False,
     allow_foreign: bool = False,
+    allow_foreign_repo: bool = False,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -2312,6 +2366,8 @@ def _offer_locked(
         manifest_names=manifest_names,
         raise_errors=raise_errors,
         allow_foreign=allow_foreign,
+        allow_foreign_repo=allow_foreign_repo,
+        selected_publication=selected_publication,
     )
     for message in refusals:
         error_plain(message)
@@ -2397,7 +2453,13 @@ def _offer_locked(
     refreshed_plans = []
     for target, progress, idx in plans:
         refreshed = resolve_target(
-            cfg, incus, container, target.manifest, force=force, allow_foreign=allow_foreign
+            cfg,
+            incus,
+            container,
+            target.manifest,
+            force=force,
+            allow_foreign=allow_foreign,
+            allow_foreign_repo=allow_foreign_repo,
         )
         if (
             refreshed.pr is None
@@ -2405,6 +2467,7 @@ def _offer_locked(
             or refreshed.pr.number != target.pr.number
             or refreshed.scope != target.scope
             or refreshed.foreign != target.foreign
+            or refreshed.foreign_repo != target.foreign_repo
         ):
             raise OutboxChanged("PR target changed; refresh required")
         refreshed_plans.append((refreshed, progress, idx))

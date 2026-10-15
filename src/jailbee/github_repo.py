@@ -35,6 +35,16 @@ def _github_remote_parts(url: str) -> tuple[str, str, str] | None:
     return match.group("prefix"), owner, repo
 
 
+# A bare ``owner/name`` as GitHub accepts it: no leading dash in the owner,
+# and a name that is not ``.`` or ``..``.
+_GITHUB_SLUG_RE = re.compile(r"(?!-)[A-Za-z0-9-]{1,39}/(?!\.{1,2}\Z)[A-Za-z0-9._-]{1,100}")
+
+
+def is_github_slug(value: str) -> bool:
+    """Whether `value` is a well-formed ``owner/name`` GitHub slug."""
+    return _GITHUB_SLUG_RE.fullmatch(value) is not None
+
+
 def github_slug(url: str) -> str | None:
     """Extract an ``owner/name`` slug from a supported GitHub remote URL."""
     parts = _github_remote_parts(url)

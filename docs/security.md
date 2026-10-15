@@ -449,6 +449,9 @@ An issue manifest may target a repository outside this project
 (`github:<owner>/<name>`); the host marks it as foreign in every plan and
 dashboard and publishes to it only after a separate confirmation or an
 explicit `--foreign`, since the write uses the host's own GitHub identity.
+The same holds for a numbered PR manifest published through `jailbee outbox
+apply` (or an Outbox entry in a dashboard) that names another repository's
+PR; `jailbee review apply` and `jailbee pr` still refuse it.
 
 **Outside the filesystem boundary.** Host paths that have not been mounted
 into the container, including unattached `optional_mounts`, are not exposed

@@ -762,6 +762,38 @@ def test_domain_repo_gate_still_refuses(env, kind):
     assert_no_mutation(env)
 
 
+def _retarget_pr_manifest(env, repo):
+    files = env[2]["pr"].as_dict()
+    payload = json.loads(files["001.json"])
+    payload["repo"] = repo
+    files["001.json"] = json.dumps(payload)
+    env[2]["pr"] = store("pr", files)
+
+
+def test_pr_in_a_foreign_repo_is_refused_without_foreign_naming_the_flag(env, capsys):
+    _retarget_pr_manifest(env, "other/plugins")
+
+    assert selected(env, "pr") == 1
+    assert_no_mutation(env)
+    assert "--foreign" in capsys.readouterr().err
+
+
+def test_pr_in_a_foreign_repo_publishes_with_foreign_and_warns(env, capsys):
+    """The outbox alone relaxes the repository lock, and only after the plan
+    has named the repository the container does not own."""
+    _retarget_pr_manifest(env, "other/plugins")
+    asked: list[str] = []
+
+    def confirm(count):
+        asked.append(capsys.readouterr().out)
+        return True
+
+    assert selected(env, "pr", confirm=confirm, foreign=True) == 0
+    assert "other/plugins, which is not a repository of container" in asked[0]
+    assert env[4]["pr_comment"].call_count == 2
+    assert {c.kwargs["repo"] for c in env[4]["pr_comment"].call_args_list} == {"other/plugins"}
+
+
 def test_pr_ownership_revalidated_after_confirm(env):
     def confirm(count):
         env[5]["user.jailbee.pr"] = "43"

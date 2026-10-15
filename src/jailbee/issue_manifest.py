@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
+
+from jailbee.github_repo import is_github_slug
 
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
@@ -118,7 +119,6 @@ def _required_string(
 
 
 GITHUB_REPO_PREFIX: Final = "github:"
-_GITHUB_SLUG = re.compile(r"(?!-)[A-Za-z0-9-]{1,39}/(?!\.{1,2}\Z)[A-Za-z0-9._-]{1,100}")
 
 
 def foreign_slug(repo: str) -> str | None:
@@ -126,7 +126,7 @@ def foreign_slug(repo: str) -> str | None:
     if not repo.startswith(GITHUB_REPO_PREFIX):
         return None
     slug = repo.removeprefix(GITHUB_REPO_PREFIX)
-    return slug if _GITHUB_SLUG.fullmatch(slug) else None
+    return slug if is_github_slug(slug) else None
 
 
 def _repo(item: Mapping[str, object], context: str) -> str:

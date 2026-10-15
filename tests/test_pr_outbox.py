@@ -912,6 +912,59 @@ def test_allow_foreign_keeps_the_repo_lock(mocker, make_cfg, tmp_path):
         resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign=True)
 
 
+def test_allow_foreign_repo_admits_another_repository_and_marks_it(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path, pr=_pr_info(number=7))
+    cfg = make_cfg(tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(repo="other/plugins", pr=7), {})
+
+    target = resolve_target(cfg, incus, "c", manifest, force=False, allow_foreign_repo=True)
+
+    assert target.pr is not None and target.pr.number == 7
+    assert target.foreign is True and target.foreign_repo is True
+    assert target.scope == PrScope.for_repo(cfg)
+    from jailbee import pr
+
+    pr.resolve_pr.assert_called_once_with(cfg.repo_root, 7, remote="origin", repo="other/plugins")
+
+
+@pytest.mark.parametrize("repo", ["--repo=x/y", "a/b/c", "noslash"])
+def test_allow_foreign_repo_still_refuses_a_malformed_slug(mocker, make_cfg, tmp_path, repo):
+    from jailbee.pr_outbox import ForeignRepoError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(repo=repo, pr=7), {})
+
+    with pytest.raises(ForeignRepoError):
+        resolve_target(
+            make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign_repo=True
+        )
+
+
+def test_allow_foreign_repo_never_binds_a_null_pr_manifest(mocker, make_cfg, tmp_path):
+    """`pr: null` means "this container's PR", which cannot be in a repository
+    the container has nothing to do with."""
+    from jailbee.pr_outbox import ForeignRepoError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest(
+        "002-d.json",
+        _manifest_text(
+            repo="other/plugins",
+            pr=None,
+            head_sha=None,
+            actions=[{"type": "description", "body": "B"}],
+        ),
+        {},
+    )
+
+    with pytest.raises(ForeignRepoError):
+        resolve_target(
+            make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign_repo=True
+        )
+
+
 def test_allow_foreign_keeps_the_stale_review_refusal(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import StaleError, parse_manifest, resolve_target
 
@@ -1106,6 +1159,24 @@ def test_foreign_warning_without_a_known_author_still_warns():
     warning = foreign_warning(_foreign_target(foreign=True, author=None), "feat-a")
 
     assert warning is not None and "#999" in warning and "@" not in warning
+
+
+def test_foreign_warning_names_a_foreign_repository():
+    from dataclasses import replace
+
+    from jailbee.pr_outbox import foreign_warning
+
+    target = _foreign_target(foreign=True)
+    target = replace(
+        target,
+        manifest=replace(target.manifest, repo="other/plugins"),
+        foreign_repo=True,
+    )
+
+    warning = foreign_warning(target, "feat-a")
+
+    assert warning is not None
+    assert "#999" in warning and "other/plugins" in warning and "feat-a" in warning
 
 
 def test_foreign_warning_is_none_for_the_containers_own_pr():
