@@ -255,8 +255,8 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
             "rpardini's built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, "
             "ghcr.io). The mirror refuses every registry outside the defaults and this "
             "list, so a pull from an unlisted one fails. Exact hostnames only — no "
-            "wildcard, port, scheme or path. `jailbee new` / `jailbee apply` push the merged list into "
-            "the mirror's REGISTRIES env."
+            "wildcard, port, scheme or path. `jailbee new` / `jailbee apply` push the "
+            "merged list into the mirror's REGISTRIES env."
         ),
     )
 

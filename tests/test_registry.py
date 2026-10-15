@@ -1445,7 +1445,9 @@ def test_sync_drops_stored_pattern_entries():
     """A mirror synced by an older jailbee may hold an entry the validator now
     refuses (a wildcard, a host:port). REGISTRIES only grows, so without this
     it would stay an nginx `hostnames` pattern until the mirror is recreated."""
-    incus = _mirror(env=_CURRENT_ENV.replace("REGISTRIES=", "REGISTRIES=*.amazonaws.com reg.local:5000 "))
+    incus = _mirror(
+        env=_CURRENT_ENV.replace("REGISTRIES=", "REGISTRIES=*.amazonaws.com reg.local:5000 ")
+    )
 
     assert sync_mirror_env(incus, []) is True
 
