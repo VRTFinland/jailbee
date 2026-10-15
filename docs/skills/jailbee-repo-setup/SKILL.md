@@ -397,7 +397,7 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Entries must be exact hostnames — no wildcard, no `:port` (the mirror serves registries on 443 only), no scheme, no path. Setting this key is
+Entries must be exact hostnames — no wildcard, no `:port` (the mirror serves registries on 443 only), no scheme, no path. If the registry issues tokens from another host, list that host too (GitLab: `registry.gitlab.com` and `gitlab.com`); the `realm` in `curl -sI https://<registry>/v2/ | grep -i www-authenticate` names it. Setting this key is
 itself an opt-in to the registry mirror: with the default
 `docker_registry_mirror.enabled: auto`, a repo that names extra registries gets
 the mirror wired in even without `golden.stacks.docker`.
