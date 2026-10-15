@@ -1924,32 +1924,14 @@ def merge_from_container(
         # In-place path: HEAD IS the target branch.
         pre_merge_head = git.rev_parse(cfg.repo_root, "HEAD")
 
-        def _do_merge() -> None:
-            if ff == "always":
-                git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
-            else:
-                # `auto` passes neither flag, which is git's own default: fast-forward
-                # when the target is strictly behind, merge commit otherwise. The
-                # message is passed either way — git ignores `-m` on a fast-forward.
-                try:
-                    git.merge_ref(
-                        cfg.repo_root,
-                        fetched_ref,
-                        message=f"Merge branch '{container_branch}' from container {short}",
-                        no_ff=(ff == "never"),
-                        ff_only=False,
-                    )
-                except git.GitError:
-                    _resolve_gitlinks_and_commit_host(
-                        cfg, branch=container_branch, location=f"cd {cfg.repo_root}"
-                    )
-
         _move_host_head(
             cfg,
             target=fetched_ref,
             base=_merge_base(cfg, fetched_ref),
             label=target or fetched_ref,
-            op=_do_merge,
+            op=lambda: _merge_host_ref(
+                cfg, fetched_ref, container_branch, short, ff, location=f"cd {cfg.repo_root}"
+            ),
         )
         head_oid = git.rev_parse(cfg.repo_root, "HEAD")
         if head_oid is None:
@@ -2027,6 +2009,31 @@ def merge_from_container(
     return _with_anchors(cfg, incus, result)
 
 
+def _merge_host_ref(
+    cfg: Config,
+    fetched_ref: str,
+    container_branch: str,
+    short: str,
+    ff: FfPolicy,
+    *,
+    location: str,
+) -> None:
+    """Merge a fetched ref, resolving gitlinks only when merge commits are allowed."""
+    if ff == "always":
+        git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
+        return
+    try:
+        git.merge_ref(
+            cfg.repo_root,
+            fetched_ref,
+            message=f"Merge branch '{container_branch}' from container {short}",
+            no_ff=(ff == "never"),
+            ff_only=False,
+        )
+    except git.GitError:
+        _resolve_gitlinks_and_commit_host(cfg, branch=container_branch, location=location)
+
+
 def _merge_via_checkout(
     cfg: Config,
     fetch_result: FetchResult,
@@ -2052,30 +2059,19 @@ def _merge_via_checkout(
         op=lambda: git.checkout_branch(cfg.repo_root, target),
     )
 
-    def _do_merge() -> None:
-        try:
-            git.merge_ref(
-                cfg.repo_root,
-                fetched_ref,
-                message=f"Merge branch '{container_branch}' from container {short}",
-                no_ff=(ff == "never"),
-                ff_only=False,
-            )
-        except git.GitError:
-            # Auto-resolve submodule gitlink pointers; on remaining conflicts the host
-            # is left on `target` in merge state (SyncError tells the user how to finish).
-            _resolve_gitlinks_and_commit_host(
-                cfg,
-                branch=container_branch,
-                location=f"cd {cfg.repo_root}  # on '{target}' in merge state; resolve, commit",
-            )
-
     _move_host_head(
         cfg,
         target=fetched_ref,
         base=_merge_base(cfg, fetched_ref),
         label=target,
-        op=_do_merge,
+        op=lambda: _merge_host_ref(
+            cfg,
+            fetched_ref,
+            container_branch,
+            short,
+            ff,
+            location=f"cd {cfg.repo_root}  # on '{target}' in merge state; resolve, commit",
+        ),
     )
     head_oid = git.rev_parse(cfg.repo_root, "HEAD")
     if head_oid is None:

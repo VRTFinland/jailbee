@@ -284,7 +284,7 @@ def resolve_base_branch(
     host_sub = (
         host_root if host_root is not None else submodules.host_subrepo_root(repo_root, subpath)
     )
-    remote = resolve_remote(repo_root, subpath, host_root=host_root)
+    remote = resolve_remote(repo_root, subpath, host_root=host_sub)
     ok, out = git.run_capture(
         str(host_sub), ["symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"]
     )

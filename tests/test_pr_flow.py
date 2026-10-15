@@ -2017,6 +2017,8 @@ def test_confirm_branch_name_prompts_when_there_is_no_source_branch(mocker):
 def test_scope_for_submodule_uses_located_root(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     root = tmp_path / ".git/modules/custom"
-    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
-    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    locate = mocker.patch("jailbee.submodules.host_subrepo_root", return_value=root)
+    remote = mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
     assert pr_flow.PrScope.for_submodule(cfg, "lib").repo_root == root
+    locate.assert_called_once_with(cfg.repo_root, "lib")
+    remote.assert_called_once_with(cfg.repo_root, "lib", host_root=root)

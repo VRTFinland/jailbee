@@ -257,11 +257,11 @@ def test_init_single_submodule_runs_config_update_sync():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/.gitmodules --get-regexp",
                 "submodule.lib.path\nlib\0",
             ),
             (
-                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/lib/.gitmodules --get-regexp",
                 IncusError("no nested .gitmodules"),
             ),
             ("test -e /mnt/host-source/lib/.git", ""),
@@ -288,10 +288,10 @@ def test_init_forces_checkout_past_update_none():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/.gitmodules --get-regexp",
                 "submodule.lib.path\nlib\0",
             ),
-            ("config -f /home/dev/repo/lib/.gitmodules --null --get-regexp", IncusError("none")),
+            ("config --null -f /home/dev/repo/lib/.gitmodules --get-regexp", IncusError("none")),
         ]
     )
 
@@ -309,7 +309,7 @@ def test_init_hard_fails_when_host_submodule_uninitialized():
     incus.exec.side_effect = _exec_router(
         [
             (
-                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/.gitmodules --get-regexp",
                 "submodule.lib.path\nlib\0",
             ),
             ("test -e /mnt/host-source/lib/.git", IncusError("missing")),
@@ -329,17 +329,17 @@ def test_init_two_level_recursion():
         [
             # Top-level .gitmodules: one submodule lib
             (
-                "config -f /home/dev/repo/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/.gitmodules --get-regexp",
                 "submodule.lib.path\nlib\0",
             ),
             # lib's .gitmodules: one nested submodule inner
             (
-                "config -f /home/dev/repo/lib/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/lib/.gitmodules --get-regexp",
                 "submodule.inner.path\ninner\0",
             ),
             # inner has no further submodules
             (
-                "config -f /home/dev/repo/lib/inner/.gitmodules --null --get-regexp",
+                "config --null -f /home/dev/repo/lib/inner/.gitmodules --get-regexp",
                 IncusError("no .gitmodules"),
             ),
             # host source existence checks
@@ -469,6 +469,39 @@ def test_transport_to_host_fetches_each_container_submodule(mocker, tmp_path):
     ]
 
 
+def test_transport_reads_sibling_declarations_once(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["a", "b"])
+    declarations = mocker.patch(
+        "jailbee.submodules._list_gitmodules", return_value=[("custom-a", "a"), ("custom-b", "b")]
+    )
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.git.init_subrepo_gitdir")
+    mocker.patch("jailbee.git.fetch_url_multi")
+    mocker.patch("jailbee.git.run_capture", return_value=(True, ""))
+    repoint = mocker.patch("jailbee.submodules._repoint_cloned_subrepo")
+    incus.exec.return_value = ""
+
+    submodules.transport_submodules_to_host(cfg, incus, "c", "s", repo_dir="/r")
+
+    declarations.assert_called_once_with(incus, "c", "/r", uid=1000, at_head=True)
+    assert [call.kwargs["name"] for call in repoint.call_args_list] == ["custom-a", "custom-b"]
+
+
+def test_container_url_uses_an_already_resolved_name():
+    incus = MagicMock()
+    incus.exec.return_value = "https://example.com/lib.git\n"
+
+    assert submodules._container_submodule_url(
+        incus, "c", "/r", "lib", uid=1000, parent_path="", at_head=True, name="custom"
+    ) == "https://example.com/lib.git"
+    incus.exec.assert_called_once()
+    assert incus.exec.call_args.args[1] == [
+        "git", "-C", "/r", "config", "--blob", "HEAD:.gitmodules", "--get", "submodule.custom.url"
+    ]
+
+
 def test_transport_to_host_creates_gitdir_for_missing_host_subrepo(mocker, tmp_path):
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
@@ -511,7 +544,7 @@ def _container_exec_stub(status: str, gitmodules: dict[str, dict[str, str]]):
         if cmd[:2] == ["git", "-C"] and "submodule" in cmd:
             return status
         if "config" in cmd and ("-f" in cmd or "--blob" in cmd):
-            file = cmd[3] if "-f" in cmd else f"{cmd[2]}/.gitmodules"
+            file = cmd[cmd.index("-f") + 1] if "-f" in cmd else f"{cmd[2]}/.gitmodules"
             entries = gitmodules.get(file)
             if entries is None:
                 raise IncusError(f"no .gitmodules at {cmd[3]}")
@@ -688,7 +721,7 @@ def test_retry_finishes_an_incomplete_subrepo_transport(mocker, tmp_path):
     incus.exec.return_value = ""
     sub = submodules.HostSubRepo("lib", tmp_path / ".git/modules/lib", None)
     mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["lib"])
-    mocker.patch("jailbee.submodules._container_submodule_name", return_value="lib")
+    mocker.patch("jailbee.submodules._list_gitmodules", return_value=[("lib", "lib")])
     mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=sub)
     mocker.patch("jailbee.git.fetch_url_multi")
     writes = []
