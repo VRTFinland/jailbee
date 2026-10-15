@@ -11,6 +11,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
 from jailbee.remote_ssh.router import RouteError
+from jailbee.tui import DIAGNOSTICS_ENV
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import SyncJobs, bare_session, box_text, drive, patch_pause
 
@@ -29,8 +30,11 @@ def _session(mocker, tmp_path, *states, config=None, **group_kw):
     return session, terminal, group
 
 
-def _children(mocker, *, failing=(), stderr="boom"):
-    def run(argv, **_kw):
+def _children(mocker, *, failing=(), warning=(), stderr="boom"):
+    def run(argv, **kw):
+        if any(name in argv for name in warning):
+            with open(kw["env"][DIAGNOSTICS_ENV], "a") as fh:
+                fh.write("warn\n")
         proc = mocker.Mock()
         bad = any(name in argv for name in failing)
         proc.returncode = 1 if bad else 0
@@ -452,7 +456,7 @@ def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
     assert [c.args[0] for c in child.call_args_list] == [
         ["jailbee", "git", "push", "alpha-a", "alpha-b", "--no-confirm"]
     ]
-    pause.assert_called_once()
+    pause.assert_not_called()  # a clean run returns straight to the table
 
 
 def test_bulk_merge_picks_its_targets_in_the_table_before_running(mocker, tmp_path):
@@ -500,7 +504,30 @@ def test_two_repos_get_one_run_each(mocker, tmp_path):
             tmp_path / "b",
         ),
     ]
+    pause.assert_not_called()
+
+
+@pytest.mark.parametrize(("failing", "warning"), [(("beta-a",), ()), ((), ("alpha-a",))])
+def test_one_failed_or_warning_run_pauses_once_after_the_last(mocker, tmp_path, failing, warning):
+    child = _children(mocker, failing=failing, warning=warning)
+    pause = patch_pause(mocker)
+    session = _two_repos(mocker, tmp_path)
+
+    session.begin_bulk("git pull", confirmed=True)
+
+    assert child.call_count == 2
     pause.assert_called_once()
+    envs = {c.kwargs["env"][DIAGNOSTICS_ENV] for c in child.call_args_list}
+    assert len(envs) == 1  # one marker shared by every run
+
+
+def test_a_clean_single_pull_says_it_is_done(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    mocker.patch.object(tsession, "_dispatch_action", return_value=0)
+
+    session.dispatch("alpha-a", "git pull")
+
+    assert session.notice == "'jailbee git pull alpha-a' done"
 
 
 def test_a_successful_run_unmarks_its_names_and_a_failed_one_keeps_them(mocker, tmp_path):

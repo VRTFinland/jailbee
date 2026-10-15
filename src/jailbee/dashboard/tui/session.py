@@ -67,6 +67,7 @@ from jailbee.dashboard.dispatch import (
     _run_cli_foreground,
     _wait_for_return,
     command_needs_pause,
+    dispatch_style,
 )
 from jailbee.dashboard.egress import (
     EgressState,
@@ -639,6 +640,9 @@ class DashboardSession:
             return
         if rc != 0:
             self.set_notice(f"'jailbee {verb} {target}' exited {rc}")
+        elif dispatch_style(verb) == "report":
+            # A clean run returns without a pause, so this is all that says it ran.
+            self.set_notice(f"'jailbee {verb} {target}' done")
         self.client.refresh()  # an action likely changed state — refresh ASAP
 
     def open_egress(self, prefix: str, container: str | None) -> EgressState | None:

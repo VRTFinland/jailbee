@@ -7,6 +7,7 @@ each action reuses the real command's behaviour and the target repo's config.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shlex
@@ -14,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -35,7 +36,10 @@ log = logging.getLogger(__name__)
 # repaints the moment the dashboard resumes, so the rest get the pause: without
 # one their output is gone before it can be read.
 _PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
-_OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS
+# The printing verbs whose clean run leaves nothing to read: the pause is kept
+# for a failure or a warning only. `git push --pr` is not one — its PR URL is.
+_REPORT_VERBS: frozenset[str] = frozenset({"git push", "git pull"})
+_OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS - _REPORT_VERBS
 
 # "report" is "output" whose pause is kept only for a failure or a warning:
 # a clean run has nothing the user still needs to read.
@@ -46,6 +50,8 @@ def dispatch_style(verb: str) -> DispatchStyle:
     """How the TUI should run ``verb``: through a pager, with a pause, or bare."""
     if verb in _PAGED_VERBS:
         return "paged"
+    if verb in _REPORT_VERBS:
+        return "report"
     if verb in _OUTPUT_VERBS:
         return "output"
     return "plain"
@@ -87,18 +93,27 @@ def _wait_for_return() -> None:
         pass
 
 
-def _run_reporting(argv: list[str], cwd: Path) -> int:
-    """Run ``argv``; pause only when it failed or printed a warning or error.
+@contextlib.contextmanager
+def _diagnostics_marker() -> Iterator[Path]:
+    """A not-yet-existing file for children to note their warnings and errors in.
 
-    The child is told through :data:`DIAGNOSTICS_ENV` where to note each
-    warning and error line `jailbee.tui` prints. A directory of our own holds
-    the file, so its absence before the run is guaranteed and it is cleaned up
-    with the directory.
+    A directory of our own holds it, so its absence before the runs is
+    guaranteed and it is cleaned up with the directory. Pass it to a child
+    with :func:`_noting_env`; it exists afterwards only if something warned.
     """
     with tempfile.TemporaryDirectory(prefix="jailbee-dashboard-") as tmp:
-        marker = Path(tmp) / "diagnostics"
-        env = {**os.environ, DIAGNOSTICS_ENV: str(marker)}
-        rc = subprocess.run(argv, check=False, cwd=cwd, env=env).returncode
+        yield Path(tmp) / "diagnostics"
+
+
+def _noting_env(marker: Path) -> dict[str, str]:
+    """This process's environment, plus where `jailbee.tui` notes diagnostics."""
+    return {**os.environ, DIAGNOSTICS_ENV: str(marker)}
+
+
+def _run_reporting(argv: list[str], cwd: Path) -> int:
+    """Run ``argv``; pause only when it failed or printed a warning or error."""
+    with _diagnostics_marker() as marker:
+        rc = subprocess.run(argv, check=False, cwd=cwd, env=_noting_env(marker)).returncode
         noisy = marker.exists()
     if rc != 0 or noisy:
         _wait_for_return()
@@ -182,8 +197,9 @@ def _dispatch_action(
 
     The verb's :func:`dispatch_style` decides what happens to its output: a
     pager for the diff (with ``--color`` forced, because the pipe would
-    otherwise turn colour off), a keypress pause for the other printing verbs,
-    and nothing at all for the rest. A missing or unstartable pager degrades to
+    otherwise turn colour off), a keypress pause for the other printing verbs
+    (for `git push`/`git pull` only after a failure or warning), and nothing
+    at all for the rest. A missing or unstartable pager degrades to
     the pause rather than losing the output.
 
     A remote session (``remote``) never gets a pager: every pager worth the
@@ -225,6 +241,8 @@ def _dispatch_action(
                 return _run_paged([*argv, "--color"], pager, target.cwd())
             except _PagerUnavailableError as exc:
                 log.debug("pager %s failed: %s", pager, exc)
+    if style == "report":
+        return _run_reporting(argv, target.cwd())
     rc = subprocess.run(argv, check=False, cwd=target.cwd()).returncode
     if style != "plain":
         _wait_for_return()
@@ -293,8 +311,10 @@ def _run_bulk_foreground(
     ``--config`` addresses one repo. Every argv is checked against the SSH
     policy before the first one runs, so a refusal leaves nothing half done.
     One pause after the last run, not one per repo: the CLI prints a roll-up
-    per run, and they read better together. The pause also happens when a run
-    cannot start (``OSError``), so the earlier runs' output is not lost.
+    per run, and they read better together. It is skipped when every run
+    exited 0 without a warning or error (one shared :func:`_diagnostics_marker`
+    tells), and kept when a run cannot start (``OSError``), so the earlier
+    runs' output is not lost.
 
     ``codes`` is appended to as each run ends, so a caller that sees an
     exception still knows the runs that completed before it.
@@ -302,15 +322,23 @@ def _run_bulk_foreground(
     for _target, argv in runs:
         check_dashboard_command(list(argv), ssh_policy, over_ssh=over_ssh)
     done = codes if codes is not None else []
-    try:
-        for target, argv in runs:
-            done.append(
-                subprocess.run(
-                    ["jailbee", *dact.addressed(list(argv), target.flags(), over_ssh=over_ssh)],
-                    check=False,
-                    cwd=target.cwd(),
-                ).returncode
-            )
-    finally:
-        _wait_for_return()
+    clean = False
+    with _diagnostics_marker() as marker:
+        try:
+            for target, argv in runs:
+                done.append(
+                    subprocess.run(
+                        [
+                            "jailbee",
+                            *dact.addressed(list(argv), target.flags(), over_ssh=over_ssh),
+                        ],
+                        check=False,
+                        cwd=target.cwd(),
+                        env=_noting_env(marker),
+                    ).returncode
+                )
+            clean = not any(done) and not marker.exists()
+        finally:
+            if not clean:
+                _wait_for_return()
     return done

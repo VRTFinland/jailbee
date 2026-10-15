@@ -2151,12 +2151,27 @@ def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_pat
     run.assert_not_called()  # the paged path replaces the plain run entirely
 
 
+def _report_child(marks: str | None):  # type: ignore[no-untyped-def]
+    """A fake `subprocess.run` that writes ``marks`` where the env says, like `tui` does."""
+
+    def run(argv, *, check, cwd, env):  # type: ignore[no-untyped-def]
+        if marks is not None:
+            Path(env[tui.DIAGNOSTICS_ENV]).write_text(marks)
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    return run
+
+
 def test_dispatch_style_classifies_every_menu_verb():
     """`git diff` is long enough to want a pager; the other printing verbs get
     a keypress pause, because Live repaints over their output on return."""
     assert ddispatch.dispatch_style("git diff") == "paged"
-    for verb in ("pr", "git push", "git pull", "job log", "job log --follow"):
+    for verb in ("pr", "git push --pr", "git retarget", "job log", "job log --follow"):
         assert ddispatch.dispatch_style(verb) == "output", verb
+    for verb in ("git push", "git pull"):
+        assert ddispatch.dispatch_style(verb) == "report", verb
     for verb in ("tmux", "shell", "ide", "chrome", "net loose", "restart", "destroy"):
         assert ddispatch.dispatch_style(verb) == "plain", verb
 
@@ -2198,9 +2213,13 @@ def test_every_printing_verb_is_a_real_menu_verb():
             )
         }
     assert dmenus.PRINTING_VERBS <= offered, f"unknown verbs: {dmenus.PRINTING_VERBS - offered}"
-    # The paged verbs are a subset, so the split cannot drop or invent one.
+    # The paged and report verbs are subsets, so the split cannot drop or invent one.
     assert ddispatch._PAGED_VERBS <= dmenus.PRINTING_VERBS
-    assert ddispatch._OUTPUT_VERBS | ddispatch._PAGED_VERBS == dmenus.PRINTING_VERBS
+    assert ddispatch._REPORT_VERBS <= dmenus.PRINTING_VERBS
+    assert (
+        ddispatch._OUTPUT_VERBS | ddispatch._PAGED_VERBS | ddispatch._REPORT_VERBS
+        == dmenus.PRINTING_VERBS
+    )
 
 
 def test_pager_argv_prefers_the_environment(mocker):
@@ -2270,8 +2289,38 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
     run.return_value.returncode = 0
     wait = patch_pause(mocker)
 
-    ddispatch._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x")
+    ddispatch._dispatch_action(_dispatch_target(tmp_path), "git retarget", "alpha-x")
 
+    wait.assert_called_once_with()
+
+
+@pytest.mark.parametrize("verb", ["git push", "git pull"])
+def test_dispatch_action_returns_straight_after_a_clean_push_or_pull(mocker, tmp_path, verb):
+    run = mocker.patch.object(tsession.subprocess, "run", side_effect=_report_child(None))
+    wait = patch_pause(mocker)
+
+    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
+
+    assert rc == 0
+    assert run.call_args.args[0][:4] == ["jailbee", *verb.split(), "alpha-x"]
+    wait.assert_not_called()
+
+
+def test_dispatch_action_pauses_when_a_pull_warned(mocker, tmp_path):
+    mocker.patch.object(tsession.subprocess, "run", side_effect=_report_child("warn\n"))
+    wait = patch_pause(mocker)
+
+    ddispatch._dispatch_action(_dispatch_target(tmp_path), "git pull", "alpha-x")
+
+    wait.assert_called_once_with()
+
+
+def test_dispatch_action_pauses_when_a_push_failed(mocker, tmp_path):
+    run = mocker.patch.object(tsession.subprocess, "run")
+    run.return_value.returncode = 1
+    wait = patch_pause(mocker)
+
+    assert ddispatch._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x") == 1
     wait.assert_called_once_with()
 
 
@@ -5351,19 +5400,6 @@ def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
     ddispatch._run_cli_foreground(_target(tmp_path), ["disk-usage"], style="plain")
 
     wait.assert_not_called()
-
-
-def _report_child(marks: str | None):  # type: ignore[no-untyped-def]
-    """A fake `subprocess.run` that writes ``marks`` where the env says, like `tui` does."""
-
-    def run(argv, *, check, cwd, env):  # type: ignore[no-untyped-def]
-        if marks is not None:
-            Path(env[tui.DIAGNOSTICS_ENV]).write_text(marks)
-        result = MagicMock()
-        result.returncode = 0
-        return result
-
-    return run
 
 
 def test_run_cli_foreground_report_skips_the_pause_on_a_clean_success(mocker, tmp_path):
