@@ -131,7 +131,6 @@ defaults:
   memory: 12GiB
   cpu: 8
   network: strict          # strict | loose
-  storage_pool: default
 
 # Golden image config used by `jailbee base build`.
 golden:
