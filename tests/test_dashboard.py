@@ -3031,6 +3031,11 @@ def test_group_warnings_name_each_base_whose_fetched_ref_is_ahead():
     assert dmodel.group_warnings(group) == [
         ("target", "main: local target behind fetched origin/main")
     ]
+    group.containers.append(container("p-d", "release/1.0", "diverged"))
+    assert dmodel.group_warnings(group)[1] == (
+        "target",
+        "release/1.0: local target diverged from fetched origin/release/1.0",
+    )
     assert dmodel.group_warnings(dmodel.RepoGroup("q", "/q", None, [])) == []
 
 

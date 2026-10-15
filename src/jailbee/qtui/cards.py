@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 # Minimum card width — the FlowLayout fits as many columns as this allows.
 _CARD_MIN_WIDTH = 260
-_WARNING_COLOR = "#b58900"  # a yellow that stays legible on a light card
+_WARNING_COLOR = "#c77700"  # an amber with enough contrast on both light and dark cards
 
 # Selection highlight applied to a card's *own* stylesheet (scoped to
 # ``#card`` so it doesn't cascade to the child labels). This is deliberately
@@ -310,10 +310,16 @@ class _GroupHeader(QWidget):
             pr_button.setToolTip("Create a review container from a pull request")
             pr_button.clicked.connect(lambda: self.newPrContainerRequested.emit(self._prefix))
             self._row.addWidget(pr_button)
+        self._warning: str | None = None
         self.set_collapsed(collapsed)
 
     def set_warning(self, warning: str | None) -> None:
-        """Mark the heading yellow with ``warning`` as its tooltip; None clears both."""
+        """Mark the heading amber with ``warning`` as its tooltip; None clears both.
+
+        Restyling re-resolves the widget, so an unchanged warning is left alone."""
+        if warning == self._warning:
+            return
+        self._warning = warning
         self._title.setStyleSheet(
             "font-weight: bold;" + (f" color:{_WARNING_COLOR};" if warning else "")
         )
@@ -361,6 +367,7 @@ class CardView(QScrollArea):
         # widgets per prefix (rebuilt on every reconcile).
         self._collapsed: set[str] = set()
         self._headers: dict[str, _GroupHeader] = {}
+        self._warnings: dict[str, str | None] = {}
         self._grid_hosts: dict[str, QWidget] = {}
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
@@ -427,10 +434,11 @@ class CardView(QScrollArea):
         if self._selected not in names:
             self._selected = None
 
+        self._warnings = {g.prefix: group_header_warning(g) for g in groups}
         desired: list[tuple[str, str, list[tuple[str, CardContent]]]] = []
         for g in groups:
             label, _is_orphan = group_header(g)
-            if group_header_warning(g):
+            if self._warnings[g.prefix]:
                 label = f"{label} ⚠"  # in the structure, so a warning appearing rebuilds the header
             entries = [(c.name, card_content(c, fields, now)) for c in g.containers]
             desired.append((g.prefix, label, entries))
@@ -443,8 +451,8 @@ class CardView(QScrollArea):
             for _prefix, _label, entries in desired:
                 for name, content in entries:
                     self._cards[name].update_content(content)
-            for group in self._groups:
-                self._headers[group.prefix].set_warning(group_header_warning(group))
+            for prefix, warning in self._warnings.items():
+                self._headers[prefix].set_warning(warning)
             return
 
         self._reconcile(desired, structure)
@@ -480,7 +488,7 @@ class CardView(QScrollArea):
                     collapsed=collapsed,
                     actionable=RepoTarget.of(group) is not None,
                 )
-                header.set_warning(group_header_warning(group))
+                header.set_warning(self._warnings[prefix])
                 header.clicked.connect(self._toggle_group)
                 header.newContainerRequested.connect(self.newContainerRequested)
                 header.newPrContainerRequested.connect(self.newPrContainerRequested)

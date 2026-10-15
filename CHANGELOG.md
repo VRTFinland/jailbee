@@ -8,6 +8,16 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- **The dashboards show a repo's warnings where they belong.** "local target
+  behind fetched …" and "diverged from fetched …" used to sit in the dashboard's
+  bottom border whichever repo was in view. They now appear in the affected
+  container's details panel (terminal) or card (Qt) and on its repo heading,
+  which carries a `⚠` and lists them in its details panel or tooltip. The same
+  goes for a repo's own configuration notice. `jailbee ls` still prints the
+  fetched-target notice once per repo and base.
+
 ### Fixed
 
 - **Submodules that exist on only some branches.** `jailbee branch`,

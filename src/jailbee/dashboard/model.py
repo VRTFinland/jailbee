@@ -29,7 +29,7 @@ from jailbee.lifecycle import (
     annotate_activity,
     annotate_agent_status,
     list_containers,
-    tracking_notices,
+    tracking_findings,
 )
 from jailbee.paths import repo_config_path
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -318,9 +318,8 @@ def group_warnings(group: RepoGroup) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     if group.column_notice:
         out.append(("config note", group.column_notice))
-    for notice in tracking_notices(group.containers):
-        base, _, text = notice.partition(": ")
-        out.append(("target", f"{base.rpartition('/')[2]}: {text}"))
+    for _repo, base, warning in tracking_findings(group.containers):
+        out.append(("target", f"{base}: {warning}"))
     return out
 
 

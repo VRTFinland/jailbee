@@ -860,12 +860,36 @@ def test_the_warning_line_is_never_dropped_from_a_short_panel() -> None:
     assert body[1].startswith("⚠")
 
 
-def test_a_repo_heading_lists_its_warnings_as_rows() -> None:
+def test_a_repo_heading_draws_its_warnings_full_width_under_the_grid() -> None:
     group = dmodel.RepoGroup(
-        "alpha", "/a", None, [_behind(base_branch="dev")], column_notice="ahead_diff retired"
+        "alpha",
+        "/a",
+        None,
+        [_behind(base_branch="release/1.0")],
+        column_notice="ls.fields: 'ahead_diff' retired; use 'target_diff'",
     )
-    items = dd.repo_details(group)
-    assert _plain(_value(items, "config note")) == "ahead_diff retired"
-    assert _plain(_value(items, "target")) == "dev: local target behind fetched origin/dev"
-    quiet = dd.repo_details(_group(_rich_container()))
-    assert [i.label for i in quiet] == ["root", "config", "containers", "loose ttl", "mounts"]
+    assert [i.label for i in dd.repo_details(group)] == [
+        "root",
+        "config",
+        "containers",
+        "loose ttl",
+        "mounts",
+    ]
+    view = dd.details_for([group], dmodel.Row("repo", "alpha"), NOW)
+    assert view is not None
+    assert [_plain(w) for w in view.warnings] == [
+        "⚠ config note: ls.fields: 'ahead_diff' retired; use 'target_diff'",
+        "⚠ target: release/1.0: local target behind fetched origin/dev",
+    ]
+    body = _panel_body(view, None, 80)
+    assert body[-1] == "⚠ target: release/1.0: local target behind fetched origin/dev"
+    assert (
+        dd.details_for([_group(_rich_container())], dmodel.Row("repo", "alpha"), NOW).warnings == ()
+    )
+
+
+def test_a_cap_below_the_top_lines_cuts_from_the_bottom_not_past_the_cap() -> None:
+    c = replace(_loose(_behind()), optional_mounts=("aws",))
+    body = _panel_body(_panel_view(c), 2, 100, fixed=True)
+    assert len(body) == 2
+    assert body[0].startswith("▶ Running") and body[1].startswith("● loose")

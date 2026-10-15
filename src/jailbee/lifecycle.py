@@ -2964,18 +2964,23 @@ def tracking_warning(c: ContainerInfo) -> str | None:
     return f"local target diverged from fetched {upstream}"
 
 
-def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
-    """One notice per affected repository and base, never per container."""
+def tracking_findings(containers: Sequence[ContainerInfo]) -> list[tuple[str, str, str]]:
+    """``(repo, base, warning)`` once per affected repository and base, never per container."""
     seen: set[tuple[str | None, str | None]] = set()
-    notices: list[str] = []
+    found: list[tuple[str, str, str]] = []
     for c in containers:
         warning = tracking_warning(c)
         key = (c.repo, c.base_branch)
         if warning is None or key in seen:
             continue
         seen.add(key)
-        notices.append(f"{c.repo or 'repo'}/{c.base_branch or '?'}: {warning}")
-    return notices
+        found.append((c.repo or "repo", c.base_branch or "?", warning))
+    return found
+
+
+def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
+    """``tracking_findings`` as the lines ``jailbee ls`` prints."""
+    return [f"{repo}/{base}: {warning}" for repo, base, warning in tracking_findings(containers)]
 
 
 # Rich style per `git_status.merge_label` kind. Module-level because it is a
