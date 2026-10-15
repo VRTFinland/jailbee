@@ -833,3 +833,39 @@ def test_details_for_a_container_carries_its_panel() -> None:
 
     assert view is not None and view.items == ()
     assert view.panel == dd.container_panel(c, NOW)
+
+
+def _behind(**kw: Any) -> ContainerInfo:
+    c = _rich_container()
+    assert c.git_status is not None
+    status = replace(c.git_status, tracking_relation="tracking-ahead", upstream_ref="origin/dev")
+    return replace(c, git_status=status, **kw)
+
+
+def test_a_container_behind_its_fetched_target_warns_in_its_own_panel() -> None:
+    panel = dd.container_panel(_behind(), NOW)
+    assert _panel_plain(panel.warnings) == ["⚠ local target behind fetched origin/dev"]
+    assert dd.container_panel(_rich_container(), NOW).warnings == ()
+
+    body = _panel_body(_panel_view(_behind()), None, 120)
+    assert body[0].startswith("▶ Running")
+    assert body[1] == "⚠ local target behind fetched origin/dev"
+
+
+def test_the_warning_line_is_never_dropped_from_a_short_panel() -> None:
+    panel = dd.ContainerPanel(("s",), "dev", _fit(2).git, ("f",), warnings=("w",))
+    assert dd.panel_fit(panel, None) == dd.PanelFit(True, True, 2, 0, True)
+    assert dd.panel_fit(panel, 2) == dd.PanelFit(False, False, 0, 0, False)
+    body = _panel_body(_panel_view(_behind()), 2, 100, fixed=True)
+    assert body[1].startswith("⚠")
+
+
+def test_a_repo_heading_lists_its_warnings_as_rows() -> None:
+    group = dmodel.RepoGroup(
+        "alpha", "/a", None, [_behind(base_branch="dev")], column_notice="ahead_diff retired"
+    )
+    items = dd.repo_details(group)
+    assert _plain(_value(items, "config note")) == "ahead_diff retired"
+    assert _plain(_value(items, "target")) == "dev: local target behind fetched origin/dev"
+    quiet = dd.repo_details(_group(_rich_container()))
+    assert [i.label for i in quiet] == ["root", "config", "containers", "loose ttl", "mounts"]

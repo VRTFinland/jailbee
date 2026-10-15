@@ -20,7 +20,9 @@ from rich.text import Text
 from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.dashboard import format as dashboard_format
+from jailbee.dashboard.model import group_warnings
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
+from jailbee.lifecycle import tracking_warning
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup
@@ -54,6 +56,12 @@ def group_header(group: RepoGroup) -> tuple[str, bool]:
     else:
         label = group.prefix
     return label, is_orphan
+
+
+def group_header_warning(group: RepoGroup) -> str | None:
+    """The repo's warnings, one per line, for its header's tooltip; None without."""
+    lines = [f"{label}: {text}" for label, text in group_warnings(group)]
+    return "\n".join(lines) or None
 
 
 def column_headers(fields: list[FieldSpec[ContainerInfo]]) -> list[str]:
@@ -103,6 +111,9 @@ class CardContent:
     # The busy processes, plain text, filled whatever the column selection:
     # the card keeps its DOING line by default, as the TUI details panel does.
     doing: str | None = None
+    # What is off about the container's git target (fetched base ahead of the
+    # local one), plain text; the card shows it as a yellow line.
+    warning: str | None = None
 
 
 def card_content(
@@ -143,6 +154,7 @@ def card_content(
         agent_waiting=any(s.state == "waiting" for s in c.agent_status),
         memory_limit=c.memory_limit,
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
+        warning=tracking_warning(c),
     )
 
 

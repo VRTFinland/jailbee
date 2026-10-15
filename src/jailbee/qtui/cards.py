@@ -35,6 +35,7 @@ from jailbee.qtui.model import (
     compact_meta,
     git_segments,
     group_header,
+    group_header_warning,
     job_badge,
 )
 
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
 
 # Minimum card width — the FlowLayout fits as many columns as this allows.
 _CARD_MIN_WIDTH = 260
+_WARNING_COLOR = "#b58900"  # a yellow that stays legible on a light card
 
 # Selection highlight applied to a card's *own* stylesheet (scoped to
 # ``#card`` so it doesn't cascade to the child labels). This is deliberately
@@ -139,6 +141,14 @@ class _Card(QFrame):
     def _build(self) -> None:
         _clear_layout(self._outer)
         self._add_header()
+        if self._content.warning:
+            warning = QLabel(f"⚠ {self._content.warning}")
+            warning.setObjectName("card-warning")
+            warning.setWordWrap(True)
+            # Plain text, like the agent line: the ref names come from git.
+            warning.setTextFormat(Qt.TextFormat.PlainText)
+            warning.setStyleSheet(f"color:{_WARNING_COLOR};")
+            self._outer.addWidget(warning)
         if self._style == "grid":
             self._build_grid()
         else:
@@ -302,6 +312,13 @@ class _GroupHeader(QWidget):
             self._row.addWidget(pr_button)
         self.set_collapsed(collapsed)
 
+    def set_warning(self, warning: str | None) -> None:
+        """Mark the heading yellow with ``warning`` as its tooltip; None clears both."""
+        self._title.setStyleSheet(
+            "font-weight: bold;" + (f" color:{_WARNING_COLOR};" if warning else "")
+        )
+        self._title.setToolTip(warning or "")
+
     def set_collapsed(self, collapsed: bool) -> None:
         arrow = "▸" if collapsed else "▾"
         self._title.setText(f"{arrow}  {self._label}   {self._count} containers")
@@ -413,6 +430,8 @@ class CardView(QScrollArea):
         desired: list[tuple[str, str, list[tuple[str, CardContent]]]] = []
         for g in groups:
             label, _is_orphan = group_header(g)
+            if group_header_warning(g):
+                label = f"{label} ⚠"  # in the structure, so a warning appearing rebuilds the header
             entries = [(c.name, card_content(c, fields, now)) for c in g.containers]
             desired.append((g.prefix, label, entries))
         structure = [
@@ -424,6 +443,8 @@ class CardView(QScrollArea):
             for _prefix, _label, entries in desired:
                 for name, content in entries:
                     self._cards[name].update_content(content)
+            for group in self._groups:
+                self._headers[group.prefix].set_warning(group_header_warning(group))
             return
 
         self._reconcile(desired, structure)
@@ -459,6 +480,7 @@ class CardView(QScrollArea):
                     collapsed=collapsed,
                     actionable=RepoTarget.of(group) is not None,
                 )
+                header.set_warning(group_header_warning(group))
                 header.clicked.connect(self._toggle_group)
                 header.newContainerRequested.connect(self.newContainerRequested)
                 header.newPrContainerRequested.connect(self.newPrContainerRequested)

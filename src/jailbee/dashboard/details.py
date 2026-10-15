@@ -27,11 +27,13 @@ from rich.text import Text
 
 from jailbee.agent_activity import describe
 from jailbee.dashboard import format as dashboard_format
+from jailbee.dashboard.model import group_warnings
 from jailbee.lifecycle import (
     ContainerInfo,
     format_duration_short,
     ls_field_specs,
     submodule_sub_rows,
+    tracking_warning,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +84,9 @@ class ContainerPanel:
     repo's defaults (loose network, attached mounts, its own egress entries;
     empty: the line is not drawn), ``git`` its trees (None without a git
     status), ``footer`` one dim line of the rest. ``base`` names the branch
-    the git table's diff column compares with.
+    the git table's diff column compares with. ``warnings`` are yellow lines
+    under the exceptions line (the fetched target is behind, say); empty:
+    none are drawn.
     """
 
     summary: tuple[str, ...]
@@ -90,6 +94,7 @@ class ContainerPanel:
     git: tuple[GitRow, ...] | None
     footer: tuple[str, ...]
     exceptions: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -288,7 +293,14 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         git,
         tuple(footer),
         _exceptions(c, now, cell("ttl")),
+        _warnings(c),
     )
+
+
+def _warnings(c: ContainerInfo) -> tuple[str, ...]:
+    """Yellow lines for what is off about ``c``'s git target, as markup."""
+    warning = tracking_warning(c)
+    return () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
 
 
 def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
@@ -318,7 +330,11 @@ def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
 
 
 def repo_details(group: RepoGroup) -> list[DetailItem]:
-    """A repo heading's rows: what :class:`RepoGroup` knows about the repo."""
+    """A repo heading's rows: what :class:`RepoGroup` knows about the repo.
+
+    A warning about the repo (a retired config key, a fetched target ahead of
+    the local one) is a yellow row of its own.
+    """
     running = sum(1 for c in group.containers if c.state == "Running")
     if group.repo_root is None:
         root, config = "[yellow]orphan[/yellow]", _DASH
@@ -329,12 +345,17 @@ def repo_details(group: RepoGroup) -> list[DetailItem]:
             if group.config_path is not None
             else "[dim]synthesized[/dim]"
         )
+    warnings = [
+        DetailItem(label, f"[yellow]{escape(text)}[/yellow]")
+        for label, text in group_warnings(group)
+    ]
     return [
         DetailItem("root", root),
         DetailItem("config", config),
         DetailItem("containers", f"{running} running / {len(group.containers)}"),
         DetailItem("loose ttl", group.loose_ttl_default or "[dim]no auto-revert[/dim]"),
         DetailItem("mounts", _or_dash(", ".join(escape(m) for m in group.optional_mounts))),
+        *warnings,
     ]
 
 
@@ -409,9 +430,10 @@ def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     Blank lines go first, then submodule rows, which one row then counts;
     the summary, the exceptions line and the footer stay. Only a panel too
     short for the table's head loses the table, and then the footer; the
-    summary and the exceptions line are never dropped.
+    summary, the exceptions line and the warnings are never dropped.
     """
-    top = 2 if panel.exceptions else 1  # the summary, and the exceptions line under it
+    # the summary, then the exceptions line and the warnings under it
+    top = 1 + bool(panel.exceptions) + len(panel.warnings)
     subs = 0 if panel.git is None else len(panel.git) - 1
     head = 1 if panel.git is None else 2
     full = top + head + subs + 1
@@ -498,6 +520,8 @@ def _panel_lines(
     one(_SUMMARY_GAP.join(panel.summary))
     if panel.exceptions:
         one(_SUMMARY_GAP.join(panel.exceptions))
+    for warning in panel.warnings:
+        one(warning)
     if fit.blanks:
         lines.append([_BLANK])
     if fit.git:

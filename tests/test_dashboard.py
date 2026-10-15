@@ -2989,8 +2989,49 @@ def test_dashboard_repo_migration_notice_uses_gathered_config_without_new_reads(
     group = dmodel.RepoGroup(
         "p", "/repo", None, [], column_notice="ls.fields: 'ahead_diff' retired; use 'target_diff'"
     )
-    notices = dmodel.dashboard_group_notices([group])
-    assert len(notices) == 1 and "p" in notices[0] and "target_diff" in notices[0]
+    warnings = dmodel.group_warnings(group)
+    assert len(warnings) == 1
+    label, text = warnings[0]
+    assert label == "config note" and "target_diff" in text
+
+
+def test_group_warnings_name_each_base_whose_fetched_ref_is_ahead():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    def container(name, base, relation):
+        return ContainerInfo(
+            name=name,
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo="p",
+            base_branch=base,
+            git_status=GitStatus(
+                wt="clean",
+                ahead_diff="clean",
+                ahead_count="0",
+                conflict="ok",
+                tracking_relation=relation,
+                upstream_ref=f"origin/{base}",
+            ),
+        )
+
+    group = dmodel.RepoGroup(
+        "p",
+        "/repo",
+        None,
+        [
+            container("p-a", "main", "tracking-ahead"),
+            container("p-b", "main", "tracking-ahead"),
+            container("p-c", "dev", "equal"),
+        ],
+    )
+    assert dmodel.group_warnings(group) == [
+        ("target", "main: local target behind fetched origin/main")
+    ]
+    assert dmodel.group_warnings(dmodel.RepoGroup("q", "/q", None, [])) == []
 
 
 def test_seed_view_state_renames_a_stored_alias_rather_than_dropping_it(mocker):

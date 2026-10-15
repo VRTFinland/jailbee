@@ -392,10 +392,10 @@ def test_long_status_notice_is_on_the_bottom_border_not_below_the_table(tmp_path
     assert not any(notice in line for line in lines[:-1])
 
 
-def test_tracking_and_job_notices_never_wrap_but_a_refusal_does(mocker, tmp_path):
+def test_job_notices_never_wrap_but_a_refusal_does(mocker, tmp_path):
     long = "y" * 100
-    mocker.patch.object(tsession, "tracking_notices", return_value=[long])
     session, _ = bare_session(mocker, [_long(tmp_path, 3)])
+    mocker.patch.object(session.jobs, "active", return_value=[long])
     view = session.view()
     assert view.notice == long and view.notice_wraps is False
     session.set_notice(long)

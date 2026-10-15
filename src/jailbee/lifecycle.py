@@ -2949,24 +2949,32 @@ def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
     return rows
 
 
+def tracking_warning(c: ContainerInfo) -> str | None:
+    """What is wrong with the container's fetched target, or None.
+
+    The text names the remote-tracking ref but not the repository: the
+    container's own card or panel already says which repo it is in.
+    """
+    status = c.git_status
+    if status is None or status.tracking_relation not in ("tracking-ahead", "diverged"):
+        return None
+    upstream = status.upstream_ref or "tracking ref"
+    if status.tracking_relation == "tracking-ahead":
+        return f"local target behind fetched {upstream}"
+    return f"local target diverged from fetched {upstream}"
+
+
 def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
     """One notice per affected repository and base, never per container."""
     seen: set[tuple[str | None, str | None]] = set()
     notices: list[str] = []
     for c in containers:
-        status = c.git_status
-        if status is None or status.tracking_relation not in ("tracking-ahead", "diverged"):
-            continue
+        warning = tracking_warning(c)
         key = (c.repo, c.base_branch)
-        if key in seen:
+        if warning is None or key in seen:
             continue
         seen.add(key)
-        target = f"{c.repo or 'repo'}/{c.base_branch or '?'}"
-        upstream = status.upstream_ref or "tracking ref"
-        if status.tracking_relation == "tracking-ahead":
-            notices.append(f"{target}: local target behind fetched {upstream}")
-        else:
-            notices.append(f"{target}: local target diverged from fetched {upstream}")
+        notices.append(f"{c.repo or 'repo'}/{c.base_branch or '?'}: {warning}")
     return notices
 
 
