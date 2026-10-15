@@ -79,6 +79,7 @@ _PROXY_TUNING: dict[str, str] = {
     "PROXY_CONNECT_CONNECT_TIMEOUT": "5s",
 }
 _QUADLET_UNIT_PATH = "/etc/containers/systemd/jailbee-registry-proxy.container"
+MIRROR_NGINX_CONF = "/etc/jailbee-registry-proxy/nginx.conf"
 
 
 def _no_steps(_message: str) -> None:
@@ -275,12 +276,16 @@ def _provision_mirror(incus: Incus) -> None:
     """
     quadlet_body = _read_provision_text("jailbee-registry-proxy.container")
     install_body = _read_provision_text("install.sh")
+    nginx_body = _read_provision_text("nginx.conf")
 
     script = f"""\
 set -euo pipefail
 cat > /root/jailbee-registry-proxy.container <<'JAILBEE_QUADLET_EOF'
 {quadlet_body.rstrip()}
 JAILBEE_QUADLET_EOF
+cat > /root/jailbee-registry-nginx.conf <<'JAILBEE_NGINX_EOF'
+{nginx_body.rstrip()}
+JAILBEE_NGINX_EOF
 cat > /root/install.sh <<'JAILBEE_INSTALL_EOF'
 {install_body.rstrip()}
 JAILBEE_INSTALL_EOF

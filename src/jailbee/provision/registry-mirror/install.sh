@@ -26,6 +26,12 @@ test -f /usr/lib/systemd/system-generators/podman-system-generator || \
 install -D -m 0644 /root/jailbee-registry-proxy.container \
   /etc/containers/systemd/jailbee-registry-proxy.container
 
+# The locked-down nginx.conf the Quadlet unit bind-mounts. Unconditional:
+# unlike the env file it holds no per-host state, and a stale copy is
+# exactly what a reinstall should replace.
+install -D -m 0644 /root/jailbee-registry-nginx.conf \
+  /etc/jailbee-registry-proxy/nginx.conf
+
 # Quadlet's EnvironmentFile= becomes `podman run --env-file=`; the file
 # must exist or podman exits 125 before pulling. Create an empty one now
 # so the first start succeeds; sync_mirror_env() rewrites the contents

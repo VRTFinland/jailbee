@@ -794,6 +794,32 @@ def test_quadlet_unit_references_environment_file_with_absolute_path():
     assert "EnvironmentFile=-" not in body
 
 
+def test_quadlet_unit_mounts_the_jailbee_nginx_conf_read_only():
+    body = _read_provision_text("jailbee-registry-proxy.container")
+    assert "Volume=/etc/jailbee-registry-proxy/nginx.conf:/etc/nginx/nginx.conf:ro" in body
+
+
+def test_install_sh_installs_nginx_conf_before_starting_the_service():
+    """Podman refuses a bind mount whose source is missing, so the file must
+    exist before the first start."""
+    body = _read_provision_text("install.sh")
+    conf_idx = body.find("/etc/jailbee-registry-proxy/nginx.conf")
+    start_idx = body.find("systemctl start jailbee-registry-proxy.service")
+    assert conf_idx != -1 and start_idx != -1
+    assert conf_idx < start_idx
+
+
+def test_provision_pushes_the_nginx_conf(tmp_path):
+    incus = MagicMock()
+    from jailbee.registry import _provision_mirror
+
+    _provision_mirror(incus)
+
+    script = incus.exec.call_args.args[1][2]
+    assert "cat > /root/jailbee-registry-nginx.conf <<'JAILBEE_NGINX_EOF'" in script
+    assert _read_provision_text("nginx.conf").rstrip() in script
+
+
 def test_provision_creates_empty_env_file_before_service_start(tmp_path):
     """Quadlet's `EnvironmentFile=` (translated to `podman run --env-file=`)
     refuses to start the container when the referenced file is missing. The
