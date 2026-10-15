@@ -29,6 +29,15 @@ before editing `## Unreleased`.
   `npm publish`. A repo whose Claude plugins install from npm adds
   `registry.npmjs.org:443` to `egress_allow`; run `jailbee apply` to drop it
   from existing containers.
+- **The registry mirror no longer reaches hosts other than registries.**
+  Through the mirror's port, which every strict container with Docker can
+  reach, a container could open a tunnel to any host or have the mirror fetch
+  any URL — bypassing strict mode. The mirror now serves only its registries
+  (rpardini's defaults and `extra_registries`), read-only. A registry outside
+  those now fails to pull (`Forbidden`) until it is listed in
+  `docker_registry_mirror.extra_registries`. `jailbee apply`, `jailbee new` or
+  `jailbee registry up` update an existing mirror, and `jailbee doctor`
+  reports whether it is locked down.
 - **The update notice stays until you upgrade or dismiss it.** A newer
   release on PyPI is now named on every `jailbee ls` / `new` / `shell`, not
   once a day, and the dashboard shows it on a row of its own with a clickable

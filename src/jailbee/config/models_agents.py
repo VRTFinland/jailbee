@@ -243,8 +243,10 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
         description=(
             "Upstream registry hostnames this repo pulls images from that aren't covered by "
             "rpardini's built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, "
-            "ghcr.io). Bare hostname[:port] only — no scheme, no path. `jailbee new` / "
-            "`jailbee apply` push the merged list into the mirror's REGISTRIES env."
+            "ghcr.io). The mirror refuses every registry outside the defaults and this "
+            "list, so a pull from an unlisted one fails. Bare hostname[:port] only — no "
+            "scheme, no path. `jailbee new` / `jailbee apply` push the merged list into "
+            "the mirror's REGISTRIES env."
         ),
     )
 

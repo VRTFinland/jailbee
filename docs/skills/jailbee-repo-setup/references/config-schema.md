@@ -794,7 +794,7 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Bare hostnames optionally with `:port`. No scheme, no path. Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
+Bare hostnames optionally with `:port`. No scheme, no path. Required for every registry outside rpardini's defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses unlisted registries (dockerd reports `Forbidden`). Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
 
 ## `agents`
 

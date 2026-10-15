@@ -755,6 +755,44 @@ user-facing behaviour. The security properties:
   the requested host name and port. Squid keeps no cache and logs requests to
   `/var/log/squid/access.log` in the proxy container.
 
+## Registry mirror
+
+When a repo uses Docker, its containers pull images through the host-global
+`jailbee-registry-mirror` (rpardini/docker-registry-proxy, an nginx-based
+MITM caching proxy). The security properties:
+
+- **The mirror is trusted infrastructure.** It sits on `jailbee-loose`, which
+  has no egress ACL, so its own upstream traffic is unrestricted. Every strict
+  container that uses it has an ACL rule to its port, so what the mirror is
+  willing to relay is part of the strict boundary.
+- **It relays registries and nothing else.** jailbee replaces rpardini's
+  `nginx.conf` with a locked-down copy. Stock rpardini tunnels a `CONNECT` to
+  any host and port, and its caching layer fetches whatever `Host` header a
+  client sends — either was a way past strict mode. The jailbee copy refuses a
+  `CONNECT` to any host outside rpardini's intercept list (its defaults plus
+  `extra_registries`), serves only those hosts in the caching layer, and
+  allows only `GET` and `HEAD`. There are no blind tunnels at all, not even to
+  the CDNs registries redirect blob downloads to: the mirror follows those
+  redirects itself. A tunnel to a shared CDN address would otherwise reach any
+  other tenant of that CDN by SNI.
+- **`jailbee doctor` checks it.** The `registry lockdown` row probes a running
+  mirror from the host with a `CONNECT` to `example.com`, a foreign `Host`
+  header and a `PATCH`, and turns red if any gets through — which is what a
+  mirror provisioned before the lockdown looks like until the next
+  `jailbee apply`, `jailbee new` or `jailbee registry up` syncs it.
+- **Residual channel: registries are multi-tenant by path.** Code in a
+  container can still `GET` an attacker's own repository on an allowed
+  registry and carry data in the path (a tag name, say). Where the registry
+  shows its owner access logs — cloud registries with audit logging do, Docker
+  Hub does not — the attacker can read it back. Neither the mirror nor any
+  network filter can tell that request from a legitimate pull; only a
+  per-image allowlist would.
+- **Alternatives considered.** An egress ACL on the mirror's own NIC would be
+  IP-based against rotating, shared CDN addresses, and routing the mirror's
+  upstream through the egress proxy needs transparent TLS interception. Both
+  would guard only against a bug in the mirror's own config, which the doctor
+  probe already detects.
+
 ## Limitations
 
 ### Work-network generation

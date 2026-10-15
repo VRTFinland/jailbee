@@ -2063,15 +2063,24 @@ docker_registry_mirror:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `extra_registries` | list[string] | `[]` | Extra registry hostnames this repo pulls images from but which rpardini does not cache out of the box. Entries must be bare hostnames, optionally with `:port` — no scheme, no path. |
+| `extra_registries` | list[string] | `[]` | Every registry hostname this repo pulls images from that is not one of rpardini's defaults. The mirror refuses any other registry. Entries must be bare hostnames, optionally with `:port` — no scheme, no path. |
 
-rpardini's image defaults cache only Docker Hub, `registry.k8s.io`,
-`gcr.io`, `quay.io`, and `ghcr.io`. Hostnames outside that set
-(notably AWS ECR — `*.dkr.ecr.<region>.amazonaws.com`) are
-CONNECT-tunneled without caching, so every `jailbee new` re-pulls those
-images from the internet. Listing them here pushes them into the
-mirror's `REGISTRIES` env on the next `jailbee new` / `jailbee apply`, after
-which pulls hit the rpardini cache on second run.
+rpardini's image defaults cover only Docker Hub, `registry.k8s.io`,
+`gcr.io`, `quay.io`, and `ghcr.io`. The mirror serves those and the
+hostnames listed here, and refuses everything else (see
+[Registry mirror](security.md#registry-mirror)) — so a repo that pulls from
+another registry (notably AWS ECR — `*.dkr.ecr.<region>.amazonaws.com`)
+must list it. Listing it pushes it into the mirror's `REGISTRIES` env on the
+next `jailbee new` / `jailbee apply`; pulls then go through the cache.
+
+A pull from an unlisted registry fails in dockerd with `Forbidden`:
+
+```text
+Error response from daemon: failed to resolve reference "public.ecr.aws/docker/library/alpine:3.20": failed to do request: Head "https://public.ecr.aws/v2/docker/library/alpine/manifests/3.20": Forbidden
+```
+
+Add the registry's hostname (`public.ecr.aws` here) to `extra_registries`
+and run `jailbee apply`.
 
 Mechanics: `jailbee new` and `jailbee apply` write the union of these entries
 into `/etc/jailbee-registry-proxy.env` inside the
@@ -2089,6 +2098,8 @@ upstreams the host may not be able to route) and `PROXY_CONNECT_TIMEOUT` /
 unresponsive upstream address cannot hold a pull past dockerd's patience.
 These three keys are jailbee's and a hand-edited value is put back; any
 other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
+The same sync also keeps the mirror's locked-down `nginx.conf` and its
+Quadlet unit at the versions this jailbee ships.
 
 ### `new`
 

@@ -389,7 +389,7 @@ Map by stack:
 
 ### `docker_registry_mirror.extra_registries` — non-default registries
 
-Only relevant if the repo's compose/Dockerfile pulls from registries outside the rpardini default set (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io). AWS ECR is the common one:
+Required if the repo's compose/Dockerfile pulls from registries outside the rpardini default set (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses any registry not in that set or this list, so such a pull fails with `Forbidden`. AWS ECR is the common one:
 
 ```yaml
 docker_registry_mirror:
