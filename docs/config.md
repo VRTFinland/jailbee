@@ -2063,7 +2063,7 @@ docker_registry_mirror:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `extra_registries` | list[string] | `[]` | Every registry hostname this repo pulls images from that is not one of rpardini's defaults. The mirror refuses any other registry. Entries must be bare hostnames, optionally with `:port` — no scheme, no path. |
+| `extra_registries` | list[string] | `[]` | Every registry hostname this repo pulls images from that is not one of rpardini's defaults. The mirror refuses any other registry. Entries must be exact hostnames — no wildcard (`*.example.com`, `.example.com`), no `:port` (the mirror serves registries on 443 only), no scheme, no path. Each entry becomes a key in the mirror's nginx host maps, where a wildcard would admit every host under it. |
 
 rpardini's image defaults cover only Docker Hub, `registry.k8s.io`,
 `gcr.io`, `quay.io`, and `ghcr.io`. The mirror serves those and the

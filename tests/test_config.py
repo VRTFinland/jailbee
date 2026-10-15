@@ -1173,12 +1173,42 @@ def test_docker_registry_mirror_extra_registries_rejects_path():
         Config.model_validate({"docker_registry_mirror": {"extra_registries": ["example.com/foo"]}})
 
 
-def test_docker_registry_mirror_extra_registries_accepts_host_port():
-    """Custom-port mirrors (host:5000) are legitimate."""
-    cfg = Config.model_validate(
-        {"docker_registry_mirror": {"extra_registries": ["registry.local:5000"]}}
-    )
-    assert cfg.docker_registry_mirror.extra_registries == ["registry.local:5000"]
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "*.amazonaws.com",  # nginx `hostnames` map: every host under it
+        ".amazonaws.com",  # same, nginx's leading-dot form
+        "~.",  # regex key: every host
+        "example.com.",  # trailing dot
+        "-bad.example.com",
+    ],
+)
+def test_docker_registry_mirror_extra_registries_rejects_patterns(entry):
+    """Each entry becomes a key in the mirror's nginx `hostnames` maps, which
+    read `*`, a leading `.` and `~` as patterns — an innocent-looking ECR
+    wildcard would let a strict container reach every host under it."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="exact registry hostname"):
+        Config.model_validate({"docker_registry_mirror": {"extra_registries": [entry]}})
+
+
+def test_docker_registry_mirror_extra_registries_rejects_a_port():
+    """The mirror matches CONNECT by host only and fetches upstream on 443,
+    so a registry on another port cannot be served; say so at load time
+    rather than fail every pull with `Forbidden`."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="port"):
+        Config.model_validate(
+            {"docker_registry_mirror": {"extra_registries": ["registry.local:5000"]}}
+        )
+
+
+def test_docker_registry_mirror_extra_registries_accepts_exact_hostnames():
+    entries = ["803520778560.dkr.ecr.eu-north-1.amazonaws.com", "public.ecr.aws", "registry"]
+    cfg = Config.model_validate({"docker_registry_mirror": {"extra_registries": entries}})
+    assert cfg.docker_registry_mirror.extra_registries == entries
 
 
 def test_docker_registry_mirror_unknown_key_rejected():

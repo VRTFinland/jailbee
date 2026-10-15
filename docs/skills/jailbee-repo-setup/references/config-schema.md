@@ -32,7 +32,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `defaults` | `{memory, cpu, network, storage_pool}` | `16GiB/8/strict/unset` | repo; `storage_pool` is per-host, so leave it out of a committed config |
 | `golden` | see below | see below | repo |
 | `autostart` | see below | empty triggers | repo |
-| `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
+| `docker_registry_mirror.extra_registries` | list of exact hostnames | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
 | `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env, skills_dir, install_jailbee_skills, global_instructions, headless}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
 | `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `agent_view`, `seed_onboarding`) | `enabled: false`, rest see below | global |
@@ -794,7 +794,7 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Bare hostnames optionally with `:port`. No scheme, no path. Required for every registry outside rpardini's defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses unlisted registries (dockerd reports `Forbidden`). Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
+Exact hostnames: no wildcard (`*.x`, `.x`), no `:port` (the mirror serves registries on 443 only), no scheme, no path. Required for every registry outside rpardini's defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, ghcr.io): the mirror refuses unlisted registries (dockerd reports `Forbidden`). Pushes into rpardini mirror's `REGISTRIES` env on next `jailbee new` / `jailbee apply`; second pull hits the cache.
 
 ## `agents`
 

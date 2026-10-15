@@ -234,6 +234,16 @@ class AutostartStage(BaseModel):
         return []
 
 
+# An exact registry hostname. Each `extra_registries` entry becomes a key in
+# the mirror's nginx `hostnames` maps (registry-mirror/nginx.conf), where `*`,
+# a leading `.` and `~` are patterns — `*.amazonaws.com` would admit every host
+# under it. No `:port` either: the mirror matches CONNECT by host and fetches
+# upstream on 443, so another port cannot be served.
+REGISTRY_HOSTNAME_RE = re.compile(
+    r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*", re.IGNORECASE
+)
+
+
 class DockerRegistryMirrorRepoConfig(BaseModel):
     """Per-repo overrides for the host-global rpardini mirror."""
 
@@ -244,8 +254,8 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
             "Upstream registry hostnames this repo pulls images from that aren't covered by "
             "rpardini's built-in defaults (Docker Hub, registry.k8s.io, gcr.io, quay.io, "
             "ghcr.io). The mirror refuses every registry outside the defaults and this "
-            "list, so a pull from an unlisted one fails. Bare hostname[:port] only — no "
-            "scheme, no path. `jailbee new` / `jailbee apply` push the merged list into "
+            "list, so a pull from an unlisted one fails. Exact hostnames only — no "
+            "wildcard, port, scheme or path. `jailbee new` / `jailbee apply` push the merged list into "
             "the mirror's REGISTRIES env."
         ),
     )
@@ -259,8 +269,17 @@ class DockerRegistryMirrorRepoConfig(BaseModel):
             if any(c.isspace() for c in raw):
                 raise ValueError(f"registry hostname must not contain whitespace: {raw!r}")
             if "/" in raw or "://" in raw:
+                raise ValueError(f"registry must be a bare hostname, not a URL/path: {raw!r}")
+            host, sep, _port = raw.partition(":")
+            if sep and REGISTRY_HOSTNAME_RE.fullmatch(host):
                 raise ValueError(
-                    f"registry must be a bare hostname[:port], not a URL/path: {raw!r}"
+                    f"registry on a non-default port is not supported by the mirror "
+                    f"(it serves registries on 443 only): {raw!r}"
+                )
+            if not REGISTRY_HOSTNAME_RE.fullmatch(raw):
+                raise ValueError(
+                    f"must be an exact registry hostname — no wildcard, leading or "
+                    f"trailing dot, or pattern: {raw!r}"
                 )
         return v
 

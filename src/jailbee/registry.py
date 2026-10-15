@@ -636,9 +636,15 @@ def sync_mirror_env(incus: Incus, registries: Iterable[str]) -> bool:
     mirror, hence the no-op path. Called with an empty ``registries`` it still
     applies the tuning and the packaged files.
     """
+    from jailbee.config.models_agents import REGISTRY_HOSTNAME_RE
+
     current = _read_proxy_env_file(incus)
     current_registries = set(current.get("REGISTRIES", "").split())
-    all_registries = current_registries | _RPARDINI_DEFAULT_REGISTRIES | set(registries)
+    # An older jailbee accepted wildcards and host:port; REGISTRIES only grows,
+    # so drop what the validator now refuses rather than keep it as an nginx
+    # `hostnames` pattern until the mirror is recreated.
+    kept = {r for r in current_registries if REGISTRY_HOSTNAME_RE.fullmatch(r)}
+    all_registries = kept | _RPARDINI_DEFAULT_REGISTRIES | set(registries)
     wanted = {
         **current,
         **_PROXY_TUNING,
@@ -691,7 +697,7 @@ def lockdown_report(incus: Incus, gcfg: GlobalConfig) -> tuple[bool | None, str]
 
     try:
         host, port = compute_mirror_endpoint(incus, gcfg)
-    except ValueError as e:
+    except (ValueError, IncusError) as e:
         return None, f"not probed — {e}"
     results = registry_selftest.run_selftest(host, port)
     ok = registry_selftest.verdict(results)

@@ -1439,3 +1439,33 @@ def test_lockdown_report_inconclusive_when_mirror_has_no_endpoint(mocker):
 
     assert ok is None
     assert "not running" in detail
+
+
+def test_sync_drops_stored_pattern_entries():
+    """A mirror synced by an older jailbee may hold an entry the validator now
+    refuses (a wildcard, a host:port). REGISTRIES only grows, so without this
+    it would stay an nginx `hostnames` pattern until the mirror is recreated."""
+    incus = _mirror(env=_CURRENT_ENV.replace("REGISTRIES=", "REGISTRIES=*.amazonaws.com reg.local:5000 "))
+
+    assert sync_mirror_env(incus, []) is True
+
+    written = _written_env(incus)["REGISTRIES"].split()
+    assert "*.amazonaws.com" not in written
+    assert "reg.local:5000" not in written
+    assert "803520778560.dkr.ecr.eu-north-1.amazonaws.com" in written
+
+
+def test_lockdown_report_inconclusive_when_incus_fails(mocker):
+    """`jailbee doctor` runs this inline: an Incus hiccup must become an
+    inconclusive row, not a traceback that ends the whole report."""
+    from jailbee.registry import lockdown_report
+
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint",
+        side_effect=IncusError(["incus", "list"], 1, "", "daemon not responding"),
+    )
+
+    ok, detail = lockdown_report(MagicMock(), GlobalConfig())
+
+    assert ok is None
+    assert detail.startswith("not probed")

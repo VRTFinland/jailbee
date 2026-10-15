@@ -397,7 +397,7 @@ docker_registry_mirror:
     - 803520778560.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
-Entries must be bare `host[:port]` — no scheme, no path. Setting this key is
+Entries must be exact hostnames — no wildcard, no `:port` (the mirror serves registries on 443 only), no scheme, no path. Setting this key is
 itself an opt-in to the registry mirror: with the default
 `docker_registry_mirror.enabled: auto`, a repo that names extra registries gets
 the mirror wired in even without `golden.stacks.docker`.
