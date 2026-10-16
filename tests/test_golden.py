@@ -26,20 +26,85 @@ from jailbee.stopping import CLEAN_STOP_BUDGET
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def _incus(pools_driver="dir", existing=(), images=(), archives=()):
+    """A stateful fake: `exists`/`image_exists` follow renames, deletes, publish.
+
+    The default profile's root pool is ``default``; ``cow`` exists too. Both
+    carry ``pools_driver`` (``btrfs`` selects instance mode).
+    """
+    incus = MagicMock()
+    instances = set(existing)
+    image_aliases = set(images) | {a for a, _size in archives}
+    sizes = dict.fromkeys(images, 100) | dict(archives)
+
+    incus.exists.side_effect = lambda name: name in instances
+
+    def _rename(old, new):
+        instances.discard(old)
+        instances.add(new)
+
+    def _delete(name, force=False):
+        instances.discard(name)
+
+    def _launch(image, name, **kwargs):
+        instances.add(name)
+
+    def _publish(container, alias):
+        image_aliases.add(alias)
+
+    def _alias_rename(old, new):
+        image_aliases.discard(old)
+        image_aliases.add(new)
+
+    def _image_delete(ref):
+        image_aliases.discard(ref)
+
+    incus.rename.side_effect = _rename
+    incus.delete.side_effect = _delete
+    incus.launch.side_effect = _launch
+    incus.publish.side_effect = _publish
+    incus.image_alias_rename.side_effect = _alias_rename
+    incus.image_delete.side_effect = _image_delete
+    incus.image_exists.side_effect = lambda alias: alias in image_aliases
+    incus.list_storage_pools.return_value = [
+        {"name": "default", "driver": pools_driver},
+        {"name": "cow", "driver": pools_driver},
+    ]
+    incus.profile_show.return_value = _PROFILE_YAML
+    incus.list_images.side_effect = lambda: [
+        {"aliases": [{"name": a}], "size": sizes.get(a, 100)} for a in sorted(image_aliases)
+    ]
+    return incus
+
+
+def _build_name(cfg):
+    return f"{cfg.golden.alias}--build"
+
+
+def _golden_name(cfg):
+    return f"{cfg.golden.alias}--golden"
+
+
+def _call_index(incus, name, *args, **kwargs):
+    """Index of the first `incus.<name>(*args, **kwargs)` in `mock_calls`."""
+    for i, c in enumerate(incus.mock_calls):
+        if c[0] == name and tuple(c.args) == args and (not kwargs or c.kwargs == kwargs):
+            return i
+    raise AssertionError(f"{name}{args} not called; calls: {incus.mock_calls}")
+
+
 def test_build_calls_launch_exec_publish_delete():
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
 
     build_golden_image(cfg, incus)
 
-    expected_build_name = f"{cfg.container_prefix}-base-build"
+    expected_build_name = _build_name(cfg)
 
     assert incus.launch.called
     launch_args = incus.launch.call_args.args
     launch_kwargs = incus.launch.call_args.kwargs
-    # incus.launch(image, name, config=..., network=...)
+    # incus.launch(image, name, config=..., network=..., storage_pool=...)
     assert "ubuntu" in launch_args[0].lower()
     assert launch_args[1] == expected_build_name
     # Nesting required so systemd-networkd starts inside the build container
@@ -53,35 +118,30 @@ def test_build_calls_launch_exec_publish_delete():
     incus.delete.assert_called_once_with(expected_build_name, force=True)
 
 
-def test_build_container_name_uses_prefix(make_cfg, tmp_path, mocker):
+def test_build_container_name_uses_alias(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
     launched_name = incus.launch.call_args.args[1]
-    assert launched_name == f"{cfg.container_prefix}-base-build"
+    assert launched_name == f"{cfg.golden.alias}--build"
 
 
-def test_build_announces_the_image_it_publishes(make_cfg, tmp_path, mocker, capsys):
+def test_build_announces_the_image_it_publishes(make_cfg, tmp_path, capsys):
     # A synthesized (scratch) config names its build container per directory but
     # publishes one shared alias; the opening line must say which image is built.
     cfg = make_cfg(tmp_path)
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
     out = capsys.readouterr()
     text = out.out + out.err
     assert f"Building {cfg.golden.alias} from" in text
-    assert f"{cfg.container_prefix}-base-build" in text
+    assert _build_name(cfg) in text
+    assert f"Golden image '{cfg.golden.alias}' built" in text
 
 
 def test_build_uses_config_versions():
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
 
     # exec should pass the configured Java/Node versions in env
@@ -105,9 +165,7 @@ def test_build_warns_on_deprecated_pinned_python(mocker):
     cfg = load_config(FIXTURES / "full_config.yaml")
     assert cfg.golden.python  # fixture pins a version → triggers the warning
     warn = mocker.patch("jailbee.golden.warn")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
 
     build_golden_image(cfg, incus)
 
@@ -115,122 +173,255 @@ def test_build_warns_on_deprecated_pinned_python(mocker):
     assert any("golden.python" in str(c.args[0]) for c in warn.call_args_list)
 
 
-def test_build_archives_existing_alias_before_publish():
-    """Rebuilding crashes with 'Aliases already exists' because
-    publish doesn't displace the existing alias. Archive it as
-    `<alias>-<YYYY-MM-DD>` first.
-    """
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = True
+# ---------- Placement, one version, instance mode
+
+
+def test_build_launches_on_the_configured_pool(make_cfg, tmp_path):
+    cfg = _with_pool(make_cfg(tmp_path), "cow")
+    incus = _incus()
+    build_golden_image(cfg, incus)
+    assert incus.launch.call_args.kwargs["storage_pool"] == "cow"
+
+
+def test_build_launches_on_the_profile_pool_when_none_configured(make_cfg, tmp_path):
+    cfg = _with_pool(make_cfg(tmp_path), None)
+    incus = _incus()
+    build_golden_image(cfg, incus)
+    assert incus.launch.call_args.kwargs["storage_pool"] == "default"
+
+
+def test_build_unknown_pool_fails_before_launch(make_cfg, tmp_path):
+    cfg = _with_pool(make_cfg(tmp_path), "nope")
+    incus = _incus()
+    with pytest.raises(ValueError, match="nope"):
+        build_golden_image(cfg, incus)
+    incus.launch.assert_not_called()
+    incus.delete.assert_not_called()
+
+
+def test_image_mode_publishes_under_temp_alias_then_swaps(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(images={alias})
 
     build_golden_image(cfg, incus)
 
-    incus.image_alias_rename.assert_called_once()
-    old, archived = incus.image_alias_rename.call_args.args
-    assert old == cfg.golden.alias
-    # archived alias has the form `<alias>-YYYY-MM-DD`
-    assert archived.startswith(f"{cfg.golden.alias}-")
-    assert len(archived.removeprefix(f"{cfg.golden.alias}-")) == 10  # YYYY-MM-DD
+    build = _build_name(cfg)
+    i_publish = _call_index(incus, "publish", build, f"{alias}--new")
+    i_aside = _call_index(incus, "image_alias_rename", alias, f"{alias}--old")
+    i_promote = _call_index(incus, "image_alias_rename", f"{alias}--new", alias)
+    i_drop = _call_index(incus, "image_delete", f"{alias}--old")
+    assert i_publish < i_aside < i_promote < i_drop
+    # No dated archive is ever created.
+    dated = re.compile(rf"^{re.escape(alias)}-\d{{4}}-\d{{2}}-\d{{2}}$")
+    for c in incus.image_alias_rename.call_args_list:
+        assert not dated.match(c.args[1])
+    assert incus.image_exists(alias)
+    assert not incus.image_exists(f"{alias}--new")
+    assert not incus.image_exists(f"{alias}--old")
 
-    # Rename must happen before publish, so the new image can claim the
-    # primary alias without colliding.
-    timeline = incus.mock_calls
-    rename_idx = next(i for i, c in enumerate(timeline) if c[0] == "image_alias_rename")
-    publish_idx = next(i for i, c in enumerate(timeline) if c[0] == "publish")
-    assert rename_idx < publish_idx
 
-
-def test_build_skips_archive_when_no_existing_alias():
-    """First-time build: image_exists returns False → no rename call."""
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+def test_image_mode_first_build_has_no_swap(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus()
 
     build_golden_image(cfg, incus)
 
-    incus.image_alias_rename.assert_not_called()
+    incus.publish.assert_called_once_with(_build_name(cfg), f"{alias}--new")
+    assert incus.image_alias_rename.call_args_list == [call(f"{alias}--new", alias)]
+    assert call(f"{alias}--old") not in incus.image_delete.call_args_list
+
+
+def test_image_mode_publish_failure_leaves_old_image_aliased(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(images={alias})
+    incus.publish.side_effect = IncusError("publish boom")
+
+    with pytest.raises(IncusError, match="publish boom"):
+        build_golden_image(cfg, incus)
+
+    assert all(c.args[0] != alias for c in incus.image_alias_rename.call_args_list)
+    incus.delete.assert_called_once_with(_build_name(cfg), force=True)
+    assert incus.image_exists(alias)
+
+
+def test_instance_mode_does_not_publish(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = _incus(pools_driver="btrfs")
+
+    build_golden_image(cfg, incus)
+
+    incus.publish.assert_not_called()
+    incus.rename.assert_any_call(_build_name(cfg), _golden_name(cfg))
+    i_promote = _call_index(incus, "rename", _build_name(cfg), _golden_name(cfg))
+    later = incus.mock_calls[i_promote:]
+    assert not any(c[0] == "delete" and c.args[0] == _build_name(cfg) for c in later)
+    assert incus.exists(_golden_name(cfg))
+
+
+def test_instance_mode_announces_the_golden_instance(make_cfg, tmp_path, capsys):
+    cfg = make_cfg(tmp_path)
+    build_golden_image(cfg, _incus(pools_driver="btrfs"))
+    out = capsys.readouterr()
+    assert f"Golden instance '{_golden_name(cfg)}' built" in out.out + out.err
+
+
+def test_instance_mode_strips_build_nic_and_nesting_before_swap(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = _incus(pools_driver="btrfs")
+    build = _build_name(cfg)
+
+    build_golden_image(cfg, incus)
+
+    i_nic = _call_index(incus, "config_device_remove", build, "eth0", missing_ok=True)
+    i_nest = _call_index(incus, "config_unset", build, "security.nesting")
+    i_promote = _call_index(incus, "rename", build, _golden_name(cfg))
+    assert i_nic < i_promote
+    assert i_nest < i_promote
+    for c in incus.config_set.call_args_list:
+        assert "boot.autostart" not in c.args
+
+
+def test_instance_mode_swaps_old_golden_aside_then_deletes_it(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    golden = _golden_name(cfg)
+    incus = _incus(pools_driver="btrfs", existing={golden})
+
+    build_golden_image(cfg, incus)
+
+    i_aside = _call_index(incus, "rename", golden, f"{alias}--old")
+    i_promote = _call_index(incus, "rename", _build_name(cfg), golden)
+    i_drop = _call_index(incus, "delete", f"{alias}--old", force=True)
+    assert i_aside < i_promote < i_drop
+    assert incus.exists(golden)
+    assert not incus.exists(f"{alias}--old")
+
+
+def test_instance_mode_failure_before_swap_keeps_old_golden(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    golden = _golden_name(cfg)
+    incus = _incus(pools_driver="btrfs", existing={golden})
+    incus.exec.side_effect = RuntimeError("provisioning boom")
+
+    with pytest.raises(RuntimeError, match="provisioning boom"):
+        build_golden_image(cfg, incus)
+
+    incus.rename.assert_not_called()
+    incus.delete.assert_called_once_with(_build_name(cfg), force=True)
+    assert incus.exists(golden)
+
+
+def test_build_restores_aside_golden_left_by_a_crash(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    golden = _golden_name(cfg)
+    incus = _incus(pools_driver="btrfs", existing={f"{alias}--old"})
+
+    build_golden_image(cfg, incus)
+
+    i_restore = _call_index(incus, "rename", f"{alias}--old", golden)
+    assert i_restore < _call_index(incus, "launch", *incus.launch.call_args.args)
+
+
+def test_build_drops_aside_golden_when_golden_also_exists(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    golden = _golden_name(cfg)
+    incus = _incus(pools_driver="btrfs", existing={f"{alias}--old", golden})
+
+    build_golden_image(cfg, incus)
+
+    i_drop = _call_index(incus, "delete", f"{alias}--old", force=True)
+    assert i_drop < _call_index(incus, "launch", *incus.launch.call_args.args)
+    assert call(f"{alias}--old", golden) not in incus.rename.call_args_list
+
+
+def test_build_drops_leftover_temp_image_aliases(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(images={f"{alias}--new", f"{alias}--old"})
+
+    build_golden_image(cfg, incus)
+
+    launch_idx = _call_index(incus, "launch", *incus.launch.call_args.args)
+    assert _call_index(incus, "image_delete", f"{alias}--new") < launch_idx
+    assert _call_index(incus, "image_delete", f"{alias}--old") < launch_idx
+
+
+def test_instance_mode_deletes_leftover_image_and_archives(make_cfg, tmp_path, capsys):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(
+        pools_driver="btrfs",
+        images={alias},
+        archives=[(f"{alias}-2026-01-01", 1024), (f"{alias}-2026-02-01", 1024)],
+    )
+
+    build_golden_image(cfg, incus)
+
+    deleted = {c.args[0] for c in incus.image_delete.call_args_list}
+    assert {alias, f"{alias}-2026-01-01", f"{alias}-2026-02-01"} <= deleted
+    out = capsys.readouterr()
+    assert "Removed 2 old golden archive(s), 2.0 KB" in out.out + out.err
+
+
+def test_image_mode_deletes_leftover_golden_instance(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    golden = _golden_name(cfg)
+    incus = _incus(existing={golden})
+
+    build_golden_image(cfg, incus)
+
+    incus.delete.assert_any_call(golden, force=True)
+    assert not incus.exists(golden)
     incus.publish.assert_called_once()
 
 
-def test_build_replaces_same_day_archive_alias():
-    """Rebuilding on the same day: the prior archive image
-    `<alias>-YYYY-MM-DD` already exists. Delete it (not just its alias) before
-    renaming so the rename doesn't fail with 'Alias already exists' and no
-    aliasless image is left dangling.
-    """
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    # First call (alias check): True (current alias exists).
-    # Second call (archive check): True (same-day archive exists too).
-    incus.image_exists.side_effect = [True, True]
-
-    build_golden_image(cfg, incus)
-
-    # Existing archive image is deleted first.
-    incus.image_delete.assert_called_once()
-    deleted = incus.image_delete.call_args.args[0]
-    assert deleted.startswith(f"{cfg.golden.alias}-")
-
-    # Then the current alias is renamed into the freed name.
-    incus.image_alias_rename.assert_called_once()
-    old, new = incus.image_alias_rename.call_args.args
-    assert old == cfg.golden.alias
-    assert new == deleted
-
-    # Order: delete archive → rename → publish.
-    timeline = [c[0] for c in incus.mock_calls]
-    del_idx = timeline.index("image_delete")
-    rename_idx = timeline.index("image_alias_rename")
-    publish_idx = timeline.index("publish")
-    assert del_idx < rename_idx < publish_idx
-
-
-def test_build_does_not_delete_archive_when_archive_alias_missing():
-    """Day-N rebuild where today's archive slot is empty: archive the
-    current alias straight into it without any deletion."""
-    cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    # alias check: True; archive check: False.
-    incus.image_exists.side_effect = [True, False]
-
-    build_golden_image(cfg, incus)
-
-    incus.image_alias_delete.assert_not_called()
-    incus.image_alias_rename.assert_called_once()
-
-
-def test_build_same_day_deletes_image_not_just_alias(make_cfg, tmp_path):
-    """Same-day rebuild: delete the whole archived image (not just its
-    alias) so no aliasless image is left dangling."""
+def test_image_mode_deletes_archives(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = True  # both live alias and archive exist → same-day
+    alias = cfg.golden.alias
+    incus = _incus(images={alias}, archives=[(f"{alias}-2026-01-01", 10)])
+
     build_golden_image(cfg, incus)
-    archived_arg = incus.image_delete.call_args.args[0]
-    assert archived_arg.startswith(f"{cfg.golden.alias}-")
-    incus.image_alias_delete.assert_not_called()
+
+    incus.image_delete.assert_any_call(f"{alias}-2026-01-01")
+    assert incus.image_exists(alias)
 
 
-def test_build_same_day_falls_back_to_alias_delete_when_in_use(make_cfg, tmp_path):
-    """Same-day rebuild: if the archive is still in use by a container,
-    Incus refuses the delete — fall back to dropping just the alias so the
-    rename can proceed and the build does not fail."""
+def test_cleanup_failure_is_a_warning_not_a_failure(make_cfg, tmp_path, mocker):
     cfg = make_cfg(tmp_path)
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = True
-    incus.image_delete.side_effect = IncusError("Image is currently in use")
+    alias = cfg.golden.alias
+    archive = f"{alias}-2026-01-01"
+    incus = _incus(pools_driver="btrfs", archives=[(archive, 10)])
+    plain_delete = incus.image_delete.side_effect
+
+    def image_delete(ref):
+        if ref == archive:
+            raise IncusError("Image is in use")
+        plain_delete(ref)
+
+    incus.image_delete.side_effect = image_delete
+    warn = mocker.patch("jailbee.golden.warn")
+    success = mocker.patch("jailbee.golden.success")
+
     build_golden_image(cfg, incus)
-    # image_delete attempted, then fell back to alias delete so rename can proceed
-    incus.image_delete.assert_called_once()
-    incus.image_alias_delete.assert_called_once()
-    incus.image_alias_rename.assert_called_once()
+
+    assert any(archive in str(c.args[0]) for c in warn.call_args_list)
+    success.assert_called_once()
+
+
+def test_build_removes_legacy_build_container_name(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    legacy = f"{cfg.container_prefix}-base-build"
+    incus = _incus(existing={legacy})
+
+    build_golden_image(cfg, incus)
+
+    i_drop = _call_index(incus, "delete", legacy, force=True)
+    assert i_drop < _call_index(incus, "launch", *incus.launch.call_args.args)
 
 
 # ---------- provision_script + provision_env
@@ -262,9 +453,7 @@ def test_build_uses_custom_provision_script(make_cfg, tmp_path, mocker):
             ),
         }
     )
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
 
     copy_call = _find_install_copy_call(incus)
@@ -290,9 +479,7 @@ def test_build_uses_relative_provision_script_under_repo_root(
             ),
         }
     )
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
 
     copy_call = _find_install_copy_call(incus)
@@ -307,9 +494,7 @@ def test_build_passes_empty_extra_apt_packages_env(make_cfg, tmp_path, mocker):
     install.sh's `: "${EXTRA_APT_PACKAGES:=}"` and conditional install
     block work consistently across builds."""
     cfg = make_cfg(tmp_path)
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
     install_call = _find_install_run_call(incus)
     env = install_call.kwargs["env"]
@@ -325,9 +510,7 @@ def test_build_passes_extra_apt_packages_env(make_cfg, tmp_path, mocker):
             ),
         }
     )
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
     install_call = _find_install_run_call(incus)
     env = install_call.kwargs["env"]
@@ -343,9 +526,7 @@ def test_build_provision_env_merged_into_exec(make_cfg, tmp_path, mocker):
             ),
         }
     )
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg, incus)
     install_call = _find_install_run_call(incus)
     env = install_call.kwargs["env"]
@@ -363,15 +544,13 @@ def test_build_deletes_container_when_provisioning_fails():
     constraint failure on the same name.
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     incus.exec.side_effect = RuntimeError("provisioning boom")
 
     with pytest.raises(RuntimeError, match="provisioning boom"):
         build_golden_image(cfg, incus)
 
-    expected = f"{cfg.container_prefix}-base-build"
+    expected = _build_name(cfg)
     incus.delete.assert_called_once_with(expected, force=True)
 
 
@@ -385,10 +564,8 @@ def test_build_survives_a_build_container_that_will_not_shut_down():
     away at the last step.
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
-    expected = f"{cfg.container_prefix}-base-build"
+    incus = _incus()
+    expected = _build_name(cfg)
 
     def stop(name, **kwargs):
         if kwargs.get("force"):
@@ -411,13 +588,11 @@ def test_build_survives_a_build_container_that_will_not_shut_down():
 def test_build_stop_asks_for_a_clean_shutdown_first():
     """A healthy container is shut down properly — no gratuitous power cut."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
 
     build_golden_image(cfg, incus)
 
-    expected = f"{cfg.container_prefix}-base-build"
+    expected = _build_name(cfg)
     incus.stop.assert_called_once_with(expected, timeout=CLEAN_STOP_BUDGET)
 
 
@@ -426,13 +601,11 @@ def test_build_removes_orphan_container_before_launch():
     behind: detect on entry and delete before launching the new one.
     """
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = True
-    incus.image_exists.return_value = False
+    expected = _build_name(cfg)
+    incus = _incus(existing={expected})
 
     build_golden_image(cfg, incus)
 
-    expected = f"{cfg.container_prefix}-base-build"
     # Two deletes: preflight (orphan) and post-publish cleanup.
     assert incus.delete.call_count == 2
     assert all(c == ((expected,), {"force": True}) for c in incus.delete.call_args_list)
@@ -464,9 +637,7 @@ def cfg_for_golden(tmp_path, make_cfg):
 
 
 def test_build_passes_new_env_vars(cfg_for_golden, mocker):
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg_for_golden, incus)
 
     install_sh_exec = next(
@@ -485,9 +656,7 @@ def test_build_stages_install_d_directory(cfg_for_golden, mocker, tmp_path):
     repo_snippet.parent.mkdir(parents=True)
     repo_snippet.write_text("#!/bin/bash\necho hi\n")
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg_for_golden, incus)
 
     # Find the exec call that writes the snippet
@@ -512,9 +681,7 @@ def test_build_skips_install_d_when_provision_script_override(cfg_for_golden, mo
     repo_snippet.parent.mkdir(parents=True)
     repo_snippet.write_text("#!/bin/bash\n")
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg_for_golden, incus)
 
     snippet_writes = [
@@ -545,9 +712,7 @@ def test_build_stages_user_install_d_from_xdg_config_home(
     user_snippet.parent.mkdir(parents=True)
     user_snippet.write_text("#!/bin/bash\necho user\n")
 
-    incus = mocker.MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     build_golden_image(cfg_for_golden, incus)
 
     assert "60-user.sh" in _staged_snippet_names(incus)
@@ -571,9 +736,7 @@ def _staged_snippet_names(incus: MagicMock) -> list[str]:
 
 
 def _fresh_incus() -> MagicMock:
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     return incus
 
 
@@ -748,9 +911,7 @@ def test_provisioning_runs_under_a_live_status_line(mocker):
     """install.sh's apt output is captured, so this step prints nothing for
     minutes. It is the one place in the build that needs a spinner."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     calls: list[str] = []
     # MagicMock already implements the context-manager protocol.
     status = mocker.MagicMock()
@@ -768,9 +929,7 @@ def test_provisioning_runs_under_a_live_status_line(mocker):
 def test_provisioning_failure_still_deletes_the_build_container():
     """The status line must not swallow the failure or leak the container."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
 
     def fail_on_install(name, cmd, **kwargs):
         # Keyed on the command rather than on a call index: the build runs a
@@ -968,9 +1127,7 @@ def test_build_creates_the_missing_loose_bridge_before_launch():
     `jailbee-loose`; launching the build container on it failed with
     "Network not found". The build must create it first."""
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     incus.network_exists.return_value = False
 
     build_golden_image(cfg, incus)
@@ -982,9 +1139,7 @@ def test_build_creates_the_missing_loose_bridge_before_launch():
 
 def test_build_leaves_an_existing_loose_bridge_alone():
     cfg = load_config(FIXTURES / "full_config.yaml")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    incus.image_exists.return_value = False
+    incus = _incus()
     incus.network_exists.return_value = True
 
     build_golden_image(cfg, incus)
