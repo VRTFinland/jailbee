@@ -381,8 +381,30 @@ class Incus:
             args += ["-s", storage_pool]
         self._run(args)
 
-    def copy(self, source: str, dest: str) -> None:
-        self._run(["copy", source, dest])
+    def copy(
+        self,
+        source: str,
+        dest: str,
+        *,
+        storage_pool: str | None = None,
+        instance_only: bool = False,
+    ) -> None:
+        """Copy an instance (or snapshot-bearing instance) to ``dest``.
+
+        ``instance_only`` matters because ``incus copy`` otherwise copies the
+        source's snapshots too (verified 2026-10-16). ``storage_pool`` puts the
+        copy's root disk on that pool; None leaves the pool to the profile.
+        """
+        args = ["copy", source, dest]
+        if instance_only:
+            args.append("--instance-only")
+        if storage_pool:
+            args += ["-s", storage_pool]
+        self._run(args)
+
+    def rename(self, old: str, new: str) -> None:
+        """Rename an instance. Incus refuses while it is running."""
+        self._run(["rename", old, new])
 
     def start(self, name: str) -> None:
         self._run(["start", name])
@@ -1032,8 +1054,12 @@ class Incus:
         *,
         config: dict[str, str] | None = None,
         network: str | None = None,
+        storage_pool: str | None = None,
     ) -> None:
         """Launch a container from `image` named `container_name`.
+
+        Optional `storage_pool` puts its root disk on that pool (``-s``); None
+        leaves the pool to the profile.
 
         Optional `config` becomes one or more ``-c key=value`` flags, e.g.
         ``config={"security.nesting": "true"}`` is required for systemd-networkd
@@ -1051,6 +1077,8 @@ class Incus:
         args = ["launch", image, container_name]
         if network:
             args += ["--network", network]
+        if storage_pool:
+            args += ["-s", storage_pool]
         if config:
             for key, value in config.items():
                 args += ["-c", f"{key}={value}"]

@@ -94,6 +94,28 @@ def test_copy_calls_incus_copy(incus, mocker):
     assert "dest" in args
 
 
+def test_copy_defaults_unchanged(incus, mocker):
+    run = _mock_run(mocker)
+    incus.copy("g", "c")
+    assert run.call_args[0][0] == ["incus", "copy", "g", "c"]
+
+
+def test_copy_instance_only_onto_pool(incus, mocker):
+    run = _mock_run(mocker)
+    incus.copy("g", "c", storage_pool="cow", instance_only=True)
+    args = run.call_args[0][0]
+    assert args[:4] == ["incus", "copy", "g", "c"]
+    assert "--instance-only" in args
+    assert args[args.index("-s") + 1] == "cow"
+
+
+def test_rename_calls_incus_rename(incus, mocker):
+    run = _mock_run(mocker)
+    incus.rename("a", "b")
+    assert run.call_args[0][0][:2] == ["incus", "rename"]
+    assert run.call_args[0][0][2:] == ["a", "b"]
+
+
 def test_start_calls_incus_start(incus, mocker):
     run = _mock_run(mocker)
     incus.start("feat-foo")
@@ -465,6 +487,19 @@ def test_launch_with_config_emits_c_flags(incus, mocker):
     assert "-c" in args
     assert "security.nesting=true" in args
     assert "limits.cpu=4" in args
+
+
+def test_launch_passes_storage_pool_when_given(incus, mocker):
+    run = _mock_run(mocker)
+    incus.launch("img", "c", storage_pool="cow")
+    args = run.call_args[0][0]
+    assert args[args.index("-s") + 1] == "cow"
+
+
+def test_launch_without_storage_pool_has_no_s_flag(incus, mocker):
+    run = _mock_run(mocker)
+    incus.launch("img", "c")
+    assert "-s" not in run.call_args[0][0]
 
 
 def test_failed_command_raises_incus_error(incus, mocker):
