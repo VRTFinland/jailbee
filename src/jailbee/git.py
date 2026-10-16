@@ -206,13 +206,13 @@ def detect_upstream_remote(repo_root: Path) -> str | None:
     if "origin" in remotes:
         return "origin"
 
-    push_default = _git_config_get(repo_root, "remote.pushDefault")
+    push_default = config_get(repo_root, "remote.pushDefault")
     if push_default in remotes:
         return push_default
 
     current = get_current_branch(repo_root)
     if current is not None:
-        tracked = _git_config_get(repo_root, f"branch.{current}.remote")
+        tracked = config_get(repo_root, f"branch.{current}.remote")
         if tracked in remotes:
             return tracked
 
@@ -297,14 +297,20 @@ def get_branch_tracking(repo_root: Path, branch: str) -> tuple[str, str] | None:
     configured; if either is missing, returns None and the caller defaults
     to ("origin", "refs/heads/<branch>").
     """
-    remote = _git_config_get(repo_root, f"branch.{branch}.remote")
-    merge = _git_config_get(repo_root, f"branch.{branch}.merge")
+    remote = config_get(repo_root, f"branch.{branch}.remote")
+    merge = config_get(repo_root, f"branch.{branch}.merge")
     if remote is None or merge is None:
         return None
     return remote, merge
 
 
-def _git_config_get(repo_root: Path, key: str) -> str | None:
+def config_get(repo_root: Path, key: str) -> str | None:
+    """`git config --get <key>` as seen from `repo_root`, or None.
+
+    Git applies its own precedence (repo-local, `includeIf`, global, system),
+    so this is the value a command run in that checkout would use. None on a
+    missing key, an empty value, or any failure to run git.
+    """
     try:
         result = subprocess.run(
             ["git", "config", "--get", key],

@@ -1969,7 +1969,7 @@ def test_tree_writers_run_outside_a_remote_session(mocker, monkeypatch, name, ca
         (lambda root: git._existing_refs(root, ["refs/heads/main"]), set()),
         (git.list_remotes, []),
         (lambda root: git._remote_has_head_symref(root, "origin"), False),
-        (lambda root: git._git_config_get(root, "remote.pushDefault"), None),
+        (lambda root: git.config_get(root, "remote.pushDefault"), None),
         (git.get_current_branch, None),
         (git.detect_upstream_remote, None),
         (lambda root: git.detect_default_branch(root, "origin"), "main"),
