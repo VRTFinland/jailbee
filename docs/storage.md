@@ -50,10 +50,14 @@ incus storage list      # DRIVER column: dir, btrfs, zfs, lvm
 
 Two numbers that look unrelated often explain each other on a `dir` pool:
 `/var/lib/incus/storage-pools/<pool>` holds the containers and snapshots, while
-`/var/lib/incus/images` holds the golden image tarballs, including every dated
-archive retained by `jailbee base build`. `jailbee disk-usage` reports a
-"Golden images" total from Incus's image-size metadata, not a measurement of
-that directory; despite the label, it includes all images visible to Incus.
+`/var/lib/incus/images` holds the golden image tarballs (any dated archive left
+by jailbee before 1.8 stays until the next build or `jailbee base prune`). On
+a btrfs pool the golden is instead a stopped instance `<alias>--golden` inside
+the pool, and new containers are copied from it with `incus copy`.
+`jailbee disk-usage` reports a "Golden images" total that adds Incus's
+image-size metadata (all images visible to Incus, despite the label) to a
+`du` measurement of the golden instance, so that part needs root like the
+container rows.
 Its container and snapshot rows need access to root-owned pool directories.
 Permission failures appear as `n/a`; a missing measured path can instead
 appear as zero. For root-only filesystem measurements, run the relevant

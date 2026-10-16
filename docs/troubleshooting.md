@@ -289,6 +289,7 @@ Delete only this repo's unused profiles that actually exist:
 `<prefix>-net-loose` and, after work-network migration,
 `<prefix>-net-work`, `<prefix>-net-work-strict`, `<prefix>-net-work-loose`.
 For each, use `incus profile delete "<actual-profile-name>"`.
+On a btrfs pool the golden is an instance, so use `incus delete "<actual-golden-alias>--golden"` instead.
 Delete the image with `incus image delete "<actual-golden-alias>"` only if
 no remaining repo needs it; a custom or scratch image alias can be shared.
 Deleting by alias deletes the image, not just that alias.

@@ -314,6 +314,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "other registries in `extra_registries`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "on a btrfs pool the golden becomes a pool-native instance that new "
+            "containers are instant snapshots of, and every rebuild keeps one "
+            "version only — rebuilding also removes old dated golden archives"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

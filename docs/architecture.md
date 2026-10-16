@@ -25,7 +25,7 @@ copies rather than mutating the loaded configuration.
 
 ## Golden image
 
-`jailbee base build` provisions an Incus image using the configured
+`jailbee base build` provisions a golden using the configured
 `golden.alias` (normally `<container_prefix>-base`; scratch directories share
 `jailbee-scratch-base`). The default flow runs
 `src/jailbee/provision/install.sh` plus the selected `install.d/*.sh` snippets.
@@ -37,9 +37,16 @@ user/repo snippets also contribute (scratch builds exclude repo snippets).
 `golden.provision_script` replaces the default flow.
 See [Provisioning snippets](config.md#provisioning-snippets-installd).
 
-`jailbee new` normally creates an instance from that image. Creation speed and
-disk sharing depend on the Incus storage backend: **copy-on-write is not a
-guarantee on every pool** (see [Storage](storage.md)). Rebuilding the image
+The build runs on `defaults.storage_pool` (else the default profile's root
+pool). What it leaves behind depends on that pool's driver. On **btrfs** the
+golden is a stopped instance named `<alias>--golden`, and `jailbee new` makes a
+container with `incus copy --instance-only`, an instant snapshot-based clone.
+On other drivers the golden is a published image under `<alias>` and `jailbee
+new` launches from it. Only one golden version is kept: every build replaces
+the previous one and removes dated archives (`<alias>-YYYY-MM-DD`) left by
+jailbee before 1.8. Creation speed and disk sharing depend on the Incus
+storage backend: **copy-on-write is not a guarantee on every pool** (see
+[Storage](storage.md)). Rebuilding the image
 does not replace existing development containers' root filesystems. They keep
 their original base and subsequent changes; use a new container to adopt the
 rebuilt image.
@@ -48,23 +55,20 @@ rebuilt image.
 flowchart TB
     UB["upstream Ubuntu image<br>golden.ubuntu_version"]
     BUILD["prefix-base-build<br>temporary, on the loose bridge<br>runs install.sh and the enabled install.d snippets"]
-    IMG["prefix-base<br>golden image"]
+    IMG["prefix-base--golden (btrfs instance)<br>or prefix-base (image)"]
     C1["prefix-feat-a"]
     C2["prefix-feat-b"]
     C3["prefix-pr-482"]
-    OLD["prefix-base-YYYY-MM-DD<br>archived alias"]
 
     UB -->|"jailbee base build"| BUILD
-    BUILD -->|"publish, then delete the build container"| IMG
+    BUILD -->|"rename to the golden instance,<br>or publish as an image"| IMG
     IMG -->|"jailbee new feat/a"| C1
     IMG -->|"jailbee new feat/b"| C2
     IMG -->|"jailbee new --pr 482"| C3
-    IMG -.->|"the next base build renames<br>the current alias out of the way"| OLD
 ```
 
-Here and below, `prefix` stands for the repo's `container_prefix`; the image
-diagram uses the normal alias. A dated alias archives the previous image,
-not a history of every build: same-day rebuilds replace that day's archive.
+Here and below, `prefix` stands for the repo's `container_prefix`; the
+diagram uses the normal alias. There is no archive of earlier builds.
 
 ## Layered profiles
 
