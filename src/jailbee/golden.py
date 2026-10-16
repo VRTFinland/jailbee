@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import yaml
+
 from jailbee.config import Config
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE, ensure_loose_bridge
@@ -311,6 +313,72 @@ def repo_uses_docker(cfg: Config) -> bool:
     if cfg.golden.provision_script is not None:
         return cfg.golden.stacks.docker
     return "docker" in resolved_snippet_names(cfg)
+
+
+def golden_instance_name(alias: str) -> str:
+    """Name of the stopped golden instance (instance mode)."""
+    return f"{alias}--golden"
+
+
+def golden_build_name(alias: str) -> str:
+    """Name of the transient build container."""
+    return f"{alias}--build"
+
+
+@dataclass(frozen=True)
+class GoldenPlacement:
+    """Where the golden lives and which form it takes.
+
+    ``pool``/``driver`` are None when no pool could be resolved (image mode,
+    pool left to the profile).
+    """
+
+    pool: str | None
+    driver: str | None
+
+    @property
+    def instance_mode(self) -> bool:
+        return self.driver == "btrfs"
+
+
+def _root_pool(yaml_text: str) -> str | None:
+    """The `pool` of the root disk device (`path: /`) in an instance/profile YAML."""
+    data = yaml.safe_load(yaml_text) if yaml_text else None
+    devices = data.get("devices") if isinstance(data, dict) else None
+    if not isinstance(devices, dict):
+        return None
+    for dev in devices.values():
+        if isinstance(dev, dict) and dev.get("type") == "disk" and dev.get("path") == "/":
+            pool = dev.get("pool")
+            return str(pool) if pool else None
+    return None
+
+
+def resolve_golden_placement(cfg: Config, incus: Incus) -> GoldenPlacement:
+    """Resolve the golden's pool and mode.
+
+    The pool is `defaults.storage_pool` (validated; its `ValueError` propagates)
+    else the root disk pool of the `default` profile.
+    """
+    from jailbee.lifecycle import check_storage_pool
+
+    pool = cfg.defaults.storage_pool
+    if pool:
+        check_storage_pool(incus, pool)
+    else:
+        pool = _root_pool(incus.profile_show("default"))
+    if not pool:
+        return GoldenPlacement(None, None)
+    driver = next(
+        (str(p.get("driver")) for p in incus.list_storage_pools() if p.get("name") == pool),
+        None,
+    )
+    return GoldenPlacement(pool, driver)
+
+
+def golden_instance_pool(incus: Incus, name: str) -> str | None:
+    """The pool of an instance's root disk, or None if it has none."""
+    return _root_pool(incus.config_show(name, expanded=True))
 
 
 def build_golden_image(cfg: Config, incus: Incus) -> None:

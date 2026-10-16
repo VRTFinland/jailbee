@@ -990,3 +990,90 @@ def test_build_leaves_an_existing_loose_bridge_alone():
     build_golden_image(cfg, incus)
 
     incus.network_create.assert_not_called()
+
+
+# ---- Golden placement -------------------------------------------------------
+
+_PROFILE_YAML = "devices:\n  root:\n    path: /\n    pool: default\n    type: disk\n"
+_POOLS = [{"name": "cow", "driver": "btrfs"}, {"name": "default", "driver": "dir"}]
+
+
+def _placement_incus(pools=_POOLS, profile=_PROFILE_YAML):
+    incus = MagicMock()
+    incus.list_storage_pools.return_value = pools
+    incus.profile_show.return_value = profile
+    return incus
+
+
+def _with_pool(cfg, pool):
+    return cfg.model_copy(
+        update={"defaults": cfg.defaults.model_copy(update={"storage_pool": pool})}
+    )
+
+
+def test_placement_uses_defaults_storage_pool_and_its_driver(make_cfg, tmp_path):
+    from jailbee.golden import GoldenPlacement, resolve_golden_placement
+
+    cfg = _with_pool(make_cfg(tmp_path), "cow")
+    placement = resolve_golden_placement(cfg, _placement_incus())
+    assert placement == GoldenPlacement("cow", "btrfs")
+    assert placement.instance_mode is True
+
+
+def test_placement_falls_back_to_default_profile_root_pool(make_cfg, tmp_path):
+    from jailbee.golden import GoldenPlacement, resolve_golden_placement
+
+    cfg = _with_pool(make_cfg(tmp_path), None)
+    placement = resolve_golden_placement(cfg, _placement_incus())
+    assert placement == GoldenPlacement("default", "dir")
+    assert placement.instance_mode is False
+
+
+def test_placement_zfs_is_image_mode(make_cfg, tmp_path):
+    from jailbee.golden import resolve_golden_placement
+
+    cfg = _with_pool(make_cfg(tmp_path), "z")
+    placement = resolve_golden_placement(cfg, _placement_incus([{"name": "z", "driver": "zfs"}]))
+    assert placement.instance_mode is False
+
+
+def test_placement_unknown_pool_raises_before_anything(make_cfg, tmp_path):
+    from jailbee.golden import resolve_golden_placement
+
+    cfg = _with_pool(make_cfg(tmp_path), "nope")
+    incus = _placement_incus()
+    with pytest.raises(ValueError, match="nope"):
+        resolve_golden_placement(cfg, incus)
+    incus.profile_show.assert_not_called()
+
+
+def test_placement_without_root_device_is_image_mode(make_cfg, tmp_path):
+    from jailbee.golden import GoldenPlacement, resolve_golden_placement
+
+    cfg = _with_pool(make_cfg(tmp_path), None)
+    incus = _placement_incus(profile="devices:\n  eth0:\n    type: nic\n")
+    assert resolve_golden_placement(cfg, incus) == GoldenPlacement(None, None)
+
+
+def test_golden_names_cannot_be_branch_containers(make_cfg, tmp_path):
+    from jailbee.golden import golden_build_name, golden_instance_name
+    from jailbee.lifecycle import derive_container_name
+
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(update={"container_prefix": "proj"})
+    alias = "proj-base"
+    for branch in ("golden", "base", "base--golden", "base-golden", "base--build", "base-build"):
+        name = derive_container_name(cfg, branch)
+        assert name != golden_instance_name(alias)
+        assert name != golden_build_name(alias)
+
+
+def test_golden_instance_pool_reads_expanded_root_disk():
+    from jailbee.golden import golden_instance_pool
+
+    incus = MagicMock()
+    incus.config_show.return_value = _PROFILE_YAML
+    assert golden_instance_pool(incus, "x--golden") == "default"
+    incus.config_show.assert_called_once_with("x--golden", expanded=True)
+    incus.config_show.return_value = "devices: {}\n"
+    assert golden_instance_pool(incus, "x--golden") is None
