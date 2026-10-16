@@ -4209,3 +4209,85 @@ def test_doctor_does_not_probe_a_stopped_mirror(tmp_path):
         run_checks(_cfg(tmp_path), _baseline_incus())
 
     probe.assert_not_called()
+
+
+# --- git identity ----------------------------------------------------------
+
+
+def _git_cfg(tmp_path, *, identity="host", mounts=()):
+    from tests.conftest import make_config
+
+    from jailbee.config import GitConfig
+
+    cfg = make_config(tmp_path)
+    return cfg.model_copy(
+        update={"git": GitConfig(identity=identity), "host_mounts": list(mounts)}
+    )
+
+
+def _resolved(mocker, **values):
+    full = {"user.name": None, "user.email": None, **values}
+    return mocker.patch("jailbee.git_identity.resolve", return_value=full)
+
+
+def test_git_identity_ok(tmp_path, mocker):
+    from jailbee.doctor import _check_git_identity
+
+    _resolved(mocker, **{"user.name": "Ann", "user.email": "ann@example.com"})
+
+    rows = _check_git_identity(_git_cfg(tmp_path))
+
+    assert len(rows) == 1
+    assert rows[0].name == "git identity"
+    assert rows[0].ok
+    assert rows[0].detail == "Ann <ann@example.com>"
+
+
+def test_git_identity_missing_email_fails(tmp_path, mocker):
+    from jailbee.doctor import _check_git_identity
+
+    _resolved(mocker, **{"user.name": "Ann"})
+
+    rows = _check_git_identity(_git_cfg(tmp_path))
+
+    assert not rows[0].ok
+    assert "user.email" in rows[0].detail
+    assert "git.user" in rows[0].detail
+
+
+def test_git_identity_off_skips(tmp_path, mocker):
+    from jailbee.doctor import _check_git_identity
+
+    resolve = _resolved(mocker)
+
+    assert _check_git_identity(_git_cfg(tmp_path, identity="off")) == []
+    resolve.assert_not_called()
+
+
+def test_gitconfig_mount_adds_info_row(tmp_path, mocker):
+    from jailbee.config import HostMount
+    from jailbee.doctor import _check_git_identity
+
+    _resolved(mocker, **{"user.name": "Ann", "user.email": "ann@example.com"})
+    gitconfig = tmp_path / ".gitconfig"
+    gitconfig.write_text("")
+    mount = HostMount(host=gitconfig, container="/home/dev/.gitconfig", readonly=True)
+
+    rows = _check_git_identity(_git_cfg(tmp_path, mounts=[mount]))
+
+    assert [r.name for r in rows] == ["git identity", "git identity source"]
+    assert rows[1].ok
+    assert "overrides the per-repo identity" in rows[1].detail
+
+
+def test_run_checks_includes_git_identity(tmp_path, mocker):
+    from jailbee import doctor
+
+    rows = [doctor.CheckResult("git identity", True, "x")]
+    check = mocker.patch("jailbee.doctor._check_git_identity", return_value=rows)
+    cfg = _git_cfg(tmp_path)
+
+    results = run_checks(cfg, MagicMock())
+
+    check.assert_called_once_with(cfg)
+    assert rows[0] in results

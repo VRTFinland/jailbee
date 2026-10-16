@@ -1329,6 +1329,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     # 9. GitHub CLI integration (only when github.enabled)
     results.extend(_check_github(cfg))
+    results.extend(_check_git_identity(cfg))
 
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
@@ -2229,6 +2230,54 @@ def _check_bridge_reachability(
         proven.append(f"egress to {ip}:{port} ok" if status == 0 else "egress not verified")
 
     return CheckResult(name, True, "; ".join(proven))
+
+
+def _check_git_identity(cfg: Config) -> list[CheckResult]:
+    """The git identity this repo's containers get, and what may override it.
+
+    Empty when `git.identity` is off. One row naming the resolved identity,
+    failing when the name or email is missing. A second, informational row
+    when a `host_mounts` entry still mounts a `~/.gitconfig`: git reads that
+    file after the XDG one jailbee writes, so it wins over the per-repo value.
+    """
+    if cfg.git.identity == "off":
+        return []
+
+    from jailbee import git_identity
+    from jailbee.config.common import CONTAINER_USERNAME
+    from jailbee.config.local_layer import local_config_path
+
+    values = git_identity.resolve(cfg)
+    name, email = values["user.name"], values["user.email"]
+    missing = [key for key in git_identity.IDENTITY_KEYS if values[key] is None]
+    if missing:
+        results = [
+            CheckResult(
+                name="git identity",
+                ok=False,
+                detail=(
+                    f"no {' / '.join(missing)} for this repo — commits in its containers "
+                    f"fail. Run `git config {missing[0]} …` in {cfg.repo_root}, or set "
+                    f"`git.user` in {local_config_path(cfg.container_prefix)}"
+                ),
+            )
+        ]
+    else:
+        results = [CheckResult(name="git identity", ok=True, detail=f"{name} <{email}>")]
+
+    home_gitconfig = f"/home/{CONTAINER_USERNAME}/.gitconfig"
+    if any(str(m.container) == home_gitconfig for m in cfg.effective_host_mounts()):
+        results.append(
+            CheckResult(
+                name="git identity source",
+                ok=True,
+                detail=(
+                    "~/.gitconfig is mounted into containers and overrides the per-repo "
+                    "identity; remove that host_mounts entry from global.yaml to use it"
+                ),
+            )
+        )
+    return results
 
 
 def _check_github(cfg: Config) -> list[CheckResult]:
