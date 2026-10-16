@@ -1407,7 +1407,7 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
     if opts.from_base == cfg.golden.alias and incus.exists(golden):
         golden_pool = golden_instance_pool(incus, golden)
         target = opts.storage_pool or golden_pool
-        if opts.storage_pool and opts.storage_pool != golden_pool:
+        if opts.storage_pool and golden_pool and opts.storage_pool != golden_pool:
             info(
                 f"Copying the golden to pool '{opts.storage_pool}' "
                 f"(golden is on '{golden_pool}'): a full copy, not a snapshot"
@@ -1439,7 +1439,7 @@ def new_container(
       7. (optional) git-clone the repo from /mnt/host-source
 
     ``on_phase``, if given, is invoked with a short phase label at each
-    major boundary — ``"creating"`` (before ``incus init``), ``"cloning"``
+    major boundary — ``"creating"`` (before the instance is copied or initialised), ``"cloning"``
     (before the repo clone), and ``"autostart"`` (before autostart). The
     background worker uses it to record progress; the synchronous path
     passes ``None`` and the callback is a no-op.

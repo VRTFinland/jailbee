@@ -10984,19 +10984,28 @@ def test_new_work_network_path_uses_the_same_creator(tmp_path, mocker, db_sessio
     incus.list_containers.side_effect = [[], []]
     mocker.patch("jailbee.golden.golden_instance_pool", return_value="cow")
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    bridge = mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
-    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    reserve = mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
     mocker.patch("jailbee.work_network.verify_work_nic")
     _select_work_generation(mocker, db_session)
     opts = NewContainerOptions(
         "feat/x", None, "strict", "8GiB", 4, cfg.golden.alias, True, autostart=False
     )
-    try:
-        new_container(cfg, incus, opts)
-    except Exception:
-        pass
+    new_container(cfg, incus, opts)
+    bridge.assert_called_once()
+    reserve.assert_called_once()
     incus.copy.assert_called_once_with(
         golden, "repo-feat-x", storage_pool="cow", instance_only=True
     )
     incus.init.assert_not_called()
+
+
+def test_new_copy_with_unknown_golden_pool_skips_the_full_copy_message(tmp_path, mocker):
+    _cfg, incus, golden, infos = _golden_new(
+        tmp_path, mocker, golden_present=True, storage_pool="other", pool=None
+    )
+    incus.copy.assert_called_once_with(
+        golden, "repo-feat-x", storage_pool="other", instance_only=True
+    )
+    assert not any("None" in m or "full copy" in m for m in infos)
