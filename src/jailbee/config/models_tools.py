@@ -28,6 +28,50 @@ class GpgConfig(BaseModel):
     )
 
 
+class GitUserConfig(BaseModel):
+    """Per-field overrides for the container's git identity."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Overrides `user.name` in containers. Unset takes the value `git config "
+            "user.name` gives in the host repo."
+        ),
+    )
+    email: str | None = Field(
+        default=None,
+        description=(
+            "Overrides `user.email` in containers. Unset takes the value `git config "
+            "user.email` gives in the host repo."
+        ),
+    )
+
+
+class GitConfig(BaseModel):
+    """The git identity containers commit with."""
+
+    model_config = ConfigDict(extra="forbid")
+    identity: Literal["host", "off"] = Field(
+        default="host",
+        description=(
+            "`host` resolves `user.name` and `user.email` on the host from the repo's "
+            "point of view (repo-local config, `includeIf`, global) and writes them to "
+            "the container's `~/.config/git/config` on create and on every start. "
+            "Signing settings come along when `gpg.enabled`. `off` leaves that file "
+            "alone."
+        ),
+    )
+    user: GitUserConfig = Field(
+        default=GitUserConfig(),
+        description=(
+            "Per-field identity overrides. Personal, so not allowed in a repo's "
+            "`.jailbee/config.yaml`: set it in `global.yaml` or the host-local "
+            "`repos/<prefix>.yaml`."
+        ),
+    )
+
+
 class GuiConfig(BaseModel):
     """Host desktop sockets beyond the display, passed into containers on request."""
 

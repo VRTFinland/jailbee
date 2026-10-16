@@ -287,10 +287,12 @@ def test_build_specs_covers_every_config_leaf():
     The two `mount_auto_revert` policy leaves (`enabled`, `after`) bring both
     models to 105 repo and 49 global leaves.
     `remote.ssh.mount_roots` and `remote.ssh.mounts` make 51.
+    The `git` block (`identity`, `user.name`, `user.email`) adds three repo
+    leaves: 105 + 3 = 108.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 105
+    assert len(build_specs(Config)) == 108
     assert len(build_specs(GlobalConfig)) == 51
 
 

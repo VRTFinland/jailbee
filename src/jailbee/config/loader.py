@@ -778,6 +778,16 @@ def load_config_from_layers(
                 f"teammate and name a group that exists on one machine only."
             )
 
+    # Host-only like `github`: a git identity is personal, and a committed repo
+    # file would sign every teammate's commits with one person's name.
+    repo_git = repo_raw.get("git")
+    if isinstance(repo_git, dict) and "user" in repo_git:
+        raise ConfigError(
+            "`git.user` is not allowed in repo .jailbee/config.yaml — a git identity "
+            "is personal. Set it in ~/.config/jailbee/global.yaml or "
+            f"{local_config_path('<container_prefix>')}."
+        )
+
     if "litellm" in repo_raw:
         raise ConfigError(
             "`litellm` is not allowed in repo .jailbee/config.yaml: it names this host's "

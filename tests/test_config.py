@@ -5243,3 +5243,58 @@ def test_ttl_syntax_error_advertises_bare_minutes():
 
     with pytest.raises(ValueError, match="integer minutes"):
         parse_ttl("banana")
+
+
+# --- git identity block ---------------------------------------------------
+
+
+def _layered_git(tmp_path, mocker, global_raw, repo_raw, local_raw=None):
+    from jailbee.config.loader import load_config_from_layers
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    return load_config_from_layers(
+        global_raw,
+        repo_raw,
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="<staged>",
+        local_raw=local_raw,
+        local_origin="<local>",
+    )
+
+
+def test_git_defaults(tmp_path, mocker):
+    cfg = _layered_git(tmp_path, mocker, {}, {})
+    assert cfg.git.identity == "host"
+    assert cfg.git.user.name is None
+    assert cfg.git.user.email is None
+
+
+def test_git_user_from_global_and_local_layers(tmp_path, mocker):
+    cfg = _layered_git(
+        tmp_path,
+        mocker,
+        {"git": {"user": {"email": "global@example.com"}}},
+        {},
+        local_raw={"git": {"user": {"name": "Local Name"}}},
+    )
+    assert cfg.git.user.email == "global@example.com"
+    assert cfg.git.user.name == "Local Name"
+
+
+@pytest.mark.parametrize(
+    "git_block",
+    [{"user": {"email": "a@b"}}, {"user": None}, {"user": {}}],
+)
+def test_git_user_in_repo_config_is_rejected(tmp_path, mocker, git_block):
+    from jailbee.config import ConfigError
+
+    with pytest.raises(ConfigError) as exc:
+        _layered_git(tmp_path, mocker, {}, {"git": git_block})
+    assert "`git.user`" in str(exc.value)
+    assert "global.yaml" in str(exc.value)
+
+
+def test_git_identity_allowed_in_repo_config(tmp_path, mocker):
+    cfg = _layered_git(tmp_path, mocker, {}, {"git": {"identity": "off"}})
+    assert cfg.git.identity == "off"

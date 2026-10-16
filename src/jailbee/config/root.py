@@ -70,6 +70,7 @@ from jailbee.config.models_net import (
 from jailbee.config.models_tools import (
     BrowserConfig,
     BrowsersConfig,
+    GitConfig,
     GpgConfig,
     GuiConfig,
     JetbrainsConfig,
@@ -224,6 +225,14 @@ class Config(BaseModel):
             "which provisioning snippets are staged, and the high-level `stacks` "
             "toggles. Consumed by `jailbee base build`. Applies to every repo unless "
             "a repo overrides it."
+        ),
+    )
+    git: GitConfig = Field(
+        default=GitConfig(),
+        description=(
+            "Git identity in containers: resolved on the host per repo and written to "
+            "the container's `~/.config/git/config` on create and start. `git.user` "
+            "is personal and refused in a repo's `.jailbee/config.yaml`."
         ),
     )
     gpg: GpgConfig = Field(

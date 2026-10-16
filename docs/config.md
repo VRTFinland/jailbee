@@ -149,7 +149,7 @@ Several keys are exempt from this pipeline — see [Keys that bypass the deep-me
 | Field | Layer | Why |
 |---|---|---|
 | `container_user.uid` / `container_user.gid` | global | Constant per developer across repos |
-| `host_mounts` (gitconfig) | global | Personal credentials |
+| `git.user.name` / `git.user.email` | global or local | Personal — refused in the repo file. Usually unset: the identity comes from the host repo's own git config |
 | `gpg.enabled` | global | Personal — depends on whether host has gpg-agent. Default `false`. |
 | `ssh.*` | global | Personal — depends on host SSH config. `ssh.enabled` default `false`. |
 | `jetbrains.enabled` | global | Personal — turn on if you use a JetBrains IDE. Default `false`. |
@@ -1255,6 +1255,37 @@ golden image's `/etc/profile.d/jailbee-env.sh` fallback only sets
 `SSH_AUTH_SOCK` when the variable is still unset *and* the gpg-agent
 socket is actually present, so login shells stay clean on hosts that run
 no gpg-agent.
+
+### `git`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `identity` | `host` \| `off` | `host` | `host` writes the git identity into the container's `~/.config/git/config` on `jailbee new` and on every start. `off` leaves that file alone. |
+| `user.name` | string | unset | Overrides `user.name`. Unset takes the host repo's value. |
+| `user.email` | string | unset | Overrides `user.email`. Unset takes the host repo's value. |
+
+JailBee resolves each key by running `git config --get <key>` in the host
+repo. Git then applies its own precedence, so the container gets what a commit
+in the host checkout would get: repo-local `.git/config`, `includeIf` rules,
+then `~/.gitconfig`. Keeping a different identity per repository needs no
+JailBee configuration. A `git.user` field wins over the host value, one field
+at a time.
+
+When [`gpg.enabled`](#gpg) is true, `user.signingkey`, `commit.gpgsign`,
+`tag.gpgsign` and `gpg.format` are copied as well. When it is false they are
+removed from the file, so commits do not wait on a missing agent. A key that
+resolves to nothing is removed, never written empty. `jailbee doctor` warns
+when the name or email is missing.
+
+`git.user` is personal and is refused in a repo's `.jailbee/config.yaml`. Set
+it in `global.yaml`, or in the [host-local file](#host-local-overrides) for one
+repo. `git.identity` is allowed in every layer.
+
+Changes reach a container at its next start. A `host_mounts` entry that mounts
+your `~/.gitconfig` at `/home/dev/.gitconfig` still works and wins over the
+written file, because git reads `~/.gitconfig` after `~/.config/git/config`.
+Remove that entry to use the per-repo identity; `jailbee doctor` points it
+out.
 
 ### `gui`
 
