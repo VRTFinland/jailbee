@@ -280,8 +280,8 @@ def test_instance_mode_strips_build_nic_and_nesting_before_swap(make_cfg, tmp_pa
     i_promote = _call_index(incus, "rename", build, _golden_name(cfg))
     assert i_nic < i_promote
     assert i_nest < i_promote
-    for c in incus.config_set.call_args_list:
-        assert "boot.autostart" not in c.args
+    incus.config_set.assert_not_called()
+    assert "boot.autostart" not in incus.launch.call_args.kwargs["config"]
 
 
 def test_instance_mode_swaps_old_golden_aside_then_deletes_it(make_cfg, tmp_path):
@@ -339,16 +339,100 @@ def test_build_drops_aside_golden_when_golden_also_exists(make_cfg, tmp_path):
     assert call(f"{alias}--old", golden) not in incus.rename.call_args_list
 
 
-def test_build_drops_leftover_temp_image_aliases(make_cfg, tmp_path):
+def test_build_drops_leftover_temp_image_aliases_when_alias_exists(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     alias = cfg.golden.alias
-    incus = _incus(images={f"{alias}--new", f"{alias}--old"})
+    incus = _incus(images={alias, f"{alias}--new", f"{alias}--old"})
 
     build_golden_image(cfg, incus)
 
     launch_idx = _call_index(incus, "launch", *incus.launch.call_args.args)
     assert _call_index(incus, "image_delete", f"{alias}--new") < launch_idx
     assert _call_index(incus, "image_delete", f"{alias}--old") < launch_idx
+    assert not any(c[0] == "image_alias_rename" for c in incus.mock_calls[:launch_idx])
+
+
+@pytest.mark.parametrize(
+    ("leftovers", "restored_from"),
+    [
+        ({"--new", "--old"}, "--new"),  # crash between the two alias renames
+        ({"--old"}, "--old"),
+        ({"--new"}, "--new"),
+    ],
+)
+def test_build_restores_alias_from_temp_image_left_by_a_crash(
+    make_cfg, tmp_path, leftovers, restored_from
+):
+    """No golden image under the alias but a temp alias left: promote it back
+    (the newest complete one) rather than delete it, so there is never a
+    window with no golden at all."""
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(images={f"{alias}{t}" for t in leftovers})
+    plain_launch = incus.launch.side_effect
+    alias_at_launch = []
+
+    def launch(image, name, **kwargs):
+        alias_at_launch.append(incus.image_exists(alias))
+        plain_launch(image, name, **kwargs)
+
+    incus.launch.side_effect = launch
+
+    build_golden_image(cfg, incus)
+
+    assert alias_at_launch == [True]
+    assert incus.image_alias_rename.call_args_list[0] == call(f"{alias}{restored_from}", alias)
+    launch_idx = _call_index(incus, "launch", *incus.launch.call_args.args)
+    deleted_before_launch = [
+        c.args[0] for c in incus.mock_calls[:launch_idx] if c[0] == "image_delete"
+    ]
+    assert sorted(deleted_before_launch) == sorted(
+        f"{alias}{t}" for t in leftovers - {restored_from}
+    )
+
+
+def test_instance_mode_promote_failure_restores_previous_golden(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    golden = _golden_name(cfg)
+    build = _build_name(cfg)
+    incus = _incus(pools_driver="btrfs", existing={golden})
+    plain_rename = incus.rename.side_effect
+
+    def rename(old, new):
+        if (old, new) == (build, golden):
+            raise IncusError("rename boom")
+        plain_rename(old, new)
+
+    incus.rename.side_effect = rename
+
+    with pytest.raises(IncusError, match="rename boom"):
+        build_golden_image(cfg, incus)
+
+    assert incus.exists(golden)
+    assert not incus.exists(f"{alias}--old")
+    incus.delete.assert_called_once_with(build, force=True)
+
+
+def test_image_mode_promote_failure_restores_previous_alias(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(images={alias})
+    plain_rename = incus.image_alias_rename.side_effect
+
+    def alias_rename(old, new):
+        if (old, new) == (f"{alias}--new", alias):
+            raise IncusError("alias boom")
+        plain_rename(old, new)
+
+    incus.image_alias_rename.side_effect = alias_rename
+
+    with pytest.raises(IncusError, match="alias boom"):
+        build_golden_image(cfg, incus)
+
+    assert incus.image_exists(alias)
+    assert not incus.image_exists(f"{alias}--old")
+    incus.delete.assert_called_once_with(_build_name(cfg), force=True)
 
 
 def test_instance_mode_deletes_leftover_image_and_archives(make_cfg, tmp_path, capsys):
@@ -410,6 +494,49 @@ def test_cleanup_failure_is_a_warning_not_a_failure(make_cfg, tmp_path, mocker):
     build_golden_image(cfg, incus)
 
     assert any(archive in str(c.args[0]) for c in warn.call_args_list)
+    success.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("driver", "existing", "images", "method", "ref"),
+    [
+        # the previous golden instance, set aside during the swap
+        ("btrfs", {"golden"}, set(), "delete", "--old"),
+        # the previous golden image, renamed to --old during the swap
+        ("dir", set(), {"alias"}, "image_delete", "--old"),
+        # the other form: a leftover image in instance mode ...
+        ("btrfs", set(), {"alias"}, "image_delete", ""),
+        # ... and a leftover golden instance in image mode
+        ("dir", {"golden"}, set(), "delete", "--golden"),
+    ],
+)
+def test_post_build_cleanup_failures_only_warn(
+    make_cfg, tmp_path, mocker, driver, existing, images, method, ref
+):
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    names = {"golden": _golden_name(cfg), "alias": alias}
+    target = f"{alias}{ref}"
+    incus = _incus(
+        pools_driver=driver,
+        existing={names[e] for e in existing},
+        images={names[i] for i in images},
+    )
+    mock = getattr(incus, method)
+    plain = mock.side_effect
+
+    def failing(name, *args, **kwargs):
+        if name == target:
+            raise IncusError("refused")
+        plain(name, *args, **kwargs)
+
+    mock.side_effect = failing
+    warn = mocker.patch("jailbee.golden.warn")
+    success = mocker.patch("jailbee.golden.success")
+
+    build_golden_image(cfg, incus)
+
+    assert any(target in str(c.args[0]) for c in warn.call_args_list)
     success.assert_called_once()
 
 

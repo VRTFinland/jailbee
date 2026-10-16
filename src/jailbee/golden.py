@@ -413,7 +413,17 @@ def _recover_leftovers(cfg: Config, incus: Incus) -> None:
         else:
             warn(f"Restoring {golden} from {aside} left by an interrupted build")
             incus.rename(aside, golden)
-    for temp in (f"{alias}--new", f"{alias}--old"):
+    temps = (f"{alias}--new", f"{alias}--old")
+    # A crash between "alias set aside" and "new alias promoted" leaves no
+    # image under the alias: promote the newest complete one (`--new` is
+    # published whole before any alias moves) instead of deleting both.
+    if not incus.image_exists(alias):
+        for temp in temps:
+            if incus.image_exists(temp):
+                warn(f"Restoring image {alias} from {temp} left by an interrupted build")
+                incus.image_alias_rename(temp, alias)
+                break
+    for temp in temps:
         if incus.image_exists(temp):
             warn(f"Removing leftover image {temp} from a previous build")
             incus.image_delete(temp)
@@ -619,7 +629,15 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
                 incus.rename(golden, aside)
                 set_aside = True
             info(f"Promoting {build_container} to {golden}")
-            incus.rename(build_container, golden)
+            try:
+                incus.rename(build_container, golden)
+            except BaseException:
+                if set_aside:
+                    _best_effort(
+                        f"restore the previous golden {golden} from {aside}",
+                        lambda: incus.rename(aside, golden),
+                    )
+                raise
             promoted = True
             if set_aside:
                 _best_effort(
@@ -634,7 +652,15 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
             had_old = incus.image_exists(alias)
             if had_old:
                 incus.image_alias_rename(alias, old_alias)
-            incus.image_alias_rename(new_alias, alias)
+            try:
+                incus.image_alias_rename(new_alias, alias)
+            except BaseException:
+                if had_old:
+                    _best_effort(
+                        f"restore the previous golden image {alias} from {old_alias}",
+                        lambda: incus.image_alias_rename(old_alias, alias),
+                    )
+                raise
             if had_old:
                 _best_effort(
                     f"delete the previous golden image {old_alias}",
