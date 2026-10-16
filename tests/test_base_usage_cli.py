@@ -38,6 +38,7 @@ def test_usage_default_lists_live_and_archives(mocker):
     alias = cfg.golden.alias
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.exists.return_value = False
     incus.list_images.return_value = [
         {"aliases": [{"name": alias}], "size": 2000},
         {"aliases": [{"name": f"{alias}-2026-07-20"}], "size": 500},
@@ -57,6 +58,7 @@ def test_usage_no_images(mocker):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.patch("jailbee.incus.Incus").return_value
     incus.list_images.return_value = []
+    incus.exists.return_value = False
     result = CliRunner().invoke(app, ["base", "usage"])
     assert result.exit_code == 0, result.stdout
     assert "No golden images found" in result.stdout
@@ -94,3 +96,18 @@ def test_usage_all_filters_excluded_repos_before_incus_probe(mocker, db_engine):
 
     assert result.exit_code == 0, result.stdout
     assert gather.call_args.args[1] == ["foo-base"]
+
+
+def test_base_usage_shows_golden_instance_row(mocker):
+    cfg = _cfg()
+    alias = cfg.golden.alias
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.list_images.return_value = []
+    incus.exists.return_value = True
+    mocker.patch("jailbee.maintenance.golden_instance_bytes", return_value=4096)
+    result = CliRunner().invoke(app, ["base", "usage"])
+    assert result.exit_code == 0, result.stdout
+    assert f"{alias}--golden" in result.stdout
+    assert "instance" in result.stdout
+    assert "4.0 KB" in result.stdout

@@ -155,3 +155,66 @@ def test_shared_caches_and_docker_rows_use_du(make_cfg, tmp_path):
     rows = gather_disk_usage(cfg, _gcfg(reg), incus)
     assert _row(rows, "Shared caches").size_bytes >= 2048
     assert _row(rows, "Docker registry mirror").size_bytes >= 1024
+
+
+# ---------- golden instance accounting ----------
+
+
+def _gold_pool(tmp_path):
+    pool = tmp_path / "pool"
+    (pool / "containers" / "foo-base--golden").mkdir(parents=True)
+    (pool / "containers" / "foo-base--golden" / "blob").write_bytes(b"g" * 100)
+    (pool / "containers" / "c1").mkdir(parents=True)
+    (pool / "containers" / "c1" / "blob").write_bytes(b"c" * 50)
+    return pool
+
+
+def test_golden_instance_bytes_sums_the_instance_dir(tmp_path, mocker):
+    from jailbee.maintenance import golden_instance_bytes
+
+    pool = _gold_pool(tmp_path)
+    mocker.patch(
+        "jailbee.maintenance._du_bytes",
+        side_effect=lambda p: 100 if p.name.endswith("--golden") else 50,
+    )
+    incus = _incus(pools=[{"name": "default", "driver": "btrfs", "config": {"source": str(pool)}}])
+    assert golden_instance_bytes(incus, "foo-base--golden") == 100
+
+
+def test_golden_instance_bytes_none_when_unreadable(tmp_path, mocker):
+    from jailbee.maintenance import golden_instance_bytes
+
+    pool = _gold_pool(tmp_path)
+    mocker.patch("jailbee.maintenance._du_bytes", return_value=None)
+    incus = _incus(pools=[{"name": "default", "driver": "btrfs", "config": {"source": str(pool)}}])
+    assert golden_instance_bytes(incus, "foo-base--golden") is None
+
+
+def test_golden_instance_bytes_zero_when_absent(tmp_path):
+    from jailbee.maintenance import golden_instance_bytes
+
+    pool = tmp_path / "pool"
+    (pool / "containers").mkdir(parents=True)
+    incus = _incus(pools=[{"name": "default", "driver": "btrfs", "config": {"source": str(pool)}}])
+    assert golden_instance_bytes(incus, "foo-base--golden") == 0
+
+
+def test_disk_usage_golden_row_includes_instance_and_containers_excludes_it(
+    make_cfg, tmp_path, mocker
+):
+    pool = _gold_pool(tmp_path)
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    mocker.patch(
+        "jailbee.maintenance._du_bytes",
+        side_effect=lambda p: (
+            100 if p.name == f"{alias}--golden" else 150 if p.name == "containers" else 0
+        ),
+    )
+    incus = _incus(
+        images=[{"aliases": [{"name": alias}], "size": 1000}],
+        pools=[{"name": "default", "driver": "btrfs", "config": {"source": str(pool)}}],
+    )
+    rows = gather_disk_usage(cfg, _gcfg(tmp_path / "reg"), incus)
+    assert _row(rows, "Golden images").size_bytes == 1100
+    assert _row(rows, "Containers").size_bytes == 50

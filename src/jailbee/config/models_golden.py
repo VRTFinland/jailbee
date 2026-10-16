@@ -192,7 +192,8 @@ class Golden(BaseModel):
     alias: str = Field(
         default="",
         description=(
-            "Image alias `jailbee base build` publishes to and containers boot from. "
+            "Image alias `jailbee base build` publishes to and containers boot from; "
+            "on btrfs pools also the base of the golden instance name `<alias>--golden`. "
             "Empty (default) resolves to `<container_prefix>-base`."
         ),
     )

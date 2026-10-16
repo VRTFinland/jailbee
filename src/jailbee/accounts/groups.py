@@ -419,11 +419,14 @@ def container_groups(
     `jailbee new` really created it.
     """
     from jailbee.config.local_layer import local_credentials
+    from jailbee.golden import is_golden_instance_name
 
     ordered = sorted(prefixes, key=len, reverse=True)
     out: list[tuple[str, str, str | None]] = []
     for row in rows:
         name = str(row.get("name", ""))
+        if is_golden_instance_name(name):
+            continue
         prefix = next((p for p in ordered if name.startswith(f"{p}-")), None)
         if prefix is None:
             continue

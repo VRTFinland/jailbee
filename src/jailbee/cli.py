@@ -11132,7 +11132,8 @@ def base_prune_cmd(
 ) -> None:
     """Prune dated archive golden images (`<alias>-YYYY-MM-DD`).
 
-    The live base image is always kept. In-use archives are skipped. With
+    Archives come only from jailbee < 1.8; builds now remove them. The live
+    base image is always kept. In-use archives are skipped. With
     `--all`, prunes archives for every registered repo, not just the current
     one.
     """
@@ -11226,7 +11227,7 @@ def base_usage_cmd(
     usages = [
         u
         for u in gather_golden_usage(incus, base_aliases)
-        if u.live_size_bytes is not None or u.archives
+        if u.live_size_bytes is not None or u.archives or u.instance_name is not None
     ]
     if not usages:
         info("No golden images found.")
@@ -11245,6 +11246,11 @@ def base_usage_cmd(
         if u.live_size_bytes is not None:
             table.add_row(u.base_alias, "[dim]live[/dim]", humanize(u.live_size_bytes))
             subtotal += u.live_size_bytes
+        if u.instance_name is not None:
+            table.add_row(
+                u.instance_name, "[dim]live (instance)[/dim]", humanize(u.instance_size_bytes)
+            )
+            subtotal += u.instance_size_bytes or 0
         for a in u.archives:
             table.add_row(a.alias, a.date.isoformat(), humanize(a.size_bytes))
             subtotal += a.size_bytes
@@ -15541,6 +15547,7 @@ def _resolve_group_container(
     learns the invocation from the failure (`prompting.choose_one`).
     """
     from jailbee import prompting
+    from jailbee.golden import is_golden_instance_name
     from jailbee.lifecycle import resolve_container_for_interactive
     from jailbee.tui import pick_container_for_group
 
@@ -15557,6 +15564,7 @@ def _resolve_group_container(
         r
         for r in incus.list_containers()
         if str(r.get("name", "")).startswith(f"{cfg.container_prefix}-")
+        and not is_golden_instance_name(str(r.get("name", "")))
     ]
     names = sorted(str(r["name"]) for r in rows)
     return prompting.choose_one(

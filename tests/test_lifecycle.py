@@ -291,6 +291,20 @@ def test_list_containers_skips_null_profiles(make_cfg, tmp_path):
     assert [c.name for c in result] == ["myrepo-feat-foo"]
 
 
+def test_golden_instance_not_listed_as_branch_container(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-feat-foo"),
+        _container(name="myrepo-base--golden", profiles=["default"]),
+    ]
+    assert [c.name for c in list_containers(cfg, incus)] == ["myrepo-feat-foo"]
+    names = [c.name for c in list_containers(cfg, incus, all_repos=True)]
+    assert names == ["myrepo-feat-foo"]
+
+
 def test_list_containers_all_repos(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

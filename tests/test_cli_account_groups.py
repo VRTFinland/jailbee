@@ -198,6 +198,12 @@ def test_group_container_none_exist_is_missing_value(group_env, mocker):
     assert "No containers for" in exc.value.message
 
 
+def test_group_container_ignores_the_golden_instance(group_env, mocker, capsys):
+    cfg, incus = group_env
+    got = _resolve_group(cfg, incus, _rows("myrepo-a", "myrepo-base--golden"), mocker, tty=False)
+    assert got == "myrepo-a"
+
+
 def test_group_container_one_is_taken_and_named_on_stderr(group_env, mocker, capsys):
     cfg, incus = group_env
     got = _resolve_group(cfg, incus, _rows("myrepo-a"), mocker, tty=False)

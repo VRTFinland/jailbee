@@ -193,6 +193,9 @@ class GoldenImageUsage:
     base_alias: str
     live_size_bytes: int | None
     archives: list[ArchivedImage]
+    # The stopped golden instance (btrfs pools); present iff instance_name is set.
+    instance_name: str | None = None
+    instance_size_bytes: int | None = None
 
 
 def gather_golden_usage(incus: Incus, base_aliases: list[str]) -> list[GoldenImageUsage]:
@@ -201,11 +204,23 @@ def gather_golden_usage(incus: Incus, base_aliases: list[str]) -> list[GoldenIma
     Bases are de-duplicated with input order preserved. A base that exists only
     as archives has ``live_size_bytes=None``.
     """
+    from jailbee.maintenance import golden_instance_bytes
+
     live, archives = _classify_golden_images(incus, base_aliases)
-    return [
-        GoldenImageUsage(base_alias=b, live_size_bytes=live[b], archives=archives[b])
-        for b in dict.fromkeys(base_aliases)
-    ]
+    out: list[GoldenImageUsage] = []
+    for b in dict.fromkeys(base_aliases):
+        inst = golden_instance_name(b)
+        present = incus.exists(inst)
+        out.append(
+            GoldenImageUsage(
+                base_alias=b,
+                live_size_bytes=live[b],
+                archives=archives[b],
+                instance_name=inst if present else None,
+                instance_size_bytes=golden_instance_bytes(incus, inst) if present else None,
+            )
+        )
+    return out
 
 
 def _resource_dir(name: str) -> Path:
@@ -317,9 +332,22 @@ def repo_uses_docker(cfg: Config) -> bool:
     return "docker" in resolved_snippet_names(cfg)
 
 
+GOLDEN_INSTANCE_SUFFIX = "--golden"
+
+
 def golden_instance_name(alias: str) -> str:
     """Name of the stopped golden instance (instance mode)."""
-    return f"{alias}--golden"
+    return f"{alias}{GOLDEN_INSTANCE_SUFFIX}"
+
+
+def is_golden_instance_name(name: str) -> bool:
+    """Whether ``name`` is a golden instance rather than a branch container.
+
+    The golden carries only the ``default`` profile, so the profile-based
+    listings already skip it; name-prefix scans (``<prefix>-...``) must use
+    this instead.
+    """
+    return name.endswith(GOLDEN_INSTANCE_SUFFIX)
 
 
 def golden_build_name(alias: str) -> str:

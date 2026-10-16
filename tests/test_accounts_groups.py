@@ -632,6 +632,14 @@ def test_container_groups_reports_the_repos_group_for_an_unlabelled_container(
     ]
 
 
+def test_container_groups_skips_the_golden_instance(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    rows = [_raw("myrepo-a"), _raw("myrepo-base--golden")]
+    assert groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "work")
+    ]
+
+
 def test_container_groups_attributes_unlabelled_container_to_local_group(monkeypatch, tmp_path):
     from jailbee.config.local_layer import local_config_path
 

@@ -997,6 +997,7 @@ def test_find_all_archived_images_dedups_base_aliases(make_cfg, tmp_path):
 
 def test_gather_golden_usage_classifies_live_and_archives(make_cfg, tmp_path):
     incus = MagicMock()
+    incus.exists.return_value = False
     incus.list_images.return_value = [
         _img(["foo-base"], 2000),  # live
         _img(["foo-base-2026-07-20"], 500),
@@ -1022,6 +1023,7 @@ def test_gather_golden_usage_classifies_live_and_archives(make_cfg, tmp_path):
 
 def test_gather_golden_usage_live_only(make_cfg, tmp_path):
     incus = MagicMock()
+    incus.exists.return_value = False
     incus.list_images.return_value = [_img(["foo-base"], 2000)]
     result = gather_golden_usage(incus, ["foo-base"])
     assert result == [GoldenImageUsage("foo-base", 2000, [])]
@@ -1373,3 +1375,15 @@ def test_golden_exists_accepts_instance_or_image(make_cfg, tmp_path, instance, i
     incus.exists.side_effect = lambda n: instance and n == golden_instance_name(cfg.golden.alias)
     incus.image_exists.return_value = image
     assert golden_exists(cfg, incus) is expected
+
+
+def test_gather_golden_usage_reports_golden_instance(mocker):
+    incus = MagicMock()
+    incus.list_images.return_value = [_img(["foo-base"], 2000)]
+    incus.exists.side_effect = lambda n: n == "foo-base--golden"
+    mocker.patch("jailbee.maintenance.golden_instance_bytes", return_value=1234)
+    result = gather_golden_usage(incus, ["foo-base", "bar-base"])
+    assert result[0].instance_name == "foo-base--golden"
+    assert result[0].instance_size_bytes == 1234
+    assert result[1].instance_name is None
+    assert result[1].instance_size_bytes is None

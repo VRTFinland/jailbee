@@ -43,11 +43,21 @@ def gather_disk_usage(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> list[Dis
     assert cfg.shared_dir is not None  # set by load_config
     images_bytes = sum(int(img.get("size", 0) or 0) for img in incus.list_images())
     sources = _pool_sources(incus)
+    from jailbee.golden import golden_instance_name
+
+    golden_name = golden_instance_name(cfg.golden.alias)
+    golden_inst = golden_instance_bytes(incus, golden_name)
+    containers_bytes = _du_pool_subdirs(sources, "containers")
+    if containers_bytes is not None and golden_inst is not None:
+        # The golden instance lives in the same dir but is reported as part of
+        # the golden, not as a branch container.
+        containers_bytes = max(containers_bytes - golden_inst, 0)
+    golden_total = None if golden_inst is None else images_bytes + golden_inst
     return [
-        DiskRow("Golden images", images_bytes, "incus image list"),
+        DiskRow("Golden images", golden_total, "incus image list + golden instance"),
         DiskRow(
             "Containers",
-            _du_pool_subdirs(sources, "containers"),
+            containers_bytes,
             _pool_subdir_display(sources, "containers"),
         ),
         DiskRow(
@@ -74,6 +84,22 @@ def _pool_sources(incus: Incus) -> list[Path]:
         if src:
             sources.append(Path(src))
     return sources
+
+
+def golden_instance_bytes(incus: Incus, name: str) -> int | None:
+    """Bytes the golden instance ``name`` occupies, summed over pool sources.
+
+    ``None`` if its directory is present but unreadable (root-only); ``0`` if
+    absent. Incus reports no disk usage for a stopped btrfs instance without
+    quotas, hence ``du`` — which needs root, like the Containers row.
+    """
+    total = 0
+    for src in _pool_sources(incus):
+        b = _du_bytes(src / "containers" / name)
+        if b is None:
+            return None
+        total += b
+    return total
 
 
 def _pool_subdir_display(sources: list[Path], sub: str) -> str:
