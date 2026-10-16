@@ -10889,9 +10889,7 @@ def test_new_container_syncs_git_identity_before_agents(tmp_path, mocker, make_c
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.pool.allocate_startup")
     mocker.patch("jailbee.agent_private.attach")
-    mocker.patch(
-        "jailbee.git_identity.sync", side_effect=lambda *a: events.append("identity")
-    )
+    mocker.patch("jailbee.git_identity.sync", side_effect=lambda *a: events.append("identity"))
     mocker.patch(
         "jailbee.agents.ensure_agents", side_effect=lambda *a, **k: events.append("agents")
     )

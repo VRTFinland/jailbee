@@ -92,7 +92,7 @@ def test_signing_keys_resolved_when_gpg_enabled(tmp_path, mocker):
 def test_write_passes_values_verbatim(tmp_path):
     cfg = _cfg(tmp_path)
     incus = MagicMock()
-    nasty = "O'Brien \"Bob\" $(touch /tmp/pwned) `id`"
+    nasty = 'O\'Brien "Bob" $(touch /tmp/pwned) `id`'
 
     git_identity.write(cfg, incus, "c1", {"user.name": nasty, "user.email": "a@b"})
 
@@ -140,15 +140,27 @@ def test_write_script_runs_under_sh(tmp_path):
     import subprocess
 
     target = tmp_path / "home" / ".config" / "git" / "config"
-    nasty = "O'Brien \"Bob\" $(echo pwned)"
+    nasty = 'O\'Brien "Bob" $(echo pwned)'
     subprocess.run(
-        ["sh", "-c", git_identity._WRITE_SCRIPT, "sh", str(target),
-         "set", "user.name", nasty, "unset", "user.email"],
+        [
+            "sh",
+            "-c",
+            git_identity._WRITE_SCRIPT,
+            "sh",
+            str(target),
+            "set",
+            "user.name",
+            nasty,
+            "unset",
+            "user.email",
+        ],
         check=True,
     )
     out = subprocess.run(
         ["git", "config", "--file", str(target), "--get", "user.name"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     assert out == nasty
 

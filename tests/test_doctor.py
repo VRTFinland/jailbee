@@ -4215,14 +4215,11 @@ def test_doctor_does_not_probe_a_stopped_mirror(tmp_path):
 
 
 def _git_cfg(tmp_path, *, identity="host", mounts=()):
+    from jailbee.config import GitConfig
     from tests.conftest import make_config
 
-    from jailbee.config import GitConfig
-
     cfg = make_config(tmp_path)
-    return cfg.model_copy(
-        update={"git": GitConfig(identity=identity), "host_mounts": list(mounts)}
-    )
+    return cfg.model_copy(update={"git": GitConfig(identity=identity), "host_mounts": list(mounts)})
 
 
 def _resolved(mocker, **values):
