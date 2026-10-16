@@ -1950,6 +1950,12 @@ def new_container(
 
     ensure_directories(cfg, incus, name)
 
+    # Before agents, autostart and `on_create`, any of which may commit. Both
+    # modes: the XDG file never touches the host repo's own config.
+    from jailbee import git_identity
+
+    git_identity.sync(cfg, incus, name)
+
     # GH_TOKEN goes in before anything creates the autostart tmux session
     # (`ensure_agents` below is the first): window 0 inherits the tmux
     # server's environment, so a token written after the session exists never
@@ -2404,6 +2410,12 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     from jailbee import agent_private
 
     agent_private.attach(cfg, incus, name)
+
+    # Pick up a host identity change made since the last start. Best-effort:
+    # `sync` warns rather than raising.
+    from jailbee import git_identity
+
+    git_identity.sync(cfg, incus, name)
 
     # Catch the AHEAD base anchor up with the host branch. Forward-only: nothing
     # moved `refs/heads/<base>` here, and for a base never checked out on the

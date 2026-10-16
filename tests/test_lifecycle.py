@@ -10856,3 +10856,54 @@ def test_destroy_warns_when_submodule_ref_cleanup_fails(tmp_path, mocker):
     destroy_container(cfg, incus, full, force=True)
     incus.delete.assert_called_once()
     assert any("config unreadable" in call.args[0] for call in warning.call_args_list)
+
+
+# ---- git identity ----
+
+
+def test_boot_container_syncs_git_identity(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events = _boot_events(mocker, incus)
+    identity = mocker.patch(
+        "jailbee.git_identity.sync", side_effect=lambda *a: events.append("identity")
+    )
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    identity.assert_called_once_with(cfg, incus, "feat-x")
+    assert events.index("identity") > events.index("start")
+
+
+@pytest.mark.parametrize("mount", [False, True])
+def test_new_container_syncs_git_identity_before_agents(tmp_path, mocker, make_cfg, mount):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    cfg = make_cfg(repo, shared_dir=tmp_path / "shared", new={"clone_from": "local"})
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    events = []
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.pool.allocate_startup")
+    mocker.patch("jailbee.agent_private.attach")
+    mocker.patch(
+        "jailbee.git_identity.sync", side_effect=lambda *a: events.append("identity")
+    )
+    mocker.patch(
+        "jailbee.agents.ensure_agents", side_effect=lambda *a, **k: events.append("agents")
+    )
+    mocker.patch(
+        "jailbee.autostart.run_autostart",
+        side_effect=lambda *a, **k: events.append("autostart") or mocker.Mock(detached=False),
+    )
+    opts = NewContainerOptions(
+        "feat/x", None, "strict", "8GiB", 4, "base", not mount, mount=mount, autostart=True
+    )
+
+    new_container(cfg, incus, opts)
+
+    assert events[:2] == ["identity", "agents"]
+    assert events.count("identity") == 1

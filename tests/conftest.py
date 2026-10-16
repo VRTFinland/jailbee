@@ -437,6 +437,25 @@ def _no_host_display_attach(
 
 
 @pytest.fixture(autouse=True)
+def _no_git_identity_sync(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the container git-identity write out of tests not about it.
+
+    `new_container` and `boot_container` call `git_identity.sync`, whose real
+    resolution shells out to host `git config` and whose write adds an
+    `incus.exec` to every exec-call assertion. Tests about it patch it
+    themselves (that wins over this default); `test_git_identity` runs the
+    real one.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_git_identity":
+        return
+    from unittest.mock import MagicMock
+
+    from jailbee import git_identity
+
+    monkeypatch.setattr(git_identity, "sync", MagicMock())
+
+
+@pytest.fixture(autouse=True)
 def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
 

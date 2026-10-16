@@ -223,3 +223,32 @@ def test_config_get_is_public(tmp_path, mocker, value):
     assert git.config_get(tmp_path, "user.name") == value
     assert run.call_args.args[0] == ["git", "config", "--get", "user.name"]
     assert run.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_boot_container_survives_identity_write_failure(tmp_path, mocker):
+    """The real `sync` inside the real boot path: a failed exec never fails a start."""
+    from jailbee.lifecycle import boot_container
+
+    cfg = _cfg(tmp_path)
+    _host(mocker, {"user.name": "N", "user.email": "e@x"})
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices", return_value=True)
+    mocker.patch("jailbee.agent_instructions.sync_global_instructions")
+    mocker.patch("jailbee.agent_instructions.missing_staging_dirs", return_value=[])
+    mocker.patch("jailbee.pool.allocate_startup")
+    mocker.patch("jailbee.agent_private.attach")
+    warn = mocker.patch("jailbee.git_identity.warn")
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+
+    def exec_(name, cmd, **kw):
+        if cmd[:2] == ["sh", "-c"]:
+            raise IncusError("container not ready")
+        return ""
+
+    incus.exec.side_effect = exec_
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    incus.start.assert_called_once()
+    warn.assert_called_once()
