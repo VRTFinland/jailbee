@@ -914,7 +914,7 @@ def update_submodules_in_container(
     a missing object makes git fail, surfaced here as `SubmoduleError`.
     `--checkout` overrides `submodule.<name>.update = none`, as on the host
     (`git.submodule_update`).
-    `env` must carry HOME/USER/LOGNAME (git needs HOME for ~/.gitconfig).
+    `env` must carry HOME/USER/LOGNAME (git needs HOME for its global config).
 
     When `branch` is given, submodules are placed on it directly. When
     `branch` is None (the default), the container branch is read from the

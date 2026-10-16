@@ -59,8 +59,9 @@ _TEMPLATE = """\
 #     description: "Figma desktop app"
 
 # Repo-specific host bind-mounts (per-project credentials/caches).
-# Personal mounts (~/.gnupg, ~/.gitconfig, JetBrains/Toolbox) live in
-# ~/.config/jailbee/global.yaml — the lists are appended at load time.
+# Personal mounts (e.g. ~/.gnupg via gpg.enabled, JetBrains/Toolbox) live in
+# ~/.config/jailbee/global.yaml — the lists are appended at load time. The git
+# identity is not a mount: see the `git` block.
 # ~/.ssh is seeded into <shared_dir>/ssh by `jailbee init`, not bind-mounted.
 host_mounts: []
 # Example:
@@ -219,8 +220,8 @@ def write_template(repo_root: Path, *, force: bool = False) -> Path:
 
 
 GLOBAL_SEED: dict[str, object] = {
-    # Defaults to the host uid/gid so bind-mounted host files (~/.gnupg,
-    # ~/.gitconfig) stay readable inside the container.
+    # Defaults to the host uid/gid so bind-mounted host files (~/.gnupg)
+    # stay readable inside the container.
     "container_user": {"uid": os.getuid(), "gid": os.getgid()},
     # Each of these master switches defaults to false in the schema — every
     # host-tooling integration is opt-in. A fresh global config turns the
@@ -274,9 +275,6 @@ GLOBAL_SEED: dict[str, object] = {
     # is per repo and lives in the host-local file (`github.token`), so the
     # deprecated `api_tokens` map is deliberately not seeded here.
     "github": {"enabled": False},
-    "host_mounts": [
-        {"host": "~/.gitconfig", "container": "/home/dev/.gitconfig", "readonly": True}
-    ],
     "loose_auto_revert": {"enabled": True, "after": "5m"},
 }
 

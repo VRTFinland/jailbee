@@ -2546,8 +2546,8 @@ def _merge_ref_in_container(
     merge_cmd.append(ref)
 
     # `incus exec --user UID` doesn't derive HOME/USER/LOGNAME from
-    # /etc/passwd. Git needs HOME to find the bind-mounted ~/.gitconfig
-    # for user.name / user.email — without it, the merge commit fails
+    # /etc/passwd. Git needs HOME to find ~/.config/git/config (where
+    # `git_identity` writes user.name / user.email) — without it, the merge commit fails
     # with "Committer identity unknown". See _attach_shell in cli.py.
     git_env = {
         "HOME": f"/home/{CONTAINER_USERNAME}",
@@ -3318,7 +3318,7 @@ def push_and_reset(
         discarded_commits = 0
 
     # `git reset --hard` creates no commit, but update_submodules_in_container
-    # below runs in-container git that needs HOME to find ~/.gitconfig. See
+    # below runs in-container git that needs HOME to find its global config. See
     # push_and_merge for why HOME/USER/LOGNAME must be set explicitly.
     git_env = {
         "HOME": f"/home/{CONTAINER_USERNAME}",

@@ -87,7 +87,7 @@ and shared with your team, so anything personal lives in
 jailbee config init --global    # writes a fully-commented ~/.config/jailbee/global.yaml
 ```
 
-That file carries your host mounts (`~/.gitconfig`, `~/.gnupg`), your IDE
+That file carries your personal integrations (`gpg`, which mounts `~/.gnupg`), your IDE
 preference, the Docker registry mirror port (default 3128, rpardini's
 default), and the **Claude Code** opt-in — see
 [Claude Code in the container](#claude-code-in-the-container) below. A third,

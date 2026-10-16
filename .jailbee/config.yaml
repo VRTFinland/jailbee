@@ -23,7 +23,7 @@ container_user:
   gid: -1
 
 # No `host_mounts` here: this repo needs none of its own. Personal credentials
-# (~/.gnupg, ~/.gitconfig, JetBrains Toolbox) belong in
+# (~/.gnupg, JetBrains Toolbox) belong in
 # ~/.config/jailbee/global.yaml — via its `gpg`/`jetbrains` auto-mounts or its
 # own `host_mounts` list. Don't write `host_mounts: []` here either: an empty
 # list resets the global entries instead of adding nothing.

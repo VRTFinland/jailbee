@@ -87,7 +87,7 @@ Don't add this key if the directory name already matches — the default is clea
 
 ### `host_mounts` — credentials the repo's tooling needs
 
-Personal credentials (`~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, the host Chrome install) usually live in `~/.config/jailbee/global.yaml`, not the per-repo file. `~/.gnupg`, the Toolbox dir, and `/opt/google/chrome` are also added automatically by the `gpg` / `jetbrains.toolbox_host_path` / `browsers.chrome.host_path` auto-mounts when those blocks are enabled (and `source: host`) — only list them manually if you want to override readonly/source. Firefox has no equivalent host mount by default: it defaults to `source: image` (built into the golden image), since the host's Firefox is normally a snap. The per-repo file is for repo-specific mounts:
+Personal credentials (`~/.gnupg`, JetBrains Toolbox, the host Chrome install) usually live in `~/.config/jailbee/global.yaml`, not the per-repo file. `~/.gnupg`, the Toolbox dir, and `/opt/google/chrome` are also added automatically by the `gpg` / `jetbrains.toolbox_host_path` / `browsers.chrome.host_path` auto-mounts when those blocks are enabled (and `source: host`) — only list them manually if you want to override readonly/source. Firefox has no equivalent host mount by default: it defaults to `source: image` (built into the golden image), since the host's Firefox is normally a snap. The git identity is not a mount: JailBee copies the host repo's `user.name` / `user.email` into each container (the `git` block), so don't add a `~/.gitconfig` mount for it. The per-repo file is for repo-specific mounts:
 
 ```yaml
 host_mounts:
@@ -504,7 +504,7 @@ fastest way to see the error without doing anything else. Rejected:
 - **Don't run `jailbee init` / `jailbee base build` / `jailbee new` automatically.** These mutate host-level Incus state and the golden-image build is slow. Show the user the commands and let them run.
 - **Don't invent autostart commands.** Read the repo's README / Makefile / package.json scripts and use exactly what's documented.
 - **Don't add `github.com` to `egress_allow`.** That's a security boundary by design.
-- **Don't put host-wide credentials or settings in the committed per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The host-local per-repo file is for repo-specific personal choices: tokens, credential groups, and agent enable/disable preferences.
+- **Don't put host-wide credentials or settings in the committed per-repo file.** `~/.gnupg`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`, and so does `git.user` — which the repo file refuses. The host-local per-repo file is for repo-specific personal choices: tokens, credential groups, and agent enable/disable preferences.
 - **Don't enable host-tooling blocks in the committed per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `browsers.chrome`, `browsers.firefox` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config.
 
 ## Inside a JailBee container

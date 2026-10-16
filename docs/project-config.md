@@ -42,12 +42,15 @@ container_prefix: sampleapp
 Mount only the files and tools the project needs. User-declared
 `host_mounts` are **read-write by default**; set `readonly: true` when the
 container must not modify the host files. For example, in your personal
-global config (the generated global template already includes this mount):
+global config:
 
 ```yaml
 host_mounts:
-  - { host: ~/.gitconfig, container: /home/dev/.gitconfig, readonly: true }
+  - { host: ~/.aws, container: /home/dev/.aws, readonly: true }
 ```
+
+Your git identity needs no mount: JailBee writes the name and email the host
+repo uses into each container. See [`git`](config.md#git).
 
 Read-only prevents modification, **not disclosure**: credentials embedded in
 a file remain readable and copyable. Avoid mounting whole `~/.ssh` or

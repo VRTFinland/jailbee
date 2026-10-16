@@ -670,3 +670,13 @@ def test_global_template_browsers_default_is_unset():
     resolves it implicitly, and naming a disabled browser is a config error."""
     parsed = yaml.safe_load(render_global_template())
     assert parsed["browsers"]["default"] is None
+
+
+def test_global_seed_has_no_gitconfig_mount():
+    """The git identity is written per repo now; a seeded `~/.gitconfig`
+    mount would override it (git reads it after the XDG file)."""
+    from jailbee.config_init import render_global_template
+
+    parsed = yaml.safe_load(render_global_template())
+    containers = [m.get("container") for m in parsed.get("host_mounts") or []]
+    assert "/home/dev/.gitconfig" not in containers

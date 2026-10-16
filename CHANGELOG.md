@@ -8,6 +8,23 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Containers commit as the identity the host repo uses.** `jailbee new`
+  and every start write `user.name` and `user.email` into the container's
+  `~/.config/git/config`, as `git config` resolves them in the host repo, so a
+  per-repo identity or an `includeIf` rule carries over. The signing settings
+  follow when `gpg.enabled`. The new `git` block can override either field
+  (`git.user`, refused in a repo's committed file) or turn the feature off
+  (`git.identity: off`). `jailbee doctor` reports the resolved identity and
+  fails when the name or email is missing.
+
+### Changed
+
+- **`jailbee init` no longer seeds a `~/.gitconfig` mount.** Existing entries
+  keep working. Because git reads `~/.gitconfig` last, a mounted one overrides
+  the per-repo identity, and `jailbee doctor` says so.
+
 ## 1.7.4 - 2026-10-15
 
 ### Added
