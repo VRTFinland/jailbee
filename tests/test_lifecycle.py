@@ -10905,3 +10905,98 @@ def test_new_container_syncs_git_identity_before_agents(tmp_path, mocker, make_c
 
     assert events[:2] == ["identity", "agents"]
     assert events.count("identity") == 1
+
+
+# -- creation from the golden instance ---------------------------------------
+
+
+def _golden_new(tmp_path, mocker, *, golden_present, from_base=None, storage_pool=None, pool="cow"):
+    from jailbee.golden import golden_instance_name
+
+    cfg = _cfg_for_new(tmp_path)
+    golden = golden_instance_name(cfg.golden.alias)
+    incus = MagicMock()
+    incus.exists.side_effect = lambda n: golden_present and n == golden
+    mocker.patch("jailbee.golden.golden_instance_pool", return_value=pool)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    infos = []
+    mocker.patch("jailbee.lifecycle.info", side_effect=infos.append)
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base=from_base or cfg.golden.alias,
+        clone=True,
+        autostart=False,
+        storage_pool=storage_pool,
+    )
+    new_container(cfg, incus, opts)
+    return cfg, incus, golden, infos
+
+
+def test_new_copies_from_golden_instance_when_present(tmp_path, mocker):
+    _cfg, incus, golden, _ = _golden_new(tmp_path, mocker, golden_present=True)
+    incus.copy.assert_called_once_with(
+        golden, "repo-feat-x", storage_pool="cow", instance_only=True
+    )
+    incus.init.assert_not_called()
+
+
+def test_new_falls_back_to_image_when_no_golden_instance(tmp_path, mocker):
+    cfg, incus, _g, _ = _golden_new(tmp_path, mocker, golden_present=False, storage_pool="cow")
+    incus.init.assert_called_once_with(cfg.golden.alias, "repo-feat-x", storage_pool="cow")
+    incus.copy.assert_not_called()
+
+
+def test_new_from_base_other_image_ignores_golden_instance(tmp_path, mocker):
+    _cfg, incus, _g, _ = _golden_new(tmp_path, mocker, golden_present=True, from_base="ubuntu-x")
+    incus.init.assert_called_once_with("ubuntu-x", "repo-feat-x", storage_pool=None)
+    incus.copy.assert_not_called()
+
+
+def test_new_cross_pool_copy_announces_full_copy(tmp_path, mocker):
+    _cfg, incus, golden, infos = _golden_new(
+        tmp_path, mocker, golden_present=True, storage_pool="other", pool="cow"
+    )
+    incus.copy.assert_called_once_with(
+        golden, "repo-feat-x", storage_pool="other", instance_only=True
+    )
+    assert any("full copy" in m for m in infos)
+
+
+def test_new_same_pool_copy_is_silent(tmp_path, mocker):
+    _cfg, _incus, _g, infos = _golden_new(
+        tmp_path, mocker, golden_present=True, storage_pool="cow", pool="cow"
+    )
+    assert not any("full copy" in m for m in infos)
+
+
+def test_new_work_network_path_uses_the_same_creator(tmp_path, mocker, db_session):
+    from jailbee.golden import golden_instance_name
+
+    cfg = _cfg_for_new(tmp_path)
+    golden = golden_instance_name(cfg.golden.alias)
+    incus = MagicMock()
+    incus.exists.side_effect = lambda n: n == golden
+    incus.network_get.return_value = "10.10.0.1/24"
+    incus.list_containers.side_effect = [[], []]
+    mocker.patch("jailbee.golden.golden_instance_pool", return_value="cow")
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    mocker.patch("jailbee.work_network.verify_work_nic")
+    _select_work_generation(mocker, db_session)
+    opts = NewContainerOptions(
+        "feat/x", None, "strict", "8GiB", 4, cfg.golden.alias, True, autostart=False
+    )
+    try:
+        new_container(cfg, incus, opts)
+    except Exception:
+        pass
+    incus.copy.assert_called_once_with(
+        golden, "repo-feat-x", storage_pool="cow", instance_only=True
+    )
+    incus.init.assert_not_called()

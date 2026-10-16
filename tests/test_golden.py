@@ -1359,3 +1359,17 @@ def test_golden_instance_pool_reads_expanded_root_disk():
     incus.config_show.assert_called_once_with("x--golden", expanded=True)
     incus.config_show.return_value = "devices: {}\n"
     assert golden_instance_pool(incus, "x--golden") is None
+
+
+@pytest.mark.parametrize(
+    ("instance", "image", "expected"),
+    [(True, False, True), (False, True, True), (False, False, False)],
+)
+def test_golden_exists_accepts_instance_or_image(make_cfg, tmp_path, instance, image, expected):
+    from jailbee.golden import golden_exists, golden_instance_name
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.exists.side_effect = lambda n: instance and n == golden_instance_name(cfg.golden.alias)
+    incus.image_exists.return_value = image
+    assert golden_exists(cfg, incus) is expected

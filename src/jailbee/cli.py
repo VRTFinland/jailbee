@@ -2716,22 +2716,24 @@ def new_cmd(
             storage_pool=storage_pool,
         )
 
+    from jailbee.golden import golden_exists
+
     # The shared scratch base image is built once per host, not per directory.
     # Checked before anything is created, and before the implicit `apply`
     # below, so declining costs nothing. `--from-base` names an image
     # explicitly and skips this entirely.
-    if cfg.is_synthetic() and from_base is None and not incus.image_exists(cfg.golden.alias):
+    if cfg.is_synthetic() and from_base is None and not golden_exists(cfg, incus):
         from jailbee.golden import build_golden_image
 
         _base_build_cmd = "jb base build"
         if not prompting.is_interactive():
             error(
-                f"The shared scratch base image '{cfg.golden.alias}' does not "
+                f"The shared scratch base '{cfg.golden.alias}' does not "
                 f"exist yet.\nBuild it once with:  {_base_build_cmd}"
             )
             raise typer.Exit(1)
         info(
-            f"No scratch base image yet. Building '{cfg.golden.alias}' takes "
+            f"No scratch base yet. Building '{cfg.golden.alias}' takes "
             f"several minutes and downloads packages; it is a one-time "
             f"operation shared by every scratch directory on this host."
         )

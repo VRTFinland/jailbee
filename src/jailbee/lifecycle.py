@@ -1395,6 +1395,28 @@ def _autostart_approved(opts: NewContainerOptions, ref: str | None) -> bool:
     )
 
 
+def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name: str) -> None:
+    """Create the instance: copy the golden instance, or init from an image.
+
+    Only the configured golden alias is ever copied, and only under its real
+    instance name; any other ``--from-base`` is an image and goes to ``init``.
+    """
+    from jailbee.golden import golden_instance_name, golden_instance_pool
+
+    golden = golden_instance_name(cfg.golden.alias)
+    if opts.from_base == cfg.golden.alias and incus.exists(golden):
+        golden_pool = golden_instance_pool(incus, golden)
+        target = opts.storage_pool or golden_pool
+        if opts.storage_pool and opts.storage_pool != golden_pool:
+            info(
+                f"Copying the golden to pool '{opts.storage_pool}' "
+                f"(golden is on '{golden_pool}'): a full copy, not a snapshot"
+            )
+        incus.copy(golden, name, storage_pool=target, instance_only=True)
+        return
+    incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
+
+
 def new_container(
     cfg: Config,
     incus: Incus,
@@ -1404,12 +1426,13 @@ def new_container(
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str], None] | None = None,
 ) -> str:
-    """Create a new container from the golden image. Returns container name.
+    """Create a new container from the golden. Returns container name.
 
     Steps:
       1. Derive name from branch (or use opts.name)
       2. Verify container does not already exist
-      3. ``incus copy`` from golden image
+      3. Create it: ``incus copy`` of the golden instance when present,
+         otherwise ``incus init`` from the golden image
       4. Assign profiles (default + base + binds + selected net)
       5. Set memory and CPU limits
       6. Start the container
@@ -1657,7 +1680,7 @@ def new_container(
                 ensure_work_bridge(incus)
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
-                incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
+                _create_instance(cfg, incus, opts, name)
                 fresh = True
                 incus.profile_assign(
                     name,
@@ -1682,7 +1705,7 @@ def new_container(
                         pass
                 raise
     else:
-        incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
+        _create_instance(cfg, incus, opts, name)
     try:
         if generation == "legacy":
             incus.profile_assign(

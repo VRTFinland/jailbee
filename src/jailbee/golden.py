@@ -383,6 +383,13 @@ def golden_instance_pool(incus: Incus, name: str) -> str | None:
     return _root_pool(incus.config_show(name, expanded=True))
 
 
+def golden_exists(cfg: Config, incus: Incus) -> bool:
+    """True if the golden exists as an instance or as a published image."""
+    return incus.exists(golden_instance_name(cfg.golden.alias)) or incus.image_exists(
+        cfg.golden.alias
+    )
+
+
 def _best_effort(what: str, action: Callable[[], None]) -> bool:
     """Run a cleanup step; an `IncusError` is a warning, never a build failure."""
     try:

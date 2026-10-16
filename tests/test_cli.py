@@ -10063,6 +10063,7 @@ def _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, *, git: bool, image_exis
 
     incus = mocker.patch("jailbee.incus.Incus").return_value
     incus.image_exists.return_value = image_exists
+    incus.exists.return_value = False  # no golden instance unless a test adds one
     incus.profile_exists.return_value = True
 
     mirror_data_dir = tmp_path / "registry"
@@ -10199,6 +10200,27 @@ def test_new_without_a_tty_names_the_build_command(tmp_path, monkeypatch, mocker
     assert "jb base build" in result.output
     assert build.call_count == 0
     assert new_container.call_count == 0
+
+
+def test_scratch_offer_skipped_when_golden_instance_exists(tmp_path, monkeypatch, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    new_container, incus = _scratch_new_cmd_env(
+        tmp_path, monkeypatch, mocker, git=True, image_exists=False
+    )
+    incus.exists.return_value = True
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    build = mocker.patch("jailbee.golden.build_golden_image")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert build.call_count == 0
+    assert confirm.call_count == 0
+    assert new_container.call_count == 1
 
 
 def test_new_skips_the_image_check_for_a_configured_repo(tmp_path, mocker):
