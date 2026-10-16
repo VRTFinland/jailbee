@@ -847,3 +847,19 @@ def test_mount_ttl_editor_schema_and_layer_round_trip(tmp_path):
         got.global_raw, got.repo_raw, repo_path, origin=str(repo_path), local_raw=got.local_raw
     )
     assert cfg.effective_mount_ttl(GlobalConfig(), "aws") == "2h"
+
+
+@pytest.mark.parametrize("field", ["git.user.name", "git.user.email"])
+def test_git_user_is_disabled_in_the_repo_layer(field):
+    reason = layers.disabled_reason(_spec(field), "repo")
+    assert reason is not None
+    assert "global.yaml" in reason
+
+
+@pytest.mark.parametrize("layer", ["global", "local"])
+def test_git_user_is_editable_outside_the_repo_layer(layer):
+    assert layers.disabled_reason(_spec("git.user.email"), layer) is None
+
+
+def test_git_identity_is_editable_in_the_repo_layer():
+    assert layers.disabled_reason(_spec("git.identity"), "repo") is None

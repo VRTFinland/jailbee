@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from jailbee import git
 from jailbee.config.common import CONTAINER_USERNAME
 from jailbee.incus import IncusError
-from jailbee.tui import warn
+from jailbee.tui import warn_plain
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -76,19 +76,58 @@ def write(cfg: Config, incus: Incus, name: str, values: dict[str, str | None]) -
     )
 
 
+def _ssh_key_file(values: dict[str, str | None]) -> bool:
+    """SSH signing pointed at a key *file*, which exists on the host only.
+
+    A literal key (`key::…` or `ssh-ed25519 AAAA…`) signs through the agent
+    `gpg.enabled` forwards; a path would make every signed commit fail.
+    """
+    key = values.get("user.signingkey")
+    if values.get("gpg.format") != "ssh" or key is None:
+        return False
+    return not key.startswith(("key::", "ssh-", "ecdsa-", "sk-"))
+
+
+def _covering_mount(cfg: Config) -> str | None:
+    """Container path of a host mount the XDG file would be written through."""
+    for mount in cfg.effective_host_mounts():
+        path = str(mount.container).rstrip("/")
+        if CONTAINER_GITCONFIG == path or CONTAINER_GITCONFIG.startswith(path + "/"):
+            return path
+    return None
+
+
 def sync(cfg: Config, incus: Incus, name: str) -> None:
     """Resolve and write the identity. Best-effort: warns, never raises."""
     if cfg.git.identity == "off":
         return
+    covered = _covering_mount(cfg)
+    if covered is not None:
+        # Writing would edit the host's own git config through the bind.
+        warn_plain(
+            f"Not setting the git identity in {name}: {covered} is a host mount, so "
+            f"{CONTAINER_GITCONFIG} is a host file.",
+            stderr=True,
+        )
+        return
     values = resolve(cfg)
     missing = [key for key in IDENTITY_KEYS if values[key] is None]
     if missing:
-        warn(
+        warn_plain(
             f"No git {' / '.join(missing)} for {name}: commits there will fail. Set it with "
             f"`git config {missing[0]} …` in {cfg.repo_root}, or under `git.user` in the "
-            "host-local config (`jailbee config edit --local`)."
+            "host-local config (`jailbee config edit --local`).",
+            stderr=True,
         )
+    if _ssh_key_file(values):
+        warn_plain(
+            f"Not copying commit signing to {name}: gpg.format=ssh with a key file "
+            f"({values['user.signingkey']}) that only exists on the host. Use a literal "
+            "`key::…` signing key to sign through the forwarded agent.",
+            stderr=True,
+        )
+        values.update(dict.fromkeys(SIGNING_KEYS))
     try:
         write(cfg, incus, name, values)
     except (IncusError, OSError) as e:
-        warn(f"Could not set the container's git identity: {e}")
+        warn_plain(f"Could not set the container's git identity: {e}", stderr=True)

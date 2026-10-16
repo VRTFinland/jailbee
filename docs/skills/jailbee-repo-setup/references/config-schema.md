@@ -17,6 +17,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `container` | `{env}` | `env: {}` | repo |
 | `shared_dir` | path | `~/.local/share/jailbee/shared/<repo-name>` | repo (auto-derived) |
 | `gpg` | `{enabled}` | `enabled: false` (opt-in) | global |
+| `git` | `{identity, user: {name, email}}` | `identity: host` | `identity` any layer; `user` global or local only (refused in the repo file) |
 | `ssh` | `{enabled, seed_from_host}` | `enabled: false`, `seed_from_host: true` | global |
 | `jetbrains` | `{enabled, ide, userprefs_from_host, autostart, toolbox_host_path}` | `enabled: false` (opt-in), rest see below | mixed (see per-key table) |
 | `browsers` | `{default, url, chrome, firefox}`, each browser `{enabled, source, host_path, url, dark_mode, autostart}` | `enabled: false` (opt-in), rest see below | mixed (see per-key table) |
@@ -353,6 +354,15 @@ the low-level escape hatch for anything `stacks` doesn't cover.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | RO bind-mount `~/.gnupg`, attach the `gpg-socket` runtime device (read-only), and set `SSH_AUTH_SOCK` in the base profile. `false` skips all three and the doctor `gpg-agent socket` check. |
+
+## `git`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `identity` | `host` \| `off` | `host` | `host` writes the identity `git config --get` gives in the host repo (repo-local config, `includeIf`, global) into the container's `~/.config/git/config` on `jailbee new` and on every start. Signing keys (`user.signingkey`, `commit.gpgsign`, `tag.gpgsign`, `gpg.format`) follow only when `gpg.enabled`. `off` leaves the file alone. |
+| `user.name` / `user.email` | string | unset | Per-field override of the host value. Personal: `load_config` refuses `git.user` in a repo's `.jailbee/config.yaml`. |
+
+Don't add a `~/.gitconfig` host mount for the identity: git reads `~/.gitconfig` after the XDG file, so a mount overrides the per-repo identity.
 
 ## `ssh`
 

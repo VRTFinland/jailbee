@@ -192,7 +192,7 @@ def test_sync_off_does_nothing(tmp_path, mocker):
 def test_sync_warns_on_exec_failure(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     _host(mocker, {"user.name": "N", "user.email": "e@x"})
-    warn = mocker.patch("jailbee.git_identity.warn")
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
     incus = MagicMock()
     incus.exec.side_effect = IncusError("boom")
 
@@ -205,7 +205,7 @@ def test_sync_warns_on_exec_failure(tmp_path, mocker):
 def test_sync_warns_on_missing_identity(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     _host(mocker, {"user.name": "N"})
-    warn = mocker.patch("jailbee.git_identity.warn")
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
     incus = MagicMock()
 
     git_identity.sync(cfg, incus, "c1")
@@ -218,7 +218,7 @@ def test_sync_warns_on_missing_identity(tmp_path, mocker):
 def test_sync_quiet_when_identity_complete(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     _host(mocker, {"user.name": "N", "user.email": "e@x"})
-    warn = mocker.patch("jailbee.git_identity.warn")
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
 
     git_identity.sync(cfg, MagicMock(), "c1")
 
@@ -249,7 +249,7 @@ def test_boot_container_survives_identity_write_failure(tmp_path, mocker):
     mocker.patch("jailbee.agent_instructions.missing_staging_dirs", return_value=[])
     mocker.patch("jailbee.pool.allocate_startup")
     mocker.patch("jailbee.agent_private.attach")
-    warn = mocker.patch("jailbee.git_identity.warn")
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
 
@@ -264,3 +264,94 @@ def test_boot_container_survives_identity_write_failure(tmp_path, mocker):
 
     incus.start.assert_called_once()
     warn.assert_called_once()
+
+
+@pytest.mark.parametrize("key", ["~/.ssh/id_ed25519.pub", "/home/u/.ssh/id.pub", "id.pub"])
+def test_sync_drops_ssh_signing_with_a_key_file(tmp_path, mocker, key):
+    """A key *file* lives on the host; in the container every signed commit would fail."""
+    cfg = _cfg(tmp_path, gpg=True)
+    _host(
+        mocker,
+        {
+            "user.name": "N",
+            "user.email": "e@x",
+            "gpg.format": "ssh",
+            "user.signingkey": key,
+            "commit.gpgsign": "true",
+        },
+    )
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
+    incus = MagicMock()
+
+    git_identity.sync(cfg, incus, "c1")
+
+    argv = _argv(incus)
+    for k in git_identity.SIGNING_KEYS:
+        assert argv[argv.index(k) - 1] == "unset"
+    warn.assert_called_once()
+    assert "gpg.format=ssh" in warn.call_args.args[0]
+
+
+@pytest.mark.parametrize("key", ["key::ssh-ed25519 AAAAC3", "ssh-ed25519 AAAAC3 me@host"])
+def test_sync_keeps_ssh_signing_with_a_literal_key(tmp_path, mocker, key):
+    cfg = _cfg(tmp_path, gpg=True)
+    _host(
+        mocker,
+        {"user.name": "N", "user.email": "e@x", "gpg.format": "ssh", "user.signingkey": key},
+    )
+    incus = MagicMock()
+
+    git_identity.sync(cfg, incus, "c1")
+
+    argv = _argv(incus)
+    assert argv[argv.index("user.signingkey") + 1] == key
+
+
+def test_sync_warning_goes_to_stderr_unparsed(tmp_path, mocker, capsys):
+    cfg = _cfg(tmp_path)
+    _host(mocker, {"user.name": "N", "user.email": "e@x"})
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("failed [exit status 1]")
+
+    git_identity.sync(cfg, incus, "c1")
+
+    captured = capsys.readouterr()
+    assert "[exit status 1]" in captured.err
+    assert "git identity" not in captured.out
+
+
+@pytest.mark.parametrize("covered", ["/home/dev/.config", "/home/dev/.config/git", "/home/dev"])
+def test_sync_refuses_to_write_through_a_host_mount(tmp_path, mocker, covered):
+    """A mount over the target would land the write in the host's own git config."""
+    from jailbee.config import HostMount
+
+    hostdir = tmp_path / "hostdir"
+    hostdir.mkdir()
+    cfg = _cfg(tmp_path).model_copy(
+        update={"host_mounts": [HostMount(host=hostdir, container=covered)]}
+    )
+    _host(mocker, {"user.name": "N", "user.email": "e@x"})
+    warn = mocker.patch("jailbee.git_identity.warn_plain")
+    incus = MagicMock()
+
+    git_identity.sync(cfg, incus, "c1")
+
+    incus.exec.assert_not_called()
+    warn.assert_called_once()
+    assert covered in warn.call_args.args[0]
+
+
+def test_sync_ignores_unrelated_mounts(tmp_path, mocker):
+    from jailbee.config import HostMount
+
+    hostdir = tmp_path / "hostdir"
+    hostdir.mkdir()
+    cfg = _cfg(tmp_path).model_copy(
+        update={"host_mounts": [HostMount(host=hostdir, container="/home/dev/.config-other")]}
+    )
+    _host(mocker, {"user.name": "N", "user.email": "e@x"})
+    incus = MagicMock()
+
+    git_identity.sync(cfg, incus, "c1")
+
+    incus.exec.assert_called_once()
