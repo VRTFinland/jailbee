@@ -188,7 +188,7 @@ def find_archived_images(cfg: Config, incus: Incus) -> list[ArchivedImage]:
 
 @dataclass(frozen=True)
 class GoldenImageUsage:
-    """Disk usage of one golden base: the live image (if any) + its archives."""
+    """Disk usage of one golden base: live image, archives and golden instance."""
 
     base_alias: str
     live_size_bytes: int | None
@@ -199,7 +199,7 @@ class GoldenImageUsage:
 
 
 def gather_golden_usage(incus: Incus, base_aliases: list[str]) -> list[GoldenImageUsage]:
-    """Return per-base-alias usage (live image + dated archives), one per base.
+    """Return per-base-alias usage (live image, dated archives, golden instance).
 
     Bases are de-duplicated with input order preserved. A base that exists only
     as archives has ``live_size_bytes=None``.

@@ -234,6 +234,36 @@ def test_work_default_reconciles_work_profiles_without_attaching_legacy_acl(
     legacy_union.assert_not_called()
 
 
+def test_golden_instance_does_not_trigger_legacy_maintenance(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = [
+        {
+            "name": f"{cfg.container_prefix}-base--golden",
+            "status": "Stopped",
+            "profiles": ["default"],
+        }
+    ]
+    incus.network_acl_list.return_value = []
+    incus.profile_exists.return_value = True
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.network_generation.default_generation", return_value="work")
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    ensure_legacy = mocker.patch("jailbee.apply._ensure_acl_attached_to_bridge")
+    legacy_union = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+
+    run_apply(cfg, incus, GlobalConfig(), no_restart=True)
+
+    ensure_legacy.assert_not_called()
+    legacy_union.assert_not_called()
+
+
 def test_run_apply_syncs_gie_skills_when_claude_enabled(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:

@@ -228,12 +228,18 @@ def run_apply(
 
     ensure_loose_bridge(incus, quiet=True)
 
+    from jailbee.golden import is_golden_instance_name
+
     raw_all = incus.list_containers()
     repo_prefix = f"{cfg.container_prefix}-"
     repo_instances = [
         raw
         for raw in raw_all
-        if isinstance(raw.get("name"), str) and raw["name"].startswith(repo_prefix)
+        if isinstance(raw.get("name"), str)
+        and raw["name"].startswith(repo_prefix)
+        # The stopped golden instance carries only `default`, so it would
+        # read as a "legacy" instance and force legacy network maintenance.
+        and not is_golden_instance_name(raw["name"])
     ]
     work_present = any(generation_of(cfg, raw) == "work" for raw in repo_instances)
     legacy_present = any(generation_of(cfg, raw) == "legacy" for raw in repo_instances)

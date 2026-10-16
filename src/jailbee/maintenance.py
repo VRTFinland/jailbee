@@ -48,10 +48,11 @@ def gather_disk_usage(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> list[Dis
     golden_name = golden_instance_name(cfg.golden.alias)
     golden_inst = golden_instance_bytes(incus, golden_name)
     containers_bytes = _du_pool_subdirs(sources, "containers")
-    if containers_bytes is not None and golden_inst is not None:
-        # The golden instance lives in the same dir but is reported as part of
-        # the golden, not as a branch container.
-        containers_bytes = max(containers_bytes - golden_inst, 0)
+    all_goldens = _all_golden_bytes(sources)
+    if containers_bytes is not None and all_goldens is not None:
+        # Golden instances (this repo's and every other repo's) live in the
+        # same dir but are not branch containers.
+        containers_bytes = max(containers_bytes - all_goldens, 0)
     golden_total = None if golden_inst is None else images_bytes + golden_inst
     return [
         DiskRow("Golden images", golden_total, "incus image list + golden instance"),
@@ -95,10 +96,37 @@ def golden_instance_bytes(incus: Incus, name: str) -> int | None:
     """
     total = 0
     for src in _pool_sources(incus):
-        b = _du_bytes(src / "containers" / name)
+        try:
+            b = _du_bytes(src / "containers" / name)
+        except OSError:
+            return None
         if b is None:
             return None
         total += b
+    return total
+
+
+def _all_golden_bytes(sources: list[Path]) -> int | None:
+    """Bytes of every ``*--golden`` instance dir across pool sources.
+
+    ``None`` if any is unreadable, so the caller leaves the Containers row
+    untouched rather than subtracting a partial figure.
+    """
+    from jailbee.golden import is_golden_instance_name
+
+    total = 0
+    for src in sources:
+        try:
+            entries = [p for p in (src / "containers").iterdir() if is_golden_instance_name(p.name)]
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        for entry in entries:
+            b = _du_bytes(entry)
+            if b is None:
+                return None
+            total += b
     return total
 
 
