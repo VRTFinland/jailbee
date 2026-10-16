@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -105,6 +106,40 @@ def test_seed_hardlinks_each_link_path_in_its_own_pass(tmp_path, mocker):
     assert f"--link-dest={src / 'caches/modules-2/files-2.1'}" in link_argv
     assert link_argv[-2] == f"{src / 'caches/modules-2/files-2.1'}/"
     assert link_argv[-1] == f"{dst / 'caches/modules-2/files-2.1'}/"
+
+
+def test_seed_tolerates_files_vanishing_from_a_live_source(tmp_path, mocker):
+    """rsync exits 24 when a source file disappears mid-transfer — routine
+    for a profile in use. The copy is otherwise complete; failing it would
+    fail the whole `new`/`start`."""
+    run = mocker.patch(
+        "jailbee.pool.subprocess.run",
+        side_effect=subprocess.CalledProcessError(24, ["rsync"]),
+    )
+    p = _pool(tmp_path, link_paths=["wrapper/dists"])
+    src = p.slots_dir / "slot-0"
+    (src / "wrapper" / "dists").mkdir(parents=True)
+    dst = p.slots_dir / "slot-1"
+    dst.mkdir(parents=True)
+
+    pool._seed(p, src, dst)
+
+    assert run.call_count == 2  # the link pass still ran after the first 24
+
+
+def test_seed_propagates_other_rsync_failures(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.pool.subprocess.run",
+        side_effect=subprocess.CalledProcessError(23, ["rsync"]),
+    )
+    p = _pool(tmp_path)
+    src = p.slots_dir / "slot-0"
+    src.mkdir(parents=True)
+    dst = p.slots_dir / "slot-1"
+    dst.mkdir(parents=True)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        pool._seed(p, src, dst)
 
 
 def test_seed_skips_a_link_path_absent_from_the_source(tmp_path, mocker):
@@ -909,13 +944,18 @@ def test_allocate_reuses_oldest_free(tmp_path, mocker):
     assert slot == s0
 
 
-def test_allocate_uses_newest_as_source_even_if_active(tmp_path, mocker):
+def test_allocate_prefers_a_free_source_over_a_warmer_active_one(tmp_path, mocker):
+    """An allocated slot may be mid-write; a free one was released cleanly.
+
+    slot-1 is the warmest but in use, so seeding from it would copy a live
+    profile file by file. The free slot-0 wins as source — and being the
+    only free slot it is also the target, so nothing is copied at all.
+    """
     cfg = _cfg(tmp_path)
     p = _chrome_pool(tmp_path)
     pool.ensure_pool_dirs(cfg, p)
     s0 = _make_slot(p, "slot-0", warmth_mtime=100.0)
-    s1 = _make_slot(p, "slot-1", warmth_mtime=999.0)
-    # slot-1 is allocated to feat-active (it's the newest, and active)
+    _make_slot(p, "slot-1", warmth_mtime=999.0)
     (p.by_container_dir / "feat-active").symlink_to(Path("..") / "slots" / "slot-1")
     incus = MagicMock()
     incus.list_containers.return_value = [
@@ -925,11 +965,49 @@ def test_allocate_uses_newest_as_source_even_if_active(tmp_path, mocker):
     run = _fake_rsync(mocker)
 
     target = pool.allocate(cfg, incus, p, "feat-new")
-    # Target = slot-0 (oldest free), source should be slot-1 (newest, active)
     assert target == s0
+    run.assert_not_called()
+
+
+def test_allocate_seeds_from_the_warmest_free_slot_not_an_active_one(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    p = _chrome_pool(tmp_path)
+    pool.ensure_pool_dirs(cfg, p)
+    s0 = _make_slot(p, "slot-0", warmth_mtime=100.0)
+    s1 = _make_slot(p, "slot-1", warmth_mtime=500.0)
+    _make_slot(p, "slot-2", warmth_mtime=999.0)
+    (p.by_container_dir / "feat-active").symlink_to(Path("..") / "slots" / "slot-2")
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "feat-active"},
+        {"name": "feat-new"},
+    ]
+    run = _fake_rsync(mocker)
+
+    target = pool.allocate(cfg, incus, p, "feat-new")
+    assert target == s0  # coldest free
     rsync_args = run.call_args.args[0]
-    assert rsync_args[-2] == f"{s1}/"  # source is slot-1
+    assert rsync_args[-2] == f"{s1}/"  # warmest free, not the active slot-2
     assert rsync_args[-1] == f"{s0}/"
+
+
+def test_allocate_seeds_from_an_active_slot_when_none_is_free(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    p = _chrome_pool(tmp_path)
+    pool.ensure_pool_dirs(cfg, p)
+    s0 = _make_slot(p, "slot-0", warmth_mtime=999.0)
+    (p.by_container_dir / "feat-active").symlink_to(Path("..") / "slots" / "slot-0")
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "feat-active"},
+        {"name": "feat-new"},
+    ]
+    run = _fake_rsync(mocker)
+
+    target = pool.allocate(cfg, incus, p, "feat-new")
+    assert target.name == "slot-1"
+    rsync_args = run.call_args.args[0]
+    assert rsync_args[-2] == f"{s0}/"
 
 
 def test_allocate_skips_rsync_when_only_slot_is_free(tmp_path, mocker):

@@ -270,6 +270,25 @@ def ensure_pools(cfg: Config, *, strict: bool = True) -> None:
             warn_plain(f"pool {p.name}: {e}")
 
 
+_RSYNC_VANISHED = 24
+"""rsync's exit status for "some source files vanished during transfer"."""
+
+
+def _rsync(argv: list[str]) -> None:
+    """Run rsync, accepting files that vanished mid-transfer.
+
+    The seed source can be a slot whose container is running, where the
+    tool deletes temporary files while rsync walks the tree. Exit 24 means
+    everything that still existed was copied; failing on it would fail the
+    container's `new`/`start` over a file that no longer matters.
+    """
+    try:
+        subprocess.run(argv, check=True)
+    except subprocess.CalledProcessError as e:
+        if e.returncode != _RSYNC_VANISHED:
+            raise
+
+
 def _seed(pool: Pool, source: Path, target: Path) -> None:
     """Copy source/ -> target/, hardlinking the `link_paths` subtrees.
 
@@ -288,17 +307,14 @@ def _seed(pool: Pool, source: Path, target: Path) -> None:
     excludes = [f"--exclude={p}/" for p in pool.spec.wipe_paths]
     excludes += stale
     excludes += [f"--exclude={p}/" for p in pool.spec.link_paths]
-    subprocess.run(
-        ["rsync", "-a", "--delete", *excludes, f"{source}/", f"{target}/"],
-        check=True,
-    )
+    _rsync(["rsync", "-a", "--delete", *excludes, f"{source}/", f"{target}/"])
     for rel in pool.spec.link_paths:
         src = source / rel
         if not src.is_dir():
             continue
         dst = target / rel
         dst.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
+        _rsync(
             [
                 "rsync",
                 "-a",
@@ -308,8 +324,7 @@ def _seed(pool: Pool, source: Path, target: Path) -> None:
                 f"--link-dest={src}",
                 f"{src}/",
                 f"{dst}/",
-            ],
-            check=True,
+            ]
         )
 
 
@@ -445,9 +460,12 @@ def allocate(cfg: Config, incus: Incus, pool: Pool, container: str) -> Path:
             symlink.unlink()
             reallocating = True
 
-        all_slots = _all_slots(pool)
         free = _free_slots(pool)
-        source = max(all_slots, key=lambda s: _slot_mtime(pool, s), default=None)
+        # A free slot was released by a stopped container, so its files are
+        # at rest; an allocated one may be mid-write, and rsync copies it file
+        # by file, not as one snapshot. Seed from the warmest free slot, and
+        # from an allocated one only when nothing is free.
+        source = max(free or _all_slots(pool), key=lambda s: _slot_mtime(pool, s), default=None)
 
         if free:
             target = min(free, key=lambda s: _slot_mtime(pool, s))

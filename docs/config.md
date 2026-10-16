@@ -857,7 +857,11 @@ one layer's list appending to the other's.
 
 A fresh slot is seeded from the warmest existing slot: the one with the newest
 configured `warmth_file` mtime. A missing configured file scores zero;
-directory mtime is used only when no `warmth_file` is configured.
+directory mtime is used only when no `warmth_file` is configured. Free slots
+(released by a destroyed container) are preferred over allocated ones, however
+much warmer: an allocated slot may be in use, and rsync copies a live profile
+file by file rather than as one snapshot. An allocated slot is the source only
+when no slot is free — which is the case after `jailbee pool prune`.
 `link_paths` names subtrees hardlinked from the seed source instead of
 copied, so a multi-gigabyte artifact store (Gradle's module cache, Maven's
 `repository/`) costs close to nothing per extra container. **`link_paths`
