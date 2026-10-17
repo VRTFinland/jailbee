@@ -257,3 +257,19 @@ def test_ctrl_r_does_not_submit_a_fork_prompt(mocker, tmp_path):
     patch_pause(mocker)
     drive(mocker, ["j", "enter", "f", "ctrl+r", "escape"], [group])
     child.assert_not_called()
+
+
+@pytest.mark.parametrize(("rc", "pauses"), [(1, 1), (0, 0)])
+def test_rename_holds_the_screen_only_when_the_cli_fails(mocker, tmp_path, rc, pauses):
+    # A refused alias prints its reason on the blanked screen; without the
+    # pause the dashboard repaints over it before it can be read.
+    info = dataclasses.replace(ci("alpha-x", "alpha"), alias="old")
+    group = cfg_group(tmp_path, (info,))
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = rc
+    pause = patch_pause(mocker)
+
+    drive(mocker, ["j", "enter", "R", *keys("x"), "enter"], [group])
+
+    child.assert_called_once()
+    assert pause.call_count == pauses
