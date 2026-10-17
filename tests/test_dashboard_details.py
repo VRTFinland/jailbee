@@ -1005,3 +1005,29 @@ def test_advisory_lines_grow_the_panel_into_free_rows() -> None:
 def test_repo_warnings_excludes_advisories() -> None:
     group = _repo_group("alpha", _advisory())
     assert dd.repo_warnings(group) == ()
+
+
+def test_every_shown_block_keeps_a_more_marker_when_reasons_do_not_fit() -> None:
+    # room 7: three blocks need 3 rows each, so two fit with the count row; the
+    # first block must not eat the spare row and leave the second unmarked.
+    adv = [_advisory(f"k{i}", reasons=4) for i in range(3)]
+    view = _repo_view([_repo_group("alpha", *adv)])
+    rows = [t.plain for t in dd.advisory_rows(view, 7)]
+    assert sum("[dismiss]" in r for r in rows) == 2
+    assert sum("more" in r and "- …" in r for r in rows) == 2
+    assert len(rows) == 7
+
+
+def test_advisory_links_follow_ssh_state() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.tui.widgets import _advisory_links
+    from tests.dashboard_pilot import view_of
+
+    policy = RemoteSSHConfig.model_validate(
+        {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["upgrade"]}}
+    )
+    assert _advisory_links(view_of([])) == dd.AdvisoryLinks(True, True, True)
+    over = view_of([], over_ssh=True, ssh_policy=policy)
+    assert _advisory_links(over) == dd.AdvisoryLinks(False, False, True)
+    denied = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["ls"]}})
+    assert not _advisory_links(view_of([], over_ssh=True, ssh_policy=denied)).upgrade_all

@@ -652,10 +652,11 @@ def _plain_row(markup: str, style: Style) -> Text:
 def advisory_rows(view: DetailsView, room: int | None) -> list[Text]:
     """The advisory blocks as one-row texts, fitted to ``room`` rows (None: all).
 
-    Under a cap the reason lines go first (the rest of a block's reasons become
-    ``- … N more``); a shown block always keeps its heading and links line.
-    When even those do not fit, trailing blocks are dropped and a last row
-    counts them. The upgrade-all link is the first thing to go.
+    Under a cap the reason lines go first: every shown block keeps its heading,
+    its links line and at least one reason row (the rest of its reasons become
+    ``- … N more``). When even those do not fit, trailing blocks are dropped and
+    a last row counts them. The upgrade-all link is reserved before any extra
+    reason rows are handed out, and goes only with the blocks it follows.
     """
     blocks = view.advisories
     if not blocks:
@@ -668,7 +669,7 @@ def advisory_rows(view: DetailsView, room: int | None) -> list[Text]:
     if room is not None and full > room:
         shown, used = 0, 0
         for block in blocks:
-            need = 1 + bool(block.links)
+            need = 1 + bool(block.links) + bool(block.reasons)
             if used + need + (shown + 1 < len(blocks)) > room:
                 break
             used += need
@@ -680,16 +681,16 @@ def advisory_rows(view: DetailsView, room: int | None) -> list[Text]:
         left -= show_all
         budgets = []
         for block in blocks[:shown]:
-            take = min(len(block.reasons), left)
-            budgets.append(take)
-            left -= take
+            extra = min(max(0, len(block.reasons) - 1), left)
+            budgets.append(min(len(block.reasons), 1 + extra) if block.reasons else 0)
+            left -= extra
     rows: list[Text] = []
     for index, block in enumerate(blocks[:shown]):
         rows.append(_plain_row(block.heading, _ADVISORY_STYLE))
         reasons, budget = block.reasons, budgets[index]
         if budget >= len(reasons):
             rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons]
-        elif budget >= 1:
+        else:  # at least one row is reserved: the marker, after budget - 1 reasons
             rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons[: budget - 1]]
             rows.append(_plain_row(f"    - … {len(reasons) - budget + 1} more", _ADVISORY_STYLE))
         if block.links:
