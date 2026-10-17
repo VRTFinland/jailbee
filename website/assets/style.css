@@ -665,6 +665,21 @@ button.copy[data-state="copied"] {
   color: var(--text);
 }
 
+/* The #usecases and #features cards' icons: Lucide outlines drawn in the
+   accent, so six paragraphs of the same grey get a mark each to scan by. */
+.card__icon {
+  display: block;
+  width: 1.6rem;
+  height: 1.6rem;
+  margin-bottom: 0.9rem;
+  color: var(--amber);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* -----------------------------------------------------------------------
    Split — an illustration beside its copy (#network, #agents). Stacks on
    narrow screens, sits side by side from 800px up. Which side the image
@@ -1245,6 +1260,71 @@ footer p {
 /* Its links are labels: wrap between them, never inside one. */
 .demo__note a {
   white-space: nowrap;
+}
+
+/* A highlight on a still, the way the videos ring a detail: the picture is
+   the positioning box and the ring a child placed in percentages of it, so
+   it scales with the frame and needs no script. The numbers are measured
+   on one file — re-crop the picture and measure them again. */
+.demo__frame {
+  position: relative;
+}
+
+.demo__ring {
+  position: absolute;
+  border: 3px solid var(--amber);
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgb(240 169 43 / 60%);
+  pointer-events: none;
+}
+
+/* dashboard-parallel.png (1136x639, a 160x35 terminal padded top and
+   bottom): the AI cells of the two rows whose agents are waiting for the
+   reader, ios-7 and main-7. */
+.demo__ring--ios7,
+.demo__ring--main7 {
+  left: 37.7%;
+  width: 4.4%;
+  height: 3.3%;
+}
+
+.demo__ring--ios7 {
+  top: 44.6%;
+}
+
+.demo__ring--main7 {
+  top: 79.2%;
+}
+
+/* The AI column's marks under the picture they explain, in the dashboard's
+   own colours rather than the page's tokens: the legend must match the
+   terminal, not the site. */
+.demo__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.demo__legend span {
+  white-space: nowrap;
+}
+
+.demo__glyph {
+  margin-right: 0.4em;
+}
+
+.demo__glyph--working {
+  color: #5fd35f;
+}
+
+.demo__glyph--waiting {
+  color: #f2c94c;
+}
+
+.demo__glyph--idle {
+  color: var(--muted);
 }
 
 .demo figcaption p code {

@@ -481,6 +481,7 @@ def test_every_expected_section_id_exists() -> None:
     for anchor in (
         "parallel",
         "demos",
+        "usecases",
         "network",
         "desktop",
         "agents",
