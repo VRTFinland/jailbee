@@ -348,7 +348,11 @@ def test_run_menu_capital_hotkey_destroys_only_through_lifecycle(mocker, tmp_pat
     drive(mocker, ["j", "enter", "l", "d"], groups=[group])
     assert not any("destroy" in call.args[0] for call in child.call_args_list)
 
+    # `D` opens the dashboard's own question; only "Yes" runs the destroy.
     drive(mocker, ["j", "enter", "l", "D"], groups=[group])
+    assert not any("destroy" in call.args[0] for call in child.call_args_list)
+
+    drive(mocker, ["j", "enter", "l", "D", "down", "enter"], groups=[group])
     assert any(call.args[0][:2] == ["jailbee", "destroy"] for call in child.call_args_list)
 
 

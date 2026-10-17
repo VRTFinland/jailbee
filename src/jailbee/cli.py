@@ -8121,8 +8121,9 @@ def git_merge(
         typer.Option(
             "--confirm/--no-confirm",
             help="Ask once before merging when several containers are involved "
-            "(several sources or several targets). Off by default: the "
-            "dashboards pass --confirm after picking the targets in the table.",
+            "(several sources or several targets). Off by default: the Qt "
+            "dashboard passes --confirm after picking the targets; the terminal "
+            "dashboard asks itself.",
         ),
     ] = None,
     config: ConfigOption = None,

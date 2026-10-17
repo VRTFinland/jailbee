@@ -295,7 +295,7 @@ def test_capital_d_with_marks_acts_on_the_marks_not_the_cursor(mocker, tmp_path)
     ]
 
 
-def test_capital_d_without_marks_keeps_the_single_destroy(mocker, tmp_path):
+def test_capital_d_without_marks_asks_in_the_dashboard_before_destroying(mocker, tmp_path):
     child = _children(mocker)
     mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
     session, terminal, _ = _session(mocker, tmp_path, "Running")
@@ -304,8 +304,27 @@ def test_capital_d_without_marks_keeps_the_single_destroy(mocker, tmp_path):
     assert session.open_menu_for_letter("l")  # Lifecycle →, then Destroy inside it
     session.menu_chosen("destroy", "Lifecycle →", 2)
 
-    assert len(terminal.handed) == 1
-    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a"]
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "container-destroy-confirm"
+    assert [e.value for e in picker.entries] == ["no", "yes"]
+    assert terminal.handed == []
+    child.assert_not_called()
+
+    session.picker_chosen(picker.entries[1])
+
+    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a", "--force"]
+
+
+def test_declining_the_single_destroy_runs_nothing(mocker, tmp_path):
+    child = _children(mocker)
+    session, _terminal, _ = _session(mocker, tmp_path, "Running")
+    session.overlay = session.begin_destroy("alpha-a")
+    assert isinstance(session.overlay, Picker)
+
+    session.picker_chosen(session.overlay.entries[0])
+
+    child.assert_not_called()
+    assert session.notice == "Cancelled"
 
 
 def test_bulk_loose_asks_the_ttl_once_and_passes_it(mocker, tmp_path):

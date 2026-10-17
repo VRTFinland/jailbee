@@ -7,6 +7,7 @@ from dataclasses import replace
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.model import container_of
+from jailbee.dashboard.overlays import Picker
 from jailbee.dashboard.tui.menu_state import MenuState
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import bare_session, drive, patch_pause
@@ -31,6 +32,13 @@ def _two_repo_session(mocker, tmp_path):  # type: ignore[no-untyped-def]
     q = dmodel.RepoGroup("q", str(tmp_path / "q"), None, [ci("q-a", "q")])
     session, _ = bare_session(mocker, [r, q])
     return session
+
+
+def _confirm(session):  # type: ignore[no-untyped-def]
+    """Answer the merge question put to the dashboard with "Yes"."""
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "merge-confirm"
+    session.picker_chosen(picker.entries[1])
 
 
 # -- entry -------------------------------------------------------------------
@@ -244,11 +252,12 @@ def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
     session.handle_key("down")  # move to r-c, skipping the source
     session.handle_key("space")  # r-c
     session.handle_key("enter")
+    _confirm(session)
 
     run.assert_called_once_with(
         "r-b",
         "container",
-        ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--confirm"],
+        ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--no-confirm"],
         style="report",
     )
     assert session.merge_pick is None
@@ -260,9 +269,10 @@ def test_merge_mode_enter_without_marks_uses_cursor_row(mocker, tmp_path):
     session.begin_merge_pick(["r-b"])
 
     session.handle_key("enter")
+    _confirm(session)
 
     run.assert_called_once_with(
-        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--confirm"], style="report"
+        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--no-confirm"], style="report"
     )
     assert session.merge_pick is None
     assert session.notice == "Merged b into a"
@@ -291,6 +301,7 @@ def test_a_successful_bulk_merge_unmarks_the_sources_only(mocker, tmp_path):
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
     session.handle_key("enter")
+    _confirm(session)
 
     assert session.marked == frozenset()
 
@@ -301,6 +312,7 @@ def test_a_failed_merge_keeps_the_bulk_marks(mocker, tmp_path):
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
     session.handle_key("enter")
+    _confirm(session)
 
     assert session.merge_pick is None
     assert session.marked == frozenset({"r-b", "r-c"})
@@ -319,6 +331,7 @@ def test_a_successful_bulk_merge_keeps_a_mark_that_was_not_a_source(mocker, tmp_
     assert session.merge_pick.sources == ("r-b",)
 
     session.handle_key("enter")
+    _confirm(session)
 
     assert session.marked == frozenset({"r-s"})
 
@@ -331,11 +344,12 @@ def test_merge_targets_marked_out_of_listing_order_run_in_listing_order(mocker, 
     session.click(Hit("row", ("r-c",)), toggle=True)  # c first ...
     session.click(Hit("row", ("r-a",)), toggle=True)  # ... then a
     session.handle_key("enter")
+    _confirm(session)
 
     run.assert_called_once_with(
         "r-b",
         "container",
-        ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--confirm"],
+        ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--no-confirm"],
         style="report",
     )
 
@@ -350,6 +364,7 @@ def test_a_merge_that_never_ran_restores_the_marks_untouched(mocker, tmp_path):
     session.begin_bulk("merge")
 
     session.handle_key("enter")
+    _confirm(session)
 
     assert session.merge_pick is None
     assert session.marked == frozenset({"r-b", "r-c"})
@@ -363,8 +378,9 @@ def test_the_merge_runs_in_the_terminal_with_every_into(mocker, tmp_path):
     session.begin_merge_pick(["r-b"])
 
     session.handle_key("enter")
+    _confirm(session)
 
-    assert child.call_args.args[0] == ["jailbee", "merge", "r-b", "--into", "r-a", "--confirm"]
+    assert child.call_args.args[0] == ["jailbee", "merge", "r-b", "--into", "r-a", "--no-confirm"]
 
 
 def test_merge_mode_esc_restores_bulk_marks(mocker, tmp_path):
@@ -522,3 +538,45 @@ def test_a_bulk_batch_ending_while_picking_unmarks_its_successes_on_restore(mock
     session.handle_key("cancel")
 
     assert session.marked == frozenset({"r-b"})
+
+
+def test_the_merge_asks_in_the_dashboard_and_runs_nothing_until_yes(mocker, tmp_path):
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
+    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    session.begin_merge_pick(["r-b"])
+
+    session.handle_key("enter")
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "merge-confirm"
+    assert picker.title == "Merge b into a?"
+    assert [e.value for e in picker.entries] == ["no", "yes"]
+    run.assert_not_called()
+
+
+def test_declining_the_merge_question_returns_to_picking(mocker, tmp_path):
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
+    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    session.begin_merge_pick(["r-b"])
+    session.handle_key("enter")
+    picker = session.overlay
+    assert isinstance(picker, Picker)
+
+    session.picker_chosen(picker.entries[0])
+
+    run.assert_not_called()
+    assert session.merge_pick is not None
+    assert session.notice == "Cancelled"
+
+
+def test_the_merge_question_is_answered_by_the_picker_keys_in_the_app(mocker, tmp_path):
+    child = mocker.patch("jailbee.dashboard.tui.session.subprocess.run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+    groups = [_group(tmp_path, ci("r-a", "r"), ci("r-b", "r"))]
+
+    drive(mocker, ["j", "j", "enter", "g", "m", "enter"], groups)
+    child.assert_not_called()  # the question is up, unanswered
+
+    drive(mocker, ["j", "j", "enter", "g", "m", "enter", "down", "enter"], groups)
+    assert child.call_args.args[0] == ["jailbee", "merge", "r-b", "--into", "r-a", "--no-confirm"]
