@@ -11033,3 +11033,18 @@ def test_new_copy_with_unknown_golden_pool_skips_the_full_copy_message(tmp_path,
         golden, "repo-feat-x", storage_pool="other", instance_only=True
     )
     assert not any("None" in m or "full copy" in m for m in infos)
+
+
+def test_list_containers_reads_root_pool(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    with_root = _container(name="myrepo-a")
+    with_root["expanded_devices"] = {"root": {"type": "disk", "path": "/", "pool": "fast"}}
+    via_devices = _container(name="myrepo-b")
+    via_devices["devices"] = {"root": {"type": "disk", "path": "/", "pool": "slow"}}
+    bare = _container(name="myrepo-c")
+    incus.list_containers.return_value = [with_root, via_devices, bare]
+    pools = {c.name: c.root_pool for c in list_containers(cfg, incus)}
+    assert pools == {"myrepo-a": "fast", "myrepo-b": "slow", "myrepo-c": None}
