@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 from dataclasses import replace
+
+import pytest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1102,3 +1104,42 @@ def test_panel_fit_keeps_process_lines_before_git_rows() -> None:
     assert any(ln.startswith("cpu  node 85%") for ln in body)
     assert any(ln.startswith("mem  java 2.0K") for ln in body)
     assert any("… +2 more submodules" in ln for ln in body)
+
+
+def _fit_procs(procs: int, exceptions: bool, subs: int = 0) -> dd.ContainerPanel:
+    base = _fit(subs)
+    return replace(
+        base,
+        processes=tuple(f"p{i}" for i in range(procs)),
+        exceptions=("x",) if exceptions else (),
+    )
+
+
+@pytest.mark.parametrize("exceptions", [False, True])
+@pytest.mark.parametrize("cap", range(2, 9))
+def test_panel_fit_keeps_git_root_row_by_cutting_process_lines_first(
+    cap: int, exceptions: bool
+) -> None:
+    with_procs = dd.panel_fit(_fit_procs(2, exceptions), cap)
+    without = dd.panel_fit(_fit_procs(0, exceptions), cap)
+    # the table survives whenever it would have without the process lines
+    assert with_procs.git == without.git
+    # process lines are only ever cut, never shown past the cap
+    assert 0 <= with_procs.procs <= 2
+    shown = 1 + with_procs.procs + exceptions
+    if with_procs.git:
+        assert shown + 2 <= cap
+
+
+def test_panel_fit_cuts_process_lines_before_the_git_head() -> None:
+    panel = _fit_procs(2, False)
+    assert dd.panel_fit(panel, 4).git is True
+    assert dd.panel_fit(panel, 4).procs == 1
+    assert dd.panel_fit(panel, 3).procs == 0
+    assert dd.panel_fit(_fit_procs(2, True), 5).git is True
+    assert dd.panel_fit(_fit_procs(2, True), 5).procs == 1
+
+
+def test_panel_fit_without_process_lines_is_unchanged_by_procs_field() -> None:
+    assert dd.panel_fit(_fit(2), 7).procs == 0
+    assert dd.panel_fit(_fit_procs(2, False), None).procs == 2

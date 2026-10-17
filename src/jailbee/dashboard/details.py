@@ -549,31 +549,39 @@ class PanelFit:
     subs: int  # submodule rows shown
     more: int  # submodule rows counted by the "… +N more submodules" row
     footer: bool
+    procs: int = 0  # process lines shown, from the top
 
 
 def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     """What of ``panel`` fits ``cap`` rows (None: everything).
 
     Blank lines go first, then submodule rows, which one row then counts;
-    the summary, the process lines, the exceptions line and the footer stay. Only a panel too
-    short for the table's head loses the table, and then the footer; the
-    summary, the exceptions line and the warnings stay, cut from the bottom
-    only by a cap below their own count.
+    the summary, the process lines, the exceptions line and the footer stay.
+    A panel too short for the table's head cuts its process lines first, down
+    to none, before it loses the table; only then does it lose the table, and
+    then the footer; the summary, the exceptions line and the warnings stay,
+    cut from the bottom only by a cap below their own count.
     """
+    procs = len(panel.processes)
     # the summary, then the exceptions line and the warnings under it
-    top = 1 + len(panel.processes) + bool(panel.exceptions) + len(panel.warnings)
+    top = 1 + procs + bool(panel.exceptions) + len(panel.warnings)
     subs = 0 if panel.git is None else len(panel.git) - 1
     head = 1 if panel.git is None else 2
     full = top + head + subs + 1
     if cap is None or full + 2 <= cap:
-        return PanelFit(True, True, subs, 0, True)
+        return PanelFit(True, True, subs, 0, True, procs)
     if full <= cap:
-        return PanelFit(False, True, subs, 0, True)
+        return PanelFit(False, True, subs, 0, True, procs)
     room = cap - top - head - 1  # rows left for submodules once the top, head and footer sit
     if room >= 1:
-        return PanelFit(False, True, room - 1, subs - (room - 1), True)
+        return PanelFit(False, True, room - 1, subs - (room - 1), True, procs)
+    if cap - top < head:
+        # the table's head fits once enough process lines are cut
+        kept = max(0, procs - (head - (cap - top)))
+        if kept < procs and cap - (top - procs + kept) >= head:
+            procs, top = kept, top - procs + kept
     git = cap - top >= head
-    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1)
+    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1, procs)
 
 
 def _cells(*markups: str) -> int:
@@ -645,7 +653,7 @@ def _panel_lines(
     def one(markup: str) -> None:
         lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
 
-    top = [_SUMMARY_GAP.join(panel.summary), *panel.processes]
+    top = [_SUMMARY_GAP.join(panel.summary), *panel.processes[: fit.procs]]
     if panel.exceptions:
         top.append(_SUMMARY_GAP.join(panel.exceptions))
     top.extend(panel.warnings)
