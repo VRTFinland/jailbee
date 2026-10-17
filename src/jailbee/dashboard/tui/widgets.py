@@ -417,6 +417,7 @@ class DashboardFrame(Vertical):
         self.mouse_enabled = mouse_enabled or (lambda: True)
         self.candidates = candidates or (lambda _text: ())
         self._notice_input: object = None
+        self._system_input: object = None
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
         self._native_overlay_key: tuple[object, ...] | None = None
@@ -594,7 +595,10 @@ class DashboardFrame(Vertical):
         system = self.query_one("#system", Static)
         system.display = bool(system_row)
         if system_row and view.system is not None:
-            system.update(system_line(view.system, max(0, width)))
+            system_input = (view.system, width)
+            if system_input != self._system_input:
+                system.update(system_line(view.system, max(0, width)))
+                self._system_input = system_input
         table = self.table
         table.display = layout.table_rows > 0
         table.styles.height = layout.table_rows
