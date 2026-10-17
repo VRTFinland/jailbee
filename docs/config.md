@@ -2482,7 +2482,7 @@ and its own folded repo groups, because a
 live view can own the state you are looking at:
 
 - In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
-  `Space` toggles, `Tab` switches between the Fields, Repos and Visibility tabs, `Esc` closes.
+  `Space` toggles, `Tab` switches between the Fields, Repos and Visibility tabs, `Esc` closes. The Visibility tab's first row, **Show system status**, shows or hides the one-row host memory, storage pool and root filesystem bar above the table (on by default, persisted); **Show empty repos** follows it.
   Changes apply immediately — the table stays on screen behind the panel.
   The Fields tab lists the enabled fields in your order, then the disabled
   ones alphabetically; `Shift+↑`/`Shift+↓` moves an enabled field (never across

@@ -3,7 +3,7 @@
 The terminal dashboard's container details panel (`v`) reads top to bottom. One
 summary line says what the container is doing: its state and any background
 job, IP, PR and issues, the agent, and busy processes. A running container adds
-up to two dim lines under it: `cpu` and `mem`, its top three processes by CPU
+up to two lines under it, labelled `cpu` and `mem` (the labels are dim), its top three processes by CPU
 and by resident memory, grouped by process name with `xN` when several share a
 name. When present, a separate
 highlighted line below it lists exceptions: loose networking and its deadline,

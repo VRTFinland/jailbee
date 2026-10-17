@@ -844,7 +844,7 @@ headers only offer Fold/Unfold because there is no directory to create in.
 
 `F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
 move, `Space` toggles the row under the cursor, `Tab` switches between the
-Fields, Repos and Visibility tabs, `Esc` closes. On Fields, `Shift+↑`/`Shift+↓`
+Fields, Repos and Visibility tabs, `Esc` closes. The Visibility tab's first row, **Show system status**, shows or hides the one-row host memory, storage pool and root filesystem bar above the table (on by default, persisted); **Show empty repos** follows it. On Fields, `Shift+↑`/`Shift+↓`
 moves an enabled column (never across `name`, which is always first). Changes apply and persist immediately
 — there is no OK/Cancel. This is where the TUI's own column set and folded
 repo groups live now, with its column order and row sort (in `state.sqlite`'s `view_prefs` table); the `dashboard:`
