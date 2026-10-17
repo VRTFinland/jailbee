@@ -17,7 +17,7 @@ from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
-from jailbee.procstat import ProcessActivity
+from jailbee.procstat import ProcessActivity, ProcessMemory
 
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
 
@@ -1064,3 +1064,38 @@ def test_advisory_run_links_follow_the_policy_per_action() -> None:
     assert (links.run_base_build, links.run_apply) == (True, False)
     assert not links.dismiss
     assert links.run("base_build") and not links.run("apply") and not links.run(None)
+
+
+def test_panel_shows_top_cpu_and_mem_lines() -> None:
+    c = _c(
+        top_cpu=(ProcessActivity("node", 85.4, 1), ProcessActivity("java", 40.0, 2)),
+        top_mem=(ProcessMemory("qemu-system-x86", 3_300_000_000, 10),),
+    )
+    assert dd.container_panel(c, NOW).processes == (
+        "[dim]cpu[/dim]  node 85% · java x2 40%",
+        "[dim]mem[/dim]  qemu-system-x86 x10 3.1G",
+    )
+
+
+def test_panel_has_no_process_lines_when_stopped_or_empty() -> None:
+    top = {"top_cpu": (ProcessActivity("node", 85.4, 1),), "top_mem": (ProcessMemory("a", 1024, 1),)}
+    assert dd.container_panel(_c(state="Stopped", **top), NOW).processes == ()
+    assert dd.container_panel(_c(), NOW).processes == ()
+    only_mem = dd.container_panel(_c(top_mem=top["top_mem"]), NOW)
+    assert only_mem.processes == ("[dim]mem[/dim]  a 1.0K",)
+
+
+def test_panel_fit_keeps_process_lines_before_git_rows() -> None:
+    c = replace(
+        _rich_container(subs=3),
+        top_cpu=(ProcessActivity("node", 85.4, 1),),
+        top_mem=(ProcessMemory("java", 2048, 1),),
+    )
+    panel = dd.container_panel(c, NOW)
+    assert len(panel.processes) == 2
+    fit = dd.panel_fit(panel, dd.DETAILS_MAX_ROWS)
+    assert (fit.subs, fit.more) == (1, 2)
+    body = _panel_body(_panel_view(c), dd.DETAILS_MAX_ROWS, 120, fixed=True)
+    assert any(ln.startswith("cpu  node 85%") for ln in body)
+    assert any(ln.startswith("mem  java 2.0K") for ln in body)
+    assert any("… +2 more submodules" in ln for ln in body)
