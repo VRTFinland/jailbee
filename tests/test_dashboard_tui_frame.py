@@ -11,8 +11,8 @@ from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.system import PoolStatus, SystemStatus
+from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState

@@ -66,7 +66,9 @@ class FakeStateClient:
     """Stands in for `StateClient`: `latest()` serves the *same* groups list
     every time, so a test that mutates it changes what the next tick sees."""
 
-    def __init__(self, groups, *, git_enabled=False, status=None, fail=None, update=None, system=None):  # type: ignore[no-untyped-def]
+    def __init__(
+        self, groups, *, git_enabled=False, status=None, fail=None, update=None, system=None
+    ):  # type: ignore[no-untyped-def]
         self.groups = groups
         self.update = update
         self.system = system
@@ -84,7 +86,12 @@ class FakeStateClient:
 
     def latest(self):  # type: ignore[no-untyped-def]
         return Snapshot(
-            1, datetime(2026, 10, 4, tzinfo=UTC), self.git_enabled, self.groups, self.update, self.system
+            1,
+            datetime(2026, 10, 4, tzinfo=UTC),
+            self.git_enabled,
+            self.groups,
+            self.update,
+            self.system,
         )
 
     def status(self):  # type: ignore[no-untyped-def]
