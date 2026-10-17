@@ -27,6 +27,8 @@ TABS: tuple[tuple[Tab, str], ...] = (
 )
 # The Visibility tab's first row. NUL can never start a repo prefix.
 SHOW_EMPTY = "\x00show-empty"
+# The Visibility tab's very first row: the system status line above the table.
+SHOW_SYSTEM = "\x00show-system"
 # The row's identity and the frozen column: always on, always first.
 LOCKED_FIELD = "name"
 
@@ -59,6 +61,7 @@ class SettingsState:
     visibility_repo_prefixes: tuple[str, ...]
     show_empty_repos: bool
     hidden_repos: frozenset[str]
+    show_system: bool = True
 
 
 def open_settings(
@@ -70,6 +73,7 @@ def open_settings(
     visibility_repo_prefixes: tuple[str, ...] = (),
     show_empty_repos: bool = True,
     hidden_repos: frozenset[str] = frozenset(),
+    show_system: bool = True,
 ) -> SettingsState:
     """A fresh overlay."""
     if not field_names:
@@ -82,6 +86,7 @@ def open_settings(
         visibility_repo_prefixes=visibility_repo_prefixes,
         show_empty_repos=show_empty_repos,
         hidden_repos=hidden_repos,
+        show_system=show_system,
     )
 
 
@@ -104,6 +109,7 @@ def setting_rows(state: SettingsState, tab: Tab) -> tuple[SettingRow, ...]:
     if tab == "repos":
         return tuple(SettingRow(p, p, p not in state.folded) for p in state.repo_prefixes)
     return (
+        SettingRow(SHOW_SYSTEM, "Show system status", state.show_system),
         SettingRow(SHOW_EMPTY, "Show empty repos", state.show_empty_repos),
         *(SettingRow(p, p, p not in state.hidden_repos) for p in state.visibility_repo_prefixes),
     )
@@ -129,6 +135,8 @@ def toggle_setting(state: SettingsState, tab: Tab, key: str) -> SettingsState:
         if key not in state.repo_prefixes:
             return state
         return replace(state, folded=state.folded ^ {key})
+    if key == SHOW_SYSTEM:
+        return replace(state, show_system=not state.show_system)
     if key == SHOW_EMPTY:
         return replace(state, show_empty_repos=not state.show_empty_repos)
     if key not in state.visibility_repo_prefixes:

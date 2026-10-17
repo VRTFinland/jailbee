@@ -38,6 +38,7 @@ class ViewState:
     ``columns_version`` is the newest dashboard column-set migration
     (``jailbee.dashboard.columns.COLUMNS_VERSION``) the stored ``columns``
     have been through. A save never lowers it.
+    ``show_system`` is whether the terminal dashboard draws the system status row above its table.
     ``sort_field``/``sort_desc`` are the row sort; ``None`` is the default order.
     Unlike ``columns_version`` they are written as given — every save site must carry them.
     """
@@ -50,6 +51,7 @@ class ViewState:
     columns_version: int = 0
     sort_field: str | None = None
     sort_desc: bool = False
+    show_system: bool = True
 
 
 def decode_names(raw: str | None) -> tuple[str, ...] | None:
@@ -98,6 +100,7 @@ def load_view_state(engine: Engine, frontend: str) -> ViewState:
             columns_version=row.columns_version,
             sort_field=row.sort_field,
             sort_desc=row.sort_desc,
+            show_system=row.show_system,
         )
 
 
@@ -120,6 +123,7 @@ def save_view_state(engine: Engine, frontend: str, state: ViewState) -> None:
         row.show_details = state.show_details
         row.sort_field = state.sort_field
         row.sort_desc = state.sort_desc
+        row.show_system = state.show_system
         # Never lowered: both front-ends build the `ViewState` they save from
         # their own fields, which carry no version, and a fold or a toggle
         # must not make the next launch re-run a column migration the user

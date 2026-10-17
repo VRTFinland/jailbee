@@ -39,6 +39,7 @@ def test_setting_rows_per_tab():
         ds.SettingRow("beta", "beta", False),
     )
     assert ds.setting_rows(state, "visibility") == (
+        ds.SettingRow(ds.SHOW_SYSTEM, "Show system status", True),
         ds.SettingRow(ds.SHOW_EMPTY, "Show empty repos", True),
         ds.SettingRow("alpha", "alpha", False),
         ds.SettingRow("beta", "beta", True),
@@ -117,6 +118,7 @@ def test_visibility_rows_follow_the_checkbox_polarity():
     state = _state(show_empty_repos=False, hidden_repos=frozenset({"beta"}))
     checked = {row.label: row.checked for row in ds.setting_rows(state, "visibility")}
     assert checked == {
+        "Show system status": True,
         "Show empty repos": False,
         "alpha": True,
         "beta": False,
@@ -161,3 +163,19 @@ def test_open_settings_rejects_an_empty_field_vocabulary():
     empty overlay is indistinguishable from a broken one."""
     with pytest.raises(ValueError):
         ds.open_settings(field_names=(), enabled=(), repo_prefixes=REPOS, folded=frozenset())
+
+
+def test_visibility_tab_lists_show_system_first():
+    rows = ds.setting_rows(_state(show_system=False), "visibility")
+    assert rows[0] == ds.SettingRow(ds.SHOW_SYSTEM, "Show system status", False)
+    assert rows[1].key == ds.SHOW_EMPTY
+
+
+def test_toggle_show_system():
+    state = _state()
+    assert state.show_system is True
+    off = ds.toggle_setting(state, "visibility", ds.SHOW_SYSTEM)
+    assert off.show_system is False
+    assert off.show_empty_repos is True and off.hidden_repos == frozenset()
+    assert ds.toggle_setting(off, "visibility", ds.SHOW_SYSTEM).show_system is True
+    assert ds.toggle_setting(state, "repos", ds.SHOW_SYSTEM) == state

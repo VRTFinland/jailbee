@@ -233,6 +233,9 @@ class ViewPrefs(SQLModel, table=True):
     sort_desc: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default="0")
     )
+    show_system: bool = Field(
+        default=True, sa_column=Column(Boolean, nullable=False, server_default="1")
+    )
 
 
 class RepoUpgradeState(SQLModel, table=True):

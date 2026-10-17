@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 
 def state_dir() -> Path:
@@ -265,6 +265,15 @@ def _migrate_to_v17(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v18(conn: Connection) -> None:
+    """v17 -> v18 adds the terminal dashboard's system-status-row preference."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(view_prefs)")}
+    if "show_system" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE view_prefs ADD COLUMN show_system BOOLEAN NOT NULL DEFAULT 1"
+        )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -283,6 +292,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     15: _migrate_to_v15,
     16: _migrate_to_v16,
     17: _migrate_to_v17,
+    18: _migrate_to_v18,
 }
 
 

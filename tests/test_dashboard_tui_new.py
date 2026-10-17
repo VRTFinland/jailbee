@@ -386,7 +386,7 @@ def test_run_cannot_create_from_a_row_hidden_by_visibility_settings(mocker, tmp_
     prompt = mocker.patch("typer.prompt")
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    steps = ["down", "S", "tab", "tab", "down", "space", "escape", "n"]
+    steps = ["down", "S", "tab", "tab", "down", "down", "space", "escape", "n"]
     run = drive(mocker, steps, [group])
     assert run.rc == 0
 

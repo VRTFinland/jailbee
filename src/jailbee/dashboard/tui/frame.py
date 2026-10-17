@@ -23,6 +23,7 @@ from jailbee.dashboard.overlays import (
 )
 from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
+from jailbee.dashboard.system import SystemStatus
 from jailbee.dashboard.tui.keys import KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
@@ -209,3 +210,6 @@ class DashboardView:
     ssh_policy: RemoteSSHConfig | None = None
     # Every repo, hidden ones too (None: `groups`), for the upgrade-all decision.
     all_groups: list[RepoGroup] | None = None
+    # The host status line above the table; drawn only while `show_system` and known.
+    system: SystemStatus | None = None
+    show_system: bool = True
