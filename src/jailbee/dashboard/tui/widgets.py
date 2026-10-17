@@ -20,6 +20,7 @@ from textual.scrollbar import ScrollDown, ScrollLeft, ScrollRight, ScrollTo, Scr
 from textual.strip import Strip
 from textual.widgets import Static
 
+from jailbee.dashboard import actions as dact
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.commands import permitted
 from jailbee.dashboard.details import (
@@ -326,12 +327,16 @@ FRAME_BORDER_ROWS = 2
 
 
 def _advisory_links(view: DashboardView) -> AdvisoryLinks:
-    """The advisory links the session may offer: none that run or dismiss over SSH."""
-    local = not view.over_ssh
+    """The advisory links the session may offer: each hidden only when the policy refuses it.
+
+    Dismissing writes the local state DB, not a ``jb`` command, so never over SSH.
+    """
+    policy, ssh = view.ssh_policy, view.over_ssh
     return AdvisoryLinks(
-        run=local,
-        dismiss=local,
-        upgrade_all=permitted(["upgrade"], view.ssh_policy, over_ssh=view.over_ssh),
+        run_base_build=permitted(dact.base_build_argv(), policy, over_ssh=ssh),
+        run_apply=permitted(dact.apply_argv(no_restart=False), policy, over_ssh=ssh),
+        dismiss=not ssh,
+        upgrade_all=permitted(dact.upgrade_all_argv(), policy, over_ssh=ssh),
     )
 
 

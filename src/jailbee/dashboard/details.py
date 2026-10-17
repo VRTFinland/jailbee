@@ -105,12 +105,19 @@ class ContainerPanel:
 class AdvisoryLinks:
     """Which advisory links a front-end may offer (over SSH they follow the policy)."""
 
-    run: bool
+    run_base_build: bool
+    run_apply: bool
     dismiss: bool
     upgrade_all: bool
 
+    def run(self, action: str | None) -> bool:
+        """Whether the run link of an advisory owing ``action`` may be offered."""
+        return (action == "base_build" and self.run_base_build) or (
+            action == "apply" and self.run_apply
+        )
 
-NO_LINKS = AdvisoryLinks(False, False, False)
+
+NO_LINKS = AdvisoryLinks(False, False, False, False)
 UPGRADE_ALL_LABEL = "[run jb upgrade (all repos)]"
 _LINK_GAP = "   "
 
@@ -410,7 +417,7 @@ def repo_advisory_blocks(group: RepoGroup, links: AdvisoryLinks) -> tuple[Adviso
     blocks = []
     for a in group.advisories:
         offered: list[AdvisoryLink] = []
-        if links.run and a.action is not None:
+        if links.run(a.action):
             offered.append(
                 AdvisoryLink(
                     f"[run {ACTION_COMMANDS[a.action]}]",

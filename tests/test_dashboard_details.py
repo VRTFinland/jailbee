@@ -898,7 +898,7 @@ def test_a_cap_below_the_top_lines_cuts_from_the_bottom_not_past_the_cap() -> No
 
 # --- advisory blocks -------------------------------------------------------
 
-_ALL_LINKS = dd.AdvisoryLinks(True, True, True)
+_ALL_LINKS = dd.AdvisoryLinks(True, True, True, True)
 
 
 def _advisory(
@@ -954,7 +954,7 @@ def test_deprecation_block_has_dismiss_only() -> None:
 
 
 def test_links_hidden_when_not_permitted() -> None:
-    view = _repo_view([_repo_group("alpha", _advisory())], dd.AdvisoryLinks(False, False, False))
+    view = _repo_view([_repo_group("alpha", _advisory())], dd.AdvisoryLinks(False, False, False, False))
     text = _text(dd.render_details(view, None), 120)
     assert "⚠ Since apply:" in text
     assert "[" not in text
@@ -972,7 +972,7 @@ def test_upgrade_all_link_needs_two_repos() -> None:
     both = [_repo_group("alpha", _advisory(), _advisory("base-build", "base_build"))]
     assert "upgrade-all" not in {m[0] for m in _metas(_repo_view(both))}
     # not permitted
-    assert _metas(_repo_view(two, dd.AdvisoryLinks(True, True, False))).isdisjoint(
+    assert _metas(_repo_view(two, dd.AdvisoryLinks(True, True, True, False))).isdisjoint(
         {("upgrade-all", "alpha")}
     )
 
@@ -1026,8 +1026,22 @@ def test_advisory_links_follow_ssh_state() -> None:
     policy = RemoteSSHConfig.model_validate(
         {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["upgrade"]}}
     )
-    assert _advisory_links(view_of([])) == dd.AdvisoryLinks(True, True, True)
+    assert _advisory_links(view_of([])) == dd.AdvisoryLinks(True, True, True, True)
     over = view_of([], over_ssh=True, ssh_policy=policy)
-    assert _advisory_links(over) == dd.AdvisoryLinks(False, False, True)
+    assert _advisory_links(over) == dd.AdvisoryLinks(False, False, False, True)
     denied = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["ls"]}})
     assert not _advisory_links(view_of([], over_ssh=True, ssh_policy=denied)).upgrade_all
+
+
+def test_advisory_run_links_follow_the_policy_per_action() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.tui.widgets import _advisory_links
+    from tests.dashboard_pilot import view_of
+
+    policy = RemoteSSHConfig.model_validate(
+        {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["base build"]}}
+    )
+    links = _advisory_links(view_of([], over_ssh=True, ssh_policy=policy))
+    assert (links.run_base_build, links.run_apply) == (True, False)
+    assert not links.dismiss
+    assert links.run("base_build") and not links.run("apply") and not links.run(None)
