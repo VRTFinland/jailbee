@@ -516,7 +516,13 @@ class DashboardFrame(Vertical):
         box = self._sync_native(overlay)
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
-            details_for(view.groups, view.selected, view.now, links=_advisory_links(view))
+            details_for(
+                view.groups,
+                view.selected,
+                view.now,
+                links=_advisory_links(view),
+                all_groups=view.all_groups,
+            )
             if view.show_details and view.groups
             else None
         )

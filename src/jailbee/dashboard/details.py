@@ -445,6 +445,7 @@ def details_for(
     now: datetime,
     *,
     links: AdvisoryLinks = NO_LINKS,
+    all_groups: Sequence[RepoGroup] | None = None,
 ) -> DetailsView | None:
     """The panel for ``selected``, or None when there is nothing to describe.
 
@@ -454,7 +455,8 @@ def details_for(
 
     A container destroyed since the cursor landed on it simply has no panel
     until the selection is reconciled on the next frame. ``links`` are the
-    advisory links a repo heading's blocks may carry.
+    advisory links a repo heading's blocks may carry; ``all_groups`` (default
+    ``groups``) is every repo, hidden ones included, which `jb upgrade` sweeps.
     """
     if selected is None:
         return None
@@ -468,7 +470,7 @@ def details_for(
         if group is None:
             return None
         blocks = repo_advisory_blocks(group, links)
-        owing = owing_repos(groups)
+        owing = owing_repos(groups if all_groups is None else all_groups)
         upgrade_all = (
             AdvisoryLink(UPGRADE_ALL_LABEL, Hit("upgrade-all", (group.prefix,)))
             if links.upgrade_all and owing >= 2 and any(b.upgrade for b in blocks)

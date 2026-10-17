@@ -447,6 +447,7 @@ class DashboardSession:
             )
         return DashboardView(
             groups=self.groups,
+            all_groups=self.all_groups,
             selected=self.selected,
             now=_now().replace(microsecond=0),
             git_enabled=self.git_enabled,
@@ -2093,7 +2094,7 @@ class DashboardSession:
             elif verb == dact.REPO_DISMISS_ADVISORIES:
                 self.overlay = self.open_dismiss_picker(target)
             elif verb == dact.REPO_UPGRADE_ALL:
-                self.overlay = dact.upgrade_all_picker(target, *dadv.upgrade_counts(self.groups))
+                self.overlay = dact.upgrade_all_picker(target, *dadv.upgrade_counts(self.all_groups))
             elif verb == dact.REPO_DOCTOR:
                 self.run_dashboard_command(target, "repo", dact.doctor_argv(), style="paged")
             elif verb == dact.REPO_DISK_USAGE:
@@ -2477,6 +2478,7 @@ class DashboardSession:
                 self.folded,
                 ssh_policy=self.ssh_policy,
                 over_ssh=self.over_ssh,
+                all_groups=self.all_groups,
             )
         return open_menu(
             self.groups,
@@ -2574,7 +2576,7 @@ class DashboardSession:
         if hit.kind == "advisory-dismiss":
             self.dismiss_advisory(prefix, key)
         elif hit.kind == "upgrade-all":
-            self.overlay = dact.upgrade_all_picker(prefix, *dadv.upgrade_counts(self.groups))
+            self.overlay = dact.upgrade_all_picker(prefix, *dadv.upgrade_counts(self.all_groups))
         elif key == "apply":
             self.overlay = dact.apply_picker(prefix)
         elif key == "base-build":

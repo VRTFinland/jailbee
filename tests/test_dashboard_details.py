@@ -977,6 +977,16 @@ def test_upgrade_all_link_needs_two_repos() -> None:
     )
 
 
+def test_upgrade_all_link_counts_hidden_repos() -> None:
+    alpha = _repo_group("alpha", _advisory())
+    beta = _repo_group("beta", _advisory())
+    selected = dmodel.Row("repo", "alpha")
+    only = dd.details_for([alpha], selected, NOW, links=_ALL_LINKS)
+    assert only is not None and only.upgrade_all is None
+    both = dd.details_for([alpha], selected, NOW, links=_ALL_LINKS, all_groups=[alpha, beta])
+    assert both is not None and both.upgrade_all is not None
+
+
 def test_capped_card_keeps_every_links_line() -> None:
     adv = [_advisory("apply", reasons=4), _advisory("base-build", "base_build", reasons=4)]
     view = _repo_view([_repo_group("alpha", *adv)])

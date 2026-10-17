@@ -332,6 +332,15 @@ def test_repo_menu_hides_them_without_advisories(tmp_path):
     assert not verbs & {"base-build", "dismiss-advisories", "upgrade-all"}
 
 
+def test_repo_menu_upgrade_all_counts_hidden_repos(tmp_path):
+    alpha = _owing_group(tmp_path, "alpha", ("apply", "apply"))
+    beta = _owing_group(tmp_path, "beta", ("apply", "apply"))
+    visible = [alpha]  # beta is hidden by a visibility preference
+    assert "upgrade-all" not in repo_menu_verbs(tmenu.open_repo_menu(visible, "alpha", frozenset()))
+    menu = tmenu.open_repo_menu(visible, "alpha", frozenset(), all_groups=[alpha, beta])
+    assert "upgrade-all" in repo_menu_verbs(menu)
+
+
 def test_repo_menu_upgrade_all_needs_two_owing_repos(tmp_path):
     groups = [_owing_group(tmp_path, "alpha", ("apply", "apply"))]
     verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))

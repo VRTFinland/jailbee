@@ -207,3 +207,5 @@ class DashboardView:
     # Remote SSH session facts, so the details panel offers only permitted links.
     over_ssh: bool = False
     ssh_policy: RemoteSSHConfig | None = None
+    # Every repo, hidden ones too (None: `groups`), for the upgrade-all decision.
+    all_groups: list[RepoGroup] | None = None

@@ -119,7 +119,7 @@ def open_menu(
 
 
 def _advisory_entries(
-    groups: list[RepoGroup],
+    all_groups: list[RepoGroup],
     group: RepoGroup,
     ssh_policy: RemoteSSHConfig | None,
     *,
@@ -134,7 +134,7 @@ def _advisory_entries(
     # Dismissing writes the local state DB; it is not a jb command, so never over SSH.
     if group.advisories and not over_ssh:
         out.append(("Dismiss notice…", dact.REPO_DISMISS_ADVISORIES))
-    if owing_repos(groups) >= 2 and permitted(
+    if owing_repos(all_groups) >= 2 and permitted(
         dact.upgrade_all_argv(), ssh_policy, over_ssh=over_ssh
     ):
         out.append(("Upgrade all repos…", dact.REPO_UPGRADE_ALL))
@@ -148,6 +148,7 @@ def open_repo_menu(
     *,
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
+    all_groups: list[RepoGroup] | None = None,
 ) -> RepoMenuState | None:
     """Offer creation, the credential group, egress and repo-level CLI entries, folding for all.
 
@@ -155,6 +156,8 @@ def open_repo_menu(
 
     The credential group and egress entries are hidden when the SSH policy
     refuses them, so a session never sees an entry that can only fail.
+    ``all_groups`` (default ``groups``) is every repo, hidden ones included,
+    for the "upgrade all" decision: `jb upgrade` sweeps them all.
     """
     group = next((g for g in groups if g.prefix == prefix), None)
     if group is None:
@@ -173,7 +176,7 @@ def open_repo_menu(
         extras = dact.repo_extras(ssh_policy, over_ssh=over_ssh)
         if extras.apply is not None:
             actions.append(extras.apply)
-        actions.extend(_advisory_entries(groups, group, ssh_policy, over_ssh=over_ssh))
+        actions.extend(_advisory_entries(groups if all_groups is None else all_groups, group, ssh_policy, over_ssh=over_ssh))
         if extras.diagnostics:
             actions.append(MenuGroup(dact.DIAGNOSTICS_LABEL, extras.diagnostics))
         if extras.prune is not None:
