@@ -468,8 +468,9 @@ the new container is an ordinary clone-mode `jailbee new` pinned to it, on
 SOURCE's branch unless `--branch` names a new one. Only commits carry over:
 SOURCE must be running, in clone mode, and have no uncommitted changes
 (tracked or untracked), else exit 2; a failed fetch is exit 1. The fork
-records SOURCE in `user.jailbee.fork_of`: `jailbee ls` shows `⑂ SOURCE` as its
-base and `jailbee merge` offers SOURCE first. NAME is slugified into the
+records SOURCE in `user.jailbee.fork_of`: BASE still shows the base branch,
+the dashboards name SOURCE in the container's details (`⑂ forked from SOURCE`)
+and `jailbee merge` offers SOURCE first. NAME is slugified into the
 container name like `jailbee new`'s; SOURCE and NAME are asked for on a TTY
 when omitted. Forwards `--net`, `--memory`, `--cpu`, `--storage`,
 `--credential-group`, `--yes`, `--background`/`--no-background`,

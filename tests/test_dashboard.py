@@ -6769,7 +6769,7 @@ def test_columns_version_is_the_newest_migration_rule():
     )
 
 
-def test_dashboard_base_cell_shows_the_fork_marker():
+def test_dashboard_base_cell_shows_a_forks_base_not_its_source():
     from jailbee.dashboard.format import dashboard_cell
     from jailbee.lifecycle import ContainerInfo, ls_field_specs
 
@@ -6785,7 +6785,7 @@ def test_dashboard_base_cell_shows_the_fork_marker():
         base_branch="main",
         fork_of="myrepo-a",
     )
-    assert dashboard_cell(base, c, now) == "⑂ a"
+    assert dashboard_cell(base, c, now) == "main"
     c.fork_of = None
     assert dashboard_cell(base, c, now) == "main"
 

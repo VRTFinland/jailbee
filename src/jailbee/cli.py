@@ -3014,8 +3014,8 @@ def fork_cmd(
     """Create a container from another container's committed state.
 
     The new container starts at SOURCE's HEAD commit, on the same branch unless
-    --branch names a new one, and remembers SOURCE as its upstream: `jailbee ls`
-    shows `⑂ SOURCE` as its base, and `jailbee merge` offers SOURCE first.
+    --branch names a new one, and remembers SOURCE as its upstream: the dashboards
+    name it in the container's details, and `jailbee merge` offers SOURCE first.
     SOURCE must be running and have no uncommitted changes.
 
     Examples:

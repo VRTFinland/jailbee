@@ -609,6 +609,13 @@ def test_footer_carries_base_mode_group_created_and_resources() -> None:
     ]
 
 
+def test_footer_names_a_forks_source_after_its_base() -> None:
+    footer = _panel_plain(dd.container_panel(_c(base_branch="dev", fork_of="alpha-a"), NOW).footer)
+
+    assert footer[:3] == ["base dev", "⑂ forked from a", "clone"]
+    assert not any("forked" in p for p in _panel_plain(dd.container_panel(_c(), NOW).footer))
+
+
 def test_a_bare_container_panel() -> None:
     panel = dd.container_panel(_c(state="Stopped", network=None), NOW)
 

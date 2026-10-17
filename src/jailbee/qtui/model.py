@@ -22,7 +22,7 @@ from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.dashboard import format as dashboard_format
 from jailbee.dashboard.model import group_warnings
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
-from jailbee.lifecycle import tracking_warning
+from jailbee.lifecycle import fork_source, tracking_warning
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup
@@ -114,6 +114,9 @@ class CardContent:
     # What is off about the container's git target (fetched base ahead of the
     # local one), plain text; the card shows it as a yellow line.
     warning: str | None = None
+    # Short name of the container this one was forked from (`jailbee fork`);
+    # the card names it next to the base, which the BASE field leaves out.
+    fork_of: str | None = None
 
 
 def card_content(
@@ -155,6 +158,7 @@ def card_content(
         memory_limit=c.memory_limit,
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
         warning=tracking_warning(c),
+        fork_of=fork_source(c),
     )
 
 
@@ -220,8 +224,14 @@ def is_git_clean(cc: CardContent) -> bool:
 
 
 def compact_meta(cc: CardContent) -> list[str]:
-    """Non-empty mode/base/network values, in that order."""
-    return [v for name in ("mode", "base", "network") if (v := card_field(cc, name))]
+    """Non-empty mode/base/network values, in that order, the fork source after the base."""
+    meta: list[str] = []
+    for name in ("mode", "base", "network"):
+        if v := card_field(cc, name):
+            meta.append(v)
+        if name == "base" and cc.fork_of:
+            meta.append(f"⑂ {cc.fork_of}")
+    return meta
 
 
 def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
@@ -232,6 +242,8 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
         for f in cc.fields
         if f.name not in _GIT_FIELD_NAMES and f.value not in _CARD_PLACEHOLDERS
     ]
+    if cc.fork_of:
+        rows.append(("FORK OF", cc.fork_of))
     segs = git_segments(cc)
     rows.append(("GIT", "clean" if not segs else "  ".join(t for t, _ in segs)))
     return rows
