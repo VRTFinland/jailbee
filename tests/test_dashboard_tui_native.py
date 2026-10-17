@@ -1011,7 +1011,7 @@ def test_space_toggles_the_row_under_the_cursor_on_each_tab(mocker, tmp_path):
     save = mocker.patch.object(tsession, "save_view_state")
     run = drive(mocker, ["S", "tab", "space", "tab", "space"], [alpha_group(tmp_path)])
     assert run.trace[3].folded == frozenset({"alpha"})  # Repos row 0
-    assert run.trace[5].overlay.show_empty_repos is False  # Visibility row 0
+    assert run.trace[5].overlay.show_system is False  # Visibility row 0
     assert save.call_count == 2
 
 
@@ -1051,7 +1051,8 @@ def test_the_checkboxes_follow_the_state_they_show(mocker, tmp_path):
     )
     assert selected[0] == ["name", "state"]
     assert selected[1] == []  # alpha is folded: unchecked
-    assert selected[2] == ["alpha"]  # visible; "Show empty repos" is off
+    # system row on, "Show empty repos" off, alpha visible
+    assert selected[2] == [ds.SHOW_SYSTEM, "alpha"]
 
 
 def test_a_toggle_moves_no_cursor_and_ticks_keep_the_state(mocker, tmp_path):
@@ -1063,7 +1064,7 @@ def test_a_toggle_moves_no_cursor_and_ticks_keep_the_state(mocker, tmp_path):
 
 def test_clicks_toggle_a_row_and_switch_a_tab(mocker, tmp_path):
     mocker.patch.object(tsession, "save_view_state")
-    run = drive(mocker, ["S", PickTab("visibility"), Pick(0)], [alpha_group(tmp_path)])
+    run = drive(mocker, ["S", PickTab("visibility"), Pick(1)], [alpha_group(tmp_path)])
     assert run.natives[2].tab == "visibility"
     assert run.trace[3].overlay.show_empty_repos != run.trace[2].overlay.show_empty_repos
 

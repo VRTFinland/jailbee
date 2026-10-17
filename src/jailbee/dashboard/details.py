@@ -33,6 +33,7 @@ from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
 from jailbee.lifecycle import (
     ContainerInfo,
+    _format_bytes,
     fork_source,
     format_duration_short,
     ls_field_specs,
@@ -91,7 +92,8 @@ class ContainerPanel:
     status), ``footer`` one dim line of the rest. ``base`` names the branch
     the git table's diff column compares with. ``warnings`` are yellow lines
     under the exceptions line (the fetched target is behind, say); empty:
-    none are drawn.
+    none are drawn. ``processes`` are the top CPU and memory lines drawn
+    directly under the summary (0-2; empty: none are drawn).
     """
 
     summary: tuple[str, ...]
@@ -100,6 +102,7 @@ class ContainerPanel:
     footer: tuple[str, ...]
     exceptions: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    processes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -351,7 +354,28 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         tuple(footer),
         _exceptions(c, now, cell("ttl")),
         _warnings(c),
+        _process_lines(c),
     )
+
+
+def _process_lines(c: ContainerInfo) -> tuple[str, ...]:
+    """The ``cpu`` and ``mem`` top-process lines of a running container, as markup."""
+    if c.state != "Running":
+        return ()
+
+    def name(comm: str, count: int) -> str:
+        return escape(comm) if count == 1 else f"{escape(comm)} x{count}"
+
+    lines: list[str] = []
+    if c.top_cpu:
+        items = " · ".join(f"{name(p.comm, p.count)} {round(p.percent)}%" for p in c.top_cpu)
+        lines.append(f"[dim]cpu[/dim]  {items}")
+    if c.top_mem:
+        items = " · ".join(
+            f"{name(p.comm, p.count)} {_format_bytes(p.rss_bytes)}" for p in c.top_mem
+        )
+        lines.append(f"[dim]mem[/dim]  {items}")
+    return tuple(lines)
 
 
 def _warnings(c: ContainerInfo) -> tuple[str, ...]:
@@ -525,31 +549,39 @@ class PanelFit:
     subs: int  # submodule rows shown
     more: int  # submodule rows counted by the "… +N more submodules" row
     footer: bool
+    procs: int = 0  # process lines shown, from the top
 
 
 def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     """What of ``panel`` fits ``cap`` rows (None: everything).
 
     Blank lines go first, then submodule rows, which one row then counts;
-    the summary, the exceptions line and the footer stay. Only a panel too
-    short for the table's head loses the table, and then the footer; the
-    summary, the exceptions line and the warnings stay, cut from the bottom
-    only by a cap below their own count.
+    the summary, the process lines, the exceptions line and the footer stay.
+    A panel too short for the table's head cuts its process lines first, down
+    to none, before it loses the table; only then does it lose the table, and
+    then the footer; the summary, the exceptions line and the warnings stay,
+    cut from the bottom only by a cap below their own count.
     """
+    procs = len(panel.processes)
     # the summary, then the exceptions line and the warnings under it
-    top = 1 + bool(panel.exceptions) + len(panel.warnings)
+    top = 1 + procs + bool(panel.exceptions) + len(panel.warnings)
     subs = 0 if panel.git is None else len(panel.git) - 1
     head = 1 if panel.git is None else 2
     full = top + head + subs + 1
     if cap is None or full + 2 <= cap:
-        return PanelFit(True, True, subs, 0, True)
+        return PanelFit(True, True, subs, 0, True, procs)
     if full <= cap:
-        return PanelFit(False, True, subs, 0, True)
+        return PanelFit(False, True, subs, 0, True, procs)
     room = cap - top - head - 1  # rows left for submodules once the top, head and footer sit
     if room >= 1:
-        return PanelFit(False, True, room - 1, subs - (room - 1), True)
+        return PanelFit(False, True, room - 1, subs - (room - 1), True, procs)
+    if cap - top < head:
+        # the table's head fits once enough process lines are cut
+        kept = max(0, procs - (head - (cap - top)))
+        if kept < procs and cap - (top - procs + kept) >= head:
+            procs, top = kept, top - procs + kept
     git = cap - top >= head
-    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1)
+    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1, procs)
 
 
 def _cells(*markups: str) -> int:
@@ -621,7 +653,7 @@ def _panel_lines(
     def one(markup: str) -> None:
         lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
 
-    top = [_SUMMARY_GAP.join(panel.summary)]
+    top = [_SUMMARY_GAP.join(panel.summary), *panel.processes[: fit.procs]]
     if panel.exceptions:
         top.append(_SUMMARY_GAP.join(panel.exceptions))
     top.extend(panel.warnings)

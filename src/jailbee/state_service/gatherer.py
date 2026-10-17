@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from jailbee.agent_activity import ActivityReader
 from jailbee.dashboard.model import carry_forward_git_status, gather_live, sample_activity
+from jailbee.dashboard.system import SystemReader, pool_names
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
 from jailbee.update_check import current_notice
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from jailbee.dashboard.model import RepoGroup
+    from jailbee.dashboard.system import SystemStatus
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
     from jailbee.update_check import UpdateNotice
@@ -94,6 +96,7 @@ class Gatherer:
         sleep: Callable[[float], None] = time.sleep,
         wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
         update: Callable[[], UpdateNotice | None] = current_notice,
+        system: SystemReader | None = None,
     ) -> None:
         self._incus = incus
         self.cadence = cadence
@@ -112,6 +115,8 @@ class Gatherer:
         self._prev: list[RepoGroup] = []
         self._seq = 0
         self._update = update
+        # Pool reads are throttled inside the reader; the base tier adds no incus call.
+        self._system = system or SystemReader(interval=cadence.git_interval)
         self._update_notice: UpdateNotice | None = None
         self._last_update: float | None = None
         # The message of the failure being logged, so an outage that lasts
@@ -167,6 +172,7 @@ class Gatherer:
                 self.cadence.git,
                 groups,
                 self._update_notice_now(refresh=refresh),
+                self._system_now(groups),
             )
         stamp = self._clock()
         self._last_base = stamp
@@ -192,3 +198,11 @@ class Gatherer:
                 log.debug("update notice read failed", exc_info=True)
                 self._update_notice = None
         return self._update_notice
+
+    def _system_now(self, groups: list[RepoGroup]) -> SystemStatus | None:
+        """Host memory and storage; a failed read ships None, never fails the gather."""
+        try:
+            return self._system.read(self._incus, pool_names(groups))
+        except Exception:
+            log.debug("system status read failed", exc_info=True)
+            return None

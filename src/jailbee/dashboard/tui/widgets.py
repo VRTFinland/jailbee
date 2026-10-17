@@ -33,6 +33,7 @@ from jailbee.dashboard.details import (
 )
 from jailbee.dashboard.details import details_rows as measure_details
 from jailbee.dashboard.model import Row
+from jailbee.dashboard.system_bar import system_line
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui.fleet import TableModel, entry_cells, entry_line, header_line
 from jailbee.dashboard.tui.frame import (
@@ -398,6 +399,7 @@ class DashboardFrame(Vertical):
         background: ansi_default;
         color: ansi_default;
     }
+    DashboardFrame > #system { height: 1; background: ansi_default; }
     DashboardFrame > #notice { height: auto; background: ansi_default; }
     DashboardFrame > #bottom { height: auto; }
     DashboardFrame > #hint { height: auto; background: ansi_default; color: ansi_default; }
@@ -415,6 +417,7 @@ class DashboardFrame(Vertical):
         self.mouse_enabled = mouse_enabled or (lambda: True)
         self.candidates = candidates or (lambda _text: ())
         self._notice_input: object = None
+        self._system_input: object = None
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
         self._native_overlay_key: tuple[object, ...] | None = None
@@ -422,6 +425,7 @@ class DashboardFrame(Vertical):
         self._settle_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
+        yield Static(id="system")
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
         yield Static(id="notice")
         yield Static(id="fill-above", classes="fill")
@@ -488,6 +492,9 @@ class DashboardFrame(Vertical):
     def show(self, view: DashboardView) -> None:
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
         height = max(0, self.app.size.height - FRAME_BORDER_ROWS)
+        system_row = int(view.show_system and view.system is not None and height > 0)
+        # The status row is one line above the table; the layout budgets what is left.
+        height -= system_row
         console = self.app.console
 
         def lines(renderable: RenderableType | None, at: int) -> int:
@@ -585,6 +592,13 @@ class DashboardFrame(Vertical):
             sources=view.sources,
             ineligible=view.ineligible,
         )
+        system = self.query_one("#system", Static)
+        system.display = bool(system_row)
+        if system_row and view.system is not None:
+            system_input = (view.system, width)
+            if system_input != self._system_input:
+                system.update(system_line(view.system, max(0, width)))
+                self._system_input = system_input
         table = self.table
         table.display = layout.table_rows > 0
         table.styles.height = layout.table_rows
@@ -606,14 +620,15 @@ class DashboardFrame(Vertical):
         self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
         anchored = beside and layout.details_rows is not None
         used = (
-            layout.table_rows
+            system_row
+            + layout.table_rows
             + layout.notice_rows
             + int(layout.gap)
             + max(0, layout.bottom_rows - layout.crop_top)
             + lines(hint, width)
         )
         # A 1fr child is never given less than a row, so a full frame has no filler.
-        spare = used < height
+        spare = used < height + system_row
         self.query_one("#fill-above", Static).display = anchored and spare
         self.query_one("#fill-below", Static).display = not anchored and spare
         if box is not None:

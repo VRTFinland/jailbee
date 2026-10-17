@@ -1575,3 +1575,10 @@ def test_config_unset_checked_retries_then_tolerates_absence(incus, mocker):
     )
     incus.config_unset_checked("c", "user.jailbee.mount_until.aws")
     assert run.call_count == 2
+
+
+def test_storage_pool_resources_runs_query(incus, mocker):
+    payload = {"space": {"used": 10, "total": 100}}
+    run = _mock_run(mocker, stdout=json.dumps(payload))
+    assert incus.storage_pool_resources("fast") == payload
+    assert run.call_args.args[0][-2:] == ["query", "/1.0/storage-pools/fast/resources"]

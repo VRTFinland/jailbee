@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
-    from jailbee.procstat import ProcessActivity
+    from jailbee.procstat import ProcessActivity, ProcessMemory
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
@@ -85,6 +85,10 @@ class ContainerInfo:
     # way `git_status` is written by the git tier — never by `list_containers`.
     cpu_percent: float | None = None
     activity: tuple[ProcessActivity, ...] = ()
+    # Top programs by CPU share (no threshold) and by resident memory, from
+    # the same reading; written in place by `annotate_activity`.
+    top_cpu: tuple[ProcessActivity, ...] = ()
+    top_mem: tuple[ProcessMemory, ...] = ()
     # From the same sampler reading as `activity`, written in place by
     # `annotate_agent_status`; never by `list_containers`.
     agent_status: tuple[AgentSummary, ...] = ()
@@ -111,6 +115,9 @@ class ContainerInfo:
     # `user.jailbee.fork_of`: the full name of the container this one was
     # forked from (`jailbee fork`). May name a container that no longer exists.
     fork_of: str | None = None
+    # `pool` of the instance's root disk device (path "/"), read for the
+    # dashboard's storage pool status; None when it has none.
+    root_pool: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -391,6 +398,18 @@ def _snapshot_targets_with_defaults(
     return snapshots, defaults
 
 
+def _root_pool(raw: dict[str, Any]) -> str | None:
+    """The `pool` of the root disk device, expanded devices first, or None."""
+    for key in ("expanded_devices", "devices"):
+        for device in (raw.get(key) or {}).values():
+            if not isinstance(device, dict):
+                continue
+            pool = device.get("pool")
+            if device.get("type") == "disk" and device.get("path") == "/":
+                return pool if isinstance(pool, str) and pool else None
+    return None
+
+
 def list_containers(
     cfg: Config,
     incus: Incus,
@@ -578,6 +597,7 @@ def list_containers(
                 egress_extra=tuple(egress_extra),
                 alias=alias,
                 fork_of=fork_of,
+                root_pool=_root_pool(raw),
             )
         )
 
@@ -694,6 +714,8 @@ def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySamp
         result = results.get(c.name)
         c.cpu_percent = result.cpu_percent if result else None
         c.activity = result.processes if result else ()
+        c.top_cpu = result.top_cpu if result else ()
+        c.top_mem = result.top_mem if result else ()
 
 
 def annotate_agent_status(

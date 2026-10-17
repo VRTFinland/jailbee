@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
 from rich.console import Console
 from rich.text import Text
 
@@ -17,7 +18,7 @@ from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
-from jailbee.procstat import ProcessActivity
+from jailbee.procstat import ProcessActivity, ProcessMemory
 
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
 
@@ -1064,3 +1065,80 @@ def test_advisory_run_links_follow_the_policy_per_action() -> None:
     assert (links.run_base_build, links.run_apply) == (True, False)
     assert not links.dismiss
     assert links.run("base_build") and not links.run("apply") and not links.run(None)
+
+
+def test_panel_shows_top_cpu_and_mem_lines() -> None:
+    c = _c(
+        top_cpu=(ProcessActivity("node", 85.4, 1), ProcessActivity("java", 40.0, 2)),
+        top_mem=(ProcessMemory("qemu-system-x86", 3_300_000_000, 10),),
+    )
+    assert dd.container_panel(c, NOW).processes == (
+        "[dim]cpu[/dim]  node 85% · java x2 40%",
+        "[dim]mem[/dim]  qemu-system-x86 x10 3.1G",
+    )
+
+
+def test_panel_has_no_process_lines_when_stopped_or_empty() -> None:
+    top = {
+        "top_cpu": (ProcessActivity("node", 85.4, 1),),
+        "top_mem": (ProcessMemory("a", 1024, 1),),
+    }
+    assert dd.container_panel(_c(state="Stopped", **top), NOW).processes == ()
+    assert dd.container_panel(_c(), NOW).processes == ()
+    only_mem = dd.container_panel(_c(top_mem=top["top_mem"]), NOW)
+    assert only_mem.processes == ("[dim]mem[/dim]  a 1.0K",)
+
+
+def test_panel_fit_keeps_process_lines_before_git_rows() -> None:
+    c = replace(
+        _rich_container(subs=3),
+        top_cpu=(ProcessActivity("node", 85.4, 1),),
+        top_mem=(ProcessMemory("java", 2048, 1),),
+    )
+    panel = dd.container_panel(c, NOW)
+    assert len(panel.processes) == 2
+    fit = dd.panel_fit(panel, dd.DETAILS_MAX_ROWS)
+    assert (fit.subs, fit.more) == (1, 2)
+    body = _panel_body(_panel_view(c), dd.DETAILS_MAX_ROWS, 120, fixed=True)
+    assert any(ln.startswith("cpu  node 85%") for ln in body)
+    assert any(ln.startswith("mem  java 2.0K") for ln in body)
+    assert any("… +2 more submodules" in ln for ln in body)
+
+
+def _fit_procs(procs: int, exceptions: bool, subs: int = 0) -> dd.ContainerPanel:
+    base = _fit(subs)
+    return replace(
+        base,
+        processes=tuple(f"p{i}" for i in range(procs)),
+        exceptions=("x",) if exceptions else (),
+    )
+
+
+@pytest.mark.parametrize("exceptions", [False, True])
+@pytest.mark.parametrize("cap", range(2, 9))
+def test_panel_fit_keeps_git_root_row_by_cutting_process_lines_first(
+    cap: int, exceptions: bool
+) -> None:
+    with_procs = dd.panel_fit(_fit_procs(2, exceptions), cap)
+    without = dd.panel_fit(_fit_procs(0, exceptions), cap)
+    # the table survives whenever it would have without the process lines
+    assert with_procs.git == without.git
+    # process lines are only ever cut, never shown past the cap
+    assert 0 <= with_procs.procs <= 2
+    shown = 1 + with_procs.procs + exceptions
+    if with_procs.git:
+        assert shown + 2 <= cap
+
+
+def test_panel_fit_cuts_process_lines_before_the_git_head() -> None:
+    panel = _fit_procs(2, False)
+    assert dd.panel_fit(panel, 4).git is True
+    assert dd.panel_fit(panel, 4).procs == 1
+    assert dd.panel_fit(panel, 3).procs == 0
+    assert dd.panel_fit(_fit_procs(2, True), 5).git is True
+    assert dd.panel_fit(_fit_procs(2, True), 5).procs == 1
+
+
+def test_panel_fit_without_process_lines_is_unchanged_by_procs_field() -> None:
+    assert dd.panel_fit(_fit(2), 7).procs == 0
+    assert dd.panel_fit(_fit_procs(2, False), None).procs == 2

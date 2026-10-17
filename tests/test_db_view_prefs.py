@@ -222,3 +222,14 @@ def test_stored_column_order_round_trips() -> None:
     engine = _engine()
     save_view_state(engine, FRONTEND_QT, ViewState(columns=("name", "cpu", "state")))
     assert load_view_state(engine, FRONTEND_QT).columns == ("name", "cpu", "state")
+
+
+def test_show_system_defaults_true_and_round_trips() -> None:
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    assert load_view_state(engine, FRONTEND_TUI).show_system is True
+    save_view_state(engine, FRONTEND_TUI, ViewState(show_system=False))
+    assert load_view_state(engine, FRONTEND_TUI).show_system is False
+    save_view_state(engine, FRONTEND_TUI, ViewState(show_system=True))
+    assert load_view_state(engine, FRONTEND_TUI).show_system is True

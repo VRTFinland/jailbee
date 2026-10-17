@@ -20,12 +20,16 @@ from pydantic import TypeAdapter, ValidationError
 from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
+from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
-from jailbee.procstat import ProcessActivity
+from jailbee.procstat import ProcessActivity, ProcessMemory
+from jailbee.sysstat import DiskStatus, MemoryStatus
 from jailbee.update_check import UpdateNotice
 
-# Bumped on any change a client of another version could misread.
+# Bumped on any change a client of another version could misread. 8 added
+# RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
+# and root_pool.
 PROTOCOL = 8
 
 
@@ -63,7 +67,8 @@ class Shutdown:
 class Snapshot:
     """One complete gather. ``git_enabled`` is the server's cadence setting.
 
-    ``update`` is a newer jailbee release to advertise, or None.
+    ``update`` is a newer jailbee release to advertise, or None. ``system`` is
+    the host's memory and storage status, or None when it could not be read.
     """
 
     seq: int
@@ -71,6 +76,7 @@ class Snapshot:
     git_enabled: bool
     groups: list[RepoGroup]
     update: UpdateNotice | None = None
+    system: SystemStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -102,12 +108,17 @@ _NAMESPACE: dict[str, Any] = {
         AgentSummary,
         AppMenuEntry,
         ContainerInfo,
+        DiskStatus,
         GitStatus,
+        MemoryStatus,
         Path,
+        PoolStatus,
         ProcessActivity,
+        ProcessMemory,
         RepoAdvisory,
         RepoGroup,
         SubmoduleChange,
+        SystemStatus,
         UpdateNotice,
         datetime,
     )

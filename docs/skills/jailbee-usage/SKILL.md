@@ -122,7 +122,8 @@ service (the `--interval`/`--git-interval`/`--no-git` flags are deprecated and
 ignored).
 Both dashboards include known repositories with no containers by default;
 toggle **Show empty repos** to hide or restore all such groups, or hide an
-individual repository by prefix. In the TUI, use **Settings > Visibility**;
+individual repository by prefix. In the TUI, use **Settings > Visibility**
+(its first row, **Show system status**, hides or shows the host status bar);
 in Qt, use **View > Repositories**. The Qt repository menu tracks repositories
 as they become known, including hidden ones.
 

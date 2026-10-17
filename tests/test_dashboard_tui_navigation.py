@@ -569,7 +569,7 @@ def test_run_visibility_tab_uses_raw_prefixes_and_persists_complete_state(mocker
 
     run = drive(
         mocker,
-        ["S", "tab", "tab", "down", "space"],
+        ["S", "tab", "tab", "down", "down", "space"],
         [alpha, empty],
         view_state=ViewState(("name",), frozenset({"vanished"})),
     )

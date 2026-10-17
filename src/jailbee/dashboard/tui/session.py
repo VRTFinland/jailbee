@@ -346,6 +346,7 @@ class DashboardSession:
         self.show_empty_repos = view_state.show_empty_repos
         self.hidden_repos = view_state.hidden_repos
         self.show_details = view_state.show_details
+        self.show_system = view_state.show_system
         self.sort = SortSpec(view_state.sort_field, view_state.sort_desc)
         self.column_widths: dict[str, int] | None = None
         # The snapshot the startup widths were fitted to: the next one fits them
@@ -372,6 +373,7 @@ class DashboardSession:
         self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if over_ssh else snapshot.update
+        self.system = snapshot.system
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -399,6 +401,7 @@ class DashboardSession:
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if self.over_ssh else snapshot.update
+        self.system = snapshot.system
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
@@ -460,6 +463,8 @@ class DashboardSession:
             column_offset=self.column_offset,
             hidden_by_preferences=bool(self.all_groups) and not self.groups,
             show_details=self.show_details,
+            system=self.system,
+            show_system=self.show_system,
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
             sort=self.sort,
@@ -485,6 +490,7 @@ class DashboardSession:
                 show_empty_repos=self.show_empty_repos,
                 hidden_repos=self.hidden_repos,
                 show_details=self.show_details,
+                show_system=self.show_system,
                 sort_field=self.sort.field,
                 sort_desc=self.sort.desc,
             )
@@ -567,6 +573,7 @@ class DashboardSession:
             visibility_repo_prefixes=tuple(dict.fromkeys(g.prefix for g in self.all_groups)),
             show_empty_repos=self.show_empty_repos,
             hidden_repos=self.hidden_repos,
+            show_system=self.show_system,
         )
 
     def _report_vanished_repo(self, repo: RepoTarget) -> None:
@@ -2170,6 +2177,7 @@ class DashboardSession:
         self.folded = overlay.folded
         self.show_empty_repos = overlay.show_empty_repos
         self.hidden_repos = overlay.hidden_repos
+        self.show_system = overlay.show_system
         self.groups = visible_repo_groups(
             self.all_groups,
             show_empty_repos=self.show_empty_repos,

@@ -9609,7 +9609,7 @@ def test_annotate_activity_writes_the_sampler_result_back(mocker):
     """The adapter's whole job: build one SampleInput per container, then
     write what comes back onto the matching rows."""
     from jailbee.lifecycle import ContainerInfo, annotate_activity
-    from jailbee.procstat import ContainerActivity, ProcessActivity
+    from jailbee.procstat import ContainerActivity, ProcessActivity, ProcessMemory
 
     a = ContainerInfo(
         name="myrepo-a",
@@ -9630,7 +9630,12 @@ def test_annotate_activity_writes_the_sampler_result_back(mocker):
     busy = ProcessActivity(comm="claude", percent=98.0, count=1)
     sampler = mocker.Mock()
     sampler.sample.return_value = {
-        "myrepo-a": ContainerActivity(cpu_percent=182.0, processes=(busy,)),
+        "myrepo-a": ContainerActivity(
+            cpu_percent=182.0,
+            processes=(busy,),
+            top_cpu=(busy,),
+            top_mem=(ProcessMemory("qemu", 4096, 2),),
+        ),
         "myrepo-b": ContainerActivity(cpu_percent=None, processes=()),
     }
 
@@ -9643,13 +9648,15 @@ def test_annotate_activity_writes_the_sampler_result_back(mocker):
     ]
     assert (a.cpu_percent, a.activity) == (182.0, (busy,))
     assert (b.cpu_percent, b.activity) == (None, ())
+    assert (a.top_cpu, a.top_mem) == ((busy,), (ProcessMemory("qemu", 4096, 2),))
+    assert (b.top_cpu, b.top_mem) == ((), ())
 
 
 def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
     """A container that vanished between the gather and the sample must not
     keep rendering the previous tick's percentage."""
     from jailbee.lifecycle import ContainerInfo, annotate_activity
-    from jailbee.procstat import ProcessActivity
+    from jailbee.procstat import ProcessActivity, ProcessMemory
 
     c = ContainerInfo(
         name="myrepo-a",
@@ -9659,6 +9666,8 @@ def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
         memory_limit=None,
         cpu_percent=99.0,
         activity=(ProcessActivity("claude", 99.0, 1),),
+        top_cpu=(ProcessActivity("claude", 99.0, 1),),
+        top_mem=(ProcessMemory("claude", 1, 1),),
     )
     sampler = mocker.Mock()
     sampler.sample.return_value = {}
@@ -9667,6 +9676,7 @@ def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
 
     assert c.cpu_percent is None
     assert c.activity == ()
+    assert (c.top_cpu, c.top_mem) == ((), ())
 
 
 # ---- CPU / DOING columns ----
@@ -11023,3 +11033,18 @@ def test_new_copy_with_unknown_golden_pool_skips_the_full_copy_message(tmp_path,
         golden, "repo-feat-x", storage_pool="other", instance_only=True
     )
     assert not any("None" in m or "full copy" in m for m in infos)
+
+
+def test_list_containers_reads_root_pool(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    with_root = _container(name="myrepo-a")
+    with_root["expanded_devices"] = {"root": {"type": "disk", "path": "/", "pool": "fast"}}
+    via_devices = _container(name="myrepo-b")
+    via_devices["devices"] = {"root": {"type": "disk", "path": "/", "pool": "slow"}}
+    bare = _container(name="myrepo-c")
+    incus.list_containers.return_value = [with_root, via_devices, bare]
+    pools = {c.name: c.root_pool for c in list_containers(cfg, incus)}
+    assert pools == {"myrepo-a": "fast", "myrepo-b": "slow", "myrepo-c": None}

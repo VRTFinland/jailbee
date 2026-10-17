@@ -13,7 +13,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
-from jailbee.procstat import ProcessActivity
+from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.state_service import protocol
 from jailbee.state_service.protocol import (
     PROTOCOL,
@@ -95,6 +95,9 @@ def _full_snapshot() -> Snapshot:
             cpu_limit="2",
             cpu_percent=12.5,
             activity=(ProcessActivity("node", 50.0, 2),),
+            top_cpu=(ProcessActivity("node", 50.0, 2), ProcessActivity("sshd", 1.0, 1)),
+            top_mem=(ProcessMemory("qemu", 1 << 30, 3),),
+            root_pool="default",
             agent_status=(
                 AgentSummary(
                     "claude",
@@ -243,7 +246,8 @@ def test_garbage_is_a_protocol_error(line):
 
 
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
-    # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories.
+    # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
+    # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     assert PROTOCOL == 8
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
@@ -256,3 +260,36 @@ def test_an_unknown_activity_event_kind_is_a_protocol_error():
     assert b'"kind":"bogus"' in line
     with pytest.raises(ProtocolError):
         decode(line)
+
+
+def test_snapshot_round_trips_top_processes():
+    container = ContainerInfo(
+        name="alpha-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        top_cpu=(ProcessActivity("node", 50.0, 2),),
+        top_mem=(ProcessMemory("qemu", 1 << 30, 3), ProcessMemory("node", 4096, 1)),
+    )
+    group = RepoGroup(
+        prefix="alpha", repo_root="/r", config_path=Path("/r/c.yaml"), containers=[container]
+    )
+    snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[group])
+
+    assert decode(encode(snapshot)) == snapshot
+
+
+def test_snapshot_round_trips_system_status():
+    from jailbee.dashboard.system import PoolStatus, SystemStatus
+    from jailbee.sysstat import DiskStatus, MemoryStatus
+
+    system = SystemStatus(
+        memory=MemoryStatus(total=16 << 30, available=4 << 30, cache=1 << 30),
+        pools=(PoolStatus("default", DiskStatus(total=100, available=40)),),
+        root=DiskStatus(total=50, available=10),
+    )
+    snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[], system=system)
+
+    assert decode(encode(snapshot)) == snapshot
+    assert decode(encode(snapshot)).system == system

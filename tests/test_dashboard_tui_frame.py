@@ -11,12 +11,23 @@ from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
+from jailbee.sysstat import DiskStatus, MemoryStatus
 from tests.dashboard_fixtures import WIDE, ci, named_rows_group, wide_group
-from tests.dashboard_pilot import NATIVE_LIST, Resize, Wheel, bare_session, drive, paint, view_of
+from tests.dashboard_pilot import (
+    NATIVE_LIST,
+    FakeStateClient,
+    Resize,
+    Wheel,
+    bare_session,
+    drive,
+    paint,
+    view_of,
+)
 
 Row = dmodel.Row
 
@@ -400,3 +411,79 @@ def test_job_notices_never_wrap_but_a_refusal_does(mocker, tmp_path):
     assert view.notice == long and view.notice_wraps is False
     session.set_notice(long)
     assert session.view().notice_wraps is True
+
+
+# --- the system status row ---------------------------------------------------------
+
+GIB = 1024**3
+
+
+def _system() -> SystemStatus:
+    return SystemStatus(
+        memory=MemoryStatus(total=16 * GIB, available=8 * GIB, cache=2 * GIB),
+        pools=(PoolStatus("default", DiskStatus(total=100 * GIB, available=50 * GIB)),),
+        root=DiskStatus(total=100 * GIB, available=50 * GIB),
+    )
+
+
+def _body_rows(lines):
+    return sum(1 for line in lines if " row" in line)
+
+
+def test_the_system_row_is_one_line_above_the_table(tmp_path):
+    view = view_of([_long(tmp_path, 3)], system=_system(), show_system=True)
+    lines = paint(view, size=(100, 25))
+    assert "Mem" in lines[1] and "NAME" not in lines[1]
+    assert "NAME" in lines[2]
+    assert len(lines) == 25 and lines[-1].startswith("╰")
+
+
+@pytest.mark.parametrize("width", [120, 50, 20])
+def test_the_system_row_never_wraps(tmp_path, width):
+    lines = paint(view_of([_long(tmp_path, 3)], system=_system()), size=(width, 25))
+    assert "NAME" in lines[2]
+    assert len(lines) == 25
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"show_system": False, "system": _system()}, {"show_system": True}]
+)
+def test_the_system_row_is_absent_when_hidden_or_unknown(tmp_path, overrides):
+    lines = paint(view_of([_long(tmp_path, 3)], **overrides), size=(100, 25))
+    assert not any("Mem" in line for line in lines)
+    assert "NAME" in lines[1]
+
+
+def test_hiding_the_system_row_gives_the_table_its_row_back(tmp_path):
+    group = named_rows_group(tmp_path, 40)
+    shown = paint(view_of([group], system=_system(), show_system=True), size=(100, 20))
+    hidden = paint(view_of([group], system=_system(), show_system=False), size=(100, 20))
+    assert len(shown) == len(hidden) == 20
+    assert _body_rows(hidden) == _body_rows(shown) + 1
+
+
+def test_the_system_row_is_fed_from_the_snapshot_and_toggled_in_settings(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    client = FakeStateClient([named_rows_group(tmp_path, 40)], system=_system())
+    run = drive(
+        mocker,
+        # settings -> Visibility tab -> the first row is "Show system status"
+        ["S", "tab", "tab", "space"],
+        client=client,
+        size=(100, 20),
+        screens=True,
+    )
+    assert run.trace[0].system == _system() and run.trace[0].show_system is True
+    assert "Mem" in run.screens[0].splitlines()[1]
+    assert run.last.show_system is False
+    assert not any("Mem" in line for line in run.screens[-1].splitlines())
+    assert _body_rows(run.screens[-1].splitlines()) > _body_rows(run.screens[0].splitlines())
+
+
+def test_every_saved_view_state_keeps_a_stored_show_system_preference(mocker, tmp_path):
+    group = named_rows_group(tmp_path, 2)
+    saved = mocker.patch.object(tsession, "save_view_state")
+    drive(mocker, ["space"], [group], view_state=ViewState(show_system=False))
+    assert saved.call_args.args[2].show_system is False
+    drive(mocker, ["S", "tab", "tab", "space"], [group], view_state=ViewState())
+    assert saved.call_args.args[2].show_system is False
