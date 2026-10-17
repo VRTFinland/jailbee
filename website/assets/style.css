@@ -348,7 +348,20 @@ section {
 }
 
 .hero {
-  padding-top: clamp(3rem, 7vw, 5.5rem);
+  padding-top: clamp(1.25rem, 3vw, 2.25rem);
+  padding-bottom: clamp(1.25rem, 3vw, 2rem);
+}
+
+/* The tour right under the hero and the problem right under the tour sit
+   closer than the full section rhythm: the three read as one first screen,
+   and the stacked paddings made the gaps twice as tall as anywhere else. */
+.hero + section {
+  padding-top: clamp(1.25rem, 3vw, 2rem);
+  padding-bottom: clamp(1.5rem, 3.5vw, 2.5rem);
+}
+
+.hero + section + section {
+  padding-top: clamp(1.5rem, 3.5vw, 2.5rem);
 }
 
 /* The framed first screen: pitch on the left, install card on the right,
