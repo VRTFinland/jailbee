@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=3b33e182" />
+    <link rel="stylesheet" href="assets/style.css?v=d20b1f3e" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -306,18 +306,18 @@
               <figcaption>
                 <code>jailbee dashboard</code>
                 <p>
-                  <strong>Which agent needs you.</strong> One Android app across eight branches,
-                  each with an emulator of its own, and below it a backlog of small ideas with a
-                  container apiece. The AI column shows who is working, who is idle and who is
-                  waiting for you; the merge column, which attempts will need a hand. Scan the
-                  column, not the terminals.
+                  <strong>Which agent needs you.</strong> Eight branches of one Android app, an
+                  emulator each, and a backlog of small ideas below. The AI column shows who is
+                  working, idle or waiting for you; the merge column, which branches need a hand.
                 </p>
-                <p class="demo__legend" aria-label="The AI column's marks">
-                  <span><span class="demo__glyph demo__glyph--working" aria-hidden="true">●</span>working</span>
-                  <span><span class="demo__glyph demo__glyph--waiting" aria-hidden="true">◆</span>waiting for you</span>
-                  <span><span class="demo__glyph demo__glyph--idle" aria-hidden="true">○</span>idle</span>
-                </p>
-                <p class="demo__note">A real screenshot from daily use.</p>
+                <div class="demo__foot">
+                  <p class="demo__legend" aria-label="The AI column's marks">
+                    <span><span class="demo__glyph demo__glyph--working" aria-hidden="true">●</span>working</span>
+                    <span><span class="demo__glyph demo__glyph--waiting" aria-hidden="true">◆</span>waiting for you</span>
+                    <span><span class="demo__glyph demo__glyph--idle" aria-hidden="true">○</span>idle</span>
+                  </p>
+                  <p class="demo__note">A real screenshot from daily use.</p>
+                </div>
               </figcaption>
             </figure>
 

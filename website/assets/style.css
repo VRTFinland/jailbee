@@ -1411,6 +1411,20 @@ footer p {
   font-size: 0.85rem;
 }
 
+/* The legend and the provenance line share one row, so the caption is no
+   taller than its neighbours' and the card has no blank strip under it. */
+.demo__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.demo figcaption .demo__foot p {
+  margin: 0;
+}
+
 .demo__legend span {
   white-space: nowrap;
 }
