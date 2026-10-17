@@ -73,8 +73,8 @@ BULK_KEYS: dict[str, str] = {
 }
 _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
 # Verbs that put their own question to the user. `destroy` shows its risk
-# summary; `merge` is asked by the CLI once the targets are picked, so the
-# question can name both ends.
+# summary; `merge` is asked once the targets are picked (by the terminal
+# dashboard itself, by the CLI for Qt), so the question can name both ends.
 ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "merge"})
 # Foreground verbs the dashboard confirms itself: their CLI run is told not to
 # ask again (`--no-confirm`).

@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -33,7 +34,6 @@ from jailbee.dashboard.bulk import (
     bulk_argv,
     bulk_loose_default,
     confirm_detail,
-    confirm_flags,
     confirm_question,
     destroy_risk_lines,
     foreground_runs,
@@ -1730,6 +1730,19 @@ class DashboardSession:
             else:
                 self.set_notice("Cancelled")
             return None
+        if picker.purpose == "container-destroy-confirm":
+            if entry.value == "yes":
+                self._run_destroy(picker.target)
+            else:
+                self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "merge-confirm":
+            pick = self.merge_pick
+            if entry.value == "yes" and pick is not None:
+                self._run_merge(pick, list(picker.carry))
+            else:
+                self.set_notice("Cancelled")
+            return None
         if picker.purpose == "bulk-loose-ttl":
             self._run_planned("net loose", ("--for", entry.value))
             return None
@@ -2117,6 +2130,9 @@ class DashboardSession:
                 # The targets are picked in the table, not in the CLI's picker.
                 if self.dispatchable(target, verb) is not None:
                     self.begin_merge_pick([target])
+            elif verb == "destroy":
+                # Asked here, as a bulk destroy is, not in the CLI on a blanked screen.
+                self.overlay = self.begin_destroy(target)
             else:
                 self.dispatch(target, verb)
 
@@ -2300,6 +2316,39 @@ class DashboardSession:
                 )
         self.run_bulk(action)
         return None
+
+    def _plan_one(self, verb: str, name: str) -> BulkAction:
+        return plan_bulk(
+            self.groups,
+            [name],
+            verb,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
+        )
+
+    def begin_destroy(self, name: str) -> Picker | None:
+        """The destroy question for one container: its risk summary, "No" first."""
+        action = self._plan_one("destroy", name)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return None
+        return Picker(
+            "container-destroy-confirm",
+            f"Destroy container '{self._merge_display([name])}'?",
+            (PickerEntry("No", "no"), PickerEntry("Yes, destroy", "yes")),
+            target=name,
+            detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
+        )
+
+    def _run_destroy(self, name: str) -> None:
+        """Destroy ``name`` once confirmed, planned again: it may have changed meanwhile."""
+        action = self._plan_one("destroy", name)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return
+        self.run_bulk(action)
 
     def bulk_running(self) -> frozenset[str]:
         """Containers with a bulk child still running."""
@@ -2737,12 +2786,24 @@ class DashboardSession:
                 return
             targets = frozenset({name})
         ordered = [name for name in self._listed_names() if name in targets]
+        question = f"Merge {self._merge_display(pick.sources)} into {self._merge_display(ordered)}?"
         argv = [
             "merge",
             *pick.sources,
             *[a for t in ordered for a in ("--into", t)],
-            *confirm_flags("merge"),
+            "--no-confirm",
         ]
+        # The mode stays up behind the question, so "No" goes back to picking.
+        self.overlay = Picker(
+            "merge-confirm",
+            question,
+            (PickerEntry("No", "no"), PickerEntry("Yes, merge", "yes")),
+            carry=tuple(argv),
+        )
+
+    def _run_merge(self, pick: MergePick, argv: list[str]) -> None:
+        """Run the confirmed merge and leave the mode."""
+        ordered = [a for prev, a in pairwise(argv) if prev == "--into"]
         self.merge_pick = None
         self.marked = pick.saved_marks
         # "report": a clean merge returns straight to the table, so the notice
