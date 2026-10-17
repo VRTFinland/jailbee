@@ -39,7 +39,9 @@ def _incus(source: str = "/dev/nvme1n1", pools: list[str] | None = None) -> Magi
         {"name": n, "config": {"source": source}} for n in names
     ]
     incus.storage_pool_resources.return_value = {"space": {"used": 30, "total": 100}}
-    incus.profile_show.return_value = "devices:\n  root:\n    path: /\n    pool: dflt\n    type: disk\n"
+    incus.profile_show.return_value = (
+        "devices:\n  root:\n    path: /\n    pool: dflt\n    type: disk\n"
+    )
     return incus
 
 

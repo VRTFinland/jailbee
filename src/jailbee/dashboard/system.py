@@ -113,7 +113,9 @@ class SystemReader:
             total, used = space.get("total"), space.get("used")
             if not isinstance(total, int) or not isinstance(used, int):
                 raise ValueError(f"pool {name!r} reported no usable space")
-            pools.append(PoolStatus(name=name, disk=DiskStatus(total=total, available=total - used)))
+            pools.append(
+                PoolStatus(name=name, disk=DiskStatus(total=total, available=total - used))
+            )
             source = ((listed.get(name) or {}).get("config") or {}).get("source")
             if isinstance(source, str):
                 sources.append(source)
