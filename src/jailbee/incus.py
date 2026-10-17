@@ -822,7 +822,12 @@ class Incus:
         try:
             self._run_retrying_on_etag(["config", "unset", name, key])
         except IncusError as error:
-            if str(error).endswith(": Error: Config option not found"):
+            # Older Incus says "Config option not found"; 6.x says
+            # "Can't unset key '<key>', it's not currently set".
+            message = str(error)
+            if message.endswith(": Error: Config option not found") or message.endswith(
+                "it's not currently set"
+            ):
                 return
             raise
 

@@ -1577,6 +1577,18 @@ def test_config_unset_checked_retries_then_tolerates_absence(incus, mocker):
     assert run.call_count == 2
 
 
+def test_config_unset_checked_tolerates_incus_6_absence_message(incus, mocker):
+    """Incus 6.x reports an absent key as "Can't unset key …, it's not currently set"."""
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=_cp(
+            1,
+            "Error: Can't unset key 'user.jailbee.mount_until.aws', it's not currently set",
+        ),
+    )
+    incus.config_unset_checked("c", "user.jailbee.mount_until.aws")
+
+
 def test_storage_pool_resources_runs_query(incus, mocker):
     payload = {"space": {"used": 10, "total": 100}}
     run = _mock_run(mocker, stdout=json.dumps(payload))
