@@ -542,6 +542,82 @@
       </div>
     </section>
 
+    <!-- Who does this, concretely. #problem and #parallel argue the case in
+         the abstract; a reader who does not yet know they have the problem
+         recognises it from a set-up that looks like their own. Each card is a
+         real way the tool is used, written as the reader's situation first and
+         the mechanism second, and links the page that sets it up. Six, because
+         the grid is three across from 960px and a short row reads as an
+         afterthought. No pictures: #demos above already shows the dashboard
+         these describe, and six screenshots would have to be real and kept
+         current. -->
+    <section id="usecases">
+      <div class="wrap">
+        <h2>What people run in it.</h2>
+        <p>
+          Six real set-ups, each on one host with one dashboard and a container per branch.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <p>
+              <strong>A mobile app, one emulator per branch.</strong> An Android/iOS codebase with
+              a shared core, split into eight pieces of work. Each container builds its own piece
+              with an Android emulator of its own on the host's <code>/dev/kvm</code>, and the
+              dashboard shows which of the eight agents is waiting for you
+              (<a href="docs/config/#host_devices">host devices</a>,
+              <a href="docs/project-config/#talking-to-android-devices-over-adb">adb</a>).
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A backlog of small ideas, one container each.</strong> A list of
+              improvements too small for a ticket apiece. Create a container per idea, point an
+              agent at each, and merge the ones that work back to main when they are done, from
+              one container into another or straight to the host
+              (<a href="docs/git-bridge/">git bridge</a>).
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A Compose stack per branch.</strong> A web app with a database and a few
+              services. Every branch runs its own Docker daemon and Compose project, so two
+              branches never fight over a port or share a database, and a browser inside the
+              container reaches that branch on its own localhost
+              (<a href="docs/config/#golden">stacks</a>).
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>Reviewing a pull request without stopping your own work.</strong>
+              <code>jailbee new --pr 482</code> clones the PR into a container of its own and
+              boots its stack, leaving your branch untouched. Push review fixes back to the PR's
+              head, or open a stacked PR on top of it
+              (<a href="docs/git-bridge/#reviewing-a-pull-request">reviewing a pull request</a>).
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>An agent left to work without prompts.</strong> Strict network mode allows
+              only the destinations the repo names, the agent stages its PRs and issues in an
+              outbox you publish from the host, and a read-only token keeps it that way. Snapshot
+              before, restore after
+              (<a href="docs/security/#running-an-agent-without-prompts">running an agent without prompts</a>).
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>A supervised admin task with time-boxed credentials.</strong> Lend the
+              container a helpdesk's admin credentials as an optional mount for an hour, open the
+              network for the same hour, and watch the agent do the job from the dashboard. Both
+              revert on their own when the time is up
+              (<a href="docs/security/#lending-a-container-a-credential">lending a credential</a>,
+              <a href="docs/config/#loose_auto_revert">timed loose mode</a>).
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="network">
       <div class="wrap split">
         <img

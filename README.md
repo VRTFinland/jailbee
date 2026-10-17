@@ -26,6 +26,38 @@ The CLI is `jailbee`, or **`jb`** for short. It needs a **Linux host with
 Incus**. A repo's `.jailbee/config.yaml` describes its environment, so JailBee
 is project-agnostic — built at GISGRO, usable with any stack.
 
+## What people run in it
+
+- **A mobile app, one emulator per branch.** An Android/iOS codebase split
+  into eight pieces of work, each container with an Android emulator of its
+  own on the host's `/dev/kvm`, and a dashboard that shows which of the eight
+  agents is waiting for you.
+  [Host devices](https://jailbee.gisgro.io/docs/config/#host_devices) ·
+  [adb](https://jailbee.gisgro.io/docs/project-config/#talking-to-android-devices-over-adb)
+- **A backlog of small ideas, one container each.** A container per idea, an
+  agent in each, and the ones that work merged back to main from one container
+  into another or straight to the host.
+  [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/)
+- **A Compose stack per branch.** Every branch runs its own Docker daemon and
+  Compose project, so two branches never fight over a port or share a
+  database, and a browser inside the container reaches that branch on its own
+  localhost.
+  [Stacks](https://jailbee.gisgro.io/docs/config/#golden)
+- **Reviewing a pull request without stopping your own work.** `jb new --pr
+  482` clones the PR into a container of its own and boots its stack; push
+  review fixes back to the PR's head or open a stacked PR on top.
+  [Reviewing a pull request](https://jailbee.gisgro.io/docs/git-bridge/#reviewing-a-pull-request)
+- **An agent left to work without prompts.** Strict network mode, PRs and
+  issues staged in an outbox you publish from the host, a read-only token, and
+  a snapshot to restore.
+  [Running an agent without prompts](https://jailbee.gisgro.io/docs/security/#running-an-agent-without-prompts)
+- **A supervised admin task with time-boxed credentials.** Lend the container
+  a helpdesk's admin credentials as an optional mount for an hour, open the
+  network for the same hour, and watch from the dashboard; both revert on
+  their own.
+  [Lending a credential](https://jailbee.gisgro.io/docs/security/#lending-a-container-a-credential) ·
+  [Timed loose mode](https://jailbee.gisgro.io/docs/config/#loose_auto_revert)
+
 ## See it work
 
 <p align="center">

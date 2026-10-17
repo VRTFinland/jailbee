@@ -58,6 +58,22 @@ scope.
   forward and no collisions.
 - **Snapshots** before an agent run, restore after.
 
+## What people run in it
+
+- A mobile app with a shared Android/iOS core, split across eight containers,
+  each with its own Android emulator on the host's `/dev/kvm`, with the
+  dashboard showing which agent is waiting.
+- A backlog of small improvements: one container and one agent per idea,
+  merged back to main through the git bridge.
+- A Compose stack per branch: its own Docker daemon, Compose project, database
+  and localhost.
+- Reviewing a pull request in a container of its own (`jailbee new --pr N`)
+  without disturbing the developer's branch.
+- An agent working without permission prompts behind a strict egress
+  allowlist, with PRs and issues staged in an outbox for a human to publish.
+- A supervised admin task with time-boxed credentials: an optional mount and
+  loose network mode that both revert on a timer.
+
 ## When not to use it
 
 - **Not on macOS or Windows.** JailBee itself runs on Linux only. A Mac or a
