@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=ba9fb0be" />
+    <link rel="stylesheet" href="assets/style.css?v=cabca4c8" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -295,26 +295,28 @@
               <!-- A plain terminal capture, not a video frame: the ring and
                    the legend are HTML (style.css, `.demo__ring`,
                    `.demo__legend`), so the text stays text and the picture
-                   is just the picture. The crop is the table only, padded
-                   with the terminal's own black to 16:9. -->
+                   is just the picture. A 160x35 terminal with the details
+                   panel hidden, padded top and bottom with the terminal's
+                   own black to 16:9. -->
               <div class="demo__frame">
-                <img class="demo__still" src="assets/img/dashboard-parallel.png" width="816" height="459" loading="lazy"
-                  alt="The dashboard's container table: one repository's branch containers, eight of them the parallel pieces of an Android app, with the AI column showing which agents are working, idle or waiting and a merge column flagging two conflicts" />
-                <div class="demo__ring demo__ring--waiting" aria-hidden="true"></div>
+                <img class="demo__still" src="assets/img/dashboard-parallel.png" width="1136" height="639" loading="lazy"
+                  alt="The dashboard's container table across four repositories: an Android app's eight parallel branches and another repo's backlog containers, with the AI column showing which agents are working, idle or waiting — two of them ringed as waiting — and a merge column flagging two conflicts" />
+                <div class="demo__ring demo__ring--ios7" aria-hidden="true"></div>
+                <div class="demo__ring demo__ring--main7" aria-hidden="true"></div>
               </div>
               <figcaption>
                 <code>jailbee dashboard</code>
                 <p>
                   <strong>Which agent needs you.</strong> One Android app across eight branches,
-                  each with an emulator of its own. The AI column shows who is working, who is
-                  idle and who is waiting for you; the merge column, which attempts will need a
-                  hand. Scan the column, not the terminals.
+                  each with an emulator of its own, and below it a backlog of small ideas with a
+                  container apiece. The AI column shows who is working, who is idle and who is
+                  waiting for you; the merge column, which attempts will need a hand. Scan the
+                  column, not the terminals.
                 </p>
                 <p class="demo__legend" aria-label="The AI column's marks">
                   <span><span class="demo__glyph demo__glyph--working" aria-hidden="true">●</span>working</span>
                   <span><span class="demo__glyph demo__glyph--waiting" aria-hidden="true">◆</span>waiting for you</span>
                   <span><span class="demo__glyph demo__glyph--idle" aria-hidden="true">○</span>idle</span>
-                  <span><span class="demo__glyph demo__glyph--shell" aria-hidden="true">◐</span>idle, a shell job running</span>
                 </p>
                 <p class="demo__note">A real screenshot from daily use.</p>
               </figcaption>
