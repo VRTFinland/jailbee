@@ -270,6 +270,34 @@ def test_compact_meta_orders_mode_base_network_and_drops_missing():
     assert compact_meta(cc2) == ["clone"]
 
 
+def test_a_forks_card_names_its_source_after_the_base():
+    from dataclasses import replace
+
+    from jailbee.qtui.model import compact_meta, grid_rows
+
+    cc = replace(_cc(mode="clone", base="main", network="● 12m"), fork_of="feat-a")
+    assert compact_meta(cc) == ["clone", "main", "⑂ feat-a", "● 12m"]
+    assert dict(grid_rows(cc))["FORK OF"] == "feat-a"
+    assert "FORK OF" not in dict(grid_rows(_cc(mode="clone")))
+
+
+def test_card_content_carries_the_fork_source():
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.qtui.model import card_content
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+        fork_of="myrepo-a",
+    )
+    assert card_content(c, []).fork_of == "a"
+
+
 def test_grid_rows_fold_git_into_one_row_and_drop_placeholders():
     from jailbee.qtui.model import grid_rows
 

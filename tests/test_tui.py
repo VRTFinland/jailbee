@@ -1009,7 +1009,7 @@ def test_choice_title_shows_live_diff_and_both_counts():
     assert "  2  " in title and "  1  " in title
 
 
-def test_choice_base_shows_the_fork_marker():
+def test_choice_base_shows_a_forks_base_not_its_source():
     from jailbee.tui import _choice_base
 
     c = ContainerInfo(
@@ -1022,7 +1022,7 @@ def test_choice_base_shows_the_fork_marker():
         base_branch="main",
         fork_of="myrepo-a",
     )
-    assert _choice_base(c) == "⑂ a"
+    assert _choice_base(c) == "main"
     c.fork_of = None
     assert _choice_base(c) == "main"
 

@@ -131,14 +131,14 @@ class ContainerInfo:
         return self.display_name
 
 
-def fork_marker(c: ContainerInfo) -> str | None:
-    """BASE text for a fork, ``"⑂ <source short name>"``; None when not a fork."""
+def fork_source(c: ContainerInfo) -> str | None:
+    """The short name of the container ``c`` was forked from; None when not a fork."""
     if not c.fork_of:
         return None
     source = c.fork_of
     if c.repo and source.startswith(f"{c.repo}-"):
         source = source[len(c.repo) + 1 :]
-    return f"⑂ {source}"
+    return source
 
 
 # Trims sub-microsecond precision that Incus (Go's RFC3339Nano) emits but
@@ -3417,12 +3417,9 @@ def ls_field_specs(
             sort=lambda c: _text_key(c.base_branch),
             header="BASE",
             cell=lambda c: (
-                fork_marker(c)
-                or (
-                    f"{c.base_branch} (tracking)"
-                    if c.base_branch and c.git_status and c.git_status.base_source == "tracking"
-                    else c.base_branch or "—"
-                )
+                f"{c.base_branch} (tracking)"
+                if c.base_branch and c.git_status and c.git_status.base_source == "tracking"
+                else c.base_branch or "—"
             ),
             json=lambda c: c.base_branch,
         ),

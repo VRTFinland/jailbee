@@ -179,8 +179,8 @@ def test_shown_name_without_alias_is_display_name(make_cfg, tmp_path):
     assert info.shown_name == "feat-x"
 
 
-def test_fork_marker_strips_repo_prefix():
-    from jailbee.lifecycle import ContainerInfo, fork_marker
+def test_fork_source_strips_repo_prefix():
+    from jailbee.lifecycle import ContainerInfo, fork_source
 
     c = ContainerInfo(
         name="myrepo-b",
@@ -191,11 +191,11 @@ def test_fork_marker_strips_repo_prefix():
         repo="myrepo",
         fork_of="myrepo-feat-a",
     )
-    assert fork_marker(c) == "⑂ feat-a"
-    assert fork_marker(replace(c, fork_of=None)) is None
+    assert fork_source(c) == "feat-a"
+    assert fork_source(replace(c, fork_of=None)) is None
 
 
-def test_ls_fields_render_alias_and_fork():
+def test_ls_fields_render_alias_and_a_fork_keeps_its_base():
     from jailbee.lifecycle import ContainerInfo, ls_field_specs
 
     c = ContainerInfo(
@@ -213,7 +213,7 @@ def test_ls_fields_render_alias_and_fork():
     assert fields["name"].cell(c) == "login (b)"
     assert fields["name"].json(c) == "b"
     assert fields["alias"].json(c) == "login"
-    assert fields["base"].cell(c) == "⑂ a"
+    assert fields["base"].cell(c) == "main"
     assert fields["base"].json(c) == "main"
 
 

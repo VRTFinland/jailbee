@@ -395,10 +395,6 @@ def confirm_destroy_risk(
 
 def _choice_base(c: ContainerInfo) -> str:
     """BASE text for picker rows, including a tracking-ref fallback marker."""
-    from jailbee.lifecycle import fork_marker
-
-    if (marker := fork_marker(c)) is not None:
-        return marker
     if not c.base_branch:
         return "—"
     if c.git_status is not None and c.git_status.base_source == "tracking":
