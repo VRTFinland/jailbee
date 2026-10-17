@@ -27,7 +27,9 @@ from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.sysstat import DiskStatus, MemoryStatus
 from jailbee.update_check import UpdateNotice
 
-# Bumped on any change a client of another version could misread.
+# Bumped on any change a client of another version could misread. 8 added
+# RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
+# and root_pool.
 PROTOCOL = 8
 
 
