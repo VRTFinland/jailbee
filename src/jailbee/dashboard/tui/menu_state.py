@@ -10,7 +10,7 @@ from rich.text import Text
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import actions as dact
-from jailbee.dashboard.advisories import upgrade_counts
+from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.commands import (
     permitted,
 )
@@ -134,7 +134,7 @@ def _advisory_entries(
     # Dismissing writes the local state DB; it is not a jb command, so never over SSH.
     if group.advisories and not over_ssh:
         out.append(("Dismiss notice…", dact.REPO_DISMISS_ADVISORIES))
-    if sum(upgrade_counts(groups)) >= 2 and permitted(
+    if owing_repos(groups) >= 2 and permitted(
         dact.upgrade_all_argv(), ssh_policy, over_ssh=over_ssh
     ):
         out.append(("Upgrade all repos…", dact.REPO_UPGRADE_ALL))

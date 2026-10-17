@@ -362,3 +362,10 @@ def test_dismiss_menu_picker_dismisses_chosen_advisory(mocker, tmp_path):
     assert [e.label for e in picker.entries] == ["apply owed", "base-build owed"]
     session.submit_picker(picker, picker.entries[1])
     dismiss.assert_called_once_with(group.advisories[1])
+
+
+def test_repo_menu_upgrade_all_not_offered_for_one_repo_owing_both(tmp_path):
+    groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta")]
+    verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
+    assert "base-build" in verbs
+    assert "upgrade-all" not in verbs

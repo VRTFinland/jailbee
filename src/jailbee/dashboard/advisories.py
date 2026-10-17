@@ -102,6 +102,11 @@ def dismiss_advisory(
     notices.reset_caches()
 
 
+def owing_repos(groups: Sequence[RepoGroup]) -> int:
+    """How many distinct repos owe an upgrade action (a repo owing both counts once)."""
+    return sum(any(a.action is not None for a in g.advisories) for g in groups)
+
+
 def upgrade_counts(groups: Sequence[RepoGroup]) -> tuple[int, int]:
     """``(repos owing base build, repos owing apply)`` across `groups`."""
     base = sum(any(a.action == "base_build" for a in g.advisories) for g in groups)

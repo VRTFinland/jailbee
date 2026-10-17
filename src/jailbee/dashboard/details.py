@@ -28,6 +28,7 @@ from rich.text import Text
 
 from jailbee.agent_activity import describe
 from jailbee.dashboard import format as dashboard_format
+from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
 from jailbee.lifecycle import (
@@ -460,7 +461,7 @@ def details_for(
         if group is None:
             return None
         blocks = repo_advisory_blocks(group, links)
-        owing = sum(any(a.action is not None for a in g.advisories) for g in groups)
+        owing = owing_repos(groups)
         upgrade_all = (
             AdvisoryLink(UPGRADE_ALL_LABEL, Hit("upgrade-all", (group.prefix,)))
             if links.upgrade_all and owing >= 2 and any(b.upgrade for b in blocks)
