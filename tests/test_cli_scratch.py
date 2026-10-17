@@ -327,3 +327,25 @@ def test_new_in_a_scratch_dir_colliding_with_a_configured_repo_refuses(
     assert row is not None
     assert row.repo_root == str(configured.resolve())
     assert row.synthetic_config is False
+
+
+def test_new_scratch_autobuild_with_a_bad_storage_pool_exits_cleanly(tmp_path, monkeypatch, mocker):
+    """A bad `defaults.storage_pool` aborts the scratch auto-build with a message."""
+    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    mocker.patch(
+        "jailbee.golden.build_golden_image",
+        side_effect=ValueError("Unknown storage pool 'nope'. Pools on this host: default"),
+    )
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+
+    result = runner.invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "Pools on this host" in " ".join(result.output.split())
+    assert new_container.call_count == 0

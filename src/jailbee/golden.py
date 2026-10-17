@@ -335,19 +335,25 @@ def repo_uses_docker(cfg: Config) -> bool:
 GOLDEN_INSTANCE_SUFFIX = "--golden"
 
 
+_GOLDEN_FAMILY_SUFFIXES = (GOLDEN_INSTANCE_SUFFIX, "--build", "--old")
+
+
 def golden_instance_name(alias: str) -> str:
     """Name of the stopped golden instance (instance mode)."""
     return f"{alias}{GOLDEN_INSTANCE_SUFFIX}"
 
 
 def is_golden_instance_name(name: str) -> bool:
-    """Whether ``name`` is a golden instance rather than a branch container.
+    """Whether ``name`` is a golden instance (or its build/aside) rather than a branch container.
+
+    Branch names never contain ``--``, so the golden, build and set-aside
+    suffixes cannot collide with a branch container.
 
     The golden carries only the ``default`` profile, so the profile-based
     listings already skip it; name-prefix scans (``<prefix>-...``) must use
     this instead.
     """
-    return name.endswith(GOLDEN_INSTANCE_SUFFIX)
+    return name.endswith(_GOLDEN_FAMILY_SUFFIXES)
 
 
 def golden_build_name(alias: str) -> str:
@@ -404,6 +410,35 @@ def resolve_golden_placement(cfg: Config, incus: Incus) -> GoldenPlacement:
         None,
     )
     return GoldenPlacement(pool, driver)
+
+
+def _local_nics(incus: Incus, name: str) -> list[str]:
+    """Names of the instance-local (non-profile) `type: nic` devices."""
+    data = yaml.safe_load(incus.config_show(name, expanded=False))
+    devices = data.get("devices") if isinstance(data, dict) else None
+    if not isinstance(devices, dict):
+        return []
+    return [
+        str(dev_name)
+        for dev_name, dev in devices.items()
+        if isinstance(dev, dict) and dev.get("type") == "nic"
+    ]
+
+
+def _strip_local_nics(incus: Incus, name: str) -> None:
+    """Remove every local NIC from the build container, whatever it is called.
+
+    `incus launch --network` names the NIC itself; a surviving one would put
+    every copy of the golden on the loose bridge, bypassing the strict ACL.
+    """
+    for nic in _local_nics(incus, name):
+        incus.config_device_remove(name, nic, missing_ok=True)
+    left = _local_nics(incus, name)
+    if left:
+        raise IncusError(
+            f"Could not remove the build NIC(s) {', '.join(left)} from {name}; "
+            "refusing to promote a golden that would bypass the network ACL."
+        )
 
 
 def golden_instance_pool(incus: Incus, name: str) -> str | None:
@@ -657,7 +692,7 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
         if placement.instance_mode:
             # The build-time NIC (jailbee-loose) and nesting flag are build
             # needs; a copy of the golden takes its NIC and config from profiles.
-            incus.config_device_remove(build_container, "eth0", missing_ok=True)
+            _strip_local_nics(incus, build_container)
             incus.config_unset(build_container, "security.nesting")
             set_aside = False
             if incus.exists(golden):

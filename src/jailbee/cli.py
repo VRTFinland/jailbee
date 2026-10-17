@@ -2740,7 +2740,11 @@ def new_cmd(
         if not default_confirm("Build it now?"):
             error(f"Aborted. Build it later with:  {_base_build_cmd}")
             raise typer.Exit(1)
-        build_golden_image(cfg, incus)
+        try:
+            build_golden_image(cfg, incus)
+        except ValueError as e:  # bad `defaults.storage_pool`
+            error(str(e))
+            raise typer.Exit(1) from e
         _record_upgrade_action(cfg, "base_build")
 
     # A scratch directory has run neither `jb init` nor `jb apply`, so its
@@ -11101,11 +11105,12 @@ def base_build_cmd(config: ConfigOption = None) -> None:
     cfg = _load_or_exit(config)
     try:
         build_golden_image(cfg, Incus())
-    except IncusError as e:
+    except (IncusError, ValueError) as e:
         # A provisioning failure carries apt's own stdout and stderr, which
         # is the diagnosis. Typer installs no global handler, so without this
         # it arrives wrapped in a Rich traceback that pushes the useful part
-        # off the top of the screen.
+        # off the top of the screen. A `ValueError` is a bad
+        # `defaults.storage_pool` (it lists the pools on this host).
         error(str(e))
         raise typer.Exit(1) from e
 

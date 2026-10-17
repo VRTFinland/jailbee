@@ -43,17 +43,15 @@ def gather_disk_usage(cfg: Config, gcfg: GlobalConfig, incus: Incus) -> list[Dis
     assert cfg.shared_dir is not None  # set by load_config
     images_bytes = sum(int(img.get("size", 0) or 0) for img in incus.list_images())
     sources = _pool_sources(incus)
-    from jailbee.golden import golden_instance_name
-
-    golden_name = golden_instance_name(cfg.golden.alias)
-    golden_inst = golden_instance_bytes(incus, golden_name)
     containers_bytes = _du_pool_subdirs(sources, "containers")
     all_goldens = _all_golden_bytes(sources)
     if containers_bytes is not None and all_goldens is not None:
         # Golden instances (this repo's and every other repo's) live in the
         # same dir but are not branch containers.
         containers_bytes = max(containers_bytes - all_goldens, 0)
-    golden_total = None if golden_inst is None else images_bytes + golden_inst
+    # Every repo's golden instance sits in exactly one row: here, never in
+    # Containers.
+    golden_total = None if all_goldens is None else images_bytes + all_goldens
     return [
         DiskRow("Golden images", golden_total, "incus image list + golden instance"),
         DiskRow(

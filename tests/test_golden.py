@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, call
 
 import pytest
+import yaml
 
 from jailbee.config import Stacks, load_config
 from jailbee.golden import (
@@ -38,6 +39,22 @@ def _incus(pools_driver="dir", existing=(), images=(), archives=()):
     sizes = dict.fromkeys(images, 100) | dict(archives)
 
     incus.exists.side_effect = lambda name: name in instances
+    # Local (non-expanded) devices of the build container: `launch --network`
+    # adds a NIC; `config_device_remove` takes it away.
+    nics = {"eth0"}
+    incus.local_nics = nics
+
+    def _config_show(name, expanded=False):
+        devices = {"root": {"type": "disk", "path": "/", "pool": "default"}}
+        if not expanded:
+            devices = {n: {"type": "nic", "network": "jailbee-loose"} for n in sorted(nics)}
+        return yaml.safe_dump({"devices": devices})
+
+    def _device_remove(name, device, missing_ok=False):
+        nics.discard(device)
+
+    incus.config_show.side_effect = _config_show
+    incus.config_device_remove.side_effect = _device_remove
 
     def _rename(old, new):
         instances.discard(old)
@@ -282,6 +299,31 @@ def test_instance_mode_strips_build_nic_and_nesting_before_swap(make_cfg, tmp_pa
     assert i_nest < i_promote
     incus.config_set.assert_not_called()
     assert "boot.autostart" not in incus.launch.call_args.kwargs["config"]
+
+
+def test_instance_mode_strips_a_build_nic_not_named_eth0(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = _incus(pools_driver="btrfs")
+    incus.local_nics.clear()
+    incus.local_nics.add("enp5s0")
+
+    build_golden_image(cfg, incus)
+
+    incus.config_device_remove.assert_any_call(_build_name(cfg), "enp5s0", missing_ok=True)
+    assert incus.local_nics == set()
+    assert incus.exists(_golden_name(cfg))
+
+
+def test_instance_mode_fails_the_build_when_a_nic_survives(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = _incus(pools_driver="btrfs")
+    incus.config_device_remove.side_effect = None  # removal silently does nothing
+
+    with pytest.raises(IncusError, match="eth0"):
+        build_golden_image(cfg, incus)
+
+    assert not incus.exists(_golden_name(cfg))
+    incus.delete.assert_any_call(_build_name(cfg), force=True)
 
 
 def test_instance_mode_swaps_old_golden_aside_then_deletes_it(make_cfg, tmp_path):
@@ -1350,6 +1392,17 @@ def test_golden_names_cannot_be_branch_containers(make_cfg, tmp_path):
         name = derive_container_name(cfg, branch)
         assert name != golden_instance_name(alias)
         assert name != golden_build_name(alias)
+
+
+def test_is_golden_instance_name_covers_build_and_aside():
+    from jailbee.golden import is_golden_instance_name
+
+    assert is_golden_instance_name("proj-base--golden")
+    assert is_golden_instance_name("proj-base--build")
+    assert is_golden_instance_name("proj-base--old")
+    assert not is_golden_instance_name("proj-feature")
+    assert not is_golden_instance_name("proj-golden")
+    assert not is_golden_instance_name("proj-build-old")
 
 
 def test_golden_instance_pool_reads_expanded_root_disk():

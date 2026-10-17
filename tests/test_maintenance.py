@@ -220,7 +220,9 @@ def test_disk_usage_golden_row_includes_instance_and_containers_excludes_it(
     assert _row(rows, "Containers").size_bytes == 50
 
 
-def test_disk_usage_containers_row_excludes_other_repos_goldens(make_cfg, tmp_path, mocker):
+def test_disk_usage_other_repos_goldens_count_in_golden_row_not_containers(
+    make_cfg, tmp_path, mocker
+):
     pool = _gold_pool(tmp_path)
     (pool / "containers" / "other-base--golden").mkdir()
     cfg = make_cfg(tmp_path)
@@ -230,7 +232,8 @@ def test_disk_usage_containers_row_excludes_other_repos_goldens(make_cfg, tmp_pa
     mocker.patch("jailbee.maintenance._du_bytes", side_effect=lambda p: sizes.get(p.name, 0))
     incus = _incus(pools=[{"name": "default", "driver": "btrfs", "config": {"source": str(pool)}}])
     rows = gather_disk_usage(cfg, _gcfg(tmp_path / "reg"), incus)
-    assert _row(rows, "Golden images").size_bytes == 100  # no images; own golden only
+    # no images; every repo's golden appears here, and only here
+    assert _row(rows, "Golden images").size_bytes == 170
     assert _row(rows, "Containers").size_bytes == 50
 
 

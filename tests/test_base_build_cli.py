@@ -56,3 +56,13 @@ def test_failed_build_records_nothing(mocker) -> None:
     # own `state.sqlite`. Nothing at all is the honest invariant: recording
     # unconditionally would insert a row here.
     assert rows == []
+
+
+def test_bad_storage_pool_is_an_error_message_not_a_traceback(mocker) -> None:
+    result, _ = _invoke(
+        mocker, raises=ValueError("Unknown storage pool 'nope'. Pools on this host: default")
+    )
+
+    assert result.exit_code == 1
+    assert "Pools on this host" in " ".join(result.output.split())
+    assert "Traceback" not in result.output
