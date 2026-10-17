@@ -84,7 +84,7 @@ def survey(cfg: Config, session: Session, version: str, *, now: datetime) -> lis
                 # a later release that adds one above this brings the advice
                 # back. Storing the running version instead would also swallow
                 # a reason added to that same release later.
-                fingerprint=".".join(str(part) for part in item.releases[-1]),
+                fingerprint=upgrade.fingerprint(item),
                 dismissal=stored.get(ident),
                 applies=True,
             )

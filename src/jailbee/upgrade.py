@@ -457,11 +457,22 @@ def _dotted(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
 
+def fingerprint(item: PendingAction) -> str:
+    """The dismissal fingerprint of one owed action: its highest firing release.
+
+    Dismissing acknowledges the reasons shown *now*, so a later release that
+    adds one above this brings the advice back. Shared by every surface that
+    records or compares a dismissal, so they cannot disagree on the key.
+    """
+    return _dotted(item.releases[-1])
+
+
 def format_advice(
     owed: Pending,
     *,
     max_reasons: int = MAX_REASONS,
     dismissed: dict[Action, str] | None = None,
+    footer: bool = True,
 ) -> list[str]:
     """Render `owed` as plain lines for `tui.hint`.
 
@@ -473,6 +484,10 @@ def format_advice(
     than hiding anything: doctor reports a dismissed action exactly as loudly
     as an undismissed one, which is what makes a dismissal that lasts until a
     new reason appears safe to offer at all.
+
+    `footer=False` omits the "Run `...`" line and the dismiss/dismissed line,
+    leaving only the header and reasons, for callers that render their own
+    call to action.
     """
     lines: list[str] = []
     for item in owed.actions:
@@ -495,6 +510,8 @@ def format_advice(
         hidden = len(item.reasons) - len(shown)
         if hidden:
             lines.append(f"    - ... and {hidden} more (see the CHANGELOG)")
+        if not footer:
+            continue
         lines.append(
             f"    Run `{command}` in this repo (or `jb upgrade` for every repo) to pick these up."
         )
