@@ -417,7 +417,7 @@ def repo_advisory_blocks(group: RepoGroup, links: AdvisoryLinks) -> tuple[Adviso
     blocks = []
     for a in group.advisories:
         offered: list[AdvisoryLink] = []
-        if links.run(a.action):
+        if a.action is not None and links.run(a.action):
             offered.append(
                 AdvisoryLink(
                     f"[run {ACTION_COMMANDS[a.action]}]",

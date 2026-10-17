@@ -2094,7 +2094,9 @@ class DashboardSession:
             elif verb == dact.REPO_DISMISS_ADVISORIES:
                 self.overlay = self.open_dismiss_picker(target)
             elif verb == dact.REPO_UPGRADE_ALL:
-                self.overlay = dact.upgrade_all_picker(target, *dadv.upgrade_counts(self.all_groups))
+                self.overlay = dact.upgrade_all_picker(
+                    target, *dadv.upgrade_counts(self.all_groups)
+                )
             elif verb == dact.REPO_DOCTOR:
                 self.run_dashboard_command(target, "repo", dact.doctor_argv(), style="paged")
             elif verb == dact.REPO_DISK_USAGE:

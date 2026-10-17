@@ -954,7 +954,9 @@ def test_deprecation_block_has_dismiss_only() -> None:
 
 
 def test_links_hidden_when_not_permitted() -> None:
-    view = _repo_view([_repo_group("alpha", _advisory())], dd.AdvisoryLinks(False, False, False, False))
+    view = _repo_view(
+        [_repo_group("alpha", _advisory())], dd.AdvisoryLinks(False, False, False, False)
+    )
     text = _text(dd.render_details(view, None), 120)
     assert "⚠ Since apply:" in text
     assert "[" not in text

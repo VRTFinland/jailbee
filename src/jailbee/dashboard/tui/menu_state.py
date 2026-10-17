@@ -176,7 +176,11 @@ def open_repo_menu(
         extras = dact.repo_extras(ssh_policy, over_ssh=over_ssh)
         if extras.apply is not None:
             actions.append(extras.apply)
-        actions.extend(_advisory_entries(groups if all_groups is None else all_groups, group, ssh_policy, over_ssh=over_ssh))
+        actions.extend(
+            _advisory_entries(
+                groups if all_groups is None else all_groups, group, ssh_policy, over_ssh=over_ssh
+            )
+        )
         if extras.diagnostics:
             actions.append(MenuGroup(dact.DIAGNOSTICS_LABEL, extras.diagnostics))
         if extras.prune is not None:
