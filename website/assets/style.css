@@ -30,7 +30,8 @@
   --measure: 64ch;
   --page: 1120px;
   --gap: clamp(1rem, 2.5vw, 2rem);
-  --section-y: clamp(3rem, 5.5vw, 5rem);
+  --section-y: clamp(2.5rem, 4.5vw, 4rem);
+  --section-tight: clamp(1.25rem, 2.2vw, 2rem);
   --radius: 10px;
 }
 
@@ -146,6 +147,12 @@ img {
 
 section {
   padding: var(--section-y) 0;
+}
+
+/* A section's own padding is its whole gap to the next one: a trailing
+   margin on the last block would add a different amount to each. */
+section > .wrap > :last-child {
+  margin-bottom: 0;
 }
 
 /* -----------------------------------------------------------------------
@@ -347,8 +354,24 @@ section {
   }
 }
 
+/* The space above the panel equals the space below it, measured to the
+   next heading: that gap is the hero's bottom padding plus the tour's top
+   padding, both --section-tight. */
 .hero {
-  padding-top: clamp(3rem, 7vw, 5.5rem);
+  padding-top: calc(var(--section-tight) * 2);
+  padding-bottom: var(--section-tight);
+}
+
+/* The tour right under the hero and the problem right under the tour sit
+   closer than the full section rhythm: the three read as one first screen,
+   with equal gaps between them. */
+.hero + section {
+  padding-top: var(--section-tight);
+  padding-bottom: var(--section-tight);
+}
+
+.hero + section + section {
+  padding-top: var(--section-tight);
 }
 
 /* The framed first screen: pitch on the left, install card on the right,
@@ -1389,6 +1412,20 @@ footer p {
   gap: 0.35rem 1.25rem;
   font-family: var(--mono);
   font-size: 0.85rem;
+}
+
+/* The legend and the provenance line share one row, so the caption is no
+   taller than its neighbours' and the card has no blank strip under it. */
+.demo__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.demo figcaption .demo__foot p {
+  margin: 0;
 }
 
 .demo__legend span {
