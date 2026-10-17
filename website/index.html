@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=cabca4c8" />
+    <link rel="stylesheet" href="assets/style.css?v=cc605922" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -566,9 +566,11 @@
          real way the tool is used, written as the reader's situation first and
          the mechanism second, and links the page that sets it up. Six, because
          the grid is three across from 960px and a short row reads as an
-         afterthought. No pictures: #demos above already shows the dashboard
-         these describe, and six screenshots would have to be real and kept
-         current. -->
+         afterthought. Two sentences each: six full paragraphs read as a wall.
+         An icon, not a picture, per card: #demos above already shows the
+         dashboard these describe, six screenshots would have to be real and
+         kept current, and only two of the six have anything real to show.
+         The icons are Lucide, the set the header uses. -->
     <section id="usecases">
       <div class="wrap">
         <h2>What people run in it.</h2>
@@ -577,57 +579,62 @@
         </p>
         <div class="cards">
           <div class="card">
+            <!-- Lucide smartphone. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2" ry="2" /><path d="M12 18h.01" /></svg>
             <p>
-              <strong>A mobile app, one emulator per branch.</strong> An Android/iOS codebase with
-              a shared core, split into eight pieces of work. Each container builds its own piece
-              with an Android emulator of its own on the host's <code>/dev/kvm</code>, and the
-              dashboard shows which of the eight agents is waiting for you
-              (<a href="docs/config/#host_devices">host devices</a>,
+              <strong>A mobile app, one emulator per branch.</strong> Eight pieces of one
+              Android/iOS codebase, each in a container with an emulator of its own on the host's
+              <code>/dev/kvm</code>. The dashboard shows which of the eight agents is waiting for
+              you (<a href="docs/config/#host_devices">host devices</a>,
               <a href="docs/project-config/#talking-to-android-devices-over-adb">adb</a>).
             </p>
           </div>
           <div class="card">
+            <!-- Lucide list-checks. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg>
             <p>
-              <strong>A backlog of small ideas, one container each.</strong> A list of
-              improvements too small for a ticket apiece. Create a container per idea, point an
-              agent at each, and merge the ones that work back to main when they are done, from
+              <strong>A backlog of small ideas, one container each.</strong> A container and an
+              agent per idea too small for a ticket. Merge the ones that work back to main, from
               one container into another or straight to the host
               (<a href="docs/git-bridge/">git bridge</a>).
             </p>
           </div>
           <div class="card">
+            <!-- Lucide boxes. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z" /><path d="m7 16.5-4.74-2.85" /><path d="m7 16.5 5-3" /><path d="M7 16.5v5.17" /><path d="M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z" /><path d="m17 16.5-5-3" /><path d="m17 16.5 4.74-2.85" /><path d="M17 16.5v5.17" /><path d="M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z" /><path d="M12 8 7.26 5.15" /><path d="m12 8 4.74-2.85" /><path d="M12 13.5V8" /></svg>
             <p>
-              <strong>A Compose stack per branch.</strong> A web app with a database and a few
-              services. Every branch runs its own Docker daemon and Compose project, so two
-              branches never fight over a port or share a database, and a browser inside the
+              <strong>A Compose stack per branch.</strong> Each branch runs its own Docker daemon
+              and Compose project, so no port or database is shared. A browser inside the
               container reaches that branch on its own localhost
               (<a href="docs/config/#golden">stacks</a>).
             </p>
           </div>
           <div class="card">
+            <!-- Lucide git-pull-request. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><line x1="6" x2="6" y1="9" y2="21" /></svg>
             <p>
-              <strong>Reviewing a pull request without stopping your own work.</strong>
-              <code>jailbee new --pr 482</code> clones the PR into a container of its own and
-              boots its stack, leaving your branch untouched. Push review fixes back to the PR's
-              head, or open a stacked PR on top of it
+              <strong>A pull request reviewed beside your own work.</strong>
+              <code>jailbee new --pr 482</code> boots the PR's stack in a container of its own and
+              leaves your branch alone. Push fixes back to its head, or open a stacked PR on top
               (<a href="docs/git-bridge/#reviewing-a-pull-request">reviewing a pull request</a>).
             </p>
           </div>
           <div class="card">
+            <!-- Lucide bot. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></svg>
             <p>
-              <strong>An agent left to work without prompts.</strong> Strict network mode allows
-              only the destinations the repo names, the agent stages its PRs and issues in an
-              outbox you publish from the host, and a read-only token keeps it that way. Snapshot
-              before, restore after
+              <strong>An agent left to work without prompts.</strong> A strict allowlist, an
+              outbox you publish from the host, a read-only token. Snapshot before, restore after
               (<a href="docs/security/#running-an-agent-without-prompts">running an agent without prompts</a>).
             </p>
           </div>
           <div class="card">
+            <!-- Lucide hourglass. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" /><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" /></svg>
             <p>
               <strong>A supervised admin task with time-boxed credentials.</strong> Lend the
-              container a helpdesk's admin credentials as an optional mount for an hour, open the
-              network for the same hour, and watch the agent do the job from the dashboard. Both
-              revert on their own when the time is up
+              container a helpdesk's admin credentials as an optional mount for an hour and open
+              the network for the same hour. Watch from the dashboard; both revert on their own
               (<a href="docs/security/#lending-a-container-a-credential">lending a credential</a>,
               <a href="docs/config/#loose_auto_revert">timed loose mode</a>).
             </p>

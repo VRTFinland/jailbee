@@ -43,9 +43,9 @@ is project-agnostic — built at GISGRO, usable with any stack.
   database, and a browser inside the container reaches that branch on its own
   localhost.
   [Stacks](https://jailbee.gisgro.io/docs/config/#golden)
-- **Reviewing a pull request without stopping your own work.** `jb new --pr
-  482` clones the PR into a container of its own and boots its stack; push
-  review fixes back to the PR's head or open a stacked PR on top.
+- **A pull request reviewed beside your own work.** `jb new --pr 482` boots
+  the PR's stack in a container of its own and leaves your branch alone; push
+  fixes back to its head or open a stacked PR on top.
   [Reviewing a pull request](https://jailbee.gisgro.io/docs/git-bridge/#reviewing-a-pull-request)
 - **An agent left to work without prompts.** Strict network mode, PRs and
   issues staged in an outbox you publish from the host, a read-only token, and
