@@ -97,6 +97,7 @@ def _full_snapshot() -> Snapshot:
             activity=(ProcessActivity("node", 50.0, 2),),
             top_cpu=(ProcessActivity("node", 50.0, 2), ProcessActivity("sshd", 1.0, 1)),
             top_mem=(ProcessMemory("qemu", 1 << 30, 3),),
+            root_pool="default",
             agent_status=(
                 AgentSummary(
                     "claude",
@@ -276,3 +277,18 @@ def test_snapshot_round_trips_top_processes():
     snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[group])
 
     assert decode(encode(snapshot)) == snapshot
+
+
+def test_snapshot_round_trips_system_status():
+    from jailbee.dashboard.system import PoolStatus, SystemStatus
+    from jailbee.sysstat import DiskStatus, MemoryStatus
+
+    system = SystemStatus(
+        memory=MemoryStatus(total=16 << 30, available=4 << 30, cache=1 << 30),
+        pools=(PoolStatus("default", DiskStatus(total=100, available=40)),),
+        root=DiskStatus(total=50, available=10),
+    )
+    snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[], system=system)
+
+    assert decode(encode(snapshot)) == snapshot
+    assert decode(encode(snapshot)).system == system

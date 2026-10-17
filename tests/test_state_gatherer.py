@@ -277,3 +277,43 @@ def test_snapshot_with_advisories_round_trips():
     snap = Snapshot(1, datetime(2026, 1, 1, tzinfo=UTC), True, [group])
 
     assert decode(encode(snap)) == snap
+
+
+def _with_system(mocker, reader):
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, [_ci("x")])])
+    return Gatherer(
+        mocker.Mock(),
+        CAD,
+        gather=gather,
+        clock=_Clock(),
+        sleep=lambda _s: None,
+        wall_clock=lambda: datetime(2026, 10, 4, tzinfo=UTC),
+        system=reader,
+    )
+
+
+def test_snapshot_carries_system_status(mocker):
+    from jailbee.dashboard.system import SystemStatus
+
+    status = SystemStatus(memory=None, pools=(), root=None)
+    reader = mocker.Mock()
+    reader.read.return_value = status
+    g = _with_system(mocker, reader)
+
+    snap = g.tick(active=True, refresh=False, roots=[])
+
+    assert isinstance(snap, Snapshot)
+    assert snap.system == status
+    assert reader.read.call_args.args[1] == ()
+
+
+def test_system_reader_failure_does_not_fail_gather(mocker):
+    reader = mocker.Mock()
+    reader.read.side_effect = OSError("boom")
+    g = _with_system(mocker, reader)
+
+    snap = g.tick(active=True, refresh=False, roots=[])
+
+    assert isinstance(snap, Snapshot)
+    assert snap.system is None
