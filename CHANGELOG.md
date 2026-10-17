@@ -18,6 +18,10 @@ before editing `## Unreleased`.
   (`git.user`, refused in a repo's committed file) or turn the feature off
   (`git.identity: off`). `jailbee doctor` reports the resolved identity and
   fails when the name or email is missing.
+- **More time in loose from the dashboard.** A loose container's
+  `Network →` menu offers `Extend loose…`, which asks for a new TTL counted
+  from now — no detour through strict. A bulk `Network: loose…` now extends
+  the marked containers that are already loose instead of skipping them.
 
 ### Changed
 

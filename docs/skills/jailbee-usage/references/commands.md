@@ -737,7 +737,8 @@ the plain view, menus and panels; at an inline prompt or picker it cancels just
 that question).
 
 Container actions group network mode switches and `Egress…` under `Network →`;
-stopped containers retain the read-only Egress view even though they have no
+a loose container also gets `Extend loose…`, which asks for a new TTL counted
+from now (the same as re-running `jailbee net loose`); stopped containers retain the read-only Egress view even though they have no
 mode switch. The inline Egress panel lists classified config, repo-local,
 legacy and container entries. Press `a` to add or `r` to remove the selected
 override; config entries and inherited repo entries in a container panel are

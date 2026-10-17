@@ -238,7 +238,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
 
     For running containers, one "Network: <mode>" entry appears per mode
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
-    dispatching the two-token ``jailbee net <mode>`` subcommand.
+    dispatching the two-token ``jailbee net <mode>`` subcommand. A loose
+    container also gets "Extend loose…" (``net loose`` again), which restarts
+    the auto-revert TTL without a detour through strict.
 
     Running rows lead with session actions, Outbox and app actions, followed by
     job diagnostics, PR leaves (including submodule PR when changes are probed),
@@ -318,6 +320,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
                 actions.append((f"Network: {mode}", f"net {mode}"))
+            elif mode == "loose":
+                # `net loose` on a loose container asks for a new TTL from now.
+                actions.append(("Extend loose…", "net loose"))
         actions.append(("Egress…", "net egress ls"))
         actions += [
             ("Restart", "restart"),

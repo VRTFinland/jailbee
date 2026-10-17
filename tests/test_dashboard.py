@@ -1042,10 +1042,22 @@ def test_menu_actions_running_network_strict_offers_loose():
     assert "net strict" not in verbs
 
 
-def test_menu_actions_running_network_loose_offers_strict():
-    verbs = [a for _, a in dmenus.menu_actions(_ctx(current_network="loose"))]
-    assert "net strict" in verbs
-    assert "net loose" not in verbs
+def test_menu_actions_running_network_loose_offers_strict_and_extend():
+    actions = dmenus.menu_actions(_ctx(current_network="loose"))
+    verb_to_label = {verb: label for label, verb in actions}
+    assert verb_to_label["net strict"] == "Network: strict"
+    # Re-running `net loose` on a loose container restarts its TTL clock.
+    assert verb_to_label["net loose"] == "Extend loose…"
+
+
+def test_menu_hotkeys_extend_loose_keeps_l():
+    root = tmenu.MenuState("alpha-x", dmenus.menu_actions(_ctx(current_network="loose")))
+
+    assert _hotkeys(root, "Network →") == {
+        "Network: strict": "s",
+        "Extend loose…": "l",
+        "Egress…": "e",
+    }
 
 
 def test_menu_actions_running_network_unknown_offers_both():

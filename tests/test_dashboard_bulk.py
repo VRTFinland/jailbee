@@ -40,15 +40,26 @@ def test_start_skips_a_running_container(tmp_path):
     assert action.skipped == (("alpha-a", "already running"),)
 
 
-def test_net_loose_skips_a_container_already_loose(tmp_path):
+def test_net_loose_extends_a_container_already_loose(tmp_path):
     loose = ci("alpha-b", "alpha")
     loose.network = "loose"
     groups = [_group(tmp_path, ci("alpha-a", "alpha"), loose)]
 
     action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b"], "net loose")
 
-    assert action.eligible == ("alpha-a",)
-    assert action.skipped == (("alpha-b", "already loose"),)
+    assert action.eligible == ("alpha-a", "alpha-b")
+    assert action.skipped == ()
+
+
+def test_net_strict_skips_a_container_already_strict(tmp_path):
+    loose = ci("alpha-b", "alpha")
+    loose.network = "loose"
+    groups = [_group(tmp_path, ci("alpha-a", "alpha"), loose)]
+
+    action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b"], "net strict")
+
+    assert action.eligible == ("alpha-b",)
+    assert action.skipped == (("alpha-a", "already strict"),)
 
 
 def test_git_verbs_skip_mount_mode_and_run_in_the_foreground(tmp_path):
