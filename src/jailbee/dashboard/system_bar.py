@@ -81,9 +81,7 @@ def _bar(seg: _Segment, width: int) -> Text:
     return bar
 
 
-def _render(
-    segs: list[_Segment], root: _Segment | None, bar: int | None, root_short: bool
-) -> Text:
+def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_short: bool) -> Text:
     line = Text(no_wrap=True, overflow="ellipsis")
     items = [(s, False) for s in segs]
     if root is not None:
