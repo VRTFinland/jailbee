@@ -46,9 +46,9 @@ def _styles_of(line: Text, needle: str) -> list[str]:
 
 def test_line_has_all_segments_at_wide_width() -> None:
     line = system_line(_status(), 120)
-    assert "Mem [" in line.plain
-    assert "Pool [" in line.plain
-    assert "/ [" in line.plain
+    assert "Mem[" in line.plain
+    assert "Pool[" in line.plain
+    assert "/[" in line.plain
     assert "\n" not in line.plain
 
 
@@ -73,8 +73,8 @@ def test_warn_colours_numbers_too() -> None:
 def test_multiple_pools_use_names() -> None:
     pools = (PoolStatus("fast", _disk()), PoolStatus("slow", _disk()))
     line = system_line(_status(pools=pools), 160)
-    assert "fast [" in line.plain
-    assert "slow [" in line.plain
+    assert "fast[" in line.plain
+    assert "slow[" in line.plain
     assert "Pool" not in line.plain
 
 
@@ -103,12 +103,19 @@ def test_bars_have_equal_width_within_limits() -> None:
     assert 4 <= widths.pop() <= 30
 
 
+def test_numbers_sit_inside_the_bar_at_its_right_end() -> None:
+    line = system_line(_status(), 120)
+    assert "8.0G/16.0G]" in line.plain
+    assert "50.0G/100.0G]" in line.plain
+    assert "50%]" in line.plain  # root shows its percentage inside the bar
+
+
 def test_root_shortens_before_bars_drop() -> None:
     status = _status()
     found = False
     for width in range(30, 120):
         plain = system_line(status, width).plain
-        if "/ " in plain and "/ [" not in plain and "Mem [" in plain:
+        if "/ " in plain and "/[" not in plain and "Mem[" in plain:
             assert "%" in plain
             found = True
     assert found
@@ -127,9 +134,28 @@ def test_nothing_to_show_is_empty() -> None:
     assert line.plain == ""
 
 
-def test_mem_bar_glyphs() -> None:
+def test_mem_bar_has_fill_then_blanks_and_no_shade_glyph() -> None:
     line = system_line(_status(), 120)
     plain = line.plain
+    assert "░" not in plain
     bar = plain[plain.index("[") + 1 : plain.index("]")]
-    assert set(bar) <= {"|", "░"}
-    assert "░" in bar
+    assert bar.startswith("|")
+    assert " " in bar  # the unused part is blank
+
+
+def test_unused_part_of_the_bar_has_no_style() -> None:
+    line = system_line(_status(), 120)
+    plain = line.plain
+    blank = plain.index(" ", plain.index("["))
+    assert plain[blank - 1] == "|"  # first blank follows the fill
+    covering = [sp for sp in line.spans if sp.start <= blank < sp.end]
+    assert covering == []
+
+
+def test_numbers_fit_in_the_narrowest_bar() -> None:
+    status = _status(pools=(PoolStatus("default", _disk(0.5)),))
+    for width in range(30, 120):
+        plain = system_line(status, width).plain
+        if "Mem[" in plain and "Pool[" in plain:
+            assert "8.0G/16.0G]" in plain
+            assert "50.0G/100.0G]" in plain
