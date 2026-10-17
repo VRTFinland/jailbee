@@ -55,7 +55,7 @@ incus storage list      # DRIVER column: dir, btrfs, zfs, lvm
 Two numbers that look unrelated often explain each other on a `dir` pool:
 `/var/lib/incus/storage-pools/<pool>` holds the containers and snapshots, while
 `/var/lib/incus/images` holds the golden image tarballs (any dated archive left
-by jailbee before 1.8 stays until the next build or `jailbee base prune`). On
+by jailbee before 1.7.5 stays until the next build or `jailbee base prune`). On
 a btrfs pool the golden is instead a stopped instance `<alias>--golden` inside
 the pool, and new containers are copied from it with `incus copy`.
 `jailbee disk-usage` reports a "Golden images" total that adds Incus's
@@ -302,10 +302,10 @@ shared helpers, and keep backups outside the pool you intend to remove.
    ```bash
    incus storage delete <old-pool>
    ```
-7. Optionally prune leftover pre-1.8 dated image archives:
+7. Optionally prune leftover pre-1.7.5 dated image archives:
    `jailbee base prune --all --days 14`. This asks to remove dated archives
    older than 14 days for registered repos, not every Incus image. Current
-   live aliases are kept. Since 1.8 a rebuild keeps one golden version, so
+   live aliases are kept. Since 1.7.5 a rebuild keeps one golden version, so
    there is normally nothing to prune.
 
 ### Moving a container you want to keep
@@ -355,7 +355,7 @@ not identify which image or snapshot shares the extents. See the
 - **Image tarballs shrink on rebuild.** `/var/lib/incus/images` holds the golden
   images' tarballs on non-btrfs pools. Only one version is kept: every
   `jailbee base build` replaces the previous one. `jailbee base prune` only
-  matters for dated archives left by pre-1.8 builds.
+  matters for dated archives left by pre-1.7.5 builds.
 - **`jailbee disk-usage` and btrfs.** The "Containers" and "Container
   snapshots" rows run `du -sb` on `<pool source>/containers` and
   `<pool source>/containers-snapshots`, summed across pools. These are apparent

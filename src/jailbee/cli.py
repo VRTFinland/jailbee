@@ -11137,7 +11137,7 @@ def base_prune_cmd(
 ) -> None:
     """Prune dated archive golden images (`<alias>-YYYY-MM-DD`).
 
-    Archives come only from jailbee < 1.8; builds now remove them. The live
+    Archives come only from jailbee < 1.7.5; builds now remove them. The live
     base image is always kept. In-use archives are skipped. With
     `--all`, prunes archives for every registered repo, not just the current
     one.

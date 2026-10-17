@@ -44,7 +44,7 @@ container with `incus copy --instance-only`, an instant snapshot-based clone.
 On other drivers the golden is a published image under `<alias>` and `jailbee
 new` launches from it. Only one golden version is kept: every build replaces
 the previous one and removes dated archives (`<alias>-YYYY-MM-DD`) left by
-jailbee before 1.8. Creation speed and disk sharing depend on the Incus
+jailbee before 1.7.5. Creation speed and disk sharing depend on the Incus
 storage backend: **copy-on-write is not a guarantee on every pool** (see
 [Storage](storage.md)). Rebuilding the image
 does not replace existing development containers' root filesystems. They keep

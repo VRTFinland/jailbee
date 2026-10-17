@@ -315,7 +315,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 8, 0),
+        version=(1, 7, 5),
         actions=frozenset({"base_build"}),
         reason=(
             "on a btrfs pool the golden becomes a pool-native instance that new "
