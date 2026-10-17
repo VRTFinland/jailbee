@@ -298,3 +298,83 @@ def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
     run = drive(mocker, repo_menu_keys(group, "doctor"), [group])
 
     assert "'jailbee doctor' exited 1" in run.notices()
+
+
+# --- advisory entries in the repo menu ---------------------------------------
+
+
+def _owing_group(tmp_path, prefix, *specs):
+    group = cfg_group(tmp_path)
+    group.prefix = prefix
+    group.advisories = tuple(
+        dmodel.RepoAdvisory(key, prefix, ("l",), "fp", f"{key} owed", action)
+        for key, action in specs
+    )
+    return group
+
+
+_BOTH = (("apply", "apply"), ("base-build", "base_build"))
+
+
+def test_repo_menu_offers_advisory_entries(tmp_path):
+    groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta", *_BOTH)]
+    verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
+    assert {"base-build", "dismiss-advisories", "upgrade-all"} <= verbs
+    menu = tmenu.open_repo_menu(groups, "alpha", frozenset())
+    order = [i[1] for i in menu.actions if not isinstance(i, dmenus.MenuGroup)]
+    assert order.index("apply") + 1 == order.index("base-build")
+    assert order.count("apply") == 1
+
+
+def test_repo_menu_hides_them_without_advisories(tmp_path):
+    groups = [cfg_group(tmp_path)]
+    verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
+    assert not verbs & {"base-build", "dismiss-advisories", "upgrade-all"}
+
+
+def test_repo_menu_upgrade_all_counts_hidden_repos(tmp_path):
+    alpha = _owing_group(tmp_path, "alpha", ("apply", "apply"))
+    beta = _owing_group(tmp_path, "beta", ("apply", "apply"))
+    visible = [alpha]  # beta is hidden by a visibility preference
+    assert "upgrade-all" not in repo_menu_verbs(tmenu.open_repo_menu(visible, "alpha", frozenset()))
+    menu = tmenu.open_repo_menu(visible, "alpha", frozenset(), all_groups=[alpha, beta])
+    assert "upgrade-all" in repo_menu_verbs(menu)
+
+
+def test_repo_menu_upgrade_all_needs_two_owing_repos(tmp_path):
+    groups = [_owing_group(tmp_path, "alpha", ("apply", "apply"))]
+    verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
+    assert "dismiss-advisories" in verbs
+    assert "upgrade-all" not in verbs
+
+
+def test_repo_menu_hides_them_over_ssh(tmp_path):
+    groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta", *_BOTH)]
+    verbs = repo_menu_verbs(
+        tmenu.open_repo_menu(
+            groups, "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), over_ssh=True
+        )
+    )
+    assert not verbs & {"base-build", "dismiss-advisories", "upgrade-all"}
+
+
+def test_dismiss_menu_picker_dismisses_chosen_advisory(mocker, tmp_path):
+    from tests.dashboard_pilot import bare_session
+
+    group = _owing_group(tmp_path, "alpha", *_BOTH)
+    session, _t = bare_session(mocker, [group])
+    dismiss = mocker.patch("jailbee.dashboard.advisories.dismiss_advisory")
+    session.overlay = tmenu.open_repo_menu([group], "alpha", frozenset())
+    session.menu_chosen("dismiss-advisories", None, 0)
+    picker = session.overlay
+    assert picker.purpose == "repo-dismiss-advisory"
+    assert [e.label for e in picker.entries] == ["apply owed", "base-build owed"]
+    session.submit_picker(picker, picker.entries[1])
+    dismiss.assert_called_once_with(group.advisories[1])
+
+
+def test_repo_menu_upgrade_all_not_offered_for_one_repo_owing_both(tmp_path):
+    groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta")]
+    verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
+    assert "base-build" in verbs
+    assert "upgrade-all" not in verbs

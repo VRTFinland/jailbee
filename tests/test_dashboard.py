@@ -6852,3 +6852,171 @@ def test_stored_view_gains_mounts_after_network_once():
     cols, _ = dcolumns.migrate_column_set(("mounts", "name", "network"), from_version=1)
     assert cols.count("mounts") == 1
     assert "mounts" in dcolumns.default_columns()
+
+
+# --- advisories gathered per repo ------------------------------------------------
+
+
+@pytest.fixture
+def advisory_rig(tmp_path, monkeypatch, mocker, db_engine):
+    """A real repo config on disk, the real loader, an in-memory state DB."""
+    xdg = tmp_path / ".config"
+    (xdg / "jailbee").mkdir(parents=True)
+    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.db.get_engine", return_value=db_engine)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+    mocker.patch("jailbee.upgrade.UPGRADE_NOTES", ())
+    repo = tmp_path / "alpha"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".jailbee").mkdir()
+    cfg_file = repo / ".jailbee" / "config.yaml"
+    cfg_file.write_text("container_prefix: alpha\nchrome:\n  enabled: true\n")
+    return repo, cfg_file
+
+
+def _gather(mocker, repo):
+    return dmodel.gather_rows(mocker.MagicMock(), [repo], with_git=False)
+
+
+def test_gather_rows_attaches_advisories(advisory_rig, mocker):
+    repo, _ = advisory_rig
+    hint = mocker.patch("jailbee.tui.hint")
+
+    (group,) = _gather(mocker, repo)
+
+    assert [a.key for a in group.advisories] == ["legacy-chrome-block"]
+    assert group.advisories[0].scope == str(repo / ".jailbee" / "config.yaml")
+    assert group.advisories[0].action is None
+    hint.assert_not_called()
+
+
+def test_gather_rows_notice_gone_after_config_fixed(advisory_rig, mocker):
+    repo, cfg_file = advisory_rig
+    assert _gather(mocker, repo)[0].advisories
+
+    cfg_file.write_text("container_prefix: alpha\n")
+
+    assert _gather(mocker, repo)[0].advisories == ()
+
+
+def test_gather_rows_notice_persists_while_config_unchanged(advisory_rig, mocker):
+    """The emitters are once-per-process caches; without `clear_emit_caches`
+    the notice would show on the first gather only."""
+    repo, _ = advisory_rig
+
+    for _ in range(3):
+        assert [a.key for a in _gather(mocker, repo)[0].advisories] == ["legacy-chrome-block"]
+
+
+def test_gather_rows_legacy_global_notice_never_reaches_the_log(advisory_rig, tmp_path, mocker):
+    """The global config is loaded every gather; its once-per-process notices are
+    re-armed per repo, so that load must be collected too, not printed."""
+    repo, _ = advisory_rig
+    (tmp_path / ".config" / "jailbee" / "global.yaml").write_text(
+        "claude_credentials:\n  group: legacy\n"
+    )
+    hint = mocker.patch("jailbee.tui.hint")
+
+    for _ in range(2):
+        _gather(mocker, repo)
+
+    hint.assert_not_called()
+
+
+def test_gather_rows_cli_dismissal_seen_next_gather(advisory_rig, db_session, mocker):
+    from jailbee import notices
+
+    repo, cfg_file = advisory_rig
+    assert _gather(mocker, repo)[0].advisories
+    assert _gather(mocker, repo)[0].advisories
+
+    notices.save(
+        db_session,
+        "legacy-chrome-block",
+        str(cfg_file),
+        fingerprint="",
+        version="1.7.5",
+        now=datetime.now(UTC),
+    )
+
+    assert _gather(mocker, repo)[0].advisories == ()
+
+
+def test_gather_rows_advisory_failure_is_empty(advisory_rig, mocker):
+    repo, _ = advisory_rig
+    mocker.patch("jailbee.dashboard.advisories.repo_advisories", side_effect=RuntimeError("db"))
+
+    (group,) = _gather(mocker, repo)
+
+    assert group.prefix == "alpha"
+    assert group.advisories == ()
+
+
+def test_gather_rows_failed_advisory_does_not_blank_later_repos(advisory_rig, tmp_path, mocker):
+    """A failed flush leaves the shared session needing a rollback."""
+    from jailbee.dashboard import advisories as dadv
+    from jailbee.db.models import DismissedNotice
+
+    alpha, _ = advisory_rig
+    beta = tmp_path / "beta"
+    (beta / ".git").mkdir(parents=True)
+    (beta / ".jailbee").mkdir()
+    (beta / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: beta\nchrome:\n  enabled: true\n"
+    )
+    real = dadv.repo_advisories
+    calls = []
+
+    def flaky(session, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            now = datetime.now(UTC)
+            for _ in range(2):
+                session.add(
+                    DismissedNotice(
+                        scope="s", key="k", fingerprint="", version="1", dismissed_at=now
+                    )
+                )
+            session.flush()
+        return real(session, *args, **kwargs)
+
+    mocker.patch("jailbee.dashboard.advisories.repo_advisories", side_effect=flaky)
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [alpha, beta], with_git=False)
+
+    by_prefix = {g.prefix: g for g in groups}
+    assert by_prefix["alpha"].advisories == ()
+    assert [a.key for a in by_prefix["beta"].advisories] == ["legacy-chrome-block"]
+
+
+def test_synthesized_repo_gets_upgrade_advice_orphan_none(
+    advisory_rig, db_session, tmp_path, mocker
+):
+    from jailbee import upgrade
+    from jailbee.upgrade import UpgradeNote
+
+    mocker.patch(
+        "jailbee.upgrade.UPGRADE_NOTES",
+        (UpgradeNote((1, 7, 3), frozenset({"apply"}), "r"),),
+    )
+    mocker.patch("jailbee.__version__", "1.7.5")
+    scratch = tmp_path / "tutkimus"
+    (scratch / ".git").mkdir(parents=True)
+    upgrade.record(db_session, _scratch_prefix(scratch), "apply", "1.7.0", now=datetime.now(UTC))
+    orphan = _ci("zeta-one", "zeta")
+
+    def fake_list(cfg, incus, *, all_repos, **kw):
+        return [orphan] if all_repos else []
+
+    mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
+
+    groups = _gather(mocker, scratch)
+
+    synthesized = next(g for g in groups if g.repo_root is not None)
+    assert synthesized.config_path is None
+    assert [a.key for a in synthesized.advisories] == ["apply"]
+    orphan_group = next(g for g in groups if g.repo_root is None)
+    assert orphan_group.advisories == ()

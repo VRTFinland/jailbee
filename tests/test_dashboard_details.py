@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -893,3 +894,166 @@ def test_a_cap_below_the_top_lines_cuts_from_the_bottom_not_past_the_cap() -> No
     body = _panel_body(_panel_view(c), 2, 100, fixed=True)
     assert len(body) == 2
     assert body[0].startswith("▶ Running") and body[1].startswith("● loose")
+
+
+# --- advisory blocks -------------------------------------------------------
+
+_ALL_LINKS = dd.AdvisoryLinks(True, True, True, True)
+
+
+def _advisory(
+    key: str = "apply", action: Any = "apply", reasons: int = 1, head: str = "Since apply:"
+) -> dmodel.RepoAdvisory:
+    lines = (head, *(f"    - reason {key} {i}" for i in range(reasons)))
+    return dmodel.RepoAdvisory(key, "alpha", lines, "fp", head, action)
+
+
+def _repo_group(prefix: str, *advisories: dmodel.RepoAdvisory) -> dmodel.RepoGroup:
+    group = dmodel.RepoGroup(prefix, "/a", None, [])
+    group.advisories = tuple(advisories)
+    return group
+
+
+def _repo_view(
+    groups: list[dmodel.RepoGroup], links: dd.AdvisoryLinks = _ALL_LINKS
+) -> dd.DetailsView:
+    view = dd.details_for(groups, dmodel.Row("repo", groups[0].prefix), NOW, links=links)
+    assert view is not None
+    return view
+
+
+def _metas(view: dd.DetailsView, max_rows: int | None = None) -> set[tuple[Any, ...]]:
+    console = Console(width=120, file=io.StringIO(), color_system="truecolor")
+    found = set()
+    for line in console.render_lines(dd.render_details(view, max_rows), pad=False):
+        for seg in line:
+            if seg.style is not None and "@jb.hit" in seg.style.meta:
+                found.add(seg.style.meta["@jb.hit"])
+    return found
+
+
+def test_repo_card_shows_advisory_block_and_links() -> None:
+    view = _repo_view([_repo_group("alpha", _advisory())])
+    text = _text(dd.render_details(view, None), 120)
+    assert "⚠ Since apply:" in text
+    assert "reason apply 0" in text
+    assert "[run jb apply]   [dismiss]" in text
+    assert _metas(view) == {
+        ("advisory-run", "alpha", "apply"),
+        ("advisory-dismiss", "alpha", "apply"),
+    }
+
+
+def test_deprecation_block_has_dismiss_only() -> None:
+    note = _advisory("chrome", None, head="chrome: is deprecated")
+    view = _repo_view([_repo_group("alpha", note)])
+    text = _text(dd.render_details(view, None), 120)
+    assert "[dismiss]" in text
+    assert "[run" not in text
+    assert _metas(view) == {("advisory-dismiss", "alpha", "chrome")}
+
+
+def test_links_hidden_when_not_permitted() -> None:
+    view = _repo_view(
+        [_repo_group("alpha", _advisory())], dd.AdvisoryLinks(False, False, False, False)
+    )
+    text = _text(dd.render_details(view, None), 120)
+    assert "⚠ Since apply:" in text
+    assert "[" not in text
+    assert _metas(view) == set()
+
+
+def test_upgrade_all_link_needs_two_repos() -> None:
+    one = [_repo_group("alpha", _advisory()), _repo_group("beta")]
+    assert "upgrade-all" not in {m[0] for m in _metas(_repo_view(one))}
+    two = [_repo_group("alpha", _advisory()), _repo_group("beta", _advisory())]
+    view = _repo_view(two)
+    assert ("upgrade-all", "alpha") in _metas(view)
+    assert "[run jb upgrade (all repos)]" in _text(dd.render_details(view, None), 120)
+    # one repo owing both actions is still one repo
+    both = [_repo_group("alpha", _advisory(), _advisory("base-build", "base_build"))]
+    assert "upgrade-all" not in {m[0] for m in _metas(_repo_view(both))}
+    # not permitted
+    assert _metas(_repo_view(two, dd.AdvisoryLinks(True, True, True, False))).isdisjoint(
+        {("upgrade-all", "alpha")}
+    )
+
+
+def test_upgrade_all_link_counts_hidden_repos() -> None:
+    alpha = _repo_group("alpha", _advisory())
+    beta = _repo_group("beta", _advisory())
+    selected = dmodel.Row("repo", "alpha")
+    only = dd.details_for([alpha], selected, NOW, links=_ALL_LINKS)
+    assert only is not None and only.upgrade_all is None
+    both = dd.details_for([alpha], selected, NOW, links=_ALL_LINKS, all_groups=[alpha, beta])
+    assert both is not None and both.upgrade_all is not None
+
+
+def test_capped_card_keeps_every_links_line() -> None:
+    adv = [_advisory("apply", reasons=4), _advisory("base-build", "base_build", reasons=4)]
+    view = _repo_view([_repo_group("alpha", *adv)])
+    body = _body(view, 8)
+    assert sum("[dismiss]" in ln for ln in body) == 2
+    assert any("… " in ln and " more" in ln for ln in body)
+    assert len(body) == 8
+
+
+def test_card_drops_trailing_blocks_but_keeps_shown_links() -> None:
+    adv = [_advisory(f"k{i}", reasons=4) for i in range(3)]
+    view = _repo_view([_repo_group("alpha", *adv)])
+    body = _body(view, 6)  # grid takes 2 rows, 4 left: one block + the count
+    assert sum("[dismiss]" in ln for ln in body) == 1
+    assert any("… 2 more notices (jb doctor)" in ln for ln in body)
+
+
+def test_advisory_lines_grow_the_panel_into_free_rows() -> None:
+    plain = _repo_view([_repo_group("alpha")])
+    owing = _repo_view([_repo_group("alpha", _advisory(reasons=8))])
+    console = Console(width=120)
+    assert dd.details_rows(owing, console, 120).want > dd.details_rows(plain, console, 120).want
+    assert dd.details_rows(owing, console, 120).base == dd.details_rows(plain, console, 120).base
+
+
+def test_repo_warnings_excludes_advisories() -> None:
+    group = _repo_group("alpha", _advisory())
+    assert dd.repo_warnings(group) == ()
+
+
+def test_every_shown_block_keeps_a_more_marker_when_reasons_do_not_fit() -> None:
+    # room 7: three blocks need 3 rows each, so two fit with the count row; the
+    # first block must not eat the spare row and leave the second unmarked.
+    adv = [_advisory(f"k{i}", reasons=4) for i in range(3)]
+    view = _repo_view([_repo_group("alpha", *adv)])
+    rows = [t.plain for t in dd.advisory_rows(view, 7)]
+    assert sum("[dismiss]" in r for r in rows) == 2
+    assert sum("more" in r and "- …" in r for r in rows) == 2
+    assert len(rows) == 7
+
+
+def test_advisory_links_follow_ssh_state() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.tui.widgets import _advisory_links
+    from tests.dashboard_pilot import view_of
+
+    policy = RemoteSSHConfig.model_validate(
+        {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["upgrade"]}}
+    )
+    assert _advisory_links(view_of([])) == dd.AdvisoryLinks(True, True, True, True)
+    over = view_of([], over_ssh=True, ssh_policy=policy)
+    assert _advisory_links(over) == dd.AdvisoryLinks(False, False, False, True)
+    denied = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["ls"]}})
+    assert not _advisory_links(view_of([], over_ssh=True, ssh_policy=denied)).upgrade_all
+
+
+def test_advisory_run_links_follow_the_policy_per_action() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.tui.widgets import _advisory_links
+    from tests.dashboard_pilot import view_of
+
+    policy = RemoteSSHConfig.model_validate(
+        {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["base build"]}}
+    )
+    links = _advisory_links(view_of([], over_ssh=True, ssh_policy=policy))
+    assert (links.run_base_build, links.run_apply) == (True, False)
+    assert not links.dismiss
+    assert links.run("base_build") and not links.run("apply") and not links.run(None)

@@ -166,3 +166,12 @@ def test_hit_tags_do_not_change_the_rendered_text(mocker, tmp_path):
     # Metadata can split adjacent SGR runs, but must not change visible cells.
     assert Text.from_ansi(untagged).plain == Text.from_ansi(tagged).plain
     assert Text.from_ansi(untagged).cell_len == Text.from_ansi(tagged).cell_len
+
+
+def test_advisory_kinds_round_trip():
+    for hit in (
+        dhit.Hit("advisory-run", ("alpha", "apply")),
+        dhit.Hit("advisory-dismiss", ("alpha", "base-build")),
+        dhit.Hit("upgrade-all", ("alpha",)),
+    ):
+        assert dhit.Hit.of(dhit.hit_style(hit.kind, *hit.args).meta) == hit

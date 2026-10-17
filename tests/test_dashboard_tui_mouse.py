@@ -404,3 +404,91 @@ def test_a_stale_dismiss_click_without_a_notice_does_nothing(mocker, tmp_path):
     session.click(Hit("dismiss-update"))
     dismiss.assert_not_called()
     assert session.overlay is None
+
+
+# --- advisory links on the repo card -----------------------------------------
+
+
+def _adv(key, action, summary="s"):
+    return dmodel.RepoAdvisory(key, "alpha", ("line",), f"fp-{key}", summary, action)
+
+
+def _owing(tmp_path, *advisories, prefix="alpha"):
+    group = dmodel.RepoGroup(prefix, str(tmp_path), None, [ci(f"{prefix}-x", prefix)])
+    group.advisories = tuple(advisories)
+    return group
+
+
+def test_click_run_apply_opens_apply_picker(mocker, tmp_path):
+    group = _owing(tmp_path, _adv("apply", "apply"))
+    session, _t = bare_session(mocker, [group])
+    run = mocker.patch.object(session, "run_dashboard_command")
+    session.click(Hit("advisory-run", ("alpha", "apply")))
+    assert isinstance(session.overlay, Picker)
+    assert session.overlay.purpose == "repo-apply"
+    assert session.overlay.target == "alpha"
+    run.assert_not_called()
+
+
+def test_click_run_base_build_runs_foreground(mocker, tmp_path):
+    group = _owing(tmp_path, _adv("base-build", "base_build"))
+    session, _t = bare_session(mocker, [group])
+    run = mocker.patch.object(session, "run_dashboard_command")
+    session.click(Hit("advisory-run", ("alpha", "base-build")))
+    run.assert_called_once_with("alpha", "repo", ["base", "build"])
+
+
+def test_click_dismiss_records_displayed_advisory_and_refreshes(mocker, tmp_path):
+    advisory = _adv("apply", "apply")
+    session, _t = bare_session(
+        mocker, [_owing(tmp_path, advisory, _adv("base-build", "base_build"))]
+    )
+    dismiss = mocker.patch("jailbee.dashboard.advisories.dismiss_advisory")
+    session.click(Hit("advisory-dismiss", ("alpha", "apply")))
+    dismiss.assert_called_once_with(advisory)
+    assert ("refresh",) in session.client.events
+
+
+def test_click_dismiss_failure_is_reported(mocker, tmp_path):
+    session, _t = bare_session(mocker, [_owing(tmp_path, _adv("apply", "apply"))])
+    mocker.patch(
+        "jailbee.dashboard.advisories.dismiss_advisory", side_effect=OSError("database is locked")
+    )
+    session.click(Hit("advisory-dismiss", ("alpha", "apply")))
+    assert session.notice is not None and "could not dismiss: database is locked" in session.notice
+
+
+def test_click_dismiss_ignored_over_ssh(mocker, tmp_path):
+    session, _t = bare_session(mocker, [_owing(tmp_path, _adv("apply", "apply"))], over_ssh=True)
+    dismiss = mocker.patch("jailbee.dashboard.advisories.dismiss_advisory")
+    session.click(Hit("advisory-dismiss", ("alpha", "apply")))
+    dismiss.assert_not_called()
+    assert ("refresh",) not in session.client.events
+
+
+def test_upgrade_all_click_confirms_then_runs(mocker, tmp_path):
+    groups = [
+        _owing(tmp_path, _adv("base-build", "base_build"), _adv("apply", "apply")),
+        _owing(tmp_path, _adv("apply", "apply"), prefix="beta"),
+    ]
+    session, _t = bare_session(mocker, groups)
+    run = mocker.patch.object(session, "run_dashboard_command")
+    session.click(Hit("upgrade-all", ("alpha",)))
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "repo-upgrade-all"
+    assert picker.detail[0] == "base build in 1 repo(s), apply in 2 repo(s)"
+    run.assert_not_called()
+    session.overlay = session.submit_picker(picker, picker.entries[0])
+    run.assert_called_once_with("alpha", "repo", ["upgrade"])
+
+
+def test_upgrade_all_declined_runs_nothing(mocker, tmp_path):
+    session, _t = bare_session(
+        mocker, [_owing(tmp_path, _adv("apply", "apply")), _owing(tmp_path, prefix="beta")]
+    )
+    run = mocker.patch.object(session, "run_dashboard_command")
+    session.click(Hit("upgrade-all", ("alpha",)))
+    picker = session.overlay
+    session.submit_picker(picker, picker.entries[1])
+    run.assert_not_called()
+    assert session.notice == "Cancelled"

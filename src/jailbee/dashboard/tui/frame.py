@@ -9,6 +9,7 @@ from datetime import datetime
 from rich.style import Style
 from rich.text import Text
 
+from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.egress import EgressState
@@ -203,3 +204,8 @@ class DashboardView:
     notice_wraps: bool = True
     # A newer jailbee release to advertise on a row of its own (`update_line`).
     update: UpdateNotice | None = None
+    # Remote SSH session facts, so the details panel offers only permitted links.
+    over_ssh: bool = False
+    ssh_policy: RemoteSSHConfig | None = None
+    # Every repo, hidden ones too (None: `groups`), for the upgrade-all decision.
+    all_groups: list[RepoGroup] | None = None

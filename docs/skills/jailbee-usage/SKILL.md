@@ -1123,7 +1123,9 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   returns when a later release adds a **new** reason for it — upgrading alone
   does not; a dismissed `update` returns when a release newer than the
   dismissed one appears; a deprecation stays dismissed until the config
-  changes.
+  changes. The dashboard shows an owed action on the repo card too (`⚠` on the
+  header, `[run …]` and `[dismiss]` links; repo menu `Run base build`,
+  `Dismiss notice…`, `Upgrade all repos…`).
   `jailbee doctor` never respects a dismissal: it still reports both, marked
   with the version they were dismissed at, so nothing is hidden from it.
   Warnings that answer the command you just typed (what `jailbee config

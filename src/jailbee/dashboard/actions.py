@@ -28,6 +28,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.model import RepoAdvisory
     from jailbee.lifecycle import ContainerInfo
 
 Leaf = tuple[str, str]
@@ -37,6 +38,9 @@ REPO_APPLY = "apply"
 REPO_DOCTOR = "doctor"
 REPO_DISK_USAGE = "disk-usage"
 REPO_PRUNE = "prune"
+REPO_BASE_BUILD = "base-build"
+REPO_DISMISS_ADVISORIES = "dismiss-advisories"
+REPO_UPGRADE_ALL = "upgrade-all"
 
 DIAGNOSTICS_LABEL = "Diagnostics →"
 
@@ -51,6 +55,16 @@ def apply_argv(*, no_restart: bool) -> list[str]:
     restarting a container or its dockerd, and only a terminal can answer.
     """
     return ["apply", *(["--no-restart"] if no_restart else [])]
+
+
+def base_build_argv() -> list[str]:
+    """`jailbee base build`: long-running, so it runs in the foreground terminal."""
+    return ["base", "build"]
+
+
+def upgrade_all_argv() -> list[str]:
+    """`jailbee upgrade`: every repo's owed base build and apply."""
+    return ["upgrade"]
 
 
 def doctor_argv() -> list[str]:
@@ -104,6 +118,30 @@ def apply_picker(prefix: str) -> Picker:
             PickerEntry("Apply (asks before restarting anything)", APPLY_RESTART),
             PickerEntry("Apply without restarting (--no-restart)", APPLY_NO_RESTART),
         ),
+        target=prefix,
+    )
+
+
+def upgrade_all_picker(prefix: str, builds: int, applies: int) -> Picker:
+    """Confirm `jb upgrade`, which can build images in many repos. Esc runs nothing."""
+    return Picker(
+        "repo-upgrade-all",
+        "Upgrade all repos",
+        (PickerEntry("Run jb upgrade", "yes"), PickerEntry("Cancel", "no")),
+        target=prefix,
+        detail=(
+            f"base build in {builds} repo(s), apply in {applies} repo(s)",
+            "Image builds can take a long time. Nothing is restarted.",
+        ),
+    )
+
+
+def dismiss_picker(prefix: str, advisories: Sequence[RepoAdvisory]) -> Picker:
+    """Which of a repo's notices to dismiss; the entry value is the advisory key."""
+    return Picker(
+        "repo-dismiss-advisory",
+        f"Dismiss notice — {prefix}",
+        tuple(PickerEntry(a.summary, a.key) for a in advisories),
         target=prefix,
     )
 

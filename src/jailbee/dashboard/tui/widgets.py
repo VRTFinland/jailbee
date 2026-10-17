@@ -20,10 +20,13 @@ from textual.scrollbar import ScrollDown, ScrollLeft, ScrollRight, ScrollTo, Scr
 from textual.strip import Strip
 from textual.widgets import Static
 
+from jailbee.dashboard import actions as dact
 from jailbee.dashboard import hit as dhit
+from jailbee.dashboard.commands import permitted
 from jailbee.dashboard.details import (
     DETAILS_MAX_ROWS,
     DETAILS_PAIR_WIDTH,
+    AdvisoryLinks,
     DetailsView,
     details_for,
     render_details,
@@ -323,6 +326,20 @@ class FleetTable(ScrollView, can_focus=False):
 FRAME_BORDER_ROWS = 2
 
 
+def _advisory_links(view: DashboardView) -> AdvisoryLinks:
+    """The advisory links the session may offer: each hidden only when the policy refuses it.
+
+    Dismissing writes the local state DB, not a ``jb`` command, so never over SSH.
+    """
+    policy, ssh = view.ssh_policy, view.over_ssh
+    return AdvisoryLinks(
+        run_base_build=permitted(dact.base_build_argv(), policy, over_ssh=ssh),
+        run_apply=permitted(dact.apply_argv(no_restart=False), policy, over_ssh=ssh),
+        dismiss=not ssh,
+        upgrade_all=permitted(dact.upgrade_all_argv(), policy, over_ssh=ssh),
+    )
+
+
 class DetailsPanel(Static):
     DEFAULT_CSS = (
         "DetailsPanel { width: 1fr; height: auto; background: ansi_default; color: ansi_default; }"
@@ -499,7 +516,13 @@ class DashboardFrame(Vertical):
         box = self._sync_native(overlay)
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
-            details_for(view.groups, view.selected, view.now)
+            details_for(
+                view.groups,
+                view.selected,
+                view.now,
+                links=_advisory_links(view),
+                all_groups=view.all_groups,
+            )
             if view.show_details and view.groups
             else None
         )

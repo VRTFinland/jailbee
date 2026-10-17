@@ -10,7 +10,7 @@ import pytest
 
 from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
-from jailbee.dashboard.model import AppMenuEntry, RepoGroup
+from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity
@@ -151,6 +151,10 @@ def _full_snapshot() -> Snapshot:
             mount_ttl_defaults={"ssh": "15m", "gpg": None},
             remote_mountable=("data",),
             checkout="feat-1",
+            advisories=(
+                RepoAdvisory("apply", "alpha", ("l1", "l2"), "1.7.3", "owed", "apply"),
+                RepoAdvisory("legacy-chrome-block", "/f.yaml", ("n",), "", "n"),
+            ),
         )
     )
     return Snapshot(seq=3, gathered_at=T0, git_enabled=True, groups=[group])
@@ -239,8 +243,9 @@ def test_garbage_is_a_protocol_error(line):
 
 
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
-    # Event ages require a server which supplies last_event_at.
-    assert PROTOCOL == 7
+    # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories.
+    assert PROTOCOL == 8
+    assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
     assert protocol._NAMESPACE["ActivityEvent"] is ActivityEvent

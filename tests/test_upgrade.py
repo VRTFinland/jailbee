@@ -409,6 +409,37 @@ def test_format_advice_renders_both_actions() -> None:
     assert any("`jb apply`" in line for line in lines)
 
 
+def test_format_advice_without_footer_drops_run_and_dismiss_lines() -> None:
+    from jailbee.upgrade import Pending, PendingAction, Watermark, format_advice
+
+    owed = Pending(
+        (
+            PendingAction(
+                "apply",
+                Watermark((1, 0, 0), observed=True),
+                ("first reason", "second reason"),
+                ((1, 1, 0),),
+            ),
+        )
+    )
+    full = format_advice(owed)
+    bare = format_advice(owed, footer=False)
+    assert bare == full[:-2]
+    assert not any("Run `" in line or "jb dismiss" in line for line in bare)
+
+
+def test_fingerprint_is_highest_release_dotted() -> None:
+    from jailbee.upgrade import PendingAction, Watermark, fingerprint
+
+    item = PendingAction(
+        "apply",
+        Watermark((1, 0, 0), observed=True),
+        ("a", "b"),
+        ((1, 7, 3), (1, 7, 5)),
+    )
+    assert fingerprint(item) == "1.7.5"
+
+
 _NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
 
 

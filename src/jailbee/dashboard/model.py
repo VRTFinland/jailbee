@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
-from jailbee import agent_status, git
+from jailbee import agent_status, git, notices
 from jailbee.config import (
     format_ttl,
     load_repo_config,
@@ -35,10 +36,13 @@ from jailbee.paths import repo_config_path
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
+    from sqlmodel import Session
+
     from jailbee.agent_activity import ActivityReader
     from jailbee.apps import AppSpec
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.notices import Notice
     from jailbee.procstat import ActivitySampler
 
 
@@ -114,6 +118,28 @@ def _app_menu_verb(spec: AppSpec) -> str:
     return f"apps run {spec.name} --container"
 
 
+@dataclass(frozen=True)
+class RepoAdvisory:
+    """One thing a repo owes the user: an upgrade action or a deprecation notice.
+
+    Gathered once by `gather_rows` and carried in the snapshot, so a front-end
+    renders and dismisses it without reading the state DB or the config.
+    ``key``/``scope`` are the dismissal identity (``"apply"``/``"base-build"``
+    scoped to the container prefix, or a `notices.Notice`'s own);
+    ``fingerprint`` is what a dismissal records (empty for a notice); ``lines``
+    is the block body without the call-to-action footer; ``summary`` is the one
+    line shown among the repo's warnings. ``action`` is None for a deprecation
+    notice, which has no command to run.
+    """
+
+    key: str
+    scope: str
+    lines: tuple[str, ...]
+    fingerprint: str
+    summary: str
+    action: Literal["apply", "base_build"] | None = None
+
+
 @dataclass
 class RepoGroup:
     """One repo's containers. ``repo_root`` is None for orphan groups
@@ -155,7 +181,9 @@ class RepoGroup:
     Mounts… panel offers only these over SSH. Orphan groups keep it empty.
     ``checkout`` is what the repo's own working tree has checked out — a
     branch name, or ``@<sha>`` on a detached HEAD — shown beside the heading;
-    None for orphan groups and when git cannot say."""
+    None for orphan groups and when git cannot say.
+    ``advisories`` are the repo's owed upgrade actions and deprecation notices
+    (`RepoAdvisory`); orphan groups keep ``()``."""
 
     prefix: str
     repo_root: str | None
@@ -172,6 +200,7 @@ class RepoGroup:
     mount_ttl_defaults: dict[str, str | None] = field(default_factory=dict)
     remote_mountable: tuple[str, ...] = ()
     checkout: str | None = None
+    advisories: tuple[RepoAdvisory, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -308,11 +337,13 @@ def dashboard_config_migration_notice() -> str | None:
     return "; ".join(retired) if retired else None
 
 
-def group_warnings(group: RepoGroup) -> list[tuple[str, str]]:
+def group_warnings(group: RepoGroup, *, advisories: bool = True) -> list[tuple[str, str]]:
     """``(label, text)`` warnings about one repository, for its heading.
 
     The configuration's own migration notice, then one line per base whose
     fetched remote-tracking ref is ahead of (or diverged from) the local one.
+    Then, unless ``advisories`` is False (a front-end that renders them in
+    their own block), one line per `RepoAdvisory`.
     Built from the already gathered group, so it reads nothing new.
     """
     out: list[tuple[str, str]] = []
@@ -320,6 +351,9 @@ def group_warnings(group: RepoGroup) -> list[tuple[str, str]]:
         out.append(("config note", group.column_notice))
     for _repo, base, warning in tracking_findings(group.containers):
         out.append(("target", f"{base}: {warning}"))
+    if advisories:
+        for a in group.advisories:
+            out.append(("upgrade" if a.action is not None else "deprecated", a.summary))
     return out
 
 
@@ -342,24 +376,99 @@ def gather_rows(
     is never pruned here). A final ``all_repos=True`` scan surfaces
     jailbee-managed containers whose repo we could not load, as view-only
     orphan groups.
+
+    Each repo's upgrade/deprecation advisories are gathered here too, from one
+    state-DB session shared by the whole gather. The config load runs inside
+    `notices.collecting()` — a ContextVar, so it is entered in this very
+    thread — which turns the deprecation notices into data instead of lines in
+    the state-service log.
     """
+    with ExitStack() as stack:
+        return _gather_rows(incus, repo_roots, with_git, stack)
+
+
+def _repo_advisories(
+    stack: ExitStack,
+    sessions: list[Session],
+    cfg: Config,
+    root: Path,
+    raised: Sequence[Notice],
+) -> tuple[RepoAdvisory, ...]:
+    """A repo's advisories, or ``()`` when anything about them fails.
+
+    Advisories are a courtesy: an unreadable state DB must never cost the
+    dashboard its rows. The session is opened lazily and shared via `sessions`.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session as SqlSession
+
+    from jailbee import __version__
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.dashboard.advisories import repo_advisories
+    from jailbee.db import get_engine
+
+    try:
+        if not sessions:
+            sessions.append(stack.enter_context(SqlSession(get_engine())))
+        # The strings the config loader passes as a notice's `source`: the repo
+        # file by `str(path)`, the local layer by `str(local_config_path(prefix))`.
+        files: set[str] = {str(local_config_path(cfg.container_prefix))}
+        repo_file = repo_config_path(root)
+        if repo_file is not None:
+            files.add(str(repo_file))
+        return repo_advisories(
+            sessions[0],
+            cfg.container_prefix,
+            __version__,
+            now=datetime.now(UTC),
+            raised=raised,
+            config_files=files,
+        )
+    except Exception:
+        log.debug("advisories unavailable for %s", cfg.container_prefix, exc_info=True)
+        # A failed flush/commit leaves the shared session unusable until rolled
+        # back; without this every later repo in the gather would lose its advisories.
+        for session in sessions:
+            try:
+                session.rollback()
+            except Exception:
+                log.debug("advisory session rollback failed", exc_info=True)
+        return ()
+
+
+def _gather_rows(
+    incus: Incus,
+    repo_roots: list[Path],
+    with_git: bool,
+    stack: ExitStack,
+) -> list[RepoGroup]:
     from jailbee.apps import resolve_apps
     from jailbee.remote_ssh.mount_policy import grantable_kinds
 
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
-    gcfg = global_config_or_defaults()
+    # Collected, not printed: `clear_emit_caches` re-arms the once-per-process
+    # emitters on every gather, so a legacy global key would hit the log each tick.
+    with notices.collecting():
+        gcfg = global_config_or_defaults()
     # One `incus list` per gather, shared by every repo and the orphan scan:
     # each listing makes the daemon build every instance's full state, and
     # the dashboards gather every few seconds. Fetched on first use, so a
     # gather with no loadable repo still never calls Incus.
     instances: list[dict[str, Any]] | None = None
+    sessions: list[Session] = []
     for root in repo_roots:
         try:
-            cfg = load_repo_config(root)
+            with notices.collecting() as raised:
+                # Re-arm the once-per-process emitters, or a notice raised on
+                # the first gather would never be raised (nor vanish) again.
+                notices.clear_emit_caches()
+                cfg = load_repo_config(root)
         except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
             continue
+        advisories = _repo_advisories(stack, sessions, cfg, root, raised)
         if base_cfg is None:
             base_cfg = cfg
         if instances is None:
@@ -396,6 +505,7 @@ def gather_rows(
                 mount_ttl_defaults=_mount_ttl_defaults(cfg, gcfg),
                 remote_mountable=grantable_kinds(gcfg.remote.ssh, cfg),
                 checkout=git.get_checkout_label(root),
+                advisories=advisories,
             )
         )
 
