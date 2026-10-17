@@ -459,3 +459,18 @@ def test_the_tag_prompt_refuses_an_empty_answer():
     assert (
         validate_answer(dact.snapshot_tag_prompt("alpha-x"), "") == "Snapshot tag cannot be empty"
     )
+
+
+def test_advisory_argv_and_pickers():
+    from jailbee.dashboard import actions as dact
+    from jailbee.dashboard.model import RepoAdvisory
+
+    assert dact.base_build_argv() == ["base", "build"]
+    assert dact.upgrade_all_argv() == ["upgrade"]
+    picker = dact.upgrade_all_picker("alpha", 2, 3)
+    assert picker.detail[0] == "base build in 2 repo(s), apply in 3 repo(s)"
+    assert [e.value for e in picker.entries] == ["yes", "no"]
+    adv = RepoAdvisory("apply", "alpha", (), "fp", "apply owed", "apply")
+    chosen = dact.dismiss_picker("alpha", [adv])
+    assert chosen.purpose == "repo-dismiss-advisory"
+    assert [(e.label, e.value) for e in chosen.entries] == [("apply owed", "apply")]

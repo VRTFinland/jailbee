@@ -10,6 +10,7 @@ from rich.text import Text
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import actions as dact
+from jailbee.dashboard.advisories import upgrade_counts
 from jailbee.dashboard.commands import (
     permitted,
 )
@@ -117,6 +118,29 @@ def open_menu(
     return MenuState(name, actions)
 
 
+def _advisory_entries(
+    groups: list[RepoGroup],
+    group: RepoGroup,
+    ssh_policy: RemoteSSHConfig | None,
+    *,
+    over_ssh: bool,
+) -> list[MenuItem]:
+    """Run / dismiss / upgrade-all entries for a repo's advisories, each hidden when refused."""
+    out: list[MenuItem] = []
+    if any(a.action == "base_build" for a in group.advisories) and permitted(
+        dact.base_build_argv(), ssh_policy, over_ssh=over_ssh
+    ):
+        out.append(("Run base build", dact.REPO_BASE_BUILD))
+    # Dismissing writes the local state DB; it is not a jb command, so never over SSH.
+    if group.advisories and not over_ssh:
+        out.append(("Dismiss notice…", dact.REPO_DISMISS_ADVISORIES))
+    if sum(upgrade_counts(groups)) >= 2 and permitted(
+        dact.upgrade_all_argv(), ssh_policy, over_ssh=over_ssh
+    ):
+        out.append(("Upgrade all repos…", dact.REPO_UPGRADE_ALL))
+    return out
+
+
 def open_repo_menu(
     groups: list[RepoGroup],
     prefix: str,
@@ -149,6 +173,7 @@ def open_repo_menu(
         extras = dact.repo_extras(ssh_policy, over_ssh=over_ssh)
         if extras.apply is not None:
             actions.append(extras.apply)
+        actions.extend(_advisory_entries(groups, group, ssh_policy, over_ssh=over_ssh))
         if extras.diagnostics:
             actions.append(MenuGroup(dact.DIAGNOSTICS_LABEL, extras.diagnostics))
         if extras.prune is not None:
@@ -259,6 +284,9 @@ _MENU_KEYS: dict[str, str] = {
     "new-pr": "p",
     "accounts": "a",
     dact.REPO_APPLY: "y",
+    dact.REPO_BASE_BUILD: "b",
+    dact.REPO_DISMISS_ADVISORIES: "i",
+    dact.REPO_UPGRADE_ALL: "U",
     dact.DIAGNOSTICS_LABEL: "d",
     dact.REPO_PRUNE: "X",
     "fold": "f",

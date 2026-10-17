@@ -24,6 +24,7 @@ from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
+from jailbee.dashboard import advisories as dadv
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.bulk import (
     BULK_KEYS,
@@ -1674,6 +1675,15 @@ class DashboardSession:
                 dact.apply_argv(no_restart=entry.value == dact.APPLY_NO_RESTART),
             )
             return None
+        if picker.purpose == "repo-upgrade-all":
+            if entry.value == "yes":
+                self.run_dashboard_command(picker.target, "repo", dact.upgrade_all_argv())
+            else:
+                self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "repo-dismiss-advisory":
+            self.dismiss_advisory(picker.target, entry.value)
+            return None
         if picker.purpose == "container-autostart-cancel":
             if entry.value == "yes":
                 self.run_dashboard_command(
@@ -2078,6 +2088,12 @@ class DashboardSession:
                 self.overlay = self.load_accounts(target)
             elif verb == dact.REPO_APPLY:
                 self.overlay = dact.apply_picker(target)
+            elif verb == dact.REPO_BASE_BUILD:
+                self.run_dashboard_command(target, "repo", dact.base_build_argv())
+            elif verb == dact.REPO_DISMISS_ADVISORIES:
+                self.overlay = self.open_dismiss_picker(target)
+            elif verb == dact.REPO_UPGRADE_ALL:
+                self.overlay = dact.upgrade_all_picker(target, *dadv.upgrade_counts(self.groups))
             elif verb == dact.REPO_DOCTOR:
                 self.run_dashboard_command(target, "repo", dact.doctor_argv(), style="paged")
             elif verb == dact.REPO_DISK_USAGE:
@@ -2521,6 +2537,11 @@ class DashboardSession:
             return  # a prompt, the command line, settings, egress or accounts keep the focus
         if hit is not None and hit.kind not in ("scroll", "sort") and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
+        if hit is not None and hit.kind in ("advisory-run", "advisory-dismiss", "upgrade-all"):
+            if overlay is not None:
+                self.close_overlay()
+            self._advisory_click(hit)
+            return
         if toggle and overlay is None and hit is not None and hit.kind == "row":
             name = str(hit.args[0])
             self.toggle_mark(name)
@@ -2545,6 +2566,48 @@ class DashboardSession:
             self.select(Row("container" if hit.kind == "row" else "repo", str(hit.args[0])))
             if double or right:
                 self.activate()
+
+    def _advisory_click(self, hit: Hit) -> None:
+        """A link on a repo's advisory block: run its action, dismiss it, or upgrade all."""
+        prefix = str(hit.args[0])
+        key = str(hit.args[1]) if len(hit.args) > 1 else ""
+        if hit.kind == "advisory-dismiss":
+            self.dismiss_advisory(prefix, key)
+        elif hit.kind == "upgrade-all":
+            self.overlay = dact.upgrade_all_picker(prefix, *dadv.upgrade_counts(self.groups))
+        elif key == "apply":
+            self.overlay = dact.apply_picker(prefix)
+        elif key == "base-build":
+            self.run_dashboard_command(prefix, "repo", dact.base_build_argv())
+
+    def open_dismiss_picker(self, prefix: str) -> Picker | None:
+        """The notices of ``prefix`` to choose from; None (with a notice) when it has none."""
+        group = next((g for g in self.groups if g.prefix == prefix), None)
+        if group is None or not group.advisories:
+            self.set_notice("No notices to dismiss")
+            return None
+        return dact.dismiss_picker(prefix, group.advisories)
+
+    def dismiss_advisory(self, prefix: str, key: str) -> None:
+        """Mark the advisory the user saw read, as `jb dismiss` would.
+
+        Dismissal writes the local state DB and is not a ``jb`` command, so
+        `check_dashboard_command` does not gate it: refuse it over SSH here.
+        """
+        if self.over_ssh:
+            return
+        advisory = next(
+            (a for g in self.groups if g.prefix == prefix for a in g.advisories if a.key == key),
+            None,
+        )
+        if advisory is None:
+            return
+        try:
+            dadv.dismiss_advisory(advisory)
+        except Exception as exc:  # a locked state DB must not take the dashboard down
+            self.set_notice(f"could not dismiss: {exc}")
+            return
+        self.client.refresh()  # the next snapshot drops the block for every client
 
     def dismiss_update_notice(self) -> None:
         """Dismiss the advertised release, as `jb dismiss update` would.
