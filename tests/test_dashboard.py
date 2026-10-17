@@ -6899,6 +6899,21 @@ def test_gather_rows_notice_persists_while_config_unchanged(advisory_rig, mocker
         assert [a.key for a in _gather(mocker, repo)[0].advisories] == ["legacy-chrome-block"]
 
 
+def test_gather_rows_legacy_global_notice_never_reaches_the_log(advisory_rig, tmp_path, mocker):
+    """The global config is loaded every gather; its once-per-process notices are
+    re-armed per repo, so that load must be collected too, not printed."""
+    repo, _ = advisory_rig
+    (tmp_path / ".config" / "jailbee" / "global.yaml").write_text(
+        "claude_credentials:\n  group: legacy\n"
+    )
+    hint = mocker.patch("jailbee.tui.hint")
+
+    for _ in range(2):
+        _gather(mocker, repo)
+
+    hint.assert_not_called()
+
+
 def test_gather_rows_cli_dismissal_seen_next_gather(advisory_rig, db_session, mocker):
     from jailbee import notices
 

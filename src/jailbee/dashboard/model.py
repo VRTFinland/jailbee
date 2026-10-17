@@ -442,7 +442,10 @@ def _gather_rows(
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
-    gcfg = global_config_or_defaults()
+    # Collected, not printed: `clear_emit_caches` re-arms the once-per-process
+    # emitters on every gather, so a legacy global key would hit the log each tick.
+    with notices.collecting():
+        gcfg = global_config_or_defaults()
     # One `incus list` per gather, shared by every repo and the orphan scan:
     # each listing makes the daemon build every instance's full state, and
     # the dashboards gather every few seconds. Fetched on first use, so a
