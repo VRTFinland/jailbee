@@ -354,8 +354,11 @@ section > .wrap > :last-child {
   }
 }
 
+/* The space above the panel equals the space below it, measured to the
+   next heading: that gap is the hero's bottom padding plus the tour's top
+   padding, both --section-tight. */
 .hero {
-  padding-top: var(--section-tight);
+  padding-top: calc(var(--section-tight) * 2);
   padding-bottom: var(--section-tight);
 }
 
