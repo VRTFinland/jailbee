@@ -175,3 +175,38 @@ def test_legacy_chrome_notice_is_dismissible_per_file(capsys, monkeypatch) -> No
     err = capsys.readouterr().err
     assert "/g/global.yaml" not in err
     assert "/r/.jailbee/config.yaml" in err
+
+
+def test_collecting_captures_without_printing(mocker, monkeypatch) -> None:
+    from jailbee import notices
+
+    monkeypatch.setattr(notices, "dismissals", lambda: {})
+    hint = mocker.patch("jailbee.tui.hint")
+    with notices.collecting() as captured:
+        notices.emit(_notice())
+    assert captured == [_notice()]
+    hint.assert_not_called()
+    assert notices.active() == ()
+
+
+def test_emit_outside_collecting_unchanged(capsys, monkeypatch) -> None:
+    from jailbee import notices
+
+    monkeypatch.setattr(notices, "dismissals", lambda: {})
+    with notices.collecting():
+        pass
+    notices.emit(_notice())
+    assert "`chrome:` is deprecated." in capsys.readouterr().err
+    assert [n.ident for n in notices.active()] == [_notice().ident]
+
+
+def test_clear_emit_caches_rearms_loader_warning(monkeypatch) -> None:
+    from jailbee import notices
+    from jailbee.config import loader
+
+    monkeypatch.setattr(notices, "dismissals", lambda: {})
+    with notices.collecting() as captured:
+        loader._warn_legacy_chrome_block("/x/config.yaml")
+        notices.clear_emit_caches()
+        loader._warn_legacy_chrome_block("/x/config.yaml")
+    assert len(captured) == 2

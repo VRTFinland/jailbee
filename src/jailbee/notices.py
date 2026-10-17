@@ -21,11 +21,14 @@ read" means nothing for something you asked to be told.
 
 from __future__ import annotations
 
+import contextvars
 import functools
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from datetime import datetime
 
     from sqlmodel import Session
@@ -201,8 +204,54 @@ def active() -> tuple[Notice, ...]:
     return tuple(_ACTIVE.values())
 
 
+_COLLECTOR: contextvars.ContextVar[list[Notice] | None] = contextvars.ContextVar(
+    "jailbee_notice_collector", default=None
+)
+
+
+@contextmanager
+def collecting() -> Iterator[list[Notice]]:
+    """Capture every `emit` in this context instead of printing it.
+
+    For a long-lived process (the dashboard state service) that loads configs
+    on a tick: the notices are data for a renderer, not stderr lines, and are
+    not registered in `_ACTIVE` either.
+    """
+    captured: list[Notice] = []
+    token = _COLLECTOR.set(captured)
+    try:
+        yield captured
+    finally:
+        _COLLECTOR.reset(token)
+
+
+def clear_emit_caches() -> None:
+    """Re-arm every once-per-process helper that calls `emit`.
+
+    `_warn_insecure_perms` is deliberately absent: it does not go through
+    `emit`, and re-arming it would print to the log on every tick.
+    """
+    from jailbee.config.loader import (
+        _warn_legacy_chrome_block,
+        _warn_legacy_credentials_block,
+        _warn_legacy_per_repo_entry,
+        _warn_legacy_pr_keys,
+        _warn_legacy_remote_shell,
+    )
+    from jailbee.paths import _warn_legacy_config_dir
+
+    _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_credentials_block.cache_clear()
+    _warn_legacy_per_repo_entry.cache_clear()
+    _warn_legacy_pr_keys.cache_clear()
+    _warn_legacy_remote_shell.cache_clear()
+    _warn_legacy_config_dir.cache_clear()
+
+
 def emit(notice: Notice) -> None:
     """Print `notice` unless it has been dismissed, registering it either way.
+
+    Inside `collecting()` it is appended to the collector instead.
 
     `hint`, like the notices this replaces: stderr, so a warning never lands in
     the middle of ``jailbee ls --format json``, and no Rich markup, so a
@@ -213,6 +262,11 @@ def emit(notice: Notice) -> None:
     ``mocker.patch("jailbee.tui.hint")``, which is how this project's tests
     assert on advisory output.
     """
+    collector = _COLLECTOR.get()
+    if collector is not None:
+        collector.append(notice)
+        return
+
     from jailbee.tui import hint
 
     _ACTIVE[notice.ident] = notice
