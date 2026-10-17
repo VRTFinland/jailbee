@@ -61,6 +61,36 @@ def _memory_segment(mem: MemoryStatus) -> _Segment:
     )
 
 
+def memory_numbers(used: int, total: int) -> str:
+    return f"{_format_bytes(used)}/{_format_bytes(total)}"
+
+
+def min_usage_bar_cells(label: str, used: int, total: int) -> int:
+    """Cells `usage_bar` needs at least: label, brackets, the numbers and the pad."""
+    return len(label) + 2 + len(memory_numbers(used, total)) + _PAD
+
+
+def usage_bar(label: str, used: int, total: int, width: int) -> Text:
+    """`label[|||    used/total]` for one usage figure, `width` cells inside the brackets.
+
+    The level colour follows the free share, as in the status line. `width`
+    must be at least the numbers plus the pad (see `min_usage_bar_cells`).
+    """
+    total = max(total, 1)
+    seg = _Segment(
+        label=label,
+        used=used / total,
+        cache=0.0,
+        numbers=memory_numbers(used, total),
+        short="",
+        lvl=level(max(0.0, (total - used) / total)),
+    )
+    line = Text()
+    line.append(label)
+    line.append_text(_bar(seg, width, seg.numbers))
+    return line
+
+
 def _segments(status: SystemStatus) -> tuple[list[_Segment], _Segment | None]:
     """Mem and pool segments, and the root segment kept apart (it degrades first)."""
     segs: list[_Segment] = []

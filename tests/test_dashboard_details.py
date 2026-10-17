@@ -1142,3 +1142,61 @@ def test_panel_fit_cuts_process_lines_before_the_git_head() -> None:
 def test_panel_fit_without_process_lines_is_unchanged_by_procs_field() -> None:
     assert dd.panel_fit(_fit(2), 7).procs == 0
     assert dd.panel_fit(_fit_procs(2, False), None).procs == 2
+
+
+GIB = 1024**3
+
+
+def test_panel_memory_is_used_and_limit_of_a_running_container() -> None:
+    c = _c(memory_usage=3 * GIB, memory_limit="8GiB")
+    assert dd.container_panel(c, NOW).memory == (3 * GIB, 8 * GIB)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"state": "Stopped", "memory_usage": GIB, "memory_limit": "8GiB"},
+        {"memory_usage": GIB, "memory_limit": None},
+        {"memory_usage": GIB, "memory_limit": "50%"},
+        {"memory_usage": None, "memory_limit": "8GiB"},
+    ],
+)
+def test_panel_has_no_memory_without_a_fixed_limit_or_usage(kw: dict[str, Any]) -> None:
+    assert dd.container_panel(_c(**kw), NOW).memory is None
+
+
+def test_memory_bar_sits_at_the_right_end_of_the_summary_row() -> None:
+    c = _c(memory_usage=3 * GIB, memory_limit="8GiB", ip="10.0.0.5")
+    summary = _panel_body(_panel_view(c), None, 100)[0]
+    assert "Running" in summary
+    assert summary.endswith("3.0G/8.0G]")
+    assert "mem[|" in summary
+    assert len(summary) == 100 - 4  # right-aligned to the panel's inner width
+
+
+def test_memory_bar_does_not_add_a_row() -> None:
+    plain = _c(memory_usage=3 * GIB, memory_limit=None)
+    barred = _c(memory_usage=3 * GIB, memory_limit="8GiB")
+    assert len(_panel_body(_panel_view(barred), None, 100)) == len(
+        _panel_body(_panel_view(plain), None, 100)
+    )
+
+
+def test_memory_bar_is_left_out_when_the_summary_leaves_no_room() -> None:
+    c = _c(memory_usage=3 * GIB, memory_limit="8GiB", ip="10.0.0.5")
+    narrow = _panel_body(_panel_view(c), None, 36)[0]
+    assert "mem[" not in narrow
+    assert "Running" in narrow
+
+
+def test_memory_bar_colour_follows_the_free_share() -> None:
+    def styles(used: int) -> set[str]:
+        c = _c(memory_usage=used, memory_limit="8GiB")
+        panel = dd.container_panel(c, NOW)
+        row = dd._summary_row(panel, 80)
+        assert isinstance(row, Text)
+        return {str(sp.style) for sp in row.spans}
+
+    assert "green" in styles(GIB)
+    assert "yellow" in styles(int(7.2 * GIB))
+    assert "bold red" in styles(int(7.8 * GIB))

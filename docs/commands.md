@@ -2,7 +2,11 @@
 
 The terminal dashboard's container details panel (`v`) reads top to bottom. One
 summary line says what the container is doing: its state and any background
-job, IP, PR and issues, the agent, and busy processes. A running container adds
+job, IP, PR and issues, the agent, and busy processes. A running container with
+a fixed `limits.memory` also shows its memory use as an htop-style bar
+(`mem[|||   3.0G/8.0G]`) at the right end of that line, coloured by the free
+share like the system status row; it is left out when the line has no room for it.
+A running container adds
 up to two lines under it, labelled `cpu` and `mem` (the labels are dim), its top three processes by CPU
 and by resident memory, grouped by process name with `xN` when several share a
 name. When present, a separate
