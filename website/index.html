@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=39635459" />
+    <link rel="stylesheet" href="assets/style.css?v=4fe1a8c6" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -1081,8 +1081,57 @@
           });
         });
       })();
+      // The demo tabs advance on their own, a slide show over the same radio
+      // group. The underline's CSS animation (`data-auto`) is the timer; its
+      // end moves on. Any real input on the card, or starting a clip, stops it
+      // for good; hovering or focusing pauses it; it only runs while the card
+      // is on screen. With reduced motion, or no JavaScript, nothing moves.
+      (function () {
+        var card = document.querySelector(".tabs");
+        if (!card || !window.IntersectionObserver) return;
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        var radios = Array.prototype.slice.call(card.querySelectorAll(".tabs__radio"));
+        var bar = card.querySelector(".tabs__bar");
+        var stopped = false, onScreen = false, engaged = false;
+        function update() {
+          if (stopped) card.removeAttribute("data-auto");
+          else card.setAttribute("data-auto", onScreen && !engaged ? "running" : "paused");
+        }
+        function stop() {
+          stopped = true;
+          update();
+        }
+        new IntersectionObserver(function (entries) {
+          onScreen = entries[entries.length - 1].isIntersecting;
+          update();
+        }, { threshold: 0.4 }).observe(card);
+        card.addEventListener("pointerenter", function (event) {
+          if (event.pointerType === "mouse") { engaged = true; update(); }
+        });
+        card.addEventListener("pointerleave", function () { engaged = false; update(); });
+        card.addEventListener("focusin", function () { engaged = true; update(); });
+        card.addEventListener("focusout", function () { engaged = false; update(); });
+        // A trusted change is the reader's; the script's own is not.
+        card.addEventListener("change", function (event) {
+          if (event.isTrusted) stop();
+        });
+        card.addEventListener("click", function (event) {
+          if (event.target.closest(".yt__play, .demo__run")) stop();
+        });
+        card.addEventListener("animationend", function (event) {
+          if (stopped || event.animationName !== "tabs-fill") return;
+          var at = radios.findIndex(function (radio) { return radio.checked; });
+          var next = radios[(at + 1) % radios.length];
+          next.checked = true;
+          // The other listeners on `change` put away a running clip.
+          next.dispatchEvent(new Event("change", { bubbles: true }));
+          var tab = card.querySelector('.tabs__tab[for="' + next.id + '"]');
+          bar.scrollTo({ left: tab.offsetLeft - (bar.clientWidth - tab.offsetWidth) / 2, behavior: "smooth" });
+        });
+        update();
+      })();
     </script>
     <!-- The #demos player: nothing from YouTube until play is pressed. -->
-    <script src="assets/lite-yt.js?v=15236160" defer></script>
+    <script src="assets/lite-yt.js?v=e29cf9e5" defer></script>
   </body>
 </html>

@@ -1032,7 +1032,16 @@ footer p {
    The tab state is a radio group, so the chooser works with JavaScript off.
    ----------------------------------------------------------------------- */
 .tabs {
+  /* One card: the chooser is its header strip and the panels sit inside it,
+     so the panels carry no frame of their own (see `.tabs__panels > .demo`). */
+  position: relative;
   margin-top: 2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  --tabs-dwell: 8s;
+  --tabs-fade: 0.8s;
 }
 
 /* Visually hidden but still focusable and still hit by :checked. */
@@ -1049,24 +1058,48 @@ footer p {
 }
 
 .tabs__bar {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__bar::-webkit-scrollbar {
+  display: none;
 }
 
 .tabs__tab {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.5rem 0.9rem;
+  position: relative;
+  flex: 1 0 auto;
+  padding: 0.85rem 1.1rem;
+  text-align: center;
+  white-space: nowrap;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    color 0.4s ease,
+    background-color 0.4s ease;
 }
 
 .tabs__tab:hover {
   color: var(--text);
-  border-color: var(--amber-dim);
+}
+
+/* The selected tab's underline. Still, it is a plain rule; while the tabs
+   advance on their own (`data-auto`, set by the script in index.html) it
+   fills over the dwell time and the animation's end is what moves on. */
+.tabs__tab::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--amber-dim);
+  opacity: 0.55;
+  transform: scaleX(0);
+  transform-origin: left;
 }
 
 #tab-tour:checked ~ .tabs__bar .tabs__tab[for="tab-tour"],
@@ -1074,9 +1107,45 @@ footer p {
 #tab-details:checked ~ .tabs__bar .tabs__tab[for="tab-details"],
 #tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"],
 #tab-cli:checked ~ .tabs__bar .tabs__tab[for="tab-cli"] {
-  background: var(--surface-2);
-  border-color: var(--amber);
+  background: var(--surface);
   color: var(--amber);
+}
+
+#tab-tour:checked ~ .tabs__bar .tabs__tab[for="tab-tour"]::after,
+#tab-agents:checked ~ .tabs__bar .tabs__tab[for="tab-agents"]::after,
+#tab-details:checked ~ .tabs__bar .tabs__tab[for="tab-details"]::after,
+#tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"]::after,
+#tab-cli:checked ~ .tabs__bar .tabs__tab[for="tab-cli"]::after {
+  transform: scaleX(1);
+}
+
+.tabs[data-auto] #tab-tour:checked ~ .tabs__bar .tabs__tab[for="tab-tour"]::after,
+.tabs[data-auto] #tab-agents:checked ~ .tabs__bar .tabs__tab[for="tab-agents"]::after,
+.tabs[data-auto] #tab-details:checked ~ .tabs__bar .tabs__tab[for="tab-details"]::after,
+.tabs[data-auto] #tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"]::after,
+.tabs[data-auto] #tab-cli:checked ~ .tabs__bar .tabs__tab[for="tab-cli"]::after {
+  animation: tabs-fill var(--tabs-dwell) linear both;
+}
+
+.tabs[data-auto="paused"] .tabs__tab::after {
+  animation-play-state: paused;
+}
+
+@keyframes tabs-fill {
+  0% {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.55;
+  }
+  85% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
 }
 
 #tab-tour:focus-visible ~ .tabs__bar .tabs__tab[for="tab-tour"],
@@ -1085,7 +1154,7 @@ footer p {
 #tab-bulk:focus-visible ~ .tabs__bar .tabs__tab[for="tab-bulk"],
 #tab-cli:focus-visible ~ .tabs__bar .tabs__tab[for="tab-cli"] {
   outline: 2px solid var(--amber);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 /* Every panel sits in the same grid cell, so the section is always as tall
@@ -1100,7 +1169,14 @@ footer p {
 .tabs__panels > .demo {
   grid-area: 1 / 1;
   margin-top: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
   visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity var(--tabs-fade) ease-in-out,
+    visibility 0s linear var(--tabs-fade);
 }
 
 #tab-tour:checked ~ .tabs__panels > #demo-tour,
@@ -1109,6 +1185,14 @@ footer p {
 #tab-bulk:checked ~ .tabs__panels > #demo-bulk,
 #tab-cli:checked ~ .tabs__panels > #demo-cli {
   visibility: visible;
+  opacity: 1;
+  transition: opacity var(--tabs-fade) ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs__panels > .demo {
+    transition: none;
+  }
 }
 
 .demo {
