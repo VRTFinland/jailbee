@@ -1247,6 +1247,66 @@ footer p {
   white-space: nowrap;
 }
 
+/* A highlight on a still, the way the videos ring a detail: the picture is
+   the positioning box and the ring a child placed in percentages of it, so
+   it scales with the frame and needs no script. The numbers are measured
+   on one file — re-crop the picture and measure them again. */
+.demo__frame {
+  position: relative;
+}
+
+.demo__ring {
+  position: absolute;
+  border: 3px solid var(--amber);
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgb(240 169 43 / 60%);
+  pointer-events: none;
+}
+
+/* dashboard-parallel.png (816x459): the AI cell of the one row whose agent
+   is waiting for the reader. */
+.demo__ring--waiting {
+  left: 40.1%;
+  top: 59.7%;
+  width: 6.9%;
+  height: 4.1%;
+}
+
+/* The AI column's marks under the picture they explain, in the dashboard's
+   own colours rather than the page's tokens: the legend must match the
+   terminal, not the site. */
+.demo__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.demo__legend span {
+  white-space: nowrap;
+}
+
+.demo__glyph {
+  margin-right: 0.4em;
+}
+
+.demo__glyph--working {
+  color: #5fd35f;
+}
+
+.demo__glyph--waiting {
+  color: #f2c94c;
+}
+
+.demo__glyph--idle {
+  color: var(--muted);
+}
+
+.demo__glyph--shell {
+  color: #4fc3d9;
+}
+
 .demo figcaption p code {
   color: var(--text);
   font-size: 0.85em;
