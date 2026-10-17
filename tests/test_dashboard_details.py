@@ -1078,7 +1078,10 @@ def test_panel_shows_top_cpu_and_mem_lines() -> None:
 
 
 def test_panel_has_no_process_lines_when_stopped_or_empty() -> None:
-    top = {"top_cpu": (ProcessActivity("node", 85.4, 1),), "top_mem": (ProcessMemory("a", 1024, 1),)}
+    top = {
+        "top_cpu": (ProcessActivity("node", 85.4, 1),),
+        "top_mem": (ProcessMemory("a", 1024, 1),),
+    }
     assert dd.container_panel(_c(state="Stopped", **top), NOW).processes == ()
     assert dd.container_panel(_c(), NOW).processes == ()
     only_mem = dd.container_panel(_c(top_mem=top["top_mem"]), NOW)
