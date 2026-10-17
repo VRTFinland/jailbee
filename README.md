@@ -28,6 +28,15 @@ is project-agnostic — built at GISGRO, usable with any stack.
 
 ## What people run in it
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/img/dashboard-parallel.png"
+       width="760"
+       alt="The terminal dashboard: an Android app's eight parallel branch containers, each with its own agent, above another repository's backlog containers, with the AI column showing which agents are working, idle or waiting and the merge column flagging two conflicts">
+</p>
+
+<p align="center"><em>One dashboard, one afternoon: an Android app across eight branches with an
+emulator each, and below it a backlog of small ideas with a container apiece.</em></p>
+
 - **A mobile app, one emulator per branch.** An Android/iOS codebase split
   into eight pieces of work, each container with an Android emulator of its
   own on the host's `/dev/kvm`, and a dashboard that shows which of the eight
