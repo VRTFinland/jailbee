@@ -22,11 +22,13 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markup import escape
 from rich.panel import Panel
 from rich.segment import Segment
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
 from jailbee.agent_activity import describe
 from jailbee.dashboard import format as dashboard_format
+from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
 from jailbee.lifecycle import (
     ContainerInfo,
@@ -35,6 +37,7 @@ from jailbee.lifecycle import (
     submodule_sub_rows,
     tracking_warning,
 )
+from jailbee.upgrade import ACTION_COMMANDS
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup, Row
@@ -98,6 +101,42 @@ class ContainerPanel:
 
 
 @dataclass(frozen=True)
+class AdvisoryLinks:
+    """Which advisory links a front-end may offer (over SSH they follow the policy)."""
+
+    run: bool
+    dismiss: bool
+    upgrade_all: bool
+
+
+NO_LINKS = AdvisoryLinks(False, False, False)
+UPGRADE_ALL_LABEL = "[run jb upgrade (all repos)]"
+_LINK_GAP = "   "
+
+
+@dataclass(frozen=True)
+class AdvisoryLink:
+    """One clickable ``[label]`` in an advisory block."""
+
+    label: str
+    hit: Hit
+
+
+@dataclass(frozen=True)
+class AdvisoryBlock:
+    """One advisory under a repo's grid: a heading, its reason lines, its links.
+
+    All text is plain (not markup); ``upgrade`` marks an owed upgrade action,
+    as opposed to a deprecation notice.
+    """
+
+    heading: str
+    reasons: tuple[str, ...]
+    links: tuple[AdvisoryLink, ...] = ()
+    upgrade: bool = False
+
+
+@dataclass(frozen=True)
 class DetailsView:
     """What the panel shows: a title and its rows, before any sizing.
 
@@ -109,6 +148,8 @@ class DetailsView:
     the table does not need. ``panel`` is a container's summary / git table /
     footer, drawn in place of ``items``; a repo heading has none. ``warnings``
     are a repo heading's yellow lines under its grid, each as wide as the panel.
+    ``advisories`` are its advisory blocks (``upgrade_all`` the link under the
+    last upgrade block), drawn right under the grid and warnings.
     """
 
     title: str
@@ -119,6 +160,8 @@ class DetailsView:
     history: tuple[str, ...] = ()
     panel: ContainerPanel | None = None
     warnings: tuple[str, ...] = ()
+    advisories: tuple[AdvisoryBlock, ...] = ()
+    upgrade_all: AdvisoryLink | None = None
 
     @property
     def base_rows(self) -> int:
@@ -357,12 +400,43 @@ def repo_warnings(group: RepoGroup) -> tuple[str, ...]:
     the local one) as yellow markup lines."""
     return tuple(
         f"[yellow]⚠ {escape(label)}: {escape(text)}[/yellow]"
-        for label, text in group_warnings(group)
+        for label, text in group_warnings(group, advisories=False)
     )
 
 
+def repo_advisory_blocks(group: RepoGroup, links: AdvisoryLinks) -> tuple[AdvisoryBlock, ...]:
+    """``group``'s advisories as blocks, with the links ``links`` allows."""
+    blocks = []
+    for a in group.advisories:
+        offered: list[AdvisoryLink] = []
+        if links.run and a.action is not None:
+            offered.append(
+                AdvisoryLink(
+                    f"[run {ACTION_COMMANDS[a.action]}]",
+                    Hit("advisory-run", (group.prefix, a.key)),
+                )
+            )
+        if links.dismiss:
+            offered.append(
+                AdvisoryLink("[dismiss]", Hit("advisory-dismiss", (group.prefix, a.key)))
+            )
+        blocks.append(
+            AdvisoryBlock(
+                f"⚠ {a.lines[0]}" if a.lines else f"⚠ {a.summary}",
+                tuple(a.lines[1:]),
+                tuple(offered),
+                a.action is not None,
+            )
+        )
+    return tuple(blocks)
+
+
 def details_for(
-    groups: Sequence[RepoGroup], selected: Row | None, now: datetime
+    groups: Sequence[RepoGroup],
+    selected: Row | None,
+    now: datetime,
+    *,
+    links: AdvisoryLinks = NO_LINKS,
 ) -> DetailsView | None:
     """The panel for ``selected``, or None when there is nothing to describe.
 
@@ -371,7 +445,8 @@ def details_for(
     - For a repo heading: the repo prefix.
 
     A container destroyed since the cursor landed on it simply has no panel
-    until the selection is reconciled on the next frame.
+    until the selection is reconciled on the next frame. ``links`` are the
+    advisory links a repo heading's blocks may carry.
     """
     if selected is None:
         return None
@@ -382,15 +457,22 @@ def details_for(
     )
     if selected.kind == "repo":
         group = next((g for g in groups if g.prefix == selected.key), None)
-        return (
-            None
-            if group is None
-            else DetailsView(
-                group.prefix,
-                tuple(repo_details(group)),
-                reserve_rows=reserve,
-                warnings=repo_warnings(group),
-            )
+        if group is None:
+            return None
+        blocks = repo_advisory_blocks(group, links)
+        owing = sum(any(a.action is not None for a in g.advisories) for g in groups)
+        upgrade_all = (
+            AdvisoryLink(UPGRADE_ALL_LABEL, Hit("upgrade-all", (group.prefix,)))
+            if links.upgrade_all and owing >= 2 and any(b.upgrade for b in blocks)
+            else None
+        )
+        return DetailsView(
+            group.prefix,
+            tuple(repo_details(group)),
+            reserve_rows=reserve,
+            warnings=repo_warnings(group),
+            advisories=blocks,
+            upgrade_all=upgrade_all,
         )
     for g in groups:
         for c in g.containers:
@@ -550,6 +632,79 @@ def _panel_lines(
     return lines
 
 
+_LINK_STYLE = Style(color="cyan")
+_ADVISORY_STYLE = Style(color="yellow")
+
+
+def _links_text(links: Sequence[AdvisoryLink], indent: str = "    ") -> Text:
+    text = Text(indent, no_wrap=True, overflow="ellipsis")
+    for index, link in enumerate(links):
+        if index:
+            text.append(_LINK_GAP)
+        text.append(link.label, style=_LINK_STYLE + hit_style(link.hit.kind, *link.hit.args))
+    return text
+
+
+def _plain_row(markup: str, style: Style) -> Text:
+    return Text(markup, style=style, no_wrap=True, overflow="ellipsis")
+
+
+def advisory_rows(view: DetailsView, room: int | None) -> list[Text]:
+    """The advisory blocks as one-row texts, fitted to ``room`` rows (None: all).
+
+    Under a cap the reason lines go first (the rest of a block's reasons become
+    ``- … N more``); a shown block always keeps its heading and links line.
+    When even those do not fit, trailing blocks are dropped and a last row
+    counts them. The upgrade-all link is the first thing to go.
+    """
+    blocks = view.advisories
+    if not blocks:
+        return []
+    last_upgrade = max((i for i, b in enumerate(blocks) if b.upgrade), default=None)
+    all_row = 1 if view.upgrade_all is not None and last_upgrade is not None else 0
+    full = sum(1 + len(b.reasons) + bool(b.links) for b in blocks) + all_row
+    shown, show_all = len(blocks), bool(all_row)
+    budgets = [len(b.reasons) for b in blocks]
+    if room is not None and full > room:
+        shown, used = 0, 0
+        for block in blocks:
+            need = 1 + bool(block.links)
+            if used + need + (shown + 1 < len(blocks)) > room:
+                break
+            used += need
+            shown += 1
+        if shown == 0:
+            return [_more_notices(len(blocks))] if room >= 1 else []
+        left = room - used - (shown < len(blocks))
+        show_all = bool(all_row) and last_upgrade is not None and last_upgrade < shown and left >= 1
+        left -= show_all
+        budgets = []
+        for block in blocks[:shown]:
+            take = min(len(block.reasons), left)
+            budgets.append(take)
+            left -= take
+    rows: list[Text] = []
+    for index, block in enumerate(blocks[:shown]):
+        rows.append(_plain_row(block.heading, _ADVISORY_STYLE))
+        reasons, budget = block.reasons, budgets[index]
+        if budget >= len(reasons):
+            rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons]
+        elif budget >= 1:
+            rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons[: budget - 1]]
+            rows.append(_plain_row(f"    - … {len(reasons) - budget + 1} more", _ADVISORY_STYLE))
+        if block.links:
+            rows.append(_links_text(block.links))
+        if show_all and index == last_upgrade and view.upgrade_all is not None:
+            rows.append(_links_text((view.upgrade_all,)))
+    if shown < len(blocks):
+        rows.append(_more_notices(len(blocks) - shown))
+    return rows
+
+
+def _more_notices(count: int) -> Text:
+    return _plain_row(f"… {count} more notices (jb doctor)", Style(dim=True))
+
+
 @dataclass(frozen=True)
 class _DetailsBody:
     """The label/value grid, or a container's panel, then the agent activity.
@@ -574,9 +729,14 @@ class _DetailsBody:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         grid_cap = self._grid_cap()
         lines = self._grid_lines(console, options, grid_cap)
-        if self.fixed and grid_cap is not None:
+        if self.fixed and grid_cap is not None and not self.view.advisories:
             lines += [[_BLANK] for _ in range(grid_cap - len(lines))]
         room = None if self.max_rows is None else max(0, self.max_rows - len(lines))
+        advisory = advisory_rows(self.view, room)
+        for text in advisory:
+            lines += console.render_lines(text, options.update(height=None), pad=False)[:1]
+        if room is not None:
+            room -= len(advisory)
         for text in self._activity_rows(console, options.max_width, room):
             lines += console.render_lines(text, options.update(height=None), pad=False)[:1]
         if self.fixed and self.max_rows is not None:
@@ -674,8 +834,14 @@ def details_rows(view: DetailsView, console: Console, width: int) -> DetailsRows
     drawn ``fixed``); everything under it is the activity, the message wrapped
     at the panel's content width.
     """
-    message = _DetailsBody(view, None).message_lines(console, width - PANEL_INSET_COLS)
-    natural = DETAILS_MAX_ROWS + len(view.activity) + len(message) + len(view.history)
+    body = _DetailsBody(view, None)
+    message = body.message_lines(console, width - PANEL_INSET_COLS)
+    grid = DETAILS_MAX_ROWS
+    if view.advisories:
+        # The grid is not padded: the blocks sit right under it and its warnings.
+        inner = console.options.update(width=max(1, width - PANEL_INSET_COLS), height=None)
+        grid = len(body._grid_lines(console, inner, None)) + len(advisory_rows(view, None))
+    natural = grid + len(view.activity) + len(message) + len(view.history)
     return DetailsRows(view.base_rows, max(view.base_rows, natural))
 
 

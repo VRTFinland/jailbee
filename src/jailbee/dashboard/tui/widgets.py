@@ -21,9 +21,11 @@ from textual.strip import Strip
 from textual.widgets import Static
 
 from jailbee.dashboard import hit as dhit
+from jailbee.dashboard.commands import permitted
 from jailbee.dashboard.details import (
     DETAILS_MAX_ROWS,
     DETAILS_PAIR_WIDTH,
+    AdvisoryLinks,
     DetailsView,
     details_for,
     render_details,
@@ -323,6 +325,16 @@ class FleetTable(ScrollView, can_focus=False):
 FRAME_BORDER_ROWS = 2
 
 
+def _advisory_links(view: DashboardView) -> AdvisoryLinks:
+    """The advisory links the session may offer: none that run or dismiss over SSH."""
+    local = not view.over_ssh
+    return AdvisoryLinks(
+        run=local,
+        dismiss=local,
+        upgrade_all=permitted(["upgrade"], view.ssh_policy, over_ssh=view.over_ssh),
+    )
+
+
 class DetailsPanel(Static):
     DEFAULT_CSS = (
         "DetailsPanel { width: 1fr; height: auto; background: ansi_default; color: ansi_default; }"
@@ -499,7 +511,7 @@ class DashboardFrame(Vertical):
         box = self._sync_native(overlay)
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
-            details_for(view.groups, view.selected, view.now)
+            details_for(view.groups, view.selected, view.now, links=_advisory_links(view))
             if view.show_details and view.groups
             else None
         )

@@ -466,6 +466,8 @@ class DashboardSession:
             running=self.bulk_running(),
             sources=sources,
             ineligible=ineligible,
+            over_ssh=self.over_ssh,
+            ssh_policy=self.ssh_policy,
         )
 
     def title(self) -> str:
