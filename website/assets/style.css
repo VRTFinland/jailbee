@@ -30,7 +30,8 @@
   --measure: 64ch;
   --page: 1120px;
   --gap: clamp(1rem, 2.5vw, 2rem);
-  --section-y: clamp(3rem, 5.5vw, 5rem);
+  --section-y: clamp(2.5rem, 4.5vw, 4rem);
+  --section-tight: clamp(1.25rem, 2.2vw, 2rem);
   --radius: 10px;
 }
 
@@ -146,6 +147,12 @@ img {
 
 section {
   padding: var(--section-y) 0;
+}
+
+/* A section's own padding is its whole gap to the next one: a trailing
+   margin on the last block would add a different amount to each. */
+section > .wrap > :last-child {
+  margin-bottom: 0;
 }
 
 /* -----------------------------------------------------------------------
@@ -348,20 +355,20 @@ section {
 }
 
 .hero {
-  padding-top: clamp(1.25rem, 3vw, 2.25rem);
-  padding-bottom: clamp(1.25rem, 3vw, 2rem);
+  padding-top: var(--section-tight);
+  padding-bottom: var(--section-tight);
 }
 
 /* The tour right under the hero and the problem right under the tour sit
    closer than the full section rhythm: the three read as one first screen,
-   and the stacked paddings made the gaps twice as tall as anywhere else. */
+   with equal gaps between them. */
 .hero + section {
-  padding-top: clamp(1.25rem, 3vw, 2rem);
-  padding-bottom: clamp(1.5rem, 3.5vw, 2.5rem);
+  padding-top: var(--section-tight);
+  padding-bottom: var(--section-tight);
 }
 
 .hero + section + section {
-  padding-top: clamp(1.5rem, 3.5vw, 2.5rem);
+  padding-top: var(--section-tight);
 }
 
 /* The framed first screen: pitch on the left, install card on the right,
