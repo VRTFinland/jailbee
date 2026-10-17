@@ -1608,8 +1608,10 @@ class DashboardSession:
             self.run_new_container(group.prefix, f"fork {answer}", fork_argv)
             return None
         if prompt.purpose == "container-rename":
+            # "report": a refused alias explains itself on the blanked screen,
+            # and only a pause keeps that reason readable.
             self.run_dashboard_command(
-                prompt.target, "container", rename_argv(prompt.target, answer), style="plain"
+                prompt.target, "container", rename_argv(prompt.target, answer), style="report"
             )
             return None
         if prompt.purpose == "egress-add":
