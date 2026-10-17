@@ -6890,10 +6890,20 @@ def test_gather_rows_notice_gone_after_config_fixed(advisory_rig, mocker):
     assert _gather(mocker, repo)[0].advisories == ()
 
 
+def test_gather_rows_notice_persists_while_config_unchanged(advisory_rig, mocker):
+    """The emitters are once-per-process caches; without `clear_emit_caches`
+    the notice would show on the first gather only."""
+    repo, _ = advisory_rig
+
+    for _ in range(3):
+        assert [a.key for a in _gather(mocker, repo)[0].advisories] == ["legacy-chrome-block"]
+
+
 def test_gather_rows_cli_dismissal_seen_next_gather(advisory_rig, db_session, mocker):
     from jailbee import notices
 
     repo, cfg_file = advisory_rig
+    assert _gather(mocker, repo)[0].advisories
     assert _gather(mocker, repo)[0].advisories
 
     notices.save(

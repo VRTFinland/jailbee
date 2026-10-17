@@ -41,8 +41,9 @@ def test_owed_apply_becomes_advisory(db_session, mocker):
 
     assert (a.key, a.scope, a.action, a.fingerprint) == ("apply", PREFIX, "apply", "1.7.3")
     assert a.summary == "`jb apply` owed (1 change)"
-    assert not any("Run `" in line or "dismiss" in line for line in a.lines)
-    assert any("reason 1.7.3" in line for line in a.lines)
+    marks = upgrade.load_or_backfill(db_session, PREFIX, "1.7.5", now=NOW)
+    (item,) = upgrade.pending("1.7.5", marks).actions
+    assert a.lines == tuple(upgrade.format_advice(upgrade.Pending((item,)), footer=False))
 
 
 def test_dismissed_action_hidden_until_new_reason(db_session, mocker):
