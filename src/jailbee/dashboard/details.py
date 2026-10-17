@@ -31,9 +31,11 @@ from jailbee.dashboard import format as dashboard_format
 from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
+from jailbee.dashboard.system_bar import min_usage_bar_cells, usage_bar
 from jailbee.lifecycle import (
     ContainerInfo,
     _format_bytes,
+    _parse_memory_limit,
     fork_source,
     format_duration_short,
     ls_field_specs,
@@ -93,7 +95,9 @@ class ContainerPanel:
     the git table's diff column compares with. ``warnings`` are yellow lines
     under the exceptions line (the fetched target is behind, say); empty:
     none are drawn. ``processes`` are the top CPU and memory lines drawn
-    directly under the summary (0-2; empty: none are drawn).
+    directly under the summary (0-2; empty: none are drawn). ``memory`` is a
+    running container's (used, limit) bytes: drawn as a bar at the right end of
+    the summary row when the row has room for it, else not at all.
     """
 
     summary: tuple[str, ...]
@@ -103,6 +107,7 @@ class ContainerPanel:
     exceptions: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     processes: tuple[str, ...] = ()
+    memory: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -355,7 +360,16 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         _exceptions(c, now, cell("ttl")),
         _warnings(c),
         _process_lines(c),
+        _memory_use(c),
     )
+
+
+def _memory_use(c: ContainerInfo) -> tuple[int, int] | None:
+    """(used, limit) bytes of a running container with a fixed memory limit."""
+    limit = _parse_memory_limit(c.memory_limit)
+    if c.state != "Running" or c.memory_usage is None or limit is None:
+        return None
+    return c.memory_usage, limit
 
 
 def _process_lines(c: ContainerInfo) -> tuple[str, ...]:
@@ -538,6 +552,7 @@ _NAME_MAX = 32  # widest the git table's name column grows
 _NAME_FLOOR = 6  # narrowest it is squeezed to while the note column still shows
 _NOTE_MIN = 8  # narrowest note column worth showing ("merge ok")
 _SUMMARY_GAP = "  "
+_MEM_BAR_CELLS = 20  # the memory bar's width inside its brackets, when there is room
 
 
 @dataclass(frozen=True)
@@ -638,6 +653,29 @@ def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
     return grid
 
 
+def _summary_row(panel: ContainerPanel, width: int) -> str | Text:
+    """The summary, with the memory bar at the right end when it fits whole.
+
+    The bar takes the room the summary leaves, up to ``_MEM_BAR_CELLS``; with
+    less than its numbers need it is left out and the summary is untouched.
+    """
+    summary = _SUMMARY_GAP.join(panel.summary)
+    if panel.memory is None:
+        return summary
+    used, limit = panel.memory
+    left = _one_row(summary)
+    avail = width - left.cell_len - len(_SUMMARY_GAP)
+    if avail < min_usage_bar_cells("mem", used, limit):
+        return summary
+    inner = min(_MEM_BAR_CELLS, avail - len("mem") - 2)
+    bar = usage_bar("mem", used, limit, inner)
+    row = Text(no_wrap=True, overflow="ellipsis")
+    row.append_text(left)
+    row.append(" " * (width - left.cell_len - bar.cell_len))
+    row.append_text(bar)
+    return row
+
+
 def _panel_lines(
     panel: ContainerPanel,
     console: Console,
@@ -650,10 +688,14 @@ def _panel_lines(
     render = options.update(height=None)
     lines: list[list[Segment]] = []
 
-    def one(markup: str) -> None:
-        lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
+    def one(markup: str | Text) -> None:
+        row = _one_row(markup) if isinstance(markup, str) else markup
+        lines.extend(console.render_lines(row, render, pad=False)[:1])
 
-    top = [_SUMMARY_GAP.join(panel.summary), *panel.processes[: fit.procs]]
+    top: list[str | Text] = [
+        _summary_row(panel, options.max_width),
+        *panel.processes[: fit.procs],
+    ]
     if panel.exceptions:
         top.append(_SUMMARY_GAP.join(panel.exceptions))
     top.extend(panel.warnings)
