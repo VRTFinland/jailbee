@@ -265,3 +265,15 @@ def test_a_failing_notice_read_cannot_fail_the_gather(mocker):
 
     assert isinstance(snapshot, Snapshot)
     assert snapshot.update is None
+
+
+def test_snapshot_with_advisories_round_trips():
+    from jailbee.dashboard.model import RepoAdvisory
+    from jailbee.state_service.protocol import decode, encode
+
+    advisory = RepoAdvisory("apply", "alpha", ("a", "b"), "1.7.3", "`jb apply` owed", "apply")
+    notice = RepoAdvisory("legacy-chrome-block", "/r/c.yaml", ("x",), "", "x")
+    group = RepoGroup("alpha", "/r", None, [], advisories=(advisory, notice))
+    snap = Snapshot(1, datetime(2026, 1, 1, tzinfo=UTC), True, [group])
+
+    assert decode(encode(snap)) == snap
