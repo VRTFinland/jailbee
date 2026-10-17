@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
-    from jailbee.procstat import ProcessActivity
+    from jailbee.procstat import ProcessActivity, ProcessMemory
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
@@ -85,6 +85,10 @@ class ContainerInfo:
     # way `git_status` is written by the git tier — never by `list_containers`.
     cpu_percent: float | None = None
     activity: tuple[ProcessActivity, ...] = ()
+    # Top programs by CPU share (no threshold) and by resident memory, from
+    # the same reading; written in place by `annotate_activity`.
+    top_cpu: tuple[ProcessActivity, ...] = ()
+    top_mem: tuple[ProcessMemory, ...] = ()
     # From the same sampler reading as `activity`, written in place by
     # `annotate_agent_status`; never by `list_containers`.
     agent_status: tuple[AgentSummary, ...] = ()
@@ -694,6 +698,8 @@ def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySamp
         result = results.get(c.name)
         c.cpu_percent = result.cpu_percent if result else None
         c.activity = result.processes if result else ()
+        c.top_cpu = result.top_cpu if result else ()
+        c.top_mem = result.top_mem if result else ()
 
 
 def annotate_agent_status(

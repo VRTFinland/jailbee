@@ -22,7 +22,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
-from jailbee.procstat import ProcessActivity
+from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.update_check import UpdateNotice
 
 # Bumped on any change a client of another version could misread.
@@ -105,6 +105,7 @@ _NAMESPACE: dict[str, Any] = {
         GitStatus,
         Path,
         ProcessActivity,
+        ProcessMemory,
         RepoAdvisory,
         RepoGroup,
         SubmoduleChange,

@@ -22,11 +22,12 @@ def write_stat(
     stime: int = 0,
     starttime: int = 1000,
     ppid: int = 1,
+    rss: int = 0,
 ) -> None:
     """Write a /proc/<pid>/stat line with the fields the reader parses.
 
     Field numbering follows proc(5): 1 pid, 2 comm, 3 state, 4 ppid, 14 utime,
-    15 stime, 22 starttime. The filler keeps every parsed field at its real
+    15 stime, 22 starttime, 24 rss. The filler keeps every parsed field at its real
     offset, which is the whole point — an off-by-one here would make the
     tests agree with a broken parser.
     """
@@ -34,7 +35,7 @@ def write_stat(
     d.mkdir(parents=True, exist_ok=True)
     before = ["S", str(ppid), "1", "0", "-1", "4194304", "0", "0", "0", "0", "0"]  # fields 3-13
     middle = ["0", "0", "20", "0", "1", "0"]  # fields 16-21
-    parts = [*before, str(utime), str(stime), *middle, str(starttime)]
+    parts = [*before, str(utime), str(stime), *middle, str(starttime), "0", str(rss)]
     (d / "stat").write_text(f"{pid} ({comm}) " + " ".join(parts) + "\n")
 
 
@@ -392,3 +393,64 @@ def test_sampler_nspid_reads_its_own_proc_root(tmp_path):
     sampler = make_sampler(tmp_path, [])
 
     assert sampler.nspid(48213) == 3679
+
+
+def test_read_process_reads_rss_pages(tmp_path):
+    write_stat(tmp_path, 42, comm="pytest", rss=250)
+
+    sample = procstat.read_process(42, proc_root=tmp_path)
+
+    assert sample is not None
+    assert sample.rss_pages == 250
+
+
+def test_top_mem_groups_by_comm_on_first_reading(tmp_path):
+    """Memory is a level, not a rate: it needs no previous reading."""
+    stage_container(tmp_path, pids=[600, 601, 602, 603])
+    proc = tmp_path / "proc"
+    for pid in (600, 601, 602):
+        write_stat(proc, pid, comm="qemu", rss=100)
+    write_stat(proc, 603, comm="node", rss=50)
+    sampler = make_sampler(tmp_path, [10.0])
+
+    out = sampler.sample([procstat.SampleInput("gie-demo", 500, None)])["gie-demo"]
+
+    assert out.top_mem == (
+        procstat.ProcessMemory("qemu", 300 * procstat.PAGE_SIZE, 3),
+        procstat.ProcessMemory("node", 50 * procstat.PAGE_SIZE, 1),
+    )
+    assert out.top_cpu == ()
+    assert out.cpu_percent is None
+
+
+def test_top_cpu_has_no_threshold_and_caps_at_three(tmp_path):
+    stage_container(tmp_path, pids=[600, 601, 602, 603, 604])
+    proc = tmp_path / "proc"
+    comms = {600: "a", 601: "b", 602: "c", 603: "d", 604: "e"}
+    for pid, comm in comms.items():
+        write_stat(proc, pid, comm=comm, starttime=5)
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item = procstat.SampleInput("gie-demo", 500, None)
+    sampler.sample([item])
+    # Over 1 s, ticks == percent of one core at the usual 100 Hz.
+    burn = {600: 1, 601: 2, 602: 3, 603: 40, 604: 0}
+    for pid, comm in comms.items():
+        ticks = burn[pid] * procstat.CLOCK_TICKS // 100
+        write_stat(proc, pid, comm=comm, utime=ticks, starttime=5)
+
+    out = sampler.sample([item])["gie-demo"]
+
+    assert [(p.comm, round(p.percent)) for p in out.top_cpu] == [("d", 40), ("c", 3), ("b", 2)]
+    assert [p.comm for p in out.processes] == ["d"]
+
+
+def test_top_mem_caps_at_three(tmp_path):
+    stage_container(tmp_path, pids=[600, 601, 602, 603, 604])
+    proc = tmp_path / "proc"
+    for pid, comm in zip((600, 601, 602, 603, 604), "abcde", strict=True):
+        write_stat(proc, pid, comm=comm, rss=10 * (pid - 599))
+    sampler = make_sampler(tmp_path, [10.0])
+
+    out = sampler.sample([procstat.SampleInput("gie-demo", 500, None)])["gie-demo"]
+
+    assert [m.comm for m in out.top_mem] == ["e", "d", "c"]

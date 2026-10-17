@@ -41,6 +41,14 @@ try:
 except (ValueError, OSError):  # pragma: no cover - every supported host has it
     CLOCK_TICKS = 100
 
+try:
+    PAGE_SIZE = int(os.sysconf("SC_PAGE_SIZE"))
+except (ValueError, OSError):  # pragma: no cover - every supported host has it
+    PAGE_SIZE = 4096
+
+# How many programs the per-container top lists keep.
+TOP_PROCESSES = 3
+
 
 @dataclass(frozen=True)
 class ProcSample:
@@ -53,6 +61,7 @@ class ProcSample:
     # counter went backwards rather than forwards.
     starttime: int
     ppid: int = 0  # proc(5) field 4; 0 when unknown
+    rss_pages: int = 0  # proc(5) field 24, resident set size in pages
 
 
 SHELL_COMMS = frozenset({"bash", "sh", "dash", "zsh", "fish"})
@@ -91,14 +100,19 @@ def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
         return None
     comm = raw[open_at + 1 : close_at]
     # `rest` starts at field 3, so field N sits at index N - 3:
-    # ppid (4) -> 1, utime (14) -> 11, stime (15) -> 12, starttime (22) -> 19.
+    # ppid (4) -> 1, utime (14) -> 11, stime (15) -> 12, starttime (22) -> 19,
+    # rss (24) -> 21.
     rest = raw[close_at + 2 :].split()
     try:
+        # rss is read leniently: a stat line cut short after starttime still
+        # yields a sample, with no memory figure.
+        rss = max(0, int(rest[21])) if len(rest) > 21 else 0
         return ProcSample(
             comm=comm,
             ticks=int(rest[11]) + int(rest[12]),
             starttime=int(rest[19]),
             ppid=int(rest[1]),
+            rss_pages=rss,
         )
     except (IndexError, ValueError):
         return None
@@ -226,11 +240,26 @@ class ProcessActivity:
 
 
 @dataclass(frozen=True)
+class ProcessMemory:
+    """One program's resident memory inside a container, summed over its processes."""
+
+    comm: str
+    rss_bytes: int
+    count: int  # processes of this name
+
+
+@dataclass(frozen=True)
 class ContainerActivity:
     """What one container was doing between two readings."""
 
     cpu_percent: float | None
     processes: tuple[ProcessActivity, ...] = ()
+    # The top `TOP_PROCESSES` by CPU share, with no threshold and only
+    # processes that burned any CPU; unlike `processes`, not a "busy" filter.
+    top_cpu: tuple[ProcessActivity, ...] = ()
+    # The top `TOP_PROCESSES` by summed RSS. A level, not a rate, so present
+    # from the first reading on.
+    top_mem: tuple[ProcessMemory, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -323,11 +352,15 @@ class ActivitySampler:
 
 
 def _diff(prev: _Reading | None, cur: _Reading, elapsed: float | None) -> ContainerActivity:
+    top_mem = _top_memory(cur.processes)
     if prev is None or elapsed is None or elapsed <= 0:
-        return ContainerActivity(cpu_percent=None)
+        return ContainerActivity(cpu_percent=None, top_mem=top_mem)
+    active, top_cpu = _process_activity(prev.processes, cur.processes, elapsed)
     return ContainerActivity(
         cpu_percent=_cpu_percent(prev.cpu_usage_ns, cur.cpu_usage_ns, elapsed),
-        processes=_process_activity(prev.processes, cur.processes, elapsed),
+        processes=active,
+        top_cpu=top_cpu,
+        top_mem=top_mem,
     )
 
 
@@ -344,8 +377,11 @@ def _cpu_percent(prev_ns: int | None, cur_ns: int | None, elapsed: float) -> flo
 
 def _process_activity(
     prev: dict[int, ProcSample], cur: dict[int, ProcSample], elapsed: float
-) -> tuple[ProcessActivity, ...]:
+) -> tuple[tuple[ProcessActivity, ...], tuple[ProcessActivity, ...]]:
     """Per-name CPU shares over the window, busiest first.
+
+    Returns the thresholded list (DOING) and the unthresholded top
+    `TOP_PROCESSES` (every name that burned CPU at all).
 
     Aggregated before the threshold is applied: eight pytest workers at 3%
     each are one program doing 24% of a core's work, and reporting them
@@ -363,10 +399,26 @@ def _process_activity(
         percent = delta / CLOCK_TICKS / elapsed * 100
         totals[sample.comm] = totals.get(sample.comm, 0.0) + percent
         counts[sample.comm] = counts.get(sample.comm, 0) + 1
-    active = [
+    everyone = [
         ProcessActivity(comm=comm, percent=percent, count=counts[comm])
         for comm, percent in totals.items()
-        if percent >= ACTIVE_PROCESS_MIN_PERCENT
     ]
-    active.sort(key=lambda p: (-p.percent, p.comm))
-    return tuple(active)
+    everyone.sort(key=lambda p: (-p.percent, p.comm))
+    active = tuple(p for p in everyone if p.percent >= ACTIVE_PROCESS_MIN_PERCENT)
+    return active, tuple(everyone[:TOP_PROCESSES])
+
+
+def _top_memory(cur: dict[int, ProcSample]) -> tuple[ProcessMemory, ...]:
+    """The `TOP_PROCESSES` biggest names by summed RSS, largest first."""
+    pages: dict[str, int] = {}
+    counts: dict[str, int] = {}
+    for sample in cur.values():
+        pages[sample.comm] = pages.get(sample.comm, 0) + sample.rss_pages
+        counts[sample.comm] = counts.get(sample.comm, 0) + 1
+    ranked = [
+        ProcessMemory(comm=comm, rss_bytes=n * PAGE_SIZE, count=counts[comm])
+        for comm, n in pages.items()
+        if n > 0
+    ]
+    ranked.sort(key=lambda m: (-m.rss_bytes, m.comm))
+    return tuple(ranked[:TOP_PROCESSES])
