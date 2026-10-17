@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import io
 from dataclasses import replace
-
-import pytest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
 from rich.console import Console
 from rich.text import Text
 
