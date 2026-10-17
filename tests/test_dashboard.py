@@ -6943,6 +6943,43 @@ def test_gather_rows_advisory_failure_is_empty(advisory_rig, mocker):
     assert group.advisories == ()
 
 
+def test_gather_rows_failed_advisory_does_not_blank_later_repos(advisory_rig, tmp_path, mocker):
+    """A failed flush leaves the shared session needing a rollback."""
+    from jailbee.dashboard import advisories as dadv
+    from jailbee.db.models import DismissedNotice
+
+    alpha, _ = advisory_rig
+    beta = tmp_path / "beta"
+    (beta / ".git").mkdir(parents=True)
+    (beta / ".jailbee").mkdir()
+    (beta / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: beta\nchrome:\n  enabled: true\n"
+    )
+    real = dadv.repo_advisories
+    calls = []
+
+    def flaky(session, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            now = datetime.now(UTC)
+            for _ in range(2):
+                session.add(
+                    DismissedNotice(
+                        scope="s", key="k", fingerprint="", version="1", dismissed_at=now
+                    )
+                )
+            session.flush()
+        return real(session, *args, **kwargs)
+
+    mocker.patch("jailbee.dashboard.advisories.repo_advisories", side_effect=flaky)
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [alpha, beta], with_git=False)
+
+    by_prefix = {g.prefix: g for g in groups}
+    assert by_prefix["alpha"].advisories == ()
+    assert [a.key for a in by_prefix["beta"].advisories] == ["legacy-chrome-block"]
+
+
 def test_synthesized_repo_gets_upgrade_advice_orphan_none(
     advisory_rig, db_session, tmp_path, mocker
 ):

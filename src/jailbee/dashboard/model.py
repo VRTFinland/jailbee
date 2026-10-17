@@ -427,6 +427,13 @@ def _repo_advisories(
         )
     except Exception:
         log.debug("advisories unavailable for %s", cfg.container_prefix, exc_info=True)
+        # A failed flush/commit leaves the shared session unusable until rolled
+        # back; without this every later repo in the gather would lose its advisories.
+        for session in sessions:
+            try:
+                session.rollback()
+            except Exception:
+                log.debug("advisory session rollback failed", exc_info=True)
         return ()
 
 
