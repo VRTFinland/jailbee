@@ -10,6 +10,7 @@ Incus fails. Nothing here raises out of `read`.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -134,6 +135,29 @@ class SystemReader:
     def _root_status(self) -> DiskStatus | None:
         for source in self._sources:
             path = Path(source)
-            if path.is_absolute() and path.exists() and same_filesystem(path, self._root):
+            if not path.is_absolute():
+                continue  # a block device name or a zfs dataset is never the root's filesystem
+            probe = _probe_path(path)
+            if probe is not None and same_filesystem(probe, self._root):
                 return None
         return read_disk(self._root)
+
+
+def _probe_path(path: Path) -> Path | None:
+    """`path`, or its nearest ancestor that can be stat'ed when `path` itself cannot.
+
+    Incus keeps loop images in a root-only directory the unprivileged state
+    service cannot enter; the directory above it decides the device just as
+    well. None when `path` is missing or nothing above it can be stat'ed.
+    """
+    probe = path
+    while True:
+        try:
+            os.stat(probe)
+            return probe
+        except PermissionError:
+            if probe.parent == probe:
+                return None
+            probe = probe.parent
+        except OSError:
+            return None
