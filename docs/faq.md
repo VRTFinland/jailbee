@@ -151,9 +151,9 @@ After changing anything the image bakes in — for example `golden.stacks`,
 `golden.extra_apt_packages`, provisioning snippets, `golden.provision_script`,
 or an image-sourced browser. Run `jailbee base build` again; existing
 containers keep their current root filesystem and do not gain the rebuilt
-image on restart. Recreate them to use it. Each build keeps one golden version only; dated
-archives left by jailbee before 1.8 go away on the next build (or with
-`jailbee base prune`).
+image on restart. Recreate them to use it. Each build keeps one golden
+version only; dated archives left by jailbee before 1.8 go away on the next
+build (or with `jailbee base prune`).
 
 → [Stack runtimes and extra apt packages](project-config.md#4-optional--stack-runtimes-and-extra-apt-packages)
 
@@ -861,9 +861,10 @@ the message alone does not distinguish them.
 
 `jailbee disk-usage` gives an estimated breakdown; directory-based apparent
 sizes and image metadata are not exclusive physical usage on a copy-on-write
-pool. `jailbee base usage` lists the repo's golden (image or golden instance) and
-any dated archives left by jailbee before 1.8; `jailbee base prune` removes
-those archives and keeps the current golden. Check the storage backend's own accounting for physical free space.
+pool. `jailbee base usage` lists the repo's golden (image or golden instance)
+and any dated archives left by jailbee before 1.8; `jailbee base prune`
+removes those archives and keeps the current golden. Check the storage
+backend's own accounting for physical free space.
 
 → [Storage](storage.md), [Commands](commands.md)
 

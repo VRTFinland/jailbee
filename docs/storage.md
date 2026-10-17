@@ -9,7 +9,8 @@ on disk. **On a host that runs more than a few containers, use a `btrfs` pool.**
 `incus admin init --auto` creates a pool with the `dir` driver on most hosts.
 A `dir` pool is just a directory tree, so:
 
-- **Every container is copied** from the golden image's root filesystem;
+- **Every container is copied** from the golden image's root filesystem
+  (the published image, since there is no golden instance on `dir`);
   the driver does not use native storage snapshots to share it.
 - **Every snapshot is copied** too.
 - Creating a container copies the whole tree, so `jailbee new` is slower.
@@ -18,8 +19,11 @@ Ten containers with an 8 GiB unpacked root filesystem therefore cost roughly
 80 GiB before workload data and snapshots. This is not the compressed image
 archive size; filesystem compression and sparse files also affect disk use.
 
-A `btrfs` pool is copy-on-write. Within the same pool, a new container is a
-snapshot of the unpacked image volume and initially shares its data extents.
+A `btrfs` pool is copy-on-write. There the golden is a stopped instance,
+`<alias>--golden`, in the pool, and a new container is an
+`incus copy --instance-only` snapshot of it: within the same pool it initially
+shares its data extents with the golden. (Other drivers create containers from
+the published image instead.)
 Writes allocate new extents, while snapshots retain the old ones. The storage
 clone is fast, but `jailbee new` still has to configure and boot the container.
 Different golden-image builds and different pools do not automatically share
@@ -27,9 +31,9 @@ all their data.
 
 | | `dir` | `btrfs` |
 |---|---|---|
-| New container | Full copy | CoW clone, shares blocks with the image |
+| New container | Full copy | CoW clone, shares blocks with the golden instance |
 | Snapshot | Full copy | Shares extents; retains old data after writes |
-| Cost of N fresh containers from one image | Roughly N × unpacked image | Roughly one unpacked image plus each container's changes |
+| Cost of N fresh containers from one golden | Roughly N × unpacked image | Roughly one golden instance plus each container's changes |
 | Transparent compression | Depends on underlying filesystem | Yes (`zstd`) |
 | Setup effort | Directory on an existing filesystem | Btrfs filesystem, device or loop-backed pool |
 | Protection from disk failure on one disk | None | None; checksums detect corruption, but repair needs another good copy |
@@ -281,7 +285,10 @@ shared helpers, and keep backups outside the pool you intend to remove.
    other resources you need to keep instead of deleting them. Do not aim for
    an empty `incus list`: unrelated instances can remain. Once no instance
    inherits the old root device, switch the `default` profile as shown above.
-5. Run `jailbee apply` for the affected repositories, then `jailbee doctor`
+5. Run `jailbee base build` for each affected repo's golden. It builds the golden
+   on the new pool (on btrfs, as the `<alias>--golden` instance living in that
+   pool), replaces the old golden and removes it. Then run
+   `jailbee apply` for the affected repositories, then `jailbee doctor`
    and create a new branch container with `jailbee new <branch>`. Check its
    root device with `incus config show <container> --expanded`, and verify
    the helpers on the new pool. Keep the old pool until these checks pass.
@@ -295,12 +302,11 @@ shared helpers, and keep backups outside the pool you intend to remove.
    ```bash
    incus storage delete <old-pool>
    ```
-7. Optionally prune old JailBee image archives:
+7. Optionally prune leftover pre-1.8 dated image archives:
    `jailbee base prune --all --days 14`. This asks to remove dated archives
    older than 14 days for registered repos, not every Incus image. Current
-   live aliases are kept. Image archives are separate from the unpacked
-   image volumes in each pool; Incus can unpack a retained image into the
-   new pool on first use.
+   live aliases are kept. Since 1.8 a rebuild keeps one golden version, so
+   there is normally nothing to prune.
 
 ### Moving a container you want to keep
 
@@ -346,9 +352,10 @@ not identify which image or snapshot shares the extents. See the
 - **One disk is not a backup.** Checksums detect corruption, but repair needs
   another good copy. The usual single-device layout duplicates metadata, not
   file data; neither protects against losing the disk. Keep work backed up.
-- **Image tarballs stay.** `/var/lib/incus/images` holds the golden images'
-  tarballs regardless of driver. They shrink only when you delete old images
-  (`jailbee base prune`).
+- **Image tarballs shrink on rebuild.** `/var/lib/incus/images` holds the golden
+  images' tarballs on non-btrfs pools. Only one version is kept: every
+  `jailbee base build` replaces the previous one. `jailbee base prune` only
+  matters for dated archives left by pre-1.8 builds.
 - **`jailbee disk-usage` and btrfs.** The "Containers" and "Container
   snapshots" rows run `du -sb` on `<pool source>/containers` and
   `<pool source>/containers-snapshots`, summed across pools. These are apparent

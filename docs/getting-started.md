@@ -110,7 +110,7 @@ for the merge rules and exceptions.
 jailbee config validate         # verify your config is sane
 jailbee init                    # creates Incus profiles, ACLs, jailbee-loose bridge, shared dirs
 jailbee registry up             # when the registry mirror is enabled — see below
-jailbee base build              # provisions and publishes the reusable golden image
+jailbee base build              # builds the reusable golden base (a stopped instance on btrfs, an image otherwise)
 ```
 
 Run `jailbee registry up` when the registry mirror is enabled for your setup.

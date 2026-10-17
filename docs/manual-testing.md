@@ -51,7 +51,8 @@ range and add only `root:53023:1` if delegation needs repair. Remove
 `dri-renderD128`/`dri-renderD129` from the generated `<prefix>-base` profile
 after `init` or `apply` if they block nested container starts (`mode: 0666`
 on nested GPU devices is rejected). `base build` can appear idle while it
-publishes/compresses an image; allow it to complete.
+runs the provisioning script and then promotes the golden (renames the build
+instance on btrfs, publishes an image otherwise); allow it to complete.
 
 ```bash
 # Host in the disposable rig; pick a configured repo and keep this shell's XDG env.

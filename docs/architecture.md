@@ -54,7 +54,7 @@ rebuilt image.
 ```mermaid
 flowchart TB
     UB["upstream Ubuntu image<br>golden.ubuntu_version"]
-    BUILD["prefix-base-build<br>temporary, on the loose bridge<br>runs install.sh and the enabled install.d snippets"]
+    BUILD["#lt;alias#gt;--build<br>temporary, on the loose bridge<br>runs install.sh and the enabled install.d snippets"]
     IMG["prefix-base--golden (btrfs instance)<br>or prefix-base (image)"]
     C1["prefix-feat-a"]
     C2["prefix-feat-b"]
