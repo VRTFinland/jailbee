@@ -2,9 +2,12 @@
 
 Pure Rich, frontend-agnostic. `system_line` always returns a single line no
 wider than the given width, degrading as the terminal narrows: bars shrink
-(all bars share one width, 4-30 cells), then the root segment drops to
-``/ NN%``, then every bar is dropped, and finally the line is cropped with an
-ellipsis.
+(all bars share one width, as narrow as their numbers plus two cells, at most
+30), then the root segment drops to ``/ NN%``, then every bar is dropped, and
+finally the line is cropped with an ellipsis.
+
+As in htop the numbers sit inside the bar, right-aligned over its end, and the
+unused part of the bar is plain blanks with no background.
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ from jailbee.dashboard.system import SystemStatus, level
 from jailbee.lifecycle import _format_bytes
 from jailbee.sysstat import DiskStatus, MemoryStatus
 
-MIN_BAR = 4
 MAX_BAR = 30
+_PAD = 2  # bar cells left for the fill beyond the numbers
 _GAP = "  "
 _LEVEL_STYLE = {"ok": "green", "warn": "yellow", "crit": "bold red"}
 
@@ -70,15 +73,34 @@ def _segments(status: SystemStatus) -> tuple[list[_Segment], _Segment | None]:
     return segs, root
 
 
-def _bar(seg: _Segment, width: int) -> Text:
+def _numbers_style(seg: _Segment) -> str:
+    return _LEVEL_STYLE[seg.lvl] if seg.lvl != "ok" else ""
+
+
+def _bar(seg: _Segment, width: int, text: str) -> Text:
+    """`[|||||    text]`: fill drawn as `|`, `text` overlaid at the right end."""
     used = min(width, max(0, round(seg.used * width)))
     cache = min(width - used, max(0, round(seg.cache * width)))
-    bar = Text("[", style="dim")
-    bar.append("|" * used, style=_LEVEL_STYLE[seg.lvl])
-    bar.append("|" * cache, style="dim")
-    bar.append("░" * (width - used - cache), style="dim")
+    fill = _LEVEL_STYLE[seg.lvl]
+    text_at = width - len(text)
+    bar = Text()
+    bar.append("[", style="dim")
+    for i in range(width):
+        if i >= text_at:
+            bar.append(text[i - text_at], style=_numbers_style(seg))
+        elif i < used:
+            bar.append("|", style=fill)
+        elif i < used + cache:
+            bar.append("|", style="dim")
+        else:
+            bar.append(" ")
     bar.append("]", style="dim")
     return bar
+
+
+def _inner(seg: _Segment) -> str:
+    """The text shown inside a bar: the root shows its percentage only."""
+    return seg.short if seg.label == "/" else seg.numbers
 
 
 def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_short: bool) -> Text:
@@ -89,32 +111,30 @@ def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_s
     for i, (seg, compact) in enumerate(items):
         if i:
             line.append(_GAP)
-        line.append(seg.label + " ")
-        numbers_style = _LEVEL_STYLE[seg.lvl] if seg.lvl != "ok" else ""
         if compact or bar is None:
-            if seg.label == "/":
-                line.append(seg.short, style=numbers_style)
-            else:
-                line.append(seg.numbers, style=numbers_style)
+            line.append(seg.label + " ")
+            line.append(_inner(seg), style=_numbers_style(seg))
             continue
-        line.append_text(_bar(seg, bar))
-        line.append(" ")
-        line.append(seg.short if seg.label == "/" else seg.numbers, style=numbers_style)
+        line.append(seg.label)
+        line.append_text(_bar(seg, bar, _inner(seg)))
     return line
 
 
 def _fit_bars(
     segs: list[_Segment], root: _Segment | None, width: int, root_short: bool
 ) -> Text | None:
-    """The line with the widest equal bars that fit, or None if even 4 cells do not."""
-    bars = len(segs) + (1 if root is not None and not root_short else 0)
-    if bars == 0:
+    """The line with the widest equal bars that fit, or None if the narrowest do not."""
+    shown = list(segs)
+    if root is not None and not root_short:
+        shown.append(root)
+    if not shown:
         return None
-    base = _render(segs, root, MIN_BAR, root_short)
+    narrowest = min(MAX_BAR, max(len(_inner(s)) for s in shown) + _PAD)
+    base = _render(segs, root, narrowest, root_short)
     spare = width - base.cell_len
     if spare < 0:
         return None
-    bar = min(MAX_BAR, MIN_BAR + spare // bars)
+    bar = min(MAX_BAR, narrowest + spare // len(shown))
     return _render(segs, root, bar, root_short)
 
 
