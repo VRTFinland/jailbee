@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=cc605922" />
+    <link rel="stylesheet" href="assets/style.css?v=39635459" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -726,6 +726,8 @@
         <h2>What you get.</h2>
         <div class="cards">
           <div class="card">
+            <!-- Lucide git-merge. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" /></svg>
             <p>
               <strong>A shortcut for git.</strong> Commits move straight between your computer
               and a branch's container, and from one container into another, so you don't have
@@ -735,6 +737,8 @@
             </p>
           </div>
           <div class="card">
+            <!-- Lucide container. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z" /><path d="M10 21.9V14L2.1 9.1" /><path d="m10 14 11.9-6.9" /><path d="M14 19.8v-8.1" /><path d="M18 17.5V9.4" /></svg>
             <p>
               <strong>Your own Docker daemon.</strong> Enable the Docker stack and each container
               runs Docker and Compose of its own. Your Compose setup works unchanged, and no
@@ -742,6 +746,8 @@
             </p>
           </div>
           <div class="card">
+            <!-- Lucide refresh-cw. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></svg>
             <p>
               <strong>Set up once, reuse across branches.</strong> Reuse configured caches,
               tool settings and agent logins instead of starting from scratch. That shared state
@@ -749,6 +755,8 @@
             </p>
           </div>
           <div class="card">
+            <!-- Lucide layout-dashboard. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></svg>
             <p>
               <strong>Build once, manage in one place.</strong> New containers start from a
               golden image — cheap on a copy-on-write backend such as btrfs. The terminal
@@ -757,6 +765,8 @@
             </p>
           </div>
           <div class="card">
+            <!-- Lucide folder-tree. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" /><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" /><path d="M3 5a2 2 0 0 0 2 2h3" /><path d="M3 3v13a2 2 0 0 0 2 2h3" /></svg>
             <p>
               <strong>Submodules come along.</strong> Initialize them recursively on the host
               first; JailBee then sets them up in new containers and transports their commits
@@ -764,6 +774,8 @@
             </p>
           </div>
           <div class="card">
+            <!-- Lucide globe. -->
+            <svg class="card__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></svg>
             <p>
               <strong>Reach it from anywhere.</strong> An optional, key-only SSH service opens
               the dashboard, a restricted console or policy-limited commands from your laptop,

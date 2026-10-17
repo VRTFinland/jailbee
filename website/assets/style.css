@@ -665,8 +665,8 @@ button.copy[data-state="copied"] {
   color: var(--text);
 }
 
-/* The use-case cards' icons: Lucide outlines drawn in the accent, so six
-   paragraphs of the same grey get a mark each to scan by. */
+/* The #usecases and #features cards' icons: Lucide outlines drawn in the
+   accent, so six paragraphs of the same grey get a mark each to scan by. */
 .card__icon {
   display: block;
   width: 1.6rem;
