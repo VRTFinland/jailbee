@@ -19,12 +19,16 @@ document.addEventListener("click", (event) => {
 
 // A player left running in a panel a tab switch hid keeps playing where
 // nobody can see it. Put the button back, which also stops it.
+// The panels fade (--tabs-fade, 0.8s in style.css) and `visibility` flips
+// only at the end of it, so look once the fade is over.
 document.addEventListener("change", (event) => {
   if (!event.target.classList.contains("tabs__radio")) return;
-  for (const frame of document.querySelectorAll(".yt__frame")) {
-    // Hidden either way: #demos hides panels with `visibility`, keeping
-    // their height; elsewhere a hidden ancestor would be `display: none`.
-    const hidden = frame.offsetParent === null || getComputedStyle(frame).visibility !== "visible";
-    if (hidden && frame.ytButton) frame.replaceWith(frame.ytButton);
-  }
+  setTimeout(() => {
+    for (const frame of document.querySelectorAll(".yt__frame")) {
+      // Hidden either way: #demos hides panels with `visibility`, keeping
+      // their height; elsewhere a hidden ancestor would be `display: none`.
+      const hidden = frame.offsetParent === null || getComputedStyle(frame).visibility !== "visible";
+      if (hidden && frame.ytButton) frame.replaceWith(frame.ytButton);
+    }
+  }, 900);
 });
