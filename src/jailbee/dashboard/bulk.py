@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.dashboard.actions import mount_argv, mount_directions, unmount_argv
 from jailbee.dashboard.jobs import JobResult, needs_terminal
 from jailbee.dashboard.menus import actions_for_container
 from jailbee.dashboard.model import RepoGroup, RepoTarget, _find_group
@@ -351,6 +352,151 @@ def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tup
     if unknown:
         lines.append(f"⚠ {unknown_status_warning(unknown)}")
     return tuple(lines)
+
+
+# The "N selected" entry that opens the optional-mount list. Not a verb of
+# BULK_VERBS: the terminal dashboard offers it, the Qt window has no mounts.
+MOUNTS_ENTRY = "mounts"
+MOUNTS_KEY = "o"
+_MOUNTABLE_STATES = frozenset({"Running", "Stopped"})
+
+
+@dataclass(frozen=True)
+class BulkMount:
+    """Mount or unmount one optional-mount ``kind`` over the marked containers.
+
+    A mount also takes containers that have ``kind`` attached already
+    (``renew``): `jailbee mount` sets a new TTL on them.
+    """
+
+    kind: str
+    remove: bool
+    eligible: tuple[str, ...]
+    skipped: tuple[tuple[str, str], ...] = ()
+    renew: tuple[str, ...] = ()
+
+    @property
+    def verb(self) -> str:
+        return f"{'unmount' if self.remove else 'mount'} {self.kind}"
+
+    @property
+    def value(self) -> str:
+        """The bulk mount list's entry value, read back by `actions.mount_choice`."""
+        return f"{'unmount' if self.remove else 'mount'}:{self.kind}"
+
+    @property
+    def label(self) -> str:
+        if self.remove:
+            return f"● {self.kind} — unmount ({len(self.eligible)})"
+        new = len(self.eligible) - len(self.renew)
+        if not new:
+            return f"● {self.kind} — renew TTL ({len(self.renew)})"
+        renew = f", renew TTL ({len(self.renew)})" if self.renew else ""
+        return f"○ {self.kind} — mount ({new}){renew}"
+
+    def argv(self, name: str, ttl: str | None) -> list[str]:
+        """One child's canonical argv: no ``jailbee``, no ``--config``."""
+        return unmount_argv(self.kind, name) if self.remove else mount_argv(self.kind, name, ttl)
+
+    def ttl_default(self, groups: Sequence[RepoGroup]) -> str | None:
+        """The TTL to offer first: the first taker's repo with one for ``kind``.
+
+        None for an unmount, or when no taker's repo has a default: then
+        nothing is asked and no ``--for`` is passed, as the Mounts… panel does.
+        """
+        if self.remove:
+            return None
+        for name in self.eligible:
+            group = _find_group(list(groups), name)
+            default = group.mount_ttl_defaults.get(self.kind) if group is not None else None
+            if default is not None:
+                return default
+        return None
+
+    def as_action(self) -> BulkAction:
+        """The batch bookkeeping a parallel run reports through."""
+        return BulkAction(self.verb, self.eligible, self.skipped)
+
+
+def plan_bulk_mount(
+    groups: Sequence[RepoGroup],
+    names: Sequence[str],
+    kind: str,
+    *,
+    remove: bool,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
+    busy: frozenset[str] = frozenset(),
+) -> BulkMount:
+    """Split ``names`` into the containers that take this mount direction and the rest."""
+    eligible: list[str] = []
+    renew: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    for name in dict.fromkeys(names):
+        group = _find_group(list(groups), name)
+        container = _container(groups, name)
+        if group is None or container is None:
+            skipped.append((name, "gone"))
+            continue
+        if name in busy:
+            skipped.append((name, "busy"))
+            continue
+        if RepoTarget.of(group) is None:
+            skipped.append((name, "view-only"))
+            continue
+        if container.state not in _MOUNTABLE_STATES:
+            skipped.append((name, container.state.lower()))
+            continue
+        if kind not in group.optional_mounts:
+            skipped.append((name, f"no '{kind}' mount configured"))
+            continue
+        attached = kind in container.optional_mounts
+        if remove and not attached:
+            skipped.append((name, "not mounted"))
+            continue
+        addable, removable = mount_directions(
+            container,
+            group.optional_mounts,
+            ssh_policy,
+            over_ssh=over_ssh,
+            remote_mountable=group.remote_mountable,
+        )
+        if kind not in (removable if remove else addable):
+            skipped.append((name, "not permitted by the SSH policy"))
+            continue
+        eligible.append(name)
+        if attached and not remove:
+            renew.append(name)
+    return BulkMount(kind, remove, tuple(eligible), tuple(skipped), tuple(renew))
+
+
+def bulk_mounts(
+    groups: Sequence[RepoGroup],
+    names: Sequence[str],
+    *,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
+    busy: frozenset[str] = frozenset(),
+) -> list[BulkMount]:
+    """Every kind and direction at least one of ``names`` takes: config order, mount first."""
+    kinds: dict[str, None] = {}
+    for name in names:
+        group = _find_group(list(groups), name)
+        if group is not None:
+            kinds.update(dict.fromkeys(group.optional_mounts))
+    plans = (
+        plan_bulk_mount(
+            groups, names, kind, remove=remove, ssh_policy=ssh_policy, over_ssh=over_ssh, busy=busy
+        )
+        for kind in kinds
+        for remove in (False, True)
+    )
+    return [plan for plan in plans if plan.eligible]
+
+
+def mount_confirm_question(plan: BulkMount) -> str:
+    action = "Unmount" if plan.remove else "Mount"
+    return f"{action} '{plan.kind}': {len(plan.eligible)} containers — {', '.join(plan.eligible)}?"
 
 
 def bulk_loose_default(groups: Sequence[RepoGroup], names: Sequence[str]) -> str | None:

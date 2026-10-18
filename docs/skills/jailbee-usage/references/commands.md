@@ -821,7 +821,7 @@ need `jetbrains.enabled`/`browsers.chrome.enabled`, `p` needs a known PR,
 `g u`/`g d` need a running clone-mode container, and orphan rows have none of
 them; a letter nothing owns does nothing. With marks, the letters are those of
 the *N selected* list (`m` merge, `u` push, `l` pull, `s` start, `r` restart,
-`H` stop, `n`/`w` network strict/loose, `R` clear name, `D` destroy). The
+`H` stop, `n`/`w` network strict/loose, `R` clear name, `o` mounts, `D` destroy). The
 dashboard keeps only the keys no menu has: movement, `Space`, `n` new container,
 `e`/`E` config, `A` accounts, `O` optimize, `F5`/`Ctrl-R` refresh, `v`, `M`,
 `S`/`F2`, `<`/`>`/`I`, `h`/`?`, `!`, `q`. Letters that would clash move in the
@@ -877,6 +877,9 @@ parallel (one notice at the end; succeeded rows are unmarked, failed or skipped 
 marked; destroy asks once, "No" first). Git push and pull run once per repo in the
 terminal through the CLI's multi-name form. The TTL picked for a bulk `net loose` is passed
 as `--for` to every marked container, including those of repos configured not to revert. In
+the terminal dashboard, `Mounts…` (`o`) lists each `optional_mounts` kind the marked
+containers' repos configure, as `mount (N)` — `renew TTL (N)` for those already attached —
+and `unmount (N)`; the chosen one runs in parallel with one TTL asked once. In
 the terminal dashboard, with marks present, Enter or right-click on any container row opens
 the *N selected* menu for the marks, even if the cursor row is unmarked; the Qt table acts
 on the right-clicked row alone when it is not part of the selection.

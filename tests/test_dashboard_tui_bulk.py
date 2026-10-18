@@ -189,13 +189,14 @@ def test_the_bulk_picker_gives_every_entry_its_own_letter(mocker, tmp_path):
 
 
 def test_bulk_letters_match_the_container_menu_where_the_verbs_do():
-    from jailbee.dashboard.bulk import BULK_KEYS
+    from jailbee.dashboard.bulk import BULK_KEYS, MOUNTS_KEY
     from jailbee.dashboard.tui.menu_state import _MENU_KEYS
 
     shared = {v: k for v, k in BULK_KEYS.items() if v in _MENU_KEYS}
     assert shared == {v: _MENU_KEYS[v] for v in shared}
     assert {"merge", "git push", "git pull", "restart", "stop", "destroy", "start"} <= set(shared)
     assert len(set(BULK_KEYS.values())) == len(BULK_KEYS)  # a bulk can offer any of them at once
+    assert MOUNTS_KEY not in BULK_KEYS.values()
 
 
 def test_a_bulk_letter_in_the_table_opens_the_bulk_picker(mocker, tmp_path):
@@ -823,3 +824,168 @@ def test_a_bulk_letter_typed_in_the_table_reaches_the_bulk_picker(mocker, tmp_pa
     run = drive(mocker, ["down", "space", "down", "space", "w"], [group])
 
     assert run.of_type(Picker)[-1].purpose == "bulk-confirm"
+
+
+def _mount_session(mocker, tmp_path, *attached, ttl=None):
+    """Running containers alpha-a… with ``attached[i]`` the kinds mounted on each."""
+    from dataclasses import replace
+
+    names = [f"alpha-{c}" for c in "abc"[: len(attached)]]
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [replace(ci(n, "alpha"), optional_mounts=k) for n, k in zip(names, attached, strict=True)],
+        optional_mounts=("aws", "gcp"),
+        mount_ttl_defaults=ttl or {},
+    )
+    session, _ = bare_session(mocker, [group])
+    session.jobs = SyncJobs()
+    session.marked = frozenset(names)
+    return session
+
+
+def _choose(session, value):
+    picker = session.overlay
+    assert isinstance(picker, Picker)
+    session.picker_chosen(next(e for e in picker.entries if e.value == value))
+
+
+def test_the_bulk_picker_offers_mounts_with_its_own_letter(mocker, tmp_path):
+    session = _mount_session(mocker, tmp_path, (), ())
+
+    picker = session.bulk_menu()
+
+    assert isinstance(picker, Picker)
+    entry = next(e for e in picker.entries if e.value == "mounts")
+    assert (entry.label, entry.key) == ("Mounts…", "o")
+    assert [e.value for e in picker.entries][-2:] == ["mounts", "destroy"]
+
+
+def test_a_repo_without_optional_mounts_offers_no_mounts_entry(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+
+    picker = session.bulk_menu()
+
+    assert isinstance(picker, Picker)
+    assert "mounts" not in [e.value for e in picker.entries]
+
+
+def test_a_stopped_container_is_offered_mounts_before_destroy(mocker, tmp_path):
+    from dataclasses import replace
+
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [replace(ci("alpha-a", "alpha", "Stopped"), optional_mounts=())],
+        optional_mounts=("aws",),
+    )
+    session, _ = bare_session(mocker, [group])
+    session.marked = frozenset({"alpha-a"})
+
+    picker = session.bulk_menu()
+
+    assert isinstance(picker, Picker)
+    assert [e.value for e in picker.entries] == ["start", "mounts", "destroy"]
+
+
+def test_the_o_letter_in_the_table_opens_the_bulk_picker(mocker, tmp_path):
+    session = _mount_session(mocker, tmp_path, (), ())
+    session.handle_key("down")
+
+    assert session.open_menu_for_letter("o")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-action"
+
+
+def test_mounts_lists_each_kind_and_direction(mocker, tmp_path):
+    session = _mount_session(mocker, tmp_path, ("aws",), ())
+    session.overlay = session.bulk_menu()
+
+    _choose(session, "mounts")
+
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-mounts"
+    assert [(e.label, e.value) for e in session.overlay.entries] == [
+        ("○ aws — mount (1), renew TTL (1)", "mount:aws"),
+        ("● aws — unmount (1)", "unmount:aws"),
+        ("○ gcp — mount (2)", "mount:gcp"),
+    ]
+
+
+def test_bulk_mount_confirms_then_asks_the_ttl_once_and_passes_it(mocker, tmp_path):
+    child = _children(mocker)
+    session = _mount_session(mocker, tmp_path, (), (), ttl={"aws": "4h"})
+    session.overlay = session.bulk_menu()
+    _choose(session, "mounts")
+
+    _choose(session, "mount:aws")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-mount-confirm"
+    assert session.overlay.title == "Mount 'aws': 2 containers — alpha-a, alpha-b?"
+    assert session.overlay.entries[0].value == "no"
+    _choose(session, "yes")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-mount-ttl"
+    assert session.overlay.entries[0].value == "4h"
+    child.assert_not_called()
+    _choose(session, "2h")
+
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "mount", "--for", "2h", "--", "aws", "alpha-a"],
+        ["jailbee", "mount", "--for", "2h", "--", "aws", "alpha-b"],
+    ]
+    session.tick()
+    assert session.notice == "mount aws: 2 ok"
+    assert session.marked == frozenset()
+
+
+def test_bulk_unmount_on_one_container_runs_without_questions(mocker, tmp_path):
+    child = _children(mocker)
+    session = _mount_session(mocker, tmp_path, ("aws",), ())
+    session.overlay = session.bulk_menu()
+    _choose(session, "mounts")
+
+    _choose(session, "unmount:aws")
+
+    assert session.overlay is None
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "unmount", "--", "aws", "alpha-a"]
+    ]
+    session.tick()
+    assert session.notice == "unmount aws: 1 ok, 1 skipped (alpha-b: not mounted)"
+
+
+def test_bulk_mount_without_a_ttl_default_passes_no_for(mocker, tmp_path):
+    child = _children(mocker)
+    session = _mount_session(mocker, tmp_path, ())
+    session.overlay = session.bulk_menu()
+    _choose(session, "mounts")
+
+    _choose(session, "mount:gcp")
+
+    assert child.call_args.args[0] == ["jailbee", "mount", "--", "gcp", "alpha-a"]
+
+
+def test_declining_the_bulk_mount_runs_nothing(mocker, tmp_path):
+    child = _children(mocker)
+    session = _mount_session(mocker, tmp_path, (), ())
+    session.overlay = session.bulk_menu()
+    _choose(session, "mounts")
+    _choose(session, "mount:aws")
+
+    _choose(session, "no")
+
+    child.assert_not_called()
+    assert session.notice == "Cancelled"
+
+
+def test_a_bulk_mount_with_nothing_left_says_so(mocker, tmp_path):
+    child = _children(mocker)
+    session = _mount_session(mocker, tmp_path, ("aws",))
+    session.overlay = session.bulk_menu()
+    _choose(session, "mounts")
+    session.groups[0].containers[0].optional_mounts = ()  # detached meanwhile
+
+    _choose(session, "unmount:aws")
+
+    child.assert_not_called()
+    assert session.notice == "Unmount 'aws': nothing to do (alpha-a: not mounted)"

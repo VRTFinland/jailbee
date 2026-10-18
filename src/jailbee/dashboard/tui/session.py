@@ -29,18 +29,24 @@ from jailbee.dashboard import advisories as dadv
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.bulk import (
     BULK_KEYS,
+    MOUNTS_ENTRY,
+    MOUNTS_KEY,
     BulkAction,
     BulkBatch,
+    BulkMount,
     bulk_actions,
     bulk_argv,
     bulk_loose_default,
+    bulk_mounts,
     confirm_detail,
     confirm_question,
     destroy_risk_lines,
     foreground_runs,
+    mount_confirm_question,
     needs_confirm,
     nothing_to_do,
     plan_bulk,
+    plan_bulk_mount,
     ttl_entries,
 )
 from jailbee.dashboard.columns import (
@@ -1740,7 +1746,23 @@ class DashboardSession:
             assert isinstance(picker.back, da.AccountsState)
             return self.submit_account_picker(picker, entry, picker.back)
         if picker.purpose == "bulk-action":
+            if entry.value == MOUNTS_ENTRY:
+                return self.bulk_mount_menu()
             return self.begin_bulk(entry.value)
+        if picker.purpose == "bulk-mounts":
+            return self.begin_bulk_mount(entry.value)
+        if picker.purpose == "bulk-mount-confirm":
+            if entry.value == "yes":
+                return self.begin_bulk_mount(picker.carry[0], confirmed=True)
+            self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "bulk-mount-ttl":
+            plan = self._plan_mount(picker.carry[0])
+            if plan.eligible:
+                self._run_mount(plan, entry.value)
+            else:
+                self.set_notice(self._mount_nothing_to_do(plan))
+            return None
         if picker.purpose == "bulk-confirm":
             if entry.value == "yes":
                 return self.begin_bulk(picker.carry[0], confirmed=True)
@@ -2297,15 +2319,84 @@ class DashboardSession:
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
         )
-        if not actions:
+        entries = [PickerEntry(a.label, a.verb, BULK_KEYS[a.verb]) for a in actions]
+        if self._bulk_mounts(names):
+            # Before Destroy…, which stays last.
+            at = len(entries) - (bool(entries) and entries[-1].value == "destroy")
+            entries.insert(at, PickerEntry("Mounts…", MOUNTS_ENTRY, MOUNTS_KEY))
+        if not entries:
             noun = "container" if len(names) == 1 else "containers"
             self.set_notice(f"No action applies to the {len(names)} marked {noun}")
             return None
-        return Picker(
-            "bulk-action",
-            f"{len(names)} selected",
-            tuple(PickerEntry(a.label, a.verb, BULK_KEYS[a.verb]) for a in actions),
+        return Picker("bulk-action", f"{len(names)} selected", tuple(entries))
+
+    def _bulk_mounts(self, names: Sequence[str]) -> list[BulkMount]:
+        return bulk_mounts(
+            self.groups,
+            names,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
         )
+
+    def bulk_mount_menu(self) -> Picker | None:
+        """Each optional-mount kind and direction the marked containers take, with counts."""
+        plans = self._bulk_mounts(self._marked_in_order())
+        if not plans:
+            self.set_notice("No optional mount to add or remove")
+            return None
+        return Picker(
+            "bulk-mounts",
+            f"Mounts — {len(self.marked)} selected",
+            tuple(PickerEntry(p.label, p.value) for p in plans),
+        )
+
+    def _plan_mount(self, value: str) -> BulkMount:
+        """A bulk mount list entry planned again from the marks as they are now."""
+        kind, remove = dact.mount_choice(value)
+        return plan_bulk_mount(
+            self.groups,
+            self._marked_in_order(),
+            kind,
+            remove=remove,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
+        )
+
+    @staticmethod
+    def _mount_nothing_to_do(plan: BulkMount) -> str:
+        reasons = "; ".join(f"{name}: {reason}" for name, reason in plan.skipped)
+        action = "Unmount" if plan.remove else "Mount"
+        return f"{action} '{plan.kind}': nothing to do ({reasons})"
+
+    def begin_bulk_mount(self, value: str, *, confirmed: bool = False) -> Overlay | None:
+        """Start a bulk mount list entry: the several-containers question, the TTL, or the run."""
+        plan = self._plan_mount(value)
+        if not plan.eligible:
+            self.set_notice(self._mount_nothing_to_do(plan))
+            return None
+        if not confirmed and len(plan.eligible) >= 2:
+            return Picker(
+                "bulk-mount-confirm",
+                mount_confirm_question(plan),
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, {len(plan.eligible)}", "yes")),
+                carry=(value,),
+                detail=_cap_detail(tuple(f"skipped {n}: {r}" for n, r in plan.skipped)),
+            )
+        default = plan.ttl_default(self.groups)
+        if default is not None:
+            return Picker(
+                "bulk-mount-ttl",
+                f"Keep '{plan.kind}' mounted in {len(plan.eligible)} for how long?",
+                ttl_entries(default),
+                carry=(value,),
+            )
+        self._run_mount(plan, None)
+        return None
+
+    def _run_mount(self, plan: BulkMount, ttl: str | None) -> None:
+        self._run_parallel(plan.as_action(), (), argv_for=lambda name: plan.argv(name, ttl))
 
     def begin_bulk(self, verb: str, *, confirmed: bool = False) -> Overlay | None:
         """Start ``verb`` on the marked containers: its question, or the run itself.
@@ -2392,11 +2483,18 @@ class DashboardSession:
         else:
             self._run_foreground(action)
 
-    def _run_parallel(self, action: BulkAction, extra: Sequence[str]) -> None:
+    def _run_parallel(
+        self,
+        action: BulkAction,
+        extra: Sequence[str],
+        *,
+        argv_for: Callable[[str], list[str]] | None = None,
+    ) -> None:
         """One detached child per container; one notice when the last one ends.
 
         Nothing is suspended: these verbs print nothing worth reading and ask
-        nothing the dashboard has not already answered (``bulk_argv``).
+        nothing the dashboard has not already answered (``bulk_argv``, or
+        ``argv_for`` when each child's argv is built elsewhere).
         """
         batch = BulkBatch(action.verb, skipped=dict(action.skipped))
         self.bulk_batches.append(batch)
@@ -2406,7 +2504,9 @@ class DashboardSession:
             if target is None:
                 batch.skipped[name] = "gone"
                 continue
-            canonical = bulk_argv(action.verb, name, extra)
+            canonical = (
+                argv_for(name) if argv_for is not None else bulk_argv(action.verb, name, extra)
+            )
             try:
                 check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
             except RouteError as exc:
@@ -2559,7 +2659,7 @@ class DashboardSession:
         if self.overlay is not None or self.merge_pick is not None:
             return False
         if self.marked and self.selected is not None and self.selected.kind != "repo":
-            if char not in BULK_KEYS.values():
+            if char not in BULK_KEYS.values() and char != MOUNTS_KEY:
                 return False
             picker = self.bulk_menu()
             if picker is None or char not in (e.key for e in picker.entries):

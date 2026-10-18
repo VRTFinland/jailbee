@@ -313,3 +313,113 @@ def test_a_pull_question_says_it_writes_to_the_host_repo():
     assert bulk.confirm_question(action) == (
         "Send commits to host (git pull): 2 containers — alpha-a, alpha-b?"
     )
+
+
+def _mount_group(tmp_path, *containers, kinds=("aws", "gcp"), ttl=None):
+    return dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        list(containers),
+        optional_mounts=kinds,
+        mount_ttl_defaults=ttl or {},
+    )
+
+
+def _attached(name, *kinds, state="Running"):
+    return replace(ci(name, "alpha", state), optional_mounts=kinds)
+
+
+def test_bulk_mounts_offer_each_kind_in_both_directions_with_counts(tmp_path):
+    groups = [
+        _mount_group(
+            tmp_path, _attached("alpha-a"), _attached("alpha-b", "aws"), _attached("alpha-c")
+        )
+    ]
+
+    plans = bulk.bulk_mounts(groups, ["alpha-a", "alpha-b", "alpha-c"])
+
+    assert [(p.kind, p.remove, p.eligible) for p in plans] == [
+        ("aws", False, ("alpha-a", "alpha-b", "alpha-c")),
+        ("aws", True, ("alpha-b",)),
+        ("gcp", False, ("alpha-a", "alpha-b", "alpha-c")),
+    ]
+    assert [p.label for p in plans] == [
+        "○ aws — mount (2), renew TTL (1)",
+        "● aws — unmount (1)",
+        "○ gcp — mount (3)",
+    ]
+
+
+def test_bulk_mount_over_only_attached_containers_is_a_renewal(tmp_path):
+    groups = [_mount_group(tmp_path, _attached("alpha-a", "aws"), kinds=("aws",))]
+
+    (mount, _unmount) = bulk.bulk_mounts(groups, ["alpha-a"])
+
+    assert mount.label == "● aws — renew TTL (1)"
+    assert mount.argv("alpha-a", "2h") == ["mount", "--for", "2h", "--", "aws", "alpha-a"]
+
+
+def test_bulk_mount_skips_what_cannot_take_it_with_reasons(tmp_path):
+    other = dmodel.RepoGroup(
+        "beta", str(tmp_path), None, [ci("beta-a", "beta")], optional_mounts=("gcp",)
+    )
+    groups = [
+        _mount_group(
+            tmp_path,
+            _attached("alpha-a"),
+            _attached("alpha-b", state="Starting"),
+            _attached("alpha-c"),
+        ),
+        other,
+    ]
+
+    plan = bulk.plan_bulk_mount(
+        groups,
+        ["alpha-a", "alpha-b", "alpha-c", "beta-a", "gone"],
+        "aws",
+        remove=False,
+        busy=frozenset({"alpha-c"}),
+    )
+
+    assert plan.eligible == ("alpha-a",)
+    assert plan.skipped == (
+        ("alpha-b", "starting"),
+        ("alpha-c", "busy"),
+        ("beta-a", "no 'aws' mount configured"),
+        ("gone", "gone"),
+    )
+
+
+def test_bulk_unmount_skips_a_container_without_the_kind_attached(tmp_path):
+    groups = [_mount_group(tmp_path, _attached("alpha-a", "aws"), _attached("alpha-b"))]
+
+    plan = bulk.plan_bulk_mount(groups, ["alpha-a", "alpha-b"], "aws", remove=True)
+
+    assert plan.eligible == ("alpha-a",)
+    assert plan.skipped == (("alpha-b", "not mounted"),)
+    assert plan.argv("alpha-a", None) == ["unmount", "--", "aws", "alpha-a"]
+
+
+def test_bulk_mount_follows_the_ssh_policy(tmp_path):
+    groups = [_mount_group(tmp_path, _attached("alpha-a", "aws"), kinds=("aws",))]
+    policy = RemoteSSHConfig.model_validate({})
+
+    plans = bulk.bulk_mounts(groups, ["alpha-a"], ssh_policy=policy, over_ssh=True)
+
+    # `mount` is a host command the default policy refuses; `unmount` stays
+    assert [(p.kind, p.remove) for p in plans] == [("aws", True)]
+
+
+def test_bulk_mount_ttl_default_is_the_first_takers_repo_default(tmp_path):
+    groups = [
+        dmodel.RepoGroup(
+            "beta", str(tmp_path), None, [ci("beta-a", "beta")], optional_mounts=("aws",)
+        ),
+        _mount_group(tmp_path, _attached("alpha-a"), ttl={"aws": "4h"}),
+    ]
+
+    plan = bulk.plan_bulk_mount(groups, ["beta-a", "alpha-a"], "aws", remove=False)
+
+    assert plan.ttl_default(groups) == "4h"
+    assert bulk.plan_bulk_mount(groups, ["beta-a"], "aws", remove=False).ttl_default(groups) is None

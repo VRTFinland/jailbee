@@ -5683,6 +5683,12 @@ push step). Run `jb dashboard`.
    `jailbee git push a b`, a single source/action question, then a pause before
    the dashboard returns.
 6. `jb git push a b --pr` and `jb git push a b --force`. Expected: exit 2.
-7. Qt (`jb dashboard --gui`): select two rows with Ctrl+click and right-click.
+7. In a repo with an `optional_mounts:` kind (say `aws`), mount it on one
+   container from its own `Mounts…`, then mark that one and another and press
+   `o`. Expected: `○ aws — mount (1), renew TTL (1)` and `● aws — unmount (1)`.
+   Choose the mount entry: one "No"-first question naming both, then one TTL
+   picker; afterwards both rows' MOUNT column shows `●` with the new deadline.
+   Mark both again, `o`, unmount: both detach, one notice.
+8. Qt (`jb dashboard --gui`): select two rows with Ctrl+click and right-click.
    Expected: a "2 selected" menu; a bulk action reports skipped rows and launch
    failures once.

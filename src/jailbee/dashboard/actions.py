@@ -282,6 +282,35 @@ _MOUNT_VALUE = "mount:"
 _UNMOUNT_VALUE = "unmount:"
 
 
+def mount_directions(
+    container: ContainerInfo,
+    kinds: Sequence[str],
+    ssh_policy: RemoteSSHConfig | None,
+    *,
+    over_ssh: bool,
+    remote_mountable: Sequence[str] = (),
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The configured kinds ``container`` may mount, and those it may unmount.
+
+    Mounting ignores whether the kind is attached already: `jailbee mount` on
+    an attached kind sets a new TTL. Unmounting needs it attached. Each
+    direction is gated on its own argv, so an SSH allowlist that permits
+    `unmount` and not `mount` leaves only the attached kinds. In a restricted
+    SSH session a kind is mountable only when `remote_mountable` names it, the
+    same rule `jailbee mount` applies there.
+    """
+    from jailbee.remote_ssh.session import is_remote_session
+
+    can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
+    can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
+    restricted = over_ssh and is_remote_session()
+    addable = tuple(
+        kind for kind in kinds if can_add and (not restricted or kind in remote_mountable)
+    )
+    removable = tuple(kind for kind in kinds if can_remove and kind in container.optional_mounts)
+    return addable, removable
+
+
 def mount_entries(
     container: ContainerInfo,
     kinds: Sequence[str],
@@ -290,24 +319,16 @@ def mount_entries(
     over_ssh: bool,
     remote_mountable: Sequence[str] = (),
 ) -> tuple[PickerEntry, ...]:
-    """One entry per configured kind: attached ones unmount, the rest mount.
-
-    Each direction is gated on its own argv, so an SSH allowlist that permits
-    `unmount` and not `mount` offers only the attached kinds. In a restricted
-    SSH session a kind is offered for mounting only when `remote_mountable`
-    names it, the same rule `jailbee mount` applies there.
-    """
-    from jailbee.remote_ssh.session import is_remote_session
-
-    can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
-    can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
-    restricted = over_ssh and is_remote_session()
+    """One entry per configured kind: attached ones unmount, the rest mount."""
+    addable, removable = mount_directions(
+        container, kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
+    )
     entries: list[PickerEntry] = []
     for kind in kinds:
         if kind in container.optional_mounts:
-            if can_remove:
+            if kind in removable:
                 entries.append(PickerEntry(f"● {kind} — unmount", _UNMOUNT_VALUE + kind))
-        elif can_add and (not restricted or kind in remote_mountable):
+        elif kind in addable:
             entries.append(PickerEntry(f"○ {kind} — mount", _MOUNT_VALUE + kind))
     return tuple(entries)
 
