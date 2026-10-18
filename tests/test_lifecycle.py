@@ -10773,6 +10773,17 @@ def test_resolve_container_name_falls_back_to_alias(make_cfg, tmp_path):
     assert resolve_container_name(cfg, incus, "login") == "myrepo-feat-x"
 
 
+@pytest.mark.parametrize(("stored", "typed"), [("ios-1-E4a", "ios-1-e4a"), ("login", "LOGIN")])
+def test_resolve_container_name_alias_ignores_case(make_cfg, tmp_path, stored, typed):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = [_aliased("myrepo-feat-x", stored)]
+    assert resolve_container_name(cfg, incus, typed) == "myrepo-feat-x"
+
+
 def test_resolve_container_name_real_name_beats_alias(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

@@ -25,13 +25,48 @@ def test_set_alias_writes_label(cfg):
     incus.config_set.assert_called_once_with("myrepo-a", "user.jailbee.alias", "login")
 
 
-@pytest.mark.parametrize("bad", ["", "Login", "-x", "x-", "a/b", "a_b"])
+@pytest.mark.parametrize("bad", ["", "-x", "x-", "a/b", "a_b", "ä"])
 def test_set_alias_rejects_bad_charset(cfg, bad):
     incus = MagicMock()
     incus.list_containers.return_value = [_raw("myrepo-a")]
     with pytest.raises(aliases.AliasError):
         aliases.set_alias(cfg, incus, "myrepo-a", bad)
     incus.config_set.assert_not_called()
+
+
+def test_set_alias_keeps_uppercase(cfg):
+    incus = MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a")]
+    aliases.set_alias(cfg, incus, "myrepo-a", "ios-1-E4a")
+    incus.config_set.assert_called_once_with("myrepo-a", "user.jailbee.alias", "ios-1-E4a")
+
+
+def test_set_alias_rejects_other_containers_alias_in_other_case(cfg):
+    incus = MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b", alias="Login")]
+    with pytest.raises(aliases.AliasError, match="alias of 'b'"):
+        aliases.set_alias(cfg, incus, "myrepo-a", "login")
+
+
+def test_set_alias_rejects_short_name_in_other_case(cfg):
+    incus = MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b")]
+    with pytest.raises(aliases.AliasError, match="'B' is a container"):
+        aliases.set_alias(cfg, incus, "myrepo-a", "B")
+
+
+def test_set_alias_rejects_instance_name_in_other_case(cfg):
+    incus = MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("other-x", prefix="other")]
+    with pytest.raises(aliases.AliasError, match="instance name"):
+        aliases.set_alias(cfg, incus, "myrepo-a", "Other-X")
+
+
+def test_set_alias_recasing_own_alias_is_allowed(cfg):
+    incus = MagicMock()
+    incus.list_containers.return_value = [_raw("myrepo-a", alias="login")]
+    aliases.set_alias(cfg, incus, "myrepo-a", "Login")
+    incus.config_set.assert_called_once_with("myrepo-a", "user.jailbee.alias", "Login")
 
 
 def test_set_alias_rejects_other_containers_short_name(cfg):

@@ -3,7 +3,9 @@
 The real Incus name never changes — every piece of state keyed on it (jobs,
 ACLs, the `.local` share, snapshots) stays put. The alias is one label,
 settable on a running container, that `lifecycle.resolve_container_name`
-accepts and the listings show.
+accepts and the listings show. Its case is kept for display but never
+matters: resolution and every collision check compare case-insensitively,
+so two aliases differing only in case cannot coexist.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 ALIAS_LABEL = "user.jailbee.alias"
-_ALIAS_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+_ALIAS_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$")
 
 
 class AliasError(ValueError):
@@ -29,18 +31,22 @@ def set_alias(cfg: Config, incus: Incus, full_name: str, alias: str) -> None:
 
     if not _ALIAS_RE.match(alias):
         raise AliasError(
-            f"invalid alias '{alias}': use lowercase letters, digits and '-', "
+            f"invalid alias '{alias}': use letters, digits and '-', "
             "starting and ending with a letter or digit"
         )
-    if alias == short_name(cfg, full_name):
+    key = alias.casefold()
+    if key == short_name(cfg, full_name).casefold():
         clear_alias(incus, full_name)
         return
     instances = incus.list_containers(fast=True)
-    if any(raw["name"] == alias for raw in instances):
+    if any(raw["name"].casefold() == key for raw in instances):
         raise AliasError(f"'{alias}' is an instance name; name resolution would shadow the alias")
     own_base = f"{cfg.container_prefix}-base"
     for raw in instances:
-        if own_base in (raw.get("profiles") or []) and short_name(cfg, raw["name"]) == alias:
+        if (
+            own_base in (raw.get("profiles") or [])
+            and short_name(cfg, raw["name"]).casefold() == key
+        ):
             raise AliasError(f"'{alias}' is a container of this repo; pick another alias")
     owner = find_by_alias(cfg, instances, alias)
     if owner is not None and owner != full_name:

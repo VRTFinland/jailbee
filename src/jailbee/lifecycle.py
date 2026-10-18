@@ -865,6 +865,8 @@ def short_name(cfg: Config, name: str) -> str:
 def find_by_alias(cfg: Config, instances: list[dict[str, Any]], alias: str) -> str | None:
     """Full name of this repo's container whose alias is ``alias``, else None.
 
+    Case-insensitive: an alias keeps its case for display only.
+
     Only containers carrying ``<container_prefix>-base`` count: an alias is a
     per-repo name, and a foreign repo's alias must never resolve here.
     """
@@ -872,7 +874,8 @@ def find_by_alias(cfg: Config, instances: list[dict[str, Any]], alias: str) -> s
     for raw in instances:
         if own_base not in (raw.get("profiles") or []):
             continue
-        if (raw.get("config") or {}).get("user.jailbee.alias") == alias:
+        stored = (raw.get("config") or {}).get("user.jailbee.alias")
+        if stored is not None and stored.casefold() == alias.casefold():
             return str(raw["name"])
     return None
 
