@@ -423,3 +423,33 @@ def test_bulk_mount_ttl_default_is_the_first_takers_repo_default(tmp_path):
 
     assert plan.ttl_default(groups) == "4h"
     assert bulk.plan_bulk_mount(groups, ["beta-a"], "aws", remove=False).ttl_default(groups) is None
+
+
+def test_a_renew_only_mount_asks_about_renewing(tmp_path):
+    groups = [
+        _mount_group(
+            tmp_path, _attached("alpha-a", "aws"), _attached("alpha-b", "aws"), kinds=("aws",)
+        )
+    ]
+
+    plan = bulk.plan_bulk_mount(groups, ["alpha-a", "alpha-b"], "aws", remove=False)
+
+    assert bulk.mount_confirm_question(plan) == (
+        "Renew TTL of 'aws': 2 containers — alpha-a, alpha-b?"
+    )
+
+
+def test_a_kind_not_remote_mountable_says_so_in_a_restricted_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    group = replace(_mount_group(tmp_path, _attached("alpha-a")), remote_mountable=("gcp",))
+    policy = RemoteSSHConfig.model_validate({"mounts": True})
+
+    plan = bulk.plan_bulk_mount(
+        [group], ["alpha-a"], "aws", remove=False, ssh_policy=policy, over_ssh=True
+    )
+
+    assert plan.skipped == (("alpha-a", "not mountable over SSH"),)
+    assert bulk.plan_bulk_mount(
+        [group], ["alpha-a"], "gcp", remove=False, ssh_policy=policy, over_ssh=True
+    ).eligible == ("alpha-a",)

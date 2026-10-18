@@ -462,7 +462,10 @@ def plan_bulk_mount(
             remote_mountable=group.remote_mountable,
         )
         if kind not in (removable if remove else addable):
-            skipped.append((name, "not permitted by the SSH policy"))
+            # `remote_mountable` gates a kind, the SSH policy the command.
+            granted = remove or not over_ssh or kind in group.remote_mountable
+            reason = "not permitted by the SSH policy" if granted else "not mountable over SSH"
+            skipped.append((name, reason))
             continue
         eligible.append(name)
         if attached and not remove:
@@ -495,7 +498,8 @@ def bulk_mounts(
 
 
 def mount_confirm_question(plan: BulkMount) -> str:
-    action = "Unmount" if plan.remove else "Mount"
+    renew_only = not plan.remove and len(plan.renew) == len(plan.eligible)
+    action = "Unmount" if plan.remove else "Renew TTL of" if renew_only else "Mount"
     return f"{action} '{plan.kind}': {len(plan.eligible)} containers — {', '.join(plan.eligible)}?"
 
 

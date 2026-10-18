@@ -2341,13 +2341,14 @@ class DashboardSession:
 
     def bulk_mount_menu(self) -> Picker | None:
         """Each optional-mount kind and direction the marked containers take, with counts."""
-        plans = self._bulk_mounts(self._marked_in_order())
+        names = self._marked_in_order()
+        plans = self._bulk_mounts(names)
         if not plans:
             self.set_notice("No optional mount to add or remove")
             return None
         return Picker(
             "bulk-mounts",
-            f"Mounts — {len(self.marked)} selected",
+            f"Mounts — {len(names)} selected",
             tuple(PickerEntry(p.label, p.value) for p in plans),
         )
 
