@@ -3240,3 +3240,99 @@ def test_run_apply_leaves_an_existing_loose_bridge_alone(
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
 
     incus.network_create.assert_not_called()
+
+
+def _apply_with_base_change(
+    make_cfg: Any, tmp_path: Path, mocker: MockerFixture, *, extra_config: bool
+) -> list[str]:
+    """Run apply where only the base profile changed; return the restart prompts shown.
+
+    The stored profile is the rendering without `cpu_share`; the new one sets it,
+    plus an extra `container.env` key when `extra_config`.
+    """
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.profiles import base_profile_yaml, profile_names
+
+    old_cfg = make_cfg(tmp_path)
+    old_yaml = base_profile_yaml(old_cfg)
+    cfg = old_cfg.model_copy(
+        update={"defaults": old_cfg.defaults.model_copy(update={"cpu_share": 20})}
+    )
+    if extra_config:
+        cfg = cfg.model_copy(
+            update={"container": cfg.container.model_copy(update={"env": {"FOO": "1"}})}
+        )
+    names = profile_names(cfg)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.profile_exists.return_value = True
+    incus.profile_show.return_value = old_yaml
+    mocker.patch("jailbee.apply._profile_differs", side_effect=lambda _i, n, _y: n == names.base)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch("jailbee.apply._restart_one")
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"{tmp_path.name}-a",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            )
+        ],
+    )
+    prompts: list[str] = []
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda m: prompts.append(m) or False)
+    assert names.base in result.profiles_changed
+    return prompts
+
+
+def test_cpu_share_change_alone_does_not_offer_a_restart(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Incus applies `limits.cpu.allowance` to running containers live; restarting
+    every running container (and re-running its autostart) for it is pure load."""
+    assert _apply_with_base_change(make_cfg, tmp_path, mocker, extra_config=False) == []
+
+
+def test_cpu_share_change_with_other_config_still_offers_a_restart(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    prompts = _apply_with_base_change(make_cfg, tmp_path, mocker, extra_config=True)
+    assert len(prompts) == 1 and "need restart" in prompts[0]
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        ("config: {}\ndevices: {}", "config: {limits.cpu.allowance: 20%}\ndevices: {}", True),
+        (
+            "config: {limits.cpu.allowance: 20%}\ndevices: {}",
+            "config: {limits.cpu.allowance: 50%}\ndevices: {}",
+            True,
+        ),
+        ("config: {limits.cpu.allowance: 20%}\ndevices: {}", "config: {}\ndevices: {}", True),
+        ("config: {x: '1'}\ndevices: {}", "config: {x: '1'}\ndevices: {}", False),
+        (
+            "config: {x: '1'}\ndevices: {}",
+            "config: {x: '2', limits.cpu.allowance: 20%}\ndevices: {}",
+            False,
+        ),
+        (
+            "config: {}\ndevices: {a: {type: disk}}",
+            "config: {limits.cpu.allowance: 20%}\ndevices: {}",
+            False,
+        ),
+    ],
+)
+def test_only_changes_live_config(old: str, new: str, expected: bool) -> None:
+    from jailbee.apply import _only_changes_live_config
+
+    assert _only_changes_live_config(old, new) is expected
