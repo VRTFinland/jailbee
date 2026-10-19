@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -559,3 +560,23 @@ def test_remove_waypipe_sockets_clears_the_new_tree_and_legacy_leftovers(tmp_pat
     assert (wp.container_servers_dir("c1") / "wp-ffffffff").exists()
     assert not (display_state_dir() / "wp-0a1b2c3d-c1").exists()
     assert (display_state_dir() / "wayland-0").exists()
+
+
+def test_ensure_servers_device_creates_the_source_directory_first(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    from jailbee.remote_ssh.waypipe import servers_dir
+
+    seen = {}
+
+    def add(container, name, kind, config):
+        source = Path(config["source"])
+        seen["exists"] = source.is_dir()
+        seen["mode"] = source.stat().st_mode & 0o777 if source.is_dir() else None
+
+    incus = MagicMock()
+    incus.config_device_add.side_effect = add
+
+    rd.ensure_servers_device(incus)
+
+    assert seen == {"exists": True, "mode": 0o700}
+    assert servers_dir().is_dir()

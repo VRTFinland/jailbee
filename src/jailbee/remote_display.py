@@ -384,6 +384,12 @@ def ensure_links_device(incus: Incus) -> None:
 
 def ensure_servers_device(incus: Incus) -> None:
     """Add the waypipe servers' tree to a display container that predates it."""
+    from jailbee.remote_ssh.waypipe import servers_dir
+
+    # Before the mount: Incus refuses a disk device whose source is missing.
+    servers = servers_dir()
+    servers.mkdir(parents=True, exist_ok=True, mode=0o700)
+    servers.chmod(0o700)
     try:
         incus.config_device_add(DISPLAY_CONTAINER, SERVERS_DEVICE, "disk", _servers_device_config())
     except IncusError as e:
