@@ -6,8 +6,10 @@ wider than the given width, degrading as the terminal narrows: bars shrink
 30), then the root segment drops to ``/ NN%``, then every bar is dropped, and
 finally the line is cropped with an ellipsis.
 
-As in htop the numbers sit inside the bar, right-aligned over its end, and the
-unused part of the bar is plain blanks with no background.
+As in htop the numbers sit inside the bar, right-aligned over its end, and are
+coloured cell by cell like the bar beneath them: the level colour as far as the
+used share reaches, blue over the cache share, white beyond. The unused part of
+the bar is plain blanks with no background.
 """
 
 from __future__ import annotations
@@ -23,7 +25,9 @@ from jailbee.sysstat import DiskStatus, MemoryStatus
 MAX_BAR = 30
 _PAD = 2  # bar cells left for the fill beyond the numbers
 _GAP = "  "
-_LEVEL_STYLE = {"ok": "green", "warn": "yellow", "crit": "bold red"}
+_LEVEL_STYLE = {"ok": "bold green", "warn": "bold yellow", "crit": "bold red"}
+_CACHE_STYLE = "bold blue"  # htop's blue for buffers/cache
+_EMPTY_STYLE = "white"  # numbers over the unused part of the bar
 
 
 @dataclass(frozen=True)
@@ -116,12 +120,16 @@ def _bar(seg: _Segment, width: int, text: str) -> Text:
     bar = Text()
     bar.append("[", style="dim")
     for i in range(width):
-        if i >= text_at:
-            bar.append(text[i - text_at], style=_numbers_style(seg))
-        elif i < used:
-            bar.append("|", style=fill)
+        if i < used:
+            style = fill
         elif i < used + cache:
-            bar.append("|", style="dim")
+            style = _CACHE_STYLE
+        else:
+            style = _EMPTY_STYLE
+        if i >= text_at:
+            bar.append(text[i - text_at], style=style)
+        elif i < used + cache:
+            bar.append("|", style=style)
         else:
             bar.append(" ")
     bar.append("]", style="dim")

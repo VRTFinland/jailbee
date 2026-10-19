@@ -159,3 +159,24 @@ def test_numbers_fit_in_the_narrowest_bar() -> None:
         if "Mem[" in plain and "Pool[" in plain:
             assert "8.0G/16.0G]" in plain
             assert "50.0G/100.0G]" in plain
+
+
+def _style_at(line: Text, index: int) -> str:
+    return " ".join(str(sp.style) for sp in line.spans if sp.start <= index < sp.end)
+
+
+def test_numbers_are_coloured_only_as_far_as_the_fill_reaches() -> None:
+    line = system_line(_status(root=_disk(0.5)), 300)
+    start = line.plain.index("50.0G/100.0G", line.plain.index("Pool["))
+    bar_open = line.plain.rindex("[", 0, start)
+    width = line.plain.index("]", start) - bar_open - 1
+    used_cells = round(0.5 * width)
+    first_unused = bar_open + 1 + used_cells
+    assert "green" in _style_at(line, first_unused - 1)
+    assert "green" not in _style_at(line, first_unused)
+    assert "white" in _style_at(line, start + len("50.0G/100.0G") - 1)
+
+
+def test_cache_share_is_blue() -> None:
+    line = system_line(_status(), 300)
+    assert any("blue" in str(sp.style) for sp in line.spans)

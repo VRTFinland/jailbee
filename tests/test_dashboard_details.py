@@ -1197,6 +1197,6 @@ def test_memory_bar_colour_follows_the_free_share() -> None:
         assert isinstance(row, Text)
         return {str(sp.style) for sp in row.spans}
 
-    assert "green" in styles(GIB)
-    assert "yellow" in styles(int(7.2 * GIB))
+    assert "bold green" in styles(GIB)
+    assert "bold yellow" in styles(int(7.2 * GIB))
     assert "bold red" in styles(int(7.8 * GIB))
