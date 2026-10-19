@@ -156,7 +156,9 @@ def test_clear_name_is_parallel_and_skips_unaliased_containers(tmp_path):
 
 def test_bulk_argv_forces_destroy_and_appends_answers():
     assert bulk.bulk_argv("stop", "alpha-a") == ["stop", "alpha-a"]
-    assert bulk.bulk_argv("destroy", "alpha-a") == ["destroy", "alpha-a", "--force"]
+    assert bulk.bulk_argv("start", "alpha-a") == ["start", "alpha-a", "--background"]
+    assert bulk.bulk_argv("restart", "alpha-a") == ["restart", "alpha-a", "--background"]
+    assert bulk.bulk_argv("destroy", "alpha-a") == ["destroy", "alpha-a", "--force", "--background"]
     assert bulk.bulk_argv("net loose", "alpha-a", ("--for", "2h")) == [
         "net",
         "loose",

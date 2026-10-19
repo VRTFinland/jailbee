@@ -121,7 +121,7 @@ def test_destroy_children_carry_force(mocker, tmp_path):
 
     session.run_bulk(plan_bulk(session.groups, ["alpha-a"], "destroy"))
 
-    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a", "--force"]
+    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a", "--force", "--background"]
 
 
 def test_a_batch_still_reports_after_its_container_vanished(mocker, tmp_path):
@@ -291,8 +291,8 @@ def test_capital_d_with_marks_acts_on_the_marks_not_the_cursor(mocker, tmp_path)
     session.picker_chosen(PickerEntry("Yes, destroy 2", "yes"))
 
     assert [c.args[0] for c in child.call_args_list] == [
-        ["jailbee", "destroy", "alpha-a", "--force"],
-        ["jailbee", "destroy", "alpha-b", "--force"],
+        ["jailbee", "destroy", "alpha-a", "--force", "--background"],
+        ["jailbee", "destroy", "alpha-b", "--force", "--background"],
     ]
 
 
@@ -313,7 +313,7 @@ def test_capital_d_without_marks_asks_in_the_dashboard_before_destroying(mocker,
 
     session.picker_chosen(picker.entries[1])
 
-    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a", "--force"]
+    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a", "--force", "--background"]
 
 
 def test_declining_the_single_destroy_runs_nothing(mocker, tmp_path):
@@ -326,6 +326,47 @@ def test_declining_the_single_destroy_runs_nothing(mocker, tmp_path):
 
     child.assert_not_called()
     assert session.notice == "Cancelled"
+
+
+@pytest.mark.parametrize(
+    ("verb", "index", "argv"),
+    [
+        ("restart", 0, ["jailbee", "restart", "alpha-a", "--background"]),
+        ("stop", 1, ["jailbee", "stop", "alpha-a"]),
+    ],
+)
+def test_a_lifecycle_menu_entry_runs_detached_not_in_the_terminal(
+    mocker, tmp_path, verb, index, argv
+):
+    """A shutdown or a boot can take minutes; the dashboard must stay usable.
+
+    Mutation: send these verbs back to `dispatch` and the terminal is handed off.
+    """
+    child = _children(mocker)
+    mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
+    session, terminal, _ = _session(mocker, tmp_path, "Running")
+    session.handle_key("down")
+
+    assert session.open_menu_for_letter("l")
+    session.menu_chosen(verb, "Lifecycle →", index)
+
+    assert terminal.handed == []
+    assert [c.args[0] for c in child.call_args_list] == [argv]
+    assert session.view().running == frozenset({"alpha-a"})
+
+
+def test_start_from_the_menu_runs_detached_and_tracked(mocker, tmp_path):
+    child = _children(mocker)
+    session, terminal, _ = _session(mocker, tmp_path, "Stopped")
+    session.handle_key("down")
+
+    assert session.open_menu_for_letter("s")
+    session.menu_chosen("start", None, 0)
+
+    assert terminal.handed == []
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "start", "alpha-a", "--background"]
+    ]
 
 
 def test_bulk_loose_asks_the_ttl_once_and_passes_it(mocker, tmp_path):

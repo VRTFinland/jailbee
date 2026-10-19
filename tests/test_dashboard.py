@@ -4444,6 +4444,70 @@ def test_actions_for_container_no_clear_for_a_live_job(mocker):
     assert "job clear" not in verbs
 
 
+_NOW_T = datetime(2026, 6, 3, 12, 0, tzinfo=UTC)
+
+
+def _job_container(state: str, phase: str, kind: str):
+    from jailbee.lifecycle import ContainerInfo
+
+    return ContainerInfo(
+        name="p-foo",
+        state=state,
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        job_phase=phase,
+        job_pid=4242,
+        job_kind=kind,
+    )
+
+
+def test_actions_for_container_no_job_log_for_a_stop(mocker):
+    """A stop row has no log file; offering `job log` would only fail.
+
+    Mutation: count the stop row as a job and `job log --follow` is offered.
+    """
+    from jailbee import background
+
+    mocker.patch.object(background, "worker_alive", return_value=True)
+    c = _job_container("Running", background.PHASE_STOPPING, background.JOB_STOP)
+    groups = [dmodel.RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [c])]
+
+    verbs = [verb for _, verb in dmenus.actions_for_container(groups, "p-foo")]
+
+    assert not any(v.startswith("job log") for v in verbs)
+
+
+@pytest.mark.parametrize(
+    ("state", "phase", "kind", "alive", "cell"),
+    [
+        ("Running", "stopping", "stop", True, "[yellow]■[/yellow]"),
+        ("Running", "stopping", "destroy", True, "[yellow]■[/yellow]"),
+        ("Stopped", "starting", "boot", True, "[yellow]▶[/yellow]"),
+        # A dead job says nothing about where the container is heading.
+        ("Running", "stopping", "stop", False, "▶"),
+        # A create's `starting` is not a boot: the container may not exist yet.
+        ("Stopped", "starting", "create", True, "■"),
+    ],
+)
+def test_state_cell_shows_where_a_live_job_is_taking_the_container(
+    mocker, state, phase, kind, alive, cell
+):
+    """Incus lags a shutdown or a boot; the live job row does not.
+
+    Mutation: render the Incus state alone and the yellow cases fail.
+    """
+    from jailbee import background
+    from jailbee.dashboard import format as dformat
+    from jailbee.lifecycle import ls_field_specs
+
+    mocker.patch.object(background, "worker_alive", return_value=alive)
+    spec = next(f for f in ls_field_specs(now=_NOW_T, all_repos=False) if f.name == "state")
+
+    assert dformat.dashboard_cell(spec, _job_container(state, phase, kind), _NOW_T) == cell
+
+
 def test_actions_for_container_no_clear_without_a_job():
     from jailbee.lifecycle import ContainerInfo
 

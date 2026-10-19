@@ -26,6 +26,7 @@ from jailbee.db.models import JOB_AUTOSTART as JOB_AUTOSTART
 from jailbee.db.models import JOB_BOOT as JOB_BOOT
 from jailbee.db.models import JOB_CREATE as JOB_CREATE
 from jailbee.db.models import JOB_DESTROY as JOB_DESTROY
+from jailbee.db.models import JOB_STOP as JOB_STOP
 from jailbee.db.models import BackgroundJob
 
 if TYPE_CHECKING:
@@ -192,6 +193,51 @@ def start_job(
         row.updated_at = now
     session.add(row)
     session.commit()
+
+
+def claim_job(
+    session: Session,
+    *,
+    container_name: str,
+    container_prefix: str,
+    pid: int,
+    phase: str,
+    now: datetime,
+    op_kind: str,
+) -> bool:
+    """Record a short-lived op run by ``pid`` itself, unless a live job holds the row.
+
+    For an op with no detached worker (a `jailbee stop`), whose row exists only
+    so every view can say what is happening. One row per container, so any
+    other row is left alone: a live one belongs to a worker still writing to
+    the container, and a failed or dead one is the only record that, say, a
+    create never finished — the release afterwards would delete it. Only a
+    dead row of the same kind (a stop that was killed) is replaced. Returns
+    whether the row is now ours.
+    """
+    row = session.get(BackgroundJob, container_name)
+    if row is not None and not (row.op_kind == op_kind and clearable(row.phase, row.pid)):
+        return False
+    start_job(
+        session,
+        container_name=container_name,
+        container_prefix=container_prefix,
+        branch=None,
+        pid=pid,
+        log_path="",
+        now=now,
+        op_kind=op_kind,
+    )
+    set_phase(session, container_name, phase, now=now)
+    return True
+
+
+def release_job(session: Session, container_name: str, pid: int) -> None:
+    """Delete the row :func:`claim_job` wrote, unless another op has replaced it since."""
+    row = session.get(BackgroundJob, container_name)
+    if row is not None and row.pid == pid:
+        session.delete(row)
+        session.commit()
 
 
 def adopt_autostart(session: Session, container_name: str, *, now: datetime) -> None:

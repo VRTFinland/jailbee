@@ -127,6 +127,9 @@ JOB_BOOT = "boot"
 # blocking stages are done, so unlike a create or a boot this job never
 # gates attaching — it only reports how far the deferred stages got.
 JOB_AUTOSTART = "autostart"
+# A `jailbee stop` in progress. No worker of its own: the stopping command is
+# the row's process, and it deletes the row when the stop ends either way.
+JOB_STOP = "stop"
 
 
 class BackgroundJob(SQLModel, table=True):

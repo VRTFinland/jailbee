@@ -6,6 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session
 from typer.testing import CliRunner
 
@@ -330,6 +331,36 @@ def test_stop_proceeds_with_a_live_job_of_another_kind(tmp_path, mocker) -> None
     out = _out(result)
     assert result.exit_code == 0, out
     incus.stop.assert_called_once()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_stop_holds_a_stop_row_only_while_it_runs(tmp_path, mocker, fails) -> None:
+    """Incus says Running for the whole shutdown; the row is what says "stopping".
+
+    Mutation: drop the row and the first assertion fails; release it only on
+    success and a failed stop leaves a stale "stopping" behind.
+    """
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_STOP
+
+    _, incus = _setup(tmp_path, mocker)
+    seen: list[tuple[str, str] | None] = []
+
+    def stop(*_a, **_kw):
+        with Session(get_engine()) as s:
+            row = background.get_job(s, "myrepo-feat-a")
+            seen.append(None if row is None else (row.op_kind, row.phase))
+        if fails:
+            raise RuntimeError("boom")
+
+    incus.stop.side_effect = stop
+
+    runner.invoke(app, ["stop", "feat-a"])
+
+    assert seen == [(JOB_STOP, background.PHASE_STOPPING)]
+    with Session(get_engine()) as s:
+        assert background.get_job(s, "myrepo-feat-a") is None
 
 
 def _restart_env(mocker):
