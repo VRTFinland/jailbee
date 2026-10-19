@@ -1465,6 +1465,64 @@ def test_list_branches_returns_empty_when_git_missing(mocker, tmp_path):
     assert list_branches(tmp_path) == []
 
 
+def test_list_remote_branches_strips_remote_prefix_and_head(mocker, tmp_path):
+    from jailbee.git import list_remote_branches
+
+    mock_run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                "refs/remotes/origin/HEAD\nrefs/remotes/origin/main\n"
+                "refs/remotes/origin/release/2.1\n"
+            ),
+            stderr="",
+        ),
+    )
+    assert list_remote_branches(tmp_path, "origin") == ["main", "release/2.1"]
+    assert mock_run.call_args.args[0] == [
+        "git",
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/remotes/origin/",
+    ]
+
+
+def test_list_remote_branches_returns_empty_on_failure(mocker, tmp_path):
+    from jailbee.git import list_remote_branches
+
+    mocker.patch("jailbee.git.subprocess.run", side_effect=FileNotFoundError("git"))
+    assert list_remote_branches(tmp_path, "origin") == []
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=128, stdout="", stderr=""),
+    )
+    assert list_remote_branches(tmp_path, "origin") == []
+
+
+def test_list_base_candidates_puts_local_first_and_dedupes(mocker, tmp_path):
+    from jailbee.git import list_base_candidates
+
+    mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a"])
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="up")
+    rb = mocker.patch(
+        "jailbee.git.list_remote_branches", return_value=["main", "release/2.1", "feat/a"]
+    )
+    assert list_base_candidates(tmp_path) == ["main", "feat/a", "release/2.1"]
+    rb.assert_called_once_with(tmp_path, "up")
+
+
+def test_list_base_candidates_falls_back_to_origin(mocker, tmp_path):
+    from jailbee.git import list_base_candidates
+
+    mocker.patch("jailbee.git.list_branches", return_value=[])
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value=None)
+    rb = mocker.patch("jailbee.git.list_remote_branches", return_value=["release/2.1"])
+    assert list_base_candidates(tmp_path) == ["release/2.1"]
+    rb.assert_called_once_with(tmp_path, "origin")
+
+
 # ---------------------------------------------------------------------------
 # get_head_sha
 # ---------------------------------------------------------------------------

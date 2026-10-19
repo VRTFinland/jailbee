@@ -628,7 +628,7 @@ class AppController(QObject):
         dialog = NewContainerDialog(
             group.prefix,
             base_default=new_container_base_default(group.repo_root),
-            branches=host_branches(group.repo_root),
+            branches=host_branches(group.repo_root, include_remote=True),
             parent=self._window,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

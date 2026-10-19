@@ -1593,7 +1593,8 @@ class DashboardSession:
                 suggestions=host_branches(
                     repo.repo_root
                     if (repo := target_group(self.groups, prompt.target, "repo"))
-                    else None
+                    else None,
+                    include_remote=True,
                 ),
             )
         if prompt.purpose == "new-base":

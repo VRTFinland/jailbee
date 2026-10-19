@@ -588,18 +588,25 @@ def new_container_base_default(repo_root: str | None) -> str | None:
     return git.get_current_branch(Path(repo_root))
 
 
-def host_branches(repo_root: str | None, *, exclude: str | None = None) -> tuple[str, ...]:
+def host_branches(
+    repo_root: str | None, *, exclude: str | None = None, include_remote: bool = False
+) -> tuple[str, ...]:
     """``repo_root``'s local branches, for a branch prompt's suggestions.
 
     The group's repo, not the cwd, for the same reason as
     :func:`new_container_base_default`. Empty for a null root (an orphan group)
     or a failing ``git`` — the prompt then takes plain text.
+
+    ``include_remote`` adds the upstream's already-fetched branches after the
+    local ones: a base for ``jailbee new`` may be remote-only (a release
+    branch), but a retarget needs ``refs/heads/<branch>`` and must not offer one.
     """
     if repo_root is None:
         return ()
     from jailbee import git
 
-    return tuple(b for b in git.list_branches(Path(repo_root)) if b != exclude)
+    lister = git.list_base_candidates if include_remote else git.list_branches
+    return tuple(b for b in lister(Path(repo_root)) if b != exclude)
 
 
 def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:

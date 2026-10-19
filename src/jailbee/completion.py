@@ -247,6 +247,22 @@ def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 @_completion_guard
+def complete_base_branch(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a `jailbee new` base from local and already-fetched upstream branches.
+
+    A release branch is often fetched but never checked out; `jailbee new`
+    accepts one that exists only as ``refs/remotes/<upstream>/...``.
+    """
+    from jailbee.git import list_base_candidates
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, _incus = loaded
+    return sorted(b for b in list_base_candidates(cfg.repo_root) if b.startswith(incomplete))
+
+
+@_completion_guard
 def complete_pool_names(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a pool name from this repo's configured cache pools.
 

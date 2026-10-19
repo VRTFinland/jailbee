@@ -201,6 +201,12 @@ def test_complete_branch_lists_local_branches(completion_repo, mocker):
     assert completion.complete_branch(_ctx(), "feat/") == ["feat/bar", "feat/foo"]
 
 
+def test_complete_base_branch_includes_fetched_upstream_branches(completion_repo, mocker):
+    mocker.patch("jailbee.git.list_base_candidates", return_value=["main", "release/2.1", "feat/x"])
+    assert completion.complete_base_branch(_ctx(), "") == ["feat/x", "main", "release/2.1"]
+    assert completion.complete_base_branch(_ctx(), "rel") == ["release/2.1"]
+
+
 def test_complete_branch_empty_when_git_fails(completion_repo, mocker):
     from subprocess import CompletedProcess
 

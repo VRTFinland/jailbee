@@ -954,6 +954,44 @@ def list_branches(repo_root: Path) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def list_remote_branches(repo_root: Path, remote: str) -> list[str]:
+    """Return `remote`'s remote-tracking branches as short names, or [] on failure.
+
+    Names come without the ``<remote>/`` prefix (``release/2.1``), the form
+    `branch_exists_in_source` accepts as a base. The ``HEAD`` symref is left
+    out. Only refs already fetched are listed: no network, so it is safe on a
+    TAB press. Same never-raises contract as `list_branches`.
+    """
+    prefix = f"refs/remotes/{remote}/"
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname)", prefix],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    names = (line.strip().removeprefix(prefix) for line in result.stdout.splitlines())
+    return [n for n in names if n and n != "HEAD"]
+
+
+def list_base_candidates(repo_root: Path) -> list[str]:
+    """Local branches, then upstream-only ones: what `jailbee new` accepts as a base.
+
+    A release branch is usually fetched but never checked out, so it exists
+    only as ``refs/remotes/<upstream>/...``. Names present in both lists appear
+    once, in the local position. Never raises.
+    """
+    local = list_branches(repo_root)
+    remote = detect_upstream_remote(repo_root) or "origin"
+    seen = set(local)
+    return [*local, *(b for b in list_remote_branches(repo_root, remote) if b not in seen)]
+
+
 def delete_ref(repo_root: Path, ref: str) -> None:
     """Delete a ref via `git update-ref -d`. Never raises."""
     try:

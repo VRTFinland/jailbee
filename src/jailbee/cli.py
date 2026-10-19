@@ -1949,8 +1949,11 @@ def new_cmd(
     base: Annotated[
         str | None,
         typer.Argument(
-            help="Optional base branch to fork from. Must already exist in the source repo.",
-            autocompletion=completion.complete_branch,
+            help=(
+                "Optional base branch to fork from. Must already exist in the source "
+                "repo, locally or as a fetched upstream branch."
+            ),
+            autocompletion=completion.complete_base_branch,
         ),
     ] = None,
     current: Annotated[

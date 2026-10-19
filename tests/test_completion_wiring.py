@@ -175,15 +175,15 @@ def _param(cmd_path: str, param_name: str) -> TyperArgument | TyperOption:
 
 
 def test_branch_arguments_complete_branches():
-    from jailbee.completion import complete_branch
+    from jailbee.completion import complete_base_branch, complete_branch
 
-    for cmd_path, param_name in [
-        ("jailbee new", "container_branch"),
-        ("jailbee new", "base"),
-        ("jailbee retarget", "new_base"),
+    for cmd_path, param_name, completer in [
+        ("jailbee new", "container_branch", complete_branch),
+        ("jailbee new", "base", complete_base_branch),
+        ("jailbee retarget", "new_base", complete_branch),
     ]:
         param = _param(cmd_path, param_name)
-        assert _underlying_completer(param) is complete_branch, f"{cmd_path}:{param_name}"
+        assert _underlying_completer(param) is completer, f"{cmd_path}:{param_name}"
 
 
 def test_snapshot_tag_arguments_complete_tags():
