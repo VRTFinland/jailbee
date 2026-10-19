@@ -288,11 +288,12 @@ def test_build_specs_covers_every_config_leaf():
     models to 105 repo and 49 global leaves.
     `remote.ssh.mount_roots` and `remote.ssh.mounts` make 51.
     The `git` block (`identity`, `user.name`, `user.email`) adds three repo
-    leaves: 105 + 3 = 108.
+    leaves: 105 + 3 = 108. `defaults.cpu_share` (host CPU weight for containers)
+    adds one more: 108 + 1 = 109.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 108
+    assert len(build_specs(Config)) == 109
     assert len(build_specs(GlobalConfig)) == 52
 
 

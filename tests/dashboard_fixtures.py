@@ -213,7 +213,7 @@ def retarget_group(tmp_path: Path) -> dmodel.RepoGroup:
     return dmodel.RepoGroup("alpha", str(tmp_path), None, [info])
 
 
-def fake_branches(_root, *, exclude=None):  # type: ignore[no-untyped-def]
+def fake_branches(_root, *, exclude=None, include_remote=False):  # type: ignore[no-untyped-def]
     return tuple(b for b in ("main", "feat/a", "develop") if b != exclude)
 
 

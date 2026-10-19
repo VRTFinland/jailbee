@@ -474,6 +474,7 @@ def test_ssh_allowlisted_new_prompts_then_spawns_final_argv(mocker, tmp_path):
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "host_branches", return_value=())
     patch_pause(mocker)
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["new"]))
 

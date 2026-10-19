@@ -170,6 +170,12 @@ def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path
     assert any("refused by policy" in str(notice) for notice in run.notices())
 
 
+@pytest.fixture(autouse=True)
+def _stub_host_branches(mocker):
+    """The base prompt lists host branches; keep ``git`` out of the mocked ``subprocess.run``."""
+    mocker.patch.object(tsession, "host_branches", side_effect=fake_branches)
+
+
 def test_run_new_base_prompt_offers_the_host_branches(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     mocker.patch.object(tsession.subprocess, "run")
