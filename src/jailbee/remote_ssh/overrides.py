@@ -151,12 +151,12 @@ def describe_overrides(overrides: ServeOverrides) -> str | None:
     return "overrides (not from global.yaml): " + ", ".join(parts)
 
 
-def remote_gui_enabled(overrides: ServeOverrides | None = None) -> bool:
-    """`remote.ssh.gui` as the next request would see it; any failure is off.
+def _live_ssh_flag(name: str, overrides: ServeOverrides | None) -> bool:
+    """`remote.ssh.<name>` as the next request would see it; any failure is off.
 
     Read from the global config on every call, so toggling the flag needs no
     service restart. The server (forwarding, sessions) and the container start
-    path (`runtime_mounts`) share this one reader and its fail-closed rule.
+    path (`runtime_mounts`) share these readers and their fail-closed rule.
     """
     try:
         global_config, _ = load_global_config(default_global_config_path())
@@ -164,6 +164,16 @@ def remote_gui_enabled(overrides: ServeOverrides | None = None) -> bool:
         if overrides is not None:
             current = apply_ssh_overrides(current, overrides)
     except Exception:
-        log.warning("remote.ssh.gui could not be read; treating it as off", exc_info=True)
+        log.warning("remote.ssh.%s could not be read; treating it as off", name, exc_info=True)
         return False
-    return current.rdp
+    return bool(getattr(current, name))
+
+
+def remote_rdp_enabled(overrides: ServeOverrides | None = None) -> bool:
+    """`remote.ssh.rdp`, live: the shared RDP display, its forward and its mount."""
+    return _live_ssh_flag("rdp", overrides)
+
+
+def remote_waypipe_enabled(overrides: ServeOverrides | None = None) -> bool:
+    """`remote.ssh.waypipe`, live: `waypipe ssh` sessions and their forward."""
+    return _live_ssh_flag("waypipe", overrides)

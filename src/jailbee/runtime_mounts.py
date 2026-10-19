@@ -26,7 +26,7 @@ from pathlib import Path
 from jailbee.config import Config
 from jailbee.gui import SHARED_DISPLAY_DIR, display_state_dir, host_is_wayland, host_wayland_socket
 from jailbee.incus import Incus, IncusError
-from jailbee.remote_ssh.overrides import remote_gui_enabled
+from jailbee.remote_ssh.overrides import remote_rdp_enabled
 from jailbee.tui import info, warn
 
 WAYLAND_DEVICE = "wayland-socket"
@@ -58,7 +58,7 @@ DISPLAY_DEVICE = "display-socket"
 Not in `SOCKET_DEVICES`: its source is a jailbee state directory, not a file
 under the host's /run/user/<uid>. It is attached only when that directory
 exists (a missing source would make Incus refuse the whole start) *and*
-`remote.ssh.gui` is on, and always read-only (`display_device_config`).
+`remote.ssh.rdp` is on, and always read-only (`display_device_config`).
 """
 
 # Everything `detach_runtime_devices` removes.
@@ -354,7 +354,7 @@ def attach_runtime_devices(
             device_config["readonly"] = "true"
         _add_device(incus, name, device_name, device_config)
 
-    if display_state_dir().is_dir() and remote_gui_enabled():
+    if display_state_dir().is_dir() and remote_rdp_enabled():
         _add_device(incus, name, DISPLAY_DEVICE, display_device_config())
 
     _pin_wayland_display(

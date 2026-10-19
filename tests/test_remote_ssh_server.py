@@ -937,6 +937,8 @@ def test_cancellation_restores_callbacks_and_does_not_log_terminal_input(
 
 @pytest.fixture
 def listener(mocker):
+    # waypipe is on by default, so startup would prune against a real incus.
+    mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
     value = SimpleNamespace(wait_closed=AsyncMock(), close=Mock(), get_port=Mock(return_value=8022))
     listen = mocker.patch.object(
         server.asyncssh, "listen", new_callable=AsyncMock, return_value=value
@@ -1642,9 +1644,9 @@ def test_an_upgrade_drains_live_sessions_before_hanging_up(listener, mocker):
     live_sets: list[set] = []
     real_server = server.JailbeeSSHServer
 
-    def capture(live=None, gui_enabled=None):
+    def capture(live=None, rdp_enabled=None, waypipe_enabled=None):
         live_sets.append(live)
-        return real_server(live, gui_enabled)
+        return real_server(live, rdp_enabled, waypipe_enabled)
 
     mocker.patch.object(server, "JailbeeSSHServer", side_effect=capture)
 
@@ -1667,7 +1669,7 @@ def test_an_upgrade_drains_live_sessions_before_hanging_up(listener, mocker):
 
 
 def test_gui_session_hands_its_port_to_the_child(child, mocker, repo):
-    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), gui=True, port=8022)
+    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), rdp=True, port=8022)
     mocker.patch.object(
         server,
         "load_global_config",
@@ -1680,7 +1682,7 @@ def test_gui_session_hands_its_port_to_the_child(child, mocker, repo):
 
 
 def test_non_gui_session_has_no_gui_port(child, mocker, repo):
-    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), gui=False)
+    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), rdp=False)
     mocker.patch.object(
         server,
         "load_global_config",
@@ -1692,8 +1694,8 @@ def test_non_gui_session_has_no_gui_port(child, mocker, repo):
     assert child.call_args.args[1].gui_port is None
 
 
-def _gui_server(connection, enabled=True):
-    instance = server.JailbeeSSHServer(gui_enabled=lambda: enabled)
+def _gui_server(connection, rdp=True, waypipe=True):
+    instance = server.JailbeeSSHServer(rdp_enabled=lambda: rdp, waypipe_enabled=lambda: waypipe)
     instance.connection_made(connection)
     return instance
 
@@ -1715,48 +1717,77 @@ def test_forwarding_anywhere_but_the_display_is_refused(connection, host, port):
     assert _gui_server(connection).connection_requested(host, port, "::1", 50000) is False
 
 
-def test_forwarding_is_refused_when_the_feature_is_off(connection):
-    """Turning remote.ssh.gui off closes the tunnel for every new request."""
+def test_the_display_forward_needs_rdp_not_waypipe(connection):
     connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
 
     assert (
-        _gui_server(connection, enabled=False).connection_requested("127.0.0.1", 13389, "::1", 1)
+        _gui_server(connection, rdp=False, waypipe=True).connection_requested(
+            "127.0.0.1", 13389, "::1", 1
+        )
         is False
     )
+    assert (
+        _gui_server(connection, rdp=True, waypipe=False).connection_requested(
+            "127.0.0.1", 13389, "::1", 1
+        )
+        is True
+    )
+
+
+def test_the_waypipe_forward_needs_waypipe_not_rdp(connection):
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+
+    assert _gui_server(connection, rdp=True, waypipe=False).unix_server_requested(WP_SOCK) is False
+
+
+@pytest.mark.parametrize("reader", ["remote_rdp_enabled", "remote_waypipe_enabled"])
+@pytest.mark.parametrize("failure", [ConfigError("bad"), OSError("unreadable"), RuntimeError("x")])
+def test_display_flags_fail_closed_when_the_config_cannot_be_read(mocker, failure, reader):
+    mocker.patch.object(overrides_module, "load_global_config", side_effect=failure)
+
+    assert getattr(overrides_module, reader)(None) is False
+
+
+def test_display_flags_follow_the_loaded_config(mocker):
+    config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig(rdp=True, waypipe=False)))
+    mocker.patch.object(overrides_module, "load_global_config", return_value=(config, None))
+
+    assert overrides_module.remote_rdp_enabled(None) is True
+    assert overrides_module.remote_waypipe_enabled(None) is False
+
+
+def test_server_factory_hands_both_live_flags_to_the_server(listener, mocker):
+    _, listen = listener
+    rdp = mocker.patch.object(server, "remote_rdp_enabled", return_value=False)
+    waypipe = mocker.patch.object(server, "remote_waypipe_enabled", return_value=True)
+    mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
+    asyncio.run(server.serve_async(RemoteSSHConfig()))
+    rdp.reset_mock()
+    waypipe.reset_mock()
+
+    instance = listen.call_args.kwargs["server_factory"]()
+
+    assert instance._rdp_enabled() is False
+    assert instance._waypipe_enabled() is True
+    rdp.assert_called_once_with(None)
+    waypipe.assert_called_once_with(None)
+
+
+def test_waypipe_alone_gives_no_shared_display_port(child, mocker, repo):
+    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), waypipe=True)
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), []),
+    )
+
+    session("--repo project ls")
+
+    assert child.call_args.args[1].gui_port is None
 
 
 def test_a_connection_without_an_authenticated_key_gets_no_forwarding(connection):
     assert _gui_server(connection).connection_requested("127.0.0.1", 13389, "::1", 1) is False
-
-
-@pytest.mark.parametrize("failure", [ConfigError("bad"), OSError("unreadable"), RuntimeError("x")])
-def test_gui_flag_fails_closed_when_the_config_cannot_be_read(mocker, failure):
-    mocker.patch.object(overrides_module, "load_global_config", side_effect=failure)
-
-    assert overrides_module.remote_gui_enabled(None) is False
-
-
-def test_gui_flag_follows_the_loaded_config(mocker):
-    config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig(gui=True)))
-    mocker.patch.object(overrides_module, "load_global_config", return_value=(config, None))
-
-    assert overrides_module.remote_gui_enabled(None) is True
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_server_factory_hands_the_live_gui_flag_to_the_server(listener, mocker, enabled):
-    """A dropped `remote_gui_enabled` wiring leaves forwarding on or off for good."""
-    _, listen = listener
-    seen = mocker.patch.object(server, "remote_gui_enabled", return_value=enabled)
-    mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
-    asyncio.run(server.serve_async(RemoteSSHConfig()))
-    seen.reset_mock()  # startup also asks, to decide on pruning waypipe leftovers
-
-    instance = listen.call_args.kwargs["server_factory"]()
-
-    assert instance._gui_enabled is not None
-    assert instance._gui_enabled() is enabled
-    seen.assert_called_once_with(None)
 
 
 def test_files_on_hands_asyncssh_the_sftp_factory_and_enables_scp(listener):
@@ -1825,7 +1856,9 @@ def test_startup_summary_names_the_file_transfer_scope_only_when_on():
     on = server._startup_summary(
         RemoteSSHConfig(files=True), SimpleNamespace(get_port=lambda: 8022), None
     )
-    off = server._startup_summary(RemoteSSHConfig(files=False), SimpleNamespace(get_port=lambda: 8022), None)
+    off = server._startup_summary(
+        RemoteSSHConfig(files=False), SimpleNamespace(get_port=lambda: 8022), None
+    )
     assert "sftp/scp: on (container repo directories only)" in on
     assert "sftp/scp" not in off
 
@@ -1855,10 +1888,10 @@ def test_the_waypipe_forward_listens_at_jailbees_own_path(connection):
 )
 def test_the_waypipe_forward_is_refused(connection, monkeypatch, tmp_path, setup):
     connection.forward_local_path = Mock(return_value="listener-coro")
-    enabled = setup != "feature-off"
+    waypipe = setup != "feature-off"
     if setup != "unauthenticated":
         connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
-    instance = _gui_server(connection, enabled=enabled)
+    instance = _gui_server(connection, waypipe=waypipe)
     path = WP_SOCK
     if setup == "second-forward":
         assert instance.unix_server_requested(WP_SOCK) == "listener-coro"
@@ -1890,7 +1923,13 @@ WP_FORWARD = {"jailbee_waypipe": (WP_SOCK, "0a1b2c3d")}
 @pytest.fixture
 def gui_config(mocker):
     ssh = RemoteSSHConfig(
-        console=True, exec=True, dashboard=True, gui=True, commands=RemoteCommandPolicy(mode="full")
+        console=True,
+        exec=True,
+        dashboard=True,
+        waypipe=True,
+        # TODO(task 3): the router still keys app launchers on rdp; make this False then.
+        rdp=True,
+        commands=RemoteCommandPolicy(mode="full"),
     )
     return mocker.patch.object(
         server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
@@ -1957,13 +1996,6 @@ def test_waypipe_without_its_forward_is_refused_before_anything_runs(
     assert b"waypipe" in output(channel, 1)
 
 
-def test_waypipe_with_the_feature_off_is_refused_naming_the_key(child, configured, waypipe_ops):
-    _, channel = session(WP_CMD, extra=WP_FORWARD)
-
-    child.assert_not_called()
-    assert b"remote.ssh.gui" in output(channel, 1)
-
-
 def test_a_display_that_cannot_start_refuses_the_session(child, gui_config, waypipe_ops):
     from jailbee.remote_display import DisplayError
 
@@ -1998,32 +2030,52 @@ def test_an_empty_waypipe_command_takes_the_no_command_route(child, gui_config, 
     assert b"Available remote commands" in output(channel)
 
 
-@pytest.mark.parametrize("gui", [True, False])
-def test_serve_async_prunes_dead_waypipe_sessions_only_with_gui_on_and_after_listening(
-    listener, mocker, gui
+@pytest.mark.parametrize("waypipe", [True, False])
+def test_serve_async_prunes_dead_waypipe_sessions_only_with_waypipe_on_and_after_listening(
+    listener, mocker, waypipe
 ):
     _, listen = listener
-    mocker.patch.object(server, "remote_gui_enabled", return_value=gui)
+    mocker.patch.object(server, "remote_waypipe_enabled", return_value=waypipe)
     prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
     listening_at_prune = []
     prune.side_effect = lambda incus: listening_at_prune.append(bool(listen.await_count))
 
     asyncio.run(server.serve_async(RemoteSSHConfig()))
 
-    assert prune.call_count == (1 if gui else 0)
-    assert listening_at_prune == ([True] if gui else [])
+    assert prune.call_count == (1 if waypipe else 0)
+    assert listening_at_prune == ([True] if waypipe else [])
 
 
 def test_a_failed_listen_prunes_nothing(listener, mocker):
     _, listen = listener
     listen.side_effect = OSError("Address already in use")
-    mocker.patch.object(server, "remote_gui_enabled", return_value=True)
+    mocker.patch.object(server, "remote_waypipe_enabled", return_value=True)
     prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
 
     with pytest.raises(OSError):
         asyncio.run(server.serve_async(RemoteSSHConfig()))
 
     prune.assert_not_called()
+
+
+def test_a_waypipe_session_is_refused_with_waypipe_off(child, mocker, waypipe_ops):
+    ssh = RemoteSSHConfig(
+        console=True,
+        exec=True,
+        dashboard=True,
+        rdp=True,
+        waypipe=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    mocker.patch.object(
+        server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
+    )
+
+    _, channel = session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()
+    assert b"remote.ssh.waypipe" in output(channel, 1)
 
 
 def test_a_refused_waypipe_command_never_provisions_the_display(child, gui_config, waypipe_ops):

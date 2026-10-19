@@ -11567,8 +11567,8 @@ def display_up_cmd(
     success("Shared display running")
     if not gcfg.remote.ssh.rdp:
         warn(
-            "remote.ssh.gui is off, so SSH sessions cannot use the display "
-            "until it is enabled (`jb config edit --global`, then remote.ssh.gui)."
+            "remote.ssh.rdp is off, so SSH sessions cannot use the display "
+            "until it is enabled (`jb config edit --global`, then remote.ssh.rdp)."
         )
     for line in format_connection_info(connection_info(gcfg.remote.ssh.port)):
         info(line)

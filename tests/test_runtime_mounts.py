@@ -37,7 +37,7 @@ def _no_host_display_dir(monkeypatch, tmp_path_factory):
 @pytest.fixture(autouse=True)
 def _gui_flag_off(mocker):
     """`remote.ssh.gui` is off unless a test turns it on; the real config is never read."""
-    return mocker.patch("jailbee.runtime_mounts.remote_gui_enabled", return_value=False)
+    return mocker.patch("jailbee.runtime_mounts.remote_rdp_enabled", return_value=False)
 
 
 @pytest.fixture
@@ -622,7 +622,7 @@ def test_display_socket_is_attached_when_the_host_directory_exists(
     }
 
 
-def test_display_socket_is_not_attached_while_remote_ssh_gui_is_off(
+def test_display_socket_is_not_attached_while_remote_ssh_rdp_is_off(
     wayland_session, tmp_path, monkeypatch
 ):
     """The directory exists (an earlier `jb display up`) but the feature is off."""
@@ -864,3 +864,14 @@ def test_ensure_clears_the_pin_when_container_env_names_the_display(wayland_sess
 
     incus.config_set.assert_not_called()
     incus.config_unset.assert_called_once_with("c", "environment.WAYLAND_DISPLAY")
+
+
+def test_waypipe_alone_never_mounts_the_shared_display_at_boot(
+    wayland_session, tmp_path, monkeypatch, _gui_flag_off
+):
+    """waypipe has its own per-container mount; the shared one is RDP's."""
+    _gui_flag_off.return_value = False  # rdp off; waypipe is irrelevant here
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    (tmp_path / "jailbee" / "display").mkdir(parents=True)
+
+    assert "display-socket" not in _attached(make_cfg(tmp_path))

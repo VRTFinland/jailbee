@@ -26,7 +26,8 @@ from jailbee.remote_ssh.overrides import (
     ServeOverrides,
     apply_ssh_overrides,
     describe_overrides,
-    remote_gui_enabled,
+    remote_rdp_enabled,
+    remote_waypipe_enabled,
 )
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -109,15 +110,17 @@ class JailbeeSSHServer(asyncssh.SSHServer):
     def __init__(
         self,
         live: set[asyncssh.SSHServerConnection] | None = None,
-        gui_enabled: Callable[[], bool] | None = None,
+        rdp_enabled: Callable[[], bool] | None = None,
+        waypipe_enabled: Callable[[], bool] | None = None,
     ) -> None:
         # `live`, when given, is a shared registry `serve_async` uses to hang
         # up every connection on SIGTERM. It is `None` for tests and any other
         # caller that constructs a server directly.
         self._live = live
-        # `remote.ssh.gui`, re-read per request so turning it off closes the
-        # display tunnel at once. `None` means never: forwarding stays refused.
-        self._gui_enabled = gui_enabled
+        # `remote.ssh.rdp` / `remote.ssh.waypipe`, re-read per request so
+        # turning one off refuses new forwards at once. `None` means never.
+        self._rdp_enabled = rdp_enabled
+        self._waypipe_enabled = waypipe_enabled
 
     def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
         self._conn = conn
@@ -176,7 +179,7 @@ class JailbeeSSHServer(asyncssh.SSHServer):
         Everything else stays refused: reverse, unix and any other TCP
         forwarding (`docs/security.md`).
         """
-        if self._gui_enabled is None or not self._gui_enabled():
+        if self._rdp_enabled is None or not self._rdp_enabled():
             return False
         authenticated = self._conn.get_extra_info("jailbee_key_fingerprint") is not None
         return authenticated and is_display_forward(dest_host, dest_port)
@@ -190,7 +193,7 @@ class JailbeeSSHServer(asyncssh.SSHServer):
     def unix_server_requested(self, listen_path: str) -> MaybeAwait[Any]:
         """Admit one `waypipe ssh` forward per connection, at JailBee's own path.
 
-        Only with `remote.ssh.gui` on, for an authenticated key, and for a path
+        Only with `remote.ssh.waypipe` on, for an authenticated key, and for a path
         of the waypipe client's shape. The client never picks a host path: the
         listener is created at `waypipe.links_socket` and each connection is
         forwarded to the client under the name it asked for. Every other
@@ -198,7 +201,7 @@ class JailbeeSSHServer(asyncssh.SSHServer):
         """
         from jailbee.remote_ssh import waypipe
 
-        if self._gui_enabled is None or not self._gui_enabled():
+        if self._waypipe_enabled is None or not self._waypipe_enabled():
             return False
         if self._conn.get_extra_info("jailbee_key_fingerprint") is None:
             return False
@@ -359,9 +362,9 @@ async def handle_process(
         command = process.command
         request = waypipe.parse_server_command(command)
         if request is not None:
-            if not config.rdp:
+            if not config.waypipe:
                 raise RouteError(
-                    "waypipe sessions need remote.ssh.gui: true in the server's global.yaml"
+                    "waypipe sessions need remote.ssh.waypipe: true in the server's global.yaml"
                 )
             forward = process.get_extra_info("jailbee_waypipe")
             if forward is None or forward[0] != request.socket:
@@ -530,6 +533,9 @@ def _startup_summary(
     ]
     if config.files_enabled():
         lines.append("  sftp/scp: on (container repo directories only)")
+    lines.append(
+        f"  gui: rdp {'on' if config.rdp else 'off'}, waypipe {'on' if config.waypipe else 'off'}"
+    )
     if config.network:
         lines.append("  network widening: on (net loose, net egress add)")
     if config.mounts:
@@ -620,7 +626,11 @@ async def serve_async(
     update = UpdateWatch(__version__, stop_for_update)
 
     def server_factory() -> JailbeeSSHServer:
-        return JailbeeSSHServer(live, lambda: remote_gui_enabled(overrides))
+        return JailbeeSSHServer(
+            live,
+            lambda: remote_rdp_enabled(overrides),
+            lambda: remote_waypipe_enabled(overrides),
+        )
 
     def process_factory(process: asyncssh.SSHServerProcess[bytes]) -> Coroutine[Any, Any, None]:
         effective = None if overrides is None or overrides.is_empty() else overrides
@@ -678,7 +688,7 @@ async def serve_async(
             gss_host=None,
         )
         log.info(_startup_summary(config, listener, overrides))
-        if remote_gui_enabled(overrides):
+        if remote_waypipe_enabled(overrides):
             from jailbee.remote_ssh.waypipe import prune_dead
 
             # After a successful listen (a failed second start must touch
