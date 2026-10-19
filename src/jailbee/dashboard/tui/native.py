@@ -250,6 +250,11 @@ class OverlayBox(Vertical):
     def chrome_rows(self) -> int:
         return 2 + self.HEADER_ROWS
 
+    @property
+    def floating(self) -> bool:
+        """Whether the box floats over the frame, centred, instead of taking the bottom slot."""
+        return False
+
     def focus_target(self) -> Widget:
         return self.query_one(f"#{NATIVE_LIST_ID}")
 
@@ -816,6 +821,11 @@ class PickerBox(OverlayBox):
 
     def content_rows(self) -> int:
         return max(1, len(self.picker.entries))
+
+    @property
+    def floating(self) -> bool:
+        # A yes/no question must not hide at the foot of the screen.
+        return self.picker.purpose.endswith("-confirm")
 
     def chrome_rows(self) -> int:
         return super().chrome_rows() + len(self.shown_detail())
