@@ -28,6 +28,7 @@ _PAD = 2  # bar cells left for the fill beyond the numbers
 _GAP = "  "
 _LEVEL_STYLE = {"ok": "bold green", "warn": "bold yellow", "crit": "bold red"}
 _EMPTY_STYLE = "bright_black"  # numbers over the unused part of the bar
+_BRACKET_STYLE = "bright_white"  # the bar's ends, so its bounds stand out
 
 
 @dataclass(frozen=True)
@@ -124,7 +125,7 @@ def _bar(seg: _Segment, width: int, text: str) -> Text:
     fill = _LEVEL_STYLE[seg.lvl]
     text_at = width - len(text)
     bar = Text()
-    bar.append("[", style="dim")
+    bar.append("[", style=_BRACKET_STYLE)
     for i in range(width):
         if i < used:
             style = fill
@@ -138,7 +139,7 @@ def _bar(seg: _Segment, width: int, text: str) -> Text:
             bar.append("|", style=style)
         else:
             bar.append(" ")
-    bar.append("]", style="dim")
+    bar.append("]", style=_BRACKET_STYLE)
     return bar
 
 
