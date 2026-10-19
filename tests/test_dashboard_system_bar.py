@@ -225,3 +225,11 @@ def test_a_long_label_widens_only_its_own_bar_when_room_is_short() -> None:
     bars = [seg.split("]")[0] for seg in plain.split("[")[1:]]
     assert len(bars) == 5  # every bar still shown
     assert len({len(b) for b in bars}) > 1  # "default" keeps its bar wider than the rest
+
+
+def test_brackets_are_bright_white() -> None:
+    line = system_line(_status(), 120)
+    open_at = line.plain.index("[Mem")
+    close_at = line.plain.index("]", open_at)
+    assert _style_at(line, open_at) == "bright_white"
+    assert _style_at(line, close_at) == "bright_white"
