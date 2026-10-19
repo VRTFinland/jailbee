@@ -36,7 +36,11 @@ from jailbee.config import (
     _split_host_keys,
     normalize_credentials_key,
 )
-from jailbee.config.common import normalize_remote_ssh_keys, service_storage_pool_from_raw
+from jailbee.config.common import (
+    normalize_remote_ssh_gui,
+    normalize_remote_ssh_keys,
+    service_storage_pool_from_raw,
+)
 from jailbee.config.models_litellm import LiteLLMConfig
 from jailbee.config.models_remote import RemoteConfig
 from jailbee.paths import expand_path, xdg_data_home
@@ -422,6 +426,11 @@ def validate_global_raw(
         from jailbee.config.loader import _warn_legacy_remote_shell
 
         _warn_legacy_remote_shell(str(path))
+    raw, gui_folded = normalize_remote_ssh_gui(raw, str(path))
+    if emit_hint and gui_folded:
+        from jailbee.config.loader import _warn_legacy_remote_gui
+
+        _warn_legacy_remote_gui(str(path))
     raw, folded = normalize_credentials_key(raw, str(path))
     if emit_hint and folded:
         from jailbee.config.loader import _warn_legacy_credentials_block

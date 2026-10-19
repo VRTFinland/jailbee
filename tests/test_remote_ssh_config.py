@@ -7,12 +7,13 @@ import pytest
 from pydantic import ValidationError
 
 from jailbee.config import ConfigError
-from jailbee.config.common import normalize_remote_ssh_keys
+from jailbee.config.common import normalize_remote_ssh_gui, normalize_remote_ssh_keys
 from jailbee.config.models_remote import (
     RemoteCommandPolicy,
     RemoteConfig,
     RemoteMountRoot,
     RemoteSSHConfig,
+    fold_legacy_gui,
 )
 from jailbee.global_config import GlobalConfig, validate_global_raw
 
@@ -251,19 +252,19 @@ def test_excluded_repos_require_host_restrictions() -> None:
 def test_gui_is_off_by_default():
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    assert RemoteSSHConfig().gui is False
+    assert RemoteSSHConfig().rdp is False
 
 
 def test_gui_can_be_turned_on():
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    assert RemoteSSHConfig(gui=True).gui is True
+    assert RemoteSSHConfig(rdp=True).rdp is True
 
 
 def test_files_defaults_off_and_accepts_true() -> None:
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    assert RemoteSSHConfig().files is False
+    assert RemoteSSHConfig().files is None
     assert RemoteSSHConfig(files=True).files is True
 
 
@@ -333,3 +334,79 @@ def test_disabled_console_cannot_be_legacy_default_entrypoint() -> None:
             {"remote": {"ssh": {"console": False, "default_entrypoint": "shell"}}},
             Path("/g.yaml"),
         )
+
+
+def test_rdp_off_and_waypipe_on_by_default() -> None:
+    ssh = RemoteSSHConfig()
+    assert ssh.rdp is False
+    assert ssh.waypipe is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "allow", "expected"),
+    [("full", [], True), ("allowlist", ["ls"], False), ("disabled", [], False)],
+)
+def test_files_unset_follows_the_command_policy(mode, allow, expected) -> None:
+    ssh = RemoteSSHConfig(
+        commands=RemoteCommandPolicy(mode=mode, allow=allow),
+        dashboard=True,
+        console=mode != "disabled",
+        exec=mode != "disabled",
+    )
+    assert ssh.files is None
+    assert ssh.files_enabled() is expected
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_an_explicit_files_value_always_wins(explicit) -> None:
+    for mode, allow in (("full", []), ("allowlist", ["ls"])):
+        ssh = RemoteSSHConfig(files=explicit, commands=RemoteCommandPolicy(mode=mode, allow=allow))
+        assert ssh.files_enabled() is explicit
+
+
+def test_files_unset_survives_a_dump_round_trip() -> None:
+    ssh = RemoteSSHConfig.model_validate_json(RemoteSSHConfig().model_dump_json())
+    assert ssh.files is None
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_legacy_gui_maps_to_both_switches(value) -> None:
+    ssh = RemoteSSHConfig.model_validate({"gui": value})
+    assert (ssh.rdp, ssh.waypipe) == (value, value)
+    assert "gui" not in ssh.model_dump()
+
+
+@pytest.mark.parametrize("new_key", ["rdp", "waypipe"])
+def test_legacy_gui_with_a_new_key_is_an_error_naming_both(new_key) -> None:
+    with pytest.raises(ValueError) as exc:
+        RemoteSSHConfig.model_validate({"gui": True, new_key: False})
+    assert "remote.ssh.gui" in str(exc.value)
+    assert f"remote.ssh.{new_key}" in str(exc.value)
+
+
+def test_fold_legacy_gui_is_pure() -> None:
+    ssh = {"gui": False, "port": 1}
+    out, folded = fold_legacy_gui(ssh, "g.yaml")
+    assert folded
+    assert out == {"rdp": False, "waypipe": False, "port": 1}
+    assert ssh == {"gui": False, "port": 1}
+    assert fold_legacy_gui({"rdp": True}, "g.yaml") == ({"rdp": True}, False)
+
+
+def test_normalize_remote_ssh_gui_reports_the_fold() -> None:
+    raw: dict[str, object] = {"remote": {"ssh": {"gui": True}}}
+    out, folded = normalize_remote_ssh_gui(raw, "g.yaml")
+    assert folded
+    assert out["remote"]["ssh"] == {"rdp": True, "waypipe": True}  # type: ignore[index]  # JSON-shaped dict, indexed untyped
+    assert normalize_remote_ssh_gui({}, "g.yaml") == ({}, False)
+    assert normalize_remote_ssh_gui({"remote": None}, "g.yaml") == ({"remote": None}, False)
+
+
+def test_global_yaml_with_only_gui_false_turns_waypipe_off(tmp_path) -> None:
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text("remote:\n  ssh:\n    gui: false\n")
+    config, _ = load_global_config(path)
+    assert config.remote.ssh.waypipe is False
+    assert config.remote.ssh.rdp is False

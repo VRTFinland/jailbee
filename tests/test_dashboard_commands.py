@@ -258,9 +258,9 @@ def test_permitted_mirrors_check_dashboard_command(argv, over_ssh, policy, expec
 def test_ssh_dashboard_gui_launchers_follow_the_gui_flag() -> None:
     full = RemoteCommandPolicy(mode="full")
     off = RemoteSSHConfig(exec=True, commands=full)
-    on = RemoteSSHConfig(exec=True, commands=full, gui=True)
+    on = RemoteSSHConfig(exec=True, commands=full, rdp=True)
 
-    with pytest.raises(RouteError, match="manages the host"):
+    with pytest.raises(RouteError, match="opens a window"):
         check_dashboard_command(["chrome", "feat-1", "--force"], off, over_ssh=True)
     check_dashboard_command(["chrome", "feat-1", "--force"], on, over_ssh=True)
     with pytest.raises(RouteError, match="manages the host"):

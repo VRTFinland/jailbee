@@ -137,13 +137,11 @@ def _live_session():
     wp.links_socket(WPS.id).touch()
 
 
-def _socket_appears(name="wp-0a1b2c3d-app-main"):
-    from jailbee.gui import display_state_dir
-
-    def run(container, cmd, **kwargs):
+def _socket_appears(container="app-main", session_id="0a1b2c3d"):
+    def run(name, cmd, **kwargs):
         if cmd[0] == "systemd-run":
-            display_state_dir().mkdir(parents=True, exist_ok=True)
-            (display_state_dir() / name).touch()
+            wp.container_servers_dir(container).mkdir(parents=True, exist_ok=True)
+            (wp.container_servers_dir(container) / f"wp-{session_id}").touch()
             return ""
         return "inactive\n"
 
@@ -156,7 +154,7 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
 
     path = wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
-    assert path == "/run/jailbee-display/wp-0a1b2c3d-app-main"
+    assert path == "/run/jailbee-waypipe/wp-0a1b2c3d"
     run = next(c for c in incus.exec.call_args_list if c.args[1][0] == "systemd-run")
     assert run.args[0] == "jailbee-display"
     argv = run.args[1]
@@ -170,7 +168,7 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
     ]
     assert tail == [
         "_",
-        "/srv/jailbee-display/wp-0a1b2c3d-app-main",
+        "/srv/jailbee-wp/app-main/wp-0a1b2c3d",
         "--no-gpu",
         "--compress",
         "zstd=5",
@@ -179,7 +177,7 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
         "--socket",
         "/srv/jailbee-waypipe-links/0a1b2c3d.sock",
         "--display",
-        "/srv/jailbee-display/wp-0a1b2c3d-app-main",
+        "/srv/jailbee-wp/app-main/wp-0a1b2c3d",
         "server",
         "--",
         "sleep",
@@ -187,21 +185,65 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
     ]
 
 
-def test_start_mounts_the_shared_directory_into_the_client_container(mocker):
+def test_start_mounts_only_this_containers_directory_read_only(mocker):
     incus = MagicMock()
     incus.exec.side_effect = _socket_appears()
-    mount = mocker.patch("jailbee.remote_display.ensure_display_mount")
+    shared = mocker.patch("jailbee.remote_display.ensure_display_mount")
 
     wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
-    mount.assert_called_once_with(incus, "app-main")
+    shared.assert_not_called()
+    incus.config_device_add.assert_any_call(
+        "app-main",
+        "waypipe-socket",
+        "disk",
+        {
+            "source": str(wp.container_servers_dir("app-main")),
+            "path": "/run/jailbee-waypipe",
+            "readonly": "true",
+        },
+    )
+    assert wp.container_servers_dir("app-main").is_dir()
+    assert oct(wp.container_servers_dir("app-main").stat().st_mode & 0o777) == "0o700"
+
+
+def test_another_containers_sockets_are_not_in_this_containers_mount():
+    incus = MagicMock()
+    incus.exec.side_effect = _socket_appears(container="other")
+    wp.start_container_server(incus, WPS, "other", sleep_fn=lambda _s: None)
+    incus.exec.side_effect = _socket_appears(container="app-main")
+
+    wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
+
+    mounted = [
+        c.args[3]["source"]
+        for c in incus.config_device_add.call_args_list
+        if c.args[0] == "app-main"
+    ]
+    assert mounted == [str(wp.container_servers_dir("app-main"))]
+    assert list(wp.container_servers_dir("app-main").iterdir()) == [
+        wp.container_servers_dir("app-main") / "wp-0a1b2c3d"
+    ]
+
+
+def test_the_longest_container_name_fits_the_socket_path_limit():
+    from jailbee.remote_display import WAYPIPE_SERVERS_CONTAINER_DIR
+
+    name = "a" * 63
+    inside = f"{WAYPIPE_SERVERS_CONTAINER_DIR}/{name}/{wp.server_socket_name('0a1b2c3d')}"
+
+    assert len(inside.encode()) <= wp.SUN_PATH_MAX
+
+
+def test_server_sockets_live_outside_the_shared_display_directory():
+    from jailbee.gui import display_state_dir
+
+    assert display_state_dir() not in wp.container_servers_dir("app-main").parents
 
 
 def test_a_running_server_is_reused():
-    from jailbee.gui import display_state_dir
-
-    display_state_dir().mkdir(parents=True, exist_ok=True)
-    (display_state_dir() / "wp-0a1b2c3d-app-main").touch()
+    wp.container_servers_dir("app-main").mkdir(parents=True, exist_ok=True)
+    (wp.container_servers_dir("app-main") / "wp-0a1b2c3d").touch()
     incus = MagicMock()
     incus.exec.return_value = "active\n"
 
@@ -211,14 +253,12 @@ def test_a_running_server_is_reused():
 
 
 def test_a_concurrent_start_that_lost_the_race_is_success():
-    from jailbee.gui import display_state_dir
-
     incus = MagicMock()
 
     def run(container, cmd, **kwargs):
         if cmd[0] == "systemd-run":
-            display_state_dir().mkdir(parents=True, exist_ok=True)
-            (display_state_dir() / "wp-0a1b2c3d-app-main").touch()
+            wp.container_servers_dir("app-main").mkdir(parents=True, exist_ok=True)
+            (wp.container_servers_dir("app-main") / "wp-0a1b2c3d").touch()
             raise IncusError(
                 "Failed to start transient service unit: Unit "
                 "jailbee-wp-0a1b2c3d-app-main.service already exists."
@@ -331,8 +371,10 @@ def listening():
     stale = socket.socket(socket.AF_UNIX)
     stale.bind(str(wp.links_socket(DEAD)))
     stale.close()  # the file stays, nothing listens
-    for name in (f"wp-{LIVE}-c1", f"wp-{DEAD}-c1"):
-        (display_state_dir() / name).touch()
+    wp.container_servers_dir("c1").mkdir(parents=True, exist_ok=True)
+    for sid in (LIVE, DEAD):
+        (wp.container_servers_dir("c1") / f"wp-{sid}").touch()
+    (display_state_dir() / f"wp-{DEAD}-c1").touch()  # pre-isolation layout
     yield
     server.close()
 
@@ -363,8 +405,9 @@ def test_prune_dead_keeps_a_session_with_a_live_listener(listening):
     ]
     assert sorted(stops) == [f"jailbee-wp-{DEAD}-*.service", "jailbee-wp-cccccccc-*.service"]
     assert wp.links_socket(LIVE).exists()
-    assert (display_state_dir() / f"wp-{LIVE}-c1").exists()
+    assert (wp.container_servers_dir("c1") / f"wp-{LIVE}").exists()
     assert not wp.links_socket(DEAD).exists()
+    assert not (wp.container_servers_dir("c1") / f"wp-{DEAD}").exists()
     assert not (display_state_dir() / f"wp-{DEAD}-c1").exists()
 
 

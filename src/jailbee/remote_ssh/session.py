@@ -39,12 +39,12 @@ REMOTE_SESSION_ENV = "JAILBEE_REMOTE_SSH"
 SSH_SESSION_ENV = "JAILBEE_SSH_SESSION"
 SSH_EXCLUDED_REPOS_ENV = "JAILBEE_SSH_EXCLUDED_REPOS"
 # Set (to the SSH server's port) for a child of a server whose
-# `remote.ssh.gui` is on, and only then: `child_environment` removes any value
+# `remote.ssh.rdp` is on, and only then: `child_environment` removes any value
 # it inherits. It says GUI apps launched here belong on the shared RDP display
 # and tells the child which port to print in the connection recipe.
 SSH_GUI_ENV = "JAILBEE_SSH_GUI"
 # Set only for a child of a `waypipe ssh` session on a server whose
-# `remote.ssh.gui` is on (`server.handle_process`); `child_environment` removes
+# `remote.ssh.waypipe` is on (`server.handle_process`); `child_environment` removes
 # any inherited value. GUI apps launched here draw through the session's
 # waypipe forward instead of the shared RDP screen; the compression must match
 # the laptop's waypipe client, or every connection fails.
@@ -169,11 +169,12 @@ def is_shared_display_session(environ: Mapping[str, str] | None = None) -> bool:
 def waypipe_session(environ: Mapping[str, str] | None = None) -> WaypipeSession | None:
     """The `waypipe ssh` session this process belongs to, or None.
 
-    Only inside a GUI-enabled SSH session, and only for a well-formed id: the
-    id becomes part of a unit name and a socket path.
+    Only inside an SSH session (the server sets the markers and strips inherited
+    ones), and only for a well-formed id: the id becomes part of a unit name and
+    a socket path.
     """
     env = os.environ if environ is None else environ
-    if not is_shared_display_session(env):
+    if not is_ssh_session(env):
         return None
     session_id = env.get(WAYPIPE_SESSION_ENV, "")
     compress = env.get(WAYPIPE_COMPRESS_ENV, "")

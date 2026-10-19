@@ -28,6 +28,21 @@ before editing `## Unreleased`.
 - **`jailbee init` no longer seeds a `~/.gitconfig` mount.** Existing entries
   keep working. Because git reads `~/.gitconfig` last, a mounted one overrides
   the per-repo identity, and `jailbee doctor` says so.
+- **Remote SSH: waypipe and file transfer on by default, the RDP display opt-in.**
+  `remote.ssh.gui` is split into `remote.ssh.rdp` (the shared RDP display,
+  off by default) and `remote.ssh.waypipe` (native windows over
+  `waypipe ssh`, on by default). `remote.ssh.files` now defaults to on when
+  `commands.mode` is `full` and off otherwise. An existing `gui` keeps its
+  meaning (`true` = both, `false` = neither); `jailbee config migrate`
+  rewrites it. See [Configuration](docs/config.md#remotessh).
+
+### Security
+
+- **Each container reaches only its own waypipe server.** waypipe server
+  sockets moved out of the shared display directory into one directory per
+  container, mounted read-only into that container alone, so a container can
+  no longer open windows through another container's `waypipe ssh` session.
+  See [Security](docs/security.md#remote-gui).
 
 ## 1.7.4 - 2026-10-15
 

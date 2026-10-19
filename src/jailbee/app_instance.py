@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from jailbee.gui import SHARED_DISPLAY_DIR, SHARED_WAYLAND_SOCKET
+from jailbee.gui import SHARED_DISPLAY_DIR, SHARED_WAYLAND_SOCKET, WAYPIPE_CONTAINER_DIR
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from jailbee.apps import AppSpec
     from jailbee.config import Config
     from jailbee.incus import Incus, RunningInstance
+
+
+_WAYPIPE_PREFIXES = (f"{WAYPIPE_CONTAINER_DIR}/", f"{SHARED_DISPLAY_DIR}/")
 
 
 def same_display(running: RunningInstance, env: Mapping[str, str]) -> bool:
@@ -33,17 +36,21 @@ def same_display(running: RunningInstance, env: Mapping[str, str]) -> bool:
     waypipe displays compare by their socket path.
     """
     launch = env.get("WAYLAND_DISPLAY")
-    if display_name(running) == "host" and not (launch or "").startswith(f"{SHARED_DISPLAY_DIR}/"):
+    if display_name(running) == "host" and not (launch or "").startswith(_WAYPIPE_PREFIXES):
         return True
     return running.wayland_display == launch
 
 
 def display_name(running: RunningInstance) -> str:
-    """The display ``running`` is on, as the user knows it."""
+    """The display ``running`` is on, as the user knows it.
+
+    A waypipe socket under the shared directory is the pre-isolation layout:
+    an app started before the upgrade still draws there.
+    """
     wayland = running.wayland_display or ""
     if wayland == SHARED_WAYLAND_SOCKET:
         return "shared RDP"
-    if wayland.startswith(f"{SHARED_DISPLAY_DIR}/"):
+    if wayland.startswith(_WAYPIPE_PREFIXES):
         return "waypipe"
     return "host"
 

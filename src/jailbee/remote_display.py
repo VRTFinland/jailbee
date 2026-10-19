@@ -3,9 +3,10 @@
 ``jailbee-display`` runs weston with the RDP backend on its own loopback; an
 Incus proxy device publishes that port on the host's loopback. A host
 directory holding weston's Wayland socket is mounted into this container and
-into every client container (`runtime_mounts`), so an app in any container
-draws on the one screen. Modelled on `registry.py`; everything goes through the
-`Incus` wrapper and no subprocess is called here.
+into client containers while RDP is on (`runtime_mounts`), so an app in any
+container draws on the one screen. `waypipe ssh` servers use per-container
+directories instead, each mounted into its own container only. Modelled on
+`registry.py`; everything goes through the `Incus` wrapper and no subprocess is called here.
 """
 
 from __future__ import annotations
@@ -48,6 +49,11 @@ DISPLAY_CONTAINER_DIR = "/srv/jailbee-display"
 # laptop's waypipe client except through a server running here.
 WAYPIPE_LINKS_CONTAINER_DIR = "/srv/jailbee-waypipe-links"
 LINKS_DEVICE = "waypipe-links"
+# The waypipe servers' socket tree (`waypipe.servers_dir`), writable here
+# only. Short on purpose: a server socket is `<this>/<container>/wp-<id>`,
+# and a 63-character container name must stay within the unix socket limit.
+WAYPIPE_SERVERS_CONTAINER_DIR = "/srv/jailbee-wp"
+SERVERS_DEVICE = "waypipe-servers"
 RDP_PORT = 3389
 HOST_RDP_PORT = DISPLAY_FORWARD_PORT
 RDP_PORT_ADDRESS = f"localhost:{RDP_PORT}"
@@ -164,6 +170,12 @@ def _links_device_config() -> dict[str, str]:
     return {"source": str(links_dir()), "path": WAYPIPE_LINKS_CONTAINER_DIR}
 
 
+def _servers_device_config() -> dict[str, str]:
+    from jailbee.remote_ssh.waypipe import servers_dir
+
+    return {"source": str(servers_dir()), "path": WAYPIPE_SERVERS_CONTAINER_DIR}
+
+
 def _create(incus: Incus, shared_dir: str, storage_pool: str | None) -> None:
     incus.init(_IMAGE, DISPLAY_CONTAINER, storage_pool=storage_pool)
     incus.profile_assign(DISPLAY_CONTAINER, ["default", DISPLAY_PROFILE])
@@ -172,6 +184,7 @@ def _create(incus: Incus, shared_dir: str, storage_pool: str | None) -> None:
         DISPLAY_CONTAINER, "shared", "disk", {"source": shared_dir, "path": DISPLAY_CONTAINER_DIR}
     )
     incus.config_device_add(DISPLAY_CONTAINER, LINKS_DEVICE, "disk", _links_device_config())
+    incus.config_device_add(DISPLAY_CONTAINER, SERVERS_DEVICE, "disk", _servers_device_config())
     # weston listens on the container's own loopback only (the bridge is never
     # an access path); this device publishes it on the host's loopback.
     incus.config_device_add(
@@ -233,11 +246,14 @@ def display_up(
     directory = display_state_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory.chmod(0o700)
-    from jailbee.remote_ssh.waypipe import links_dir
+    from jailbee.remote_ssh.waypipe import links_dir, servers_dir
 
     links = links_dir()
     links.mkdir(parents=True, exist_ok=True, mode=0o700)
     links.chmod(0o700)
+    servers = servers_dir()
+    servers.mkdir(parents=True, exist_ok=True, mode=0o700)
+    servers.chmod(0o700)
     if not incus.network_exists(DISPLAY_BRIDGE):
         incus.network_create(DISPLAY_BRIDGE)
     _ensure_profile(incus)
@@ -253,6 +269,7 @@ def display_up(
         if entry.get("status") != "Running":
             incus.start(DISPLAY_CONTAINER)
         ensure_links_device(incus)
+        ensure_servers_device(incus)
         if _provisioning_incomplete(incus):
             on_step("finishing provisioning")
             _provision(incus)
@@ -365,6 +382,41 @@ def ensure_links_device(incus: Incus) -> None:
         raise
 
 
+def ensure_servers_device(incus: Incus) -> None:
+    """Add the waypipe servers' tree to a display container that predates it."""
+    from jailbee.remote_ssh.waypipe import servers_dir
+
+    # Before the mount: Incus refuses a disk device whose source is missing.
+    servers = servers_dir()
+    servers.mkdir(parents=True, exist_ok=True, mode=0o700)
+    servers.chmod(0o700)
+    try:
+        incus.config_device_add(DISPLAY_CONTAINER, SERVERS_DEVICE, "disk", _servers_device_config())
+    except IncusError as e:
+        if "already exists" in str(e).lower():
+            return
+        raise
+
+
+def ensure_waypipe_socket(incus: Incus, container: str) -> None:
+    """Mount ``container``'s own waypipe server directory into it, read-only."""
+    from jailbee.gui import WAYPIPE_CONTAINER_DIR
+    from jailbee.remote_ssh.waypipe import container_servers_dir
+    from jailbee.runtime_mounts import WAYPIPE_DEVICE
+
+    config = {
+        "source": str(container_servers_dir(container)),
+        "path": WAYPIPE_CONTAINER_DIR,
+        "readonly": "true",
+    }
+    try:
+        incus.config_device_add(container, WAYPIPE_DEVICE, "disk", config)
+    except IncusError as e:
+        if "already exists" in str(e).lower():
+            return
+        raise
+
+
 def ensure_waypipe_display(
     incus: Incus,
     *,
@@ -384,6 +436,7 @@ def ensure_waypipe_display(
         on_step("finishing provisioning")
         _provision(incus)
     ensure_links_device(incus)
+    ensure_servers_device(incus)
 
 
 def remove_waypipe_sockets(session_id: str | None = None, *, links: bool = True) -> None:
@@ -393,9 +446,15 @@ def remove_waypipe_sockets(session_id: str | None = None, *, links: bool = True)
     belong to the server, not to the display. Never raises: a path that
     cannot be removed is logged and the rest are still removed.
     """
-    from jailbee.remote_ssh.waypipe import links_dir
+    from jailbee.remote_ssh.waypipe import links_dir, servers_dir
 
+    one = f"wp-{session_id}" if session_id else "wp-*"
     targets = [(display_state_dir(), f"wp-{session_id}-*" if session_id else "wp-*")]
+    root = servers_dir()
+    try:
+        targets.extend((d, one) for d in (root.iterdir() if root.is_dir() else ()) if d.is_dir())
+    except OSError:
+        log.warning("Could not list %s for waypipe sockets", root, exc_info=True)
     if links:
         targets.append((links_dir(), f"{session_id}.sock" if session_id else "*.sock"))
     for directory, pattern in targets:

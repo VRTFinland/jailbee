@@ -21,6 +21,8 @@ DisplayTarget = Literal["host", "shared", "waypipe"]
 SHARED_DISPLAY_DIR = "/run/jailbee-display"
 """Where the shared display's directory is mounted in every container."""
 SHARED_WAYLAND_SOCKET = f"{SHARED_DISPLAY_DIR}/wayland-0"
+WAYPIPE_CONTAINER_DIR = "/run/jailbee-waypipe"
+"""Where a container's own waypipe server directory is mounted, read-only."""
 
 
 def display_state_dir() -> Path:
@@ -34,7 +36,7 @@ def display_target(environ: Mapping[str, str] | None = None) -> DisplayTarget:
     """Where this process's GUI apps should draw: the host, the shared RDP display, or waypipe.
 
     ``waypipe`` for a `waypipe ssh` session, ``shared`` for any other SSH
-    session whose server has `remote.ssh.gui` on (see
+    session whose server has `remote.ssh.rdp` on (see
     `remote_ssh.session.child_environment`); everything else, every local
     command included, keeps drawing on the host exactly as before.
     """

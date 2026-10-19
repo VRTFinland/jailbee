@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from jailbee.remote_ssh.session import (
     REMOTE_SESSION_ENV,
-    SSH_GUI_ENV,
     SSH_SESSION_ENV,
     WAYPIPE_ATTACH_ENV,
     WAYPIPE_COMPRESS_ENV,
@@ -124,10 +123,15 @@ def test_attach_is_set_only_when_asked() -> None:
     assert waypipe_attach(child_environment({}, gui_port=2222, waypipe=_WP)) is False
 
 
-def test_waypipe_session_needs_the_gui_marker_and_a_well_formed_id() -> None:
+def test_waypipe_session_needs_the_ssh_marker_and_a_well_formed_id() -> None:
     env = child_environment({}, gui_port=2222, waypipe=_WP)
 
-    assert waypipe_session({k: v for k, v in env.items() if k != SSH_GUI_ENV}) is None
+    assert (
+        waypipe_session(
+            {k: v for k, v in env.items() if not k.startswith(("JAILBEE_SSH", "JAILBEE_REMOTE"))}
+        )
+        is None
+    )
     assert waypipe_session({**env, WAYPIPE_SESSION_ENV: "../../etc"}) is None
     assert waypipe_session({**env, WAYPIPE_COMPRESS_ENV: ""}) is None
     assert waypipe_session({}) is None
