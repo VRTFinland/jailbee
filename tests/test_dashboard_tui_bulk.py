@@ -624,7 +624,7 @@ def test_the_destroy_confirm_keeps_both_entries_whatever_the_size(mocker, tmp_pa
     run = drive(mocker, ["down", "space", "down", "space", "D"], [group], size=size, screens=True)
 
     screen = run.screens[5]  # after the five steps, before the padding Ctrl-C
-    assert any(line.strip("│ ").strip() == "No" for line in screen.splitlines())
+    assert any(line.strip("│ ").strip() == "[n] No" for line in screen.splitlines())
     assert "Yes, destroy 2" in screen
 
 

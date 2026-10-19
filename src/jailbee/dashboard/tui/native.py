@@ -746,8 +746,17 @@ class HelpBox(OverlayBox):
         return await super().handle_key(event)
 
 
+_ANSWER_KEYS = {"yes": "y", "no": "n"}
+
+
+def _entry_key(entry: PickerEntry) -> str:
+    """The entry's own key; a bare yes/no answer defaults to `y`/`n`."""
+    return entry.key or _ANSWER_KEYS.get(entry.value, "")
+
+
 def _keyed_label(entry: PickerEntry) -> str:
-    return f"[{entry.key}] {entry.label}" if entry.key else entry.label
+    key = _entry_key(entry)
+    return f"[{key}] {entry.label}" if key else entry.label
 
 
 class PickerBox(OverlayBox):
@@ -858,7 +867,7 @@ class PickerBox(OverlayBox):
                 return True  # an overlay the screen has no room to draw chooses nothing
             return self._chosen(self.query_one(OverlayList).highlighted) or True
         if event.character and self.display:
-            keys = [e.key for e in self.picker.entries]
+            keys = [_entry_key(e) for e in self.picker.entries]
             if event.character in keys:
                 # An entry's own key is Enter on that entry.
                 index = keys.index(event.character)

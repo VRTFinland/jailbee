@@ -2061,3 +2061,16 @@ def test_a_confirm_picker_floats_in_the_middle_of_the_screen(mocker, tmp_path):
     assert abs(top - (height - bottom)) <= 1
     assert top > 5
     assert "Yes, destroy" in text
+
+
+def test_a_yes_no_picker_answers_to_y_and_n():
+    spec = Picker(
+        "container-destroy-confirm",
+        "Destroy alpha-a?",
+        (PickerEntry("No", "no"), PickerEntry("Yes, destroy", "yes")),
+    )
+
+    text = "\n".join(box_text(spec))
+
+    assert "[n] No" in text
+    assert "[y] Yes, destroy" in text
