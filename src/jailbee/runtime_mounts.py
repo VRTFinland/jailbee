@@ -61,8 +61,17 @@ exists (a missing source would make Incus refuse the whole start) *and*
 `remote.ssh.rdp` is on, and always read-only (`display_device_config`).
 """
 
+WAYPIPE_DEVICE = "waypipe-socket"
+"""Incus device name of a container's own waypipe server directory.
+
+Attached by `remote_display.ensure_waypipe_socket` on the container's first
+`waypipe ssh` launch, never at boot. Its source is that one container's
+directory under `waypipe.servers_dir()`, so a container reaches no other
+container's server. Read-only for the same reason as `DISPLAY_DEVICE`.
+"""
+
 # Everything `detach_runtime_devices` removes.
-DETACHED_DEVICES: frozenset[str] = SOCKET_DEVICES | {DISPLAY_DEVICE}
+DETACHED_DEVICES: frozenset[str] = SOCKET_DEVICES | {DISPLAY_DEVICE, WAYPIPE_DEVICE}
 
 # Device names that belong to the gpg integration and must be skipped
 # when ``gpg.enabled`` is false.

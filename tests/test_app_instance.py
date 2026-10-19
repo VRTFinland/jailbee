@@ -47,6 +47,17 @@ def test_same_display(was, now, same):
     assert same_display(_running(was), now) is same
 
 
+@pytest.mark.parametrize(
+    "socket",
+    ["/run/jailbee-waypipe/wp-0a1b2c3d", "/run/jailbee-display/wp-0a1b2c3d-app-main"],
+)
+def test_waypipe_sockets_old_and_new_are_waypipe(socket):
+    running = _running({"WAYLAND_DISPLAY": socket})
+
+    assert display_name(running) == "waypipe"
+    assert not same_display(running, {"WAYLAND_DISPLAY": "wayland-1"})
+
+
 def test_two_host_launches_are_one_display_whatever_their_socket_names():
     # The host target falls back to wayland-0 / :0 while the browser runs on
     # wayland-1 or an X11 :1; neither is another display worth moving for.

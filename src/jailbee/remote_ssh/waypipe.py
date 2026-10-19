@@ -127,6 +127,27 @@ def links_dir() -> Path:
     return state_dir() / "waypipe-links"
 
 
+def servers_dir() -> Path:
+    """Host directory of the waypipe servers' sockets, one subdirectory per container.
+
+    Outside `display_state_dir()` on purpose: that directory is mounted into
+    every container while `remote.ssh.rdp` is on, and must never carry these.
+    """
+    from jailbee.db import state_dir
+
+    return state_dir() / "waypipe-servers"
+
+
+def container_servers_dir(container: str) -> Path:
+    """``container``'s own server directory; the only one it ever mounts."""
+    return servers_dir() / container
+
+
+def server_socket_name(session_id: str) -> str:
+    """The socket file name of a session's server, inside its container's directory."""
+    return f"wp-{session_id}"
+
+
 def links_socket(session_id: str) -> Path:
     return links_dir() / f"{session_id}.sock"
 
@@ -161,22 +182,24 @@ def start_container_server(
     The server runs in jailbee-display as a transient systemd unit: stopping
     the unit takes its per-connection children and so the apps' connections
     with it, which killing waypipe's main process does not (spec, spike
-    item 4). Its Wayland socket lands in the shared display directory, which
-    ``container`` mounts read-only at `SHARED_DISPLAY_DIR`.
+    item 4). Its Wayland socket lands in ``container``'s own directory under
+    `servers_dir`, which only ``container`` mounts (read-only, at
+    `WAYPIPE_CONTAINER_DIR`).
 
     The unit runs as the display's own user, the one jailbee-display was
     provisioned and idmapped for (`remote_display._provision`), not the repo's
     ``container_user``. A session that has ended (its forward listener is
     gone) starts nothing: a unit launched then would have nothing to stop it.
     """
-    from jailbee.gui import SHARED_DISPLAY_DIR, display_state_dir
+    from jailbee.gui import WAYPIPE_CONTAINER_DIR
     from jailbee.incus import IncusError
     from jailbee.remote_display import (
         DISPLAY_CONTAINER,
         DISPLAY_CONTAINER_DIR,
         WAYPIPE_LINKS_CONTAINER_DIR,
+        WAYPIPE_SERVERS_CONTAINER_DIR,
         DisplayError,
-        ensure_display_mount,
+        ensure_waypipe_socket,
     )
 
     if not _CONTAINER_RE.fullmatch(container):
@@ -185,11 +208,16 @@ def start_container_server(
         raise DisplayError(f"Invalid compression setting {session.compress!r}.")
     if not links_socket(session.id).exists():
         raise DisplayError("This waypipe session has ended; reconnect.")
-    name = server_name(session.id, container)
+    socket_name = server_socket_name(session.id)
     unit_base = unit_name(session.id, container)
     unit = f"{unit_base}.service"
-    ensure_display_mount(incus, container)
-    host_socket = display_state_dir() / name
+    directory = container_servers_dir(container)
+    # Before the mount: Incus refuses a disk device whose source is missing.
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    ensure_waypipe_socket(incus, container)
+    host_socket = directory / socket_name
+    inside = f"{WAYPIPE_SERVERS_CONTAINER_DIR}/{container}/{socket_name}"
     if _unit_state(incus, unit) != "active":
         try:
             incus.exec(
@@ -208,7 +236,7 @@ def start_container_server(
                     "-c",
                     'rm -f "$1"; shift; exec waypipe "$@"',
                     "_",
-                    f"{DISPLAY_CONTAINER_DIR}/{name}",
+                    inside,
                     "--no-gpu",
                     "--compress",
                     session.compress,
@@ -217,7 +245,7 @@ def start_container_server(
                     "--socket",
                     f"{WAYPIPE_LINKS_CONTAINER_DIR}/{session.id}.sock",
                     "--display",
-                    f"{DISPLAY_CONTAINER_DIR}/{name}",
+                    inside,
                     "server",
                     "--",
                     "sleep",
@@ -240,7 +268,7 @@ def start_container_server(
             )
         sleep_fn(_POLL_SECONDS)
         deadline -= _POLL_SECONDS
-    return f"{SHARED_DISPLAY_DIR}/{name}"
+    return f"{WAYPIPE_CONTAINER_DIR}/{socket_name}"
 
 
 def stop_session(incus: Incus, session_id: str) -> None:
@@ -259,7 +287,7 @@ def stop_session(incus: Incus, session_id: str) -> None:
 
 
 _UNIT_ID_RE = re.compile(r"^jailbee-wp-([0-9a-f]{8})-")
-_SOCKET_ID_RE = re.compile(r"^(?:wp-)?([0-9a-f]{8})(?:-.*|\.sock)$")
+_SOCKET_ID_RE = re.compile(r"^(?:wp-)?([0-9a-f]{8})(?:-.*|\.sock)?$")
 
 
 def prune_dead(incus: Incus) -> None:
@@ -283,7 +311,11 @@ def _session_ids_on_disk() -> set[str]:
     from jailbee.gui import display_state_dir
 
     ids: set[str] = set()
-    for directory in (links_dir(), display_state_dir()):
+    directories = [links_dir(), display_state_dir()]
+    root = servers_dir()
+    if root.is_dir():
+        directories.extend(p for p in root.iterdir() if p.is_dir())
+    for directory in directories:
         if not directory.is_dir():
             continue
         for path in directory.iterdir():

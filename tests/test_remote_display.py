@@ -324,7 +324,7 @@ def test_ensure_waypipe_display_starts_a_stopped_display_and_never_waits_for_rdp
 
     up.assert_called_once()
     waited.assert_not_called()
-    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+    assert incus.config_device_add.call_args.args[1] == rd.SERVERS_DEVICE
 
 
 def test_ensure_waypipe_display_leaves_a_running_display_alone(mocker):
@@ -335,7 +335,7 @@ def test_ensure_waypipe_display_leaves_a_running_display_alone(mocker):
     rd.ensure_waypipe_display(incus)
 
     up.assert_not_called()
-    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+    assert incus.config_device_add.call_args.args[1] == rd.SERVERS_DEVICE
 
 
 def test_remove_waypipe_sockets_for_one_session_or_all(tmp_path):
@@ -426,7 +426,10 @@ def test_up_adds_the_links_device_to_an_existing_display(mocker, status):
     rd.display_up(incus, sleep_fn=lambda _s: None)
 
     incus.init.assert_not_called()
-    assert [c.args[1] for c in incus.config_device_add.call_args_list] == [rd.LINKS_DEVICE]
+    assert [c.args[1] for c in incus.config_device_add.call_args_list] == [
+        rd.LINKS_DEVICE,
+        rd.SERVERS_DEVICE,
+    ]
 
 
 def _provisioning_scripts(incus):
@@ -467,7 +470,7 @@ def test_ensure_waypipe_display_reprovisions_a_running_display_lacking_waypipe(m
 
     provision.assert_called_once_with(incus)
     up.assert_not_called()
-    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+    assert incus.config_device_add.call_args.args[1] == rd.SERVERS_DEVICE
 
 
 def test_ensure_waypipe_display_does_not_reprovision_a_complete_running_display(mocker):
@@ -477,7 +480,7 @@ def test_ensure_waypipe_display_does_not_reprovision_a_complete_running_display(
 
     provision.assert_not_called()
     up.assert_not_called()
-    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+    assert incus.config_device_add.call_args.args[1] == rd.SERVERS_DEVICE
 
 
 def test_ensure_waypipe_display_stopped_path_goes_through_display_up_only(mocker):
@@ -488,7 +491,7 @@ def test_ensure_waypipe_display_stopped_path_goes_through_display_up_only(mocker
 
     up.assert_called_once()
     provision.assert_not_called()
-    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+    assert incus.config_device_add.call_args.args[1] == rd.SERVERS_DEVICE
 
 
 def test_up_creates_the_display_on_the_given_pool():
@@ -511,3 +514,48 @@ def test_up_without_a_pool_leaves_the_display_to_the_profile():
     rd.display_up(incus, sleep_fn=lambda _s: None)
 
     assert incus.init.call_args.kwargs == {"storage_pool": None}
+
+
+def test_create_adds_the_waypipe_servers_device(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    incus = MagicMock()
+
+    rd._create(incus, str(tmp_path / "display"), None)
+
+    incus.config_device_add.assert_any_call(
+        "jailbee-display",
+        "waypipe-servers",
+        "disk",
+        {"source": str(tmp_path / "jailbee" / "waypipe-servers"), "path": "/srv/jailbee-wp"},
+    )
+
+
+def test_ensure_waypipe_display_adds_the_servers_device_to_an_old_display(mocker):
+    incus = MagicMock()
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.RUNNING)
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=False)
+
+    rd.ensure_waypipe_display(incus)
+
+    devices = [c.args[1] for c in incus.config_device_add.call_args_list]
+    assert "waypipe-servers" in devices and "waypipe-links" in devices
+
+
+def test_remove_waypipe_sockets_clears_the_new_tree_and_legacy_leftovers(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    from jailbee.gui import display_state_dir
+    from jailbee.remote_ssh import waypipe as wp
+
+    wp.container_servers_dir("c1").mkdir(parents=True)
+    (wp.container_servers_dir("c1") / "wp-0a1b2c3d").touch()
+    (wp.container_servers_dir("c1") / "wp-ffffffff").touch()
+    display_state_dir().mkdir(parents=True, exist_ok=True)
+    (display_state_dir() / "wp-0a1b2c3d-c1").touch()
+    (display_state_dir() / "wayland-0").touch()
+
+    rd.remove_waypipe_sockets("0a1b2c3d", links=False)
+
+    assert not (wp.container_servers_dir("c1") / "wp-0a1b2c3d").exists()
+    assert (wp.container_servers_dir("c1") / "wp-ffffffff").exists()
+    assert not (display_state_dir() / "wp-0a1b2c3d-c1").exists()
+    assert (display_state_dir() / "wayland-0").exists()

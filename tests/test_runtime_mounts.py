@@ -875,3 +875,12 @@ def test_waypipe_alone_never_mounts_the_shared_display_at_boot(
     (tmp_path / "jailbee" / "display").mkdir(parents=True)
 
     assert "display-socket" not in _attached(make_cfg(tmp_path))
+
+
+def test_detach_drops_the_waypipe_socket():
+    incus = MagicMock()
+
+    detach_runtime_devices(_cfg(), incus, "feat-smoke")
+
+    removed = {c.args[1] for c in incus.config_device_remove.call_args_list}
+    assert "waypipe-socket" in removed

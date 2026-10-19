@@ -21,6 +21,8 @@ DisplayTarget = Literal["host", "shared", "waypipe"]
 SHARED_DISPLAY_DIR = "/run/jailbee-display"
 """Where the shared display's directory is mounted in every container."""
 SHARED_WAYLAND_SOCKET = f"{SHARED_DISPLAY_DIR}/wayland-0"
+WAYPIPE_CONTAINER_DIR = "/run/jailbee-waypipe"
+"""Where a container's own waypipe server directory is mounted, read-only."""
 
 
 def display_state_dir() -> Path:
