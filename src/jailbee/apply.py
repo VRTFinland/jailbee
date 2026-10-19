@@ -118,6 +118,29 @@ def _only_attaches_services_acl(existing: str, candidate: str) -> bool:
     return attached
 
 
+# Profile config keys Incus applies to a running container on the spot.
+_LIVE_PROFILE_KEYS = frozenset({"limits.cpu.allowance"})
+
+
+def _only_changes_live_config(existing: str, candidate: str) -> bool:
+    """True if `candidate` differs from `existing` only in `_LIVE_PROFILE_KEYS`.
+
+    Such a change is already in force once the profile is written, so the
+    restart offer would restart every running container — and re-run its
+    autostart — for nothing.
+    """
+    if not isinstance(existing, str):
+        return False
+    old, new = yaml.safe_load(existing) or {}, yaml.safe_load(candidate) or {}
+    if (old.get("devices") or {}) != (new.get("devices") or {}):
+        return False
+    old_config, new_config = old.get("config") or {}, new.get("config") or {}
+    changed = {
+        k for k in old_config.keys() | new_config.keys() if old_config.get(k) != new_config.get(k)
+    }
+    return bool(changed) and changed <= _LIVE_PROFILE_KEYS
+
+
 def _acl_differs(incus: Incus, name: str, new_yaml: str) -> bool:
     """True if the rendered ACL YAML differs from Incus's stored ACL."""
     return _yaml_subset_differs(
@@ -375,7 +398,9 @@ def run_apply(
             existing = incus.profile_show(name)
             incus.profile_set_yaml(name, new_yaml)
             profiles_changed.append(name)
-            if gcfg.litellm.enabled or not _only_attaches_services_acl(existing, new_yaml):
+            if not _only_changes_live_config(existing, new_yaml) and (
+                gcfg.litellm.enabled or not _only_attaches_services_acl(existing, new_yaml)
+            ):
                 restart_profiles.append(name)
         else:
             profiles_unchanged.append(name)
