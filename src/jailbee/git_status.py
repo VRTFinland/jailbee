@@ -371,10 +371,13 @@ if [ -n "$TARGET_SHA" ] \
   BASE="$TARGET_SHA"
 fi
 
-WT_UNSTAGED=$(git diff --shortstat --ignore-submodules=dirty HEAD 2>/dev/null) || WT_UNSTAGED=""
+# Worktree diffs use `git diff-index`: porcelain `git diff` rewrites the index
+# (taking .git/index.lock) on stat-dirty entries even with GIT_OPTIONAL_LOCKS=0.
+WT_UNSTAGED=$(git diff-index --shortstat --ignore-submodules=dirty HEAD 2>/dev/null) \
+  || WT_UNSTAGED=""
 WT_STAGED=$(git diff --cached --shortstat --ignore-submodules=dirty 2>/dev/null) || WT_STAGED=""
 SUB_WT=$(git submodule foreach --recursive --quiet \
-  'git diff --shortstat HEAD || :' 2>/dev/null) || SUB_WT=""
+  'git diff-index --shortstat HEAD || :' 2>/dev/null) || SUB_WT=""
 WT="${WT_STAGED}${WT_UNSTAGED}${SUB_WT}"
 
 if [ -n "$BASE" ]; then
@@ -467,7 +470,7 @@ if [ -n "$BASE" ]; then
   )
 fi
 SUB_WT_STRUCT=$(git submodule foreach --recursive --quiet \
-  'ss=$(git diff --shortstat HEAD 2>/dev/null || :); printf "%s\t%s\n" "$displaypath" "$ss"' \
+  'ss=$(git diff-index --shortstat HEAD 2>/dev/null || :); printf "%s\t%s\n" "$displaypath" "$ss"' \
   2>/dev/null) || SUB_WT_STRUCT=""
 
 # --- fields 7-10: head sha, remote containment, LOCAL diff vs the host ---
@@ -611,9 +614,10 @@ def probe_container_git(
                 "HOST_SOURCE": HOST_SOURCE,
                 "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 "ISSUE_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}",
-                # The probe only reads, but `git diff`/`git diff --cached`/
-                # `git submodule foreach 'git diff'` refresh the index and
-                # write it back — which takes `.git/index.lock`. A listing
+                # The probe only reads, but `git status`/`git diff --cached`
+                # refresh the index and write it back — which takes
+                # `.git/index.lock`. (Worktree `git diff` ignores this
+                # variable, so the snippet uses `git diff-index` there.) A listing
                 # (`jailbee ls`, the push picker, the dashboard's periodic
                 # refresh) would then race any write in the same container and
                 # make `git merge` die with "Unable to create

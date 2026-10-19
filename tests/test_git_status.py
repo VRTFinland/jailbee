@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 
 import pytest
@@ -306,7 +307,7 @@ def test_probe_snippet_sums_submodule_wt():
 
     # Working-tree submodule content is summed recursively.
     assert "submodule foreach --recursive --quiet" in _PROBE_SNIPPET
-    assert "'git diff --shortstat HEAD || :'" in _PROBE_SNIPPET
+    assert "'git diff-index --shortstat HEAD || :'" in _PROBE_SNIPPET
     # Superproject WT ignores dirty submodule content (avoids double count)
     # while still flagging pointer/commit changes.
     assert "--ignore-submodules=dirty" in _PROBE_SNIPPET
@@ -631,6 +632,28 @@ def test_probe_does_not_take_the_git_index_lock(mocker):
     )
     env = incus.exec.call_args.kwargs.get("env") or {}
     assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+def test_probe_never_runs_a_worktree_git_diff():
+    """Worktree-side `git diff` takes `.git/index.lock` despite GIT_OPTIONAL_LOCKS=0.
+
+    Porcelain `git diff` (worktree against the index or a commit) rewrites
+    the index whenever it meets stat-dirty entries, and that refresh ignores
+    GIT_OPTIONAL_LOCKS (git 2.53). The probe runs under a 3 s `incus exec`
+    timeout, so a kill landing inside that window leaves a stale empty lock
+    and every later `git merge` in the container fails. Worktree diffs must
+    go through `git diff-index`, which never writes the index; `git diff`
+    stays only for `--cached` and commit-to-commit comparisons.
+    """
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    joined = re.sub(r"\\\n\s*", " ", _PROBE_SNIPPET)
+    calls = re.findall(r"(?<!`)\bgit diff (?P<args>[^)|;'\n]*)", joined)
+    assert calls
+    for args in calls:
+        words = args.split()
+        revs = [w for w in words if not w.startswith(("-", "2>"))]
+        assert "--cached" in words or len(revs) >= 2 or any(".." in r for r in revs), args
 
 
 def test_probe_reports_in_progress_merge_and_unmerged_count(mocker):
