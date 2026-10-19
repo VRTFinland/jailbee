@@ -228,10 +228,11 @@ def base_profile_yaml(cfg: Config) -> str:
         "environment.DISPLAY": ":0",
     }
     # In the profile, not set per container like `limits.cpu`, so that
-    # `jailbee apply` reaches existing containers too. Omitted when unset,
-    # leaving Incus's own default (10).
-    if cfg.defaults.cpu_priority is not None:
-        profile_config["limits.cpu.priority"] = str(cfg.defaults.cpu_priority)
+    # `jailbee apply` reaches existing containers too. The percent form is
+    # the cgroup's `cpu.weight` (`limits.cpu.priority` only shifts it by up
+    # to 10, too little to matter against the host). Omitted when unset.
+    if cfg.defaults.cpu_share is not None:
+        profile_config["limits.cpu.allowance"] = f"{cfg.defaults.cpu_share}%"
     if cfg.gpg.enabled:
         profile_config["environment.SSH_AUTH_SOCK"] = f"{runtime}/gnupg/S.gpg-agent.ssh"
     if cfg.claude.enabled:
