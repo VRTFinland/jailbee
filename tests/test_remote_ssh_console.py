@@ -1192,7 +1192,7 @@ def test_console_runs_a_gui_launcher_only_when_the_gui_flag_is_on(
     console_env: ConsoleEnv, mocker, capsys
 ) -> None:
     def run_with(gui: bool) -> Mock:
-        ssh = RemoteSSHConfig(console=True, gui=gui, commands=RemoteCommandPolicy(mode="full"))
+        ssh = RemoteSSHConfig(console=True, rdp=gui, commands=RemoteCommandPolicy(mode="full"))
         run = mocker.patch(
             "jailbee.remote_ssh.console.subprocess.run",
             return_value=CompletedProcess([], 0),
@@ -1202,7 +1202,7 @@ def test_console_runs_a_gui_launcher_only_when_the_gui_flag_is_on(
         return run
 
     run_with(False).assert_not_called()
-    assert "manages the host itself" in capsys.readouterr().err
+    assert "opens a window" in capsys.readouterr().err
     run_with(True).assert_called_once()
 
 

@@ -206,7 +206,7 @@ def launch_env(
     On the host the host compositor socket is attached to ``container`` (or a
     stale one replaced) first — see `runtime_mounts.ensure_host_display` — and
     the environment is `gui_env(cfg)`. From an SSH session whose server has
-    `remote.ssh.gui` on, the shared RDP display is prepared first (started,
+    `remote.ssh.rdp` on, the shared RDP display is prepared first (started,
     mounted into ``container``, an RDP client awaited) and the app is pointed
     at it. From a `waypipe ssh` session, the container's waypipe server is
     started in jailbee-display and the app is pointed at it; no RDP client is

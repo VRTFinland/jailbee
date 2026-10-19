@@ -303,10 +303,10 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
     }
 )
 
-# The GUI app launchers that `remote.ssh.gui` turns from host commands into
-# container commands: with it on they draw on the shared RDP display, not on
-# the host's screen. `gui` (the Qt dashboard) is deliberately not here: it
-# always opens a window on the host.
+# The GUI app launchers that `remote.ssh.rdp` (or `remote.ssh.waypipe`, in a
+# `waypipe ssh` session) turn from host commands into container commands: they
+# draw on the shared RDP display or on the client, not on the host's screen.
+# `gui` (the Qt dashboard) is deliberately not here: it always opens a window on the host.
 _GUI_APP_COMMANDS: frozenset[str] = frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
 
 
@@ -345,12 +345,24 @@ class RemoteUnlocks:
     mounts: bool = False
 
     @classmethod
-    def of(cls, config: RemoteSSHConfig | None) -> RemoteUnlocks:
-        """The switches `config` turns on; all off without a config."""
+    def of(cls, config: RemoteSSHConfig | None, *, waypipe: bool | None = None) -> RemoteUnlocks:
+        """The switches `config` turns on; all off without a config.
+
+        GUI launchers are container commands with `rdp` on (they draw on the
+        shared display), or with `waypipe` on inside a `waypipe ssh` session
+        (they draw on the client). ``waypipe`` says whether this is such a
+        session; `None` asks the current process (`session.waypipe_session`),
+        which is right everywhere but in the server itself, before a child
+        exists.
+        """
         if config is None:
             return cls()
+        if waypipe is None:
+            from jailbee.remote_ssh.session import waypipe_session
+
+            waypipe = waypipe_session() is not None
         return cls(
-            gui=config.rdp,
+            gui=config.rdp or (config.waypipe and waypipe),
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
         )
@@ -787,6 +799,12 @@ def policy_allows(
     # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):
         if is_host_command(path, unlocks=unlocks):
+            if path in _GUI_APP_COMMANDS:
+                raise RouteError(
+                    f"`{path}` opens a window, which this session has no display for: "
+                    "run it from a `waypipe ssh` session, or enable remote.ssh.rdp on "
+                    "the host for the shared RDP display"
+                )
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"
             )
@@ -835,13 +853,14 @@ def route(
     config: RemoteSSHConfig,
     *,
     engine: Engine | None = None,
+    waypipe: bool = False,
 ) -> Route:
     """Route one remote SSH command according to the restricted grammar."""
     argv = _parse(raw) if raw is not None else ()
     scope = RemoteRepoScope(frozenset(config.excluded_repos))
     if not argv:
         if config.default_entrypoint != "help":
-            return route(config.default_entrypoint, config, engine=engine)
+            return route(config.default_entrypoint, config, engine=engine, waypipe=waypipe)
         return Route("help", (), None, None, False)
 
     if argv == ("help",):
@@ -899,7 +918,7 @@ def route(
         restrict_host=config.restrict_host,
         scope=scope,
         allow_scoped_aggregates=True,
-        unlocks=RemoteUnlocks.of(config),
+        unlocks=RemoteUnlocks.of(config, waypipe=waypipe),
     )
     if prefix is None:
         return Route(
@@ -909,7 +928,7 @@ def route(
     return Route("command", command_argv, prefix, root, False)
 
 
-def help_text(config: RemoteSSHConfig) -> str:
+def help_text(config: RemoteSSHConfig, *, waypipe: bool = False) -> str:
     """Describe enabled entry points and commands this session may run."""
     lines = ["Available remote commands:", "  help"]
     if config.dashboard:
@@ -929,7 +948,7 @@ def help_text(config: RemoteSSHConfig) -> str:
             config.commands,
             restrict_host=config.restrict_host,
             scope=RemoteRepoScope(frozenset(config.excluded_repos)),
-            unlocks=RemoteUnlocks.of(config),
+            unlocks=RemoteUnlocks.of(config, waypipe=waypipe),
         )
     )
     short = known_command_short_help()

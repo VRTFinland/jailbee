@@ -13,6 +13,7 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import (
+    RemoteUnlocks,
     Route,
     RouteError,
     check_arguments,
@@ -684,7 +685,7 @@ def test_local_console_is_never_a_remote_command() -> None:
 def test_a_restricted_session_never_manages_the_host_even_in_full_mode(argv, monkeypatch):
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
 
-    with pytest.raises(RouteError, match="manages the host itself"):
+    with pytest.raises(RouteError, match=r"manages the host itself|opens a window"):
         policy_allows(argv, FULL)
 
 
@@ -967,7 +968,7 @@ def test_gui_apps_are_host_commands_unless_the_feature_is_on(path: str) -> None:
 
     policy = RemoteCommandPolicy(mode="full")
 
-    with pytest.raises(RouteError, match="manages the host"):
+    with pytest.raises(RouteError, match="opens a window"):
         policy_allows([path], policy, restrict_host=True)
     assert (
         policy_allows([path], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True)) == path
@@ -979,7 +980,7 @@ def test_apps_run_follows_the_same_rule() -> None:
 
     policy = RemoteCommandPolicy(mode="full")
 
-    with pytest.raises(RouteError, match="manages the host"):
+    with pytest.raises(RouteError, match="opens a window"):
         policy_allows(["apps", "run", "x"], policy, restrict_host=True)
     assert (
         policy_allows(
@@ -1023,7 +1024,7 @@ def test_route_threads_the_gui_flag_to_the_command_policy(repo, engine: Engine) 
     off = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))
     on = off.model_copy(update={"rdp": True})
 
-    with pytest.raises(RouteError, match="manages the host"):
+    with pytest.raises(RouteError, match="opens a window"):
         route("--repo project chrome feat", off, engine=engine)
     assert route("--repo project chrome feat", on, engine=engine).kind == "command"
 
@@ -1038,7 +1039,7 @@ def test_remote_unlocks_default_unlocks_nothing() -> None:
 def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    unlocks = RemoteUnlocks.of(RemoteSSHConfig(gui=True))
+    unlocks = RemoteUnlocks.of(RemoteSSHConfig(rdp=True))
     assert unlocks.commands() == frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
     assert "gui" not in unlocks.commands()
 
@@ -1426,7 +1427,7 @@ POLICIES = [
     ),
     RemoteSSHConfig(exec=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full")),
     RemoteSSHConfig(exec=True, excluded_repos=["other"], commands=RemoteCommandPolicy(mode="full")),
-    RemoteSSHConfig(exec=True, gui=True, network=True, commands=RemoteCommandPolicy(mode="full")),
+    RemoteSSHConfig(exec=True, rdp=True, network=True, commands=RemoteCommandPolicy(mode="full")),
 ]
 
 
@@ -1547,3 +1548,69 @@ def test_egress_proxy_up_and_down_manage_the_host_and_status_does_not():
     assert is_host_command("net egress proxy up") is True
     assert is_host_command("net egress proxy down") is True
     assert is_host_command("net egress proxy status") is False
+
+
+@pytest.mark.parametrize(
+    ("rdp", "waypipe_on", "in_session", "unlocked"),
+    [
+        (False, False, False, False),
+        (False, False, True, False),
+        (False, True, False, False),
+        (False, True, True, True),
+        (True, False, False, True),
+        (True, False, True, True),
+        (True, True, False, True),
+        (True, True, True, True),
+    ],
+)
+def test_gui_launchers_unlock_for_rdp_or_a_waypipe_session(rdp, waypipe_on, in_session, unlocked):
+    config = RemoteSSHConfig(rdp=rdp, waypipe=waypipe_on)
+
+    assert RemoteUnlocks.of(config, waypipe=in_session).gui is unlocked
+
+
+def test_unlocks_read_the_process_session_by_default(monkeypatch):
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_WAYPIPE_SESSION", "0a1b2c3d")
+    monkeypatch.setenv("JAILBEE_WAYPIPE_COMPRESS", "lz4")
+
+    assert RemoteUnlocks.of(RemoteSSHConfig(rdp=False, waypipe=True)).gui is True
+
+
+def test_a_plain_session_with_only_waypipe_is_told_how_to_launch(monkeypatch):
+    for name in ("JAILBEE_WAYPIPE_SESSION", "JAILBEE_WAYPIPE_COMPRESS"):
+        monkeypatch.delenv(name, raising=False)
+    config = RemoteSSHConfig(rdp=False, waypipe=True, commands=RemoteCommandPolicy(mode="full"))
+
+    with pytest.raises(RouteError) as exc:
+        policy_allows(
+            ["chrome"], config.commands, restrict_host=True, unlocks=RemoteUnlocks.of(config)
+        )
+
+    assert "waypipe ssh" in str(exc.value)
+    assert "remote.ssh.rdp" in str(exc.value)
+
+
+def test_route_unlocks_launchers_for_a_waypipe_request(repo, engine):
+    config = RemoteSSHConfig(rdp=False, waypipe=True, commands=RemoteCommandPolicy(mode="full"))
+
+    selected = route("--repo project chrome", config, engine=engine, waypipe=True)
+
+    assert selected.argv == ("chrome",)
+    with pytest.raises(RouteError):
+        route("--repo project chrome", config, engine=engine, waypipe=False)
+
+
+def test_exclusions_still_refuse_launchers_in_a_waypipe_session():
+    config = RemoteSSHConfig(
+        waypipe=True, excluded_repos=["private-app"], commands=RemoteCommandPolicy(mode="full")
+    )
+
+    with pytest.raises(RouteError, match="exclusions"):
+        policy_allows(
+            ["chrome"],
+            config.commands,
+            restrict_host=True,
+            scope=RemoteRepoScope(frozenset(config.excluded_repos)),
+            unlocks=RemoteUnlocks.of(config, waypipe=True),
+        )

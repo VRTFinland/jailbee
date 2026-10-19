@@ -375,13 +375,15 @@ async def handle_process(
             waypipe_session = WaypipeSession(id=forward[1], compress=request.compress)
             command = request.command
             kind, prefix, path = _request_fields(command)
-        selected = route(command, config)
+        selected = route(command, config, waypipe=waypipe_session is not None)
         kind, prefix = selected.kind, selected.repo_prefix
         if selected.requires_pty and process.term_type is None:
             raise PTYError("This entry point requires a PTY; retry with ssh -t.")
         decision = "allowed"
         if selected.kind == "help":
-            process.stdout.write(_server_text(help_text(config), pty=pty))
+            process.stdout.write(
+                _server_text(help_text(config, waypipe=waypipe_session is not None), pty=pty)
+            )
             process.exit(0)
             return
         if selected.kind == "repos":

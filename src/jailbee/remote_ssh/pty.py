@@ -45,7 +45,7 @@ class ChildSpec:
     # remote session (see `session.child_environment`).
     restrict_host: bool = True
     excluded_repos: tuple[str, ...] = ()
-    # `remote.ssh.gui`: the server's port when GUI apps belong on the shared
+    # `remote.ssh.rdp`: the server's port when GUI apps belong on the shared
     # RDP display, else None.
     gui_port: int | None = None
     # A `waypipe ssh` session (`server.handle_process`), else None; `waypipe_attach`

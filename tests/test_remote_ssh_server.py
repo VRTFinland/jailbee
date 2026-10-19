@@ -1454,7 +1454,7 @@ def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, c
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     config = RemoteSSHConfig(
         exec=True,
-        gui=True,
+        rdp=True,
         commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "chrome", "gui"]),
     )
 
@@ -1927,8 +1927,7 @@ def gui_config(mocker):
         exec=True,
         dashboard=True,
         waypipe=True,
-        # TODO(task 3): the router still keys app launchers on rdp; make this False then.
-        rdp=True,
+        rdp=False,
         commands=RemoteCommandPolicy(mode="full"),
     )
     return mocker.patch.object(
@@ -1956,6 +1955,14 @@ def test_a_waypipe_session_runs_its_command_with_the_session_markers(
     waypipe_ops["ensure"].assert_called_once()
     waypipe_ops["stop"].assert_called_once()
     assert waypipe_ops["stop"].call_args.args[1] == "0a1b2c3d"
+
+
+def test_a_waypipe_session_may_run_a_launcher_without_rdp(child, gui_config, waypipe_ops, repo):
+    cmd = WP_CMD.replace("server dashboard", "server --repo project chrome")
+
+    session(cmd, extra=WP_FORWARD)
+
+    child.assert_called_once()
 
 
 def test_a_direct_gui_command_runs_attached(child, gui_config, waypipe_ops, repo):
