@@ -38,10 +38,12 @@ class FakeGatherer:
         self.once = once  # only the first gather yields a snapshot
         self.calls: list[tuple[bool, bool, tuple[Path, ...]]] = []
         self.seq = 0
+        self.fasts: list[bool] = []
         self.fail_on = fail_on
 
-    def tick(self, *, active, refresh, roots):
+    def tick(self, *, active, refresh, roots, fast=False):
         self.calls.append((active, refresh, tuple(roots)))
+        self.fasts.append(fast)
         if not (active or refresh):
             return None
         if self.once and self.seq:
@@ -222,8 +224,8 @@ def test_a_client_that_never_reads_cannot_keep_the_server_alive(sock_path, mocke
     mocker.patch("jailbee.state_service.server.DRAIN_TIMEOUT_SECONDS", 0.3)
 
     class Big(FakeGatherer):
-        def tick(self, *, active, refresh, roots):
-            snap = super().tick(active=active, refresh=refresh, roots=roots)
+        def tick(self, *, active, refresh, roots, fast=False):
+            snap = super().tick(active=active, refresh=refresh, roots=roots, fast=fast)
             if isinstance(snap, Snapshot):
                 snap.groups[0].prefix = "x" * 200_000
             return snap
@@ -261,6 +263,28 @@ def test_refresh_is_honoured_for_an_inactive_client(sock_path):
     wait_until(lambda: not gatherer.calls[-1][0], "Active(False) to land")
     conn.send(Refresh())
     wait_until(lambda: any(r for _a, r, _ in gatherer.calls), "a refresh tick")
+
+
+def test_refresh_settle_opens_a_fast_window_that_closes(sock_path, mocker):
+    mocker.patch("jailbee.state_service.server.TICK_SECONDS", 0.02)
+    gatherer = FakeGatherer()
+    Running(gatherer, sock_path)
+    conn = Conn(sock_path)
+    conn.recv()
+    assert not any(gatherer.fasts)
+    conn.send(Refresh(0.4))
+    wait_until(lambda: any(gatherer.fasts), "a fast tick")
+    wait_until(lambda: not gatherer.fasts[-1], "the fast window to close")
+
+
+def test_refresh_without_settle_stays_slow(sock_path):
+    gatherer = FakeGatherer()
+    Running(gatherer, sock_path)
+    conn = Conn(sock_path)
+    conn.recv()
+    conn.send(Refresh())
+    wait_until(lambda: any(r for _a, r, _ in gatherer.calls), "a refresh tick")
+    assert not any(gatherer.fasts)
 
 
 def test_server_gathers_the_union_of_client_roots(sock_path):

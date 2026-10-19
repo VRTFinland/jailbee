@@ -47,6 +47,8 @@ DRAIN_TIMEOUT_SECONDS = 5.0
 # How long a starting server waits for the previous one to let go of the
 # lifetime lock — the gap between that server unlinking its socket and exiting.
 LOCK_WAIT_SECONDS = 2.0
+# The longest settle window one Refresh may ask for.
+MAX_SETTLE_SECONDS = 30.0
 
 
 def _abort(writer: asyncio.StreamWriter) -> None:
@@ -86,6 +88,7 @@ class StateServer:
         self._writers: set[asyncio.StreamWriter] = set()
         self._latest: Snapshot | None = None
         self._refresh = False
+        self._fast_until = 0.0
         self._stopping = False
         self._idle_since = clock()
         self._wake = asyncio.Event()
@@ -118,6 +121,7 @@ class StateServer:
                 self._gatherer.tick,
                 active=any(c.active for c in self._clients),
                 refresh=refresh,
+                fast=self._clock() < self._fast_until,
                 roots=sorted({c.cwd_root for c in self._clients if c.cwd_root is not None}),
             )
             if result is not None:
@@ -154,6 +158,8 @@ class StateServer:
                     client.active = message.value
                 elif isinstance(message, Refresh):
                     self._refresh = True
+                    settle = min(max(message.settle, 0.0), MAX_SETTLE_SECONDS)
+                    self._fast_until = max(self._fast_until, self._clock() + settle)
                 self._wake.set()
         except (ProtocolError, ConnectionError, ValueError) as exc:
             # ValueError: a line over the reader's limit (LimitOverrunError's base).

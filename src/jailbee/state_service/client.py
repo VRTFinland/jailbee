@@ -45,6 +45,8 @@ log = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_SECONDS = 5.0
 BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 10.0)
+SETTLE_SECONDS = 8.0
+"""How long the service gathers fast after `StateClient.refresh`."""
 DISCONNECTED = "state service disconnected — reconnecting"
 
 
@@ -141,8 +143,9 @@ class StateClient:
         with self._lock:
             return self._status
 
-    def refresh(self) -> None:
-        self._send(Refresh())
+    def refresh(self, settle: float = SETTLE_SECONDS) -> None:
+        """Gather now, then keep gathering fast for ``settle`` seconds."""
+        self._send(Refresh(settle))
 
     def set_active(self, value: bool) -> None:
         with self._lock:

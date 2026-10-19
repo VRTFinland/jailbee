@@ -29,8 +29,8 @@ from jailbee.update_check import UpdateNotice
 
 # Bumped on any change a client of another version could misread. 8 added
 # RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
-# and root_pool.
-PROTOCOL = 8
+# and root_pool. 9 added Refresh.settle.
+PROTOCOL = 9
 
 
 class ProtocolError(ValueError):
@@ -55,7 +55,13 @@ class Active:
 
 @dataclass(frozen=True)
 class Refresh:
-    """Gather now, git tier included."""
+    """Gather now, git tier included.
+
+    ``settle`` seconds: then keep gathering at the fast cadence, for an
+    action whose effect takes a while to show (a container still booting).
+    """
+
+    settle: float = 0.0
 
 
 @dataclass(frozen=True)

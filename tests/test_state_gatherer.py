@@ -23,6 +23,7 @@ def due(**kw):
         "cadence": CAD,
         "active": True,
         "refresh": False,
+        "fast": False,
     }
     return refresh_due(**(args | kw))
 
@@ -320,3 +321,15 @@ def test_system_reader_failure_does_not_fail_gather(mocker):
 
     assert isinstance(snap, Snapshot)
     assert snap.system is None
+
+
+def test_fast_window_caps_both_tier_intervals():
+    # Slow cadence: base 3 s and git 10 s are not due 1.5 s / 2.5 s after the last gathers.
+    assert due(now=100.0, last_base=98.5, last_full=97.5) == (False, False)
+    assert due(now=100.0, last_base=98.5, last_full=97.5, fast=True) == (True, False)
+    assert due(now=100.0, last_base=98.5, last_full=96.5, fast=True) == (True, True)
+
+
+def test_fast_window_never_slows_a_faster_cadence():
+    quick = Cadence(interval=0.5, git_interval=0.5, git=True)
+    assert due(cadence=quick, now=100.0, last_base=99.4, last_full=99.4, fast=True) == (True, True)

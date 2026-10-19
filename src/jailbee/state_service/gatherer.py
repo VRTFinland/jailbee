@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -35,6 +35,10 @@ log = logging.getLogger(__name__)
 
 UPDATE_INTERVAL = 60.0
 """Seconds between reads of the update notice. A refresh reads it at once."""
+
+FAST_INTERVAL = 1.0
+FAST_GIT_INTERVAL = 3.0
+"""The base and git tier intervals while a refresh's settle window is open."""
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,7 @@ def refresh_due(
     cadence: Cadence,
     active: bool,
     refresh: bool,
+    fast: bool = False,
 ) -> tuple[bool, bool]:
     """``(gather now, include the git tier)``.
 
@@ -68,9 +73,20 @@ def refresh_due(
     gets through. The very first gather is base-only so the first frame
     arrives fast; the git tier follows on the next tick (``last_full`` is
     still None then). ``now`` and the ``last_*`` stamps are monotonic.
+
+    ``fast`` (a refresh's settle window is open) caps both intervals at
+    `FAST_INTERVAL` / `FAST_GIT_INTERVAL`: the state an action set in motion
+    needs a few seconds to settle, and a single gather right after it would
+    show the half-way picture.
     """
     if not (active or refresh):
         return False, False
+    if fast:
+        cadence = replace(
+            cadence,
+            interval=min(cadence.interval, FAST_INTERVAL),
+            git_interval=min(cadence.git_interval, FAST_GIT_INTERVAL),
+        )
     if last_base is None:
         return True, False
     do_git = cadence.git and (
@@ -124,11 +140,12 @@ class Gatherer:
         self._failing: str | None = None
 
     def tick(
-        self, *, active: bool, refresh: bool, roots: Sequence[Path]
+        self, *, active: bool, refresh: bool, roots: Sequence[Path], fast: bool = False
     ) -> Snapshot | GatherError | None:
         """Gather if due. None when nothing was due.
 
-        ``roots`` are the connected clients' cwd repos, gathered on top of the
+        ``fast`` is the settle window of `refresh_due`. ``roots`` are the
+        connected clients' cwd repos, gathered on top of the
         registered ones. A failed gather is reported, never raised, and still
         moves the schedule on — so a dead incusd is retried once per
         ``interval``, not in a hot loop.
@@ -140,6 +157,7 @@ class Gatherer:
             cadence=self.cadence,
             active=active,
             refresh=refresh,
+            fast=fast,
         )
         if not do_base:
             return None

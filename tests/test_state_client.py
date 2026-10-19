@@ -337,7 +337,7 @@ def test_client_receives_a_snapshot_over_64_kib(runtime_dir):
     ]
 
     class BigGatherer(FakeGatherer):
-        def tick(self, *, active, refresh, roots):
+        def tick(self, *, active, refresh, roots, fast=False):
             if not (active or refresh):
                 return None
             self.seq += 1
