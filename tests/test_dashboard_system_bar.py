@@ -174,9 +174,4 @@ def test_numbers_are_coloured_only_as_far_as_the_fill_reaches() -> None:
     first_unused = bar_open + 1 + used_cells
     assert "green" in _style_at(line, first_unused - 1)
     assert "green" not in _style_at(line, first_unused)
-    assert "white" in _style_at(line, start + len("50.0G/100.0G") - 1)
-
-
-def test_cache_share_is_blue() -> None:
-    line = system_line(_status(), 300)
-    assert any("blue" in str(sp.style) for sp in line.spans)
+    assert "bright_black" in _style_at(line, start + len("50.0G/100.0G") - 1)

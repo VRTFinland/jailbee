@@ -8,7 +8,7 @@ finally the line is cropped with an ellipsis.
 
 As in htop the numbers sit inside the bar, right-aligned over its end, and are
 coloured cell by cell like the bar beneath them: the level colour as far as the
-used share reaches, blue over the cache share, white beyond. The unused part of
+used share reaches, dark grey beyond. The unused part of
 the bar is plain blanks with no background.
 """
 
@@ -26,15 +26,13 @@ MAX_BAR = 30
 _PAD = 2  # bar cells left for the fill beyond the numbers
 _GAP = "  "
 _LEVEL_STYLE = {"ok": "bold green", "warn": "bold yellow", "crit": "bold red"}
-_CACHE_STYLE = "bold blue"  # htop's blue for buffers/cache
-_EMPTY_STYLE = "white"  # numbers over the unused part of the bar
+_EMPTY_STYLE = "bright_black"  # numbers over the unused part of the bar
 
 
 @dataclass(frozen=True)
 class _Segment:
     label: str
     used: float  # fraction of the bar drawn in the level colour
-    cache: float  # fraction drawn dim `|`
     numbers: str
     short: str  # numbers when the bar is dropped and the segment is compact
     lvl: str
@@ -46,7 +44,6 @@ def _disk_segment(label: str, disk: DiskStatus) -> _Segment:
     return _Segment(
         label=label,
         used=used,
-        cache=0.0,
         numbers=f"{_format_bytes(disk.used)}/{_format_bytes(disk.total)}",
         short=f"{round(used * 100)}%",
         lvl=level(disk.free_ratio),
@@ -58,7 +55,6 @@ def _memory_segment(mem: MemoryStatus) -> _Segment:
     return _Segment(
         label="Mem",
         used=mem.used / total,
-        cache=mem.cache / total,
         numbers=f"{_format_bytes(mem.used)}/{_format_bytes(mem.total)}",
         short=f"{round(mem.used / total * 100)}%",
         lvl=level(mem.free_ratio),
@@ -84,7 +80,6 @@ def usage_bar(label: str, used: int, total: int, width: int) -> Text:
     seg = _Segment(
         label=label,
         used=used / total,
-        cache=0.0,
         numbers=memory_numbers(used, total),
         short="",
         lvl=level(max(0.0, (total - used) / total)),
@@ -114,7 +109,6 @@ def _numbers_style(seg: _Segment) -> str:
 def _bar(seg: _Segment, width: int, text: str) -> Text:
     """`[|||||    text]`: fill drawn as `|`, `text` overlaid at the right end."""
     used = min(width, max(0, round(seg.used * width)))
-    cache = min(width - used, max(0, round(seg.cache * width)))
     fill = _LEVEL_STYLE[seg.lvl]
     text_at = width - len(text)
     bar = Text()
@@ -122,13 +116,11 @@ def _bar(seg: _Segment, width: int, text: str) -> Text:
     for i in range(width):
         if i < used:
             style = fill
-        elif i < used + cache:
-            style = _CACHE_STYLE
         else:
             style = _EMPTY_STYLE
         if i >= text_at:
             bar.append(text[i - text_at], style=style)
-        elif i < used + cache:
+        elif i < used:
             bar.append("|", style=style)
         else:
             bar.append(" ")
