@@ -2235,7 +2235,8 @@ class DashboardSession:
         if key in ("up", "down"):
             self.move(-1 if key == "up" else 1)
         elif key in ("scroll-left", "scroll-right"):
-            self.scroll_columns(1 if key == "scroll-right" else -1)
+            if not self._fold_repo(fold=key == "scroll-left"):
+                self.scroll_columns(1 if key == "scroll-right" else -1)
         elif key == "enter":
             self.activate()
         elif key == "help":
@@ -2814,6 +2815,18 @@ class DashboardSession:
         # header rather than letting reconcile_selection pick a neighbour repo.
         self.selected = Row("repo", prefix)
         self.save_view()
+
+    def _fold_repo(self, *, fold: bool) -> bool:
+        """Fold (``fold``) or unfold the repo header under the cursor; False if nothing changed."""
+        if self.selected is None or self.selected.kind != "repo":
+            return False
+        if fold and self.column_offset > 0:
+            return False  # scrolled right: ← first scrolls back
+        prefix = fold_target(self.groups, self.selected)
+        if prefix is None or (prefix in self.folded) == fold:
+            return False
+        self.toggle_fold(prefix)
+        return True
 
     # -- merge-target mode ------------------------------------------------
 

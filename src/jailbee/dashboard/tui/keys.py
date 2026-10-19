@@ -32,7 +32,9 @@ class KeyBinding:
 KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("up", ("up", "k"), "↑/↓ (j/k)", "move the highlight", "Navigate"),
     KeyBinding("down", ("down", "j"), "", "", "Navigate"),
-    KeyBinding("scroll-left", ("left",), "←/→", "scroll columns", "Navigate"),
+    KeyBinding(
+        "scroll-left", ("left",), "←/→", "fold/unfold a repo, else scroll columns", "Navigate"
+    ),
     KeyBinding("scroll-right", ("right",), "", "", "Navigate"),
     KeyBinding(
         "enter",

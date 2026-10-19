@@ -84,6 +84,25 @@ def test_space_folds_then_unfolds_the_selected_repo(mocker, tmp_path):
     assert folded == [frozenset({"alpha"}), frozenset()]
 
 
+def test_left_folds_and_right_unfolds_the_selected_repo(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
+    save = mocker.patch.object(tsession, "save_view_state")
+
+    assert drive(mocker, ["left", "left", "right", "right"], [group]).rc == 0
+
+    folded = [c.args[2].folded for c in save.call_args_list]
+    assert folded == [frozenset({"alpha"}), frozenset()]
+
+
+def test_left_on_a_container_row_still_scrolls_columns(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
+    save = mocker.patch.object(tsession, "save_view_state")
+
+    drive(mocker, ["j", "left"], [group])
+
+    save.assert_not_called()
+
+
 def test_space_on_a_container_row_marks_it_instead_of_folding(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     save = mocker.patch.object(tsession, "save_view_state")
@@ -159,9 +178,12 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
     mocker.patch.object(tsession, "save_view_state")
     group = wide_group(tmp_path)
     enabled = ("name", "mode", "state", "created", "network")
+    # → on a folded repo header unfolds it instead of scrolling, so a folded start skips the
+    # leading scroll and an unfolded one skips the trailing scroll.
+    lead = 0 if initially_folded else 6
     run = drive(
         mocker,
-        ["right"] * 6 + repo_menu_keys(group, "fold") + ["right"] * 3,
+        ["right"] * lead + repo_menu_keys(group, "fold") + ["right"] * 3 * initially_folded,
         [group],
         view_state=ViewState(
             columns=enabled,
@@ -169,7 +191,7 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
         ),
         size=(36, 25),
     )
-    before = run.trace[6]
+    before = run.trace[lead]
     final = run.last
     assert (before.column_offset == 0) if initially_folded else (before.column_offset > 0)
     assert set(final.shown_columns) == (set(enabled) if initially_folded else {"name"})
