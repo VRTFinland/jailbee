@@ -227,6 +227,11 @@ def base_profile_yaml(cfg: Config) -> str:
         "environment.XDG_RUNTIME_DIR": runtime,
         "environment.DISPLAY": ":0",
     }
+    # In the profile, not set per container like `limits.cpu`, so that
+    # `jailbee apply` reaches existing containers too. Omitted when unset,
+    # leaving Incus's own default (10).
+    if cfg.defaults.cpu_priority is not None:
+        profile_config["limits.cpu.priority"] = str(cfg.defaults.cpu_priority)
     if cfg.gpg.enabled:
         profile_config["environment.SSH_AUTH_SOCK"] = f"{runtime}/gnupg/S.gpg-agent.ssh"
     if cfg.claude.enabled:

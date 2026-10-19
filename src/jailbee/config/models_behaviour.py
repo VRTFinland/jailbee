@@ -252,6 +252,19 @@ class Defaults(BaseModel):
         default=8,
         description="CPU core limit for new containers.",
     )
+    cpu_priority: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "CPU scheduling weight of the repo's containers against the rest of the "
+            "host, 0 (lowest) to 10 (Incus's own default), written to the base profile "
+            "as `limits.cpu.priority`. Only matters when the CPUs are contended: an "
+            "otherwise idle host still gives a container every core it is allowed. "
+            "Unset leaves Incus's default. `jailbee apply` updates running containers "
+            "live. A host preference, so set it in `global.yaml` or a repo's local layer."
+        ),
+    )
     network: Literal["strict", "loose"] = Field(
         default="strict",
         description=(

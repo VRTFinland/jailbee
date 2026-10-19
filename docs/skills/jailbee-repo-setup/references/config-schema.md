@@ -30,7 +30,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `share_local` | bool | `true` | repo |
 | `egress_allow` | list of strings | `[]` | global for cross-cutting, repo appends |
 | `egress_proxy_always` | bool | `true` | global or repo; on the work network every container gets the `HTTP(S)_PROXY` variables from first boot, strict and loose, so no new shell is needed; `false` limits them to strict containers with a wildcard |
-| `defaults` | `{memory, cpu, network, storage_pool}` | `16GiB/8/strict/unset` | repo; `storage_pool` is per-host, so leave it out of a committed config |
+| `defaults` | `{memory, cpu, cpu_priority, network, storage_pool}` | `16GiB/8/unset/strict/unset` | repo; `cpu_priority` and `storage_pool` are host preferences, so leave them out of a committed config |
 | `golden` | see below | see below | repo |
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of exact hostnames | `[]` | repo |
@@ -285,6 +285,8 @@ defaults:
 ```
 
 `storage_pool` (the Incus pool new containers are created on) is also accepted, but pool names differ per host: do not put it in a committed config. A host that wants a specific pool sets it in `global.yaml` or passes `jailbee new --storage <pool>`. Unset, the `default` profile's root pool is used.
+
+`cpu_priority` (0–10, unset = Incus's default 10) lowers the containers' CPU weight against the host's own work, so a busy container does not slow the desktop. It is a host preference too: leave it out of a committed config; the user sets it in `global.yaml` or the repo's local layer.
 
 ## `golden`
 

@@ -5298,3 +5298,25 @@ def test_git_user_in_repo_config_is_rejected(tmp_path, mocker, git_block):
 def test_git_identity_allowed_in_repo_config(tmp_path, mocker):
     cfg = _layered_git(tmp_path, mocker, {}, {"git": {"identity": "off"}})
     assert cfg.git.identity == "off"
+
+
+# ---------- defaults.cpu_priority
+
+
+def test_cpu_priority_defaults_to_unset(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    cfg = load_config(_make_config(tmp_path, "{}\n"))
+    assert cfg.defaults.cpu_priority is None
+
+
+def test_cpu_priority_accepts_incus_range(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    cfg = load_config(_make_config(tmp_path, "defaults:\n  cpu_priority: 0\n"))
+    assert cfg.defaults.cpu_priority == 0
+
+
+@pytest.mark.parametrize("value", [-1, 11])
+def test_cpu_priority_rejects_out_of_range(tmp_path, mocker, value):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    with pytest.raises(ConfigError, match="cpu_priority"):
+        load_config(_make_config(tmp_path, f"defaults:\n  cpu_priority: {value}\n"))
