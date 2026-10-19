@@ -27,6 +27,8 @@ Buffers:          100000 kB
 Cached:          2000000 kB
 SReclaimable:     300000 kB
 Shmem:            400000 kB
+SwapTotal:       2000000 kB
+SwapFree:        1500000 kB
 """
 
 
@@ -41,10 +43,27 @@ def test_read_memory_parses_meminfo(tmp_path: Path) -> None:
 
     status = read_memory(proc_root=proc_root)
 
-    assert status == MemoryStatus(16000000 * 1024, 4000000 * 1024, 2000000 * 1024)
+    assert status == MemoryStatus(
+        16000000 * 1024, 4000000 * 1024, 2000000 * 1024, 2000000 * 1024, 1500000 * 1024
+    )
     assert status is not None
     assert status.free_ratio == 0.25
     assert status.used == (16000000 - 4000000) * 1024
+
+
+def test_read_memory_without_swap_lines_has_no_swap(tmp_path: Path) -> None:
+    proc_root = _write_meminfo(tmp_path / "proc", "MemTotal: 1000 kB\nMemAvailable: 100 kB\n")
+
+    status = read_memory(proc_root=proc_root)
+
+    assert status is not None
+    assert (status.swap_total, status.swap_free) == (0, 0)
+
+
+def test_swap_used_and_free_ratio() -> None:
+    status = MemoryStatus(100, 50, 0, swap_total=100, swap_free=25)
+    assert status.swap_used == 75
+    assert status.swap_free_ratio == 0.25
 
 
 def test_read_memory_cache_is_capped_at_available(tmp_path: Path) -> None:

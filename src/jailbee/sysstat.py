@@ -26,6 +26,8 @@ class MemoryStatus:
     total: int
     available: int
     cache: int  # reclaimable page cache, capped at `available`
+    swap_total: int = 0  # 0 when the host has no swap
+    swap_free: int = 0
 
     @property
     def used(self) -> int:
@@ -34,6 +36,14 @@ class MemoryStatus:
     @property
     def free_ratio(self) -> float:
         return self.available / self.total if self.total else 0.0
+
+    @property
+    def swap_used(self) -> int:
+        return self.swap_total - self.swap_free
+
+    @property
+    def swap_free_ratio(self) -> float:
+        return self.swap_free / self.swap_total if self.swap_total else 0.0
 
 
 @dataclass(frozen=True)
@@ -92,7 +102,14 @@ def read_memory(*, proc_root: Path = PROC_ROOT) -> MemoryStatus | None:
         + fields.get("SReclaimable", 0)
         - fields.get("Shmem", 0),
     )
-    return MemoryStatus(total=total, available=available, cache=min(cache, available))
+    swap_total = fields.get("SwapTotal", 0)
+    return MemoryStatus(
+        total=total,
+        available=available,
+        cache=min(cache, available),
+        swap_total=swap_total,
+        swap_free=min(fields.get("SwapFree", 0), swap_total),
+    )
 
 
 def read_disk(path: Path) -> DiskStatus | None:

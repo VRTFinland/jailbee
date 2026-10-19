@@ -552,7 +552,7 @@ _NAME_MAX = 32  # widest the git table's name column grows
 _NAME_FLOOR = 6  # narrowest it is squeezed to while the note column still shows
 _NOTE_MIN = 8  # narrowest note column worth showing ("merge ok")
 _SUMMARY_GAP = "  "
-_MEM_BAR_CELLS = 20  # the memory bar's width inside its brackets, when there is room
+_MEM_BAR_CELLS = 23  # the memory bar's width inside its brackets, label included
 
 
 @dataclass(frozen=True)
@@ -667,7 +667,7 @@ def _summary_row(panel: ContainerPanel, width: int) -> str | Text:
     avail = width - left.cell_len - len(_SUMMARY_GAP)
     if avail < min_usage_bar_cells("mem", used, limit):
         return summary
-    inner = min(_MEM_BAR_CELLS, avail - len("mem") - 2)
+    inner = min(_MEM_BAR_CELLS, avail - 2)
     bar = usage_bar("mem", used, limit, inner)
     row = Text(no_wrap=True, overflow="ellipsis")
     row.append_text(left)
