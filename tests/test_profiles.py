@@ -1220,3 +1220,18 @@ def test_a_disabled_second_agent_renders_nothing(make_cfg, tmp_path, second_pool
 
     assert "environment.FAKE_CRED_DIR" not in base_parsed["config"]
     assert "fake-creds" not in binds_parsed["devices"]
+
+
+def test_base_profile_omits_cpu_allowance_when_unset():
+    """Unset leaves Incus's own default weight in force: no key is written."""
+    out = yaml.safe_load(base_profile_yaml(_cfg()))
+    assert "limits.cpu.allowance" not in out["config"]
+
+
+def test_base_profile_writes_cpu_share_as_soft_allowance():
+    """A percentage, never `Nms/Mms`: the percent form is a cgroup weight, the
+    time form a hard cap that would slow an idle host too."""
+    cfg = _cfg()
+    cfg = cfg.model_copy(update={"defaults": cfg.defaults.model_copy(update={"cpu_share": 20})})
+    out = yaml.safe_load(base_profile_yaml(cfg))
+    assert out["config"]["limits.cpu.allowance"] == "20%"

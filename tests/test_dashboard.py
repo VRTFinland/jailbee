@@ -5810,7 +5810,7 @@ def test_gui_remote_allowlist_without_chrome_does_not_offer_chrome():
 
     group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
     group.apps = _apps("chrome")
-    policy = RemoteSSHConfig(gui=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
+    policy = RemoteSSHConfig(rdp=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
 
     actions = dmenus.actions_for_container(
         [group], "alpha-x", remote=True, ssh_policy=policy, over_ssh=True
@@ -5825,7 +5825,7 @@ def test_gui_remote_allowlist_naming_chrome_offers_chrome():
     group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
     group.apps = _apps("chrome")
     policy = RemoteSSHConfig(
-        gui=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["chrome"])
+        rdp=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["chrome"])
     )
 
     actions = dmenus.actions_for_container(
@@ -5845,7 +5845,7 @@ def test_remote_gui_dispatch_keeps_the_recipe_on_screen(mocker, tmp_path, verb, 
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = patch_pause(mocker)
-    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), gui=True)
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), rdp=True)
 
     ddispatch._dispatch_action(
         _dispatch_target(tmp_path),
@@ -5869,7 +5869,7 @@ def test_is_gui_verb():
 def _gui_dispatch_policy(*, gui: bool):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
-    return RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), gui=gui, restrict_host=False)
+    return RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), rdp=gui, restrict_host=False)
 
 
 def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocker, tmp_path):
@@ -7097,3 +7097,25 @@ def test_synthesized_repo_gets_upgrade_advice_orphan_none(
     assert [a.key for a in synthesized.advisories] == ["apply"]
     orphan_group = next(g for g in groups if g.repo_root is None)
     assert orphan_group.advisories == ()
+
+
+@pytest.mark.parametrize("in_waypipe", [True, False])
+def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    for name in ("JAILBEE_WAYPIPE_SESSION", "JAILBEE_WAYPIPE_COMPRESS"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    if in_waypipe:
+        monkeypatch.setenv("JAILBEE_WAYPIPE_SESSION", "0a1b2c3d")
+        monkeypatch.setenv("JAILBEE_WAYPIPE_COMPRESS", "lz4")
+    group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
+    group.apps = _apps("chrome")
+    policy = RemoteSSHConfig(rdp=False, waypipe=True, commands=RemoteCommandPolicy(mode="full"))
+
+    actions = dmenus.actions_for_container(
+        [group], "alpha-x", remote=True, ssh_policy=policy, over_ssh=True
+    )
+
+    assert ("chrome" in {verb for _label, verb in actions}) is in_waypipe

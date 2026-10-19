@@ -33,6 +33,7 @@ from jailbee.config.common import (
     _HOST_LEVEL_KEYS,
     _read_yaml_or_empty,
     normalize_credentials_key,
+    normalize_remote_ssh_gui,
     normalize_remote_ssh_keys,
 )
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted, entry_model
@@ -177,8 +178,11 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     repo_raw = resolve_browsers_raw(layer_set.repo_raw)
     origin = str(layer_set.global_path)
     global_raw = resolve_browsers_raw(
-        normalize_remote_ssh_keys(
-            normalize_credentials_key(layer_set.global_raw, origin)[0], origin
+        normalize_remote_ssh_gui(
+            normalize_remote_ssh_keys(
+                normalize_credentials_key(layer_set.global_raw, origin)[0], origin
+            )[0],
+            origin,
         )[0]
     )
     local_raw = resolve_browsers_raw(layer_set.local_raw)

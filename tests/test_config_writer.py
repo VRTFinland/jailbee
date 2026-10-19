@@ -556,3 +556,15 @@ def test_remote_ssh_migration_renames_both_spellings() -> None:
 def test_remote_ssh_migration_noop() -> None:
     own = YamlChange(("x",), 1)
     assert remote_ssh_key_migration({"remote": {"ssh": {"console": True}}}, [own]) == [own]
+
+
+def test_remote_ssh_gui_migration_splits_the_key() -> None:
+    from jailbee.config_writer import remote_ssh_gui_migration
+
+    raw = {"remote": {"ssh": {"gui": True}}}
+    assert remote_ssh_gui_migration(raw, []) == [
+        YamlChange(("remote", "ssh", "rdp"), True),
+        YamlChange(("remote", "ssh", "waypipe"), True),
+        YamlChange(("remote", "ssh", "gui"), DELETE),
+    ]
+    assert remote_ssh_gui_migration({"remote": {"ssh": {"rdp": False}}}, []) == []

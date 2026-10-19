@@ -330,3 +330,18 @@ def test_apply_migration_token_secures_existing_local_file_but_preserves_backup_
     cfg = load_config(repo)
     token = cfg.github.token_for("a")
     assert token is not None and token.get_secret_value() == "ghp_secret"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_legacy_remote_ssh_gui_is_split(value):
+    inputs = _inputs({"remote": {"ssh": {"gui": value, "port": 8022}}})
+    plan = plan_migrations(inputs)
+    assert [s.migration_id for s in plan.steps] == ["remote-ssh-gui"]
+    ssh = _load(plan, inputs.global_path)["remote"]["ssh"]
+    assert ssh == {"rdp": value, "waypipe": value, "port": 8022}
+    validate_plan(inputs, plan)
+
+
+def test_remote_ssh_gui_migration_is_idempotent():
+    inputs = _inputs({"remote": {"ssh": {"rdp": True, "waypipe": False}}})
+    assert [s.migration_id for s in plan_migrations(inputs).steps] == []

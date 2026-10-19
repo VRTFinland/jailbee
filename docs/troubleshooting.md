@@ -145,9 +145,10 @@ instructions, including restarting Incus after changing delegation: see
   sockets attach on the container's next start when available. These
   settings do not diagnose every application-side problem.
 - **SSH launch refused:** GUI launches through JailBee's SSH server need
-  `remote.ssh.gui: true`. Ordinary SSH sessions prepare the shared RDP
-  display and wait for an RDP client; `waypipe ssh` uses waypipe instead,
-  without requiring that display. See [Remote GUI over SSH](remote-gui.md).
+  `remote.ssh.rdp: true` in an ordinary SSH session, which prepares the shared
+  RDP display and waits for an RDP client. A `waypipe ssh` session uses
+  waypipe instead, which is on by default (`remote.ssh.waypipe`) and does not
+  need that display. See [Remote GUI over SSH](remote-gui.md).
 - **Concurrent IDE instances conflict:** JetBrains configuration and data
   directories are shared by default between containers of the same repo,
   so concurrent IDEs may contend on shared state. Chrome and Firefox use

@@ -377,6 +377,8 @@ Once this block is committed, it is not just the local default: `jailbee new <br
 
 Default is 16GiB / 8 CPU. For a small Python-only repo, 4GiB / 4 CPU is plenty. For a JVM monorepo with Gradle and several services, 16–32GiB is appropriate. Don't oversize — Incus enforces the limit and OOM-kills will surface.
 
+Don't generate `defaults.cpu_share` into the committed config: how much the desktop should win over containers is the host user's call, made in `global.yaml` or the local layer.
+
 ### `jetbrains.ide` — default IDE for `jailbee ide` / autostart
 
 Map by stack:

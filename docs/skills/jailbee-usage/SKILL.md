@@ -877,8 +877,9 @@ after changing `listen` or `port`; `serve` is the foreground diagnostic path.
 /`--restrict-host`(`/--no-restrict-host`)/`--files`(`/--no-files`) overrides of
 `remote.ssh`, for trying a policy without editing `global.yaml` (never written
 there, and the systemd unit never passes them); the persistent setting for
-`sftp`/`scp` into a container's repo dir is `remote.ssh.files: true` in
-`global.yaml`, and changing it needs `jb remote ssh restart`; `--allow`,
+`sftp`/`scp` into a container's repo dir is `remote.ssh.files` in
+`global.yaml` (unset, it is on under `commands.mode: full` and off otherwise;
+an explicit value wins), and changing it needs `jb remote ssh restart`; `--allow`,
 given at least once, replaces the configured `commands.allow` list rather
 than appending to it, e.g. `jb remote ssh serve --port 18022 --console
 --commands allowlist --allow ls --allow new`.
@@ -967,7 +968,7 @@ session marker, it admits public leaves including future ones except reserved
 routes and hidden internal commands. See the full command behavior and security boundary in
 [`references/commands.md`](references/commands.md#remote-ssh).
 
-With `remote.ssh.gui: true` and `jailbee display up` run on the host, `jailbee
+With `remote.ssh.rdp: true` (off by default) and `jailbee display up` run on the host, `jailbee
 chrome`, `firefox`, `browser`, `ide` and `apps run` over an SSH session draw on one shared RDP
 display (weston, one screen for every container) instead of being refused.
 They print how to connect: tunnel `ssh -N -L 3389:127.0.0.1:13389 -p <port>
@@ -985,7 +986,7 @@ autostart step) needs `gui.wayland: always`. `display attach` also replaces a so
 host re-login; it is host-only.
 
 On a Linux laptop with a Wayland session and waypipe installed, `waypipe ssh`
-gives native windows instead (needs `remote.ssh.gui: true`). A Mac does the
+gives native windows instead (on by default via `remote.ssh.waypipe`; each container reaches only its own waypipe server). A Mac does the
 same with the Cocoa-Way compositor (`COCOA_WAY_PRESENTATION=rootless
 cocoa-way`) and Homebrew's `waypipe-darwin`, with `XDG_RUNTIME_DIR` and
 `WAYLAND_DISPLAY` pointed at the socket under `$TMPDIR/cocoa-way/` (the
@@ -1073,7 +1074,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   `--detach`) runs any command detached — needed for a GUI app run by hand
   (`jailbee exec smoke -d -- some-gui-tool`), useful for anything
   long-running. It returns immediately; output goes to a log file inside
-  the container. Over a GUI-enabled remote SSH session add `--gui` for a GUI
+  the container. Over a remote SSH session with `remote.ssh.rdp` on add `--gui` for a GUI
   app so it draws on the shared RDP display.
 - **Cache pools:** `jailbee pool ls [NAME]` / `jailbee pool prune [NAME]` — any
   cache configured with `pooled_caches`/`SharedCache.pool` (Gradle, Maven,

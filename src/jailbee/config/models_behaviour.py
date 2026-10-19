@@ -252,6 +252,20 @@ class Defaults(BaseModel):
         default=8,
         description="CPU core limit for new containers.",
     )
+    cpu_share: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description=(
+            "CPU scheduling weight of the repo's containers against the rest of the "
+            "host, as a percentage (1-100) of a normal process group's weight, written "
+            "to the base profile as `limits.cpu.allowance: N%`. A soft limit: it only "
+            "matters when the CPUs are contended, and an otherwise idle host still "
+            "gives a container every core it is allowed. Unset leaves Incus's default "
+            "(100). `jailbee apply` updates running containers live. A host preference, "
+            "so set it in `global.yaml` or a repo's local layer."
+        ),
+    )
     network: Literal["strict", "loose"] = Field(
         default="strict",
         description=(

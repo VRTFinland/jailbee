@@ -479,7 +479,8 @@ succeed, and no new host-key prompt because restart preserved the host key.
 
 ### Rejected SSH features (`files: false`)
 
-With `remote.ssh.files` off (the default), SFTP and both modern and legacy SCP
+With `remote.ssh.files: false` set explicitly (or unset under `commands.mode:
+allowlist` or `disabled`, where it defaults to off), SFTP and both modern and legacy SCP
 must fail rather than expose files:
 
 ```bash
@@ -552,7 +553,9 @@ the journal for the session's allowed audit row.
 
 ### File transfer (`files: true`)
 
-Host only; needs a real running container with a clone. Reuse the client key
+Host only; under the default `commands.mode: full` file transfer is already on
+(unset `files` follows the mode), so step 1 only matters for `allowlist` or
+`disabled`, or after an explicit `files: false`; needs a real running container with a clone. Reuse the client key
 and known-hosts file from above (add `-o IdentitiesOnly=yes -o
 UserKnownHostsFile=... -i ...` to each command).
 
@@ -5444,12 +5447,12 @@ explicitly authorized checks.
 ## Remote GUI over SSH (shared RDP display)
 
 Host-only checks; they need a real Incus daemon, the SSH service with
-`remote.ssh.gui: true`, and an RDP client. Background:
+`remote.ssh.rdp: true`, and an RDP client. Background:
 [Remote GUI over SSH](remote-gui.md).
 
 1. `jb display up` from cold (no `jailbee-display` container). Expected: the
    image is pulled, weston installed, the service reported active, and the
-   connection recipe printed. With `remote.ssh.gui` off it also warns that SSH sessions cannot use
+   connection recipe printed. With `remote.ssh.rdp` off it also warns that SSH sessions cannot use
    the display.
 2. `jb display status`. Expected: running, plus the same recipe. Then, with
    nothing launched yet, open the tunnel and connect the RDP client. Expected:
@@ -5470,17 +5473,17 @@ Host-only checks; they need a real Incus daemon, the SSH service with
 7. `jb display down`, then connect the RDP client through the tunnel again.
    Expected: the forward opens, but the RDP client fails to connect (nothing
    listens on `127.0.0.1:13389`).
-8. Set `remote.ssh.gui: false` (no service restart), run `jb chrome` over SSH.
+8. Set `remote.ssh.rdp: false` (no service restart), run `jb chrome` over SSH.
    Expected: refused, and a new forward is refused too.
 9. From the host and from a sibling container, `nc -vz <display container
    bridge address> 3389`. Expected: refused in both cases.
 10. In a client container, `rm /run/jailbee-display/wayland-0` and `touch
     /run/jailbee-display/x`. Expected: both fail with "Read-only file system",
     while connecting to the socket (an app launch) still works.
-11. With `remote.ssh.gui: false`, restart a client container. Expected: no
+11. With `remote.ssh.rdp: false`, restart a client container. Expected: no
     `display-socket` device (`incus config device show`), even though
     `jb display up` was run earlier.
-12. In a GUI SSH session, `jb exec <name> -d -- sleep 1`. Expected: runs at
+12. In an SSH session with `rdp` on, `jb exec <name> -d -- sleep 1`. Expected: runs at
     once, with no display start and no wait. `jb exec <name> -d --gui --
     xterm` goes through the display as in step 3.
 
@@ -5499,8 +5502,8 @@ attached after boot and keep `/run/jailbee-display`.
 
 ## Remote GUI over waypipe (Linux laptop)
 
-Host-only checks. The host needs `remote.ssh.gui: true`, the SSH service
-running and `jb display up` done; the laptop is Linux with a Wayland session
+Host-only checks. The host needs the SSH service running (`remote.ssh.waypipe`
+is on by default, so no GUI setting is required) and `jb display up` done; the laptop is Linux with a Wayland session
 and waypipe 0.10 or newer. Background:
 [Native windows with waypipe](remote-gui.md#native-windows-with-waypipe).
 
@@ -5512,12 +5515,37 @@ and waypipe 0.10 or newer. Background:
 3. `waypipe ssh -p <port> jailbee@<host> --repo <prefix> chrome <container>`.
    Expected: Chrome opens, and the command stays open until Chrome is closed.
 4. `waypipe --compress zstd ssh ...` as in step 3. Expected: works.
-5. With `remote.ssh.gui: false`, repeat step 3. Expected: refused, with
-   `remote.ssh.gui` named.
+5. With `remote.ssh.waypipe: false`, repeat step 3. Expected: refused, with
+   `remote.ssh.waypipe` named.
 6. Open a session as in step 1, then `jb remote ssh restart`. Expected: no
    `jailbee-wp-*` unit survives (the listing from step 2 is empty).
 7. Record the client waypipe version tested. 0.8 and 0.9 clients are
    untested.
+
+### Per-container waypipe isolation and the RDP opt-in
+
+Host-only. Run with the default config (`rdp` off, `waypipe` on); the host has
+two running containers A and B and a Linux laptop with waypipe.
+
+1. Open `waypipe ssh` sessions into both A and B (launch an app from each).
+   Inside A, `ls /run/jailbee-waypipe`. Expected: only A's `wp-*.sock` files;
+   none of B's. Connecting to B's socket path from A is impossible (there is
+   no such path in A).
+2. Inside A, `ls /run/jailbee-display`. Expected: absent, since `rdp` is off
+   and no shared display directory was mounted. `incus config device show <A>`
+   lists `waypipe-socket` but no `display-socket`.
+3. On the host, `ls state/waypipe-servers/`. Expected: one directory per
+   container, mode `0700`, with that container's sockets in it.
+4. `ssh -N -L 3389:127.0.0.1:13389 -p <port> jailbee@<host>`, then connect
+   to the local port. Expected: the forward is refused
+   (`administratively prohibited`).
+5. Stop and start A. Expected: `waypipe-socket` is gone from its devices until
+   the next waypipe launch.
+6. Set `remote.ssh.rdp: true`, restart container A, run `jb display up` and
+   repeat the RDP recipe from [Remote GUI over SSH (shared RDP
+   display)](#remote-gui-over-ssh-shared-rdp-display). Expected: the forward
+   opens, `/run/jailbee-display/wayland-0` appears in A, and the RDP flow works
+   as before. Inside A, `/run/jailbee-waypipe` still holds only A's sockets.
 
 ## macOS client
 
@@ -5529,7 +5557,7 @@ deviation; the setup B results decide whether its "experimental" banner goes.
 
 1. On the host: `uv tool install 'jailbee[ssh]'`, `jb remote ssh key add`
    (paste the Mac's public key), `jb remote ssh enable`, set
-   `remote.ssh.gui: true` and `files: true`, `jb remote ssh restart`,
+   `remote.ssh.rdp: true` (`files` is on by default under `commands.mode: full`), `jb remote ssh restart`,
    `jb display up`. Expected: `jb remote ssh status` shows the service active.
 2. On the Mac, add the `Host jb` entry from the guide (with `ProxyJump` and
    `LocalForward 3389 127.0.0.1:13389`), then `ssh jb help`. Expected: a

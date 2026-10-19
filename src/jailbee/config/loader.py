@@ -407,6 +407,25 @@ def _warn_legacy_remote_shell(source: str) -> None:
 
 
 @functools.cache
+def _warn_legacy_remote_gui(source: str) -> None:
+    """Print the `remote.ssh.gui` split notice once per process, per source."""
+    from jailbee.notices import Notice, emit
+
+    emit(
+        Notice(
+            key="legacy-remote-ssh-gui",
+            scope=source,
+            lines=(
+                f"`remote.ssh.gui` in {source} is deprecated and split into "
+                "`remote.ssh.rdp` and `remote.ssh.waypipe` — run `jailbee config "
+                "migrate`, or see docs/config.md. It keeps working until "
+                f"{LEGACY_REMOVAL_VERSION}.",
+            ),
+        )
+    )
+
+
+@functools.cache
 def _warn_legacy_per_repo_entry(
     source: str, key: str, prefix: str, local_path: str, conflict: bool
 ) -> None:

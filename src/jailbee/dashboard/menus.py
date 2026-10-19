@@ -17,7 +17,7 @@ from jailbee.dashboard.commands import (
     dashboard_action_argv,
 )
 from jailbee.dashboard.model import AppMenuEntry, RepoGroup, RepoTarget, Row, _find_group
-from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.router import RemoteUnlocks, RouteError
 
 if TYPE_CHECKING:
     from jailbee.git_status import GitStatus
@@ -50,8 +50,9 @@ class MenuContext:
 
     ``remote`` is a remote SSH session (see :func:`run`), which gets no app
     launches: a GUI app would open on the host's display, not the client's.
-    ``gui_remote`` (``remote.ssh.gui``) lets a remote session launch apps,
-    which then draw on the shared RDP display.
+    ``gui_remote`` (``remote.ssh.rdp``, or ``remote.ssh.waypipe`` in a waypipe
+    session) lets a remote session launch apps, which then draw on the shared
+    RDP display (rdp) or on the client (waypipe session).
     """
 
     state: str
@@ -427,7 +428,7 @@ def actions_for_container(
             job_running=container.job_phase is not None and not job_clearable,
             git_status=container.git_status,
             remote=remote,
-            gui_remote=bool(remote and ssh_policy is not None and ssh_policy.gui),
+            gui_remote=bool(remote and ssh_policy is not None and RemoteUnlocks.of(ssh_policy).gui),
             alias=container.alias,
         )
     )

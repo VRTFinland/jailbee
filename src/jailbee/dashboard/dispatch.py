@@ -224,7 +224,7 @@ def _dispatch_action(
     if (
         over_ssh
         and ssh_policy is not None
-        and ssh_policy.gui
+        and ssh_policy.rdp
         and _is_gui_verb(verb)
         and waypipe_session() is None
     ):

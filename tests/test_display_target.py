@@ -15,9 +15,11 @@ from jailbee.gui import (
 )
 from jailbee.remote_ssh.session import (
     SSH_GUI_ENV,
+    WaypipeSession,
     child_environment,
     is_shared_display_session,
     shared_display_port,
+    waypipe_session,
 )
 from tests.conftest import make_cfg
 
@@ -92,3 +94,20 @@ def test_a_non_numeric_gui_marker_is_not_a_session() -> None:
 def test_a_unicode_digit_marker_is_not_a_port() -> None:
     """`"²".isdigit()` is True but `int("²")` raises."""
     assert shared_display_port({SSH_GUI_ENV: "²"}) is None
+
+
+def test_a_waypipe_session_needs_no_shared_display_port():
+    env = {
+        "JAILBEE_SSH_SESSION": "1",
+        "JAILBEE_WAYPIPE_SESSION": "0a1b2c3d",
+        "JAILBEE_WAYPIPE_COMPRESS": "lz4",
+    }
+
+    assert waypipe_session(env) == WaypipeSession(id="0a1b2c3d", compress="lz4")
+    assert display_target(env) == "waypipe"
+
+
+def test_waypipe_markers_outside_an_ssh_session_mean_nothing():
+    env = {"JAILBEE_WAYPIPE_SESSION": "0a1b2c3d", "JAILBEE_WAYPIPE_COMPRESS": "lz4"}
+
+    assert waypipe_session(env) is None

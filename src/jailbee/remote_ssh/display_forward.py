@@ -2,7 +2,7 @@
 
 `JailbeeSSHServer.connection_requested` allows `ssh -L ...` to exactly this
 destination, the host loopback port the display's Incus proxy device listens
-on, for any authenticated key while `remote.ssh.gui` is on. Every key that
+on, for any authenticated key while `remote.ssh.rdp` is on. Every key that
 can log in can also launch an app on the shared screen, so binding the
 tunnel to keys that already have would add a step without protecting
 anything (see `docs/security.md`).
