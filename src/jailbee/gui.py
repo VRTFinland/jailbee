@@ -36,7 +36,7 @@ def display_target(environ: Mapping[str, str] | None = None) -> DisplayTarget:
     """Where this process's GUI apps should draw: the host, the shared RDP display, or waypipe.
 
     ``waypipe`` for a `waypipe ssh` session, ``shared`` for any other SSH
-    session whose server has `remote.ssh.gui` on (see
+    session whose server has `remote.ssh.rdp` on (see
     `remote_ssh.session.child_environment`); everything else, every local
     command included, keeps drawing on the host exactly as before.
     """

@@ -548,7 +548,8 @@ def _startup_summary(
             "(remote.ssh.mount_roots)"
         )
     if restricted and config.commands.mode == "allowlist":
-        unlocks = RemoteUnlocks.of(config)
+        # The server is not a session: no waypipe forward exists here.
+        unlocks = RemoteUnlocks.of(config, waypipe=False)
         refused = sorted(
             path for path in config.commands.allow if is_host_command(path, unlocks=unlocks)
         )
@@ -556,6 +557,11 @@ def _startup_summary(
             lines.append(
                 "  allowlisted but refused while host restrictions are on: " + ", ".join(refused)
             )
+            launchers = [path for path in refused if is_gui_app_command(path.split())]
+            if launchers and config.waypipe:
+                lines.append(
+                    f"  GUI launchers ({', '.join(launchers)}) are refused outside waypipe sessions"
+                )
     overrides_line = describe_overrides(overrides) if overrides is not None else None
     if overrides_line is not None:
         lines.append(f"  {overrides_line}")

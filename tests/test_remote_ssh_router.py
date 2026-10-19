@@ -1597,7 +1597,7 @@ def test_route_unlocks_launchers_for_a_waypipe_request(repo, engine):
     selected = route("--repo project chrome", config, engine=engine, waypipe=True)
 
     assert selected.argv == ("chrome",)
-    with pytest.raises(RouteError):
+    with pytest.raises(RouteError, match="opens a window"):
         route("--repo project chrome", config, engine=engine, waypipe=False)
 
 
@@ -1614,3 +1614,20 @@ def test_exclusions_still_refuse_launchers_in_a_waypipe_session():
             scope=RemoteRepoScope(frozenset(config.excluded_repos)),
             unlocks=RemoteUnlocks.of(config, waypipe=True),
         )
+
+
+@pytest.mark.parametrize("waypipe_on", [True, False])
+def test_gui_refusal_names_waypipe_only_when_it_is_available(waypipe_on, monkeypatch):
+    for name in ("JAILBEE_WAYPIPE_SESSION", "JAILBEE_WAYPIPE_COMPRESS"):
+        monkeypatch.delenv(name, raising=False)
+    config = RemoteSSHConfig(
+        rdp=False, waypipe=waypipe_on, commands=RemoteCommandPolicy(mode="full")
+    )
+
+    with pytest.raises(RouteError) as exc:
+        policy_allows(
+            ["chrome"], config.commands, restrict_host=True, unlocks=RemoteUnlocks.of(config)
+        )
+
+    assert "remote.ssh.rdp" in str(exc.value)
+    assert ("waypipe ssh" in str(exc.value)) is waypipe_on

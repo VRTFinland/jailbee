@@ -343,6 +343,8 @@ class RemoteUnlocks:
     gui: bool = False
     network: bool = False
     mounts: bool = False
+    # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
+    waypipe_available: bool = False
 
     @classmethod
     def of(cls, config: RemoteSSHConfig | None, *, waypipe: bool | None = None) -> RemoteUnlocks:
@@ -365,6 +367,7 @@ class RemoteUnlocks:
             gui=config.rdp or (config.waypipe and waypipe),
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
+            waypipe_available=config.waypipe,
         )
 
     def commands(self) -> frozenset[str]:
@@ -800,10 +803,14 @@ def policy_allows(
     if host_restricted(restrict_host):
         if is_host_command(path, unlocks=unlocks):
             if path in _GUI_APP_COMMANDS:
-                raise RouteError(
-                    f"`{path}` opens a window, which this session has no display for: "
+                advice = (
                     "run it from a `waypipe ssh` session, or enable remote.ssh.rdp on "
                     "the host for the shared RDP display"
+                    if unlocks.waypipe_available
+                    else "enable remote.ssh.rdp on the host for the shared RDP display"
+                )
+                raise RouteError(
+                    f"`{path}` opens a window, which this session has no display for: {advice}"
                 )
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"

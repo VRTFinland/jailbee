@@ -51,8 +51,8 @@ class MenuContext:
     ``remote`` is a remote SSH session (see :func:`run`), which gets no app
     launches: a GUI app would open on the host's display, not the client's.
     ``gui_remote`` (``remote.ssh.rdp``, or ``remote.ssh.waypipe`` in a waypipe
-    session) lets a remote session launch apps,
-    which then draw on the shared RDP display.
+    session) lets a remote session launch apps, which then draw on the shared
+    RDP display (rdp) or on the client (waypipe session).
     """
 
     state: str

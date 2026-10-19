@@ -1450,6 +1450,24 @@ def test_startup_names_allowlisted_host_commands_that_stay_refused(listener, cap
     )
 
 
+def test_startup_says_gui_launchers_are_refused_outside_waypipe_sessions(
+    listener, caplog, monkeypatch
+):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    config = RemoteSSHConfig(
+        exec=True,
+        rdp=False,
+        waypipe=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "chrome"]),
+    )
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+
+    assert "allowlisted but refused while host restrictions are on: chrome" in caplog.text
+    assert "GUI launchers (chrome) are refused outside waypipe sessions" in caplog.text
+
+
 def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, caplog, monkeypatch):
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     config = RemoteSSHConfig(
