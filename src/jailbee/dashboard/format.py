@@ -59,6 +59,15 @@ def transition_glyph(container: ContainerInfo) -> str | None:
     return None
 
 
+def autostart_failed(container: ContainerInfo) -> bool:
+    """Whether the container's autostart run ended in failure (or its worker died)."""
+    if container.job_kind != background.JOB_AUTOSTART or container.job_phase is None:
+        return False
+    if container.job_pid is None:
+        return container.job_phase in background.TERMINAL_PHASES
+    return background.clearable(container.job_phase, container.job_pid)
+
+
 def state_label(state: str) -> str:
     """The state as the details panel words it: glyph and name, escaped."""
     glyph = _STATE_GLYPHS.get(state)
