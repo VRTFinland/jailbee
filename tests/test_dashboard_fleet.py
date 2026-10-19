@@ -320,3 +320,49 @@ def test_a_heading_without_a_checkout_is_unchanged(tmp_path):  # type: ignore[no
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])
 
     assert fleet.repo_heading(group, None, frozenset()).plain == "\u25be alpha  (1)"
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_a_failed_autostart_flags_the_name_in_the_attention_colour(tmp_path, selected):  # type: ignore[no-untyped-def]
+    import dataclasses
+
+    from jailbee import background
+
+    failed = dataclasses.replace(
+        ci("alpha-a", "alpha"),
+        job_kind=background.JOB_AUTOSTART,
+        job_phase=background.PHASE_FAILED,
+    )
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [failed, ci("alpha-b", "alpha")])
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+    bad, fine = (e for e in model.entries if e.container)
+
+    line = fleet.entry_line(bad, model.geometry, frozenset(), selected=selected, width=80)
+
+    assert "⚠" in line.plain
+    assert (
+        "⚠"
+        not in fleet.entry_line(fine, model.geometry, frozenset(), selected=False, width=80).plain
+    )
+    assert line.get_style_at_offset(Console(), line.plain.index("⚠")).color.name == "yellow"
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_the_heading_warning_keeps_the_attention_colour(tmp_path, selected):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])
+    row = Row("repo", "alpha") if selected else None
+
+    heading = fleet.repo_heading(group, row, frozenset(), warned=True)
+
+    style = heading.get_style_at_offset(Console(), heading.plain.index("⚠"))
+    assert style.color.name == "yellow"

@@ -22,6 +22,7 @@ from rich.text import Text
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
+from jailbee.dashboard.format import autostart_failed
 from jailbee.dashboard.model import RepoGroup, Row, group_warnings, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
@@ -35,6 +36,8 @@ _HEADER_STYLE = Style(bold=True)
 # A marked row's background. The `●` in the indent carries the mark for
 # NO_COLOR and 16-colour terminals; the background is the at-a-glance cue.
 MARKED_STYLE = Style(bgcolor="blue")
+WARN_MARK = "[bold yellow]⚠[/bold yellow]"
+"""A failed autostart's flag after the container name, in the attention colour."""
 
 
 @dataclass(frozen=True)
@@ -255,6 +258,8 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
             if spec.name == "name" and entry.group.repo_root is None
             else spec.cell(entry.container)
         )
+        if index == 0 and spec.name == "name" and autostart_failed(entry.container):
+            value += f" {WARN_MARK}"
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
@@ -283,8 +288,6 @@ def repo_heading(
         rest += "  (orphan)"
     if marked:
         rest += f"  ●{marked}"
-    if warned:
-        rest += "  ⚠"  # the details panel, with the cursor on the heading, says what
     if selected == Row("repo", group.prefix):
         style = CURSOR_STYLE
     else:
@@ -292,6 +295,12 @@ def repo_heading(
     heading = Text(style=style)
     heading.append(marker, style=dhit.hit_style("fold", group.prefix))
     heading.append(rest, style=dhit.hit_style("repo", group.prefix))
+    if warned:
+        # The details panel, with the cursor on the heading, says what; the
+        # attention colour holds under the cursor band too.
+        heading.append(
+            "  ⚠", style=Style(color="yellow", bold=True) + dhit.hit_style("repo", group.prefix)
+        )
     return heading
 
 
