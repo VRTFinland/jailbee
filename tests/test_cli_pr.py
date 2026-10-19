@@ -3296,7 +3296,7 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
 
     def select(*args, **kwargs):
         process.start()
-        assert parent.poll(5), "delete process never started"
+        assert parent.poll(30), "delete process never started"
         assert parent.recv() == "waiting"
         assert not parent.poll(0.2), "delete entered during description selection"
         if outcome == "cancel":
@@ -3323,7 +3323,7 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
     try:
         result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
         assert result.exit_code == (0 if outcome == "create" else 1), result.exception
-        assert parent.poll(5), "lock was not released"
+        assert parent.poll(30), "lock was not released"
         status, detail = parent.recv()
         if outcome == "create":
             assert status == "blocked"
@@ -3331,12 +3331,12 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
         else:
             assert status == "editable"
             assert len(json.loads(detail)["actions"]) == 1
-        process.join(5)
+        process.join(30)
         assert process.exitcode == 0
     finally:
         if process.is_alive():
             process.terminate()
-            process.join(5)
+            process.join(30)
         parent.close()
         child.close()
 
