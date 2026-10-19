@@ -147,6 +147,46 @@ def test_probe_returns_all_question_marks_on_timeout(mocker):
     assert result == GitStatus(wt="?", ahead_diff="?", ahead_count="?", conflict="?")
 
 
+def _probe_warnings(caplog):
+    return [r.getMessage() for r in caplog.records if r.name == "jailbee.git_status"]
+
+
+def test_probe_logs_the_exec_error_that_made_it_unknown(mocker, caplog):
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusError("`incus exec c` timed out after 3s")
+    with caplog.at_level("WARNING", logger="jailbee.git_status"):
+        probe_container_git(incus, "c", "/repo", "main", "main")
+    (message,) = _probe_warnings(caplog)
+    assert "c" in message
+    assert "timed out after 3s" in message
+
+
+def test_probe_logs_short_output(mocker, caplog):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "\x00"
+    with caplog.at_level("WARNING", logger="jailbee.git_status"):
+        probe_container_git(incus, "c", "/repo", "main", "main")
+    (message,) = _probe_warnings(caplog)
+    assert "short output" in message
+
+
+def test_probe_logs_a_missing_repo_reported_by_the_snippet(mocker, caplog):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "?\x00?\x00?\x00?\x00"
+    with caplog.at_level("WARNING", logger="jailbee.git_status"):
+        probe_container_git(incus, "c", "/repo", "main", "main")
+    (message,) = _probe_warnings(caplog)
+    assert "repository" in message
+
+
+def test_probe_logs_nothing_for_a_clean_result(mocker, caplog):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = "\x00\x000\n\x00ok\x00"
+    with caplog.at_level("WARNING", logger="jailbee.git_status"):
+        probe_container_git(incus, "c", "/repo", "main", "main")
+    assert _probe_warnings(caplog) == []
+
+
 def test_probe_passes_env_vars_into_snippet(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = "\x00\x00\x00ok\x00"

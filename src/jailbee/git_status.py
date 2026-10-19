@@ -8,6 +8,7 @@ parallel use from a thread pool.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ from jailbee.incus import Incus, IncusError
 from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
 from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
+
+log = logging.getLogger(__name__)
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
 
@@ -629,12 +632,16 @@ def probe_container_git(
             uid=uid,
             timeout=timeout_s,
         )
-    except IncusError:
+    except IncusError as exc:
+        log.warning("git probe of %s failed: %s", full_name, exc)
         return unknown
 
     parts = raw.split("\x00")
     if len(parts) < 4:
+        log.warning("git probe of %s returned short output (%d bytes)", full_name, len(raw))
         return unknown
+    if parts[:4] == ["?", "?", "?", "?"]:
+        log.warning("git probe of %s: no readable repository at %s", full_name, repo_dir)
     wt_raw, ahead_raw, count_raw, conflict_raw = parts[0], parts[1], parts[2], parts[3]
 
     wt = parse_shortstat(wt_raw)
