@@ -5300,23 +5300,25 @@ def test_git_identity_allowed_in_repo_config(tmp_path, mocker):
     assert cfg.git.identity == "off"
 
 
-# ---------- defaults.cpu_priority
+
+# ---------- defaults.cpu_share
 
 
-def test_cpu_priority_defaults_to_unset(tmp_path, mocker):
+def test_cpu_share_defaults_to_unset(tmp_path, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg = load_config(_make_config(tmp_path, "{}\n"))
-    assert cfg.defaults.cpu_priority is None
+    assert cfg.defaults.cpu_share is None
 
 
-def test_cpu_priority_accepts_incus_range(tmp_path, mocker):
+@pytest.mark.parametrize("value", [1, 100])
+def test_cpu_share_accepts_percent_range(tmp_path, mocker, value):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
-    cfg = load_config(_make_config(tmp_path, "defaults:\n  cpu_priority: 0\n"))
-    assert cfg.defaults.cpu_priority == 0
+    cfg = load_config(_make_config(tmp_path, f"defaults:\n  cpu_share: {value}\n"))
+    assert cfg.defaults.cpu_share == value
 
 
-@pytest.mark.parametrize("value", [-1, 11])
-def test_cpu_priority_rejects_out_of_range(tmp_path, mocker, value):
+@pytest.mark.parametrize("value", [0, 101])
+def test_cpu_share_rejects_out_of_range(tmp_path, mocker, value):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
-    with pytest.raises(ConfigError, match="cpu_priority"):
-        load_config(_make_config(tmp_path, f"defaults:\n  cpu_priority: {value}\n"))
+    with pytest.raises(ConfigError, match="cpu_share"):
+        load_config(_make_config(tmp_path, f"defaults:\n  cpu_share: {value}\n"))
