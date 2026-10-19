@@ -123,7 +123,8 @@ It renames global `claude_credentials:` to
 `credentials:`, moves `github.api_tokens` and `credentials.repos` entries into
 the matching local files, and repo-scoped egress overrides from `state.sqlite`
 into local `egress_allow` lists. It also moves legacy PR settings into `pr:`
-and renames `remote.ssh.shell` to `console`. Existing edited files are backed up
+renames `remote.ssh.shell` to `console` and rewrites the deprecated
+`remote.ssh.gui` to `rdp` and `waypipe`. Existing edited files are backed up
 as `.bak` files.
 Conflicts while moving tokens, credential groups and egress entries, malformed
 local lists, and invalid repo prefixes are reported for manual resolution.
@@ -2899,8 +2900,9 @@ remote:
       mode: full
       allow: []
     restrict_host: true
-    gui: false
-    files: false
+    rdp: false
+    waypipe: true
+    # files: unset follows commands.mode (on with full)
     mounts: false
     # mount_roots:
     #   - path: /mnt/scratch
@@ -2954,14 +2956,19 @@ remote:
 | `exec` | bool | `true` | Permit one-shot `COMMAND [ARGS...] [--repo PREFIX]` execution and `repos`. This switch affects only the one-shot entry point. |
 | `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. While host restrictions apply, a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount`, regardless of command mode — see [Security](security.md#remote-ssh). |
-| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, app commands use RDP or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
-| `gui` | bool | `false` | Permit remote GUI app launches on the shared RDP display or, in a `waypipe ssh` session, on the client's display. Allows forwarding to the shared display's TCP port and one constrained reverse Unix-socket forward for waypipe; other forwarding remains refused. See [Remote GUI](remote-gui.md). |
+| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `rdp` on, or in a `waypipe ssh` session with `waypipe` on, app commands use the shared RDP display or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
+| `rdp` | bool | `false` | Permit the shared RDP display: GUI launches over plain SSH draw on it, SSH may forward to its TCP port, and dev containers mount its socket directory (one screen and clipboard shared by every participating container). See [Remote GUI](remote-gui.md) and [Security](security.md#remote-gui). |
+| `waypipe` | bool | `true` | Permit `waypipe ssh` sessions: GUI launches in such a session open as native windows on the client. Each container reaches only its own waypipe server. Allows one constrained reverse Unix-socket forward per connection. See [Remote GUI](remote-gui.md). |
 | `network` | bool | `false` | Let remote sessions widen a container's network: `net loose`, `new --net loose` and container-scope `net egress add`. Either can open the host's LAN to the container, which is why it is opt-in. Narrowing (`net strict`, `net egress rm`) does not need this opt-in, but still requires command-policy permission; `--repo` on `net egress add`/`rm` never is, since it writes the host-local repo layer and affects every container of the repo. See [Security](security.md#remote-ssh). |
-| `files` | bool | `false` | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
+| `files` | bool (unset allowed) | follows `commands.mode`: on with `full`, off otherwise | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. An explicit value, or `serve --files/--no-files`, always wins. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
 | `mounts` | bool | `false` | Let remote sessions attach every `optional_mounts` entry as defined, with no path check. The repo config then decides which host path a remote session reaches; prefer `mount_roots`. |
 | `mount_roots` | list | `[]` | "Host directories a restricted session may attach with `jailbee mount`: an `optional_mounts` entry qualifies only when its host path resolves to exactly one of them (no subdirectories). Each entry: `path` (absolute, fully resolved), `readonly` (default `true`: attached read-only whatever the mount says), `repos` (container prefixes; empty = all). Requires `restrict_host: true`. See [Security](security.md#remote-ssh)." |
 | `excluded_repos` | list[string] | `[]` | Host-controlled exact registered `container_prefix` values unavailable through SSH. Filters repo routes, dashboard/console listings and supported aggregate views. Requires `restrict_host: true`; see [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
+
+**Deprecated: `gui`.** `remote.ssh.gui` was split into `rdp` and `waypipe`. `gui: true` means
+`rdp: true` plus `waypipe: true`, and `gui: false` turns both off. Setting `gui` next to
+either new key is an error. `jailbee config migrate` rewrites it.
 
 An allowlist matches the exact public command leaf, not a prefix and not its
 arguments. `git pull` permits `git pull feat-x --cleanup`; `git` is not a leaf

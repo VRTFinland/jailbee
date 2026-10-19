@@ -39,21 +39,23 @@ jb remote ssh key add
 jb remote ssh enable
 ```
 
-Turn on the shared display, and optionally file transfer, in
+Native windows over `waypipe ssh` (step 4) and, under the default
+`commands.mode: full`, file transfer work with no configuration. To use the
+shared RDP display, turn it on in
 `~/.config/jailbee/global.yaml` (see [`remote.ssh`](config.md#remotessh)):
 
 ```yaml
 remote:
   ssh:
-    gui: true
-    files: true                  # optional: sftp/scp into containers
+    rdp: true                    # only for the shared RDP display
+    files: true                  # sftp/scp into containers; on by default with commands.mode: full
     default_entrypoint: dashboard  # optional: a bare `ssh -t jb` opens the dashboard
 ```
 
 Enabling `files` requires `jb remote ssh restart` so the service registers
 file-transfer support. Disabling it blocks new file-transfer channels without
 a restart, but does not close existing ones. Restart after changing it to
-apply the setting consistently. `gui` and `default_entrypoint` are reloaded for
+apply the setting consistently. `rdp` and `default_entrypoint` are reloaded for
 new requests. Then start the display:
 
 ```bash
@@ -357,7 +359,7 @@ With the `jb` entry from setup A (or B), from a macOS terminal:
 | Get a shell inside a container | `ssh -t jb shell feat-x --repo PREFIX` |
 | Open the IDE or a browser on the shared display | `ssh jb ide feat-x --repo PREFIX`, `ssh jb chrome feat-x [url] --repo PREFIX`, `ssh jb apps run APP --container feat-x --repo PREFIX` |
 | Open them as native macOS windows instead ([step 4](#4-on-the-mac-native-windows-optional)) | `cwaypipe -t jb dashboard`, or `cwaypipe jb chrome feat-x --repo PREFIX` |
-| Copy files in or out (`files: true`) | `sftp jb`, or `scp ./notes.md jb:/PREFIX-feat-x/docs/` (the destination directory must exist) |
+| Copy files in or out (`files`, on by default with `commands.mode: full`) | `sftp jb`, or `scp ./notes.md jb:/PREFIX-feat-x/docs/` (the destination directory must exist) |
 | Copy and paste | Works between the Mac and the shared display through Windows App |
 
 `PREFIX` is the repo's `container_prefix`; the console and dashboard let you

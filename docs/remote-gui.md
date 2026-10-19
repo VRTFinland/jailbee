@@ -5,7 +5,7 @@
 With the [SSH service](installation.md#optional-ssh-service) a remote session
 cannot open a window on the host's screen, so by default the GUI launchers
 (`jb ide`, `jb chrome`, `jb firefox`, `jb browser`, `jb apps run`) are
-host-only. With `remote.ssh.gui` on, they instead draw on a **shared RDP
+host-only. With `remote.ssh.rdp` on, they instead draw on a **shared RDP
 display**: a small `jailbee-display` container running the weston compositor
 (RDP backend, software rendering). You tunnel its port over the existing SSH
 connection and view it in a compatible RDP client.
@@ -13,12 +13,17 @@ connection and view it in a compatible RDP client.
 There is one shared screen for all containers, not a separate screen per
 container. Apps from different containers appear side by side on it.
 
+This page covers two ways to see the windows. The RDP display needs
+`remote.ssh.rdp: true` and is off by default. Native windows over `waypipe ssh`
+need no configuration: `remote.ssh.waypipe` is on by default (see
+[below](#native-windows-with-waypipe)).
+
 ## Turn it on
 
 On the Linux host, with the [SSH service](installation.md#optional-ssh-service)
 already installed and enabled:
 
-1. Set `remote.ssh.gui: true` in `~/.config/jailbee/global.yaml` (see
+1. Set `remote.ssh.rdp: true` in `~/.config/jailbee/global.yaml` (see
    [`remote.ssh`](config.md#remotessh)).
 2. Run `jb display up`. The first run downloads an image and installs the
    display packages, which can take a few minutes. Later runs reuse the
@@ -28,8 +33,8 @@ The flag is re-read for new SSH sessions and forwarded connections, so no
 `jb remote ssh restart` is needed for new requests to see a change. Existing
 sessions retain their GUI setting. Disabling the flag does not disconnect an
 existing RDP connection, close apps, or remove an already attached display
-mount. With GUI forwarding enabled, containers acquire the display mount at
-their next start or first GUI launch; `jb display up` warns if the flag is off.
+mount. With RDP enabled, containers acquire the display mount at
+their next start or first GUI launch; `jb display up` warns if `rdp` is off.
 
 `jb display up` prints the connection recipe; `jb display status` prints it
 when the display container and its service are running.
@@ -75,7 +80,7 @@ above. To request the forward whenever you connect through a particular
 connection cannot bind the same local port.
 
 The server accepts this TCP forward from any authenticated SSH key while
-`remote.ssh.gui` is on, and only to `127.0.0.1:13389`. Command permissions and
+`remote.ssh.rdp` is on, and only to `127.0.0.1:13389`. Command permissions and
 repository exclusions do not restrict access to the shared RDP screen. You
 can connect before or after launching anything.
 
@@ -92,7 +97,7 @@ readiness heuristic, not verification that the RDP handshake or input seat is
 ready. Display startup and polling can make the total wait longer. If the wait
 fails, connect a client and run the launch again.
 
-Autostart apps launched from a GUI-enabled SSH session target the shared
+Autostart apps launched from an SSH session with `rdp` on target the shared
 display too, but never move an already-running browser: it may receive the
 request on its existing display. Use an explicit browser launch to move it.
 If display preparation fails, the failure is reported and the remaining apps
@@ -111,8 +116,8 @@ Cocoa-Way compositor; see
 [Using JailBee from a Mac](macos.md#4-on-the-mac-native-windows-optional).
 Choose RDP instead on Windows, and for windows that must survive a disconnect.
 
-Needs `remote.ssh.gui: true` (a waypipe session is refused without it) and a
-stock waypipe client. JailBee runs the server-side waypipe in `jailbee-display`,
+On by default (`remote.ssh.waypipe`; a waypipe session is refused if you turn it
+off), so it needs no configuration beyond a stock waypipe client. JailBee runs the server-side waypipe in `jailbee-display`,
 not as a host-installed binary. Open the dashboard and launch from its menu:
 
 ```bash
@@ -150,7 +155,8 @@ exit 2 lists them).
   so windows from different repositories and containers can be told apart.
 - Each session runs one waypipe server per container, as a transient unit in
   `jailbee-display`; stopping the session stops them, and with them every
-  window.
+  window. Each container reaches only its own servers (see
+  [Security](security.md#remote-gui)).
 - The client's `--compress` is honoured (`waypipe --compress zstd ssh ...`).
   The other waypipe options (`--threads`, `--video`, `--no-gpu`) are the
   laptop's own; the server does not use them.
@@ -197,7 +203,7 @@ fails; close it on the other display and retry.
 - `jb gui` (the Qt dashboard) stays a host command.
 - When SSH repository exclusions are active (`remote.ssh.excluded_repos` is
   non-empty), the GUI launchers (`ide`, the browsers, `apps run`) are refused
-  over SSH even with `gui` on, because the scoped command allow-list does not
+  over SSH even with `rdp` or `waypipe` on, because the scoped command allow-list does not
   include them. `jb exec -d --gui` is in that list and remains available for
   visible repositories if the command policy permits `exec`. This command
   restriction does not prevent forwarding to the shared RDP screen.
@@ -215,9 +221,9 @@ See [Remote GUI in the security model](security.md#remote-gui).
 - `jb display down` stops the display container and interrupts those display
   connections too. The SSH connection and local forwarding listener may stay
   open, but RDP connections cannot reach the stopped display. A later GUI
-  launch can start it again while GUI access remains enabled.
+  launch can start it again while `rdp` or `waypipe` remains enabled.
 - For a refused forward (`administratively prohibited` in `ssh -v`), check
-  `remote.ssh.gui` and the destination `127.0.0.1:13389` (`localhost` does not
+  `remote.ssh.rdp` and the destination `127.0.0.1:13389` (`localhost` does not
   count). The server also refuses forwarding if it cannot reload the GUI
   setting; check the SSH service log for configuration errors.
 - "No seats available" from an app means the compositor's input seat was not

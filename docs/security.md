@@ -89,7 +89,7 @@ host-wide visibility boundary for all keys, not per-key authorization, and it
 does not alter local CLI, TUI, or Qt behavior. Each new command channel takes
 a routing/repo-scope policy snapshot; a running channel keeps that snapshot.
 Mount grants are checked separately against freshly loaded host policy at
-mount time, and new GUI forwarding requests re-read the GUI flag.
+mount time, and new GUI forwarding requests re-read the `rdp` and `waypipe` flags.
 
 With exclusions active, commands whose output or effects cannot safely be
 scoped are refused instead of exposing host-wide data: `config show --layer
@@ -118,8 +118,9 @@ containers and moving commits can therefore affect host state. It withholds
 what would reach the host beyond that — the config editor (a config decides
 host mounts and this very policy), the diff pager (a pager can start a
 shell), "Open PR" and GUI app launches (a browser or window would open on
-the host's display; with `remote.ssh.gui` on, launches go to the shared RDP
-display instead). The admitted `exec --gui` route is an exception to the
+the host's display; with `remote.ssh.rdp` on, or inside a `waypipe ssh`
+session with `remote.ssh.waypipe` on, launches go to the shared RDP display or
+the client's display instead). The admitted `exec --gui` route is an exception to the
 named GUI-launcher restrictions, described below. Restricted child processes
 carry `JAILBEE_REMOTE_SSH=1` and `LESSSECURE=1`, inherited by their children.
 Every SSH session, restricted or not, also carries
@@ -137,8 +138,10 @@ LAN's addresses to the container), `registry up`/`down`, `display up`/`down`,
 up`/`down`/`login`/`logout`/`logs`, the `account` commands that write,
 `port to-container`, and the GUI launchers (`gui`, `ide`, the browsers, `apps
 run`). `mount` is host-only unless `remote.ssh.mount_roots` or
-`remote.ssh.mounts` unlocks it. With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
-permitted and draw on the shared display instead; `gui` stays host-only.
+`remote.ssh.mounts` unlocks it. With `remote.ssh.rdp` on, or inside a
+`waypipe ssh` session with `remote.ssh.waypipe` on, `ide`, the browsers and
+`apps run` are permitted and draw on the shared display or the client's display
+instead; `gui` stays host-only.
 With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
 `net egress add` are permitted too; without it `new` is refused only when
 `--net` names `loose`, in any spelling of the case. `net strict` and container-scope
@@ -171,16 +174,18 @@ The SSH protocol surface is also fail-closed:
 - public-key authentication is the only authentication method; password,
   keyboard-interactive, host-based and GSS authentication are disabled;
 - agent forwarding, X11 forwarding, Unix-socket forwarding and remote
-  listeners are disabled, and so is TCP forwarding, with two exceptions, both
-  only while `remote.ssh.gui` is on (see [Remote GUI](#remote-gui)):
-  `127.0.0.1:13389` (the shared display), for any authorized key; and one
-  reverse unix forward per connection, for `waypipe ssh`, requested by a
-  connection authenticated by an authorized key. JailBee listens for that
-  forward at its own path under the state directory (the client never chooses
-  a host path), and the listener's directory is mounted into `jailbee-display`
-  only;
-- SFTP and SCP are disabled unless `remote.ssh.files` is on. When it is, they
-  serve one thing only (see [File transfer](#file-transfer)) and every other
+  listeners are disabled, and so is TCP forwarding, with two exceptions (see
+  [Remote GUI](#remote-gui)): `127.0.0.1:13389` (the shared display), for any
+  authorized key, only while `remote.ssh.rdp` is on; and one reverse unix
+  forward per connection, for `waypipe ssh`, requested by a connection
+  authenticated by an authorized key, only while `remote.ssh.waypipe` is on.
+  JailBee listens for that forward at its own path under the state directory
+  (the client never chooses a host path), and the listener's directory is
+  mounted into `jailbee-display` only;
+- SFTP and SCP are on by default only under `commands.mode: full`, where
+  `shell` already reaches the same files; they are off by default under
+  `allowlist` and `disabled`, and an explicit `remote.ssh.files` always wins.
+  When enabled, they serve one thing only (see [File transfer](#file-transfer)) and every other
   subsystem is still refused;
 - client environment requests, including `SendEnv`, are accepted by the
   protocol but ignored: the client's environment never reaches the child
@@ -239,7 +244,7 @@ JailBee shares no X11 socket. Wayland normally isolates clients' surfaces,
 but the compositor and its supported protocols remain part of the trust
 boundary; socket access is not a guarantee against display-server bugs or
 additional compositor capabilities. Host session D-Bus and PulseAudio
-sockets are opt-in ([`gui`](config.md#gui)). With `remote.ssh.gui` on,
+sockets are opt-in ([`gui`](config.md#gui)). With `remote.ssh.rdp` on,
 boot-time setup can also attach the shared display directory read-only to
 dev containers, allowing their processes to draw on the shared RDP display
 (see [Remote GUI](#remote-gui)).
@@ -271,7 +276,11 @@ rotation, service status, journal inspection and recovery operations.
 
 `remote.ssh.files: true` lets an authorized key use `sftp` and `scp` against a
 container's repository directory, in both directions. It is a single switch for
-reading and writing together, and it is off by default. Enabling it requires
+reading and writing together. Unset, it follows `commands.mode`: on under
+`full`, where `shell` already reaches the same files, and off under
+`allowlist` and `disabled`, so a narrowed command policy does not silently
+grant access to every container's repo. An explicit value always wins.
+Enabling it requires
 `jb remote ssh restart` if the server started without file-transfer support.
 Disabling it refuses new SFTP channels without a restart; existing channels
 retain their scope. Close those channels or restart the service to end them.
@@ -344,8 +353,10 @@ would reach outside the declared directory.
 
 ### Remote GUI
 
-With `remote.ssh.gui: true`, GUI apps launched over SSH draw on a shared RDP
-display (see [Remote GUI over SSH](remote-gui.md)):
+With `remote.ssh.rdp: true`, GUI apps launched over SSH draw on a shared RDP
+display (see [Remote GUI over SSH](remote-gui.md)); `remote.ssh.waypipe`
+(on by default) separately permits native windows over `waypipe ssh`, described
+at the end of this section. The RDP exposure:
 
 - The weston compositor listens on the display container's loopback only, and
   an Incus proxy device publishes it on the host's loopback
@@ -355,7 +366,7 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   Level Authentication; weston checks no login, so any local user of the host
   can connect to `127.0.0.1:13389`. JailBee assumes a single-user workstation.
 - Over SSH, any authorized key may forward to that one destination while
-  `remote.ssh.gui` is on; the flag is re-read for every forward request, so
+  `remote.ssh.rdp` is on; the flag is re-read for every forward request, so
   turning it off refuses new tunnels at once (open ones run until they close).
   The forward is not tied to a key that has launched an app: every authorized
   key runs under the same server-wide policy and could launch one, so such a
@@ -363,7 +374,7 @@ display (see [Remote GUI over SSH](remote-gui.md)):
 - All containers share one screen and the RDP clipboard: one container can
   draw over another's windows and read what is on the clipboard.
 - Boot-time attachment of the shared display directory requires
-  `remote.ssh.gui` and an existing display directory. The client mount is
+  `remote.ssh.rdp` and an existing display directory. The client mount is
   read-only. Turning the flag off does not detach existing mounts or revoke
   old sessions and tunnels. Every client shares the host user's idmap, so a
   writable mount would let a compromised container
@@ -375,15 +386,6 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   isolated from each other on this screen.
 - The display container uses the dev user's idmap, like the client containers,
   so the shared socket is owned by the same host user.
-- Each `waypipe ssh` session (see [Native windows with
-  waypipe](remote-gui.md#native-windows-with-waypipe)) runs one waypipe
-  server per container inside `jailbee-display`. Their sockets live in the same
-  shared directory, so any container can open a window through another
-  container's server; that window carries the other container's title prefix.
-  No two containers share a server process. Untrusted Wayland traffic is
-  parsed by those servers and the laptop's waypipe client processes the
-  forwarded protocol. The display container is an intermediary, not a
-  guarantee that hostile display traffic cannot affect the client.
 - With SSH repository exclusions active, the GUI launchers (`ide`, the
   browsers, `apps run`) are refused over SSH regardless of this setting.
   `exec -d --gui` is not: it is admitted as a command scoped to one container
@@ -391,6 +393,19 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   display: it is one screen shared by participating containers, including
   excluded repos, and any session allowed to forward to it sees all of it.
   Command allowlists and repo exclusions do not narrow this display access.
+
+With `remote.ssh.waypipe` on (the default), each `waypipe ssh` session (see
+[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe)) runs
+one waypipe server per container inside `jailbee-display`. Each server's socket
+lives in its container's own directory under `state/waypipe-servers/`, which is
+mounted read-only into that container only, on its first waypipe launch. A
+container therefore cannot open a window through another container's server,
+and none of these sockets is in the shared display directory that `rdp` mounts.
+Sessions of one container share that directory. No two containers share a
+server process. Untrusted Wayland traffic is parsed by those servers and the
+laptop's waypipe client processes the forwarded protocol. The display container
+is an intermediary, not a guarantee that hostile display traffic cannot affect
+the client.
 
 ### Running an agent without prompts
 
