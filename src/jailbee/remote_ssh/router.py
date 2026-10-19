@@ -350,7 +350,7 @@ class RemoteUnlocks:
         if config is None:
             return cls()
         return cls(
-            gui=config.gui,
+            gui=config.rdp,
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
         )

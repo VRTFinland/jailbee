@@ -166,4 +166,4 @@ def remote_gui_enabled(overrides: ServeOverrides | None = None) -> bool:
     except Exception:
         log.warning("remote.ssh.gui could not be read; treating it as off", exc_info=True)
         return False
-    return current.gui
+    return current.rdp

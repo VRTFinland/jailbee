@@ -273,7 +273,7 @@ def test_build_specs_covers_every_config_leaf():
     `routes`, `profiles`) add 5 to GlobalConfig: 28 + 5 = 33.
     Phase 2 of LiteLLM adds `accounts`, `egress` and `extra`: 33 + 3 = 36.
     Phase 3 of LiteLLM adds `autostart`: 36 + 1 = 37. The host-level
-    `agent_instructions` field makes 38, `remote.ssh.gui` makes 39, and
+    `agent_instructions` field makes 38, `remote.ssh.gui` made 39 (its split into `rdp`/`waypipe` makes 52), and
     `remote.ssh.files` 40.
     The `pr` block (`agent`, `ai_description`, `ai_branch`, `prompt`, `model`,
     `timeout`) adds six repo-level leaves: 95 + 6 = 101. The Claude agent's
@@ -293,7 +293,7 @@ def test_build_specs_covers_every_config_leaf():
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 108
-    assert len(build_specs(GlobalConfig)) == 51
+    assert len(build_specs(GlobalConfig)) == 52
 
 
 def test_a_default_factory_field_reports_its_real_default():

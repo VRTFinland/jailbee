@@ -426,7 +426,7 @@ def actions_for_container(
             job_running=container.job_phase is not None and not job_clearable,
             git_status=container.git_status,
             remote=remote,
-            gui_remote=bool(remote and ssh_policy is not None and ssh_policy.gui),
+            gui_remote=bool(remote and ssh_policy is not None and ssh_policy.rdp),
             alias=container.alias,
         )
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, Self
 
@@ -13,6 +14,30 @@ from jailbee.paths import xdg_data_home
 
 CommandMode = Literal["disabled", "allowlist", "full"]
 _COMMAND_PATH_RE = re.compile(r"^[a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*$")
+
+
+def fold_legacy_gui(ssh: Mapping[str, object], origin: str) -> tuple[dict[str, object], bool]:
+    """Fold the pre-split `remote.ssh.gui` into `rdp` + `waypipe`. Pure.
+
+    `gui` used to switch both the shared RDP display and `waypipe ssh`
+    sessions, so a written value keeps meaning exactly that: `true` turns
+    both on, `false` both off (an explicit "no GUI" must not gain waypipe on
+    upgrade). Next to either new key it is an error, not a precedence
+    question. Returns a new mapping; ``ssh`` is never mutated.
+    """
+    if "gui" not in ssh:
+        return dict(ssh), False
+    clash = [key for key in ("rdp", "waypipe") if key in ssh]
+    if clash:
+        named = " and ".join(f"`remote.ssh.{key}`" for key in clash)
+        raise ValueError(
+            f"Both {named} and deprecated `remote.ssh.gui` are set in {origin}; "
+            "remove the old key instead of making jailbee choose."
+        )
+    out = {key: value for key, value in ssh.items() if key != "gui"}
+    out["rdp"] = ssh["gui"]
+    out["waypipe"] = ssh["gui"]
+    return out, True
 
 
 def _jailbee_dirs() -> tuple[Path, ...]:
@@ -155,13 +180,22 @@ class RemoteSSHConfig(BaseModel):
             "`false` makes an allowed command behave exactly as it does locally."
         ),
     )
-    gui: bool = Field(
+    rdp: bool = Field(
         default=False,
         description=(
-            "Let remote sessions launch GUI apps (`ide`, `chrome`, `firefox`, "
-            "`browser`, `apps run`) onto a shared RDP display instead of the "
-            "host's screen, and allow SSH port forwarding to that display only. "
+            "Let remote sessions use the shared RDP display: GUI apps "
+            "(`ide`, `chrome`, `firefox`, `browser`, `apps run`) draw on it, "
+            "SSH may forward to it, and dev containers mount its socket "
+            "directory. Every container shares that one screen and clipboard. "
             "Off by default."
+        ),
+    )
+    waypipe: bool = Field(
+        default=True,
+        description=(
+            "Let `waypipe ssh` sessions launch GUI apps as native windows on "
+            "the client. Each container reaches only its own waypipe server. "
+            "On by default."
         ),
     )
     network: bool = Field(
@@ -174,12 +208,13 @@ class RemoteSSHConfig(BaseModel):
             "Off by default."
         ),
     )
-    files: bool = Field(
-        default=False,
+    files: bool | None = Field(
+        default=None,
         description=(
             "Let remote sessions use `sftp` and `scp` on a container's repo "
             "directory (and nothing else: never the host, never the rest of the "
-            "container). Off by default; changing it needs a restart."
+            "container). Unset follows `commands.mode`: on with `full`, off "
+            "otherwise. Changing it needs a restart."
         ),
     )
     mount_roots: list[RemoteMountRoot] = Field(
@@ -208,6 +243,28 @@ class RemoteSSHConfig(BaseModel):
     def _listen_is_an_ip_literal(cls, value: str) -> str:
         ipaddress.ip_address(value)
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_gui(cls, data: object) -> object:
+        # Here as well as in `normalize_remote_ssh_gui`: a model built from a
+        # mapping that never went through the loader (a serve override, a
+        # policy JSON, a test) must read `gui` the same way.
+        if isinstance(data, Mapping):
+            folded, _ = fold_legacy_gui(data, "remote.ssh")
+            return folded
+        return data
+
+    def files_enabled(self) -> bool:
+        """Whether SFTP/SCP is on: the explicit value, else `commands.mode == "full"`.
+
+        Resolved on read, not stored: `apply_ssh_overrides` rebuilds the model
+        from a dump, and an override narrowing the command policy must narrow
+        an unset `files` with it.
+        """
+        if self.files is not None:
+            return self.files
+        return self.commands.mode == "full"
 
     @model_validator(mode="after")
     def _entrypoints_are_usable(self) -> Self:

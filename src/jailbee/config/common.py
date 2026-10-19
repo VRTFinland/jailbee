@@ -196,6 +196,30 @@ def normalize_remote_ssh_keys(
     return {**raw, "remote": {**remote, "ssh": new_ssh}}, True
 
 
+def normalize_remote_ssh_gui(
+    raw: dict[str, object], origin: str
+) -> tuple[dict[str, object], bool]:
+    """Fold the pre-split `remote.ssh.gui` into `rdp` + `waypipe` (`fold_legacy_gui`).
+
+    `normalize_remote_ssh_keys`' sibling: pure, the notice belongs to the
+    caller, and ``raw`` is never mutated.
+    """
+    from jailbee.config.models_remote import fold_legacy_gui
+
+    remote = raw.get("remote")
+    ssh = remote.get("ssh") if isinstance(remote, dict) else None
+    if not isinstance(ssh, dict):
+        return raw, False
+    try:
+        new_ssh, folded = fold_legacy_gui(ssh, origin)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+    if not folded:
+        return raw, False
+    assert isinstance(remote, dict)
+    return {**raw, "remote": {**remote, "ssh": new_ssh}}, True
+
+
 def _read_yaml_or_empty(path: Path) -> dict[str, object]:
     """Read and parse a YAML file. Missing file -> {}. Invalid YAML -> ConfigError."""
     if not path.exists():

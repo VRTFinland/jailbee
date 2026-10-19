@@ -130,11 +130,35 @@ def remote_ssh_key_migration(
     return [*out, *changes]
 
 
+def remote_ssh_gui_migration(
+    raw: dict[str, object], changes: Sequence[YamlChange]
+) -> list[YamlChange]:
+    """The changes that split the pre-split `remote.ssh.gui` in one write.
+
+    Same reason as `remote_ssh_key_migration`: a staged `rdp`/`waypipe`
+    change next to an on-disk `gui` would leave both spellings, which the
+    loader refuses. The caller's own changes come last so they win.
+    """
+    remote = raw.get("remote")
+    ssh = remote.get("ssh") if isinstance(remote, dict) else None
+    if not isinstance(ssh, dict) or "gui" not in ssh:
+        return list(changes)
+    value = deepcopy(ssh["gui"])
+    return [
+        YamlChange(("remote", "ssh", "rdp"), value),
+        YamlChange(("remote", "ssh", "waypipe"), deepcopy(value)),
+        YamlChange(("remote", "ssh", "gui"), DELETE),
+        *changes,
+    ]
+
+
 def legacy_key_migrations(
     raw: dict[str, object], changes: Sequence[YamlChange]
 ) -> list[YamlChange]:
     """Every rename a write to `global.yaml` carries; see the two helpers."""
-    return remote_ssh_key_migration(raw, credential_key_migration(raw, changes))
+    return remote_ssh_gui_migration(
+        raw, remote_ssh_key_migration(raw, credential_key_migration(raw, changes))
+    )
 
 
 def _yaml() -> YAML:

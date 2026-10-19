@@ -359,7 +359,7 @@ async def handle_process(
         command = process.command
         request = waypipe.parse_server_command(command)
         if request is not None:
-            if not config.gui:
+            if not config.rdp:
                 raise RouteError(
                     "waypipe sessions need remote.ssh.gui: true in the server's global.yaml"
                 )
@@ -418,7 +418,7 @@ async def handle_process(
             requires_pty=selected.requires_pty,
             restrict_host=config.restrict_host,
             excluded_repos=tuple(config.excluded_repos),
-            gui_port=config.port if config.gui else None,
+            gui_port=config.port if config.rdp else None,
             waypipe=waypipe_session,
             waypipe_attach=(
                 waypipe_session is not None
@@ -528,7 +528,7 @@ def _startup_summary(
         f"  {keys_line}",
         f"  connect example: {_connect_example(config.listen, port, config)}",
     ]
-    if config.files:
+    if config.files_enabled():
         lines.append("  sftp/scp: on (container repo directories only)")
     if config.network:
         lines.append("  network widening: on (net loose, net egress add)")
@@ -647,14 +647,14 @@ async def serve_async(
         except Exception:
             log.exception("SFTP: policy reload failed; refusing the session")
             return None
-        if not current.files:
+        if not current.files_enabled():
             log.warning("SFTP: file transfer is off in the current policy; refusing the session")
             return None
         return RemoteRepoScope(frozenset(current.excluded_repos))
 
     sftp_service = (
         SFTPService(Incus(), sftp_scope, asyncio.Semaphore(MAX_CONCURRENT_EXECS))
-        if config.files
+        if config.files_enabled()
         else None
     )
 

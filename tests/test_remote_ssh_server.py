@@ -437,7 +437,7 @@ def test_missing_repo_spawns_a_picking_child_in_the_state_dir(
     fallback = tmp_path / "state"
     mocker.patch.object(server, "state_dir", return_value=fallback)
     configured.return_value[0].remote.ssh = configured.return_value[0].remote.ssh.model_copy(
-        update={"gui": True, "excluded_repos": excluded, "restrict_host": False}
+        update={"rdp": True, "excluded_repos": excluded, "restrict_host": False}
     )
     process, channel = session(arguments, term=term, env={"LD_PRELOAD": "client-secret"})
     child.assert_awaited_once_with(
@@ -946,7 +946,7 @@ def listener(mocker):
 
 def test_listener_exposes_only_binary_session_capabilities(listener):
     value, listen = listener
-    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123)))
+    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123, files=False)))
     listen.assert_awaited_once()
     args, kwargs = listen.call_args
     assert args == ("127.0.0.2", 8123)
@@ -1771,7 +1771,7 @@ def test_files_on_hands_asyncssh_the_sftp_factory_and_enables_scp(listener):
 
 def test_files_off_leaves_sftp_and_scp_refused(listener):
     _, listen = listener
-    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123)))
+    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123, files=False)))
     kwargs = listen.call_args.kwargs
     assert kwargs["sftp_factory"] is None and kwargs["allow_scp"] is False
 
@@ -1825,7 +1825,7 @@ def test_startup_summary_names_the_file_transfer_scope_only_when_on():
     on = server._startup_summary(
         RemoteSSHConfig(files=True), SimpleNamespace(get_port=lambda: 8022), None
     )
-    off = server._startup_summary(RemoteSSHConfig(), SimpleNamespace(get_port=lambda: 8022), None)
+    off = server._startup_summary(RemoteSSHConfig(files=False), SimpleNamespace(get_port=lambda: 8022), None)
     assert "sftp/scp: on (container repo directories only)" in on
     assert "sftp/scp" not in off
 
@@ -2033,3 +2033,23 @@ def test_a_refused_waypipe_command_never_provisions_the_display(child, gui_confi
 
     child.assert_not_called()
     waypipe_ops["ensure"].assert_not_called()
+
+
+def test_an_allowlist_override_resolves_unset_files_off() -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides
+
+    merged = apply_ssh_overrides(
+        RemoteSSHConfig(), ServeOverrides(commands_mode="allowlist", allow=["ls"])
+    )
+    assert merged.files is None
+    assert merged.files_enabled() is False
+
+
+def test_the_files_override_beats_the_command_policy() -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides
+
+    merged = apply_ssh_overrides(
+        RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])),
+        ServeOverrides(files=True),
+    )
+    assert merged.files_enabled() is True

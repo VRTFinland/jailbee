@@ -1021,7 +1021,7 @@ def test_every_leaf_is_classified_with_gui_on_too() -> None:
 
 def test_route_threads_the_gui_flag_to_the_command_policy(repo, engine: Engine) -> None:
     off = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))
-    on = off.model_copy(update={"gui": True})
+    on = off.model_copy(update={"rdp": True})
 
     with pytest.raises(RouteError, match="manages the host"):
         route("--repo project chrome feat", off, engine=engine)
@@ -1298,7 +1298,7 @@ def test_trailing_repo_routes_like_leading_form(engine, repo, configured_ssh):
 
 
 def test_missing_repo_asks_child_to_pick(configured_ssh, engine):
-    cfg = configured_ssh.model_copy(update={"gui": True})
+    cfg = configured_ssh.model_copy(update={"rdp": True})
     assert route("chrome feat", cfg, engine=engine) == Route(
         "command", ("chrome", "feat"), None, None, False, pick_repo=True
     )
