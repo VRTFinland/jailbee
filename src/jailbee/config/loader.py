@@ -418,7 +418,8 @@ def _warn_legacy_remote_gui(source: str) -> None:
             lines=(
                 f"`remote.ssh.gui` in {source} is deprecated and split into "
                 "`remote.ssh.rdp` and `remote.ssh.waypipe` — run `jailbee config "
-                f"migrate`, or see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}.",
+                "migrate`, or see docs/config.md. It keeps working until "
+                f"{LEGACY_REMOVAL_VERSION}.",
             ),
         )
     )

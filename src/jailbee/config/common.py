@@ -196,9 +196,7 @@ def normalize_remote_ssh_keys(
     return {**raw, "remote": {**remote, "ssh": new_ssh}}, True
 
 
-def normalize_remote_ssh_gui(
-    raw: dict[str, object], origin: str
-) -> tuple[dict[str, object], bool]:
+def normalize_remote_ssh_gui(raw: dict[str, object], origin: str) -> tuple[dict[str, object], bool]:
     """Fold the pre-split `remote.ssh.gui` into `rdp` + `waypipe` (`fold_legacy_gui`).
 
     `normalize_remote_ssh_keys`' sibling: pure, the notice belongs to the
