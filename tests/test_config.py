@@ -5300,7 +5300,6 @@ def test_git_identity_allowed_in_repo_config(tmp_path, mocker):
     assert cfg.git.identity == "off"
 
 
-
 # ---------- defaults.cpu_share
 
 
