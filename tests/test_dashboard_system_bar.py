@@ -11,10 +11,16 @@ from jailbee.sysstat import DiskStatus, MemoryStatus
 GIB = 1024**3
 
 
-def _mem(avail_ratio: float = 0.5) -> MemoryStatus:
+def _mem(avail_ratio: float = 0.5, swap_total: int = 0, swap_free: int = 0) -> MemoryStatus:
     total = 16 * GIB
     available = int(total * avail_ratio)
-    return MemoryStatus(total=total, available=available, cache=available // 4)
+    return MemoryStatus(
+        total=total,
+        available=available,
+        cache=available // 4,
+        swap_total=swap_total,
+        swap_free=swap_free,
+    )
 
 
 def _disk(free_ratio: float = 0.5) -> DiskStatus:
@@ -46,9 +52,9 @@ def _styles_of(line: Text, needle: str) -> list[str]:
 
 def test_line_has_all_segments_at_wide_width() -> None:
     line = system_line(_status(), 120)
-    assert "Mem[" in line.plain
-    assert "Pool[" in line.plain
-    assert "/[" in line.plain
+    assert "[Mem" in line.plain
+    assert "[Pool" in line.plain
+    assert "[/" in line.plain
     assert "\n" not in line.plain
 
 
@@ -73,8 +79,8 @@ def test_warn_colours_numbers_too() -> None:
 def test_multiple_pools_use_names() -> None:
     pools = (PoolStatus("fast", _disk()), PoolStatus("slow", _disk()))
     line = system_line(_status(pools=pools), 160)
-    assert "fast[" in line.plain
-    assert "slow[" in line.plain
+    assert "[fast" in line.plain
+    assert "[slow" in line.plain
     assert "Pool" not in line.plain
 
 
@@ -115,7 +121,7 @@ def test_root_shortens_before_bars_drop() -> None:
     found = False
     for width in range(30, 120):
         plain = system_line(status, width).plain
-        if "/ " in plain and "/[" not in plain and "Mem[" in plain:
+        if "/ " in plain and "[/" not in plain and "[Mem" in plain:
             assert "%" in plain
             found = True
     assert found
@@ -139,7 +145,7 @@ def test_mem_bar_has_fill_then_blanks_and_no_shade_glyph() -> None:
     plain = line.plain
     assert "░" not in plain
     bar = plain[plain.index("[") + 1 : plain.index("]")]
-    assert bar.startswith("|")
+    assert bar.startswith("Mem|")
     assert " " in bar  # the unused part is blank
 
 
@@ -156,7 +162,7 @@ def test_numbers_fit_in_the_narrowest_bar() -> None:
     status = _status(pools=(PoolStatus("default", _disk(0.5)),))
     for width in range(30, 120):
         plain = system_line(status, width).plain
-        if "Mem[" in plain and "Pool[" in plain:
+        if "[Mem" in plain and "[Pool" in plain:
             assert "8.0G/16.0G]" in plain
             assert "50.0G/100.0G]" in plain
 
@@ -167,11 +173,55 @@ def _style_at(line: Text, index: int) -> str:
 
 def test_numbers_are_coloured_only_as_far_as_the_fill_reaches() -> None:
     line = system_line(_status(root=_disk(0.5)), 300)
-    start = line.plain.index("50.0G/100.0G", line.plain.index("Pool["))
-    bar_open = line.plain.rindex("[", 0, start)
+    start = line.plain.index("50.0G/100.0G", line.plain.index("[Pool"))
+    bar_open = line.plain.index("[Pool")
     width = line.plain.index("]", start) - bar_open - 1
     used_cells = round(0.5 * width)
     first_unused = bar_open + 1 + used_cells
     assert "green" in _style_at(line, first_unused - 1)
     assert "green" not in _style_at(line, first_unused)
     assert "bright_black" in _style_at(line, start + len("50.0G/100.0G") - 1)
+
+
+def test_swap_gets_its_own_bar_after_mem() -> None:
+    line = system_line(_status(memory=_mem(swap_total=8 * GIB, swap_free=6 * GIB)), 200)
+    assert "[Swap" in line.plain
+    assert "2.0G/8.0G]" in line.plain
+    assert line.plain.index("[Mem") < line.plain.index("[Swap") < line.plain.index("[Pool")
+
+
+def test_no_swap_bar_without_swap() -> None:
+    line = system_line(_status(), 200)
+    assert "Swap" not in line.plain
+
+
+def test_swap_colour_follows_its_free_share() -> None:
+    line = system_line(_status(memory=_mem(swap_total=8 * GIB, swap_free=GIB // 4)), 200)
+    assert "red" in _style_at(line, line.plain.index("[Swap") + 1)
+
+
+def test_label_sits_inside_the_bar_coloured_like_the_cells_beneath() -> None:
+    line = system_line(_status(memory=_mem(0.5)), 300)
+    label = line.plain.index("[Mem") + 1
+    assert "green" in _style_at(line, label)  # half full: the label is in the fill
+    empty = system_line(_status(memory=_mem(1.0)), 300)
+    label = empty.plain.index("[Mem") + 1
+    assert "bright_black" in _style_at(empty, label)  # nothing used: dark grey
+
+
+def test_compact_segments_keep_the_label_outside() -> None:
+    status = _status(pools=(PoolStatus("a", _disk()), PoolStatus("b", _disk())))
+    plain = system_line(status, 40).plain
+    assert "[" not in plain
+    assert "Mem " in plain
+
+
+def test_a_long_label_widens_only_its_own_bar_when_room_is_short() -> None:
+    status = _status(
+        memory=_mem(swap_total=8 * GIB, swap_free=7 * GIB),
+        pools=(PoolStatus("default", _disk()), PoolStatus("cow", _disk())),
+    )
+    plain = system_line(status, 100).plain
+    bars = [seg.split("]")[0] for seg in plain.split("[")[1:]]
+    assert len(bars) == 5  # every bar still shown
+    assert len({len(b) for b in bars}) > 1  # "default" keeps its bar wider than the rest

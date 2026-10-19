@@ -1,15 +1,16 @@
-"""htop-style one-line host status: memory, storage pools and root filesystem.
+"""htop-style one-line host status: memory, swap, storage pools and root filesystem.
 
 Pure Rich, frontend-agnostic. `system_line` always returns a single line no
 wider than the given width, degrading as the terminal narrows: bars shrink
-(all bars share one width, as narrow as their numbers plus two cells, at most
-30), then the root segment drops to ``/ NN%``, then every bar is dropped, and
-finally the line is cropped with an ellipsis.
+(they share one width, at most 30, but a bar never gets narrower than its label
+and numbers plus two cells), then the root segment drops to ``/ NN%``, then
+every bar is dropped, and finally the line is cropped with an ellipsis.
 
-As in htop the numbers sit inside the bar, right-aligned over its end, and are
-coloured cell by cell like the bar beneath them: the level colour as far as the
-used share reaches, dark grey beyond. The unused part of
-the bar is plain blanks with no background.
+The label sits inside the bar at its left end and the numbers at its right
+end, both coloured cell by cell like the bar beneath them: the level colour as
+far as the used share reaches, dark grey beyond. The unused part of the bar is
+plain blanks with no background. The swap bar is left out on a host without
+swap.
 """
 
 from __future__ import annotations
@@ -61,20 +62,32 @@ def _memory_segment(mem: MemoryStatus) -> _Segment:
     )
 
 
+def _swap_segment(mem: MemoryStatus) -> _Segment:
+    total = mem.swap_total or 1
+    return _Segment(
+        label="Swap",
+        used=mem.swap_used / total,
+        numbers=f"{_format_bytes(mem.swap_used)}/{_format_bytes(mem.swap_total)}",
+        short=f"{round(mem.swap_used / total * 100)}%",
+        lvl=level(mem.swap_free_ratio),
+    )
+
+
 def memory_numbers(used: int, total: int) -> str:
     return f"{_format_bytes(used)}/{_format_bytes(total)}"
 
 
 def min_usage_bar_cells(label: str, used: int, total: int) -> int:
-    """Cells `usage_bar` needs at least: label, brackets, the numbers and the pad."""
+    """Cells `usage_bar` needs at least: brackets, label, the numbers and the pad."""
     return len(label) + 2 + len(memory_numbers(used, total)) + _PAD
 
 
 def usage_bar(label: str, used: int, total: int, width: int) -> Text:
-    """`label[|||    used/total]` for one usage figure, `width` cells inside the brackets.
+    """`[label|||    used/total]` for one usage figure, `width` cells inside the brackets.
 
     The level colour follows the free share, as in the status line. `width`
-    must be at least the numbers plus the pad (see `min_usage_bar_cells`).
+    must be at least the label, the numbers and the pad (see
+    `min_usage_bar_cells`).
     """
     total = max(total, 1)
     seg = _Segment(
@@ -84,17 +97,16 @@ def usage_bar(label: str, used: int, total: int, width: int) -> Text:
         short="",
         lvl=level(max(0.0, (total - used) / total)),
     )
-    line = Text()
-    line.append(label)
-    line.append_text(_bar(seg, width, seg.numbers))
-    return line
+    return _bar(seg, width, seg.numbers)
 
 
 def _segments(status: SystemStatus) -> tuple[list[_Segment], _Segment | None]:
-    """Mem and pool segments, and the root segment kept apart (it degrades first)."""
+    """Mem, swap and pool segments, and the root segment kept apart (it degrades first)."""
     segs: list[_Segment] = []
     if status.memory is not None:
         segs.append(_memory_segment(status.memory))
+        if status.memory.swap_total:
+            segs.append(_swap_segment(status.memory))
     many = len(status.pools) > 1
     for pool in status.pools:
         segs.append(_disk_segment(pool.name if many else "Pool", pool.disk))
@@ -107,7 +119,7 @@ def _numbers_style(seg: _Segment) -> str:
 
 
 def _bar(seg: _Segment, width: int, text: str) -> Text:
-    """`[|||||    text]`: fill drawn as `|`, `text` overlaid at the right end."""
+    """`[label|||||    text]`: fill drawn as `|`, label and `text` overlaid at the ends."""
     used = min(width, max(0, round(seg.used * width)))
     fill = _LEVEL_STYLE[seg.lvl]
     text_at = width - len(text)
@@ -120,6 +132,8 @@ def _bar(seg: _Segment, width: int, text: str) -> Text:
             style = _EMPTY_STYLE
         if i >= text_at:
             bar.append(text[i - text_at], style=style)
+        elif i < len(seg.label):
+            bar.append(seg.label[i], style=style)
         elif i < used:
             bar.append("|", style=style)
         else:
@@ -133,7 +147,13 @@ def _inner(seg: _Segment) -> str:
     return seg.short if seg.label == "/" else seg.numbers
 
 
+def _min_bar(seg: _Segment) -> int:
+    """The narrowest bar that shows `seg`'s label and numbers whole, plus the pad."""
+    return len(seg.label) + len(_inner(seg)) + _PAD
+
+
 def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_short: bool) -> Text:
+    """The line with every bar `bar` cells wide, or wider where its own content needs it."""
     line = Text(no_wrap=True, overflow="ellipsis")
     items = [(s, False) for s in segs]
     if root is not None:
@@ -145,27 +165,24 @@ def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_s
             line.append(seg.label + " ")
             line.append(_inner(seg), style=_numbers_style(seg))
             continue
-        line.append(seg.label)
-        line.append_text(_bar(seg, bar, _inner(seg)))
+        line.append_text(_bar(seg, max(bar, _min_bar(seg)), _inner(seg)))
     return line
 
 
 def _fit_bars(
     segs: list[_Segment], root: _Segment | None, width: int, root_short: bool
 ) -> Text | None:
-    """The line with the widest equal bars that fit, or None if the narrowest do not."""
+    """The line with the widest shared bar width that fits, or None if none does."""
     shown = list(segs)
     if root is not None and not root_short:
         shown.append(root)
     if not shown:
         return None
-    narrowest = min(MAX_BAR, max(len(_inner(s)) for s in shown) + _PAD)
-    base = _render(segs, root, narrowest, root_short)
-    spare = width - base.cell_len
-    if spare < 0:
-        return None
-    bar = min(MAX_BAR, narrowest + spare // len(shown))
-    return _render(segs, root, bar, root_short)
+    for bar in range(MAX_BAR, 0, -1):
+        line = _render(segs, root, bar, root_short)
+        if line.cell_len <= width:
+            return line
+    return None
 
 
 def system_line(status: SystemStatus, width: int) -> Text:

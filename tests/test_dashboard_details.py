@@ -1170,7 +1170,7 @@ def test_memory_bar_sits_at_the_right_end_of_the_summary_row() -> None:
     summary = _panel_body(_panel_view(c), None, 100)[0]
     assert "Running" in summary
     assert summary.endswith("3.0G/8.0G]")
-    assert "mem[|" in summary
+    assert "[mem|" in summary
     assert len(summary) == 100 - 4  # right-aligned to the panel's inner width
 
 
@@ -1185,7 +1185,7 @@ def test_memory_bar_does_not_add_a_row() -> None:
 def test_memory_bar_is_left_out_when_the_summary_leaves_no_room() -> None:
     c = _c(memory_usage=3 * GIB, memory_limit="8GiB", ip="10.0.0.5")
     narrow = _panel_body(_panel_view(c), None, 36)[0]
-    assert "mem[" not in narrow
+    assert "[mem" not in narrow
     assert "Running" in narrow
 
 
