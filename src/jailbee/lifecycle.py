@@ -986,6 +986,10 @@ def wait_for_background_ready(
             return
         if row.op_kind == background.JOB_DESTROY and background.worker_alive(row.pid):
             raise ValueError(f"'{short}' is being destroyed")
+        if row.op_kind == background.JOB_STOP:
+            if background.worker_alive(row.pid):
+                raise ValueError(f"'{short}' is being stopped")
+            return  # a stop that died mid-way gates nothing; the row is bookkeeping
         # A detached autostart supervisor never gates an attach — not when it
         # failed a stage, and not when its worker was killed. The container is
         # up, running and usable by construction: the supervisor only exists

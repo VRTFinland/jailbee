@@ -1,10 +1,12 @@
 """CLI entry point for jailbee."""
 
+import contextlib
 import json
+import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -5041,8 +5043,41 @@ def stop(
     # No force fallback here: this container holds the user's work, so a
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
-    stop_container(incus, name, force=force, label=short_name(cfg, name))
+    with _stop_job_row(cfg, name):
+        stop_container(incus, name, force=force, label=short_name(cfg, name))
     success(f"Stopped: {short_name(cfg, name)}")
+
+
+@contextlib.contextmanager
+def _stop_job_row(cfg: "Config", full_name: str) -> Iterator[None]:
+    """Hold a `stop` job row while the stop runs, so every view says "stopping".
+
+    A clean shutdown can take minutes, and Incus reports the container as
+    Running throughout; the row is what `jailbee ls` and the dashboards show
+    instead. Bookkeeping only, like every job write (`_track_job`).
+    """
+    from jailbee import background as bg
+
+    engine = _job_engine()
+    pid = os.getpid()
+
+    def claim(session: "Session") -> None:
+        # A live job keeps its row (`claim_job`); the stop then simply goes untracked.
+        bg.claim_job(
+            session,
+            container_name=full_name,
+            container_prefix=cfg.container_prefix,
+            pid=pid,
+            phase=bg.PHASE_STOPPING,
+            now=datetime.now().astimezone(),
+            op_kind=bg.JOB_STOP,
+        )
+
+    _track_job(engine, claim, "record the stop job row")
+    try:
+        yield
+    finally:
+        _track_job(engine, lambda s: bg.release_job(s, full_name, pid), "clear the stop job row")
 
 
 @app.command()
@@ -10798,6 +10833,10 @@ def job_log(
     row = lookup_background_job(cfg, name)
     if row is None:
         error(f"no background job for '{name}'")
+        raise typer.Exit(1)
+    if not row.log_path:
+        # A `jailbee stop` row: the stopping command prints to its own terminal.
+        error(f"'{short_name(cfg, row.container_name)}' is {row.phase}; that job keeps no log")
         raise typer.Exit(1)
 
     path = _Path(row.log_path)

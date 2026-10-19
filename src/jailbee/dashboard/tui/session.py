@@ -29,6 +29,7 @@ from jailbee.dashboard import advisories as dadv
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.bulk import (
     BULK_KEYS,
+    DETACHED_MENU_VERBS,
     MOUNTS_ENTRY,
     MOUNTS_KEY,
     BulkAction,
@@ -2186,6 +2187,10 @@ class DashboardSession:
             elif verb == "destroy":
                 # Asked here, as a bulk destroy is, not in the CLI on a blanked screen.
                 self.overlay = self.begin_destroy(target)
+            elif verb in DETACHED_MENU_VERBS:
+                # Detached, as a bulk run of one: the dashboard stays usable
+                # through a shutdown or an autostart run.
+                self._run_planned_one(verb, target)
             else:
                 self.dispatch(target, verb)
 
@@ -2469,7 +2474,11 @@ class DashboardSession:
 
     def _run_destroy(self, name: str) -> None:
         """Destroy ``name`` once confirmed, planned again: it may have changed meanwhile."""
-        action = self._plan_one("destroy", name)
+        self._run_planned_one("destroy", name)
+
+    def _run_planned_one(self, verb: str, name: str) -> None:
+        """Run ``verb`` on ``name`` alone as a detached child, or say why not."""
+        action = self._plan_one(verb, name)
         if not action.eligible:
             self.set_notice(nothing_to_do(action))
             return

@@ -1175,8 +1175,9 @@ jailbee restart feat-foo -b            # reboot + autostart, detached
 
 `jailbee ls` shows a **JOB** column with the live phase (`creating` → `cloning` →
 `autostart:<stage>`, or `starting` → `autostart:<stage>` for a boot, or
-`destroying` / `failed`) — `<stage>` is whichever autostart stage a
-detached run is currently on; it clears when the container is ready.
+`destroying` / `failed`, or `stopping` while any `jailbee stop` runs) — `<stage>`
+is whichever autostart stage a detached run is currently on; it clears when the
+container is ready. `jailbee shell`/`tmux` refuse a container that is being stopped.
 A failed background job leaves the container intact for inspection (`jailbee shell`,
 then destroy). `jailbee shell`/`tmux` on an in-flight container **wait** for it to
 finish, then attach — for a create and a boot alike, the wait ends early at

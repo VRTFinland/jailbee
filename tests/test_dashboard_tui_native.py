@@ -64,6 +64,7 @@ from tests.dashboard_pilot import (
     option_offset,
     option_style,
     repo_menu_keys,
+    screen_text,
 )
 
 
@@ -2036,3 +2037,40 @@ def test_a_capped_detail_keeps_every_entry_in_a_short_box():
     assert "…and 6 more" in text
     assert "No" in text
     assert "Yes, destroy 10" in text
+
+
+def test_a_confirm_picker_floats_in_the_middle_of_the_screen(mocker, tmp_path):
+    seen: list[tuple[int, int, int, int, str]] = []
+
+    def open_confirm(app) -> None:
+        app.session.overlay = Picker(
+            "container-destroy-confirm",
+            "Destroy alpha-a?",
+            (PickerEntry("No", "no"), PickerEntry("Yes, destroy", "yes")),
+        )
+
+    def probe(app) -> None:
+        box = app.frame.native_box
+        seen.append(
+            (box.region.y, box.region.bottom, app.size.height, box.region.x, screen_text(app))
+        )
+
+    drive(mocker, [open_confirm, probe], [wide_group(tmp_path)], size=(80, 30))
+
+    top, bottom, height, _left, text = seen[0]
+    assert abs(top - (height - bottom)) <= 1
+    assert top > 5
+    assert "Yes, destroy" in text
+
+
+def test_a_yes_no_picker_answers_to_y_and_n():
+    spec = Picker(
+        "container-destroy-confirm",
+        "Destroy alpha-a?",
+        (PickerEntry("No", "no"), PickerEntry("Yes, destroy", "yes")),
+    )
+
+    text = "\n".join(box_text(spec))
+
+    assert "[n] No" in text
+    assert "[y] Yes, destroy" in text

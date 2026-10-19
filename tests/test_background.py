@@ -728,3 +728,98 @@ def test_credential_group_defaults_to_none_for_an_older_job_file():
     del job["opts"]["credential_group"]
     back, _, _ = job_to_opts(job)
     assert back.credential_group is None
+
+
+def _claim(s, pid: int) -> bool:
+    from jailbee import background
+    from jailbee.db.models import JOB_STOP
+
+    return background.claim_job(
+        s,
+        container_name="c",
+        container_prefix="sampleapp",
+        pid=pid,
+        phase=background.PHASE_STOPPING,
+        now=datetime(2026, 6, 3, 12, 0, tzinfo=UTC),
+        op_kind=JOB_STOP,
+    )
+
+
+def test_claim_job_writes_a_stop_row_and_release_deletes_it() -> None:
+    from jailbee import background
+    from jailbee.db.models import JOB_STOP, BackgroundJob
+
+    engine = _engine()
+    with Session(engine) as s:
+        assert _claim(s, 4242)
+        row = s.get(BackgroundJob, "c")
+        assert row is not None
+        assert (row.op_kind, row.phase, row.pid) == (JOB_STOP, background.PHASE_STOPPING, 4242)
+        background.release_job(s, "c", 4242)
+        assert s.get(BackgroundJob, "c") is None
+
+
+def test_claim_job_leaves_a_live_job_alone(mocker) -> None:
+    """Overwriting a live worker's row would hide it from every view.
+
+    Mutation: claim unconditionally and the boot row is replaced.
+    """
+    from jailbee import background
+    from jailbee.db.models import JOB_BOOT, BackgroundJob
+
+    engine = _engine()
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    with Session(engine) as s:
+        background.start_job(
+            s,
+            container_name="c",
+            container_prefix="sampleapp",
+            branch=None,
+            pid=7,
+            log_path="/l",
+            now=datetime(2026, 6, 3, 12, 0, tzinfo=UTC),
+            op_kind=JOB_BOOT,
+        )
+        assert not _claim(s, 4242)
+        background.release_job(s, "c", 4242)
+        row = s.get(BackgroundJob, "c")
+        assert row is not None and row.op_kind == JOB_BOOT
+
+
+def test_claim_job_keeps_a_failed_create_row() -> None:
+    """A failed create's row is the only record the setup never finished.
+
+    Mutation: replace any clearable row and the stop's release deletes it.
+    """
+    from jailbee import background
+    from jailbee.db.models import JOB_CREATE, BackgroundJob
+
+    engine = _engine()
+    with Session(engine) as s:
+        background.start_job(
+            s,
+            container_name="c",
+            container_prefix="sampleapp",
+            branch=None,
+            pid=7,
+            log_path="/l",
+            now=datetime(2026, 6, 3, 12, 0, tzinfo=UTC),
+        )
+        background.fail_job(s, "c", "clone failed", now=datetime(2026, 6, 3, 12, 1, tzinfo=UTC))
+        assert not _claim(s, 4242)
+        background.release_job(s, "c", 4242)
+        row = s.get(BackgroundJob, "c")
+        assert row is not None and row.op_kind == JOB_CREATE
+        assert row.phase == background.PHASE_FAILED
+
+
+def test_claim_job_replaces_a_killed_stop(mocker) -> None:
+    from jailbee.db.models import BackgroundJob
+
+    engine = _engine()
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    with Session(engine) as s:
+        assert _claim(s, 7)
+        assert _claim(s, 4242)
+        row = s.get(BackgroundJob, "c")
+        assert row is not None and row.pid == 4242

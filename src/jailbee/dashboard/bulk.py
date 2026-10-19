@@ -45,6 +45,15 @@ BULK_VERBS: tuple[str, ...] = (
 PARALLEL_VERBS: frozenset[str] = frozenset(
     {"start", "stop", "restart", "net strict", "net loose", "rename --clear", "destroy"}
 )
+# Parallel verbs whose CLI can hand the work to a tracked background worker.
+# Their child then returns at once and the job row (the JOB column, the yellow
+# state glyph) says how far it got; a plain child would leave the row showing
+# nothing until it ended. `stop` writes its own row and needs no flag.
+TRACKED_VERBS: frozenset[str] = frozenset({"start", "restart", "destroy"})
+# Container-menu verbs that run as one detached child, as a bulk run of one,
+# rather than taking the terminal: they print nothing worth reading and can
+# take minutes.
+DETACHED_MENU_VERBS: frozenset[str] = frozenset({"start", "stop", "restart"})
 BULK_LABELS: dict[str, str] = {
     "start": "Start",
     "stop": "Stop",
@@ -239,10 +248,18 @@ def bulk_argv(verb: str, name: str, extra: Sequence[str] = ()) -> list[str]:
     """One parallel child's canonical argv: no ``jailbee``, no ``--config``.
 
     ``destroy`` gets ``--force``: the dashboard has asked already, and a
-    detached child has no stdin for the CLI's own question. ``extra`` carries
-    the answers the dashboard collected (``--for <ttl>``).
+    detached child has no stdin for the CLI's own question. The verbs in
+    :data:`TRACKED_VERBS` get ``--background``, so their progress is a job row
+    every view shows. ``extra`` carries the answers the dashboard collected
+    (``--for <ttl>``).
     """
-    return [*verb.split(), name, *(["--force"] if verb == "destroy" else []), *extra]
+    return [
+        *verb.split(),
+        name,
+        *(["--force"] if verb == "destroy" else []),
+        *(["--background"] if verb in TRACKED_VERBS else []),
+        *extra,
+    ]
 
 
 @dataclass(frozen=True)

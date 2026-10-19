@@ -38,6 +38,27 @@ _HEADER_LABELS = {
 _STATE_GLYPHS = {"Running": "▶", "Stopped": "■", "Frozen": "Ⅱ"}
 
 
+def transition_glyph(container: ContainerInfo) -> str | None:
+    """The state a live job is taking ``container`` to, as a yellow glyph; None if none.
+
+    Incus reports Running for the whole of a clean shutdown and Stopped until
+    a boot's `incus start` returns, so the state alone lags the action by as
+    long as the action takes. A live job row is what knows better.
+    """
+    if container.job_phase is None or container.job_pid is None:
+        return None
+    if background.clearable(container.job_phase, container.job_pid):
+        return None
+    if container.job_phase == background.PHASE_STOPPING:
+        return "[yellow]■[/yellow]"
+    if (
+        container.job_kind == background.JOB_BOOT
+        and container.job_phase == background.PHASE_STARTING
+    ):
+        return "[yellow]▶[/yellow]"
+    return None
+
+
 def state_label(state: str) -> str:
     """The state as the details panel words it: glyph and name, escaped."""
     glyph = _STATE_GLYPHS.get(state)
@@ -122,7 +143,9 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
     """Return a dashboard-specific value, keeping unknown text safely renderable."""
     value = field.cell(container)
     if field.name == "state":
-        return _STATE_GLYPHS.get(container.state, escape(container.state))
+        return transition_glyph(container) or _STATE_GLYPHS.get(
+            container.state, escape(container.state)
+        )
     if field.name == "network":
         return _loose(container, now)
     if field.name == "mounts":

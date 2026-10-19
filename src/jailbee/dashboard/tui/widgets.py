@@ -466,18 +466,22 @@ class DashboardFrame(Vertical):
         """
         async with self._settle_lock:
             bottom = self.query_one("#bottom", Horizontal)
+            screen = self.screen
             while True:
                 stale = [
                     child
-                    for child in bottom.children
+                    for host in (bottom, screen)
+                    for child in host.children
                     if isinstance(child, OverlayBox) and child is not self.native_box
                 ]
                 if stale:
-                    await bottom.remove_children(stale)
+                    for child in stale:
+                        await child.remove()
                     continue
                 box = self.native_box
                 if box is not None and box.parent is None:
-                    await bottom.mount(box)
+                    # A floating box sits on the screen's own layer, over the frame.
+                    await (screen if box.floating else bottom).mount(box)
                     continue
                 break
             box = self.native_box
@@ -488,6 +492,18 @@ class DashboardFrame(Vertical):
     def native_state(self) -> NativeState | None:
         box = self.native_box
         return box.state() if box is not None and box.is_mounted else None
+
+    @staticmethod
+    def _place_floating(box: OverlayBox, *, width: int, height: int) -> None:
+        """Centre ``box`` on the screen, over the frame."""
+        box_width = min(width, max(box.natural_width() or 0, 20))
+        box_height = min(height, box.content_rows() + box.chrome_rows())
+        box.display = True
+        box.styles.layer = "float"
+        box.styles.width = box_width
+        box.styles.max_width = "100%"
+        box.styles.height = box_height
+        box.styles.offset = ((width - box_width) // 2, (height - box_height) // 2)
 
     def show(self, view: DashboardView) -> None:
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
@@ -521,6 +537,7 @@ class DashboardFrame(Vertical):
         self.border_subtitle = subtitle if subtitle is not None else ""
         overlay = view.overlay
         box = self._sync_native(overlay)
+        floating = box is not None and box.floating
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
             details_for(
@@ -546,9 +563,13 @@ class DashboardFrame(Vertical):
         )
 
         def bottom_lines(list_rows: int, details_rows: int | None) -> int:
-            beside = details is not None and details_rows is not None and (overlay is None or menu)
+            beside = (
+                details is not None
+                and details_rows is not None
+                and (overlay is None or menu or floating)
+            )
             shown_details = details_rows + 2 if beside and details_rows is not None else 0
-            if box is None:
+            if box is None or floating:
                 return shown_details
             return max(shown_details, min(box.content_rows(), list_rows) + box.chrome_rows())
 
@@ -564,7 +585,7 @@ class DashboardFrame(Vertical):
                 table_lines=table_lines,
                 notice_lines=lines(inline, width),
                 hint_lines=lines(hint, width),
-                has_bottom=overlay is not None or details is not None,
+                has_bottom=(overlay is not None and not floating) or details is not None,
                 details_cap=DETAILS_MAX_ROWS if measured is None else measured.base,
                 details_want=DETAILS_MAX_ROWS if measured is None else measured.want,
                 details_fit=details_fit,
@@ -615,7 +636,9 @@ class DashboardFrame(Vertical):
         bottom.display = layout.bottom_rows > layout.crop_top
         bottom.styles.margin = (1 if layout.gap else 0, 0, 0, 0)
         beside = (
-            details is not None and layout.details_rows is not None and (overlay is None or menu)
+            details is not None
+            and layout.details_rows is not None
+            and (overlay is None or menu or floating)
         )
         self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
         anchored = beside and layout.details_rows is not None
@@ -631,7 +654,9 @@ class DashboardFrame(Vertical):
         spare = used < height + system_row
         self.query_one("#fill-above", Static).display = anchored and spare
         self.query_one("#fill-below", Static).display = not anchored and spare
-        if box is not None:
+        if box is not None and floating:
+            self._place_floating(box, width=self.app.size.width, height=self.app.size.height)
+        elif box is not None:
             rows = min(box.content_rows(), layout.list_rows) + box.chrome_rows() - layout.crop_top
             box.display = rows > box.chrome_rows()
             box.styles.height = max(0, rows)

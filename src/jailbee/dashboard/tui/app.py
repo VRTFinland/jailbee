@@ -91,8 +91,8 @@ class DashboardApp(App[int], inherit_bindings=False):
     """
 
     CSS = """
-    Screen { background: ansi_default; }
-    #frame { background: ansi_default; color: ansi_default; }
+    Screen { background: ansi_default; layers: base float; }
+    #frame { layer: base; background: ansi_default; color: ansi_default; }
     """
     ENABLE_COMMAND_PALETTE = False
     # Textual's selection binds double-click (select all) and a copy key that

@@ -420,7 +420,8 @@ def actions_for_container(
             pr_number=container.pr_number,
             pr_author=container.pr_author,
             job_clearable=job_clearable,
-            has_job=container.job_phase is not None,
+            # A stop row has no log: the stopping command is its own process.
+            has_job=container.job_phase is not None and container.job_kind != background.JOB_STOP,
             # A job row that is not clearable is one whose worker is still
             # alive — that is what makes `--follow` the right form.
             job_running=container.job_phase is not None and not job_clearable,

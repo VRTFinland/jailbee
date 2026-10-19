@@ -7516,6 +7516,44 @@ def test_wait_for_background_ready_rejects_destroy_op(make_cfg, tmp_path, monkey
         wait_for_background_ready(cfg, "myrepo-dying", sleep=lambda _s: None)
 
 
+@pytest.mark.parametrize("alive", [True, False])
+def test_wait_for_background_ready_on_a_stop_row(make_cfg, tmp_path, monkeypatch, mocker, alive):
+    """A live stop refuses the attach; a stop row whose process died gates nothing.
+
+    Mutation: let the dead row fall through to the generic "worker is gone"
+    path and the second case raises.
+    """
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_STOP
+    from jailbee.lifecycle import wait_for_background_ready
+
+    cfg = make_cfg(tmp_path / "repo")
+    object.__setattr__(cfg, "container_prefix", "myrepo")
+    with Session(get_engine()) as s:
+        assert background.claim_job(
+            s,
+            container_name="myrepo-x",
+            container_prefix="myrepo",
+            pid=4242,
+            phase=background.PHASE_STOPPING,
+            now=datetime.now(UTC),
+            op_kind=JOB_STOP,
+        )
+    mocker.patch("jailbee.background.worker_alive", return_value=alive)
+
+    if alive:
+        with pytest.raises(ValueError, match="being stopped"):
+            wait_for_background_ready(cfg, "myrepo-x", sleep=lambda _s: None)
+    else:
+        wait_for_background_ready(cfg, "myrepo-x", sleep=lambda _s: None)
+
+
 def test_wait_for_background_ready_dead_destroy_worker_reports_gone(
     make_cfg, tmp_path, monkeypatch
 ):
