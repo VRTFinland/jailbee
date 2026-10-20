@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.tui import fleet
+from jailbee.dashboard.tui import fleet, scrollbar
 from jailbee.dashboard.tui.widgets import FleetTable
 from tests.dashboard_fixtures import ci
 
@@ -64,6 +64,7 @@ class _Host(App[None]):
 
 def _run(script):  # type: ignore[no-untyped-def]
     async def main():  # type: ignore[no-untyped-def]
+        scrollbar.install()  # what `DashboardApp` does, so no test depends on one having run
         app = _Host()
         async with app.run_test(size=(64, 20)) as pilot:
             await script(app, app.query_one(_Counting), pilot)
@@ -361,7 +362,8 @@ def test_placeholder_rewraps_on_resize_and_uses_scrollbar_content_width():
         assert all(len(line[1]) <= 19 for line in table._drawn)
         table.scroll_to(y=table.max_scroll_y, animate=False)
         await pilot.pause()
-        assert "show them" in " ".join(" ".join(_screen(app)[:2]).split())
+        text = " ".join(_screen(app)[:2]).replace("┃", " ").replace("│", " ")
+        assert "show them" in " ".join(text.split())
         await pilot.resize_terminal(80, 20)
         await pilot.pause()
         assert len(table._drawn) == table.virtual_size.height == 1

@@ -826,8 +826,9 @@ class _DetailsBody:
         return lines
 
 
-_SCROLL_TRACK = Style(dim=True)
-_SCROLL_THUMB = Style(bold=True)
+# One look for every scrollbar of the dashboard: a thin line, the thumb heavier.
+SCROLL_THUMB_GLYPH, SCROLL_TRACK_GLYPH = "┃", "│"
+SCROLL_THUMB_STYLE, SCROLL_TRACK_STYLE = Style(bold=True), Style(dim=True)
 
 
 def _with_scrollbar(
@@ -847,8 +848,9 @@ def _with_scrollbar(
         target = round(row * furthest / (rows - 1)) if rows > 1 else 0
         on = start <= row < start + thumb
         bar = Segment(
-            "┃" if on else "│",
-            (_SCROLL_THUMB if on else _SCROLL_TRACK) + hit_style("details-scroll", target),
+            SCROLL_THUMB_GLYPH if on else SCROLL_TRACK_GLYPH,
+            (SCROLL_THUMB_STYLE if on else SCROLL_TRACK_STYLE)
+            + hit_style("details-scroll", target),
         )
         out.append([*Segment.adjust_line_length(lines[top + row], width), bar])
     return out

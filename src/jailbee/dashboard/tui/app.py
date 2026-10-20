@@ -20,6 +20,7 @@ from textual.message import Message
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
+from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.keys import parse_key
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS
@@ -113,6 +114,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         auto_optimize: bool = True,
     ) -> None:
         super().__init__(ansi_color=True)
+        scrollbar.install()
         self.session = DashboardSession(
             startup,
             incus=incus,
