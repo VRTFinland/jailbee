@@ -155,17 +155,20 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
         kinds = (
             ("text", "thinking", "tool_use") if record["type"] == "assistant" else ("tool_result",)
         )
-        if any(isinstance(block, dict) and block.get("type") in kinds for block in content):
-            stamp = record.get("timestamp")
-            if isinstance(stamp, str):
-                try:
-                    date = datetime.fromisoformat(stamp)
-                    if date.tzinfo is not None and (now is None or date.timestamp() <= now):
-                        date = date.astimezone(UTC)
-                        if last_event_at is None or date > last_event_at:
-                            last_event_at = date
-                except (ValueError, OverflowError, OSError):
-                    pass
+        date: datetime | None = None
+        stamp = record.get("timestamp")
+        if isinstance(stamp, str):
+            try:
+                parsed = datetime.fromisoformat(stamp)
+                if parsed.tzinfo is not None and (now is None or parsed.timestamp() <= now):
+                    date = parsed.astimezone(UTC)
+            except (ValueError, OverflowError, OSError):
+                pass
+        if date is not None and any(
+            isinstance(block, dict) and block.get("type") in kinds for block in content
+        ):
+            if last_event_at is None or date > last_event_at:
+                last_event_at = date
         if record["type"] != "assistant":
             continue
         for block in reversed(content):
@@ -179,7 +182,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                     continue
                 if last_tool is None:
                     last_tool = tool
-                event = ActivityEvent("tool", tool)
+                event = ActivityEvent("tool", tool, date)
             elif kind == "text":
                 text = block.get("text")
                 if not isinstance(text, str):
@@ -189,7 +192,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                 short = _one_line(text, MESSAGE_CHARS)
                 if not short:
                     continue
-                event = ActivityEvent("message", short)
+                event = ActivityEvent("message", short, date)
             else:
                 continue
             if len(newest_first) < RECENT_EVENTS:

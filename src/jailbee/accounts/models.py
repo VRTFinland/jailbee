@@ -275,6 +275,8 @@ class ActivityEvent:
 
     kind: Literal["tool", "message"]
     text: str
+    at: datetime | None = None
+    """When the transcript recorded the step (UTC); None when it carried no valid time."""
 
 
 @dataclass(frozen=True)

@@ -45,6 +45,7 @@ from jailbee.lifecycle import (
 from jailbee.upgrade import ACTION_COMMANDS
 
 if TYPE_CHECKING:
+    from jailbee.accounts.models import ActivityEvent
     from jailbee.dashboard.model import RepoGroup, Row
 
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
@@ -215,6 +216,22 @@ def tool_markup(text: str, *, dim_args: bool) -> str:
     return out
 
 
+def _clock(event: ActivityEvent | None) -> str:
+    """The local ``HH:MM`` an event happened, dim, with its trailing space; ``""`` if unknown."""
+    if event is None or event.at is None:
+        return ""
+    return f"[dim]{event.at.astimezone():%H:%M}[/dim] "
+
+
+def _event_markup(event: ActivityEvent) -> str:
+    body = (
+        tool_markup(event.text, dim_args=True)
+        if event.kind == "tool"
+        else f"[white]{escape(f'“{event.text}”')}[/white]"
+    )
+    return _clock(event) + body
+
+
 def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
     """The container's agent activity, or an empty block.
 
@@ -231,25 +248,26 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
         text = describe(summary, now)
         if text is None:
             continue
-        lines = [escape(text.head)]
-        if text.tool is not None:
-            lines.append(f"↳ {tool_markup(text.tool, dim_args=False)}")
-        message = (
-            None
-            if text.message is None
-            else f"[bold white]{escape(f'“{text.message}”')}[/bold white]"
-        )
+        # The newest tool call and message are what the tool line and `message`
+        # show; each leads with the time its transcript record carries.
+        newest: dict[str, ActivityEvent] = {}
         skip = {"tool": text.tool is not None, "message": text.message is not None}
         earlier: list[str] = []
         for event in reversed(text.recent):
             if skip.get(event.kind):
                 skip[event.kind] = False  # only the newest of each kind is shown above
+                newest[event.kind] = event
                 continue
-            earlier.append(
-                tool_markup(event.text, dim_args=True)
-                if event.kind == "tool"
-                else f"[white]{escape(f'“{event.text}”')}[/white]"
-            )
+            earlier.append(_event_markup(event))
+        lines = [escape(text.head)]
+        if text.tool is not None:
+            lines.append(f"↳ {_clock(newest.get('tool'))}{tool_markup(text.tool, dim_args=False)}")
+        message = (
+            None
+            if text.message is None
+            else f"{_clock(newest.get('message'))}"
+            f"[bold white]{escape(f'“{text.message}”')}[/bold white]"
+        )
         history = tuple(earlier)
         return ActivityBlock(tuple(lines), message, history)
     return ActivityBlock()

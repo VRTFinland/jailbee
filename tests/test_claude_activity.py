@@ -487,3 +487,28 @@ def test_event_timestamp_is_found_even_after_recent_display_history_is_full():
     parsed = ca.parse_tail(_tail(dated, *([undated] * (RECENT_EVENTS + 1))), now=1767225630)
     assert parsed.last_event_at == datetime(2026, 1, 1, 0, 0, 14, tzinfo=UTC)
     assert len(parsed.recent) == RECENT_EVENTS
+
+
+def test_recent_events_carry_the_time_of_their_record():
+    from datetime import UTC, datetime
+
+    def record(stamp: object, *blocks: dict[str, object]) -> str:
+        data: dict[str, object] = {"type": "assistant", "message": {"content": list(blocks)}}
+        if stamp is not None:
+            data["timestamp"] = stamp
+        return json.dumps(data)
+
+    parsed = ca.parse_tail(
+        _tail(
+            record("2026-01-01T10:15:00Z", _tool("Read", file_path="/a.py")),
+            record("2026-01-01T10:20:00+02:00", _text("later")),
+            record("broken", _text("no usable time")),
+            record(None, _text("no time")),
+        )
+    )
+    assert [e.at for e in parsed.recent] == [
+        datetime(2026, 1, 1, 10, 15, tzinfo=UTC),
+        datetime(2026, 1, 1, 8, 20, tzinfo=UTC),
+        None,
+        None,
+    ]

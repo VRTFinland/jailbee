@@ -1116,3 +1116,26 @@ def test_memory_bar_colour_follows_the_free_share() -> None:
     assert "bold green" in styles(GIB)
     assert "bold yellow" in styles(int(7.2 * GIB))
     assert "bold red" in styles(int(7.8 * GIB))
+
+
+def test_activity_rows_lead_with_the_local_clock_time_of_their_event() -> None:
+    at = datetime(2026, 10, 3, 9, 41, tzinfo=UTC)
+    hhmm = lambda minutes: (at + timedelta(minutes=minutes)).astimezone().strftime("%H:%M")  # noqa: E731
+    recent = (
+        ActivityEvent("tool", "Bash  old", at),
+        ActivityEvent("message", "older", at + timedelta(minutes=1)),
+        ActivityEvent("tool", "Bash  ls", at + timedelta(minutes=2)),
+        ActivityEvent("message", "done", at + timedelta(minutes=3)),
+        ActivityEvent("tool", "Bash  undated"),
+    )
+    activity = AgentActivity("Bash  undated", "done", recent=recent)
+    summary = AgentSummary("claude", "busy", None, None, 1, activity=activity)
+    block = dd.activity_block(_c(agent_status=(summary,)), NOW)
+
+    assert _plain(block.lines[1]) == "↳ Bash  undated"  # no time recorded: no prefix
+    assert block.message is not None and _plain(block.message).startswith(hhmm(3))
+    assert [_plain(h) for h in block.history] == [
+        f"{hhmm(2)} Bash  ls",
+        f"{hhmm(1)} “older”",
+        f"{hhmm(0)} Bash  old",
+    ]
