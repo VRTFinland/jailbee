@@ -184,7 +184,9 @@ def test_branch_reports_real_host_git_update_failure_as_exit_one(mocker, tmp_pat
 
     _cfg(mocker, tmp_path)
     mocker.patch("jailbee.sync.git.checkout_branch")
-    mocker.patch("jailbee.submodules.git.submodule_update", side_effect=git.GitError("fatal: bad object"))
+    mocker.patch(
+        "jailbee.submodules.git.submodule_update", side_effect=git.GitError("fatal: bad object")
+    )
 
     result = runner.invoke(app, ["branch", "master"])
 

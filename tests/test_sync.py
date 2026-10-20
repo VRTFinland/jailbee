@@ -7072,7 +7072,9 @@ def test_checkout_submodules_on_host_switch_resolves_current_branch(mocker, make
     co.assert_called_once_with(cfg.repo_root, "feat/foo")
 
 
-def test_checkout_submodules_on_host_wraps_alignment_failure_after_switch(mocker, make_cfg, tmp_path):
+def test_checkout_submodules_on_host_wraps_alignment_failure_after_switch(
+    mocker, make_cfg, tmp_path
+):
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)
