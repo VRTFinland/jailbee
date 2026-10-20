@@ -362,15 +362,12 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         )
         git = (root, *subs)
 
-    created = cell("created")
-    if c.created_at is not None:
-        created = f"{format_duration_short(now - c.created_at)} ago ({created})"
+    # What no other row says: the base is the git table's "vs" header, memory and
+    # CPU are the summary bar and the process lines, the table has the age.
     group = escape(c.credential_group) if c.credential_group else "inherits repo"
-    footer = [f"base {cell('base')}"]
+    footer = [escape(c.mode), f"group {group}"]
     if (source := fork_source(c)) is not None:
         footer.append(f"⑂ forked from {escape(source)}")
-    footer += [escape(c.mode), f"group {group}", f"created {created}"]
-    footer += [f"mem {cell('mem')}", f"cpu {cell('cpu')}"]
     return ContainerPanel(
         tuple(summary),
         escape(c.base_branch or "base"),

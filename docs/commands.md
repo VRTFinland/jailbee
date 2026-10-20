@@ -16,7 +16,7 @@ Then a git table lists the container's own tree and one row per
 changed submodule, with commits ahead (↑) and behind (↓), the committed diff
 against the base, the working-tree diff, and the merge prediction (plus the
 diff against the host's checked-out HEAD when the note column has room). A dim
-footer line holds the rest: base, mode, credential group, age, memory and CPU.
+footer line holds the rest: mode, credential group and, for a fork, its source.
 Unchanged submodules are omitted; `?` means the probe could not determine a
 value. Nothing is cut: a line too long for the panel continues on the next
 line, and a card taller than the room it gets shows a window of its content

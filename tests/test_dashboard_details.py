@@ -596,34 +596,25 @@ def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:
     assert all(r.extra == "" for r in subs)
 
 
-def test_footer_carries_base_mode_group_created_and_resources() -> None:
-    created = NOW - timedelta(days=2)
+def test_footer_carries_only_what_no_other_row_says() -> None:
     c = _c(
         base_branch="dev",
         credential_group="[work]",
-        created_at=created,
-        optional_mounts=("ssh", "gpg"),
+        created_at=NOW - timedelta(days=2),
         memory_usage=1_200_000_000,
         memory_limit="4GiB",
         cpu_percent=34.0,
     )
-    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
-    footer = _panel_plain(dd.container_panel(c, NOW).footer)
 
-    assert footer == [
-        f"base {_plain(cells['base'](c))}",
-        "clone",
-        "group [work]",
-        f"created 48h ago ({_plain(cells['created'](c))})",
-        f"mem {_plain(cells['mem'](c))}",
-        f"cpu {_plain(cells['cpu'](c))}",
-    ]
+    # Not the base (the git table's "vs" header), the age (a table column), nor
+    # memory and CPU (the summary bar and the process lines).
+    assert _panel_plain(dd.container_panel(c, NOW).footer) == ["clone", "group [work]"]
 
 
-def test_footer_names_a_forks_source_after_its_base() -> None:
+def test_footer_names_a_forks_source_after_its_group() -> None:
     footer = _panel_plain(dd.container_panel(_c(base_branch="dev", fork_of="alpha-a"), NOW).footer)
 
-    assert footer[:3] == ["base dev", "⑂ forked from a", "clone"]
+    assert footer == ["clone", "group inherits repo", "⑂ forked from a"]
     assert not any("forked" in p for p in _panel_plain(dd.container_panel(_c(), NOW).footer))
 
 
@@ -722,7 +713,7 @@ def test_the_panel_reads_summary_git_table_footer() -> None:
     assert body[3].startswith("feat") and "merge" in body[3] and "host HEAD" in body[3]
     assert "deps/module-0" in body[4] and "modified" in body[4]
     assert body[5] == ""
-    assert body[6].startswith("base dev") and "group inherits repo" in body[6]
+    assert body[6].startswith("clone") and "group inherits repo" in body[6]
     # One column per fact: the diffs sit under "vs dev", the working trees under "working".
     assert body[3].index("+245 -18") == body[2].index("vs dev") == body[4].index("+40 -2")
     assert body[3].index("+12 -3") == body[2].index("working") == body[4].index("+5 -0")
@@ -736,7 +727,7 @@ def test_many_submodules_scroll_and_keep_the_footer_at_the_end() -> None:
     assert "deps/module-3" in "\n".join(body) and "deps/module-4" not in "\n".join(body)
     last, _ = _panel_scrolled(replace(view, scroll=99), 8, 120, fixed=True)
     assert "deps/module-9" in "\n".join(last)
-    assert last[-1].startswith("base dev")
+    assert last[-1].startswith("clone")
     assert "more submodules" not in "\n".join(body + last)
 
 
@@ -745,7 +736,7 @@ def test_a_fixed_panel_pins_the_footer_to_the_last_grid_row() -> None:
 
     assert len(body) == 8
     assert body[0].startswith("▶ Running")
-    assert body[7].startswith("base dev")
+    assert body[7].startswith("clone")
     assert body[4:7] == ["", "", ""]
 
 
@@ -753,7 +744,7 @@ def test_a_narrow_panel_wraps_its_rows_and_drops_host_head() -> None:
     for width in (dd.DETAILS_PAIR_WIDTH, 59):
         body = _panel_body(_panel_view(_rich_container(subs=2)), None, width)
         assert "host HEAD" not in "\n".join(body), width
-        assert any(ln.startswith("base") for ln in body), width
+        assert any(ln.startswith("clone") for ln in body), width
     wide = _panel_body(_panel_view(_rich_container()), 8, 100, fixed=True)
     assert "host HEAD" in "\n".join(wide)
 
@@ -783,7 +774,7 @@ def test_the_git_table_keeps_every_column_at_every_width() -> None:
 def test_no_git_status_renders_one_git_line() -> None:
     body = _panel_body(_panel_view(_c()), None, 80)
     assert body == [body[0], "", "git —", "", body[-1]]
-    assert body[0].startswith("▶ Running") and body[-1].startswith("base")
+    assert body[0].startswith("▶ Running") and body[-1].startswith("clone")
 
 
 def test_container_written_text_renders_literally() -> None:
