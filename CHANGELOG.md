@@ -28,11 +28,12 @@ before editing `## Unreleased`.
   from now — no detour through strict. A bulk `Network: loose…` now extends
   the marked containers that are already loose instead of skipping them.
 
-- **On a btrfs pool, new containers are instant copy-on-write clones.**
-  `jailbee base build` now builds on the configured pool and, on btrfs, keeps
-  the golden image as a pool-native instance that `jailbee new` copies, so a
-  fresh container shares its blocks with the golden instead of duplicating
-  them. A rebuild keeps one golden version only, and removes old dated golden
+- **`jailbee base build` builds the golden image on the configured pool.**
+  Which storage backend that is depends on your Incus setup; when the pool's
+  driver is btrfs, the golden image is kept as a pool-native instance and
+  `jailbee new` copies it, so a fresh container shares its blocks with the
+  golden instead of duplicating them. Other drivers behave as before. Every
+  rebuild keeps one golden version only and removes old dated golden
   archives. `jailbee base usage` and `jailbee disk-usage` report the golden
   instance. Run `jailbee base build` to pick it up; see
   [Storage](docs/storage.md).
