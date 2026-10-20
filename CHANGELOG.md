@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.6 - 2026-10-20
+
 ### Added
 
 - **Dashboard: clock times in the agent activity.** The tool line, the last
