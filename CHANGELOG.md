@@ -8,6 +8,12 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- **The LiteLLM proxy is pinned to 1.106.0** (was 1.106.0rc1, now a stable
+  release). An instance without `litellm.version` is reinstalled on the next
+  `jailbee litellm up`; `jailbee apply` says when one is due.
+
 ## 1.7.6 - 2026-10-20
 
 ### Added
