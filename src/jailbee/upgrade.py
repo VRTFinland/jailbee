@@ -331,14 +331,6 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`container.tmpfs.enabled` to get one back, capped by `container.tmpfs.size`"
         ),
     ),
-    UpgradeNote(
-        version=(1, 7, 7),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the bundled LiteLLM version moves from 1.106.0rc1 to the stable "
-            "1.106.0 release, with a matching hash-locked requirements file"
-        ),
-    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
