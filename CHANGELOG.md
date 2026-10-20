@@ -8,6 +8,33 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Dashboard: clock times in the agent activity.** The tool line, the last
+  message and each history row on a container card lead with a dim local
+  `HH:MM`, so you can tell when each step happened.
+
+### Changed
+
+- **Dashboard: cards wrap and scroll instead of cutting.** A long line on a
+  container or repo card continues on the next line, and a card taller than
+  its room shows a window of its content with a scrollbar — the `… +N more
+  submodules`, `- … N more` and message `…` rows are gone. Scroll with the
+  wheel over the card, `PgUp`/`PgDn`, or a click on the scrollbar.
+- **Dashboard: every scrollbar is a thin line.** The table, menus and pickers
+  use the same `┃` thumb on a `│` track as the cards, instead of Textual's
+  block bar.
+- **Dashboard: the container card's footer holds only what no other row says.**
+  The base branch, age, memory and CPU are gone (the git table, the table and
+  the summary already show them); the mode, credential group and a fork's
+  source stay.
+
+### Fixed
+
+- **Dashboard: the `[run …]` and `[dismiss]` links on the repo card react at
+  once.** They are underlined under the pointer, and a dismissed notice
+  disappears immediately instead of when the next refresh arrives.
+
 ## 1.7.5 - 2026-10-20
 
 ### Added
