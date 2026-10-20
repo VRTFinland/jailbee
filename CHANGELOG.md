@@ -28,8 +28,42 @@ before editing `## Unreleased`.
   from now — no detour through strict. A bulk `Network: loose…` now extends
   the marked containers that are already loose instead of skipping them.
 
+- **On a btrfs pool, new containers are instant copy-on-write clones.**
+  `jailbee base build` now builds on the configured pool and, on btrfs, keeps
+  the golden image as a pool-native instance that `jailbee new` copies, so a
+  fresh container shares its blocks with the golden instead of duplicating
+  them. A rebuild keeps one golden version only, and removes old dated golden
+  archives. `jailbee base usage` and `jailbee disk-usage` report the golden
+  instance. Run `jailbee base build` to pick it up; see
+  [Storage](docs/storage.md).
+- **`defaults.cpu_share` lowers containers' CPU weight against the host.**
+  A percentage (1–100) written to the base profile as `limits.cpu.allowance`,
+  so busy containers cannot starve the desktop while the CPUs are contended;
+  an idle host still gives them every core. `jailbee apply` updates running
+  containers live. See [Configuration](docs/config.md#defaults).
+- **Dashboard: host status and per-container load.** A system status row shows
+  host memory and storage-pool usage as htop-style bars (toggle it on the
+  Visibility tab), and each container card lists its top CPU and memory
+  processes, with memory and CPU bars in its summary row.
+- **Dashboard: upgrade and deprecation advice on the repo card.** Owed
+  `jailbee base build` / `jailbee apply` runs and config deprecation notices
+  show on the repo card with run and dismiss links, and the menu offers
+  "upgrade all".
+- **Dashboard: bulk mounts and calmer actions.** Optional mounts can be
+  mounted or unmounted over the marked containers. Start, stop and restart run
+  detached and show the transition. Destroy and merge ask for confirmation,
+  yes/no questions float mid-screen and answer to `y`/`n`, and `←`/`→` fold and
+  unfold a repo.
+- **`jailbee new` suggests fetched upstream branches as the base.** TAB
+  completion and the dashboards' base prompts list local branches first, then
+  the upstream branches already fetched.
+- **Aliases may contain uppercase letters** and are matched
+  case-insensitively.
+
 ### Changed
 
+- **The BASE column always shows the base branch.** For a fork it used to show
+  `⑂ <source>`; the source now appears in the container's details.
 - **`jailbee init` no longer seeds a `~/.gitconfig` mount.** Existing entries
   keep working. Because git reads `~/.gitconfig` last, a mounted one overrides
   the per-repo identity, and `jailbee doctor` says so.
