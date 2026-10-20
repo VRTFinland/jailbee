@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 from rich.console import Console
+from rich.segment import Segment
 from rich.text import Text
 
 from jailbee.accounts.models import ActivityEvent, AgentActivity
@@ -145,6 +147,27 @@ def test_render_flows_pairs_by_width_and_scrolls_past_its_rows() -> None:
     assert len(capped) == 4 and "┃" in bar
     assert "k11" not in "\n".join(capped)
     assert "k11" in _scrolled(replace(view, scroll=8), 4, width=40)[0][-1]
+
+
+def test_a_scrollbar_render_that_narrows_to_exactly_its_rows_does_not_divide_by_zero(
+    mocker: MockerFixture,
+) -> None:
+    """The scrollbar is drawn from lines recomputed one column narrower than the
+    check that decided to draw it; if that recompute lands on exactly ``rows``
+    lines (instead of more), ``_with_scrollbar`` must not divide by zero."""
+    rows = 11
+
+    def fake_natural_lines(
+        self: dd._DetailsBody, console: Console, options: Any
+    ) -> list[list[Segment]]:
+        count = rows if options.max_width < 40 else rows + 1
+        return [[Segment("x")] for _ in range(count)]
+
+    mocker.patch.object(dd._DetailsBody, "natural_lines", fake_natural_lines)
+    body = dd._DetailsBody(dd.DetailsView("alpha", ()), rows, fixed=False)
+
+    console = Console(record=True, width=40)
+    console.print(body)  # must not raise ZeroDivisionError
 
 
 def _with_activity(**kw: Any) -> ContainerInfo:

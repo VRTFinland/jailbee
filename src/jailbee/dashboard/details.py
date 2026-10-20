@@ -757,12 +757,16 @@ class _DetailsBody:
         rows = self.max_rows
         if rows is not None and len(lines) > rows and options.max_width >= 2:
             width = options.max_width - 1
-            lines = _with_scrollbar(
-                self.natural_lines(console, options.update(width=width)),
-                rows,
-                width,
-                self.view.scroll,
-            )
+            narrow_lines = self.natural_lines(console, options.update(width=width))
+            # Wrapping at one column narrower can land on <= rows lines even
+            # though the wider check above found more: no scrollbar is needed
+            # then, and drawing one would divide by zero.
+            if len(narrow_lines) > rows:
+                lines = _with_scrollbar(narrow_lines, rows, width, self.view.scroll)
+            else:
+                lines = narrow_lines
+                if self.fixed:
+                    lines += [[_BLANK] for _ in range(rows - len(lines))]
         elif rows is not None and self.fixed:
             lines += [[_BLANK] for _ in range(rows - len(lines))]
         for index, line in enumerate(lines):
