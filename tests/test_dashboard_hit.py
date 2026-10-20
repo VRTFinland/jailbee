@@ -175,3 +175,17 @@ def test_advisory_kinds_round_trip():
         dhit.Hit("upgrade-all", ("alpha",)),
     ):
         assert dhit.Hit.of(dhit.hit_style(hit.kind, *hit.args).meta) == hit
+
+
+def test_details_panel_underlines_the_hovered_link():
+    from rich.console import Console
+    from rich.text import Text
+
+    from jailbee.dashboard.hit import Hit, hit_style
+    from jailbee.dashboard.tui.widgets import _Hovered
+
+    hit = Hit("advisory-dismiss", ("alpha", "k"))
+    text = Text("x ")
+    text.append("[dismiss]", style=hit_style(hit.kind, *hit.args))
+    segments = list(Console().render(_Hovered(text, hit)))
+    assert [s.text for s in segments if s.style and s.style.underline] == ["[dismiss]"]

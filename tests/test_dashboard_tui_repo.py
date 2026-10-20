@@ -373,6 +373,20 @@ def test_dismiss_menu_picker_dismisses_chosen_advisory(mocker, tmp_path):
     dismiss.assert_called_once_with(group.advisories[1])
 
 
+def test_dismissed_advisory_disappears_before_the_next_snapshot(mocker, tmp_path):
+    from tests.dashboard_pilot import bare_session
+
+    group = _owing_group(tmp_path, "alpha", *_BOTH)
+    session, _t = bare_session(mocker, [group])
+    mocker.patch("jailbee.dashboard.advisories.dismiss_advisory")
+    key = group.advisories[0].key
+    session.dismiss_advisory("alpha", key)
+    session.tick()  # the client still serves the old snapshot
+    shown = next(g for g in session.groups if g.prefix == "alpha")
+    assert key not in [a.key for a in shown.advisories]
+    assert len(shown.advisories) == len(group.advisories) - 1
+
+
 def test_repo_menu_upgrade_all_not_offered_for_one_repo_owing_both(tmp_path):
     groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta")]
     verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))

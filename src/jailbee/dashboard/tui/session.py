@@ -376,6 +376,8 @@ class DashboardSession:
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
+        # Advisories dismissed here whose snapshot has not caught up yet: hidden at once.
+        self._dismissed: set[tuple[str, str]] = set()
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
         self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
@@ -404,7 +406,9 @@ class DashboardSession:
         self.jobs.poll()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
-        self.presented = present(snapshot.groups, self.cwd_root, self.scope)
+        self.presented = self._without_dismissed(
+            present(snapshot.groups, self.cwd_root, self.scope)
+        )
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if self.over_ssh else snapshot.update
@@ -428,6 +432,31 @@ class DashboardSession:
             self._auto_optimize_seq = None
             self._optimize_widths()
         self.column_offset = self._clamped(self.column_offset)
+
+    def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
+        """``groups`` minus the advisories dismissed since the snapshot was gathered.
+
+        A dismissal reaches the snapshot only after the state service gathers
+        again; until then the block would stay on screen and the click look
+        lost. An entry is forgotten once the snapshot has stopped listing it.
+        """
+        if not self._dismissed:
+            return groups
+        listed = {(g.prefix, a.key) for g in groups for a in g.advisories}
+        self._dismissed &= listed
+        if not self._dismissed:
+            return groups
+        return [
+            replace(
+                g,
+                advisories=tuple(
+                    a for a in g.advisories if (g.prefix, a.key) not in self._dismissed
+                ),
+            )
+            if any((g.prefix, a.key) in self._dismissed for a in g.advisories)
+            else g
+            for g in groups
+        ]
 
     def view(self, hover: Hit | None = None) -> DashboardView:
         """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
@@ -2782,6 +2811,7 @@ class DashboardSession:
         except Exception as exc:  # a locked state DB must not take the dashboard down
             self.set_notice(f"could not dismiss: {exc}")
             return
+        self._dismissed.add((prefix, key))  # hidden on the next tick, not the next snapshot
         self.client.refresh()  # the next snapshot drops the block for every client
 
     def dismiss_update_notice(self) -> None:

@@ -341,6 +341,16 @@ def _advisory_links(view: DashboardView) -> AdvisoryLinks:
     )
 
 
+class _Hovered:
+    """``renderable`` with the hovered click target underlined."""
+
+    def __init__(self, renderable: RenderableType, hover: dhit.Hit | None) -> None:
+        self.renderable, self.hover = renderable, hover
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield from dhit.hover_segments(console.render(self.renderable, options), self.hover)
+
+
 class DetailsPanel(Static):
     DEFAULT_CSS = (
         "DetailsPanel { width: 1fr; height: auto; background: ansi_default; color: ansi_default; }"
@@ -348,13 +358,15 @@ class DetailsPanel(Static):
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
-        self._shown: tuple[DetailsView, int] | None = None
+        self._shown: tuple[DetailsView, int, dhit.Hit | None] | None = None
 
-    def show(self, view: DetailsView | None, rows: int | None) -> None:
-        shown = None if view is None or rows is None else (view, rows)
+    def show(
+        self, view: DetailsView | None, rows: int | None, hover: dhit.Hit | None = None
+    ) -> None:
+        shown = None if view is None or rows is None else (view, rows, hover)
         self.display = shown is not None
         if shown is not None and shown != self._shown:
-            self.update(render_details(shown[0], shown[1], fixed=True))
+            self.update(_Hovered(render_details(shown[0], shown[1], fixed=True), hover))
         self._shown = shown
 
 
@@ -640,7 +652,9 @@ class DashboardFrame(Vertical):
             and layout.details_rows is not None
             and (overlay is None or menu or floating)
         )
-        self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
+        self.query_one(DetailsPanel).show(
+            details if beside else None, layout.details_rows, view.hover
+        )
         anchored = beside and layout.details_rows is not None
         used = (
             system_row
