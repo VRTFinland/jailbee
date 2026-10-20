@@ -1756,7 +1756,9 @@ def checkout_submodules_on_host(
     gitlinks the submodule alignment then places branches at. A refused
     checkout (dirty tree, unknown branch) raises ``SyncError`` and the
     submodules are left alone — never aligned to a branch the superproject
-    is not on.
+    is not on. A submodule alignment failure raises ``SyncError``; after a
+    successful superproject switch, that switch is left in place (no rollback)
+    and the working tree may be partially aligned.
 
     Purely local — moves no objects between host and container. Raises
     ``SyncError`` when the host is in detached HEAD and no ``branch`` override
@@ -1784,7 +1786,17 @@ def checkout_submodules_on_host(
             )
         except git.GitError as exc:
             raise SyncError(f"could not check out '{resolved}' in the superproject: {exc}") from exc
-    submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
+    try:
+        submodules.update_submodules_on_host(cfg.repo_root, branch=resolved)
+    except submodules.SubmoduleError as exc:
+        if switch_superproject:
+            raise SyncError(
+                f"The superproject was switched to '{resolved}', but submodule alignment failed; "
+                f"the working tree may be partially aligned. {exc}\n"
+                f"See the Git error above. Resolve the reported problem, then retry with: "
+                f"jailbee branch {resolved}"
+            ) from exc
+        raise SyncError(f"Could not align host submodules to '{resolved}': {exc}") from exc
     report = submodules.report_submodule_branches(git.run_capture, str(cfg.repo_root))
     return resolved, report
 

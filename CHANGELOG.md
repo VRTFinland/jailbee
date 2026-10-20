@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- **`jailbee branch` reports submodule alignment failures without a traceback.**
+  If the superproject already switched branches, the error names that partial
+  state and explains how to retry. Submodule update errors no longer assume
+  that a commit is missing or a submodule is uninitialized.
+
 ## 1.7.7 - 2026-10-20
 
 ### Changed

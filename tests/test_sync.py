@@ -7072,6 +7072,46 @@ def test_checkout_submodules_on_host_switch_resolves_current_branch(mocker, make
     co.assert_called_once_with(cfg.repo_root, "feat/foo")
 
 
+def test_checkout_submodules_on_host_wraps_alignment_failure_after_switch(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    failure = sync.submodules.SubmoduleError("git update failed (exit 1): fatal: bad object")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host", side_effect=failure)
+
+    with pytest.raises(sync.SyncError) as exc_info:
+        sync.checkout_submodules_on_host(cfg, branch="feat/x", switch_superproject=True)
+
+    message = str(exc_info.value)
+    assert "superproject was switched to 'feat/x'" in message
+    assert "submodule alignment failed" in message
+    assert "working tree may be partially aligned" in message
+    assert "See the Git error above" in message
+    assert "Resolve the reported problem" in message
+    assert "jailbee branch feat/x" in message
+    assert str(failure) in message
+    assert exc_info.value.__cause__ is failure
+    checkout.assert_called_once_with(cfg.repo_root, "feat/x")
+
+
+def test_checkout_submodules_on_host_alignment_failure_without_switch(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    failure = sync.submodules.SubmoduleError("git update failed (exit 1): fatal: bad object")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host", side_effect=failure)
+
+    with pytest.raises(sync.SyncError) as exc_info:
+        sync.checkout_submodules_on_host(cfg, branch="feat/x")
+
+    message = str(exc_info.value)
+    assert str(failure) in message
+    assert "superproject was switched" not in message
+    assert "partially aligned" not in message
+    assert exc_info.value.__cause__ is failure
+
+
 def test_checkout_submodules_on_host_switch_failure_skips_alignment(mocker, make_cfg, tmp_path):
     """A refused checkout (dirty tree, unknown branch) must not leave the
     submodules aligned to a branch the superproject is not on."""

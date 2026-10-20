@@ -177,3 +177,21 @@ def test_alias_container_form_with_branch_override(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     host.assert_not_called()
     inside.assert_called_once_with(cfg_mock, incus, "feat-foo", branch="master")
+
+
+def test_branch_reports_real_host_git_update_failure_as_exit_one(mocker, tmp_path):
+    from jailbee import git, submodules
+
+    _cfg(mocker, tmp_path)
+    mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.submodules.git.submodule_update", side_effect=git.GitError("fatal: bad object"))
+
+    result = runner.invoke(app, ["branch", "master"])
+
+    combined = " ".join(((result.output or "") + (result.stderr or "")).split())
+    assert result.exit_code == 1
+    assert "fatal: bad object" in combined
+    assert "jailbee branch master" in combined
+    assert isinstance(result.exception, SystemExit)
+    assert not isinstance(result.exception, submodules.SubmoduleError)
+    assert not isinstance(result.exception, git.GitError)

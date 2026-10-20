@@ -963,10 +963,7 @@ def update_submodules_on_host(repo_root: Path, branch: str | None = None) -> Non
     try:
         git.submodule_update(repo_root)
     except git.GitError as exc:
-        raise SubmoduleError(
-            f"submodule update failed on host: {exc}\n"
-            f"A submodule commit is missing or a submodule is uninitialized."
-        ) from exc
+        raise SubmoduleError(f"submodule update failed on host: {exc}") from exc
     # Absorb before placement, not after: a freshly cloned sub-repo's git dir
     # is migrated into `.git/modules/<name>` here, and branch placement should
     # operate on the final layout. Running it from this function rather than

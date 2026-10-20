@@ -418,6 +418,28 @@ def test_update_on_host_delegates_to_git(mocker):
     upd.assert_called_once_with(Path("/host/repo"))
 
 
+def test_update_on_host_failure_is_neutral_and_stops_before_absorb(mocker):
+    from pathlib import Path
+
+    from jailbee import git as gitmod
+
+    failure = gitmod.GitError("fatal: could not checkout recorded commit")
+    mocker.patch("jailbee.submodules.git.submodule_update", side_effect=failure)
+    absorb = mocker.patch("jailbee.submodules.git.submodule_absorb_gitdirs")
+    placement = mocker.patch("jailbee.submodules._place_submodule_branches")
+
+    with pytest.raises(submodules.SubmoduleError) as exc_info:
+        submodules.update_submodules_on_host(Path("/host/repo"), branch="feat/x")
+
+    message = str(exc_info.value)
+    assert "missing" not in message
+    assert "uninitialized" not in message
+    assert str(failure) in message
+    assert exc_info.value.__cause__ is failure
+    absorb.assert_not_called()
+    placement.assert_not_called()
+
+
 def test_update_on_host_hard_fails_on_git_error(mocker):
     from pathlib import Path
 

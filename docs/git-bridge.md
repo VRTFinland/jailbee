@@ -547,6 +547,11 @@ purely local — it moves nothing between host and container — and works on ei
 with no `--container` it works on the host repo, with `--container <name>`
 on that container.
 
+If submodule alignment fails after the host superproject switches branches,
+JailBee reports the partial state and exits with status 1; it does not roll the
+checkout back. Resolve the problem Git reported, then retry `jailbee branch
+<branch>`. No files are automatically discarded or stashed.
+
 ```bash
 jailbee branch                              # host, align to current branch
 jailbee branch master                       # host, whole tree to master
