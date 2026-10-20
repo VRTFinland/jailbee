@@ -1235,3 +1235,50 @@ def test_base_profile_writes_cpu_share_as_soft_allowance():
     cfg = cfg.model_copy(update={"defaults": cfg.defaults.model_copy(update={"cpu_share": 20})})
     out = yaml.safe_load(base_profile_yaml(cfg))
     assert out["config"]["limits.cpu.allowance"] == "20%"
+
+
+# ---------- container.tmpfs -> raw.lxc
+
+
+def test_base_profile_leaves_tmp_alone_by_default(make_cfg, tmp_path):
+    """No `raw.lxc` key: /tmp stays the disk the golden image leaves it on."""
+    cfg = make_cfg(tmp_path)
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "raw.lxc" not in parsed["config"]
+
+
+def test_base_profile_mounts_capped_tmpfs_when_enabled(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, container={"tmpfs": {"enabled": True, "size": "2G"}})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["raw.lxc"] == (
+        "lxc.mount.entry = tmpfs tmp tmpfs nosuid,nodev,mode=1777,size=2G 0 0"
+    )
+
+
+def test_base_profile_tmpfs_size_defaults_to_one_gig(make_cfg, tmp_path):
+    """The cap is the point: without `size=` the kernel picks half the host's RAM."""
+    cfg = make_cfg(tmp_path, container={"tmpfs": {"enabled": True}})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "size=1G " in parsed["config"]["raw.lxc"]
+
+
+def test_base_profile_ignores_tmpfs_size_while_disabled(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, container={"tmpfs": {"size": "4G"}})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "raw.lxc" not in parsed["config"]
+
+
+@pytest.mark.parametrize("size", ["512M", "2G", "1024", "64k", "5%", "100%"])
+def test_tmpfs_size_accepts_kernel_grammar(make_cfg, tmp_path, size):
+    cfg = make_cfg(tmp_path, container={"tmpfs": {"enabled": True, "size": size}})
+    assert cfg.container.tmpfs.size == size
+
+
+@pytest.mark.parametrize(
+    "size", ["", "0", "0G", "-1G", "1.5G", "2GB", "101%", "0%", "1G,mode=0", "G"]
+)
+def test_tmpfs_size_rejects_what_would_break_the_mount(make_cfg, tmp_path, size):
+    """A bad value must fail at config load, not as a container that won't boot;
+    the comma case would also smuggle extra mount options into the entry."""
+    with pytest.raises(ValueError, match=r"container\.tmpfs\.size"):
+        make_cfg(tmp_path, container={"tmpfs": {"enabled": True, "size": size}})

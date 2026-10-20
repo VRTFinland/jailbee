@@ -65,10 +65,57 @@ class ContainerUser(BaseModel):
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+# `size=` grammar of a tmpfs mount: a byte count with an optional k/m/g
+# suffix, or a percentage of RAM. Anything else would be handed to the
+# kernel verbatim and fail the container's boot, not the config load.
+_TMPFS_SIZE_RE = re.compile(r"^(?:[1-9][0-9]*[kKmMgG]?|(?:100|[1-9][0-9]?)%)$")
+
+
+class TmpfsConfig(BaseModel):
+    """`/tmp` as an in-memory tmpfs (opt-in).
+
+    The golden image masks systemd's `tmp.mount`, so `/tmp` is ordinary disk
+    by default. A tmpfs is charged to the container's memory cgroup, and its
+    default size (half the host's RAM) says nothing about the container's own
+    limit, so a runaway temp file shows up as an OOM, not a full disk.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Mount `/tmp` as a tmpfs. Off by default, leaving `/tmp` on the container's "
+            "disk. A tmpfs is faster but counts against the container's memory."
+        ),
+    )
+    size: str = Field(
+        default="1G",
+        description=(
+            "Size cap of the `/tmp` tmpfs, only used when `enabled` is true. A byte "
+            "count with an optional `K`/`M`/`G` suffix (`512M`, `2G`) or a percentage "
+            "of the host's RAM (`5%`) — the kernel does not see the container's limit."
+        ),
+    )
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: str) -> str:
+        if not _TMPFS_SIZE_RE.match(v):
+            raise ValueError(
+                f"invalid container.tmpfs.size: {v!r}. Use a byte count with an optional "
+                "K/M/G suffix (e.g. 512M, 2G) or a percentage (e.g. 5%)"
+            )
+        return v
+
+
 class ContainerConfig(BaseModel):
     """Container-wide settings applied via the Incus base profile."""
 
     model_config = ConfigDict(extra="forbid")
+    tmpfs: TmpfsConfig = Field(
+        default_factory=TmpfsConfig,
+        description="Opt-in in-memory `/tmp`. See `container.tmpfs` in the config reference.",
+    )
     env: dict[str, str] = Field(
         default_factory=dict,
         description=(

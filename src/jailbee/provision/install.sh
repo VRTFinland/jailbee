@@ -48,6 +48,13 @@ systemctl mask \
     apt-daily.service apt-daily-upgrade.service \
     unattended-upgrades.service 2>/dev/null || true
 
+# Ubuntu mounts /tmp as a tmpfs sized at half the host's RAM. In a container
+# that memory is charged to the container's cgroup, so a large temp file
+# exhausts RAM long before /tmp looks full. Masked so /tmp is ordinary disk;
+# `container.tmpfs` opts back in with a size cap, mounted by the Incus profile.
+echo "==> Masking tmp.mount (/tmp stays on disk)"
+systemctl mask tmp.mount 2>/dev/null || true
+
 echo "==> Updating apt cache"
 apt-get update -y
 

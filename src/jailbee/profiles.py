@@ -265,6 +265,15 @@ def base_profile_yaml(cfg: Config) -> str:
     if path_env is not None:
         profile_config[path_env[0]] = path_env[1]
 
+    # `tmp.mount` is masked in the golden image, so /tmp is disk unless the
+    # repo opts in. LXC mounts this before init, which the mask does not
+    # touch; being in the profile, a new size reaches containers on `apply`.
+    if cfg.container.tmpfs.enabled:
+        profile_config["raw.lxc"] = (
+            f"lxc.mount.entry = tmpfs tmp tmpfs "
+            f"nosuid,nodev,mode=1777,size={cfg.container.tmpfs.size} 0 0"
+        )
+
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point
     # SSH_AUTH_SOCK at a different agent).

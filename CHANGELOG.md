@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **`/tmp` is disk-backed by default; a capped tmpfs is opt-in.** The golden
+  image no longer mounts Ubuntu's RAM-backed `/tmp`, whose default size is half
+  the host's RAM and which is charged to the container's memory. Set
+  `container.tmpfs.enabled` (and `container.tmpfs.size`, default `1G`) to get a
+  tmpfs back. Run `jailbee base build` and `jailbee apply` to pick it up.
 - **Containers commit as the identity the host repo uses.** `jailbee new`
   and every start write `user.name` and `user.email` into the container's
   `~/.config/git/config`, as `git config` resolves them in the host repo, so a

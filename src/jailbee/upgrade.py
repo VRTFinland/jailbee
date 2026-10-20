@@ -323,6 +323,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "version only — rebuilding also removes old dated golden archives"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 5),
+        actions=frozenset({"base_build", "apply"}),
+        reason=(
+            "`/tmp` is ordinary disk instead of a RAM-backed tmpfs; set "
+            "`container.tmpfs.enabled` to get one back, capped by `container.tmpfs.size`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

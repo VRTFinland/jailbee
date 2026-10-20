@@ -230,3 +230,9 @@ def test_install_sh_masks_the_user_socket_units_that_clobber_host_sockets():
         "pipewire-pulse.socket",
     ):
         assert unit in script, f"{unit} is not masked by install.sh"
+
+
+def test_install_sh_masks_tmp_mount_so_tmp_stays_on_disk():
+    """`container.tmpfs` relies on this: the opt-in mount comes from the Incus
+    profile, and the golden image must not already be mounting a tmpfs."""
+    assert "systemctl mask tmp.mount" in _install_sh()

@@ -177,6 +177,7 @@ Several keys are exempt from this pipeline — see [Keys that bypass the deep-me
 | `autostart.on_create`, `autostart.on_start` | repo | Repo-specific runtime workflow |
 | `container.env` | repo | Repo-specific runtime env (`NODE_OPTIONS`, app feature flags, …) |
 | `container.path` | repo | The repo's own `scripts/`, `bin/`; global for a personal `~/bin`, repo appends |
+| `container.tmpfs` | global or repo | Whether `/tmp` is RAM-backed and how large; a memory trade-off, not a repo fact |
 | `shared_dir` | repo only (auto-derived) | Setting globally forces all repos to share the same dir |
 
 The table is a placement convention for ordinary mergeable fields, not
@@ -468,6 +469,8 @@ Container-wide settings applied via the Incus base profile.
 |---|---|---|---|
 | `env` | map | `{}` | Non-secret env vars injected into every process Incus starts in the container — `jailbee shell`, `jailbee tmux`, autostart steps, and any nested tmux/shell. Values are passed through verbatim (no shell expansion). These are visible in `incus profile show`; do not store secrets here. Keys must match `[A-Za-z_][A-Za-z0-9_]*`. |
 | `path` | list[string] | `[]` | Container-side directories prepended to `PATH` — repo-internal scripts, a vendored toolchain. See [`container.path`](#containerpath) below. |
+| `tmpfs.enabled` | bool | `false` | Mount `/tmp` as an in-memory tmpfs. See [`container.tmpfs`](#containertmpfs) below. |
+| `tmpfs.size` | string | `1G` | Size cap of that tmpfs. Only used when `tmpfs.enabled` is `true`. |
 
 `container.env` is ambient: it applies to interactive shells (`jailbee shell`),
 the autostart tmux session (`jailbee tmux`), and every autostart step. Per-step
@@ -555,6 +558,32 @@ an error, but the `container.path` entries are then ignored and
 In the [layered config](#configuration-layers), `container.path` follows the
 list-append convention: `global.yaml`'s entries come first, the repo's are
 appended after them — so a global entry wins a collision against a repo one.
+
+#### `container.tmpfs`
+
+By default `/tmp` is ordinary disk inside the container: the golden image masks
+systemd's `tmp.mount`. Ubuntu's own default is a tmpfs sized at half the host's
+RAM, and a tmpfs is charged to the container's memory cgroup — so a large temp
+file exhausts the container's memory (an OOM kill) long before `/tmp` looks
+full.
+
+```yaml
+container:
+  tmpfs:
+    enabled: true
+    size: 2G       # 512M, 2G, 1024 (bytes), or 5% (of the *host's* RAM)
+```
+
+With `enabled: true` the base profile mounts a tmpfs on `/tmp` (`raw.lxc`),
+capped at `size` (`1G` unless set). The content is lost on every container
+restart, and what it holds counts against the container's memory limit.
+
+- A new `size` takes effect after `jailbee apply` and a container restart.
+- Containers built from a golden image older than 1.7.5 still carry the
+  unmasked `tmp.mount`; run `jailbee base build` to move them to disk-backed
+  `/tmp`.
+- `size` is validated at load time; a value the kernel would reject is refused
+  by `jailbee config validate` instead of failing the container's boot.
 
 ### `shared_dir`
 
