@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.7 - 2026-10-20
+
 ### Changed
 
 - **The LiteLLM proxy is pinned to 1.106.0** (was 1.106.0rc1, now a stable
