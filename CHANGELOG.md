@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.5 - 2026-10-20
+
 ### Added
 
 - **`/tmp` is disk-backed by default; a capped tmpfs is opt-in.** The golden
