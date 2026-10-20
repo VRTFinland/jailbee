@@ -14,6 +14,14 @@ before editing `## Unreleased`.
   release). An instance without `litellm.version` is reinstalled on the next
   `jailbee litellm up`; `jailbee apply` says when one is due.
 
+### Fixed
+
+- **Dashboard: expanding or collapsing a repo card's details no longer
+  crashes the TUI.** The scrollbar thumb was sized from a line count measured
+  at the panel's full width, then recomputed one column narrower for the
+  actual render; when that narrower count landed exactly on the panel's row
+  count, the position math divided by zero.
+
 ## 1.7.6 - 2026-10-20
 
 ### Added
