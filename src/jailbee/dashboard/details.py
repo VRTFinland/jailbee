@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
 DETAILS_ACTIVITY_ROWS = 3  # rows every view reserves under it while any container has activity
 _BLANK = Segment("")  # a blank line the panel's line splitter keeps even at the very end
-_MIN_GRID_ROWS = 2  # the grid always keeps these, whatever the activity asks for
 DETAILS_PAIR_WIDTH = 36  # columns one label/value pair needs before another fits
 DETAILS_MAX_PAIRS = 3
 PANEL_INSET_COLS = 4  # the panel's border and padding, either side
@@ -166,7 +165,8 @@ class DetailsView:
     footer, drawn in place of ``items``; a repo heading has none. ``warnings``
     are a repo heading's yellow lines under its grid, each as wide as the panel.
     ``advisories`` are its advisory blocks (``upgrade_all`` the link under the
-    last upgrade block), drawn right under the grid and warnings.
+    last upgrade block), drawn right under the grid and warnings. ``scroll`` is
+    how many content rows are scrolled off the top.
     """
 
     title: str
@@ -179,6 +179,7 @@ class DetailsView:
     warnings: tuple[str, ...] = ()
     advisories: tuple[AdvisoryBlock, ...] = ()
     upgrade_all: AdvisoryLink | None = None
+    scroll: int = 0  # the first content row shown when the content is taller than the panel
 
     @property
     def base_rows(self) -> int:
@@ -543,9 +544,8 @@ def details_for(
 
 
 def _one_row(markup: str) -> Text:
-    text = Text.from_markup(markup, overflow="ellipsis")
-    text.no_wrap = True  # from_markup has no no_wrap parameter
-    return text
+    """A row of markup; one too long for the panel continues on the next line."""
+    return Text.from_markup(markup, overflow="fold")
 
 
 _NAME_MAX = 32  # widest the git table's name column grows
@@ -555,56 +555,12 @@ _SUMMARY_GAP = "  "
 _MEM_BAR_CELLS = 23  # the memory bar's width inside its brackets, label included
 
 
-@dataclass(frozen=True)
-class PanelFit:
-    """Which parts of a container panel fit the grid's rows."""
-
-    blanks: bool  # the blank lines around the git table
-    git: bool  # its header and the container's own row, or the "git —" line
-    subs: int  # submodule rows shown
-    more: int  # submodule rows counted by the "… +N more submodules" row
-    footer: bool
-    procs: int = 0  # process lines shown, from the top
-
-
-def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
-    """What of ``panel`` fits ``cap`` rows (None: everything).
-
-    Blank lines go first, then submodule rows, which one row then counts;
-    the summary, the process lines, the exceptions line and the footer stay.
-    A panel too short for the table's head cuts its process lines first, down
-    to none, before it loses the table; only then does it lose the table, and
-    then the footer; the summary, the exceptions line and the warnings stay,
-    cut from the bottom only by a cap below their own count.
-    """
-    procs = len(panel.processes)
-    # the summary, then the exceptions line and the warnings under it
-    top = 1 + procs + bool(panel.exceptions) + len(panel.warnings)
-    subs = 0 if panel.git is None else len(panel.git) - 1
-    head = 1 if panel.git is None else 2
-    full = top + head + subs + 1
-    if cap is None or full + 2 <= cap:
-        return PanelFit(True, True, subs, 0, True, procs)
-    if full <= cap:
-        return PanelFit(False, True, subs, 0, True, procs)
-    room = cap - top - head - 1  # rows left for submodules once the top, head and footer sit
-    if room >= 1:
-        return PanelFit(False, True, room - 1, subs - (room - 1), True, procs)
-    if cap - top < head:
-        # the table's head fits once enough process lines are cut
-        kept = max(0, procs - (head - (cap - top)))
-        if kept < procs and cap - (top - procs + kept) >= head:
-            procs, top = kept, top - procs + kept
-    git = cap - top >= head
-    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1, procs)
-
-
 def _cells(*markups: str) -> int:
     """The widest of the markup cells, in terminal columns."""
     return max((Text.from_markup(m).cell_len for m in markups), default=0)
 
 
-def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
+def _git_table(panel: ContainerPanel, width: int) -> Table:
     """The git table, its columns sized so the whole table fits ``width``.
 
     The four value columns keep their natural width; the name column gives way
@@ -613,9 +569,7 @@ def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
     """
     assert panel.git is not None  # the caller draws "git —" otherwise
     root, *subs = panel.git
-    rows = (root, *subs[: fit.subs])
-    hidden = len(subs) - fit.subs - fit.more
-    hint = f"[dim]+{hidden} submodules[/dim]" if hidden > 0 else ""
+    rows = (root, *subs)
     head = ("[dim]git[/dim]", "[dim]↑[/dim]", "[dim]↓[/dim]")
     target_head, working_head = f"[dim]vs {panel.base}[/dim]", "[dim]working[/dim]"
     values = (
@@ -627,7 +581,7 @@ def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
     fixed = sum(values) + 2 * len(values)  # values and the gap before each
     name_natural = min(_cells(head[0], *(r.name for r in rows)), _NAME_MAX)
     notes = [r.note for r in rows]
-    note_min = min(_cells(hint, *notes), _NOTE_MIN)
+    note_min = min(_cells(*notes), _NOTE_MIN)
     note_width = 0
     name_width = max(1, min(name_natural, width - fixed))
     if width - fixed - _NAME_FLOOR - 2 >= note_min:
@@ -636,18 +590,18 @@ def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
         with_extra = [" · ".join(p for p in (r.note, r.extra) if p) for r in rows]
         if _cells(*with_extra) <= room:
             notes = with_extra
-        note_width = min(room, _cells(hint, *notes))
+        note_width = min(room, _cells(*notes))
     grid = Table.grid(padding=(0, 2))
-    grid.add_column(width=name_width, no_wrap=True, overflow="ellipsis")
+    grid.add_column(width=name_width, overflow="fold")
     for w in values:
         grid.add_column(width=w, no_wrap=True, overflow="ellipsis")
     if note_width:
-        grid.add_column(width=note_width, no_wrap=True, overflow="ellipsis")
+        grid.add_column(width=note_width, overflow="fold")
 
     def tail(note: str) -> list[str]:
         return [note] if note_width else []
 
-    grid.add_row(head[0], head[1], head[2], target_head, working_head, *tail(hint))
+    grid.add_row(head[0], head[1], head[2], target_head, working_head, *tail(""))
     for row, note in zip(rows, notes, strict=True):
         grid.add_row(row.name, row.ahead, row.behind, row.target, row.working, *tail(note))
     return grid
@@ -680,43 +634,32 @@ def _panel_lines(
     panel: ContainerPanel,
     console: Console,
     options: ConsoleOptions,
-    cap: int | None,
     pad_to: int | None,
 ) -> list[list[Segment]]:
     """``panel`` as lines; with ``pad_to`` the footer lands on that row."""
-    fit = panel_fit(panel, cap)
     render = options.update(height=None)
     lines: list[list[Segment]] = []
 
     def one(markup: str | Text) -> None:
         row = _one_row(markup) if isinstance(markup, str) else markup
-        lines.extend(console.render_lines(row, render, pad=False)[:1])
+        lines.extend(console.render_lines(row, render, pad=False))
 
-    top: list[str | Text] = [
-        _summary_row(panel, options.max_width),
-        *panel.processes[: fit.procs],
-    ]
-    if panel.exceptions:
-        top.append(_SUMMARY_GAP.join(panel.exceptions))
-    top.extend(panel.warnings)
-    for markup in top if cap is None else top[:cap]:  # a cap under the top lines cuts the last
+    one(_summary_row(panel, options.max_width))
+    for markup in panel.processes:
         one(markup)
-    if fit.blanks:
-        lines.append([_BLANK])
-    if fit.git:
-        if panel.git is None:
-            one("[dim]git —[/dim]")
-        else:
-            table = _git_table(panel, fit, options.max_width)
-            lines.extend(console.render_lines(table, render, pad=False))
-            if fit.more:
-                one(f"[dim]… +{fit.more} more submodules[/dim]")
-    if fit.footer:
-        if fit.blanks:
-            lines.append([_BLANK])
-        if pad_to is not None:
-            lines += [[_BLANK] for _ in range(pad_to - len(lines) - 1)]
-        one(f"[dim]{' · '.join(panel.footer)}[/dim]")
+    if panel.exceptions:
+        one(_SUMMARY_GAP.join(panel.exceptions))
+    for markup in panel.warnings:
+        one(markup)
+    lines.append([_BLANK])
+    if panel.git is None:
+        one("[dim]git —[/dim]")
+    else:
+        lines.extend(console.render_lines(_git_table(panel, options.max_width), render, pad=False))
+    lines.append([_BLANK])
+    if pad_to is not None:
+        lines += [[_BLANK] for _ in range(pad_to - len(lines) - 1)]
+    one(f"[dim]{' · '.join(panel.footer)}[/dim]")
     return lines
 
 
@@ -725,7 +668,7 @@ _ADVISORY_STYLE = Style(color="yellow")
 
 
 def _links_text(links: Sequence[AdvisoryLink], indent: str = "    ") -> Text:
-    text = Text(indent, no_wrap=True, overflow="ellipsis")
+    text = Text(indent, overflow="fold")
     for index, link in enumerate(links):
         if index:
             text.append(_LINK_GAP)
@@ -734,102 +677,79 @@ def _links_text(links: Sequence[AdvisoryLink], indent: str = "    ") -> Text:
 
 
 def _plain_row(markup: str, style: Style) -> Text:
-    return Text(markup, style=style, no_wrap=True, overflow="ellipsis")
+    return Text(markup, style=style, overflow="fold")
 
 
-def advisory_rows(view: DetailsView, room: int | None) -> list[Text]:
-    """The advisory blocks as one-row texts, fitted to ``room`` rows (None: all).
-
-    Under a cap the reason lines go first: every shown block keeps its heading,
-    its links line and at least one reason row (the rest of its reasons become
-    ``- … N more``). When even those do not fit, trailing blocks are dropped and
-    a last row counts them. The upgrade-all link is reserved before any extra
-    reason rows are handed out, and goes only with the blocks it follows.
-    """
+def advisory_rows(view: DetailsView) -> list[Text]:
+    """The advisory blocks as texts: heading, reasons, links, and under the last
+    upgrade block the upgrade-all link."""
     blocks = view.advisories
-    if not blocks:
-        return []
     last_upgrade = max((i for i, b in enumerate(blocks) if b.upgrade), default=None)
-    all_row = 1 if view.upgrade_all is not None and last_upgrade is not None else 0
-    full = sum(1 + len(b.reasons) + bool(b.links) for b in blocks) + all_row
-    shown, show_all = len(blocks), bool(all_row)
-    budgets = [len(b.reasons) for b in blocks]
-    if room is not None and full > room:
-        shown, used = 0, 0
-        for block in blocks:
-            need = 1 + bool(block.links) + bool(block.reasons)
-            if used + need + (shown + 1 < len(blocks)) > room:
-                break
-            used += need
-            shown += 1
-        if shown == 0:
-            return [_more_notices(len(blocks))] if room >= 1 else []
-        left = room - used - (shown < len(blocks))
-        show_all = bool(all_row) and last_upgrade is not None and last_upgrade < shown and left >= 1
-        left -= show_all
-        budgets = []
-        for block in blocks[:shown]:
-            extra = min(max(0, len(block.reasons) - 1), left)
-            budgets.append(min(len(block.reasons), 1 + extra) if block.reasons else 0)
-            left -= extra
     rows: list[Text] = []
-    for index, block in enumerate(blocks[:shown]):
+    for index, block in enumerate(blocks):
         rows.append(_plain_row(block.heading, _ADVISORY_STYLE))
-        reasons, budget = block.reasons, budgets[index]
-        if budget >= len(reasons):
-            rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons]
-        else:  # at least one row is reserved: the marker, after budget - 1 reasons
-            rows += [_plain_row(r, _ADVISORY_STYLE) for r in reasons[: budget - 1]]
-            rows.append(_plain_row(f"    - … {len(reasons) - budget + 1} more", _ADVISORY_STYLE))
+        rows += [_plain_row(r, _ADVISORY_STYLE) for r in block.reasons]
         if block.links:
             rows.append(_links_text(block.links))
-        if show_all and index == last_upgrade and view.upgrade_all is not None:
+        if view.upgrade_all is not None and index == last_upgrade:
             rows.append(_links_text((view.upgrade_all,)))
-    if shown < len(blocks):
-        rows.append(_more_notices(len(blocks) - shown))
     return rows
-
-
-def _more_notices(count: int) -> Text:
-    return _plain_row(f"… {count} more notices (jb doctor)", Style(dim=True))
 
 
 @dataclass(frozen=True)
 class _DetailsBody:
     """The label/value grid, or a container's panel, then the agent activity.
 
-    With ``max_rows`` the grid keeps at most ``DETAILS_MAX_ROWS`` rows (two at
-    the least, before the reservation) and everything under it is activity,
-    filled in order — head and tool lines, the wrapped last message, the
-    history — and clipped to the rows left. ``fixed`` pads the grid to its
-    share and the panel to exactly ``max_rows``.
+    Nothing is cut: a row too long for the panel wraps onto the next line, and
+    with ``max_rows`` set, content taller than that is shown as a window of
+    ``max_rows`` rows starting at the view's ``scroll``, with a scrollbar in
+    the last column. ``fixed`` pads the grid to ``DETAILS_MAX_ROWS`` and the
+    panel to exactly ``max_rows``.
     """
 
     view: DetailsView
     max_rows: int | None
     fixed: bool = False
 
-    def _grid_cap(self) -> int | None:
-        if self.max_rows is None:
-            return None
-        reserved = min(self.view.reserve_rows, max(0, self.max_rows - _MIN_GRID_ROWS))
-        return min(DETAILS_MAX_ROWS, self.max_rows - reserved)
+    def natural_lines(self, console: Console, options: ConsoleOptions) -> list[list[Segment]]:
+        """Every row of the body at ``options.max_width``, wrapped and uncut."""
+        render = options.update(height=None)
+        grid_rows = DETAILS_MAX_ROWS if self.fixed else None
+        lines = self._grid_lines(console, options, grid_rows)
+        if grid_rows is not None and not self.view.advisories:
+            lines += [[_BLANK] for _ in range(grid_rows - len(lines))]
+        for text in advisory_rows(self.view):
+            lines += console.render_lines(text, render, pad=False)
+        for text in self._activity_rows(console, options.max_width):
+            lines += console.render_lines(text, render, pad=False)
+        return lines
+
+    def scroll_lines(self, console: Console, options: ConsoleOptions) -> tuple[int, int]:
+        """``(rows the body has, the furthest it can scroll)`` at ``options.max_width``.
+
+        The scrollbar takes a column, which can wrap one more row: the second
+        number counts with it.
+        """
+        total = len(self.natural_lines(console, options))
+        rows = self.max_rows
+        if rows is None or total <= rows or options.max_width < 2:
+            return total, 0
+        narrow = len(self.natural_lines(console, options.update(width=options.max_width - 1)))
+        return total, max(0, narrow - rows)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        grid_cap = self._grid_cap()
-        lines = self._grid_lines(console, options, grid_cap)
-        if self.fixed and grid_cap is not None and not self.view.advisories:
-            lines += [[_BLANK] for _ in range(grid_cap - len(lines))]
-        room = None if self.max_rows is None else max(0, self.max_rows - len(lines))
-        advisory = advisory_rows(self.view, room)
-        for text in advisory:
-            lines += console.render_lines(text, options.update(height=None), pad=False)[:1]
-        if room is not None:
-            room -= len(advisory)
-        for text in self._activity_rows(console, options.max_width, room):
-            lines += console.render_lines(text, options.update(height=None), pad=False)[:1]
-        if self.fixed and self.max_rows is not None:
-            lines += [[_BLANK] for _ in range(self.max_rows - len(lines))]
+        lines = self.natural_lines(console, options)
+        rows = self.max_rows
+        if rows is not None and len(lines) > rows and options.max_width >= 2:
+            width = options.max_width - 1
+            lines = _with_scrollbar(
+                self.natural_lines(console, options.update(width=width)),
+                rows,
+                width,
+                self.view.scroll,
+            )
+        elif rows is not None and self.fixed:
+            lines += [[_BLANK] for _ in range(rows - len(lines))]
         for index, line in enumerate(lines):
             if index:
                 yield Segment.line()
@@ -841,30 +761,16 @@ class _DetailsBody:
             return []
         return list(Text.from_markup(self.view.message).wrap(console, max(1, width)))
 
-    def _activity_rows(self, console: Console, width: int, room: int | None) -> list[Text]:
+    def _activity_rows(self, console: Console, width: int) -> list[Text]:
         head = [_one_row(markup) for markup in self.view.activity]
-        message = self.message_lines(console, width)
         history = [_one_row(markup) for markup in self.view.history]
-        if room is None:
-            return head + message + history
-        head = head[:room]
-        room -= len(head)
-        if len(message) > room:
-            message = message[:room]
-            if message:
-                message[-1].truncate(max(0, width - 1))
-                message[-1].append("…", style="bold white")
-        room -= len(message)
-        if len(history) > room:
-            history = [*history[: room - 1], _one_row("[dim]…[/dim]")] if room > 0 else []
-        return head + message + history
+        return head + self.message_lines(console, width) + history
 
     def _grid_lines(
-        self, console: Console, options: ConsoleOptions, cap: int | None
+        self, console: Console, options: ConsoleOptions, pad_to: int | None
     ) -> list[list[Segment]]:
         if self.view.panel is not None:
-            pad_to = cap if self.fixed else None
-            return _panel_lines(self.view.panel, console, options, cap, pad_to)
+            return _panel_lines(self.view.panel, console, options, pad_to)
         pairs = max(1, min(DETAILS_MAX_PAIRS, options.max_width // DETAILS_PAIR_WIDTH))
         columns: list[list[DetailItem]] = [[] for _ in range(pairs)]
         groups: list[list[DetailItem]] = []
@@ -882,61 +788,90 @@ class _DetailsBody:
         # Padding adds one gap after every column except the last.
         value_width = max(1, (options.max_width - (2 * pairs - 1)) // pairs - label_width)
         row_count = max((len(column) for column in columns), default=0)
-        if cap is not None:
-            row_count = min(row_count, cap)
         grid = Table.grid(padding=(0, 1), expand=False)
         for _ in range(pairs):
             grid.add_column(width=label_width, style="bold", no_wrap=True, overflow="ellipsis")
-            grid.add_column(width=value_width, overflow="ellipsis", no_wrap=True)
+            grid.add_column(width=value_width, overflow="fold")
         for row in range(row_count):
             cells: list[str] = []
             for column in columns:
-                if row == row_count - 1 and len(column) > row_count:
-                    cells += ["", "…"]
-                elif row < len(column):
+                if row < len(column):
                     item = column[row]
                     cells += [item.label, item.value]
                 else:
                     cells += ["", ""]
             grid.add_row(*cells)
-        lines = console.render_lines(grid, options.update(height=None), pad=False)
-        room = None if cap is None else max(0, cap - len(lines))
-        for markup in self.view.warnings if room is None else self.view.warnings[:room]:
-            lines += console.render_lines(_one_row(markup), options.update(height=None), pad=False)[
-                :1
-            ]
+        render = options.update(height=None)
+        lines = console.render_lines(grid, render, pad=False)
+        for markup in self.view.warnings:
+            lines += console.render_lines(_one_row(markup), render, pad=False)
         return lines
+
+
+_SCROLL_TRACK = Style(dim=True)
+_SCROLL_THUMB = Style(bold=True)
+
+
+def _with_scrollbar(
+    lines: list[list[Segment]], rows: int, width: int, scroll: int
+) -> list[list[Segment]]:
+    """The ``rows``-row window of ``lines`` from row ``scroll``, a scrollbar to its right.
+
+    Each bar cell is a click target that scrolls to the matching position.
+    """
+    total = len(lines)
+    furthest = total - rows
+    top = max(0, min(scroll, furthest))
+    thumb = max(1, rows * rows // total)
+    start = round(top * (rows - thumb) / furthest)
+    out = []
+    for row in range(rows):
+        target = round(row * furthest / (rows - 1)) if rows > 1 else 0
+        on = start <= row < start + thumb
+        bar = Segment(
+            "┃" if on else "│",
+            (_SCROLL_THUMB if on else _SCROLL_TRACK) + hit_style("details-scroll", target),
+        )
+        out.append([*Segment.adjust_line_length(lines[top + row], width), bar])
+    return out
 
 
 @dataclass(frozen=True)
 class DetailsRows:
-    """Content rows a details panel is guaranteed and would use if it could."""
+    """Content rows a details panel is guaranteed and would use if it could.
+
+    ``total`` is the rows its whole content takes at the measured width, and
+    ``total_barred`` the same beside a scrollbar, which can wrap one more row.
+    """
 
     base: int
     want: int
+    total: int = 0
+    total_barred: int = 0
+
+    def furthest(self, rows: int) -> int:
+        """How far a panel of ``rows`` content rows scrolls (0: its content fits)."""
+        return 0 if self.total <= rows else max(0, self.total_barred - rows)
 
 
 def details_rows(view: DetailsView, console: Console, width: int) -> DetailsRows:
     """``view``'s guaranteed and wanted content rows at the panel's outer ``width``.
 
     The grid always takes ``DETAILS_MAX_ROWS`` rows in the dashboard (it is
-    drawn ``fixed``); everything under it is the activity, the message wrapped
-    at the panel's content width.
+    drawn ``fixed``) unless advisory blocks sit right under it; everything under
+    it is the activity, wrapped at the panel's content width like every row.
     """
-    body = _DetailsBody(view, None)
-    message = body.message_lines(console, width - PANEL_INSET_COLS)
-    grid = DETAILS_MAX_ROWS
-    if view.advisories:
-        # The grid is not padded: the blocks sit right under it and its warnings.
-        inner = console.options.update(width=max(1, width - PANEL_INSET_COLS), height=None)
-        grid = len(body._grid_lines(console, inner, None)) + len(advisory_rows(view, None))
-    natural = grid + len(view.activity) + len(message) + len(view.history)
-    return DetailsRows(view.base_rows, max(view.base_rows, natural))
+    inner = console.options.update(width=max(1, width - PANEL_INSET_COLS), height=None)
+    body = _DetailsBody(view, None, fixed=True)
+    total = len(body.natural_lines(console, inner))
+    barred = len(body.natural_lines(console, inner.update(width=max(1, inner.max_width - 1))))
+    return DetailsRows(view.base_rows, max(view.base_rows, total), total, barred)
 
 
 def render_details(view: DetailsView, max_rows: int | None, *, fixed: bool = False) -> Panel:
-    """The details panel; ``max_rows`` caps its content rows, activity included
-    (None: uncapped).
+    """The details panel; ``max_rows`` is its content rows, activity included
+    (None: as many as the content takes), scrolled from ``view.scroll`` when
+    the content is taller.
 
     ``fixed`` also pads it to exactly ``max_rows`` content rows."""
     return Panel(

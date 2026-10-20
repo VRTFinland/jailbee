@@ -213,3 +213,5 @@ class DashboardView:
     # The host status line above the table; drawn only while `show_system` and known.
     system: SystemStatus | None = None
     show_system: bool = True
+    # Content rows scrolled off the top of the details panel.
+    details_scroll: int = 0

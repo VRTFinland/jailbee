@@ -6,6 +6,7 @@ import pytest
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import dispatch as ddispatch
+from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import menu_state as tmenu
@@ -392,3 +393,24 @@ def test_repo_menu_upgrade_all_not_offered_for_one_repo_owing_both(tmp_path):
     verbs = repo_menu_verbs(tmenu.open_repo_menu(groups, "alpha", frozenset()))
     assert "base-build" in verbs
     assert "upgrade-all" not in verbs
+
+
+def test_details_scroll_stays_in_range_and_resets_with_the_selection(mocker, tmp_path):
+    from tests.dashboard_pilot import bare_session
+
+    groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta", *_BOTH)]
+    session, _t = bare_session(mocker, groups)
+    session.details_furthest = 5
+    session.scroll_details(3)
+    assert session.details_scroll == 3
+    session.scroll_details(9)
+    assert session.details_scroll == 5
+    session.handle_key("details-up")
+    assert session.details_scroll == 0
+    session.click(dhit.Hit("details-scroll", (4,)))
+    assert session.details_scroll == 4
+    session.handle_key("details-down")
+    assert session.details_scroll == 5
+    session.handle_key("down")  # to the next repo
+    session.tick()
+    assert session.details_scroll == 0

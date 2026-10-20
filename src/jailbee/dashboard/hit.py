@@ -30,6 +30,7 @@ HitKind = Literal[
     "advisory-run",
     "advisory-dismiss",
     "upgrade-all",
+    "details-scroll",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 

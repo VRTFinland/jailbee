@@ -273,15 +273,16 @@ def test_the_frame_fills_the_terminal_and_the_details_show_the_whole_history(tmp
     assert lines[top - 1].strip("│ ") == ""  # the slack is blank space above the panel
 
 
-def test_history_that_does_not_fit_is_cut_with_an_ellipsis_row(tmp_path):
+def test_history_that_does_not_fit_scrolls_in_the_panel(tmp_path):
     view = view_of([_busy(tmp_path)], selected=Row("container", "alpha-row01"), show_details=True)
     lines = paint(view, size=(120, 30))
 
     assert len(lines) == 30 and lines[-1].startswith("╰")
     top, bottom = _panel(lines)
-    content = [ln.strip("│ ") for ln in lines[top + 1 : bottom]]
-    assert content[-1] == "…" and content[-2] == "“event10”"  # even events are messages
-    assert "event09" not in "\n".join(lines)
+    assert any("┃" in ln for ln in lines[top + 1 : bottom])  # the scrollbar's thumb
+    assert "event08" not in "\n".join(lines)
+    scrolled = paint(replace(view, details_scroll=99), size=(120, 30))
+    assert "event00" in "\n".join(scrolled)
 
 
 def test_without_activity_the_panel_keeps_its_size_at_the_bottom(tmp_path):
@@ -320,8 +321,8 @@ def test_a_huge_message_on_a_small_terminal_stays_inside_the_frame(tmp_path):
     lines = paint(view, size=(80, 24))
 
     assert len(lines) == 24 and lines[-1].startswith("╰")
-    _, bottom = _panel(lines)
-    assert lines[bottom - 1].rstrip(" │").endswith("…")
+    top, bottom = _panel(lines)
+    assert any("┃" in ln for ln in lines[top + 1 : bottom])
 
 
 def test_a_picker_still_sits_under_the_table(tmp_path):

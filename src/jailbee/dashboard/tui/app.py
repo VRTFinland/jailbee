@@ -44,7 +44,7 @@ from jailbee.dashboard.tui.session import (
     open_dashboard,
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
-from jailbee.dashboard.tui.widgets import DashboardFrame, FleetTable
+from jailbee.dashboard.tui.widgets import DashboardFrame, DetailsPanel, FleetTable
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
@@ -324,6 +324,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         if painted == self._painted:
             return
         self.frame.show(view)
+        self.session.details_furthest = self.frame.details_furthest
         self._painted = painted
 
     def _after(self, outcome: Outcome) -> None:
@@ -391,6 +392,11 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self.mouse_on:
             x, y = self.mouse_position
             self._set_hover(Hit.of(self.screen.get_style_at(x, y).meta))
+
+    def on_details_panel_scrolled(self, message: DetailsPanel.Scrolled) -> None:
+        if self.mouse_on:
+            self.session.scroll_details(message.step)
+            self.refresh_frame()
 
     def on_fleet_table_geometry_changed(self, _message: FleetTable.GeometryChanged) -> None:
         self.refresh_frame()

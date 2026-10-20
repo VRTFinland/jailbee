@@ -492,3 +492,26 @@ def test_upgrade_all_declined_runs_nothing(mocker, tmp_path):
     session.submit_picker(picker, picker.entries[1])
     run.assert_not_called()
     assert session.notice == "Cancelled"
+
+
+def _long_notice_group(tmp_path):
+    from tests.dashboard_fixtures import cfg_group
+
+    group = cfg_group(tmp_path)
+    lines = ("Since apply:", *(f"- reason {i}" for i in range(12)))
+    group.advisories = (dmodel.RepoAdvisory("apply", group.prefix, lines, "fp", "owed", "apply"),)
+    return group
+
+
+def test_wheel_over_the_details_panel_scrolls_it_and_a_scrollbar_click_jumps(mocker, tmp_path):
+    run = drive(
+        mocker,
+        [Wheel(1, at="#details"), Wheel(1, at="#details"), Click(Hit("details-scroll", (1,)))],
+        [_long_notice_group(tmp_path)],
+        view_state=tsession.ViewState(show_details=True),
+        size=(100, 20),
+    )
+    first, second, third = run.trace[1], run.trace[2], run.trace[3]
+    assert 0 < first.details_scroll < second.details_scroll
+    assert third.details_scroll == 1
+    assert first.selected == run.trace[0].selected  # the wheel never moves the cursor

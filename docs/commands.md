@@ -18,10 +18,11 @@ against the base, the working-tree diff, and the merge prediction (plus the
 diff against the host's checked-out HEAD when the note column has room). A dim
 footer line holds the rest: base, mode, credential group, age, memory and CPU.
 Unchanged submodules are omitted; `?` means the probe could not determine a
-value. When rows run short, the blank lines go first, then submodule rows,
-which a `… +N more submodules` row counts. The footer stays last when space
-permits; a very short panel can omit the git table and footer too, keeping the
-summary and any exception line.
+value. Nothing is cut: a line too long for the panel continues on the next
+line, and a card taller than the room it gets shows a window of its content
+with a scrollbar on its right edge. Scroll it with the wheel over the card,
+`PgUp`/`PgDn`, or a click on the scrollbar; the position resets when the
+selection moves. A repo card scrolls the same way through its notices.
 
 ## Global repository option
 

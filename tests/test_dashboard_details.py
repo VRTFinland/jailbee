@@ -121,27 +121,30 @@ def test_render_keeps_each_group_in_one_column_at_two_and_three_columns() -> Non
             )
 
 
-def test_capped_columns_show_ellipsis_where_that_column_overflows() -> None:
+def test_a_taller_panel_scrolls_instead_of_cutting() -> None:
     items = tuple(dd.DetailItem(f"k{i}", f"v{i}", group=f"g{i}") for i in range(12))
-    rendered = _text(dd.render_details(dd.DetailsView("alpha", items), 3), width=120)
+    view = dd.DetailsView("alpha", items)  # four rows at 120 columns
 
-    assert "k0" in rendered and "k1" in rendered and "k2" in rendered
-    assert rendered.count("…") == 3
-    assert "k6" not in rendered and "k7" not in rendered and "k8" not in rendered
-    assert len(rendered.splitlines()) == 5
+    top, bar = _scrolled(view, 3)
+    assert "k0" in top[0] and "k9" not in " ".join(top)
+    assert "…" not in " ".join(top)
+    assert bar == "┃┃│"
+    end, bar = _scrolled(replace(view, scroll=99), 3)  # past the end: kept in range
+    assert "k3" in end[0] and "k9" in end[-1]
+    assert bar == "│┃┃"
 
 
-def test_render_flows_pairs_by_width_and_caps_rows() -> None:
+def test_render_flows_pairs_by_width_and_scrolls_past_its_rows() -> None:
     view = dd.DetailsView("alpha-feat", tuple(dd.DetailItem(f"k{i}", f"v{i}") for i in range(12)))
     wide = _text(dd.render_details(view, None), width=120).splitlines()
     narrow = _text(dd.render_details(view, None), width=40).splitlines()
     assert "alpha-feat" in wide[0]
     assert len(wide) == 4 + 2  # 3 pairs per line at 120 columns, plus the border
     assert len(narrow) == 12 + 2  # 1 pair per line at 40 columns
-    capped = _text(dd.render_details(view, 4), width=40).splitlines()
-    assert len(capped) == 4 + 2
-    assert "…" in capped[-2]
+    capped, bar = _scrolled(view, 4, width=40)
+    assert len(capped) == 4 and "┃" in bar
     assert "k11" not in "\n".join(capped)
+    assert "k11" in _scrolled(replace(view, scroll=8), 4, width=40)[0][-1]
 
 
 def _with_activity(**kw: Any) -> ContainerInfo:
@@ -275,6 +278,15 @@ def _body(view: dd.DetailsView, max_rows: int | None, *, fixed: bool = False) ->
     return [ln[2:-2].rstrip() for ln in lines[1:-1]]
 
 
+def _scrolled(
+    view: dd.DetailsView, rows: int, *, width: int = 120, fixed: bool = False
+) -> tuple[list[str], str]:
+    """A panel too tall for ``rows``: its content lines and its scrollbar column."""
+    lines = _text(dd.render_details(view, rows, fixed=fixed), width=width).splitlines()[1:-1]
+    inner = [ln[2:-2] for ln in lines]
+    return [ln[:-1].rstrip() for ln in inner], "".join(ln[-1] for ln in inner)
+
+
 LINES = ("busy 2m", "↳ Bash  ls", "[bold white]“done”[/bold white]")
 
 
@@ -294,18 +306,12 @@ def test_a_fixed_panel_is_padded_to_exactly_its_rows_even_without_activity() -> 
     assert without[-3:] == ["", "", ""]
 
 
-def test_a_cramped_panel_cuts_the_message_first_then_the_tool_and_keeps_two_grid_rows() -> None:
-    four = _body(_view(LINES), 4)
-    assert four[-2:] == ["busy 2m", "↳ Bash  ls"]  # message cut, grid cut to 2 rows
-    assert len(four) == 4
-
-    three = _body(_view(LINES), 3)
-    assert three[-1] == "busy 2m"  # only the state line survives
-    assert len(three) == 3
-
-    two = _body(_view(LINES), 2)
-    assert len(two) == 2
-    assert "busy 2m" not in " ".join(two)  # the grid keeps its two rows
+def test_a_cramped_panel_scrolls_to_the_message() -> None:
+    first, bar = _scrolled(_view(LINES), 4)
+    assert first[-2:] == ["busy 2m", "↳ Bash  ls"]
+    assert "┃" in bar
+    last, _ = _scrolled(replace(_view(LINES), scroll=9), 4)
+    assert last[-3:] == ["busy 2m", "↳ Bash  ls", "“done”"]
 
 
 def test_sparse_and_filled_details_keep_label_and_value_columns_aligned() -> None:
@@ -357,7 +363,7 @@ def test_details_rows_base_is_the_reservation_and_want_is_everything() -> None:
 
     rows = dd.details_rows(_full(), console, 120)
 
-    assert rows == dd.DetailsRows(base=dd.DETAILS_MAX_ROWS + 3, want=8 + 2 + 1 + 6)
+    assert (rows.base, rows.want) == (dd.DETAILS_MAX_ROWS + 3, 8 + 2 + 1 + 6)
     body = _body(_full(), rows.want, fixed=True)
     assert len(body) == rows.want
     assert body[-6:] == ["h0", "h1", "h2", "h3", "h4", "h5"]
@@ -366,15 +372,19 @@ def test_details_rows_base_is_the_reservation_and_want_is_everything() -> None:
 
 def test_a_view_without_activity_wants_only_its_base() -> None:
     plain = dd.DetailsView("t", _full().items, (), 3)
-    assert dd.details_rows(plain, Console(width=120), 120) == dd.DetailsRows(11, 11)
+    rows = dd.details_rows(plain, Console(width=120), 120)
+    assert (rows.base, rows.want) == (11, 11)
     bare = dd.DetailsView("t", _full().items)
-    assert dd.details_rows(bare, Console(width=120), 120) == dd.DetailsRows(8, 8)
+    rows = dd.details_rows(bare, Console(width=120), 120)
+    assert (rows.base, rows.want) == (8, 8)
 
 
-def test_history_that_does_not_fit_ends_in_an_ellipsis_row() -> None:
-    body = _body(_full(), 8 + 2 + 1 + 3, fixed=True)
-
-    assert body[-5:] == ["↳ Bash  ls", "“done”", "h0", "h1", "…"]
+def test_history_that_does_not_fit_scrolls_into_view() -> None:
+    rows = 8 + 2 + 1 + 3
+    first, bar = _scrolled(_full(), rows, fixed=True)
+    assert first[-3:] == ["h0", "h1", "h2"] and "┃" in bar and "…" not in first
+    last, _ = _scrolled(replace(_full(), scroll=9), rows, fixed=True)
+    assert last[-1] == "h5" and last[0] == ""
 
 
 def test_a_long_message_is_wrapped_in_full() -> None:
@@ -391,17 +401,16 @@ def test_a_long_message_is_wrapped_in_full() -> None:
     assert "…" not in shown
 
 
-def test_a_message_cut_short_ends_in_an_ellipsis() -> None:
+def test_a_message_cut_short_scrolls_instead_of_ending_in_an_ellipsis() -> None:
     words = " ".join(f"w{i:02d}" for i in range(60))
     view = _full(history=0, message=f"[bold white]“{words}”[/bold white]")
     rows = dd.details_rows(view, Console(width=60), 60)
 
-    lines = _text(dd.render_details(view, rows.want - 1, fixed=True), width=60).splitlines()
-    content = [ln[2:-2].rstrip() for ln in lines[1:-1]]
-
-    assert len(content) == rows.want - 1
-    assert content[-1].endswith("…")
-    assert "w59" not in " ".join(content)
+    first, _ = _scrolled(view, rows.want - 1, width=60, fixed=True)
+    assert len(first) == rows.want - 1
+    assert "…" not in " ".join(first) and "w59" not in " ".join(first)
+    last, _ = _scrolled(replace(view, scroll=9), rows.want - 1, width=60, fixed=True)
+    assert "w59" in " ".join(last)
 
 
 def test_hostile_transcript_text_renders_literally() -> None:
@@ -670,43 +679,20 @@ def _panel_view(c: ContainerInfo, **kw: Any) -> dd.DetailsView:
     return dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW), **kw)
 
 
+def _panel_scrolled(
+    view: dd.DetailsView, rows: int, width: int, *, fixed: bool = False
+) -> tuple[list[str], str]:
+    lines = _text(dd.render_details(view, rows, fixed=fixed), width=width).splitlines()[1:-1]
+    inner = [ln[2:-2] for ln in lines]
+    return [ln[:-1].rstrip() for ln in inner], "".join(ln[-1] for ln in inner)
+
+
 def _panel_body(
     view: dd.DetailsView, max_rows: int | None, width: int, *, fixed: bool = False
 ) -> list[str]:
     lines = _text(dd.render_details(view, max_rows, fixed=fixed), width=width).splitlines()
     assert all(len(ln) == width for ln in lines), "every panel line is one terminal row"
     return [ln[2:-2].rstrip() for ln in lines[1:-1]]
-
-
-def _fit(subs: int | None) -> dd.ContainerPanel:
-    """A panel with no git status (None) or a root row plus ``subs`` submodule rows."""
-    row = dd.GitRow("r", "0", "0", "clean", "clean")
-    git = None if subs is None else tuple(row for _ in range(subs + 1))
-    return dd.ContainerPanel(("s",), "dev", git, ("f",))
-
-
-def test_panel_fit_drops_blanks_then_submodules_then_the_footer() -> None:
-    fit = dd.PanelFit
-    assert dd.panel_fit(_fit(None), None) == fit(True, True, 0, 0, True)
-    assert dd.panel_fit(_fit(2), 8) == fit(True, True, 2, 0, True)  # 1+2+2+1 rows + 2 blanks
-    assert dd.panel_fit(_fit(2), 7) == fit(False, True, 2, 0, True)
-    assert dd.panel_fit(_fit(10), 8) == fit(False, True, 3, 7, True)  # 3 shown + "+7 more"
-    assert dd.panel_fit(_fit(1), 4) == fit(False, True, 0, 0, True)
-    assert dd.panel_fit(_fit(None), 2) == fit(False, True, 0, 0, False)
-    assert dd.panel_fit(_fit(2), 2) == fit(False, False, 0, 0, True)
-    assert dd.panel_fit(_fit(2), 1) == fit(False, False, 0, 0, False)
-
-
-def test_panel_fit_keeps_the_exceptions_line_with_the_summary() -> None:
-    fit = dd.PanelFit
-    panel = dd.ContainerPanel(("s",), "dev", _fit(2).git, ("f",), exceptions=("e",))
-    assert dd.panel_fit(panel, None) == fit(True, True, 2, 0, True)
-    assert dd.panel_fit(panel, 9) == fit(True, True, 2, 0, True)  # 2+2+2+1 rows + 2 blanks
-    assert dd.panel_fit(panel, 8) == fit(False, True, 2, 0, True)
-    assert dd.panel_fit(panel, 7) == fit(False, True, 2, 0, True)
-    assert dd.panel_fit(panel, 6) == fit(False, True, 0, 2, True)  # "+2 more" row only
-    assert dd.panel_fit(panel, 3) == fit(False, False, 0, 0, True)
-    assert dd.panel_fit(panel, 2) == fit(False, False, 0, 0, False)
 
 
 def test_the_exceptions_line_sits_under_the_summary_undimmed() -> None:
@@ -742,13 +728,16 @@ def test_the_panel_reads_summary_git_table_footer() -> None:
     assert body[3].index("+12 -3") == body[2].index("working") == body[4].index("+5 -0")
 
 
-def test_many_submodules_collapse_into_a_more_row_and_keep_the_footer() -> None:
-    body = _panel_body(_panel_view(_rich_container(subs=10)), 8, 120, fixed=True)
+def test_many_submodules_scroll_and_keep_the_footer_at_the_end() -> None:
+    view = _panel_view(_rich_container(subs=10))
+    body, bar = _panel_scrolled(view, 8, 120, fixed=True)
 
-    assert len(body) == 8
-    assert "deps/module-2" in "\n".join(body) and "deps/module-3" not in "\n".join(body)
-    assert "… +7 more submodules" in body[6]
-    assert body[7].startswith("base dev")
+    assert len(body) == 8 and "┃" in bar
+    assert "deps/module-3" in "\n".join(body) and "deps/module-4" not in "\n".join(body)
+    last, _ = _panel_scrolled(replace(view, scroll=99), 8, 120, fixed=True)
+    assert "deps/module-9" in "\n".join(last)
+    assert last[-1].startswith("base dev")
+    assert "more submodules" not in "\n".join(body + last)
 
 
 def test_a_fixed_panel_pins_the_footer_to_the_last_grid_row() -> None:
@@ -760,12 +749,11 @@ def test_a_fixed_panel_pins_the_footer_to_the_last_grid_row() -> None:
     assert body[4:7] == ["", "", ""]
 
 
-def test_a_narrow_panel_keeps_one_row_per_line_and_drops_host_head() -> None:
+def test_a_narrow_panel_wraps_its_rows_and_drops_host_head() -> None:
     for width in (dd.DETAILS_PAIR_WIDTH, 59):
-        body = _panel_body(_panel_view(_rich_container(subs=2)), 8, width, fixed=True)
-        assert len(body) == 8, width
+        body = _panel_body(_panel_view(_rich_container(subs=2)), None, width)
         assert "host HEAD" not in "\n".join(body), width
-        assert body[-1].startswith("base"), width
+        assert any(ln.startswith("base") for ln in body), width
     wide = _panel_body(_panel_view(_rich_container()), 8, 100, fixed=True)
     assert "host HEAD" in "\n".join(wide)
 
@@ -774,7 +762,7 @@ def test_the_git_table_keeps_every_column_at_every_width() -> None:
     for subs in (2, 10):
         for width in range(36, 121):
             where = f"{subs} submodules, width {width}"
-            body = _panel_body(_panel_view(_rich_container(subs=subs)), 8, width, fixed=True)
+            body = _panel_body(_panel_view(_rich_container(subs=subs)), None, width)
             at = next(i for i, ln in enumerate(body) if ln.startswith("git"))
             header = body[at]
             assert "↑" in header and "↓" in header and "vs dev" in header, where
@@ -785,16 +773,11 @@ def test_the_git_table_keeps_every_column_at_every_width() -> None:
             assert root[header.index("↓")] == "4", where
             assert "+245 -18" in root and "+12 -3" in root, where
             assert "…" not in root[header.index("↑") :].split("merge")[0], where
-            rows = [ln for ln in body[at + 2 : -1] if ln and not ln.startswith("… +")]
-            assert rows, where
+            rows = [ln for ln in body[at + 2 : -1] if "+40 -2" in ln or "+5 -0" in ln]
+            assert len(rows) == subs, where  # a long name wraps in its column, the row stays whole
             for ln in rows:
                 assert "+40 -2" in ln and "+5 -0" in ln, where
                 assert ln[header.index("↑")] == "2", where
-
-
-def test_a_hidden_submodule_block_is_hinted_in_the_header() -> None:
-    body = _panel_body(_panel_view(_rich_container(subs=3)), 4, 100, fixed=True)
-    assert "+3 submodules" in body[1]
 
 
 def test_no_git_status_renders_one_git_line() -> None:
@@ -825,13 +808,14 @@ def test_container_written_text_renders_literally() -> None:
         assert literal in text, literal
 
 
-def test_a_cramped_panel_keeps_the_summary_and_the_activity() -> None:
+def test_a_cramped_panel_scrolls_from_the_summary_to_the_activity() -> None:
     view = _panel_view(_rich_container(), activity=LINES[:2], reserve_rows=3)
-    body = _panel_body(view, 4, 120, fixed=True)
+    body, bar = _panel_scrolled(view, 4, 120, fixed=True)
 
-    assert len(body) == 4
+    assert len(body) == 4 and "┃" in bar
     assert body[0].startswith("▶ Running")
-    assert body[-2:] == ["busy 2m", "↳ Bash  ls"]
+    last, _ = _panel_scrolled(replace(view, scroll=99), 4, 120, fixed=True)
+    assert last[-2:] == ["busy 2m", "↳ Bash  ls"]
 
 
 def test_details_for_a_container_carries_its_panel() -> None:
@@ -859,14 +843,6 @@ def test_a_container_behind_its_fetched_target_warns_in_its_own_panel() -> None:
     body = _panel_body(_panel_view(_behind()), None, 120)
     assert body[0].startswith("▶ Running")
     assert body[1] == "⚠ local target behind fetched origin/dev"
-
-
-def test_the_warning_line_is_never_dropped_from_a_short_panel() -> None:
-    panel = dd.ContainerPanel(("s",), "dev", _fit(2).git, ("f",), warnings=("w",))
-    assert dd.panel_fit(panel, None) == dd.PanelFit(True, True, 2, 0, True)
-    assert dd.panel_fit(panel, 2) == dd.PanelFit(False, False, 0, 0, False)
-    body = _panel_body(_panel_view(_behind()), 2, 100, fixed=True)
-    assert body[1].startswith("⚠")
 
 
 def test_a_repo_heading_draws_its_warnings_full_width_under_the_grid() -> None:
@@ -997,21 +973,15 @@ def test_upgrade_all_link_counts_hidden_repos() -> None:
     assert both is not None and both.upgrade_all is not None
 
 
-def test_capped_card_keeps_every_links_line() -> None:
+def test_a_card_taller_than_its_rows_scrolls_through_every_notice() -> None:
     adv = [_advisory("apply", reasons=4), _advisory("base-build", "base_build", reasons=4)]
     view = _repo_view([_repo_group("alpha", *adv)])
-    body = _body(view, 8)
-    assert sum("[dismiss]" in ln for ln in body) == 2
-    assert any("… " in ln and " more" in ln for ln in body)
-    assert len(body) == 8
-
-
-def test_card_drops_trailing_blocks_but_keeps_shown_links() -> None:
-    adv = [_advisory(f"k{i}", reasons=4) for i in range(3)]
-    view = _repo_view([_repo_group("alpha", *adv)])
-    body = _body(view, 6)  # grid takes 2 rows, 4 left: one block + the count
-    assert sum("[dismiss]" in ln for ln in body) == 1
-    assert any("… 2 more notices (jb doctor)" in ln for ln in body)
+    assert sum("[dismiss]" in ln for ln in _body(view, None)) == 2
+    first, bar = _scrolled(view, 8)
+    assert len(first) == 8 and "┃" in bar
+    assert not any("more" in ln for ln in first)
+    last, _ = _scrolled(replace(view, scroll=99), 8)
+    assert "[dismiss]" in last[-1]
 
 
 def test_advisory_lines_grow_the_panel_into_free_rows() -> None:
@@ -1025,17 +995,6 @@ def test_advisory_lines_grow_the_panel_into_free_rows() -> None:
 def test_repo_warnings_excludes_advisories() -> None:
     group = _repo_group("alpha", _advisory())
     assert dd.repo_warnings(group) == ()
-
-
-def test_every_shown_block_keeps_a_more_marker_when_reasons_do_not_fit() -> None:
-    # room 7: three blocks need 3 rows each, so two fit with the count row; the
-    # first block must not eat the spare row and leave the second unmarked.
-    adv = [_advisory(f"k{i}", reasons=4) for i in range(3)]
-    view = _repo_view([_repo_group("alpha", *adv)])
-    rows = [t.plain for t in dd.advisory_rows(view, 7)]
-    assert sum("[dismiss]" in r for r in rows) == 2
-    assert sum("more" in r and "- …" in r for r in rows) == 2
-    assert len(rows) == 7
 
 
 def test_advisory_links_follow_ssh_state() -> None:
@@ -1089,7 +1048,7 @@ def test_panel_has_no_process_lines_when_stopped_or_empty() -> None:
     assert only_mem.processes == ("[dim]mem[/dim]  a 1.0K",)
 
 
-def test_panel_fit_keeps_process_lines_before_git_rows() -> None:
+def test_process_lines_sit_under_the_summary() -> None:
     c = replace(
         _rich_container(subs=3),
         top_cpu=(ProcessActivity("node", 85.4, 1),),
@@ -1097,51 +1056,8 @@ def test_panel_fit_keeps_process_lines_before_git_rows() -> None:
     )
     panel = dd.container_panel(c, NOW)
     assert len(panel.processes) == 2
-    fit = dd.panel_fit(panel, dd.DETAILS_MAX_ROWS)
-    assert (fit.subs, fit.more) == (1, 2)
-    body = _panel_body(_panel_view(c), dd.DETAILS_MAX_ROWS, 120, fixed=True)
-    assert any(ln.startswith("cpu  node 85%") for ln in body)
-    assert any(ln.startswith("mem  java 2.0K") for ln in body)
-    assert any("… +2 more submodules" in ln for ln in body)
-
-
-def _fit_procs(procs: int, exceptions: bool, subs: int = 0) -> dd.ContainerPanel:
-    base = _fit(subs)
-    return replace(
-        base,
-        processes=tuple(f"p{i}" for i in range(procs)),
-        exceptions=("x",) if exceptions else (),
-    )
-
-
-@pytest.mark.parametrize("exceptions", [False, True])
-@pytest.mark.parametrize("cap", range(2, 9))
-def test_panel_fit_keeps_git_root_row_by_cutting_process_lines_first(
-    cap: int, exceptions: bool
-) -> None:
-    with_procs = dd.panel_fit(_fit_procs(2, exceptions), cap)
-    without = dd.panel_fit(_fit_procs(0, exceptions), cap)
-    # the table survives whenever it would have without the process lines
-    assert with_procs.git == without.git
-    # process lines are only ever cut, never shown past the cap
-    assert 0 <= with_procs.procs <= 2
-    shown = 1 + with_procs.procs + exceptions
-    if with_procs.git:
-        assert shown + 2 <= cap
-
-
-def test_panel_fit_cuts_process_lines_before_the_git_head() -> None:
-    panel = _fit_procs(2, False)
-    assert dd.panel_fit(panel, 4).git is True
-    assert dd.panel_fit(panel, 4).procs == 1
-    assert dd.panel_fit(panel, 3).procs == 0
-    assert dd.panel_fit(_fit_procs(2, True), 5).git is True
-    assert dd.panel_fit(_fit_procs(2, True), 5).procs == 1
-
-
-def test_panel_fit_without_process_lines_is_unchanged_by_procs_field() -> None:
-    assert dd.panel_fit(_fit(2), 7).procs == 0
-    assert dd.panel_fit(_fit_procs(2, False), None).procs == 2
+    body = _panel_body(_panel_view(c), None, 120)
+    assert body[1].startswith("cpu  node 85%") and body[2].startswith("mem  java 2.0K")
 
 
 GIB = 1024**3

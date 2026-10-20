@@ -84,6 +84,8 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("optimize", ("O",), "O", "optimize column widths once", "View"),
     KeyBinding("refresh", ("f5", "ctrl+r"), "F5 / Ctrl-R", "force a full refresh", "View"),
     KeyBinding("details", ("v",), "v", "show/hide the details panel", "View"),
+    KeyBinding("details-up", ("pageup",), "PgUp/PgDn", "scroll the details panel", "View"),
+    KeyBinding("details-down", ("pagedown",), "", "", "View"),
     KeyBinding("mouse", ("M",), "M", "mouse on/off (off: select text with the terminal)", "View"),
     KeyBinding(
         "settings",

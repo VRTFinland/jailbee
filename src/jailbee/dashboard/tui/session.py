@@ -304,6 +304,7 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
 
 
 # A picker's risk lines never outgrow the room left for its entries.
+DETAILS_PAGE = 5  # rows PgUp/PgDn scroll the details panel
 MAX_DETAIL_LINES = 4
 
 
@@ -378,6 +379,11 @@ class DashboardSession:
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
         # Advisories dismissed here whose snapshot has not caught up yet: hidden at once.
         self._dismissed: set[tuple[str, str]] = set()
+        # The details panel's scroll, reset with the selection; the app reports
+        # how far it can go after each paint.
+        self.details_scroll = 0
+        self.details_furthest = 0
+        self._details_row: Row | None = None
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
         self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
@@ -426,6 +432,8 @@ class DashboardSession:
         self._close_vanished_overlay()
         self._pin_selection()
         self._snap_merge_cursor()
+        if self.selected != self._details_row:
+            self._details_row, self.details_scroll = self.selected, 0
         if self.notice is not None and time.monotonic() >= self.notice_until:
             self.notice = None
         if self._auto_optimize_seq is not None and snapshot.seq != self._auto_optimize_seq:
@@ -501,6 +509,7 @@ class DashboardSession:
             show_details=self.show_details,
             system=self.system,
             show_system=self.show_system,
+            details_scroll=self.details_scroll,
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
             sort=self.sort,
@@ -2309,6 +2318,8 @@ class DashboardSession:
                 self.toggle_mark(self.selected.key)
             else:
                 self.toggle_fold()
+        elif key in ("details-up", "details-down"):
+            self.scroll_details(-DETAILS_PAGE if key == "details-up" else DETAILS_PAGE)
         elif key in ("extend-up", "extend-down"):
             self.extend_marks(-1 if key == "extend-up" else 1)
         elif key == "cancel":
@@ -2731,6 +2742,9 @@ class DashboardSession:
         if hit is not None and hit.kind == "dismiss-update":
             self.dismiss_update_notice()
             return
+        if hit is not None and hit.kind == "details-scroll":
+            self.scroll_details(int(hit.args[0]), absolute=True)  # view state only: any mode
+            return
         if self.merge_pick is not None:
             self._merge_pick_click(hit, toggle=toggle)
             return
@@ -2813,6 +2827,11 @@ class DashboardSession:
             return
         self._dismissed.add((prefix, key))  # hidden on the next tick, not the next snapshot
         self.client.refresh()  # the next snapshot drops the block for every client
+
+    def scroll_details(self, step: int, *, absolute: bool = False) -> None:
+        """Scroll the details panel ``step`` rows (``absolute``: to row ``step``), kept in range."""
+        target = step if absolute else self.details_scroll + step
+        self.details_scroll = max(0, min(target, self.details_furthest))
 
     def dismiss_update_notice(self) -> None:
         """Dismiss the advertised release, as `jb dismiss update` would.

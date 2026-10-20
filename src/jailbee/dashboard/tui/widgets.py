@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from functools import cached_property
 
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
@@ -341,6 +342,9 @@ def _advisory_links(view: DashboardView) -> AdvisoryLinks:
     )
 
 
+WHEEL_ROWS = 3  # content rows one wheel notch scrolls the details panel
+
+
 class _Hovered:
     """``renderable`` with the hovered click target underlined."""
 
@@ -359,6 +363,21 @@ class DetailsPanel(Static):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self._shown: tuple[DetailsView, int, dhit.Hit | None] | None = None
+
+    class Scrolled(Message):
+        """The wheel turned over the panel: ``step`` rows down (negative: up)."""
+
+        def __init__(self, step: int) -> None:
+            super().__init__()
+            self.step = step
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        event.stop()
+        self.post_message(self.Scrolled(WHEEL_ROWS))
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        event.stop()
+        self.post_message(self.Scrolled(-WHEEL_ROWS))
 
     def show(
         self, view: DetailsView | None, rows: int | None, hover: dhit.Hit | None = None
@@ -430,6 +449,8 @@ class DashboardFrame(Vertical):
         self.candidates = candidates or (lambda _text: ())
         self._notice_input: object = None
         self._system_input: object = None
+        # How far the shown details panel scrolls; the app hands it to the session.
+        self.details_furthest = 0
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
         self._native_overlay_key: tuple[object, ...] | None = None
@@ -652,8 +673,16 @@ class DashboardFrame(Vertical):
             and layout.details_rows is not None
             and (overlay is None or menu or floating)
         )
+        shown = beside and layout.details_rows is not None
+        self.details_furthest = (
+            measured.furthest(layout.details_rows)
+            if shown and measured is not None and layout.details_rows is not None
+            else 0
+        )
         self.query_one(DetailsPanel).show(
-            details if beside else None, layout.details_rows, view.hover
+            replace(details, scroll=view.details_scroll) if details is not None and shown else None,
+            layout.details_rows,
+            view.hover,
         )
         anchored = beside and layout.details_rows is not None
         used = (
