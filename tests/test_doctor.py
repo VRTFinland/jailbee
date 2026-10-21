@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jailbee.config import load_config
-from jailbee.doctor import _check_pool_roots, run_checks
+from jailbee.doctor import CheckResult, _check_pool_roots, run_checks
 from jailbee.global_config import DockerRegistryMirror, GlobalConfig
 from jailbee.litellm_inputs import load_host_inputs as _real_load_host_inputs
 from jailbee.registry import MirrorStatus
@@ -4288,3 +4288,109 @@ def test_run_checks_includes_git_identity(tmp_path, mocker):
 
     check.assert_called_once_with(cfg)
     assert rows[0] in results
+
+
+def _kernel_rig(
+    tmp_path: Path,
+    *,
+    config: str | None,
+    apparmor: str | None = "Y",
+    lsm: str | None = "lockdown,capability,landlock,yama,apparmor",
+) -> dict[str, Path]:
+    """Paths for `_check_kernel_features`; None leaves that file absent."""
+    import gzip
+
+    proc = tmp_path / "config.gz"
+    if config is not None:
+        with gzip.open(proc, "wt") as handle:
+            handle.write(config)
+    enabled = tmp_path / "apparmor-enabled"
+    if apparmor is not None:
+        enabled.write_text(apparmor + "\n")
+    lsm_path = tmp_path / "lsm"
+    if lsm is not None:
+        lsm_path.write_text(lsm)
+    return {
+        "proc_config": proc,
+        "boot_config": tmp_path / "no-boot-config",
+        "apparmor_enabled": enabled,
+        "securityfs_lsm": lsm_path,
+    }
+
+
+def _kernel_rows(results: list[CheckResult]) -> dict[str, CheckResult]:
+    return {r.name: r for r in results}
+
+
+def test_kernel_features_pass_on_a_stock_kernel(tmp_path: Path) -> None:
+    from jailbee.doctor import _check_kernel_features
+
+    config = "CONFIG_NF_CONNTRACK_BRIDGE=m\nCONFIG_BTRFS_FS=m\nCONFIG_BTRFS_FS_POSIX_ACL=y\n"
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=config)))
+    assert set(rows) == {"kernel bridge conntrack", "apparmor"}
+    assert all(r.ok for r in rows.values())
+
+
+def test_kernel_features_flag_missing_bridge_conntrack(tmp_path: Path) -> None:
+    """The Apple container machine's default kernel: strict containers fail to
+    start on an nftables 'Protocol error' with no hint of the cause."""
+    from jailbee.doctor import _check_kernel_features
+
+    config = "# CONFIG_NF_CONNTRACK_BRIDGE is not set\n"
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=config)))
+    row = rows["kernel bridge conntrack"]
+    assert row.ok is False
+    assert "CONFIG_NF_CONNTRACK_BRIDGE" in row.detail
+    assert "Protocol error" in row.detail
+
+
+def test_kernel_features_flag_btrfs_without_posix_acl(tmp_path: Path) -> None:
+    from jailbee.doctor import _check_kernel_features
+
+    config = "CONFIG_NF_CONNTRACK_BRIDGE=y\nCONFIG_BTRFS_FS=y\n"
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=config)))
+    assert rows["kernel btrfs ACLs"].ok is False
+    assert "CONFIG_BTRFS_FS_POSIX_ACL" in rows["kernel btrfs ACLs"].detail
+
+
+def test_kernel_features_skip_option_checks_without_a_readable_config(tmp_path: Path) -> None:
+    from jailbee.doctor import _check_kernel_features
+
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=None)))
+    assert set(rows) == {"apparmor"}
+
+
+def test_kernel_features_read_the_boot_config_when_proc_has_none(tmp_path: Path) -> None:
+    from jailbee.doctor import _check_kernel_features
+
+    paths = _kernel_rig(tmp_path, config=None)
+    paths["boot_config"].write_text("# CONFIG_NF_CONNTRACK_BRIDGE is not set\n")
+    rows = _kernel_rows(_check_kernel_features(**paths))
+    assert rows["kernel bridge conntrack"].ok is False
+
+
+def test_kernel_features_flag_apparmor_without_securityfs(tmp_path: Path) -> None:
+    """AppArmor compiled in and enabled, but nothing mounted securityfs."""
+    from jailbee.doctor import _check_kernel_features
+
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=None, lsm=None)))
+    assert rows["apparmor"].ok is False
+    assert "securityfs" in rows["apparmor"].detail
+
+
+def test_kernel_features_flag_apparmor_missing_from_the_lsm_list(tmp_path: Path) -> None:
+    from jailbee.doctor import _check_kernel_features
+
+    rig = _kernel_rig(tmp_path, config=None, lsm="lockdown,capability,yama")
+    rows = _kernel_rows(_check_kernel_features(**rig))
+    assert rows["apparmor"].ok is False
+    assert "lsm=" in rows["apparmor"].detail
+
+
+def test_kernel_features_accept_a_kernel_without_apparmor(tmp_path: Path) -> None:
+    """An SELinux host has no AppArmor; that is a fact to report, not a failure."""
+    from jailbee.doctor import _check_kernel_features
+
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=None, apparmor=None)))
+    assert rows["apparmor"].ok is True
+    assert "not enabled" in rows["apparmor"].detail

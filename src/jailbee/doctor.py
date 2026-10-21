@@ -43,6 +43,9 @@ if TYPE_CHECKING:
 # and the next launch fails with a misleading "disk quota exceeded" error.
 _KERNEL_KEYS_MAXKEYS = Path("/proc/sys/kernel/keys/maxkeys")
 _KERNEL_KEY_USERS = Path("/proc/key-users")
+_PROC_KERNEL_CONFIG = Path("/proc/config.gz")
+_APPARMOR_ENABLED = Path("/sys/module/apparmor/parameters/enabled")
+_SECURITYFS_LSM = Path("/sys/kernel/security/lsm")
 _INCUS_MAPPED_ROOT_UID = 1000000
 _KEYRING_MAXKEYS_RECOMMENDED = 1000
 _KEYRING_USAGE_WARN_FRACTION = 0.75
@@ -846,6 +849,10 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 1b. Kernel keyring quota for Incus's mapped root uid (issue: misleading
     # "disk quota exceeded" from runc when starting nested containers).
     results.extend(_check_kernel_keyring())
+    # 1c. Kernel facilities a stock distro kernel has but a minimal VM kernel
+    # (an Apple `container machine`, say) may lack; each one otherwise fails
+    # far from its cause.
+    results.extend(_check_kernel_features())
 
     # 2. UID/GID match
     real_uid = os.getuid()
@@ -1592,6 +1599,120 @@ def _check_uid_delegation(
             f"delegated to root (largest root range: {largest} ids)"
         ),
     )
+
+
+def _kernel_config(
+    proc_config: Path | None = None, boot_config: Path | None = None
+) -> dict[str, str] | None:
+    """The running kernel's build options (`CONFIG_X` -> value), or None.
+
+    Read from /proc/config.gz when the kernel exposes it, else from
+    /boot/config-<release>. Options that are "not set" are absent.
+    """
+    import gzip
+
+    proc = proc_config if proc_config is not None else _PROC_KERNEL_CONFIG
+    boot = boot_config if boot_config is not None else Path(f"/boot/config-{os.uname().release}")
+    try:
+        if proc.exists():
+            with gzip.open(proc, "rt") as handle:
+                text = handle.read()
+        elif boot.exists():
+            text = boot.read_text()
+        else:
+            return None
+    except (OSError, EOFError):
+        return None
+    options: dict[str, str] = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.startswith("CONFIG_"):
+            options[key] = value
+    return options
+
+
+def _check_kernel_features(
+    proc_config: Path | None = None,
+    boot_config: Path | None = None,
+    apparmor_enabled: Path | None = None,
+    securityfs_lsm: Path | None = None,
+) -> list[CheckResult]:
+    """Kernel options and LSM state that strict containers rely on.
+
+    Bridge connection tracking: without it Incus cannot install a strict
+    container's per-NIC filter rules, and the start fails with an opaque
+    nftables "Protocol error". btrfs without POSIX ACLs fails an instance
+    copy on `lsetxattr`. AppArmor compiled in but securityfs unmounted leaves
+    Incus unable to load its profiles. An unreadable kernel config skips the
+    option checks rather than guessing.
+    """
+    results: list[CheckResult] = []
+    options = _kernel_config(proc_config, boot_config)
+    if options is not None:
+        if options.get("CONFIG_NF_CONNTRACK_BRIDGE") in ("y", "m"):
+            results.append(CheckResult("kernel bridge conntrack", True, "available"))
+        else:
+            results.append(
+                CheckResult(
+                    "kernel bridge conntrack",
+                    False,
+                    "CONFIG_NF_CONNTRACK_BRIDGE is not set: Incus cannot install a strict "
+                    "container's bridge filter rules, and starting one fails with "
+                    "'Could not process rule: Protocol error'. Use a kernel built with it.",
+                )
+            )
+        if options.get("CONFIG_BTRFS_FS") in ("y", "m") and (
+            options.get("CONFIG_BTRFS_FS_POSIX_ACL") != "y"
+        ):
+            results.append(
+                CheckResult(
+                    "kernel btrfs ACLs",
+                    False,
+                    "btrfs is built without CONFIG_BTRFS_FS_POSIX_ACL: copying an instance "
+                    "on a btrfs pool fails on lsetxattr. Use a kernel built with it, or a "
+                    "non-btrfs storage pool.",
+                )
+            )
+
+    enabled = apparmor_enabled if apparmor_enabled is not None else _APPARMOR_ENABLED
+    lsm = securityfs_lsm if securityfs_lsm is not None else _SECURITYFS_LSM
+    try:
+        apparmor_on = enabled.read_text().strip() == "Y"
+    except OSError:
+        apparmor_on = False
+    if not apparmor_on:
+        results.append(
+            CheckResult(
+                "apparmor",
+                True,
+                "not enabled in this kernel — Incus runs containers without AppArmor confinement",
+            )
+        )
+        return results
+    try:
+        active = "apparmor" in lsm.read_text().split(",")
+    except OSError:
+        results.append(
+            CheckResult(
+                "apparmor",
+                False,
+                f"enabled, but {lsm} is unreadable — mount securityfs "
+                "(`mount -t securityfs securityfs /sys/kernel/security`) before Incus starts",
+            )
+        )
+        return results
+    if active:
+        results.append(CheckResult("apparmor", True, "active"))
+    else:
+        results.append(
+            CheckResult(
+                "apparmor",
+                False,
+                "enabled, but not in the active LSM list — add `apparmor` to the kernel's "
+                "`lsm=` boot parameter",
+            )
+        )
+    return results
 
 
 def _check_kernel_keyring(
