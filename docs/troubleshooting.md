@@ -4,7 +4,8 @@
 
 Run `jailbee doctor` from your repo on the host. It checks selected host and
 configuration conditions (UID delegation, bridge reachability, keyring quota,
-Incus reachability, GitHub token format, etc.) with remediation hints. Some
+kernel options, AppArmor, Incus reachability, GitHub token format, etc.) with
+remediation hints. Some
 checks are skipped or inconclusive when evidence is unavailable; a passing
 check is not a complete health guarantee. Start with its reported failures
 and use the sections below to investigate further.
@@ -115,6 +116,18 @@ the running Incus daemon has picked up changes. Inspect a failed start with
 `incus info --show-log <full-container-name>` and follow the installation
 instructions, including restarting Incus after changing delegation: see
 [Why the UID mapping is needed](installation.md#why-the-uid-mapping-is-needed).
+
+### "Could not process rule: Protocol error" when a strict container starts
+
+Incus installs per-container bridge filter rules that need the kernel's bridge
+connection tracking (`CONFIG_NF_CONNTRACK_BRIDGE`). Stock distribution kernels
+have it; a minimal VM kernel may not. `jailbee doctor`'s `kernel bridge
+conntrack` row reads the running kernel's configuration, when it is exposed.
+Its `kernel btrfs ACLs` and `apparmor` rows cover two related gaps: btrfs
+without POSIX ACLs fails instance copies on `lsetxattr`, and AppArmor needs
+securityfs mounted before Incus starts. The
+[Apple container machine](apple-container-machine.md) recipe builds a kernel
+with all three.
 
 ### A GUI app (IDE, browser, `apps:` entry) won't launch
 

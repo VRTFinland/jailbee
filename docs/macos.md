@@ -342,7 +342,7 @@ that the rest of the VM setup is equivalent to a tested Linux host.
 | **Colima `--runtime=incus`** | The experimental recipe above; supplies an Incus guest image. |
 | **Lima (vz backend)** | Configure a suitable Linux guest, install Incus, and provide same-path repo mounts. The selected image and kernel need not match Colima's. |
 | **Multipass or UTM** | Candidate Linux VM hosts, not verified JailBee recipes. Check guest kernel facilities, Incus setup, same-path folder sharing, ownership and I/O performance. |
-| **Apple `container`** | Not a verified Incus host. Do not assume its Linux container VMs provide the systemd, kernel security, networking and storage facilities needed for this setup; a custom kernel alone is not proof of compatibility. |
+| **Apple `container machine`** | Experimental, with a custom kernel: the default kernel lacks bridge connection tracking, AppArmor and btrfs. The Mac home stays unshared, so repositories live on the VM's disk. See [Apple container machine with a custom kernel](apple-container-machine.md). |
 
 These alternatives require their own transport configuration and end-to-end
 validation; they are not supported substitutes merely because they run Linux.
