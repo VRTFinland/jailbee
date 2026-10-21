@@ -61,6 +61,19 @@ def profile_names(cfg: Config) -> ProfileNames:
     )
 
 
+HOST_FONTS_DIR = Path("/usr/share/fonts")
+
+
+def _host_fonts_dir() -> Path | None:
+    """The host's font directory, or None when the host has none.
+
+    A minimal host image (an Apple `container machine`, a server install)
+    may ship no fonts at all; a disk device whose source is missing fails
+    the container's start, so the mount is left out instead.
+    """
+    return HOST_FONTS_DIR if HOST_FONTS_DIR.is_dir() else None
+
+
 def _host_render_nodes() -> list[Path]:
     """Sorted list of DRI render nodes on the host (``/dev/dri/renderD*``).
 
@@ -174,14 +187,15 @@ def base_profile_yaml(cfg: Config) -> str:
     gid = cfg.container_user.gid
     runtime = f"/run/user/{uid}"
 
-    devices: dict[str, dict[str, str]] = {
-        "fonts": {
+    devices: dict[str, dict[str, str]] = {}
+    fonts = _host_fonts_dir()
+    if fonts is not None:
+        devices["fonts"] = {
             "type": "disk",
-            "source": "/usr/share/fonts",
-            "path": "/usr/share/fonts",
+            "source": str(fonts),
+            "path": str(HOST_FONTS_DIR),
             "readonly": "true",
-        },
-    }
+        }
 
     # Pass each host render node as an explicit unix-char device — the
     # minimum surface for GPU-accelerated Chrome/Mesa. Mode 0666 because

@@ -331,6 +331,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`container.tmpfs.enabled` to get one back, capped by `container.tmpfs.size`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "a host without `/usr/share/fonts` no longer gets a fonts mount that "
+            "keeps every container from starting"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
