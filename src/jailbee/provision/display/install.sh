@@ -23,6 +23,17 @@ if [ -z "$network_up" ]; then
   exit 1
 fi
 
+# cloud-init's first boot rewrites the apt sources while this script runs. An
+# index refresh that finishes before the rewrite leaves package lists the
+# install below finds nothing in ("Unable to locate package"), so wait for
+# cloud-init to finish first. Its exit status reports
+# module errors, not readiness, and is not this script's concern; the
+# timeout keeps a wedged cloud-init from stalling provisioning forever.
+if command -v cloud-init >/dev/null 2>&1; then
+  echo "==> Waiting for cloud-init to finish"
+  timeout 300 cloud-init status --wait >/dev/null 2>&1 || true
+fi
+
 apt-get update -qq
 apt-get install -y -qq weston openssl waypipe
 

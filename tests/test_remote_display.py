@@ -278,6 +278,15 @@ def test_provisioning_installs_waypipe():
     assert "waypipe" in script.split("apt-get install", 1)[1].splitlines()[0]
 
 
+def test_provisioning_waits_for_cloud_init_before_refreshing_apt():
+    """cloud-init's first boot rewrites the apt sources; an `apt-get update`
+    racing it left `apt-get install` unable to locate weston and waypipe."""
+    script = rd._read_provision_text("install.sh")
+
+    assert "cloud-init status --wait" in script
+    assert script.index("cloud-init status --wait") < script.index("apt-get update")
+
+
 def test_a_display_without_waypipe_counts_as_incompletely_provisioned():
     incus = MagicMock()
     incus.exec.return_value = "absent\n"

@@ -55,6 +55,17 @@ systemctl mask \
 echo "==> Masking tmp.mount (/tmp stays on disk)"
 systemctl mask tmp.mount 2>/dev/null || true
 
+# cloud-init's first boot rewrites the apt sources while this script runs. An
+# index refresh that finishes before the rewrite leaves package lists the
+# install below finds nothing in ("Unable to locate package"), so wait for
+# cloud-init to finish first. Its exit status reports
+# module errors, not readiness, and is not this script's concern; the
+# timeout keeps a wedged cloud-init from stalling provisioning forever.
+if command -v cloud-init >/dev/null 2>&1; then
+    echo "==> Waiting for cloud-init to finish"
+    timeout 300 cloud-init status --wait >/dev/null 2>&1 || true
+fi
+
 echo "==> Updating apt cache"
 apt-get update -y
 

@@ -279,3 +279,11 @@ def test_install_sh_leaves_an_existing_dev_group_alone():
     out = _run_group_creation("dev")
     assert "groupadd" not in out
     assert "groupmod" not in out
+
+
+def test_install_sh_waits_for_cloud_init_before_refreshing_apt():
+    """cloud-init's first boot rewrites the apt sources; an `apt-get update`
+    racing it leaves package lists `apt-get install` finds nothing in."""
+    script = _install_sh()
+    assert "cloud-init status --wait" in script
+    assert script.index("cloud-init status --wait") < script.index("apt-get update")
