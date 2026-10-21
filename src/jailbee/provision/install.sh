@@ -103,8 +103,19 @@ if getent passwd ubuntu >/dev/null; then
 fi
 getent group ubuntu >/dev/null && groupdel ubuntu 2>/dev/null || true
 
+# A host GID can already name a system group in the image: macOS gives its
+# users GID 20 ("staff"), which Ubuntu reserves for `dialout`, so a Linux VM
+# created from a Mac account hands that GID through. Only the number matters
+# for file ownership across the bind mounts, so the existing group is renamed
+# to the dev user's rather than failing groupadd on a duplicate GID.
 echo "==> Creating user ${CONTAINER_USER} (UID=${CONTAINER_UID}, GID=${CONTAINER_GID})"
-groupadd -g "${CONTAINER_GID}" "${CONTAINER_USER}"
+existing_group="$(getent group "${CONTAINER_GID}" | cut -d: -f1 || true)"
+if [ -z "${existing_group}" ]; then
+    groupadd -g "${CONTAINER_GID}" "${CONTAINER_USER}"
+elif [ "${existing_group}" != "${CONTAINER_USER}" ]; then
+    echo "==> GID ${CONTAINER_GID} belongs to '${existing_group}'; renaming it to '${CONTAINER_USER}'"
+    groupmod -n "${CONTAINER_USER}" "${existing_group}"
+fi
 useradd -m -u "${CONTAINER_UID}" -g "${CONTAINER_GID}" \
         -s /bin/bash "${CONTAINER_USER}"
 

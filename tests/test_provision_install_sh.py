@@ -236,3 +236,46 @@ def test_install_sh_masks_tmp_mount_so_tmp_stays_on_disk():
     """`container.tmpfs` relies on this: the opt-in mount comes from the Incus
     profile, and the golden image must not already be mounting a tmpfs."""
     assert "systemctl mask tmp.mount" in _install_sh()
+
+
+def _run_group_creation(existing: str) -> str:
+    """Run install.sh's dev-group block with stubbed group tools.
+
+    ``existing`` is the group `getent` reports for the GID ("" for none);
+    the stubs print the command they were asked to run.
+    """
+    script = _install_sh()
+    start = script.index('existing_group="$(getent group')
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    stubs = (
+        f'getent() {{ [ -n "{existing}" ] && echo "{existing}:x:$2:"; }}\n'
+        'groupadd() { echo "groupadd $*"; }\n'
+        'groupmod() { echo "groupmod $*"; }\n'
+        "CONTAINER_USER=dev\nCONTAINER_GID=20\nset -euo pipefail\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", stubs + script[start:end]],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def test_install_sh_creates_the_dev_group_when_the_gid_is_free():
+    assert _run_group_creation("").strip() == "groupadd -g 20 dev"
+
+
+def test_install_sh_renames_a_system_group_that_holds_the_gid():
+    """A Mac account's GID 20 is Ubuntu's `dialout`; groupadd -g 20 used to
+    fail the whole golden build."""
+    out = _run_group_creation("dialout")
+    assert "groupmod -n dev dialout" in out
+    assert "groupadd" not in out
+
+
+def test_install_sh_leaves_an_existing_dev_group_alone():
+    out = _run_group_creation("dev")
+    assert "groupadd" not in out
+    assert "groupmod" not in out
