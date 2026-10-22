@@ -1,0 +1,31 @@
+# Packages the machine image carries. Everything here is static; configuration
+# that depends on the user lives in root-prepare.sh so an existing machine can
+# be re-prepared without being recreated.
+systemd
+systemd-sysv
+dbus
+dbus-user-session
+sudo
+ca-certificates
+curl
+openssh-server
+iproute2
+iputils-ping
+nftables
+iptables
+kmod
+netcat-openbsd
+incus
+incus-client
+uidmap
+dnsmasq-base
+squashfs-tools
+btrfs-progs
+attr
+acl
+fuse-overlayfs
+git
+python3
+python3-venv
+pipx
+apparmor-utils
