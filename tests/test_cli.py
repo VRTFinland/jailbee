@@ -5971,6 +5971,20 @@ def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):
     assert "jailbee registry up && jailbee apply" in flat
 
 
+def test_net_loose_keeps_the_mirror_endpoint(tmp_path, mocker):
+    """Loose keeps the mirror's /etc/hosts row (`hosts.sync_hosts`), but only
+    if it is handed the endpoint: with None it clears the whole block, and a
+    work-network container's dockerd can no longer resolve its HTTPS_PROXY."""
+    _setup_net_test(tmp_path, mocker, pre_mode="strict")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=("10.42.0.7", 3128))
+    switch = mocker.patch("jailbee.lifecycle.switch_network")
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
+
+    assert result.exit_code == 0, result.stdout
+    assert switch.call_args.kwargs["mirror_endpoint"] == ("10.42.0.7", 3128)
+
+
 def test_net_strict_is_silent_when_the_repo_does_not_want_the_mirror(tmp_path, mocker):
     """The warning must be gated on `mirror_wanted`, not on the endpoint alone,
     or every non-Docker repo gets it on every `net strict`."""
