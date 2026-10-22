@@ -16,7 +16,7 @@ New here? [Installation](installation.md) sets up the host, then
 | [Storage: use btrfs](storage.md) | Why a copy-on-write btrfs pool beats the default `dir` pool, how to set one up, and how to point JailBee at it |
 | [Getting started](getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
 | [Using JailBee from a Mac](macos.md) | A Mac as client of a Linux host, or of a Linux VM on the Mac (experimental): SSH service plus Windows App for GUI apps |
-| [Apple container machine](apple-container-machine.md) | Experimental: JailBee and Incus inside an Apple `container machine` with a custom kernel, the Mac home unshared |
+| [Apple container machine](apple-container-machine.md) | Experimental: JailBee and Incus inside an Apple `container machine` with a custom kernel |
 
 ## Daily use
 

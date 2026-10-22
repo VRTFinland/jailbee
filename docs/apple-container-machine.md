@@ -1,14 +1,16 @@
 # Apple container machine with a custom kernel
 
 This recipe runs JailBee and Incus inside an Apple `container machine`, with
-repositories and caches on the VM's Linux disk. The Mac home directory stays
-**unshared**. Use the machine's terminal or JailBee's SSH service; SFTP moves
-files between the Mac and a container's repository.
+repositories and caches on the VM's Linux disk. Use the machine's terminal or
+JailBee's SSH service; SFTP moves files between the Mac and a container's
+repository.
 
 This is an experimental setup, tested on one Apple silicon Mac on
-2026-10-21. It does not establish compatibility with every project or provide
-a Mac folder-sharing recipe. See [Using JailBee from a Mac](macos.md) for the
-other arrangements.
+2026-10-21. It does not establish compatibility with every project. The tested
+machine was created without the Mac home mounted, by the tester's preference;
+the recipe does not depend on that, but a machine that shares the Mac home was
+not tested. See [Using JailBee from a Mac](macos.md) for the other
+arrangements.
 
 The recipe pins the tested JailBee 1.7.7. Three of its workarounds address
 problems that later releases handle themselves, as noted where each appears;
@@ -113,6 +115,10 @@ container machine create --name jailbee --cpus 6 --memory 12G \
   --home-mount none local/jailbee-host:trial
 container machine run -n jailbee --root -i -t -- bash -l
 ```
+
+`--home-mount none` keeps the Mac home out of the VM, which `container
+machine` would otherwise share. That was the tester's choice, not a JailBee
+requirement; omitting it was not tested.
 
 The builder's 4 GiB and the machine's 12 GiB are separate settings. The
 following sections explicitly identify the shell in which commands run.
@@ -326,7 +332,7 @@ jb exec smoke -- git status --short --branch
 This fixture deliberately has no project toolchains or agent credentials.
 Follow [project configuration](project-config.md) for a real stack. A source
 repository that exists only under a Mac path such as `/Volumes/workspace/...`
-is not available inside this home-unshared machine.
+is not available inside a machine created with `--home-mount none`.
 
 ## 6. Test the boundaries and reboot
 
@@ -377,7 +383,7 @@ running. Nested Docker was also tested in an unprivileged Incus probe with
 
 ## Remote commands, SFTP and RDP
 
-Keep home sharing disabled. Configure key-only access to the VM's ordinary
+Configure key-only access to the VM's ordinary
 OpenSSH server, then use it as the jump host to JailBee's loopback SSH service.
 Authorise a public key and start the JailBee service from the VM user shell:
 
@@ -409,7 +415,7 @@ a live Mac bind mount. A diagnostic macOS bridge configuration reached the
 VM and printed the installed version. That does not establish access to the
 Mac repository: neither a version command nor `jailbee mac doctor` verifies
 that the working directory contains the same files inside the VM. No bridge
-project workflow was verified with home sharing disabled.
+project workflow was verified in this setup.
 
 For GUI testing, add this to the project's `.jailbee/config.yaml`:
 
@@ -476,7 +482,7 @@ verify the visible window, typing, and clipboard in both directions.
 
 ## Native Mac windows with Cocoa-Way
 
-The same home-unshared machine also accepted a waypipe connection from
+The same machine also accepted a waypipe connection from
 Cocoa-Way 2.1.1 with waypipe-darwin 0.11.2 on the Mac; the display container
 had waypipe 0.11.0. Firefox loaded its container-local HTTP page, and the
 compositor logged creation of a rootless Mac window and presentation of its
@@ -561,7 +567,7 @@ to the installed behaviour.
 | Clipboard Mac → container | Passed |
 | Clipboard container → Mac | Failed in the initial manual test; menu-copy retest pending |
 | Native macOS bridge | Transport/version probe only; no project workflow verified |
-| Live Mac repo mounts | Not tested: home sharing deliberately disabled |
+| Live Mac repo mounts | Not tested: the test machine did not share the Mac home |
 | Cocoa-Way/waypipe Firefox | Page, rootless window and ASCII input passed; default layout is US |
 | Finnish Mac keyboard workaround | XKB symbols verified; keyboard operation confirmed manually |
 | Cocoa-Way text clipboard, both directions | Passed: form token and Mac clipboard token verified |
