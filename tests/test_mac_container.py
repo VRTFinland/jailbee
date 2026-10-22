@@ -202,3 +202,9 @@ def test_machine_stop_rm_and_image_rm_argv() -> None:
         ["container", "machine", "rm", "m"],
         ["container", "image", "rm", "local/x:1"],
     ]
+
+
+def test_set_default_kernel_recommended_argv() -> None:
+    runner = FakeRunner()
+    AppleContainer(runner=runner).set_default_kernel_recommended()
+    assert runner.calls == [["container", "system", "kernel", "set", "--recommended", "--force"]]

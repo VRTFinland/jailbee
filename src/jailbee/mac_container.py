@@ -87,6 +87,13 @@ class AppleContainer:
             return None
         return link.resolve().name.removeprefix("vmlinux-") or None
 
+    def set_default_kernel_recommended(self) -> None:
+        """Replace Apple's global default kernel with the recommended one.
+
+        Global state other `container` users rely on: callers ask first.
+        """
+        self._checked("system", "kernel", "set", "--recommended", "--force")
+
     # -- images and one-shot containers -----------------------------------
 
     def build_image(self, context: Path, tag: str, *, cpus: int, memory: str) -> None:
