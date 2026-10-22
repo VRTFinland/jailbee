@@ -90,7 +90,7 @@ def test_jailbee_step_installs_uv_then_jailbee_then_writes_global_yaml(tmp_path:
 
 def test_jailbee_fingerprint_is_mac_version(tmp_path: Path) -> None:
     ctx = make_ctx(tmp_path, FakeAC())
-    assert JailbeeStep(mac_version="1.7.8").fingerprint(ctx) == "1.7.8"
+    assert JailbeeStep(mac_version="1.7.8").fingerprint(ctx).startswith("1.7.8:")
 
 
 def test_base_step_reruns_on_jailbee_upgrade_or_new_kernel(tmp_path: Path) -> None:
@@ -160,3 +160,19 @@ def test_user_commands_drop_from_root_to_the_login_user(tmp_path: Path, monkeypa
     installs = [r for r in ac.runs if "uv tool install" in " ".join(r["argv"])]  # type: ignore[arg-type]
     assert installs and installs[0]["root"] is True
     assert installs[0]["argv"][:5] == ["runuser", "-u", "me", "--", "bash"]  # type: ignore[index]
+
+
+def test_mac_repos_mode_trusts_the_shared_repositories(tmp_path: Path) -> None:
+    """On the Mac share, file owners seen in the machine flicker between the login
+    user and root (observed on a real Mac), so git reports 'dubious ownership'."""
+    ac = FakeAC()
+    JailbeeStep(mac_version="1.7.8").run(make_ctx(tmp_path, ac))
+    assert any("safe.directory '*'" in c for c in commands(ac))
+
+
+def test_isolated_mode_does_not_loosen_git(tmp_path: Path) -> None:
+    ac = FakeAC()
+    ctx = make_ctx(tmp_path, ac)
+    ctx.state.options.mode = "isolated"
+    JailbeeStep(mac_version="1.7.8").run(ctx)
+    assert not any("safe.directory" in c for c in commands(ac))

@@ -23,6 +23,8 @@ _USER_BUS = (
 GLOBAL_YAML = "~/.config/jailbee/global.yaml"
 SCRATCH_DIR = "$HOME/jailbee-scratch"
 POOL = "jailbee-btrfs"
+RECIPE = 2
+"""Bump when this step does more than before, so machines already set up redo it."""
 _KERNEL_ROWS = ("kernel bridge conntrack", "kernel btrfs ACLs", "apparmor")
 
 
@@ -100,7 +102,7 @@ class JailbeeStep:
         self._version = mac_version or _mac_version()
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        return self._version
+        return f"{self._version}:r{RECIPE}"
 
     def run(self, ctx: SetupContext) -> None:
         run_as_user(
@@ -109,6 +111,14 @@ class JailbeeStep:
         run_as_user(ctx, install_command(self._version, warn=ctx.log))
         write_vm_global(ctx, merge_global_yaml(read_vm_global(ctx)))
         run_as_user(ctx, "jailbee setup --yes --only timer")
+        if ctx.state.options.mode == "mac-repos":
+            # Owners on the Mac share flicker between the login user and root in the
+            # machine, which makes git refuse the repositories as 'dubious ownership'.
+            run_as_user(
+                ctx,
+                "git config --global --get-all safe.directory | grep -qxF '*' "
+                "|| git config --global --add safe.directory '*'",
+            )
 
 
 class BaseImageStep:
