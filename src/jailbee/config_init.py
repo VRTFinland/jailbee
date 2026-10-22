@@ -264,6 +264,7 @@ GLOBAL_SEED: dict[str, object] = {
             "autostart": False,
         },
     },
+    "terminal": {"kitty": {"enabled": "auto", "host_terminfo_path": None}},
     # `agents.claude` is the recommended integration; enabling it here
     # (rather than leaving `agents` empty) mirrors the old template's
     # working example and keeps Claude Code usable out of the box.

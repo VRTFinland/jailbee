@@ -76,6 +76,7 @@ from jailbee.config.models_tools import (
     JetbrainsConfig,
     SshConfig,
     TerminalConfig,
+    resolve_kitty_terminfo_path,
 )
 from jailbee.constants import SHARED_SUBDIRS
 from jailbee.git import DEFAULT_REMOTE
@@ -319,8 +320,9 @@ class Config(BaseModel):
     terminal: TerminalConfig = Field(
         default=TerminalConfig(),
         description=(
-            "Deprecated and ignored: the golden image ships the xterm-kitty terminfo "
-            "entry the `kitty` block used to mount from the host. Remove this key."
+            "Terminal-emulator integrations — currently just Kitty's terminfo "
+            "bind-mount, so `jailbee shell`/`jailbee tmux` from a Kitty terminal don't "
+            "degrade to a plain xterm. Applies to every repo unless a repo overrides it."
         ),
     )
     autostart: Autostart = Field(
@@ -852,6 +854,17 @@ class Config(BaseModel):
                 auto.append(
                     HostMount(host=browser.host_path, container=container_path, readonly=True)
                 )
+        kitty = self.terminal.kitty
+        if kitty.enabled and (
+            resolved := resolve_kitty_terminfo_path(explicit=kitty.host_terminfo_path)
+        ):
+            auto.append(
+                HostMount(
+                    host=resolved,
+                    container="/usr/share/terminfo/x/xterm-kitty",
+                    readonly=True,
+                )
+            )
 
         for entry in auto:
             if str(entry.container) not in existing_containers:
@@ -1012,6 +1025,14 @@ class Config(BaseModel):
                 f"clear browsers.default."
             )
         issues.extend(self._validate_apps())
+        kitty = self.terminal.kitty
+        if kitty.enabled:
+            if kitty.host_terminfo_path is not None and not kitty.host_terminfo_path.exists():
+                issues.append(
+                    f"terminal.kitty.host_terminfo_path does not exist: "
+                    f"{kitty.host_terminfo_path}. Point at an existing xterm-kitty "
+                    f"terminfo file or set host_terminfo_path: null to autodetect."
+                )
         if self.github.enabled:
             secret = self.github.token_for(self.container_prefix)
             if secret is not None and not secret.get_secret_value().strip():

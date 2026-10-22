@@ -351,8 +351,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 7, 8),
         actions=frozenset({"base_build"}),
         reason=(
-            "the golden image ships kitty's `xterm-kitty` terminfo; the host file "
-            "is no longer mounted and `terminal.kitty` is ignored"
+            "the golden image ships kitty's `xterm-kitty` terminfo, so a kitty "
+            "terminal works in containers even when the host lacks the file"
         ),
     ),
 )

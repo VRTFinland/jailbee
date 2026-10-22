@@ -298,7 +298,7 @@ def test_install_sh_leaves_a_valid_utc_localtime_not_an_empty_file():
 
 
 def test_install_sh_installs_the_xterm_kitty_terminfo():
-    """`terminal.kitty` no longer mounts the host's file; the image must carry
-    the entry (ncurses-term has only `kitty`, not `xterm-kitty`)."""
+    """The image carries xterm-kitty itself (ncurses-term has only `kitty`),
+    so kitty terminals work even where the host has no file to mount."""
     packages = _install_sh().split('echo "==> Installing LXC plumbing apt packages"', 1)[1]
     assert "kitty-terminfo" in packages.split("\n\n", 1)[0]

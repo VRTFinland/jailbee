@@ -39,7 +39,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `agent_view`, `seed_onboarding`) | `enabled: false`, rest see below | global |
 | `pr` | `{agent, ai_description, ai_branch, model, prompt, timeout}` — how `jailbee pr` writes PR text; see the `pr` section below. Replaces the old `claude.ai_pr_*` / `claude.pr_prompt` keys, which still load with a deprecation notice | `agent: auto`, rest see below | global for `agent`/`timeout`/`model`, repo for `prompt` |
 | `github` | `{enabled, token}` (+ deprecated `api_tokens`) | `enabled: false` (opt-in) | `enabled` global; `token` in the host-local `repos/<prefix>.yaml` — never the committed repo file |
-| `terminal` | deprecated, ignored | — | global |
+| `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "15m"` | global/repo |
 | `ls` / `dashboard` | `{fields, hide}` | `fields: null`, `hide: []` (`dashboard.hide` defaults to `[repo, full_name, git_status, created, ttl]`) | global (personal display preference) |
 | `pull` | `{destroy_container, delete_branch}` | both `prompt` | mixed |
@@ -783,7 +783,19 @@ read-only silently bypasses that review step. See the
 
 ## `terminal`
 
-Deprecated and ignored (removed in 2.0.0). The golden image ships the `xterm-kitty` terminfo entry, so the `terminal.kitty` block no longer mounts anything. Don't add it to a new config; remove it from an existing one.
+Terminal-emulator integrations. Currently only kitty.
+
+```yaml
+terminal:
+  kitty:
+    enabled: auto              # "auto" (default) | true | false
+    host_terminfo_path: null   # explicit host path, or null to autodetect
+```
+
+When you run `jailbee shell`/`jailbee tmux` from a kitty terminal, `TERM=xterm-kitty` propagates into the container. The golden image ships that terminfo entry; this block also RO bind-mounts the host's file, for containers built from older images (planned for removal in 2.0.0).
+
+- `kitty.enabled`: `"auto"` and `true` mount the host file when found (none found is not an error); `false` disables.
+- `kitty.host_terminfo_path`: explicit path, else autodetect probes `/usr/share/terminfo/x/xterm-kitty`, `~/.local/kitty.app/lib/kitty/terminfo/x/xterm-kitty`, `~/.terminfo/x/xterm-kitty` in order.
 
 ## `container_prefix`
 

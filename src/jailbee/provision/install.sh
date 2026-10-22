@@ -87,7 +87,9 @@ apt-get update -y
 #
 # kitty-terminfo: `jailbee shell` from a kitty terminal carries
 # TERM=xterm-kitty into the container, and ncurses-term ships only `kitty`,
-# not `xterm-kitty`; without the entry curses tools warn and degrade.
+# not `xterm-kitty`; without the entry tmux refuses to start and curses
+# tools degrade. `terminal.kitty` still mounts the host's file over it, for
+# containers built from images that predate this package.
 echo "==> Installing LXC plumbing apt packages"
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apt-transport-https ca-certificates curl gnupg lsb-release wget \
