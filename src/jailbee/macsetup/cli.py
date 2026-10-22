@@ -277,6 +277,11 @@ def _uninstall(
     if kernel and Path(kernel).exists():
         Path(kernel).unlink()
         removed.append("custom kernel")
+        for directory in (Path(kernel).parent, Path(kernel).parent.parent):
+            try:
+                directory.rmdir()  # only while empty: never someone else's files
+            except OSError:
+                break
     _remove_include_line(user_ssh_config or Path.home() / ".ssh" / "config")
     _restore_macos_yaml(macos_yaml)
     shutil.rmtree(paths.ssh_dir, ignore_errors=True)

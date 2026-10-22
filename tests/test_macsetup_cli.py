@@ -150,6 +150,7 @@ def test_uninstall_removes_include_line_only(env, tmp_path: Path) -> None:  # ty
     assert ssh_config.read_text() == "Host keep\n    User me\n"
     assert [c[0] for c in ac.calls] == ["stop", "rm", "image_rm"]
     assert not kernel.exists()
+    assert not kernel.parent.exists()  # the emptied kernels directory goes too
     assert not env["paths"].state_file.exists()
     assert not env["paths"].config_dir.exists()  # nothing of ours is left behind
     assert env["macos_yaml"].read_text() == "transport: [colima, ssh]\n"

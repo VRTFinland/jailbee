@@ -471,3 +471,19 @@ def test_mac_doctor_uses_the_layer_report_for_apple_backend(mocker) -> None:
 def test_usage_lists_the_new_subcommands(capsys) -> None:
     assert macos._run_mac_command([]) == 2
     assert "setup" in capsys.readouterr().err
+
+
+def test_isolated_mode_runs_in_the_machine_home(mocker) -> None:
+    """The Mac's working directory does not exist in an isolated machine; JailBee
+    would otherwise start in `/` and refuse it."""
+    run = mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0))
+    with pytest.raises(SystemExit):
+        macos._delegate(_apple_cfg(mode="isolated"), ["ls"], Path("/tmp/x"), isatty=False)
+    assert 'cd "$HOME"' in run.call_args.args[0][-1]
+
+
+def test_mac_repos_mode_keeps_the_mapped_directory(mocker) -> None:
+    run = mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0))
+    with pytest.raises(SystemExit):
+        macos._delegate(_apple_cfg(), ["ls"], Path("/Users/me/repo"), isatty=False)
+    assert 'cd "$HOME"' not in run.call_args.args[0][-1]

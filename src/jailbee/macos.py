@@ -111,7 +111,8 @@ def _remote(cfg: BridgeConfig, args: list[str]) -> list[str]:
     """What follows `--` for `args`: the argv itself, or one quoted string for Apple."""
     if cfg.backend != "apple":
         return args
-    inner = _APPLE_PRELUDE + shlex.join(args)
+    prelude = _APPLE_PRELUDE + ('cd "$HOME"; ' if cfg.mode == "isolated" else "")
+    inner = prelude + shlex.join(args)
     return [f"runuser -u {shlex.quote(cfg.user)} -- bash -c {shlex.quote(inner)}"]
 
 
