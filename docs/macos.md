@@ -1,13 +1,14 @@
 # Using JailBee from a Mac
 
 JailBee only runs on Linux, because the Incus **daemon** is Linux-only (see
-[Why not native macOS](#why-not-native-macos)). A Mac reaches it in one of two
-setups:
+[Why not native macOS](#why-not-native-macos)). A Mac reaches it in one of
+three setups:
 
 | Setup | Where JailBee runs | Status |
 |---|---|---|
 | [A. A Linux host, the Mac as client](#setup-a-a-linux-host-the-mac-as-client) | A Linux workstation, server or cloud VM you can SSH into | Recommended. Windows App against the shared display, clipboard included, is confirmed; the Mac-side recipe below is still being run end to end |
 | [B. A Linux VM on the Mac](#setup-b-a-linux-vm-on-the-mac-colima) | A Colima VM on the same Mac, with the repo shared from macOS | **Experimental, not verified on real Apple hardware** |
+| [C. Apple's container machine, one command](#setup-c-apples-container-machine-one-command) | A Linux machine on the same Mac, set up by `jailbee mac setup` | **Experimental.** Apple silicon only; the hand recipe it automates was verified on one Mac |
 
 Either way, day-to-day use from the Mac goes through the same two things:
 
@@ -181,6 +182,77 @@ applies unchanged, including `-o ControlMaster=no` if your ssh config shares
 connections. Cocoa-Way's repository also ships `run_waypipe.sh`, which handles
 additional runtime locations and display selection; the function above is
 only a minimal default-location helper.
+
+## Setup C: Apple's container machine, one command
+
+> **Experimental.** `jailbee mac setup` automates the recipe in
+> [Apple container machine with a custom kernel](apple-container-machine.md),
+> which was verified by hand on one Apple silicon Mac. Read that page for what
+> each step does and how to do it yourself.
+
+Here JailBee, Incus and the containers run in a Linux machine on the Mac,
+created with Apple's [`container`](https://github.com/apple/container). One
+command builds everything, including the custom Linux kernel that strict
+network mode needs (Apple's default kernel lacks `CONFIG_NF_CONNTRACK_BRIDGE`,
+AppArmor and btrfs).
+
+You need an Apple silicon Mac, Apple's signed `container` package 1.6.0 or newer
+(it needs an administrator to install) and [`uv`](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install 'jailbee[ssh]'
+jailbee mac setup
+```
+
+Setup runs unattended for about half an hour: it builds the kernel in a
+throwaway container, builds the machine image, creates the machine, installs
+Incus with a btrfs pool, installs the same JailBee version inside, builds the
+base image and finishes by creating and removing a test container. If it
+stops, it says what to do; run `jailbee mac setup` again and it continues where
+it left off.
+
+| Option | Effect |
+|---|---|
+| `--isolated` | Do not share your Mac home with the machine. JailBee and your repos then live in the machine; reach them with `ssh jailbee-vm`. |
+| `--no-gui` | Skip native Mac windows. |
+| `--cpus N`, `--memory 8G` | Machine size. Default: half your Mac's cores and memory. |
+| `--machine NAME` | Machine name (default `jailbee`). |
+| `--yes` | Answer yes to every question, for scripts. |
+
+By default the machine shares your Mac home at the same path, so "the host" is
+your Mac's own repositories:
+
+```sh
+cd ~/code/your-repo
+jailbee new feat/x          # delegated into the machine
+jailbee shell feat-x
+jailbee firefox feat-x      # a window on the Mac (needs Cocoa-Way, see below)
+```
+
+Native windows use [Cocoa-Way](https://github.com/J-x-Z/cocoa-way) and waypipe
+from a third-party Homebrew tap. Setup asks before installing them, and the
+windows go through JailBee's SSH service inside the machine, which setup turns
+on with `remote.ssh.restrict_host: false`. Only your Mac's key can reach it
+(through the machine's own sshd), so the dashboard keeps its host commands. Set
+the key back to `true` in the machine's `~/.config/jailbee/global.yaml` to
+restrict it. Linux Chrome has no arm64 build; use `jailbee firefox`.
+
+Freed disk space returns to the Mac: the machine's disk is a sparse image and
+the root filesystem is mounted with `discard`.
+
+**Upgrade** by running `jailbee mac setup` again. Each layer (the kernel, the
+machine image, JailBee, the base image) is redone only when its input changed.
+`jailbee mac doctor` lists the layers that are out of date.
+
+**Remove** everything setup created with `jailbee mac uninstall`. It asks first,
+because it deletes the machine and everything inside it.
+
+Setup changes these things outside the machine: a machine, an image and a kernel
+file (`~/Library/Application Support/jailbee/kernels`); `~/.config/jailbee/mac/`
+(state and an SSH key); one `Include` line at the top of `~/.ssh/config`; and
+`~/.config/jailbee/macos.yaml` (an existing Colima file is saved as
+`macos.yaml.colima.bak`). It never replaces Apple's default kernel without
+asking.
 
 ## Setup B: a Linux VM on the Mac (Colima)
 

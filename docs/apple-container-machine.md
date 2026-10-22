@@ -5,6 +5,10 @@ repositories and caches on the VM's Linux disk. Use the machine's terminal or
 JailBee's SSH service; SFTP moves files between the Mac and a container's
 repository.
 
+[`jailbee mac setup`](macos.md#setup-c-apples-container-machine-one-command)
+automates everything on this page in one command. Read on for what it does, or
+to do it by hand.
+
 This is an experimental setup, tested on one Apple silicon Mac on
 2026-10-21. It does not establish compatibility with every project. The tested
 machine was created without the Mac home mounted, by the tester's preference;
