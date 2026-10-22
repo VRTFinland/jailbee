@@ -152,3 +152,19 @@ def test_load_state_none_when_missing_or_unknown_schema(tmp_path: Path) -> None:
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"schema": 99}))
     assert load_state(bad) is None
+
+
+def test_fingerprint_is_recorded_after_the_step_ran(tmp_path: Path) -> None:
+    """A step's input can change by running it (an image that now exists)."""
+
+    class Builds(FakeStep):
+        def __init__(self) -> None:
+            super().__init__("a", "before")
+
+        def run(self, ctx: SetupContext) -> None:
+            super().run(ctx)
+            self._fingerprint = "after"
+
+    ctx = make_ctx(tmp_path)
+    assert run_steps(ctx, [Builds()]) == 0
+    assert ctx.state.done["a"] == "after"

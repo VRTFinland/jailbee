@@ -140,6 +140,7 @@ def run_steps(ctx: SetupContext, steps: Sequence[Step]) -> int:
                 continue
             ctx.log(f"{label} ...")
             step.run(ctx)
+            fingerprint = step.fingerprint(ctx)  # running may change it (an image now exists)
         except SetupError as exc:
             _report_failure(ctx, str(exc), exc.remedy)
             return exc.exit_code
