@@ -1643,6 +1643,8 @@ Configuring a new agent, not just inspecting one already on, is the
   read-path recipes → **jailbee-pr-review** skill.
 - Staging GitHub issue creates, edits, comments, labels, closes or reopens
   from *inside* a container → **jailbee-issue-management** skill.
+- JailBee itself misbehaving (a traceback, a command contradicting these docs)
+  and the user wants it reported → **jailbee-bug-report** skill.
 - Changing what a container installs, its autostart steps, egress allowlist,
   resources, or any `.jailbee/config.yaml` field → **jailbee-repo-setup** skill.
 - First-time host setup (`jailbee init`, UFW/subuid/keyring, `jailbee base build`) →

@@ -640,10 +640,11 @@ documented by Anthropic:
 
 ## 10. The bundled jailbee skills
 
-jailbee ships four skills — `jailbee-usage` (day-to-day commands),
+jailbee ships five skills — `jailbee-usage` (day-to-day commands),
 `jailbee-repo-setup` (first-time repo configuration), `jailbee-pr-review`
 (staging PR review comments, replies and description rewrites) and
-`jailbee-issue-management` (staging GitHub issue actions) — and installs
+`jailbee-issue-management` (staging GitHub issue actions) and
+`jailbee-bug-report` (staging a bug report against jailbee itself) — and installs
 them for every enabled agent that has a skills mechanism, not just Claude:
 
 | Agent | Skills directory (in-container) | Shared subpath it lands under |
