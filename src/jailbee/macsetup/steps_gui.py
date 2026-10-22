@@ -18,8 +18,8 @@ from typing import Any
 import yaml
 
 from jailbee.macsetup.engine import SetupContext, SetupError, ask
-from jailbee.macsetup.steps_machine import machine_generation
 from jailbee.macsetup.steps_jailbee import GLOBAL_YAML, read_vm_global, run_as_user, write_vm_global
+from jailbee.macsetup.steps_machine import machine_generation
 
 TAP = "J-x-Z/tap"
 _NEEDED = ("cocoa-way", "waypipe")
