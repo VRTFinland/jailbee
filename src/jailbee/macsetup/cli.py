@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 from collections.abc import Sequence
@@ -109,9 +108,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _interactive() -> bool:
-    if os.environ.get("JAILBEE_NONINTERACTIVE"):
-        return False
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    from jailbee.prompting import is_interactive  # the one TTY test (CLAUDE.md)
+
+    return is_interactive() and sys.stdout.isatty()
 
 
 def _confirm(question: str) -> bool:
