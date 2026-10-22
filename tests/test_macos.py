@@ -419,3 +419,28 @@ def test_ensure_cocoa_way_gives_up_with_install_hint(mocker, tmp_path: Path, mon
     mocker.patch("jailbee.macos.time.sleep")
     with pytest.raises(macos.BridgeError, match="brew install cocoa-way"):
         macos._ensure_cocoa_way()
+
+
+def test_mac_setup_hands_over_to_the_setup_command(mocker) -> None:
+    main = mocker.patch("jailbee.macsetup.cli.main", return_value=0)
+    assert macos._run_mac_command(["setup", "--isolated"]) == 0
+    main.assert_called_once_with(["setup", "--isolated"])
+
+
+@pytest.mark.parametrize("sub", ["upgrade", "uninstall"])
+def test_mac_upgrade_and_uninstall_hand_over(mocker, sub: str) -> None:
+    main = mocker.patch("jailbee.macsetup.cli.main", return_value=0)
+    assert macos._run_mac_command([sub]) == 0
+    main.assert_called_once_with([sub])
+
+
+def test_mac_doctor_uses_the_layer_report_for_apple_backend(mocker) -> None:
+    mocker.patch("jailbee.macos.load_bridge_config", return_value=_apple_cfg())
+    main = mocker.patch("jailbee.macsetup.cli.main", return_value=1)
+    assert macos._run_mac_command(["doctor"]) == 1
+    main.assert_called_once_with(["doctor"])
+
+
+def test_usage_lists_the_new_subcommands(capsys) -> None:
+    assert macos._run_mac_command([]) == 2
+    assert "setup" in capsys.readouterr().err

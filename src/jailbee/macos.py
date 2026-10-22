@@ -284,15 +284,20 @@ def maybe_delegate(argv: list[str], *, platform: str = sys.platform) -> None:
 
 
 def _run_mac_command(args: list[str]) -> int:
+    usage = "usage: jailbee mac {setup|upgrade|doctor|uninstall|bootstrap}"
     if not args:
-        print("usage: jailbee mac {doctor|bootstrap}", file=sys.stderr)
+        print(usage, file=sys.stderr)
         return 2
     sub, cfg = args[0], load_bridge_config()
+    if sub in {"setup", "upgrade", "uninstall"} or (sub == "doctor" and cfg.backend == "apple"):
+        from jailbee.macsetup.cli import main
+
+        return main(args)
     if sub == "doctor":
         return _mac_doctor(cfg)
     if sub == "bootstrap":
         return _mac_bootstrap(cfg)
-    print(f"usage: jailbee mac {{doctor|bootstrap}} (got: {sub})", file=sys.stderr)
+    print(f"{usage} (got: {sub})", file=sys.stderr)
     return 2
 
 
