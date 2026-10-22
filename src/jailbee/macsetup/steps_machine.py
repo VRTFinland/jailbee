@@ -5,10 +5,11 @@ from __future__ import annotations
 import getpass
 import hashlib
 import shutil
+import uuid
 from importlib import resources
 from pathlib import Path
 
-from jailbee.macsetup.engine import SetupContext, SetupError
+from jailbee.macsetup.engine import SetupContext, SetupError, save_state
 
 GIB = 1024**3
 POOL = "jailbee-btrfs"
@@ -38,6 +39,11 @@ def _vm(ctx: SetupContext, argv: list[str], *, input: str | None = None) -> str:
     return result.stdout
 
 
+def machine_generation(ctx: SetupContext) -> str:
+    """Which incarnation of the machine this is; every step after it depends on this."""
+    return ctx.state.facts.get("machine_gen", "none")
+
+
 def _wait_ready(ctx: SetupContext) -> None:
     ctx.ac.wait_ready(ctx.state.options.machine)
 
@@ -47,7 +53,10 @@ class MachineStep:
     title = "Creating the machine"
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        return f"{ctx.state.facts['kernel_path']}|{ctx.state.options.mode}"
+        opts = ctx.state.options
+        # A machine removed behind setup's back reads as missing, so it is recreated.
+        state = "" if ctx.ac.machine(opts.machine) is not None else "+missing"
+        return f"{ctx.state.facts['kernel_path']}|{opts.mode}|{opts.machine}{state}"
 
     def run(self, ctx: SetupContext) -> None:
         opts, facts = ctx.state.options, ctx.state.facts
@@ -64,6 +73,10 @@ class MachineStep:
                 kernel=Path(kernel),
             )
             facts["machine"] = name
+            facts["machine_gen"] = uuid.uuid4().hex[:8]
+            # Remember the machine before its first boot: if that boot times out or is
+            # interrupted, a re-run must recognise it as ours rather than refuse it.
+            save_state(ctx.paths.state_file, ctx.state)
         else:
             if info.home_mount != home_mount:
                 raise SetupError(
@@ -87,7 +100,9 @@ class PrepareStep:
         self._packages = packages if packages is not None else _packages()
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        data = _provision("root-prepare.sh") + "\0" + self._packages
+        data = (
+            _provision("root-prepare.sh") + "\0" + self._packages + "\0" + machine_generation(ctx)
+        )
         return hashlib.sha256(data.encode()).hexdigest()[:12]
 
     def run(self, ctx: SetupContext) -> None:
@@ -110,7 +125,7 @@ class IncusStep:
         self._pool_gib = pool_gib
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        return "1"
+        return f"1:{machine_generation(ctx)}"
 
     def run(self, ctx: SetupContext) -> None:
         _wait_ready(ctx)

@@ -49,6 +49,7 @@ class VerifyStep:
         run_as_user(
             ctx,
             f"mkdir -p {SCRATCH_DIR} && cd {SCRATCH_DIR} && "
+            f"(jailbee destroy {smoke} --force >/dev/null 2>&1 || true) && "
             f"jailbee new {smoke} --mount --no-autostart && jailbee destroy {smoke} --force",
         )
         for line in _next_steps(ctx.state.options):
@@ -259,13 +260,21 @@ def _uninstall(
             _say(exc.remedy)
         return exc.exit_code
     removed: list[str] = []
-    if machine and ac.machine(machine) is not None:
-        for action in (ac.machine_stop, ac.machine_rm):
+    if machine:
+        if not ac.system_running():
+            _say(
+                f"Apple's container service is not running, so the machine {machine} cannot be "
+                "removed. Nothing was deleted.\nRun: container system start, then uninstall again."
+            )
+            return 1
+        if ac.machine(machine) is not None:
             try:
-                action(machine)
+                ac.machine_stop(machine)
+                ac.machine_rm(machine)
             except AppleContainerError as exc:
-                _say(f"warning: {exc}")
-        removed.append(f"machine {machine}")
+                _say(f"Could not remove the machine {machine}: {exc}\nNothing else was deleted.")
+                return 1
+            removed.append(f"machine {machine}")
     image = stored.facts.get("image")
     if image:
         try:
@@ -321,5 +330,5 @@ def _restore_macos_yaml(path: Path | None) -> None:
     backup = path.with_name(path.name + ".colima.bak")
     if backup.exists():
         backup.replace(path)
-    elif path.exists():
-        path.unlink()
+    elif path.exists() and "backend: apple" in path.read_text():
+        path.unlink()  # ours; a hand-written Colima file is never touched

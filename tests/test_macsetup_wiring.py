@@ -19,6 +19,9 @@ class FakeAC:
     def __init__(self) -> None:
         self.runs: list[dict[str, object]] = []
 
+    def wait_ready(self, name):  # type: ignore[no-untyped-def]
+        pass
+
     def machine_run(self, name, argv, *, root=False, input=None):  # type: ignore[no-untyped-def]
         self.runs.append({"argv": argv, "input": input})
         return _cp()

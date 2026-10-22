@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from jailbee.macsetup.engine import SetupContext, SetupError
+from jailbee.macsetup.steps_machine import machine_generation
 
 _GIT_SPEC = "git+https://github.com/VRTFinland/jailbee"
 _PATH = 'export PATH="$HOME/.local/bin:$PATH"'
@@ -66,6 +67,7 @@ def run_as_user(
     ctx: SetupContext, script: str, *, input: str | None = None, check: bool = True
 ) -> str:
     """Run `script` in a bash as the machine's development user; return its stdout."""
+    ctx.ac.wait_ready(ctx.state.options.machine)  # after a Mac reboot the machine is cold
     full = f"{_PATH}; {_USER_BUS}; {script}"
     # Root enters the machine and `runuser -u` drops to the login user *with* its
     # groups: a plain `machine run` session carries none, so `incus` is refused.
@@ -102,7 +104,7 @@ class JailbeeStep:
         self._version = mac_version or _mac_version()
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        return f"{self._version}:r{RECIPE}"
+        return f"{self._version}:r{RECIPE}:{machine_generation(ctx)}"
 
     def run(self, ctx: SetupContext) -> None:
         run_as_user(
@@ -129,7 +131,7 @@ class BaseImageStep:
         self._version = mac_version or _mac_version()
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        data = f"{self._version}\0{ctx.state.facts['kernel_path']}"
+        data = f"{self._version}\0{ctx.state.facts['kernel_path']}\0{machine_generation(ctx)}"
         return hashlib.sha256(data.encode()).hexdigest()[:12]
 
     def run(self, ctx: SetupContext) -> None:

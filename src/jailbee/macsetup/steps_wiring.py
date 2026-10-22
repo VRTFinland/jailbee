@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from jailbee.macsetup.engine import SetupContext, SetupError
+from jailbee.macsetup.steps_machine import machine_generation
 
 SSH_ALIAS = "jailbee-vm"
 GUI_ALIAS = "jailbee-ssh"
@@ -54,7 +55,7 @@ class WiringStep:
 
     def fingerprint(self, ctx: SetupContext) -> str:
         opts = ctx.state.options
-        return f"{opts.mode}:{opts.gui}:{opts.machine}:3"
+        return f"{opts.mode}:{opts.gui}:{opts.machine}:3:{machine_generation(ctx)}"
 
     def _macos_yaml_path(self) -> Path:
         if self._macos_yaml is not None:

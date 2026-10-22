@@ -192,3 +192,47 @@ def test_root_prepare_contains_securityfs_unit_and_discard() -> None:
     assert "mount -o remount,discard /" in script
     assert "fstrim.timer" in script
     assert "kernel.keys.maxkeys=2000" in script
+
+
+def test_state_is_saved_right_after_the_machine_is_created(tmp_path: Path) -> None:
+    """A first boot that times out must not leave a machine setup then refuses."""
+    from jailbee.macsetup.engine import load_state
+
+    class BootFails(FakeAC):
+        def wait_ready(self, name):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boot timed out")
+
+    ctx = make_ctx(tmp_path, BootFails())
+    with pytest.raises(RuntimeError):
+        MachineStep().run(ctx)
+    saved = load_state(ctx.paths.state_file)
+    assert saved is not None and saved.facts["machine"] == "jailbee"
+
+
+def test_a_machine_deleted_outside_setup_is_recreated_and_later_steps_rerun(tmp_path: Path) -> None:
+    ac = FakeAC(MachineInfo("jailbee", True, KERNEL, "rw"))
+    ctx = make_ctx(tmp_path, ac)
+    ctx.state.facts["machine_gen"] = "g1"
+    present = MachineStep().fingerprint(ctx)
+    ac._machine = None
+    assert MachineStep().fingerprint(ctx) != present
+    MachineStep().run(ctx)
+    assert ctx.state.facts["machine_gen"] != "g1"
+    assert "create" in kinds(ac)
+
+
+def test_steps_after_the_machine_depend_on_its_generation(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path, FakeAC())
+    ctx.state.facts["machine_gen"] = "g1"
+    one = (PrepareStep(dev_user="u").fingerprint(ctx), IncusStep().fingerprint(ctx))
+    ctx.state.facts["machine_gen"] = "g2"
+    two = (PrepareStep(dev_user="u").fingerprint(ctx), IncusStep().fingerprint(ctx))
+    assert one[0] != two[0] and one[1] != two[1]
+
+
+def test_vm_steps_wait_for_boot_before_running_user_commands(tmp_path: Path) -> None:
+    ac = FakeAC()
+    from jailbee.macsetup.steps_jailbee import run_as_user
+
+    run_as_user(make_ctx(tmp_path, ac), "true")
+    assert kinds(ac)[0] == "wait_ready"

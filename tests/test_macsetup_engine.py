@@ -168,3 +168,28 @@ def test_fingerprint_is_recorded_after_the_step_ran(tmp_path: Path) -> None:
     ctx = make_ctx(tmp_path)
     assert run_steps(ctx, [Builds()]) == 0
     assert ctx.state.done["a"] == "after"
+
+
+def test_apple_container_errors_become_a_clean_failure_with_the_rerun_hint(tmp_path: Path) -> None:
+    from jailbee.mac_container import AppleContainerError
+
+    ctx = make_ctx(tmp_path)
+
+    class Boom(FakeStep):
+        def run(self, ctx: SetupContext) -> None:
+            raise AppleContainerError("the build ran out of disk")
+
+    assert run_steps(ctx, [Boom("a")]) == 1
+    text = "\n".join(ctx.log.lines)  # type: ignore[attr-defined]
+    assert "the build ran out of disk" in text and "Re-run" in text
+
+
+def test_missing_tool_errors_become_a_clean_failure(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+
+    class NoTool(FakeStep):
+        def run(self, ctx: SetupContext) -> None:
+            raise FileNotFoundError("ssh-keygen")
+
+    assert run_steps(ctx, [NoTool("a")]) == 1
+    assert any("ssh-keygen" in line for line in ctx.log.lines)  # type: ignore[attr-defined]

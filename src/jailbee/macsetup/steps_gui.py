@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from jailbee.macsetup.engine import SetupContext, SetupError, ask
+from jailbee.macsetup.steps_machine import machine_generation
 from jailbee.macsetup.steps_jailbee import GLOBAL_YAML, read_vm_global, run_as_user, write_vm_global
 
 TAP = "J-x-Z/tap"
@@ -52,7 +53,7 @@ class GuiStep:
         self._runner = runner
 
     def fingerprint(self, ctx: SetupContext) -> str:
-        return "1" if ctx.state.options.gui else "off"
+        return f"1:{machine_generation(ctx)}" if ctx.state.options.gui else "off"
 
     def run(self, ctx: SetupContext) -> None:
         if not ctx.state.options.gui:

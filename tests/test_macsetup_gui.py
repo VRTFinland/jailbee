@@ -21,6 +21,9 @@ class FakeAC:
         self.runs: list[dict[str, object]] = []
         self._global = global_yaml
 
+    def wait_ready(self, name):  # type: ignore[no-untyped-def]
+        pass
+
     def machine_run(self, name, argv, *, root=False, input=None):  # type: ignore[no-untyped-def]
         self.runs.append({"argv": argv, "input": input})
         return _cp(

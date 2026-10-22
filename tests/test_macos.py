@@ -298,13 +298,19 @@ def test_apple_backend_delegate_uses_tty_flags_when_interactive(mocker) -> None:
 
 def test_isolated_mode_skips_shared_root_check(mocker) -> None:
     mocker.patch("jailbee.macos.shutil.which", return_value="/x/container")
-    mocker.patch("jailbee.macos.subprocess.run", side_effect=[_cp(0), _cp(0, stdout="9.9.9")])
+    mocker.patch(
+        "jailbee.macos.subprocess.run",
+        side_effect=[_cp(0, stdout="running\n"), _cp(0, stdout="9.9.9")],
+    )
     macos.preflight(_apple_cfg(mode="isolated"), Path("/tmp/elsewhere"))  # no raise
 
 
 def test_mac_repos_mode_still_checks_shared_root(mocker) -> None:
     mocker.patch("jailbee.macos.shutil.which", return_value="/x/container")
-    mocker.patch("jailbee.macos.subprocess.run", side_effect=[_cp(0), _cp(0, stdout="9.9.9")])
+    mocker.patch(
+        "jailbee.macos.subprocess.run",
+        side_effect=[_cp(0, stdout="running\n"), _cp(0, stdout="9.9.9")],
+    )
     with pytest.raises(macos.BridgeError, match="must live under"):
         macos.preflight(_apple_cfg(), Path("/tmp/elsewhere"))
 
@@ -314,10 +320,11 @@ def test_apple_preflight_messages_name_jailbee_mac_setup(mocker) -> None:
     with pytest.raises(macos.BridgeError, match="jailbee mac setup"):
         macos.preflight(_apple_cfg(), Path("/Users/me"))
     mocker.patch("jailbee.macos.shutil.which", return_value="/x/container")
+    mocker.patch("jailbee.macos.time.sleep")
     mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(1))
     with pytest.raises(macos.BridgeError, match="container machine run -n jb"):
         macos.preflight(_apple_cfg(), Path("/Users/me"))
-    mocker.patch("jailbee.macos.subprocess.run", side_effect=[_cp(0), _cp(127)])
+    mocker.patch("jailbee.macos.subprocess.run", side_effect=[_cp(0, stdout="running\n"), _cp(127)])
     with pytest.raises(macos.BridgeError, match="jailbee mac setup"):
         macos.preflight(_apple_cfg(), Path("/Users/me"))
 
@@ -487,3 +494,15 @@ def test_mac_repos_mode_keeps_the_mapped_directory(mocker) -> None:
     with pytest.raises(SystemExit):
         macos._delegate(_apple_cfg(), ["ls"], Path("/Users/me/repo"), isatty=False)
     assert 'cd "$HOME"' not in run.call_args.args[0][-1]
+
+
+def test_apple_preflight_waits_for_the_machine_to_finish_booting(mocker) -> None:
+    mocker.patch("jailbee.macos.shutil.which", return_value="/x/container")
+    mocker.patch("jailbee.macos.time.sleep")
+    booting = _cp(1, stdout="")  # bus not up yet: no state printed
+    run = mocker.patch(
+        "jailbee.macos.subprocess.run",
+        side_effect=[booting, booting, _cp(0, stdout="running\n"), _cp(0, stdout="9.9.9")],
+    )
+    macos.preflight(_apple_cfg(mode="isolated"), Path("/tmp/x"))
+    assert "is-system-running" in run.call_args_list[0].args[0][-1]

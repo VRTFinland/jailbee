@@ -27,6 +27,8 @@ class FakeAC:
     def __init__(self, machine: MachineInfo | None = None) -> None:
         self._machine = machine
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.runs = []
+        self.fail_rm = False
 
     def machine(self, name: str) -> MachineInfo | None:
         return self._machine
@@ -35,13 +37,27 @@ class FakeAC:
         self.calls.append(("stop", (name,)))
 
     def machine_rm(self, name: str) -> None:
+        if self.fail_rm:
+            from jailbee.mac_container import AppleContainerError
+
+            raise AppleContainerError("disk busy")
         self.calls.append(("rm", (name,)))
 
     def image_rm(self, tag: str) -> None:
         self.calls.append(("image_rm", (tag,)))
 
     def machine_run(self, name, argv, *, root=False, input=None):  # type: ignore[no-untyped-def]
+        self.runs.append(" ".join(argv))
         return _cp(0, "1.7.8\n")
+
+    def wait_ready(self, name: str) -> None:
+        pass
+
+    def system_running(self) -> bool:
+        return self.service_up
+
+    runs: list[str]
+    service_up = True
 
 
 class RecStep:
@@ -178,3 +194,60 @@ def test_default_steps_order() -> None:
         "base",
         "verify",
     ]
+
+
+def _uninstall_setup(env, tmp_path: Path):  # type: ignore[no-untyped-def]
+    kernel = tmp_path / "k" / "vmlinux-6.18.35-jailbee"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_bytes(b"k")
+    save_state(
+        env["paths"].state_file,
+        SetupState(
+            options=SetupOptions(),
+            facts={"machine": "jailbee", "image": "local/x:1", "kernel_path": str(kernel)},
+        ),
+    )
+    return kernel
+
+
+def test_uninstall_keeps_everything_when_the_service_is_down(env, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    kernel = _uninstall_setup(env, tmp_path)
+    ac = FakeAC(MachineInfo("jailbee", True, None, "rw"))
+    ac.service_up = False
+    assert cli.main(["uninstall", "--yes"], ac=ac, steps=[], **env) == 1
+    assert kernel.exists() and env["paths"].state_file.exists()
+    assert "container system start" in capsys.readouterr().out
+
+
+def test_uninstall_keeps_state_when_the_machine_cannot_be_removed(env, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    kernel = _uninstall_setup(env, tmp_path)
+    ac = FakeAC(MachineInfo("jailbee", True, None, "rw"))
+    ac.fail_rm = True
+    assert cli.main(["uninstall", "--yes"], ac=ac, steps=[], **env) == 1
+    assert kernel.exists() and env["paths"].state_file.exists()
+
+
+def test_uninstall_leaves_a_colima_macos_yaml_alone(env, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    _uninstall_setup(env, tmp_path)
+    env["macos_yaml"].parent.mkdir(parents=True, exist_ok=True)
+    env["macos_yaml"].write_text("transport: [colima, ssh]\n")  # no backup: wiring never ran
+    assert cli.main(["uninstall", "--yes"], ac=FakeAC(), steps=[], **env) == 0
+    assert env["macos_yaml"].read_text() == "transport: [colima, ssh]\n"
+
+
+def test_verify_removes_a_leftover_smoke_container_first(tmp_path: Path) -> None:
+    ac = FakeAC()
+    paths = MacPaths(tmp_path, tmp_path / "s.json", tmp_path / "k", tmp_path / "ssh")
+    ctx = SetupContext(
+        ac=ac,  # type: ignore[arg-type]
+        state=SetupState(options=SetupOptions()),
+        paths=paths,
+        interactive=False,
+        confirm=lambda q: True,
+        log=lambda line: None,
+    )
+    cli.VerifyStep().run(ctx)
+    script = next(r for r in ac.runs if "jailbee new mac-setup-smoke" in r)
+    assert script.index("jailbee destroy mac-setup-smoke --force") < script.index(
+        "jailbee new mac-setup-smoke"
+    )

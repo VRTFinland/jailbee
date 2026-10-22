@@ -134,6 +134,19 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
+def _machine_up(cfg: BridgeConfig) -> bool:
+    """Whether the VM answers. An Apple machine is also waited for until it has booted:
+    the first command after a Mac reboot starts it, and the system bus lags behind."""
+    if cfg.backend != "apple":
+        return _run_in_vm(cfg, ["true"]).returncode == 0
+    for _ in range(30):
+        result = _run_in_vm(cfg, ["systemctl", "is-system-running", "--wait"])
+        if result.stdout.strip() in {"running", "degraded"}:
+            return True
+        time.sleep(2)
+    return False
+
+
 def preflight(cfg: BridgeConfig, cwd: Path) -> None:
     """Verify the bridge can run; raise BridgeError with remediation if not."""
     apple = cfg.backend == "apple"
@@ -145,7 +158,7 @@ def preflight(cfg: BridgeConfig, cwd: Path) -> None:
             if apple
             else f"{tool} not found. Install: brew install colima incus. See docs/macos.md"
         )
-    if _run_in_vm(cfg, ["true"]).returncode != 0:
+    if not _machine_up(cfg):
         raise BridgeError(
             f"The jailbee machine is not running. "
             f"Start it: container machine run -n {cfg.machine} -- true"

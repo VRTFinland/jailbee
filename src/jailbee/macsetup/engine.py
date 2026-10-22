@@ -13,10 +13,9 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import Literal, Protocol
 
-if TYPE_CHECKING:
-    from jailbee.mac_container import AppleContainer
+from jailbee.mac_container import AppleContainer, AppleContainerError
 
 _SCHEMA = 1
 RERUN_HINT = 'Re-run "jailbee mac setup" to continue.'
@@ -144,6 +143,9 @@ def run_steps(ctx: SetupContext, steps: Sequence[Step]) -> int:
         except SetupError as exc:
             _report_failure(ctx, str(exc), exc.remedy)
             return exc.exit_code
+        except (AppleContainerError, OSError) as exc:
+            _report_failure(ctx, f"{type(exc).__name__}: {exc}" if not str(exc) else str(exc), None)
+            return 1
         except KeyboardInterrupt:
             _report_failure(ctx, "Interrupted.", None)
             return 130
