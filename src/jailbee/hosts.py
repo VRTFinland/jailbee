@@ -108,7 +108,9 @@ def apply_hosts(
       1. awk-strips any existing BEGIN/END jailbee-managed block from
          /etc/hosts into a tmp file.
       2. Appends the freshly rendered block (if non-empty).
-      3. Atomically moves the tmp file into place.
+      3. Atomically moves the tmp file into place, as 0644: `mktemp`
+         creates 0600 and `mv` keeps it, which would hide /etc/hosts from
+         every non-root process in the container.
 
     No-op when the ACL has no hostname-derived rules and no
     mirror_endpoint is passed. Propagates `incus.IncusError` from the
@@ -129,6 +131,7 @@ tmp=$(mktemp)
 cat >> "$tmp" <<'JAILBEE_HOSTS_EOF'
 {block.rstrip()}
 JAILBEE_HOSTS_EOF
+chmod 644 "$tmp"
 mv "$tmp" /etc/hosts
 """
     incus.exec(name, ["bash", "-c", script])
@@ -173,6 +176,7 @@ def clear_hosts(cfg: Config, incus: Incus, name: str) -> None:
 set -euo pipefail
 tmp=$(mktemp)
 {_STRIP_MANAGED_BLOCK_AWK} > "$tmp"
+chmod 644 "$tmp"
 mv "$tmp" /etc/hosts
 """
     incus.exec(name, ["bash", "-c", script])

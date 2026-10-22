@@ -331,6 +331,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`container.tmpfs.enabled` to get one back, capped by `container.tmpfs.size`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the /etc/hosts pin is rewritten readable by every user — it was left "
+            "root-only, so non-root programs in strict containers ignored the pinned IPs"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
