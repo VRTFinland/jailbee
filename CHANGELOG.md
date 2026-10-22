@@ -14,6 +14,13 @@ before editing `## Unreleased`.
   If the superproject already switched branches, the error names that partial
   state and explains how to retry. Submodule update errors no longer assume
   that a commit is missing or a submodule is uninitialized.
+- **`docker pull` keeps working after `jailbee net loose` on the work
+  network.** The switch, and the timer's revert at the end of a loose period,
+  removed the registry mirror's `/etc/hosts` row, so dockerd failed with
+  `lookup jailbee-registry-mirror.incus ... no such host`.
+- **`/etc/hosts` is readable by every user again.** Rewrites left it
+  root-only, so non-root programs in a strict container ignored its pinned
+  IPs. Run `jailbee apply` to fix existing containers.
 
 ## 1.7.7 - 2026-10-20
 
