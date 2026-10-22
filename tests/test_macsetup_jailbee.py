@@ -107,3 +107,10 @@ def test_base_step_builds_in_scratch_dir_and_logs_doctor(tmp_path: Path) -> None
     cmds = commands(ac)
     assert any("jailbee base build" in c and "jailbee-scratch" in c for c in cmds)
     assert any("jailbee doctor" in c for c in cmds)
+
+
+def test_install_spec_override_wins_for_testing_a_branch(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("JAILBEE_MAC_INSTALL_SPEC", "/Users/me/dist/jailbee-1.7.8-py3-none-any.whl[ssh]")
+    assert install_command("1.7.8") == (
+        "uv tool install --force '/Users/me/dist/jailbee-1.7.8-py3-none-any.whl[ssh]'"
+    )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import shlex
 from collections.abc import Callable
 from typing import Any
 
@@ -29,7 +31,13 @@ def _mac_version() -> str:
 
 
 def install_command(version: str, *, warn: Callable[[str], None] | None = None) -> str:
-    """`uv tool install` command for the Mac's own version (PyPI), or git for dev builds."""
+    """`uv tool install` command for the Mac's own version (PyPI), or git for dev builds.
+
+    `JAILBEE_MAC_INSTALL_SPEC` overrides the spec, to try a branch or a wheel build.
+    """
+    override = os.environ.get("JAILBEE_MAC_INSTALL_SPEC")
+    if override:
+        return f"uv tool install --force {shlex.quote(override)}"
     if re.search(r"dev|\+|unknown", version):
         if warn is not None:
             warn(f"warning: this Mac runs {version}, which is not on PyPI; installing from git")
