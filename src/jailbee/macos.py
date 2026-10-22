@@ -13,12 +13,13 @@ imports cli.py, Typer, or any incus-oriented module.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NoReturn
+from typing import Literal, NoReturn
 
 
 class BridgeError(Exception):
@@ -34,6 +35,21 @@ class BridgeConfig:
     tty_flag: list[str] = field(default_factory=lambda: ["-t"])
     workdir_flag: str = "--workdir"
     shared_root: Path = field(default_factory=Path.home)
+    # `apple` = an Apple `container machine` set up by `jailbee mac setup`.
+    backend: Literal["colima", "apple"] = "colima"
+    machine: str = "jailbee"
+    mode: Literal["mac-repos", "isolated"] = "mac-repos"
+    gui: bool = False
+
+
+# `container machine run` joins its arguments with spaces and runs them through a
+# non-login `bash -c`, so the command reaches it as ONE pre-quoted string, and the
+# tools `uv` installs are not on that shell's PATH.
+_APPLE_PRELUDE = (
+    'export PATH="$HOME/.local/bin:$PATH"; '
+    'export XDG_RUNTIME_DIR="/run/user/$(id -u)"; '
+    'export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; '
+)
 
 
 def _config_path() -> Path:
@@ -65,13 +81,37 @@ def load_bridge_config(path: Path | None = None) -> BridgeConfig:
         cfg.workdir_flag = str(raw["workdir_flag"])
     if "shared_root" in raw:
         cfg.shared_root = Path(str(raw["shared_root"])).expanduser()
+    if raw.get("backend") == "apple":
+        _apply_apple(cfg, raw)
     return cfg
+
+
+def _apply_apple(cfg: BridgeConfig, raw: dict[str, object]) -> None:
+    """Fill the Apple-machine defaults; explicit transport/tty/workdir keys still win."""
+    cfg.backend = "apple"
+    cfg.machine = str(raw.get("machine", cfg.machine))
+    cfg.mode = "isolated" if raw.get("mode") == "isolated" else "mac-repos"
+    cfg.gui = bool(raw.get("gui", False))
+    if "transport" not in raw:
+        binary = shutil.which("container") or "container"
+        cfg.transport = [binary, "machine", "run", "-n", cfg.machine]
+    if "tty_flag" not in raw:
+        cfg.tty_flag = ["-i", "-t"]
+    if "workdir_flag" not in raw:
+        cfg.workdir_flag = ""  # the machine maps the working directory itself
+
+
+def _remote(cfg: BridgeConfig, args: list[str]) -> list[str]:
+    """What follows `--` for `args`: the argv itself, or one quoted string for Apple."""
+    if cfg.backend != "apple":
+        return args
+    return [_APPLE_PRELUDE + shlex.join(args)]
 
 
 def _run_in_vm(cfg: BridgeConfig, args: list[str]) -> subprocess.CompletedProcess[str]:
     """Run `args` inside the VM via the transport, capturing output."""
     return subprocess.run(
-        [*cfg.transport, "--", *args],
+        [*cfg.transport, "--", *_remote(cfg, args)],
         capture_output=True,
         text=True,
         check=False,
@@ -88,24 +128,37 @@ def _is_under(path: Path, root: Path) -> bool:
 
 def preflight(cfg: BridgeConfig, cwd: Path) -> None:
     """Verify the bridge can run; raise BridgeError with remediation if not."""
+    apple = cfg.backend == "apple"
     tool = cfg.transport[0]
     if shutil.which(tool) is None:
         raise BridgeError(
-            f"{tool} not found. Install: brew install colima incus. See docs/macos.md"
+            "Apple's container not found. Install it, then run: jailbee mac setup. "
+            "See docs/apple-container-machine.md"
+            if apple
+            else f"{tool} not found. Install: brew install colima incus. See docs/macos.md"
         )
     if _run_in_vm(cfg, ["true"]).returncode != 0:
         raise BridgeError(
-            "Colima VM not running. Start once:\n"
+            f"The jailbee machine is not running. Start it: container machine run -n {cfg.machine} -- true"
+            if apple
+            else "Colima VM not running. Start once:\n"
             "  colima start --runtime=incus --vm-type vz --mount-type virtiofs"
         )
     ver = _run_in_vm(cfg, ["jailbee", "version"])
     if ver.returncode != 0:
-        raise BridgeError("jailbee is not installed in the VM. Run once: jailbee mac bootstrap")
+        raise BridgeError(
+            "jailbee is not installed in the machine. Run: jailbee mac setup"
+            if apple
+            else "jailbee is not installed in the VM. Run once: jailbee mac bootstrap"
+        )
     _warn_on_version_mismatch(ver.stdout.strip())
+    if apple and cfg.mode == "isolated":
+        return  # the machine has its own repos; the Mac's cwd means nothing there
     if not _is_under(cwd, cfg.shared_root):
         raise BridgeError(
-            f"Repo must live under {cfg.shared_root} (Colima shares $HOME). "
-            "Move the repo or set shared_root in ~/.config/jailbee/macos.yaml"
+            f"Repo must live under {cfg.shared_root} ("
+            + ("the machine shares your home" if apple else "Colima shares $HOME")
+            + "). Move the repo or set shared_root in ~/.config/jailbee/macos.yaml"
         )
 
 
@@ -128,8 +181,9 @@ def _delegate(
     """Run `jailbee argv` inside the VM (stdio inherited) and propagate its exit code."""
     if isatty is None:
         isatty = sys.stdin.isatty()
-    tty = list(cfg.tty_flag) if isatty else []
-    cmd = [*cfg.transport, *tty, cfg.workdir_flag, str(cwd), "--", "jailbee", *argv]
+    tty = list(cfg.tty_flag) if isatty else (["-i"] if cfg.backend == "apple" else [])
+    workdir = [cfg.workdir_flag, str(cwd)] if cfg.workdir_flag else []
+    cmd = [*cfg.transport, *tty, *workdir, "--", *_remote(cfg, ["jailbee", *argv])]
     result = subprocess.run(cmd, check=False)
     raise SystemExit(result.returncode)
 
