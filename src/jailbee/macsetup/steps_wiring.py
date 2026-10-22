@@ -54,7 +54,7 @@ class WiringStep:
 
     def fingerprint(self, ctx: SetupContext) -> str:
         opts = ctx.state.options
-        return f"{opts.mode}:{opts.gui}:{opts.machine}:2"
+        return f"{opts.mode}:{opts.gui}:{opts.machine}:3"
 
     def _macos_yaml_path(self) -> Path:
         if self._macos_yaml is not None:
@@ -125,6 +125,7 @@ class WiringStep:
                 "    User jailbee\n"
                 f"    ProxyJump {SSH_ALIAS}\n"
                 f"    HostKeyAlias jailbee-machine-{ctx.state.options.machine}\n"
+                "    StrictHostKeyChecking accept-new\n"
                 f"    IdentityFile {ssh_dir / _KEY}\n"
                 "    IdentitiesOnly yes\n"
                 f"    UserKnownHostsFile {ssh_dir / 'known_hosts'}\n"

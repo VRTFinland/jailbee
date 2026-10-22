@@ -148,3 +148,4 @@ def test_gui_host_block_jumps_through_the_vm_only_when_gui_is_on(tmp_path: Path)
     assert "User jailbee" in block
     assert "ProxyJump jailbee-vm" in block
     assert "HostKeyAlias jailbee-machine-jb" in block
+    assert "StrictHostKeyChecking accept-new" in block
