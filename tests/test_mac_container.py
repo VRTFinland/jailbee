@@ -108,10 +108,27 @@ def test_machine_run_root_and_input_flags() -> None:
     assert runner.inputs[0] == "echo hi\n"
 
 
-def test_wait_ready_ignores_degraded_and_raises_on_offline() -> None:
-    ac = AppleContainer(runner=FakeRunner((1, "degraded\n", "")))
-    ac.wait_ready("m")  # degraded is fine: the bus is up
-    ac = AppleContainer(runner=FakeRunner((1, "offline\n", "")))
+def test_wait_ready_accepts_running_and_degraded() -> None:
+    for state in ("running", "degraded"):
+        AppleContainer(runner=FakeRunner((0, f"{state}\n", ""))).wait_ready("m")
+
+
+def test_wait_ready_retries_until_the_system_bus_is_up() -> None:
+    """Right after boot the bus is missing: the command fails with stderr only."""
+    bus_down = (1, "", "Failed to connect to system scope bus via local transport")
+    runner = FakeRunner(bus_down, bus_down, (0, "running\n", ""))
+    AppleContainer(runner=runner, sleep=lambda seconds: None).wait_ready("m")
+    assert len(runner.calls) == 3
+
+
+def test_wait_ready_gives_up_with_a_plain_message() -> None:
+    runner = FakeRunner(*[(1, "", "no bus")] * 100)
+    with pytest.raises(AppleContainerError, match="did not finish booting"):
+        AppleContainer(runner=runner, sleep=lambda seconds: None).wait_ready("m")
+
+
+def test_wait_ready_raises_on_offline() -> None:
+    ac = AppleContainer(runner=FakeRunner((1, "offline\n", "")), sleep=lambda seconds: None)
     with pytest.raises(AppleContainerError, match="offline"):
         ac.wait_ready("m")
 

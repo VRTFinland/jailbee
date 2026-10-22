@@ -15,6 +15,7 @@ import json
 import re
 import shlex
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +46,9 @@ class AppleContainer:
         binary: str = "container",
         runner: Runner = subprocess.run,
         kernels_dir: Path = _KERNELS_DIR,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._sleep = sleep
         self._bin = binary
         self._runner = runner
         self._kernels_dir = kernels_dir
@@ -181,8 +184,18 @@ class AppleContainer:
             "machine", "run", "-n", name, *flags, "--", shlex.join(argv), input=input
         )
 
-    def wait_ready(self, name: str) -> None:
-        """Wait for the machine's systemd to finish booting; only `offline` is fatal."""
-        result = self.machine_run(name, ["systemctl", "is-system-running", "--wait"], root=True)
-        if result.stdout.strip() == "offline":
-            raise AppleContainerError(f"machine {name} is offline; stop and start it again")
+    def wait_ready(self, name: str, *, attempts: int = 60) -> None:
+        """Wait until the machine's systemd has finished booting.
+
+        Just after boot the system bus is missing and `is-system-running` prints
+        only an error, so an empty answer is retried; `degraded` counts as up.
+        """
+        for _ in range(attempts):
+            result = self.machine_run(name, ["systemctl", "is-system-running", "--wait"], root=True)
+            state = result.stdout.strip()
+            if state in {"running", "degraded"}:
+                return
+            if state == "offline":
+                raise AppleContainerError(f"machine {name} is offline; stop and start it again")
+            self._sleep(2)
+        raise AppleContainerError(f"machine {name} did not finish booting; try again in a minute")
