@@ -281,6 +281,10 @@ def _uninstall(
     _restore_macos_yaml(macos_yaml)
     shutil.rmtree(paths.ssh_dir, ignore_errors=True)
     paths.state_file.unlink(missing_ok=True)
+    try:
+        paths.config_dir.rmdir()  # only when nothing else lives there
+    except OSError:
+        pass
     removed.append("SSH wiring and setup state")
     _say("Removed: " + ", ".join(removed))
     return 0
