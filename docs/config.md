@@ -1745,19 +1745,13 @@ then states JailBee's JSON response contract. That ordering is not a guarantee
 of model compliance; contradictory instructions or malformed output can still
 make generation fail and fall back to a placeholder.
 
-### `terminal` / `terminal.kitty`
+### `terminal` / `terminal.kitty` (deprecated)
 
-When a developer runs `jailbee shell` / `jailbee tmux` from a kitty terminal on
-the host, `TERM=xterm-kitty` propagates into the container via `incus
-exec`. The base image's terminfo database doesn't ship the `xterm-kitty`
-entry, so curses-aware tools warn `terminal is not fully functional` and
-degrade. When active, this block RO bind-mounts the host's `xterm-kitty`
-terminfo file into every container so the entry resolves naturally.
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `terminal.kitty.enabled` | `"auto"` \| bool | `"auto"` | `"auto"` activates iff the host terminfo file can be located. `true` activates and fails `jailbee config validate` if no file is found. `false` disables the integration unconditionally. |
-| `terminal.kitty.host_terminfo_path` | path \| null | `null` | Explicit host path to the `xterm-kitty` terminfo file. When `null` (default), autodetect probes `/usr/share/terminfo/x/xterm-kitty`, `~/.local/kitty.app/lib/kitty/terminfo/x/xterm-kitty`, and `~/.terminfo/x/xterm-kitty` in that order. |
+Deprecated and ignored; still accepted so existing configs load, and removed in
+2.0.0. `jailbee shell` / `jailbee tmux` from a kitty terminal carries
+`TERM=xterm-kitty` into the container, and the golden image now ships that
+terminfo entry (`kitty-terminfo`) itself, so the host's file is no longer
+mounted. Rebuild the image with `jailbee base build`, then remove the block.
 
 ### `autostart`
 

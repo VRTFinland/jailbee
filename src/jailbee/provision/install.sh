@@ -84,6 +84,10 @@ apt-get update -y
 # capabilities inside the new namespace, so Chromium's sandbox needs the
 # per-app profile — on both sides: an app at a path the host has no
 # profile for stays broken whatever is loaded here (docs/config.md#apps).
+#
+# kitty-terminfo: `jailbee shell` from a kitty terminal carries
+# TERM=xterm-kitty into the container, and ncurses-term ships only `kitty`,
+# not `xterm-kitty`; without the entry curses tools warn and degrade.
 echo "==> Installing LXC plumbing apt packages"
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     apt-transport-https ca-certificates curl gnupg lsb-release wget \
@@ -91,7 +95,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git make tmux \
     build-essential libssl-dev pkg-config \
     ripgrep fd-find jq htop \
-    openssh-server \
+    openssh-server kitty-terminfo \
     apparmor
 
 # tzdata installs /etc/localtime as a symlink (-> /usr/share/zoneinfo/Etc/UTC).

@@ -688,32 +688,6 @@ def _mock_runtime_mounts(request, mocker):
     )
 
 
-@pytest.fixture(autouse=True)
-def _neutralize_kitty_autodetect(request, mocker):
-    """Force the kitty terminfo autodetect to find nothing by default.
-
-    Without this, the host-side `_kitty_terminfo_candidates` paths get
-    probed for real, and `effective_host_mounts()` returns a different
-    mount list on developer machines with kitty installed vs. CI runners
-    without it. Tests that exercise kitty autodetect explicitly re-patch
-    `_kitty_terminfo_candidates` to inject their own paths and override
-    this default.
-
-    A plain callable rather than a mock, for the reason given in
-    `_mock_runtime_mounts`.
-    """
-    # Exempt the one test whose subject IS this function (it asserts on
-    # the real candidate list). Tests that exercise kitty autodetect
-    # against fabricated paths re-patch this symbol themselves, which
-    # supersedes our default.
-    if request.node.name == "test_kitty_terminfo_candidates_includes_known_paths":
-        return
-    mocker.patch(
-        "jailbee.config.models_tools._kitty_terminfo_candidates",
-        new=lambda: [Path("/nonexistent/kitty-terminfo-sentinel")],
-    )
-
-
 def memory_engine() -> Engine:
     """In-memory SQLite engine with the jailbee schema applied.
 

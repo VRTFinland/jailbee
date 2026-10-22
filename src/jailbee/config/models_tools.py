@@ -410,73 +410,32 @@ ChromeConfig = BrowserConfig
 
 
 class TerminalKittyConfig(BaseModel):
-    """Kitty terminal integration (host-side opt-in, container-side terminfo).
+    """Deprecated and ignored; accepted so existing configs keep loading.
 
-    When a developer runs `jailbee shell` / `jailbee tmux` from a kitty terminal on
-    the host, `TERM=xterm-kitty` propagates into the container via `incus
-    exec`. The base image's terminfo database doesn't ship the `xterm-kitty`
-    entry, so curses-aware tools emit `WARNING: terminal is not fully
-    functional` and degrade. This block, when active, RO bind-mounts the
-    host's `xterm-kitty` terminfo file into every container so the entry
-    resolves naturally.
+    The golden image ships the `xterm-kitty` terminfo entry (`kitty-terminfo`),
+    so the host's file is no longer bind-mounted into containers. Remove in
+    2.0.0.
     """
 
     model_config = ConfigDict(extra="forbid")
     enabled: Literal["auto", True, False] = Field(
         default="auto",
         description=(
-            '"auto" (default) activates iff the host terminfo file can be located. `True` '
-            "activates and fails validation if no file is found. `False` disables the "
-            "integration unconditionally."
+            "Deprecated and ignored: the golden image ships the xterm-kitty terminfo "
+            "entry. Remove this key."
         ),
     )
     host_terminfo_path: PathExpanded | None = Field(
         default=None,
-        description=(
-            "Explicit host path to the xterm-kitty terminfo file. When None (default), "
-            "autodetect probes /usr/share/terminfo/x/xterm-kitty, "
-            "~/.local/kitty.app/lib/kitty/terminfo/x/xterm-kitty, and ~/.terminfo/x/xterm-kitty "
-            "in that order."
-        ),
+        description="Deprecated and ignored, like `enabled`. Remove this key.",
     )
 
 
 class TerminalConfig(BaseModel):
-    """Container of terminal-emulator integrations. Currently just kitty."""
+    """Deprecated and ignored; see `TerminalKittyConfig`."""
 
     model_config = ConfigDict(extra="forbid")
     kitty: TerminalKittyConfig = Field(
         default=TerminalKittyConfig(),
-        description=(
-            "Kitty terminal integration settings — the only terminal emulator support so far."
-        ),
+        description="Deprecated and ignored. Remove this key.",
     )
-
-
-def _kitty_terminfo_candidates() -> list[Path]:
-    """Ordered list of host paths jailbee probes for the kitty terminfo entry.
-
-    1. Distro package (``kitty-terminfo`` on Debian/Ubuntu/Fedora).
-    2. Kitty's official ``installer.sh`` user-local layout.
-    3. User-installed via ``tic``.
-    """
-    home = Path.home()
-    return [
-        Path("/usr/share/terminfo/x/xterm-kitty"),
-        home / ".local/kitty.app/lib/kitty/terminfo/x/xterm-kitty",
-        home / ".terminfo/x/xterm-kitty",
-    ]
-
-
-def resolve_kitty_terminfo_path(*, explicit: Path | None) -> Path | None:
-    """Return an existing host terminfo file path, or None.
-
-    Explicit-path mode: returns the path iff it exists. Autodetect mode:
-    returns the first existing candidate from ``_kitty_terminfo_candidates``.
-    """
-    if explicit is not None:
-        return explicit if explicit.exists() else None
-    for cand in _kitty_terminfo_candidates():
-        if cand.exists():
-            return cand
-    return None

@@ -163,9 +163,8 @@ agent's pool is a new adapter module, not a change to `engine.py`.
 
 Enabled integrations can expose host resources through read-only mounts:
 the GnuPG key directory, an SSH agent socket, host-installed JetBrains
-Toolbox/IDE binaries, host-sourced browser binaries, and the host's
-`xterm-kitty` terminfo entry. Browser binaries may instead be installed in the
-image, depending on configuration.
+Toolbox/IDE binaries and host-sourced browser binaries. Browser binaries may
+instead be installed in the image, depending on configuration.
 
 Read-only prevents filesystem writes **through that mount**; it does not
 prevent reading or copying secret keys, or using the capabilities of a

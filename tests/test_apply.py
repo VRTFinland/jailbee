@@ -20,7 +20,7 @@ def _no_mirror_lookup(mocker: MockerFixture) -> Any:
     the real implementation to run can undo just this one patch via
     ``mocker.stop(...)`` — not ``mocker.stopall()``, which would also tear
     down every other autouse patch made through this test's `mocker`
-    instance (e.g. conftest's runtime-mounts and kitty-autodetect fixtures).
+    instance (e.g. conftest's runtime-mounts fixture).
     """
     endpoint_patch = mocker.patch(
         "jailbee.apply._mirror_endpoint_or_warn",
@@ -2468,7 +2468,7 @@ def test_apply_warns_and_continues_when_the_mirror_is_down(
     # "mirror disabled" for free. This test is testing that function's own
     # body, so it must undo just that one patch (not `mocker.stopall()`,
     # which would also tear down conftest's other autouse patches, e.g.
-    # runtime-mounts and kitty-autodetect) before patching the two things
+    # runtime-mounts) before patching the two things
     # the real implementation actually calls.
     mocker.stop(_no_mirror_lookup)
     mocker.patch(

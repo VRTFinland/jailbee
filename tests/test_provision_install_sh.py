@@ -295,3 +295,10 @@ def test_install_sh_leaves_a_valid_utc_localtime_not_an_empty_file():
     script = _install_sh()
     assert "cp /usr/share/zoneinfo/Etc/UTC /etc/localtime" in script
     assert "touch /etc/localtime" not in script
+
+
+def test_install_sh_installs_the_xterm_kitty_terminfo():
+    """`terminal.kitty` no longer mounts the host's file; the image must carry
+    the entry (ncurses-term has only `kitty`, not `xterm-kitty`)."""
+    packages = _install_sh().split('echo "==> Installing LXC plumbing apt packages"', 1)[1]
+    assert "kitty-terminfo" in packages.split("\n\n", 1)[0]

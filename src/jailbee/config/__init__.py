@@ -108,8 +108,6 @@ from jailbee.config.models_tools import (
     SshConfig,
     TerminalConfig,
     TerminalKittyConfig,
-    _kitty_terminfo_candidates,
-    resolve_kitty_terminfo_path,
 )
 from jailbee.config.retired import _check_retired_keys
 from jailbee.config.root import Config
@@ -185,7 +183,6 @@ __all__ = [
     "_check_retired_keys",
     "_columns_already_sanitized",
     "_default_shared_caches",
-    "_kitty_terminfo_candidates",
     "_split_host_keys",
     "deep_merge",
     "device_name",
@@ -202,7 +199,6 @@ __all__ = [
     "parse_ttl",
     "resolve_agents_raw",
     "resolve_browsers_raw",
-    "resolve_kitty_terminfo_path",
     "sanitize_column_blocks",
     "scratch_repo_layer",
     "slugify_prefix",

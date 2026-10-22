@@ -347,6 +347,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "file, for hosts that have no `/etc/localtime` to mount over it"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image ships kitty's `xterm-kitty` terminfo; the host file "
+            "is no longer mounted and `terminal.kitty` is ignored"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
