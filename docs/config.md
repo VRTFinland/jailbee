@@ -615,6 +615,21 @@ List of bind mounts added to every container.
 | `container` | string | — | In-container mount target. |
 | `readonly` | bool | `false` | **Read-write unless set to `true`**. Read-only prevents filesystem writes, not reading/copying secrets or communicating through mounted sockets. |
 
+Containers use the fonts the golden image installs (`60-gui-libs.sh`). To make
+the host's fonts available to GUI apps as well, mount them where fontconfig
+looks in addition to the image's own directory, typically in the global
+config:
+
+```yaml
+host_mounts:
+  - { host: /usr/share/fonts, container: /usr/local/share/fonts, readonly: true }
+  - { host: ~/.local/share/fonts, container: /home/dev/.local/share/fonts, readonly: true }
+```
+
+Mounting onto `/usr/share/fonts` itself would hide the image's fonts. A
+missing host path fails the container's start, so list only directories the
+host has.
+
 ### `optional_mounts`
 
 Named mounts, attached with `jailbee mount <name> <container>` or an autostart

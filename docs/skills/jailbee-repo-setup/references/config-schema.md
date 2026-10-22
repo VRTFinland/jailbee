@@ -94,6 +94,9 @@ host_mounts:
 
 Each entry is bind-mounted into every container. `readonly: false` is allowed but rare for credentials.
 
+Fonts come from the golden image. For host fonts, mount them beside the image's
+rather than over them: `{ host: /usr/share/fonts, container: /usr/local/share/fonts, readonly: true }`.
+
 ## `optional_mounts`
 
 ```yaml

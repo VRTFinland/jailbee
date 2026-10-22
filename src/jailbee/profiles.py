@@ -61,19 +61,6 @@ def profile_names(cfg: Config) -> ProfileNames:
     )
 
 
-HOST_FONTS_DIR = Path("/usr/share/fonts")
-
-
-def _host_fonts_dir() -> Path | None:
-    """The host's font directory, or None when the host has none.
-
-    A minimal host image (an Apple `container machine`, a server install)
-    may ship no fonts at all; a disk device whose source is missing fails
-    the container's start, so the mount is left out instead.
-    """
-    return HOST_FONTS_DIR if HOST_FONTS_DIR.is_dir() else None
-
-
 def _host_render_nodes() -> list[Path]:
     """Sorted list of DRI render nodes on the host (``/dev/dri/renderD*``).
 
@@ -171,7 +158,7 @@ def container_path_env(cfg: Config) -> tuple[str, str] | None:
 def base_profile_yaml(cfg: Config) -> str:
     """Generate <repo>-base profile YAML.
 
-    Includes security flags, UID/GID mapping, GPU passthrough, fonts,
+    Includes security flags, UID/GID mapping, GPU passthrough,
     and environment variables for Wayland/X11/SSH-via-GPG.
 
     NOTE: The four ``/run/user/<uid>/*`` socket bind mounts (the
@@ -187,15 +174,11 @@ def base_profile_yaml(cfg: Config) -> str:
     gid = cfg.container_user.gid
     runtime = f"/run/user/{uid}"
 
+    # Fonts come from the golden image (60-gui-libs.sh), not the host: a
+    # host /usr/share/fonts mount hid the image's own fonts, made rendering
+    # depend on the host distro and broke starts on a host with none. A user
+    # who wants host fonts adds a `host_mounts` entry (docs/config.md).
     devices: dict[str, dict[str, str]] = {}
-    fonts = _host_fonts_dir()
-    if fonts is not None:
-        devices["fonts"] = {
-            "type": "disk",
-            "source": str(fonts),
-            "path": str(HOST_FONTS_DIR),
-            "readonly": "true",
-        }
 
     # Pass each host render node as an explicit unix-char device — the
     # minimum surface for GPU-accelerated Chrome/Mesa. Mode 0666 because

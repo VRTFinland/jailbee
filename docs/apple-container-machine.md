@@ -103,10 +103,10 @@ RUN truncate -s 0 /etc/machine-id \
        systemd-update-utmp.service console-getty.service
 ```
 
-The fonts package supplies `/usr/share/fonts`, which JailBee's standard base
+The fonts package supplies `/usr/share/fonts`, which JailBee 1.7.7's base
 profile mounts even for a headless container. Without that source directory,
 profile assignment failed before the container could start. (Releases after
-1.7.7 leave the mount out when the host has no font directory.)
+1.7.7 no longer mount the host's fonts; containers use the golden image's.)
 
 ```bash
 container build --progress plain --cpus 4 --memory 4G \

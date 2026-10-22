@@ -130,32 +130,19 @@ def test_base_profile_emits_no_render_devices_when_host_has_none(mocker):
     falls back to software rendering, which is fine in those contexts.
     """
     mocker.patch("jailbee.profiles._host_render_nodes", return_value=[])
-    mocker.patch("jailbee.profiles._host_fonts_dir", return_value=Path("/usr/share/fonts"))
     cfg = _cfg()
     out = base_profile_yaml(cfg)
     devices = yaml.safe_load(out)["devices"]
     assert not any(name.startswith("dri-") for name in devices)
-    # Fonts device must still be there — it's unrelated to the GPU path.
-    assert "fonts" in devices
 
 
-def test_base_profile_omits_fonts_when_host_has_no_font_directory(mocker):
-    """A minimal host (an Apple `container machine` image, say) may have no
-    /usr/share/fonts. A disk device with a missing source fails the
-    container's start, so the profile must leave the mount out instead.
+def test_base_profile_mounts_no_host_fonts():
+    """Fonts come from the golden image. A host /usr/share/fonts mount hid the
+    image's own fonts and failed every start on a host without the directory.
     """
-    mocker.patch("jailbee.profiles._host_fonts_dir", return_value=None)
     devices = yaml.safe_load(base_profile_yaml(_cfg()))["devices"]
     assert "fonts" not in devices
-
-
-def test_host_fonts_dir_is_none_when_the_directory_is_missing(mocker, tmp_path):
-    from jailbee import profiles
-
-    mocker.patch.object(profiles, "HOST_FONTS_DIR", tmp_path / "absent")
-    assert profiles._host_fonts_dir() is None
-    mocker.patch.object(profiles, "HOST_FONTS_DIR", tmp_path)
-    assert profiles._host_fonts_dir() == tmp_path
+    assert all(d.get("path") != "/usr/share/fonts" for d in devices.values())
 
 
 def test_base_profile_has_env_vars(monkeypatch):
