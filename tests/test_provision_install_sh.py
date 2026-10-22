@@ -285,8 +285,9 @@ def test_install_sh_waits_for_cloud_init_before_refreshing_apt():
     """cloud-init's first boot rewrites the apt sources; an `apt-get update`
     racing it leaves package lists `apt-get install` finds nothing in."""
     script = _install_sh()
-    assert "cloud-init status --wait" in script
-    assert script.index("cloud-init status --wait") < script.index("apt-get update")
+    wait = "timeout 300 cloud-init status --wait >/dev/null 2>&1 || true"
+    assert wait in script
+    assert script.index(wait) < script.index("apt-get update")
 
 
 def test_install_sh_leaves_a_valid_utc_localtime_not_an_empty_file():

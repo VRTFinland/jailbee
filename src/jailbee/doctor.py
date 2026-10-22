@@ -852,7 +852,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 1c. Kernel facilities a stock distro kernel has but a minimal VM kernel
     # (an Apple `container machine`, say) may lack; each one otherwise fails
     # far from its cause.
-    results.extend(_check_kernel_features())
+    results.extend(_check_kernel_features(btrfs_in_use=_btrfs_pool_in_use(incus, incus_available)))
 
     # 2. UID/GID match
     real_uid = os.getuid()
@@ -1631,18 +1631,31 @@ def _kernel_config(
     return options
 
 
+def _btrfs_pool_in_use(incus: Incus, incus_available: bool) -> bool:
+    """Whether any Incus storage pool uses the btrfs driver; False if unknown."""
+    if not incus_available:
+        return False
+    try:
+        return any(pool.get("driver") == "btrfs" for pool in incus.list_storage_pools())
+    except (IncusError, ValueError):
+        return False
+
+
 def _check_kernel_features(
     proc_config: Path | None = None,
     boot_config: Path | None = None,
     apparmor_enabled: Path | None = None,
     securityfs_lsm: Path | None = None,
+    *,
+    btrfs_in_use: bool = False,
 ) -> list[CheckResult]:
     """Kernel options and LSM state that strict containers rely on.
 
     Bridge connection tracking: without it Incus cannot install a strict
     container's per-NIC filter rules, and the start fails with an opaque
     nftables "Protocol error". btrfs without POSIX ACLs fails an instance
-    copy on `lsetxattr`. AppArmor compiled in but securityfs unmounted leaves
+    copy on `lsetxattr` (checked only while a btrfs pool exists, so a host on
+    `dir` or ZFS is not flagged for it). AppArmor compiled in but securityfs unmounted leaves
     Incus unable to load its profiles. An unreadable kernel config skips the
     option checks rather than guessing.
     """
@@ -1661,8 +1674,10 @@ def _check_kernel_features(
                     "'Could not process rule: Protocol error'. Use a kernel built with it.",
                 )
             )
-        if options.get("CONFIG_BTRFS_FS") in ("y", "m") and (
-            options.get("CONFIG_BTRFS_FS_POSIX_ACL") != "y"
+        if (
+            btrfs_in_use
+            and options.get("CONFIG_BTRFS_FS") in ("y", "m")
+            and options.get("CONFIG_BTRFS_FS_POSIX_ACL") != "y"
         ):
             results.append(
                 CheckResult(

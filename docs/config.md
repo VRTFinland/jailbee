@@ -615,7 +615,9 @@ List of bind mounts added to every container.
 | `container` | string | — | In-container mount target. |
 | `readonly` | bool | `false` | **Read-write unless set to `true`**. Read-only prevents filesystem writes, not reading/copying secrets or communicating through mounted sockets. |
 
-Containers use the fonts the golden image installs (`60-gui-libs.sh`). To make
+Containers use the fonts the golden image installs (`60-gui-libs.sh`); with that
+snippet disabled or `golden.provision_script` overriding it, they have none
+unless the custom provisioning installs some or a mount below supplies them. To make
 the host's fonts available to GUI apps as well, mount them where fontconfig
 looks in addition to the image's own directory, typically in the global
 config:

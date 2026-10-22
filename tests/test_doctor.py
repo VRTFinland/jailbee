@@ -4348,9 +4348,33 @@ def test_kernel_features_flag_btrfs_without_posix_acl(tmp_path: Path) -> None:
     from jailbee.doctor import _check_kernel_features
 
     config = "CONFIG_NF_CONNTRACK_BRIDGE=y\nCONFIG_BTRFS_FS=y\n"
-    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=config)))
+    rig = _kernel_rig(tmp_path, config=config)
+    rows = _kernel_rows(_check_kernel_features(**rig, btrfs_in_use=True))
     assert rows["kernel btrfs ACLs"].ok is False
     assert "CONFIG_BTRFS_FS_POSIX_ACL" in rows["kernel btrfs ACLs"].detail
+
+
+def test_kernel_features_ignore_btrfs_acls_without_a_btrfs_pool(tmp_path: Path) -> None:
+    """A host on a `dir` or ZFS pool never copies through btrfs; flagging the
+    kernel option there would turn doctor red for nothing."""
+    from jailbee.doctor import _check_kernel_features
+
+    config = "CONFIG_NF_CONNTRACK_BRIDGE=y\nCONFIG_BTRFS_FS=y\n"
+    rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=config)))
+    assert "kernel btrfs ACLs" not in rows
+
+
+def test_btrfs_pool_in_use_reads_the_pool_drivers() -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.doctor import _btrfs_pool_in_use
+
+    incus = MagicMock()
+    incus.list_storage_pools.return_value = [{"driver": "dir"}, {"driver": "btrfs"}]
+    assert _btrfs_pool_in_use(incus, True) is True
+    incus.list_storage_pools.return_value = [{"driver": "zfs"}]
+    assert _btrfs_pool_in_use(incus, True) is False
+    assert _btrfs_pool_in_use(incus, False) is False
 
 
 def test_kernel_features_skip_option_checks_without_a_readable_config(tmp_path: Path) -> None:

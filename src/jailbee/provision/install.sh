@@ -55,10 +55,11 @@ systemctl mask \
 echo "==> Masking tmp.mount (/tmp stays on disk)"
 systemctl mask tmp.mount 2>/dev/null || true
 
-# cloud-init's first boot rewrites the apt sources while this script runs. An
-# index refresh that finishes before the rewrite leaves package lists the
-# install below finds nothing in ("Unable to locate package"), so wait for
-# cloud-init to finish first. Its exit status reports
+# The default build image (images:ubuntu/<ver>) has no cloud-init, and then
+# this is a no-op. An image that does run it rewrites the apt sources on first
+# boot, while this script runs: an index refresh that finishes before the
+# rewrite leaves package lists the install below finds nothing in ("Unable to
+# locate package"), so wait for cloud-init to finish first. Its exit status reports
 # module errors, not readiness, and is not this script's concern; the
 # timeout keeps a wedged cloud-init from stalling provisioning forever.
 if command -v cloud-init >/dev/null 2>&1; then
@@ -127,7 +128,10 @@ getent group ubuntu >/dev/null && groupdel ubuntu 2>/dev/null || true
 # users GID 20 ("staff"), which Ubuntu reserves for `dialout`, so a Linux VM
 # created from a Mac account hands that GID through. Only the number matters
 # for file ownership across the bind mounts, so the existing group is renamed
-# to the dev user's rather than failing groupadd on a duplicate GID.
+# to the dev user's rather than failing groupadd on a duplicate GID. That can
+# rename a group other image packages refer to by name (`dialout`, or `users`
+# for a host whose primary GID is 100); inside a dev container that is the
+# lesser cost.
 echo "==> Creating user ${CONTAINER_USER} (UID=${CONTAINER_UID}, GID=${CONTAINER_GID})"
 existing_group="$(getent group "${CONTAINER_GID}" | cut -d: -f1 || true)"
 if [ -z "${existing_group}" ]; then

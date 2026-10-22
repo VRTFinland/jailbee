@@ -283,8 +283,9 @@ def test_provisioning_waits_for_cloud_init_before_refreshing_apt():
     racing it left `apt-get install` unable to locate weston and waypipe."""
     script = rd._read_provision_text("install.sh")
 
-    assert "cloud-init status --wait" in script
-    assert script.index("cloud-init status --wait") < script.index("apt-get update")
+    wait = "timeout 300 cloud-init status --wait >/dev/null 2>&1 || true"
+    assert wait in script
+    assert script.index(wait) < script.index("apt-get update")
 
 
 def test_a_display_without_waypipe_counts_as_incompletely_provisioned():
