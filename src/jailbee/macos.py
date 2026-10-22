@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NoReturn
@@ -175,12 +176,91 @@ def _warn_on_version_mismatch(vm_version: str) -> None:
         )
 
 
+GUI_COMMANDS = frozenset({"dashboard", "tui", "firefox", "chrome", "browser", "ide", "apps"})
+"""Commands whose windows must open on the Mac: they go through `waypipe ssh`."""
+GUI_SSH_ALIAS = "jailbee-ssh"
+
+
+def _cocoa_dir() -> Path:
+    return Path(os.environ.get("TMPDIR", "/tmp").rstrip("/") or "/tmp") / "cocoa-way"
+
+
+def _cocoa_socket(directory: Path) -> Path | None:
+    import stat
+
+    for candidate in sorted(directory.glob("wayland-*")) if directory.is_dir() else []:
+        if stat.S_ISSOCK(candidate.stat().st_mode):
+            return candidate
+    return None
+
+
+def _ensure_cocoa_way() -> dict[str, str]:
+    """Start Cocoa-Way (rootless) if it is not running; return the env waypipe needs."""
+    directory = _cocoa_dir()
+    sock = _cocoa_socket(directory)
+    if sock is None:
+        subprocess.Popen(
+            ["cocoa-way"],
+            env={**os.environ, "COCOA_WAY_PRESENTATION": "rootless"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(50):
+            time.sleep(0.1)
+            sock = _cocoa_socket(directory)
+            if sock is not None:
+                break
+    if sock is None:
+        raise BridgeError(
+            "Cocoa-Way did not start. Install it: brew install cocoa-way waypipe-darwin "
+            "(tap J-x-Z/tap), or run jailbee mac setup again."
+        )
+    return {"XDG_RUNTIME_DIR": str(directory), "WAYLAND_DISPLAY": sock.name}
+
+
+def _repo_prefix(cfg: BridgeConfig, cwd: Path) -> str | None:
+    """The container prefix of the repo in `cwd`, asked of the machine (None if not a repo)."""
+    result = _run_in_vm(cfg, ["jailbee", "config", "show"])
+    if result.returncode != 0:
+        return None
+    import yaml
+
+    try:
+        data = yaml.safe_load(result.stdout)
+    except yaml.YAMLError:
+        return None
+    prefix = data.get("container_prefix") if isinstance(data, dict) else None
+    return str(prefix) if prefix else None
+
+
+def _delegate_gui(cfg: BridgeConfig, argv: list[str], cwd: Path, *, isatty: bool) -> NoReturn:
+    """Run a GUI command through `waypipe ssh` so its windows open on the Mac.
+
+    The restricted SSH service identifies a waypipe session; it selects repos by
+    `--repo`, not by working directory, so the prefix is resolved here.
+    """
+    env = {**os.environ, **_ensure_cocoa_way()}
+    remote = list(argv)
+    if cfg.mode == "mac-repos" and "--repo" not in remote and (prefix := _repo_prefix(cfg, cwd)):
+        remote += ["--repo", prefix]
+    cmd = [
+        "waypipe", "--compress=zstd", "ssh",
+        "-o", "StreamLocalBindUnlink=yes", "-o", "ControlMaster=no",
+        *(["-t"] if isatty else []),
+        GUI_SSH_ALIAS, *remote,
+    ]  # fmt: skip
+    raise SystemExit(subprocess.run(cmd, check=False, env=env).returncode)
+
+
 def _delegate(
     cfg: BridgeConfig, argv: list[str], cwd: Path, *, isatty: bool | None = None
 ) -> NoReturn:
     """Run `jailbee argv` inside the VM (stdio inherited) and propagate its exit code."""
     if isatty is None:
         isatty = sys.stdin.isatty()
+    if cfg.backend == "apple" and cfg.gui and argv and argv[0] in GUI_COMMANDS:
+        _delegate_gui(cfg, argv, cwd, isatty=isatty)
     tty = list(cfg.tty_flag) if isatty else (["-i"] if cfg.backend == "apple" else [])
     workdir = [cfg.workdir_flag, str(cwd)] if cfg.workdir_flag else []
     cmd = [*cfg.transport, *tty, *workdir, "--", *_remote(cfg, ["jailbee", *argv])]

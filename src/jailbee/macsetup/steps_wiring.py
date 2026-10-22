@@ -15,6 +15,7 @@ import yaml
 from jailbee.macsetup.engine import SetupContext, SetupError
 
 SSH_ALIAS = "jailbee-vm"
+GUI_ALIAS = "jailbee-ssh"
 _INCLUDE = "~/.config/jailbee/mac/ssh/config"
 _KEY = "id_ed25519"
 
@@ -98,6 +99,20 @@ class WiringStep:
     def _write_ssh_config(self, ctx: SetupContext) -> None:
         ssh_dir = ctx.paths.ssh_dir
         proxy = f"{shlex.quote(self._container)} machine run -n {ctx.state.options.machine} -i -- nc 127.0.0.1 22"
+        gui = ""
+        if ctx.state.options.gui:
+            gui = (
+                "\n"
+                f"Host {GUI_ALIAS}\n"
+                "    HostName 127.0.0.1\n"
+                "    Port 8022\n"
+                "    User jailbee\n"
+                f"    ProxyJump {SSH_ALIAS}\n"
+                f"    HostKeyAlias jailbee-machine-{ctx.state.options.machine}\n"
+                f"    IdentityFile {ssh_dir / _KEY}\n"
+                "    IdentitiesOnly yes\n"
+                f"    UserKnownHostsFile {ssh_dir / 'known_hosts'}\n"
+            )
         (ssh_dir / "config").write_text(
             f"Host {SSH_ALIAS}\n"
             f"    HostName {SSH_ALIAS}\n"
@@ -107,6 +122,7 @@ class WiringStep:
             "    StrictHostKeyChecking accept-new\n"
             f"    UserKnownHostsFile {ssh_dir / 'known_hosts'}\n"
             f"    ProxyCommand {proxy}\n"
+            + gui
         )
 
     def _write_macos_yaml(self, ctx: SetupContext) -> None:

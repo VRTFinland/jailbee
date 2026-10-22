@@ -122,3 +122,17 @@ def test_proxy_command_quotes_a_binary_path_with_spaces(tmp_path: Path) -> None:
     step.run(ctx)
     text = (ctx.paths.ssh_dir / "config").read_text()
     assert "ProxyCommand '/Applications/My Tools/container' machine run -n jb -i" in text
+
+
+def test_gui_host_block_jumps_through_the_vm_only_when_gui_is_on(tmp_path: Path) -> None:
+    step, ctx, _ = make(tmp_path, gui=False)
+    step.run(ctx)
+    assert "Host jailbee-ssh" not in (ctx.paths.ssh_dir / "config").read_text()
+    step, ctx, _ = make(tmp_path / "g", gui=True)
+    step.run(ctx)
+    text = (ctx.paths.ssh_dir / "config").read_text()
+    block = text.split("Host jailbee-ssh", 1)[1]
+    assert "HostName 127.0.0.1" in block and "Port 8022" in block
+    assert "User jailbee" in block
+    assert "ProxyJump jailbee-vm" in block
+    assert "HostKeyAlias jailbee-machine-jb" in block

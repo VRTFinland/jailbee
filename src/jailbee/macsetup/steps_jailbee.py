@@ -50,7 +50,7 @@ def merge_global_yaml(existing: str) -> str:
     return yaml.safe_dump(data, sort_keys=False)
 
 
-def _user(ctx: SetupContext, script: str, *, input: str | None = None) -> str:
+def run_as_user(ctx: SetupContext, script: str, *, input: str | None = None) -> str:
     """Run `script` in a bash as the machine's development user."""
     full = f"{_PATH}; {_USER_BUS}; {script}"
     result = ctx.ac.machine_run(ctx.state.options.machine, ["bash", "-lc", full], input=input)
@@ -64,6 +64,18 @@ def _user(ctx: SetupContext, script: str, *, input: str | None = None) -> str:
     return result.stdout
 
 
+def read_vm_global(ctx: SetupContext) -> str:
+    """The development user's global.yaml inside the machine ('' when absent)."""
+    result = ctx.ac.machine_run(
+        ctx.state.options.machine, ["bash", "-lc", f"cat {GLOBAL_YAML} 2>/dev/null || true"]
+    )
+    return result.stdout
+
+
+def write_vm_global(ctx: SetupContext, text: str) -> None:
+    run_as_user(ctx, f"mkdir -p ~/.config/jailbee && cat > {GLOBAL_YAML}", input=text)
+
+
 class JailbeeStep:
     id = "jailbee"
     title = "Installing JailBee in the machine"
@@ -75,14 +87,10 @@ class JailbeeStep:
         return self._version
 
     def run(self, ctx: SetupContext) -> None:
-        _user(ctx, "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh")
-        _user(ctx, install_command(self._version, warn=ctx.log))
-        current = ctx.ac.machine_run(
-            ctx.state.options.machine, ["bash", "-lc", f"cat {GLOBAL_YAML} 2>/dev/null || true"]
-        ).stdout
-        merged = merge_global_yaml(current)
-        _user(ctx, f"mkdir -p ~/.config/jailbee && cat > {GLOBAL_YAML}", input=merged)
-        _user(ctx, "jailbee setup --yes --only timer")
+        run_as_user(ctx, "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh")
+        run_as_user(ctx, install_command(self._version, warn=ctx.log))
+        write_vm_global(ctx, merge_global_yaml(read_vm_global(ctx)))
+        run_as_user(ctx, "jailbee setup --yes --only timer")
 
 
 class BaseImageStep:
@@ -98,7 +106,7 @@ class BaseImageStep:
 
     def run(self, ctx: SetupContext) -> None:
         scratch = SCRATCH_DIR
-        _user(ctx, f"mkdir -p {scratch} && cd {scratch} && jailbee base build")
+        run_as_user(ctx, f"mkdir -p {scratch} && cd {scratch} && jailbee base build")
         # Doctor is advisory here: it also reports host details setup does not manage.
         report = ctx.ac.machine_run(
             ctx.state.options.machine, ["bash", "-lc", f"{_PATH}; {_USER_BUS}; cd {scratch} && jailbee doctor"]

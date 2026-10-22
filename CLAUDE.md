@@ -46,7 +46,9 @@ isolated per-branch development environments using Incus system containers. See
   per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
   `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
   (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `mac_container.py`
-  (Apple's `container`, for `jailbee mac setup`), `cswap.py` (`cswap`),
+  (Apple's `container`, for `jailbee mac setup`; the setup steps in
+  `macsetup/` call no `container` of their own), `macsetup/steps_wiring.py`
+  (`ssh-keygen`), `macsetup/steps_gui.py` (`brew`), `cswap.py` (`cswap`),
   `remote_ssh/service.py` (`systemctl`, to install/enable/disable/restart/
   inspect the SSH user unit). `remote_ssh/console.py` and `remote_ssh/pty.py`
   are a second, narrower exception to "subprocess only in `incus.py`": they
