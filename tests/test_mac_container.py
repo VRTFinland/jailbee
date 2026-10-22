@@ -158,7 +158,12 @@ def test_machine_create_argv_puts_image_last_and_keeps_kernel_path_whole() -> No
     runner = FakeRunner()
     kernel = Path("/Users/u/Library/Application Support/jailbee/kernels/vmlinux-6.18.35-jailbee")
     AppleContainer(runner=runner).machine_create(
-        "jailbee", "local/jailbee-machine:abc", cpus=4, memory="8G", home_mount="none", kernel=kernel
+        "jailbee",
+        "local/jailbee-machine:abc",
+        cpus=4,
+        memory="8G",
+        home_mount="none",
+        kernel=kernel,
     )
     argv = runner.calls[0]
     assert argv[:4] == ["container", "machine", "create", "--name"]

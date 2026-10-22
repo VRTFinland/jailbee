@@ -112,7 +112,11 @@ def test_keyboard_interrupt_returns_130_with_rerun_hint(tmp_path: Path) -> None:
 def test_ask_non_interactive_raises_with_command(tmp_path: Path) -> None:
     ctx = make_ctx(tmp_path, interactive=False)
     with pytest.raises(SetupError) as excinfo:
-        ask(ctx, "Update Apple's default kernel?", "container system kernel set --recommended --force")
+        ask(
+            ctx,
+            "Update Apple's default kernel?",
+            "container system kernel set --recommended --force",
+        )
     assert excinfo.value.exit_code == 2
     assert "container system kernel set --recommended --force" in (excinfo.value.remedy or "")
     assert "--yes" in (excinfo.value.remedy or "")

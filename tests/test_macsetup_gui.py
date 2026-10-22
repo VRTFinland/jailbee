@@ -23,7 +23,9 @@ class FakeAC:
 
     def machine_run(self, name, argv, *, root=False, input=None):  # type: ignore[no-untyped-def]
         self.runs.append({"argv": argv, "input": input})
-        return _cp(0, self._global if "cat" in " ".join(argv) and "global.yaml" in " ".join(argv) else "")
+        return _cp(
+            0, self._global if "cat" in " ".join(argv) and "global.yaml" in " ".join(argv) else ""
+        )
 
 
 def make(tmp_path: Path, *, gui: bool = True, yes: bool = True, interactive: bool = True):  # type: ignore[no-untyped-def]

@@ -23,7 +23,7 @@ from jailbee.macsetup.engine import (
 )
 from jailbee.macsetup.steps_gui import GuiStep
 from jailbee.macsetup.steps_image import ImageStep
-from jailbee.macsetup.steps_jailbee import BaseImageStep, JailbeeStep, SCRATCH_DIR, run_as_user
+from jailbee.macsetup.steps_jailbee import SCRATCH_DIR, BaseImageStep, JailbeeStep, run_as_user
 from jailbee.macsetup.steps_kernel import KernelStep
 from jailbee.macsetup.steps_machine import IncusStep, MachineStep, PrepareStep
 from jailbee.macsetup.steps_preflight import PreflightStep
@@ -95,7 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("setup", "upgrade"):
         p = sub.add_parser(name, help="set up, or bring every layer up to date")
-        p.add_argument("--isolated", action="store_true", help="do not share the Mac home with the machine")
+        p.add_argument(
+            "--isolated", action="store_true", help="do not share the Mac home with the machine"
+        )
         p.add_argument("--machine", help="machine name (default: jailbee)")
         p.add_argument("--cpus", type=int, help="machine CPUs (default: half the Mac)")
         p.add_argument("--memory", help="machine memory, e.g. 8G (default: half the Mac)")
@@ -174,7 +176,9 @@ def main(
         done=dict(stored.done) if stored else {},
         facts=dict(stored.facts) if stored else {},
     )
-    ctx = SetupContext(ac=ac, state=state, paths=paths, interactive=interactive, confirm=_confirm, log=_say)
+    ctx = SetupContext(
+        ac=ac, state=state, paths=paths, interactive=interactive, confirm=_confirm, log=_say
+    )
     return run_steps(ctx, the_steps)
 
 
@@ -188,7 +192,9 @@ def _doctor(
     if stored is None:
         _say("Not set up yet. Run: jailbee mac setup")
         return 1
-    ctx = SetupContext(ac=ac, state=stored, paths=paths, interactive=interactive, confirm=_confirm, log=_say)
+    ctx = SetupContext(
+        ac=ac, state=stored, paths=paths, interactive=interactive, confirm=_confirm, log=_say
+    )
     stale = 0
     for step in steps:
         if step.id in {"preflight", "verify"}:
@@ -240,7 +246,8 @@ def _uninstall(
     try:
         if not ask(
             ctx,
-            f"Remove the machine {machine or '(none)'}, its image, the custom kernel and the SSH wiring? "
+            f"Remove the machine {machine or '(none)'}, its image, the custom kernel and the SSH "
+            "wiring? "
             "Everything inside the machine is deleted.",
             "jailbee mac uninstall --yes",
         ):

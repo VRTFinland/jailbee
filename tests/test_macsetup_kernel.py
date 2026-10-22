@@ -42,7 +42,9 @@ class FakeAC:
 
 
 def make_ctx(tmp_path: Path, ac: FakeAC) -> SetupContext:
-    paths = MacPaths(tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "kernels", tmp_path / "ssh")
+    paths = MacPaths(
+        tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "kernels", tmp_path / "ssh"
+    )
     return SetupContext(
         ac=ac,  # type: ignore[arg-type]
         state=SetupState(

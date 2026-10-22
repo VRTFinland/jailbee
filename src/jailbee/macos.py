@@ -140,7 +140,8 @@ def preflight(cfg: BridgeConfig, cwd: Path) -> None:
         )
     if _run_in_vm(cfg, ["true"]).returncode != 0:
         raise BridgeError(
-            f"The jailbee machine is not running. Start it: container machine run -n {cfg.machine} -- true"
+            f"The jailbee machine is not running. "
+            f"Start it: container machine run -n {cfg.machine} -- true"
             if apple
             else "Colima VM not running. Start once:\n"
             "  colima start --runtime=incus --vm-type vz --mount-type virtiofs"

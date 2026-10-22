@@ -73,7 +73,9 @@ class GuiStep:
             "Homebrew will be allowed to load that tap's formulae."
         )
         if not ask(ctx, question, _INSTALL_COMMAND):
-            raise SetupError("Native windows need Cocoa-Way.", remedy="Re-run with --no-gui to skip them.")
+            raise SetupError(
+                "Native windows need Cocoa-Way.", remedy="Re-run with --no-gui to skip them."
+            )
         for argv in (
             ["brew", "tap", TAP],
             ["brew", "trust", "--tap", TAP],

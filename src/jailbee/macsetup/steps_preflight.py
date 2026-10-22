@@ -69,7 +69,8 @@ class PreflightStep:
         if host.arch != "arm64":
             raise SetupError(
                 "Apple's container needs an Apple silicon Mac.",
-                remedy="Use the Colima setup instead: docs/macos.md#setup-b-a-linux-vm-on-the-mac-colima",
+                remedy="Use the Colima setup instead: "
+                "docs/macos.md#setup-b-a-linux-vm-on-the-mac-colima",
             )
         self._check_cli(ctx)
         self._check_kernel(ctx)

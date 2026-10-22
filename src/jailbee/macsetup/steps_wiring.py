@@ -77,7 +77,18 @@ class WiringStep:
         key = ssh_dir / _KEY
         if not key.exists():
             result = self._runner(
-                ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "jailbee-mac-setup", "-f", str(key)],
+                [
+                    "ssh-keygen",
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-C",
+                    "jailbee-mac-setup",
+                    "-f",
+                    str(key),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -92,13 +103,18 @@ class WiringStep:
             'grep -qxF "$key" ~/.ssh/authorized_keys 2>/dev/null || '
             'printf "%s\\n" "$key" >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys'
         )
-        result = ctx.ac.machine_run(ctx.state.options.machine, ["bash", "-c", script], input=public + "\n")
+        result = ctx.ac.machine_run(
+            ctx.state.options.machine, ["bash", "-c", script], input=public + "\n"
+        )
         if result.returncode != 0:
-            raise SetupError(f"Could not authorise the SSH key in the machine: {result.stderr.strip()}")
+            raise SetupError(
+                f"Could not authorise the SSH key in the machine: {result.stderr.strip()}"
+            )
 
     def _write_ssh_config(self, ctx: SetupContext) -> None:
         ssh_dir = ctx.paths.ssh_dir
-        proxy = f"{shlex.quote(self._container)} machine run -n {ctx.state.options.machine} -i -- nc 127.0.0.1 22"
+        binary, machine = shlex.quote(self._container), ctx.state.options.machine
+        proxy = f"{binary} machine run -n {machine} -i -- nc 127.0.0.1 22"
         gui = ""
         if ctx.state.options.gui:
             gui = (
@@ -121,8 +137,7 @@ class WiringStep:
             "    IdentitiesOnly yes\n"
             "    StrictHostKeyChecking accept-new\n"
             f"    UserKnownHostsFile {ssh_dir / 'known_hosts'}\n"
-            f"    ProxyCommand {proxy}\n"
-            + gui
+            f"    ProxyCommand {proxy}\n" + gui
         )
 
     def _write_macos_yaml(self, ctx: SetupContext) -> None:

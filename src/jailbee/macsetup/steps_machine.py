@@ -30,8 +30,9 @@ def _vm(ctx: SetupContext, argv: list[str], *, input: str | None = None) -> str:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise SetupError(
-            f"`{' '.join(argv[:3])}` failed in the machine: {detail}" if detail else
-            f"`{' '.join(argv[:3])}` failed in the machine.",
+            f"`{' '.join(argv[:3])}` failed in the machine: {detail}"
+            if detail
+            else f"`{' '.join(argv[:3])}` failed in the machine.",
             remedy="Check the message above, then re-run.",
         )
     return result.stdout

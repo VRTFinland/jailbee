@@ -314,10 +314,15 @@ def test_apple_preflight_messages_name_jailbee_mac_setup(mocker) -> None:
 
 def test_gui_command_uses_waypipe_when_enabled(mocker, tmp_path: Path) -> None:
     run = mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0))
-    mocker.patch("jailbee.macos._ensure_cocoa_way", return_value={"WAYLAND_DISPLAY": "wayland-1", "XDG_RUNTIME_DIR": "/t"})
+    mocker.patch(
+        "jailbee.macos._ensure_cocoa_way",
+        return_value={"WAYLAND_DISPLAY": "wayland-1", "XDG_RUNTIME_DIR": "/t"},
+    )
     mocker.patch("jailbee.macos._repo_prefix", return_value="pfx")
     with pytest.raises(SystemExit):
-        macos._delegate(_apple_cfg(gui=True), ["firefox", "c1"], Path("/Users/me/repo"), isatty=False)
+        macos._delegate(
+            _apple_cfg(gui=True), ["firefox", "c1"], Path("/Users/me/repo"), isatty=False
+        )
     cmd = run.call_args.args[0]
     assert cmd[:3] == ["waypipe", "--compress=zstd", "ssh"]
     assert cmd[-5:] == ["jailbee-ssh", "firefox", "c1", "--repo", "pfx"]
@@ -341,7 +346,9 @@ def test_explicit_repo_is_not_resolved_again(mocker) -> None:
     mocker.patch("jailbee.macos._ensure_cocoa_way", return_value={})
     spy = mocker.patch("jailbee.macos._repo_prefix")
     with pytest.raises(SystemExit):
-        macos._delegate(_apple_cfg(gui=True), ["chrome", "c", "--repo", "x"], Path("/Users/me/r"), isatty=False)
+        macos._delegate(
+            _apple_cfg(gui=True), ["chrome", "c", "--repo", "x"], Path("/Users/me/r"), isatty=False
+        )
     spy.assert_not_called()
     assert run.call_args.args[0][-5:] == ["jailbee-ssh", "chrome", "c", "--repo", "x"]
 
@@ -359,12 +366,17 @@ def test_gui_disabled_never_touches_cocoa_way(mocker) -> None:
     mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0))
     spy = mocker.patch("jailbee.macos._ensure_cocoa_way")
     with pytest.raises(SystemExit):
-        macos._delegate(_apple_cfg(gui=False), ["firefox", "c"], Path("/Users/me/repo"), isatty=False)
+        macos._delegate(
+            _apple_cfg(gui=False), ["firefox", "c"], Path("/Users/me/repo"), isatty=False
+        )
     spy.assert_not_called()
 
 
 def test_repo_prefix_reads_container_prefix_from_config_show(mocker) -> None:
-    mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0, stdout="container_prefix: demo\nfoo: 1\n"))
+    mocker.patch(
+        "jailbee.macos.subprocess.run",
+        return_value=_cp(0, stdout="container_prefix: demo\nfoo: 1\n"),
+    )
     assert macos._repo_prefix(_apple_cfg(), Path("/Users/me/repo")) == "demo"
     mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(1))
     assert macos._repo_prefix(_apple_cfg(), Path("/Users/me/repo")) is None
@@ -387,7 +399,9 @@ def test_ensure_cocoa_way_reuses_a_running_compositor(mocker, tmp_path: Path, mo
     assert env == {"XDG_RUNTIME_DIR": str(d), "WAYLAND_DISPLAY": "wayland-1"}
 
 
-def test_ensure_cocoa_way_starts_rootless_and_waits_for_the_socket(mocker, tmp_path: Path, monkeypatch) -> None:
+def test_ensure_cocoa_way_starts_rootless_and_waits_for_the_socket(
+    mocker, tmp_path: Path, monkeypatch
+) -> None:
     import socket as _socket
 
     monkeypatch.setenv("TMPDIR", str(tmp_path))

@@ -22,7 +22,12 @@ class FakeAC:
         kernel: str | None = "6.18.35-197-debug",
         machine: MachineInfo | None = None,
     ) -> None:
-        self._version, self._running, self._kernel, self._machine = version, running, kernel, machine
+        self._version, self._running, self._kernel, self._machine = (
+            version,
+            running,
+            kernel,
+            machine,
+        )
         self.commands: list[list[str]] = []
 
     def version(self) -> str | None:
@@ -42,8 +47,12 @@ class FakeAC:
         self._kernel = "6.18.35-197-debug"
 
 
-def make_ctx(tmp_path: Path, ac: FakeAC, *, interactive: bool = True, yes: bool = False) -> SetupContext:
-    paths = MacPaths(tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "k", tmp_path / "ssh")
+def make_ctx(
+    tmp_path: Path, ac: FakeAC, *, interactive: bool = True, yes: bool = False
+) -> SetupContext:
+    paths = MacPaths(
+        tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "k", tmp_path / "ssh"
+    )
     lines: list[str] = []
     ctx = SetupContext(
         ac=ac,  # type: ignore[arg-type]
@@ -109,7 +118,7 @@ def test_low_disk_fails_with_numbers(tmp_path: Path) -> None:
 def test_missing_cli_and_old_cli_and_stopped_service(tmp_path: Path) -> None:
     with pytest.raises(SetupError, match="not installed"):
         PreflightStep(host()).run(make_ctx(tmp_path, FakeAC(version=None)))
-    with pytest.raises(SetupError, match="1.6.0"):
+    with pytest.raises(SetupError, match=r"1\.6\.0"):
         PreflightStep(host()).run(make_ctx(tmp_path, FakeAC(version="1.5.2")))
     with pytest.raises(SetupError) as excinfo:
         PreflightStep(host()).run(make_ctx(tmp_path, FakeAC(running=False)))

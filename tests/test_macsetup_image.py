@@ -19,7 +19,12 @@ class FakeAC:
 
     def build_image(self, context: Path, tag: str, *, cpus: int, memory: str) -> None:
         self.built.append(
-            {"tag": tag, "files": sorted(p.name for p in context.iterdir()), "cpus": cpus, "memory": memory}
+            {
+                "tag": tag,
+                "files": sorted(p.name for p in context.iterdir()),
+                "cpus": cpus,
+                "memory": memory,
+            }
         )
 
 

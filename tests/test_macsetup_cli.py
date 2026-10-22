@@ -9,7 +9,14 @@ import pytest
 
 from jailbee.mac_container import MachineInfo
 from jailbee.macsetup import cli
-from jailbee.macsetup.engine import MacPaths, SetupContext, SetupOptions, SetupState, load_state, save_state
+from jailbee.macsetup.engine import (
+    MacPaths,
+    SetupContext,
+    SetupOptions,
+    SetupState,
+    load_state,
+    save_state,
+)
 
 
 def _cp(rc: int = 0, out: str = "", err: str = "") -> _sp.CompletedProcess[str]:
@@ -50,7 +57,12 @@ class RecStep:
 
 @pytest.fixture
 def env(tmp_path: Path):  # type: ignore[no-untyped-def]
-    paths = MacPaths(tmp_path / "cfg", tmp_path / "cfg" / "setup-state.json", tmp_path / "k", tmp_path / "cfg" / "ssh")
+    paths = MacPaths(
+        tmp_path / "cfg",
+        tmp_path / "cfg" / "setup-state.json",
+        tmp_path / "k",
+        tmp_path / "cfg" / "ssh",
+    )
     return {
         "paths": paths,
         "user_ssh_config": tmp_path / "dotssh" / "config",
@@ -61,10 +73,23 @@ def env(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 def test_second_run_reuses_stored_options(env) -> None:  # type: ignore[no-untyped-def]
     steps = [RecStep("a")]
-    assert cli.main(["setup", "--isolated", "--machine", "m1", "--no-gui", "--cpus", "3"], ac=FakeAC(), steps=steps, **env) == 0
+    assert (
+        cli.main(
+            ["setup", "--isolated", "--machine", "m1", "--no-gui", "--cpus", "3"],
+            ac=FakeAC(),
+            steps=steps,
+            **env,
+        )
+        == 0
+    )
     assert cli.main(["setup"], ac=FakeAC(), steps=steps, **env) == 0
     options = load_state(env["paths"].state_file).options  # type: ignore[union-attr]
-    assert (options.mode, options.machine, options.gui, options.cpus) == ("isolated", "m1", False, 3)
+    assert (options.mode, options.machine, options.gui, options.cpus) == (
+        "isolated",
+        "m1",
+        False,
+        3,
+    )
     assert steps[0].runs == 1  # the second run found it up to date
 
 
@@ -113,7 +138,11 @@ def test_uninstall_removes_include_line_only(env, tmp_path: Path) -> None:  # ty
     kernel.write_bytes(b"k")
     state = SetupState(
         options=SetupOptions(),
-        facts={"machine": "jailbee", "image": "local/jailbee-machine:abc", "kernel_path": str(kernel)},
+        facts={
+            "machine": "jailbee",
+            "image": "local/jailbee-machine:abc",
+            "kernel_path": str(kernel),
+        },
     )
     save_state(env["paths"].state_file, state)
     ac = FakeAC(MachineInfo("jailbee", True, None, "rw"))
@@ -126,10 +155,24 @@ def test_uninstall_removes_include_line_only(env, tmp_path: Path) -> None:  # ty
 
 
 def test_non_interactive_confirmation_exits_2(env) -> None:  # type: ignore[no-untyped-def]
-    save_state(env["paths"].state_file, SetupState(options=SetupOptions(), facts={"machine": "jailbee"}))
+    save_state(
+        env["paths"].state_file, SetupState(options=SetupOptions(), facts={"machine": "jailbee"})
+    )
     assert cli.main(["uninstall"], ac=FakeAC(), steps=[], **env) == 2
 
 
 def test_default_steps_order() -> None:
     ids = [step.id for step in cli.default_steps()]
-    assert ids == ["preflight", "kernel", "image", "machine", "prepare", "incus", "jailbee", "wiring", "gui", "base", "verify"]
+    assert ids == [
+        "preflight",
+        "kernel",
+        "image",
+        "machine",
+        "prepare",
+        "incus",
+        "jailbee",
+        "wiring",
+        "gui",
+        "base",
+        "verify",
+    ]

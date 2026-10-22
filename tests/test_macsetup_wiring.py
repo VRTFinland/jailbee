@@ -32,9 +32,13 @@ def keygen_runner(argv: list[str], **kwargs: object) -> _sp.CompletedProcess[str
     return _cp()
 
 
-def make(tmp_path: Path, *, mode: str = "mac-repos", gui: bool = False) -> tuple[WiringStep, SetupContext, FakeAC]:
+def make(
+    tmp_path: Path, *, mode: str = "mac-repos", gui: bool = False
+) -> tuple[WiringStep, SetupContext, FakeAC]:
     ac = FakeAC()
-    paths = MacPaths(tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "k", tmp_path / "cfg" / "ssh")
+    paths = MacPaths(
+        tmp_path / "cfg", tmp_path / "cfg" / "s.json", tmp_path / "k", tmp_path / "cfg" / "ssh"
+    )
     ctx = SetupContext(
         ac=ac,  # type: ignore[arg-type]
         state=SetupState(options=SetupOptions(mode=mode, gui=gui, machine="jb")),  # type: ignore[arg-type]
@@ -85,7 +89,9 @@ def test_ssh_config_uses_machine_run_proxy_and_quotes_paths(tmp_path: Path) -> N
     text = (ctx.paths.ssh_dir / "config").read_text()
     assert "Host jailbee-vm" in text
     assert "User me" in text
-    assert "ProxyCommand /opt/homebrew/bin/container machine run -n jb -i -- nc 127.0.0.1 22" in text
+    assert (
+        "ProxyCommand /opt/homebrew/bin/container machine run -n jb -i -- nc 127.0.0.1 22" in text
+    )
     assert f"IdentityFile {ctx.paths.ssh_dir / 'id_ed25519'}" in text
 
 

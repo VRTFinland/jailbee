@@ -20,7 +20,11 @@ def _cp(rc: int = 0, out: str = "", err: str = "") -> _sp.CompletedProcess[str]:
 
 
 class FakeAC:
-    def __init__(self, machine: MachineInfo | None = None, vm: dict[str, _sp.CompletedProcess[str]] | None = None) -> None:
+    def __init__(
+        self,
+        machine: MachineInfo | None = None,
+        vm: dict[str, _sp.CompletedProcess[str]] | None = None,
+    ) -> None:
         self._machine = machine
         self.events: list[tuple[str, object]] = []
         self.vm = vm or {}
@@ -54,7 +58,12 @@ def make_ctx(tmp_path: Path, ac: FakeAC, *, mode: str = "mac-repos") -> SetupCon
         ac=ac,  # type: ignore[arg-type]
         state=SetupState(
             options=SetupOptions(mode=mode),  # type: ignore[arg-type]
-            facts={"image": "local/jailbee-machine:abc", "kernel_path": KERNEL, "cpus": "4", "memory": "8G"},
+            facts={
+                "image": "local/jailbee-machine:abc",
+                "kernel_path": KERNEL,
+                "cpus": "4",
+                "memory": "8G",
+            },
         ),
         paths=paths,
         interactive=True,
@@ -152,19 +161,33 @@ def test_incus_step_initialises_and_creates_pool(tmp_path: Path) -> None:
 
 
 def test_incus_step_names_kernel_step_when_apparmor_missing(tmp_path: Path) -> None:
-    ac = FakeAC(vm={"storage list": _cp(0, "x,y"), "uname": _cp(0, "6.18.35-197-debug\n"), "lsm": _cp(0, "yama")})
+    ac = FakeAC(
+        vm={
+            "storage list": _cp(0, "x,y"),
+            "uname": _cp(0, "6.18.35-197-debug\n"),
+            "lsm": _cp(0, "yama"),
+        }
+    )
     with pytest.raises(SetupError, match="custom kernel"):
         IncusStep(pool_gib=50).run(make_ctx(tmp_path, ac))
 
 
 def test_wait_ready_called_before_vm_steps(tmp_path: Path) -> None:
-    ac = FakeAC(vm={"storage list": _cp(0, "a,b\njailbee-btrfs,btrfs"), "uname": _cp(0, "x-jailbee"), "lsm": _cp(0, "apparmor")})
+    ac = FakeAC(
+        vm={
+            "storage list": _cp(0, "a,b\njailbee-btrfs,btrfs"),
+            "uname": _cp(0, "x-jailbee"),
+            "lsm": _cp(0, "apparmor"),
+        }
+    )
     IncusStep(pool_gib=50).run(make_ctx(tmp_path, ac))
     assert kinds(ac)[0] == "wait_ready"
 
 
 def test_root_prepare_contains_securityfs_unit_and_discard() -> None:
-    script = resources.files("jailbee.provision").joinpath("mac").joinpath("root-prepare.sh").read_text()
+    script = (
+        resources.files("jailbee.provision").joinpath("mac").joinpath("root-prepare.sh").read_text()
+    )
     assert "mount -t securityfs" in script
     assert "mount -o remount,discard /" in script
     assert "fstrim.timer" in script

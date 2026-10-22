@@ -65,8 +65,9 @@ def run_as_user(ctx: SetupContext, script: str, *, input: str | None = None) -> 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise SetupError(
-            f"A step inside the machine failed: {detail}" if detail else
-            "A step inside the machine failed.",
+            f"A step inside the machine failed: {detail}"
+            if detail
+            else "A step inside the machine failed.",
             remedy="Check the message above, then re-run.",
         )
     return result.stdout
@@ -95,7 +96,9 @@ class JailbeeStep:
         return self._version
 
     def run(self, ctx: SetupContext) -> None:
-        run_as_user(ctx, "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh")
+        run_as_user(
+            ctx, "command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh"
+        )
         run_as_user(ctx, install_command(self._version, warn=ctx.log))
         write_vm_global(ctx, merge_global_yaml(read_vm_global(ctx)))
         run_as_user(ctx, "jailbee setup --yes --only timer")
@@ -117,7 +120,8 @@ class BaseImageStep:
         run_as_user(ctx, f"mkdir -p {scratch} && cd {scratch} && jailbee base build")
         # Doctor is advisory here: it also reports host details setup does not manage.
         report = ctx.ac.machine_run(
-            ctx.state.options.machine, ["bash", "-lc", f"{_PATH}; {_USER_BUS}; cd {scratch} && jailbee doctor"]
+            ctx.state.options.machine,
+            ["bash", "-lc", f"{_PATH}; {_USER_BUS}; cd {scratch} && jailbee doctor"],
         )
         for line in (report.stdout or report.stderr).splitlines():
             ctx.log(f"  {line}")
