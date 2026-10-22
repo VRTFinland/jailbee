@@ -274,6 +274,33 @@ Inspect an existing installation instead of reinitialising it. The `dir`
 pool remains available; use `jailbee-btrfs` for JailBee environments. See
 [Storage](storage.md) for capacity and copy-on-write behaviour.
 
+### Disk space on the Mac
+
+`size=30GiB` is a ceiling, not an allocation. The pool is a sparse loop file
+on the machine's disk, which is itself a sparse image file on the Mac, so
+both grow only as containers write data. Raise the ceiling later with
+`incus storage set jailbee-btrfs size=…`.
+
+Freed space returns to the Mac only when discards travel down the whole
+chain. btrfs mounts with `discard=async` by default, so a deleted file frees
+the loop file's blocks within seconds. The machine's ext4 root then has to
+pass the freed blocks on, either continuously or in batches:
+
+```bash
+mount -o remount,discard /          # continuous, until the next boot
+systemctl enable --now fstrim.timer # weekly batch
+```
+
+Run `fstrim -av` twice to reclaim space at once: the first pass trims btrfs,
+and the outer ext4 can only trim the blocks that pass released after its
+journal commits. This chain was measured on 2026-10-22 in a Virtualization
+framework VM attached the way Apple's `containerization` attaches disks, not
+in a `container machine`: a deleted 512 MiB file left the Mac within 20
+seconds with `discard` on the ext4 mount, and Virtualization framework did
+punch holes in the APFS image. Whether a `container machine` root accepts
+the `discard` remount has not been tested; to check, compare `du -h` of the
+machine's disk image on the Mac before and after deleting a large file.
+
 ## 5. Enter as the development user and create an environment
 
 On the Mac:
@@ -561,6 +588,7 @@ to the installed behaviour.
 | Strict per-container egress, positive and negative destinations | Passed |
 | Host-side AppArmor enforcement after reboot | Passed |
 | btrfs instance migration and snapshots, retained after reboot | Passed |
+| Freed btrfs space returned to the Mac | Measured in a separate Virtualization framework VM, not in a `container machine` |
 | Nested Docker `hello-world` after reboot | Passed |
 | User refresh timer and keyring limits after reboot | Passed |
 | SSH repository discovery, listing and interactive shell | Passed |
