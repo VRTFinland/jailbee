@@ -111,7 +111,13 @@ def test_macos_yaml_written_for_apple_backend_and_colima_config_backed_up(tmp_pa
     yaml_path.write_text("transport: [colima, ssh]\n")
     step.run(ctx)
     written = yaml.safe_load(yaml_path.read_text())
-    assert written == {"backend": "apple", "machine": "jb", "mode": "isolated", "gui": True}
+    assert written == {
+        "backend": "apple",
+        "machine": "jb",
+        "user": "me",
+        "mode": "isolated",
+        "gui": True,
+    }
     assert (yaml_path.parent / "macos.yaml.colima.bak").read_text() == "transport: [colima, ssh]\n"
 
 

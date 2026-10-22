@@ -54,7 +54,7 @@ class WiringStep:
 
     def fingerprint(self, ctx: SetupContext) -> str:
         opts = ctx.state.options
-        return f"{opts.mode}:{opts.gui}:{opts.machine}:1"
+        return f"{opts.mode}:{opts.gui}:{opts.machine}:2"
 
     def _macos_yaml_path(self) -> Path:
         if self._macos_yaml is not None:
@@ -149,7 +149,13 @@ class WiringStep:
             if not (isinstance(existing, dict) and existing.get("backend") == "apple"):
                 backup.write_text(path.read_text())
         opts = ctx.state.options
-        data = {"backend": "apple", "machine": opts.machine, "mode": opts.mode, "gui": opts.gui}
+        data = {
+            "backend": "apple",
+            "machine": opts.machine,
+            "user": self._user,
+            "mode": opts.mode,
+            "gui": opts.gui,
+        }
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(yaml.safe_dump(data, sort_keys=False))
         os.replace(tmp, path)

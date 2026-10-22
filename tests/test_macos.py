@@ -237,7 +237,8 @@ def _apple_cfg(**over) -> macos.BridgeConfig:  # type: ignore[no-untyped-def]
     base = dict(
         backend="apple",
         machine="jb",
-        transport=["container", "machine", "run", "-n", "jb"],
+        transport=["container", "machine", "run", "-n", "jb", "--root"],
+        user="me",
         tty_flag=["-i", "-t"],
         workdir_flag="",
         shared_root=Path("/Users/me"),
@@ -256,7 +257,7 @@ def test_apple_backend_defaults_from_yaml(tmp_path: Path, mocker) -> None:
     p = tmp_path / "macos.yaml"
     p.write_text("backend: apple\nmachine: jb\nmode: isolated\ngui: true\n")
     cfg = macos.load_bridge_config(p)
-    assert cfg.transport == ["/opt/homebrew/bin/container", "machine", "run", "-n", "jb"]
+    assert cfg.transport == ["/opt/homebrew/bin/container", "machine", "run", "-n", "jb", "--root"]
     assert cfg.tty_flag == ["-i", "-t"]
     assert cfg.workdir_flag == ""
     assert (cfg.machine, cfg.mode, cfg.gui) == ("jb", "isolated", True)
@@ -269,10 +270,13 @@ def test_apple_backend_delegate_passes_one_quoted_command(mocker) -> None:
         macos._delegate(_apple_cfg(), ["new", "feat x"], Path("/Users/me/repo"), isatty=False)
     assert exc.value.code == 7
     cmd = run.call_args.args[0]
-    assert cmd[:7] == ["container", "machine", "run", "-n", "jb", "-i", "--"]
-    assert len(cmd) == 8
-    assert cmd[7].endswith("jailbee new 'feat x'")
-    assert ".local/bin" in cmd[7]
+    assert cmd[:8] == ["container", "machine", "run", "-n", "jb", "--root", "-i", "--"]
+    assert len(cmd) == 9
+    # root enters the machine, then drops to the login user WITH its supplementary groups
+    # (a plain machine-run session has none, so incus-admin would be missing).
+    assert cmd[8].startswith("runuser -u me -- bash -c ")
+    assert "feat x" in cmd[8]
+    assert ".local/bin" in cmd[8]
     assert "--workdir" not in cmd
 
 
@@ -280,7 +284,16 @@ def test_apple_backend_delegate_uses_tty_flags_when_interactive(mocker) -> None:
     run = mocker.patch("jailbee.macos.subprocess.run", return_value=_cp(0))
     with pytest.raises(SystemExit):
         macos._delegate(_apple_cfg(), ["shell", "c"], Path("/Users/me/repo"), isatty=True)
-    assert run.call_args.args[0][:7] == ["container", "machine", "run", "-n", "jb", "-i", "-t"]
+    assert run.call_args.args[0][:8] == [
+        "container",
+        "machine",
+        "run",
+        "-n",
+        "jb",
+        "--root",
+        "-i",
+        "-t",
+    ]
 
 
 def test_isolated_mode_skips_shared_root_check(mocker) -> None:

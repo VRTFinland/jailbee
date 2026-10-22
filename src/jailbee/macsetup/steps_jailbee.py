@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
 import re
@@ -61,7 +62,10 @@ def merge_global_yaml(existing: str) -> str:
 def run_as_user(ctx: SetupContext, script: str, *, input: str | None = None) -> str:
     """Run `script` in a bash as the machine's development user."""
     full = f"{_PATH}; {_USER_BUS}; {script}"
-    result = ctx.ac.machine_run(ctx.state.options.machine, ["bash", "-lc", full], input=input)
+    # Root enters the machine and `runuser -u` drops to the login user *with* its
+    # groups: a plain `machine run` session carries none, so `incus` is refused.
+    argv = ["runuser", "-u", getpass.getuser(), "--", "bash", "-lc", full]
+    result = ctx.ac.machine_run(ctx.state.options.machine, argv, root=True, input=input)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise SetupError(

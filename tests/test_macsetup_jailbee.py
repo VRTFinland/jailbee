@@ -116,3 +116,13 @@ def test_install_spec_override_wins_for_testing_a_branch(monkeypatch) -> None:  
     assert install_command("1.7.8") == (
         "uv tool install --force '/Users/me/dist/jailbee-1.7.8-py3-none-any.whl[ssh]'"
     )
+
+
+def test_user_commands_drop_from_root_to_the_login_user(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A plain machine-run session has no supplementary groups, so no incus-admin."""
+    monkeypatch.setattr("getpass.getuser", lambda: "me")
+    ac = FakeAC()
+    JailbeeStep(mac_version="1.7.8").run(make_ctx(tmp_path, ac))
+    installs = [r for r in ac.runs if "uv tool install" in " ".join(r["argv"])]  # type: ignore[arg-type]
+    assert installs and installs[0]["root"] is True
+    assert installs[0]["argv"][:5] == ["runuser", "-u", "me", "--", "bash"]  # type: ignore[index]

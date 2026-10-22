@@ -12,6 +12,7 @@ imports cli.py, Typer, or any incus-oriented module.
 
 from __future__ import annotations
 
+import getpass
 import os
 import shlex
 import shutil
@@ -39,6 +40,7 @@ class BridgeConfig:
     # `apple` = an Apple `container machine` set up by `jailbee mac setup`.
     backend: Literal["colima", "apple"] = "colima"
     machine: str = "jailbee"
+    user: str = field(default_factory=getpass.getuser)
     mode: Literal["mac-repos", "isolated"] = "mac-repos"
     gui: bool = False
 
@@ -91,11 +93,14 @@ def _apply_apple(cfg: BridgeConfig, raw: dict[str, object]) -> None:
     """Fill the Apple-machine defaults; explicit transport/tty/workdir keys still win."""
     cfg.backend = "apple"
     cfg.machine = str(raw.get("machine", cfg.machine))
+    cfg.user = str(raw.get("user", cfg.user))
     cfg.mode = "isolated" if raw.get("mode") == "isolated" else "mac-repos"
     cfg.gui = bool(raw.get("gui", False))
     if "transport" not in raw:
         binary = shutil.which("container") or "container"
-        cfg.transport = [binary, "machine", "run", "-n", cfg.machine]
+        # Root enters the machine; `_remote` then drops to the login user with its
+        # groups, which a plain `machine run` session lacks (no incus-admin).
+        cfg.transport = [binary, "machine", "run", "-n", cfg.machine, "--root"]
     if "tty_flag" not in raw:
         cfg.tty_flag = ["-i", "-t"]
     if "workdir_flag" not in raw:
@@ -106,7 +111,8 @@ def _remote(cfg: BridgeConfig, args: list[str]) -> list[str]:
     """What follows `--` for `args`: the argv itself, or one quoted string for Apple."""
     if cfg.backend != "apple":
         return args
-    return [_APPLE_PRELUDE + shlex.join(args)]
+    inner = _APPLE_PRELUDE + shlex.join(args)
+    return [f"runuser -u {shlex.quote(cfg.user)} -- bash -c {shlex.quote(inner)}"]
 
 
 def _run_in_vm(cfg: BridgeConfig, args: list[str]) -> subprocess.CompletedProcess[str]:
