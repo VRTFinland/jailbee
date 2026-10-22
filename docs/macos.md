@@ -186,9 +186,13 @@ only a minimal default-location helper.
 ## Setup C: Apple's container machine, one command
 
 > **Experimental.** `jailbee mac setup` automates the recipe in
-> [Apple container machine with a custom kernel](apple-container-machine.md),
-> which was verified by hand on one Apple silicon Mac. Read that page for what
-> each step does and how to do it yourself.
+> [Apple container machine with a custom kernel](apple-container-machine.md).
+> The command was run end to end on one Apple silicon Mac (macOS 26.7.1, Apple
+> `container` 1.6.0), in both modes: it built the kernel, created the machine,
+> created a strict container from a Mac repository, committed in it, pulled the
+> commit back, upgraded, and uninstalled cleanly. Native Mac windows were not
+> checked, because that needs a graphical login; the SSH path they use was.
+> Read the linked page for what each step does and how to do it yourself.
 
 Here JailBee, Incus and the containers run in a Linux machine on the Mac,
 created with Apple's [`container`](https://github.com/apple/container). One
@@ -204,7 +208,7 @@ uv tool install 'jailbee[ssh]'
 jailbee mac setup
 ```
 
-Setup runs unattended for about half an hour: it builds the kernel in a
+Setup runs unattended for about 15 to 25 minutes (the kernel build is the longest part): it builds the kernel in a
 throwaway container, builds the machine image, creates the machine, installs
 Incus with a btrfs pool, installs the same JailBee version inside, builds the
 base image and finishes by creating and removing a test container. If it

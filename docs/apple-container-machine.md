@@ -592,6 +592,8 @@ to the installed behaviour.
 | Strict per-container egress, positive and negative destinations | Passed |
 | Host-side AppArmor enforcement after reboot | Passed |
 | btrfs instance migration and snapshots, retained after reboot | Passed |
+| `jailbee mac setup` end to end, both modes, upgrade and uninstall (2026-10-22, 1.6.0) | Passed on one Mac, with the machine's own `container machine` root measured: `fstrim` and a `discard` mount both shrink the Mac's disk image |
+| Native Mac windows through `jailbee mac setup` | Not checked: needs a graphical login |
 | Freed btrfs space returned to the Mac | Measured in a separate Virtualization framework VM, not in a `container machine` |
 | Nested Docker `hello-world` after reboot | Passed |
 | User refresh timer and keyring limits after reboot | Passed |
