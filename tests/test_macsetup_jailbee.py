@@ -101,12 +101,46 @@ def test_base_step_reruns_on_jailbee_upgrade_or_new_kernel(tmp_path: Path) -> No
     assert BaseImageStep(mac_version="1.7.8").fingerprint(ctx) != before
 
 
-def test_base_step_builds_in_scratch_dir_and_logs_doctor(tmp_path: Path) -> None:
-    ac = FakeAC()
+DOCTOR_OK = """\
+  | kernel bridge conntrack | ✓ OK   | enabled |
+  | apparmor               | ✓ OK   | active  |
+  | git identity           | ✗ FAIL | no user.name |
+"""
+DOCTOR_BAD = DOCTOR_OK.replace(
+    "kernel bridge conntrack | ✓ OK   | enabled", "kernel bridge conntrack | ✗ FAIL | missing"
+)
+
+
+class DoctorAC(FakeAC):
+    def __init__(self, doctor: str) -> None:
+        super().__init__()
+        self._doctor = doctor
+
+    def machine_run(self, name, argv, *, root=False, input=None):  # type: ignore[no-untyped-def]
+        result = super().machine_run(name, argv, root=root, input=input)
+        if "jailbee doctor" in " ".join(argv):
+            return _cp(1, self._doctor)  # doctor exits 1 for unrelated rows (git identity...)
+        return result
+
+
+def test_base_step_builds_in_scratch_dir_as_the_login_user(tmp_path: Path) -> None:
+    ac = DoctorAC(DOCTOR_OK)
     BaseImageStep(mac_version="1.7.8").run(make_ctx(tmp_path, ac))
-    cmds = commands(ac)
-    assert any("jailbee base build" in c and "jailbee-scratch" in c for c in cmds)
-    assert any("jailbee doctor" in c for c in cmds)
+    build = next(r for r in ac.runs if "jailbee base build" in " ".join(r["argv"]))  # type: ignore[arg-type]
+    assert build["root"] is True and "jailbee-scratch" in " ".join(build["argv"])  # type: ignore[arg-type]
+
+
+def test_base_step_ignores_unrelated_doctor_failures(tmp_path: Path) -> None:
+    BaseImageStep(mac_version="1.7.8").run(make_ctx(tmp_path, DoctorAC(DOCTOR_OK)))  # no raise
+
+
+def test_base_step_fails_on_a_kernel_row(tmp_path: Path) -> None:
+    import pytest
+
+    from jailbee.macsetup.engine import SetupError
+
+    with pytest.raises(SetupError, match="kernel bridge conntrack"):
+        BaseImageStep(mac_version="1.7.8").run(make_ctx(tmp_path, DoctorAC(DOCTOR_BAD)))
 
 
 def test_install_spec_override_wins_for_testing_a_branch(monkeypatch) -> None:  # type: ignore[no-untyped-def]

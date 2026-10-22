@@ -23,6 +23,7 @@ _USER_BUS = (
 GLOBAL_YAML = "~/.config/jailbee/global.yaml"
 SCRATCH_DIR = "$HOME/jailbee-scratch"
 POOL = "jailbee-btrfs"
+_KERNEL_ROWS = ("kernel bridge conntrack", "kernel btrfs ACLs", "apparmor")
 
 
 def _mac_version() -> str:
@@ -59,14 +60,16 @@ def merge_global_yaml(existing: str) -> str:
     return yaml.safe_dump(data, sort_keys=False)
 
 
-def run_as_user(ctx: SetupContext, script: str, *, input: str | None = None) -> str:
-    """Run `script` in a bash as the machine's development user."""
+def run_as_user(
+    ctx: SetupContext, script: str, *, input: str | None = None, check: bool = True
+) -> str:
+    """Run `script` in a bash as the machine's development user; return its stdout."""
     full = f"{_PATH}; {_USER_BUS}; {script}"
     # Root enters the machine and `runuser -u` drops to the login user *with* its
     # groups: a plain `machine run` session carries none, so `incus` is refused.
     argv = ["runuser", "-u", getpass.getuser(), "--", "bash", "-lc", full]
     result = ctx.ac.machine_run(ctx.state.options.machine, argv, root=True, input=input)
-    if result.returncode != 0:
+    if check and result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise SetupError(
             f"A step inside the machine failed: {detail}"
@@ -122,10 +125,16 @@ class BaseImageStep:
     def run(self, ctx: SetupContext) -> None:
         scratch = SCRATCH_DIR
         run_as_user(ctx, f"mkdir -p {scratch} && cd {scratch} && jailbee base build")
-        # Doctor is advisory here: it also reports host details setup does not manage.
-        report = ctx.ac.machine_run(
-            ctx.state.options.machine,
-            ["bash", "-lc", f"{_PATH}; {_USER_BUS}; cd {scratch} && jailbee doctor"],
-        )
-        for line in (report.stdout or report.stderr).splitlines():
-            ctx.log(f"  {line}")
+        # Doctor also reports host details setup does not manage (git identity, a
+        # graphical session), so only the rows about the kernel this setup built count.
+        report = run_as_user(ctx, f"cd {scratch} && jailbee doctor", check=False)
+        failing = [
+            line.strip(" |│")
+            for line in report.splitlines()
+            if any(row in line for row in _KERNEL_ROWS) and "FAIL" in line
+        ]
+        if failing:
+            raise SetupError(
+                "The kernel is missing something JailBee needs: " + "; ".join(failing),
+                remedy="Run: jailbee mac setup --help, or see docs/apple-container-machine.md",
+            )
