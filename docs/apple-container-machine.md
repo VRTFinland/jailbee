@@ -12,11 +12,13 @@ the recipe does not depend on that, but a machine that shares the Mac home was
 not tested. See [Using JailBee from a Mac](macos.md) for the other
 arrangements.
 
-The recipe pins the tested JailBee 1.7.7. Three of its workarounds address
-problems that later releases handle themselves, as noted where each appears;
-they remain harmless. `jailbee doctor` in later releases also reports the
-kernel gaps described below (its `kernel bridge conntrack`, `kernel btrfs ACLs`
-and `apparmor` rows).
+The trial ran JailBee 1.7.7. JailBee 1.7.8 fixes three problems the recipe
+works around: the GID collision, the fonts mount and the display's cloud-init
+race. Each workaround is marked where it appears; on 1.7.8 it is optional
+and harmless. From 1.7.8, `jailbee doctor` also reports the kernel gaps
+described below: its `kernel bridge conntrack` and `apparmor` rows, and
+`kernel btrfs ACLs` once a btrfs pool exists. The recipe has not been re-run
+end to end on 1.7.8.
 
 ## Tested versions and resources
 
@@ -105,8 +107,8 @@ RUN truncate -s 0 /etc/machine-id \
 
 The fonts package supplies `/usr/share/fonts`, which JailBee 1.7.7's base
 profile mounts even for a headless container. Without that source directory,
-profile assignment failed before the container could start. (Releases after
-1.7.7 no longer mount the host's fonts; containers use the golden image's.)
+profile assignment failed before the container could start. (From 1.7.8
+JailBee no longer mounts the host's fonts, so the package is optional.)
 
 ```bash
 container build --progress plain --cpus 4 --memory 4G \
@@ -137,8 +139,9 @@ getent group 1500
 Choose an unused GID if 1500 is already occupied. The test Mac's primary GID
 was 20, which Ubuntu reserves for `dialout`; JailBee's golden-image
 provisioning then failed at `groupadd -g 20 dev`. Give the VM account an unused
-Linux group. This changes only its VM-local home. (Releases after 1.7.7 rename
-a system group that already holds the GID instead of failing.)
+Linux group. This changes only its VM-local home. (From 1.7.8 the
+build renames a system group that already holds the GID instead of failing,
+so this step is optional.)
 
 ```bash
 groupadd --gid 1500 jailbee-dev
@@ -287,7 +290,7 @@ account's updated primary and supplementary groups. Check `id` in the shell.
 Inside the VM, as that user:
 
 ```bash
-pipx install 'jailbee[ssh]==1.7.7'
+pipx install 'jailbee[ssh]>=1.7.8'
 pipx ensurepath
 export PATH="$HOME/.local/bin:$PATH"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -447,8 +450,8 @@ jb display up
 
 The first attempt in this test could not locate `weston` and `waypipe`.
 Cloud-init subsequently reported completion; refreshing package indexes and
-retrying `jb display up` succeeded. (Releases after 1.7.7 wait for cloud-init
-before provisioning the display.)
+retrying `jb display up` succeeded. (From 1.7.8 `jb display up`
+waits for cloud-init itself, so this retry should not be needed.)
 
 ```bash
 sudo incus exec jailbee-display -- cloud-init status --wait
