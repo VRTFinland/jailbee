@@ -339,6 +339,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "host's `/usr/share/fonts`; a `host_mounts` entry brings host fonts back"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's `/etc/localtime` is a UTC zone instead of an empty "
+            "file, for hosts that have no `/etc/localtime` to mount over it"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

@@ -287,3 +287,11 @@ def test_install_sh_waits_for_cloud_init_before_refreshing_apt():
     script = _install_sh()
     assert "cloud-init status --wait" in script
     assert script.index("cloud-init status --wait") < script.index("apt-get update")
+
+
+def test_install_sh_leaves_a_valid_utc_localtime_not_an_empty_file():
+    """A container whose host has no /etc/localtime gets no mount, so the
+    image's own file must be a real zone, not the empty placeholder."""
+    script = _install_sh()
+    assert "cp /usr/share/zoneinfo/Etc/UTC /etc/localtime" in script
+    assert "touch /etc/localtime" not in script

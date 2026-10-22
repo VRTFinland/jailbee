@@ -98,10 +98,13 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # The <repo>-binds profile bind-mounts the host's /etc/localtime onto this
 # path, but LXC refuses to mount over a symlink destination and
 # the container fails to start with "Too many levels of symbolic links".
-# Drop the symlink; the bind-mount supplies the contents at runtime.
-echo "==> Replacing /etc/localtime symlink with empty regular file"
+# Replace the symlink with a regular-file copy of UTC: the bind-mount
+# supplies the host's zone at runtime, and a host without /etc/localtime
+# (no mount) still leaves the container a valid zone rather than an empty
+# file.
+echo "==> Replacing /etc/localtime symlink with a regular UTC file"
 rm -f /etc/localtime
-touch /etc/localtime
+cp /usr/share/zoneinfo/Etc/UTC /etc/localtime
 
 # Ubuntu cloud images ship with a default `ubuntu` user at UID 1000 / GID 1000.
 # When CONTAINER_UID/GID == 1000 (the common case — host user UID), useradd/

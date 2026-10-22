@@ -458,6 +458,7 @@ def test_binds_profile_does_not_include_source_repo_bind():
 def test_binds_profile_binds_host_localtime_readonly(mocker):
     """/etc/localtime is bind-mounted RO so container TZ matches host."""
     mocker.patch("jailbee.profiles._host_has_timezone_file", return_value=True)
+    mocker.patch("jailbee.profiles._host_has_localtime", return_value=True)
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
     parsed = yaml.safe_load(out)
@@ -482,12 +483,22 @@ def test_binds_profile_binds_host_timezone_when_present(mocker):
 def test_binds_profile_skips_host_timezone_when_missing(mocker):
     """Hosts without /etc/timezone (e.g. some non-Debian distros) must not error."""
     mocker.patch("jailbee.profiles._host_has_timezone_file", return_value=False)
+    mocker.patch("jailbee.profiles._host_has_localtime", return_value=True)
     cfg = _cfg()
     out = binds_profile_yaml(cfg)
     parsed = yaml.safe_load(out)
     devices = parsed["devices"]
     assert "host-localtime" in devices
     assert "host-timezone" not in devices
+
+
+def test_binds_profile_skips_host_localtime_when_missing(mocker):
+    """A minimal host image without tzdata has no /etc/localtime; a disk
+    device with a missing source would fail every container's start."""
+    mocker.patch("jailbee.profiles._host_has_localtime", return_value=False)
+    mocker.patch("jailbee.profiles._host_has_timezone_file", return_value=False)
+    devices = yaml.safe_load(binds_profile_yaml(_cfg()))["devices"]
+    assert "host-localtime" not in devices
 
 
 def test_binds_profile_binds_host_tmux_paths_readonly(mocker):

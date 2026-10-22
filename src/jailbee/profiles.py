@@ -344,6 +344,10 @@ def _host_has_timezone_file() -> bool:
     return Path("/etc/timezone").exists()
 
 
+def _host_has_localtime() -> bool:
+    return Path("/etc/localtime").exists()
+
+
 def _host_tmux_paths() -> list[tuple[str, Path, str]]:
     """Existing host tmux config/plugin paths to RO-bind into the container.
 
@@ -392,15 +396,17 @@ def binds_profile_yaml(cfg: Config) -> str:
         devices[device_name] = device
 
     # Track host's timezone so log timestamps and IDE clocks match the
-    # host. /etc/localtime exists on every modern Linux;
-    # /etc/timezone is Debian/Ubuntu-specific so we add it only when
-    # present on the host.
-    devices["host-localtime"] = {
-        "type": "disk",
-        "source": "/etc/localtime",
-        "path": "/etc/localtime",
-        "readonly": "true",
-    }
+    # host. Each file is mounted only when the host has it: a disk device
+    # with a missing source fails every container's start, and a minimal
+    # host image may lack tzdata. /etc/timezone is Debian/Ubuntu-specific.
+    # Without the mount the golden image's own /etc/localtime (UTC) applies.
+    if _host_has_localtime():
+        devices["host-localtime"] = {
+            "type": "disk",
+            "source": "/etc/localtime",
+            "path": "/etc/localtime",
+            "readonly": "true",
+        }
     if _host_has_timezone_file():
         devices["host-timezone"] = {
             "type": "disk",
