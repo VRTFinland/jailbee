@@ -27,6 +27,7 @@ from jailbee.config.common import (
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
+    ORPHAN_BASE_PREFIX,
     SCRATCH_BASE_ALIAS,
     _build_config_from_dict,
     device_name,
@@ -34,6 +35,7 @@ from jailbee.config.loader import (
     load_config_from_layers,
     load_config_from_text,
     load_config_unsanitized,
+    load_orphan_base_config,
     load_repo_config,
     load_repo_config_unsanitized,
     resolve_agents_raw,
@@ -131,6 +133,7 @@ __all__ = [
     "JETBRAINS_LICENSE_HOSTS",
     "NET_DESCRIPTIONS",
     "OFFLINE_REMOVED_MSG",
+    "ORPHAN_BASE_PREFIX",
     "POOL_PRESETS",
     "SCRATCH_BASE_ALIAS",
     "SCRATCH_ORIGIN_SUFFIX",
@@ -194,6 +197,7 @@ __all__ = [
     "load_config_from_layers",
     "load_config_from_text",
     "load_config_unsanitized",
+    "load_orphan_base_config",
     "load_repo_config",
     "load_repo_config_unsanitized",
     "merge_apps_raw",

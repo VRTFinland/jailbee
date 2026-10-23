@@ -1102,6 +1102,37 @@ def _synthesize_repo_config(repo_root: Path) -> Config:
     return cfg
 
 
+ORPHAN_BASE_PREFIX = "jailbee-orphan"
+"""`container_prefix` of the repo-less config `load_orphan_base_config` falls back to."""
+
+
+def load_orphan_base_config(repo_root: Path) -> Config:
+    """`repo_root`'s config for a command that acts on no repo — `jailbee orphan …`.
+
+    The same as `load_repo_config`, except that a directory with no config file
+    which `load_repo_config` would refuse (`$HOME`, an ancestor of it, the
+    filesystem root, or `scratch.enabled: false`) gets a minimal config built
+    from `global.yaml` alone instead. The refusal exists to stop a container
+    from bind-mounting that directory; an orphan command creates no container
+    and reads no repo, and the terminal dashboard runs it from `$HOME`. A config
+    file that exists but fails to load still raises.
+    """
+    if repo_config_path_warned(repo_root) is not None:
+        return load_repo_config(repo_root)
+    try:
+        return load_repo_config(repo_root)
+    except ConfigError:
+        from jailbee.global_config import default_global_config_path
+
+        cfg = _load_config_from_repo_raw(
+            {"container_prefix": ORPHAN_BASE_PREFIX, "golden": {"alias": SCRATCH_BASE_ALIAS}},
+            repo_root / REPO_CONFIG_DIRS[0] / "config.yaml",
+            origin=f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}",
+        )
+        cfg._synthetic = True
+        return _sanitize_columns(cfg)
+
+
 def load_repo_config_unsanitized(repo_root: Path) -> Config:
     """`load_config_unsanitized` for a repo root, synthesizing when it has no file.
 
