@@ -11,6 +11,15 @@ def test_command_reference_names_the_ssh_enable_command() -> None:
     assert "jb remote ssh enable" in commands
 
 
+def test_dashboard_command_continuation_stays_inside_command_table() -> None:
+    commands = (DOCS / "commands.md").read_text().splitlines()
+    dashboard = next(line for line in commands if line.startswith("| `jailbee dashboard`"))
+
+    assert "Dashboard keys:" in dashboard
+    assert dashboard.endswith("|")
+    assert any(line.startswith("| `jailbee console") for line in commands)
+
+
 def test_security_reference_marks_full_remote_commands_as_high_trust() -> None:
     security = (DOCS / "security.md").read_text()
 
