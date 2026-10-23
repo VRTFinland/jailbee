@@ -108,7 +108,10 @@ completion and history: it starts in the repo containing the current directory
 `exit` leaves; locally it has no `remote.ssh` restrictions.
 A repo with no `.jailbee/config.yaml` (a scratch directory) is listed and acted
 on exactly like a configured one — no `--config` flag to pass, since the
-dashboard runs each action's child process from that repo's own root.
+dashboard runs each action's child process from that repo's own root. To adjust
+one container's memory, use its **Memory** menu action in either dashboard; the
+TUI picker and Qt terminal action use `jailbee mem` behavior, including the
+below-current-usage confirmation.
 `jailbee gui` (== `jailbee dashboard --gui`) opens the same dashboard as a graphical Qt
 window instead of a terminal TUI. Its **View** menu switches between a wide
 Table layout and a width-adaptive Cards layout (the default on a fresh
@@ -135,7 +138,8 @@ widens network access — still get asked. The Qt dashboard does the same from
 `&Container → New…` (Ctrl+N) or a right-click on a repo group header, opening
 a terminal window for the run. Only those two fields are asked; network,
 memory, cpu, mount and autostart come from the repo's config exactly as they
-do for `jailbee new <branch> <base>` on the command line.
+do for `jailbee new <branch> <base>` on the command line. The memory limit
+comes from `defaults.memory` unless an explicit `--memory` override is supplied.
 For review containers, select **New from PR…** in the TUI repo menu or the
 Qt **Container** menu / repo header (the Cards view also has a **PR…** button).
 Enter a positive PR number; the dashboard runs `jailbee new --pr N` in that
@@ -209,7 +213,7 @@ for the full diff format.
 
 Useful flags: `--no-autostart` (skip the repo's autostart steps — fastest, lowest
 risk), `--no-clone` (bare container, no repo), `--name` (override the derived
-container name), `--memory`/`--cpu`/`--net`/`--storage` (one-off resource/network/storage-pool overrides),
+container name), `--memory`/`--cpu`/`--net`/`--storage` (one-off resource/network/storage-pool overrides; omit `--memory` to inherit `defaults.memory`),
 `--background`/`-b` (provision detached, see below), `--tmux`/`--shell` (attach
 to tmux / a shell once it's up; forces foreground), `--wait`/`--no-wait`
 (override an `autostart` stage's `detach: true` for this run — see

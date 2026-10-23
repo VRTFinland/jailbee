@@ -375,7 +375,7 @@ Once this block is committed, it is not just the local default: `jailbee new <br
 
 ### `defaults.memory` / `defaults.cpu` — match repo size
 
-Default is 16GiB / 8 CPU. For a small Python-only repo, 4GiB / 4 CPU is plenty. For a JVM monorepo with Gradle and several services, 16–32GiB is appropriate. Don't oversize — Incus enforces the limit and OOM-kills will surface.
+Default is 16GiB / 8 CPU. `defaults.memory` is written to the repo's base Incus profile, so new containers inherit it and `jailbee apply` updates that inherited limit live on existing containers. A per-container `jailbee mem <name> <size>` or `jailbee new --memory <size>` sets an explicit override; use `jailbee mem <name> default` to clear it. `jailbee apply` also clears instance pins equal to the changed default so those containers inherit the profile again. For a small Python-only repo, 4GiB / 4 CPU is plenty. For a JVM monorepo with Gradle and several services, 16–32GiB is appropriate. Don't oversize — Incus enforces the limit and OOM-kills will surface.
 
 Don't generate `defaults.cpu_share` into the committed config: how much the desktop should win over containers is the host user's call, made in `global.yaml` or the local layer.
 

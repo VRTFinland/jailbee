@@ -1204,7 +1204,7 @@ Per-container defaults.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `memory` | string | `16GiB` | Memory limit for new containers. |
+| `memory` | string | `16GiB` | Default memory limit, written to the repo's base Incus profile and inherited by new containers unless `--memory` sets a per-container override. `jailbee apply` updates the inherited profile limit live on existing containers; instance limits equal to the new default are cleared so they inherit it. If a running container would then use more memory than the new default, `apply` reports it; the kernel may reclaim memory or OOM-kill processes. Use `jailbee mem <container> <size>` to override one container, or `jailbee mem <container> default` to clear its override. |
 | `cpu` | int | `8` | CPU limit for new containers. |
 | `cpu_share` | int 1–100 | unset | CPU scheduling weight of the repo's containers against the rest of the host, as a percentage of a normal process group's weight, written to the repo's base profile as Incus `limits.cpu.allowance: N%`. A soft limit: with `20`, a busy container gets roughly a fifth of what the desktop gets while the CPUs are contended, and an idle host still gives it every core `cpu` allows. Unset means Incus's default (100). Each container gets its own weight, so many busy containers together still weigh more than one. `jailbee apply` updates existing containers live. A host preference: set it in `global.yaml` or a repo's local layer (`jailbee config edit --local`). |
 | `network` | enum | `strict` | Initial network mode: `strict` \| `loose`. |
