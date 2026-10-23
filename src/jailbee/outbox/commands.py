@@ -27,6 +27,7 @@ from jailbee.outbox.service import execute_delete, load_container
 from jailbee.remote_ssh import repo_scope
 
 if TYPE_CHECKING:
+    from jailbee.pr_outbox import ChooseMode
     from pathlib import Path
 
     from jailbee.config import Config
@@ -202,7 +203,10 @@ def apply_selected(
     confirm: Callable[[int], bool],
     confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
+    choose_mode: ChooseMode | None = None,
 ) -> int:
+    if proposal.kind == "issue" and options.draft:
+        raise OutboxError("draft is only valid for PR publication")
     if proposal.kind == "issue" and options.force:
         raise OutboxError("force is only valid for PR publication")
     target, container, view = _selected(
@@ -226,6 +230,7 @@ def apply_selected(
         journal_store=journal_store,
         options=options,
         confirm=checked_confirm,
+        choose_mode=choose_mode,
         confirm_foreign=confirm_foreign,
         expected_revision=view.revision,
         raise_errors=True,

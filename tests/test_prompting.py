@@ -114,6 +114,26 @@ def test_picker_returning_none_is_cancelled():
         choose_one("container", [A, B], picker=lambda o: None, is_interactive=_yes)
 
 
+@pytest.mark.parametrize("answer", ["b-full", None])
+def test_choose_returns_value_and_none_on_cancel(mocker, answer):
+    select = mocker.patch("jailbee.prompting._select_question", return_value=answer, create=True)
+    interactive = mocker.patch("jailbee.prompting.is_interactive", side_effect=AssertionError)
+    assert prompting.choose("Publish?", [A, B]) == answer
+    select.assert_called_once_with("Publish?", [A, B])
+    interactive.assert_not_called()
+
+
+@pytest.mark.parametrize("keys, expected", [("\r", None), ("\x1b", None), ("\x1b[A\r", "b-full")])
+def test_choose_real_picker_defaults_to_cancel_and_honors_escape(keys, expected):
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text(keys)
+        assert prompting.choose("Publish?", [A, B]) == expected
+
+
 def test_default_picker_is_the_select_seam(mocker):
     sel = mocker.patch("jailbee.prompting._select", return_value="b-full")
     assert choose_one("container", [A, B], is_interactive=_yes) == "b-full"

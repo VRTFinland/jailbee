@@ -109,6 +109,40 @@ def _select(noun: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
 
 
+def _select_question(question: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
+    """An optional choice, initially pointing at Cancel rather than consent."""
+    import questionary
+    from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
+
+    choices = [
+        questionary.Choice(title=o.title, value=_CANCEL if o.value is None else o.value)
+        for o in options
+    ]
+    if not any(o.value is None for o in options):
+        choices.append(questionary.Choice(title="Cancel", value=_CANCEL))
+    cancel_choice = next(choice for choice in choices if choice.value is _CANCEL)
+    prompt = questionary.select(question, choices=choices, default=cancel_choice)
+    bindings = KeyBindings()
+
+    @bindings.add("escape")
+    def cancel(event: KeyPressEvent) -> None:
+        event.app.exit(result=_CANCEL)
+
+    existing = prompt.application.key_bindings
+    prompt.application.key_bindings = merge_key_bindings(
+        [existing, bindings] if existing is not None else [bindings]
+    )
+    result = prompt.ask()
+    if result is None or result is _CANCEL:
+        return None
+    return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
+
+
+def choose(question: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
+    """Ask an optional question; callers own interactive policy. Cancel is the default."""
+    return _select_question(question, options)
+
+
 def _ask(
     noun: str,
     default: str | None,

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee import issue_outbox, pr, pr_outbox
+from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.outbox.inspect import build_views, safe_text
 from jailbee.outbox.io import PrManagement
@@ -42,6 +42,23 @@ class PublishOptions:
     # or not), or to an issue action on a foreign repository
     # (`github:<owner>/<name>`); the plan warns about each.
     foreign: bool = False
+    draft: bool = False
+
+
+def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.PublishMode | None:
+    """Offer publication modes for one selected manifest, with their distinct counts."""
+    draft_total = preview.pending + int(preview.description)
+    options: list[prompting.Option[pr_outbox.PublishMode | None]] = [
+            prompting.Option("publish", "Publish", "publish"),
+            prompting.Option(
+                "draft",
+                "Publish as draft review — only you see it until you submit it on GitHub"
+                f" ({draft_total} pending actions; {preview.held_back} general comments held back)",
+                "draft",
+            ),
+            prompting.Option(None, "Cancel", "cancel"),
+        ]
+    return prompting.choose(f"Publish {total} pending actions?", options)
 
 
 def _checked(
@@ -143,6 +160,7 @@ def publish_selected(
     confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
     raise_errors: bool = False,
+    choose_mode: pr_outbox.ChooseMode | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
 
@@ -153,6 +171,8 @@ def publish_selected(
     the default retains legacy printed diagnostics and integer failure counts.
     """
     try:
+        if proposal.kind == "issue" and options.draft:
+            raise OutboxError("draft is only valid for PR publication")
         if proposal.kind == "issue" and options.force:
             raise OutboxError("force is only valid for PR publication")
         identity = _identity(incus, container)
@@ -184,6 +204,8 @@ def publish_selected(
                     confirm=confirm,
                     outbox=pr_outbox.Outbox(snapshot.as_dict(), snapshot.rejected, identity),
                     force=options.force,
+                    draft=options.draft,
+                    choose_mode=choose_mode,
                     dry_run=options.dry_run,
                     manifest_names=(proposal.name,),
                     management=manager,

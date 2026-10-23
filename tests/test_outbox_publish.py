@@ -649,6 +649,48 @@ def test_no_approval_or_dry_run_never_mutates(env, kind, mode):
     assert_no_mutation(env)
 
 
+def test_issue_draft_is_rejected(env):
+    from jailbee.outbox.models import OutboxError
+
+    with pytest.raises(OutboxError, match="draft is only valid for PR publication"):
+        selected(env, draft=True, raise_errors=True)
+    assert selected(env, draft=True) == 1
+
+
+def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
+    callback = mocker.Mock(return_value="draft")
+    cfg, incus, _, journals, *_ = env
+    assert publish_selected(
+        cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
+        journal_store=journals, options=PublishOptions(draft=True),
+        confirm=lambda n: False, choose_mode=callback,
+    ) == 0
+    assert offer.call_args.kwargs["draft"] is True
+    assert offer.call_args.kwargs["choose_mode"] is callback
+
+
+@pytest.mark.parametrize("mode", ["publish", "draft", None])
+@pytest.mark.parametrize("description", [False, True])
+def test_ask_publish_mode_maps_cancel_to_none_and_shows_chosen_counts(mocker, mode, description):
+    from jailbee.outbox.publish import ask_publish_mode
+    from jailbee.pr_outbox import DraftPreview
+
+    choose = mocker.patch("jailbee.prompting.choose", return_value=mode, create=True)
+    assert ask_publish_mode(5, DraftPreview(42, 2, 2, description)) == mode
+    question, options = choose.call_args.args
+    assert question == "Publish 5 pending actions?"
+    assert options[0].value == "publish"
+    assert options[0].title == "Publish"
+    assert options[1].value == "draft"
+    assert f"{2 + int(description)} pending actions" in options[1].title
+    assert "only you see it until you submit it on GitHub" in options[1].title
+    assert options[-1].title == "Cancel"
+    assert options[-1].value is None
+
+
 def test_issue_force_is_refused(env):
     assert selected(env, force=True) == 1
     assert_no_mutation(env)

@@ -45,6 +45,36 @@ def env(mocker, make_cfg, tmp_path):
     return cfg, incus, loader, reader, mutation, journals
 
 
+def test_issue_draft_is_rejected(env):
+    from jailbee.outbox.commands import apply_selected
+    from jailbee.outbox.models import ProposalId
+    from jailbee.outbox.publish import PublishOptions
+
+    cfg, incus, _, reader, _, journals = env
+    with pytest.raises(OutboxError, match="draft is only valid for PR publication"):
+        apply_selected(cfg, incus, IDENTITY.full_name, ProposalId("issue", "001.json"),
+                       options=PublishOptions(draft=True), journal_store=journals,
+                       confirm=lambda n: True)
+    reader.assert_not_called()
+
+
+def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
+    from jailbee.outbox.commands import apply_selected
+    from jailbee.outbox.models import ProposalId
+    from jailbee.outbox.publish import PublishOptions
+    from tests.outbox_support import pr_files
+
+    cfg, incus, _, reader, _, journals = env
+    reader.side_effect = lambda i, c, k, **kw: store(k, pr_files() if k == "pr" else {})
+    publish = mocker.patch("jailbee.outbox.commands.publish_selected", return_value=0)
+    callback = mocker.Mock(return_value="draft")
+    assert apply_selected(cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
+                          options=PublishOptions(draft=True), journal_store=journals,
+                          confirm=lambda n: False, choose_mode=callback) == 0
+    assert publish.call_args.kwargs["options"].draft is True
+    assert publish.call_args.kwargs["choose_mode"] is callback
+
+
 def register(prefix, root):
     with Session(get_engine()) as session:
         session.add(
