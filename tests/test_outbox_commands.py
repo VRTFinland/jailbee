@@ -88,7 +88,55 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
         == 0
     )
     assert publish.call_args.kwargs["options"].draft is True
-    assert publish.call_args.kwargs["choose_mode"] is callback
+    from jailbee.pr_outbox import DraftPreview
+
+    preview = DraftPreview(42, 1, 0, False)
+    assert publish.call_args.kwargs["choose_mode"](1, preview) == "draft"
+    callback.assert_called_once_with(1, preview)
+
+
+@pytest.mark.parametrize("mode", ["publish", "draft", None])
+def test_choose_mode_rechecks_target_config_only_after_approval(env, mocker, mode):
+    from jailbee.outbox.commands import apply_selected
+    from jailbee.outbox.models import OutboxChanged, ProposalId
+    from jailbee.outbox.publish import PublishOptions
+    from jailbee.pr_outbox import DraftPreview
+    from tests.outbox_support import pr_files
+
+    cfg, incus, loader, reader, _, journals = env
+    reader.side_effect = lambda i, c, k, **kw: store(k, pr_files() if k == "pr" else {})
+    changed = cfg.model_copy(
+        update={"container_user": cfg.container_user.model_copy(update={"uid": 2345})}
+    )
+    mutation = mocker.Mock()
+
+    def choose(total, preview):
+        loader.return_value = changed
+        return mode
+
+    def publish(*args, choose_mode, **kwargs):
+        selected = choose_mode(1, DraftPreview(42, 1, 0, False))
+        if selected is not None:
+            mutation()
+        return 0
+
+    mocker.patch("jailbee.outbox.commands.publish_selected", side_effect=publish)
+    confirm = mocker.Mock(side_effect=AssertionError("unexpected boolean confirmation"))
+
+    def apply():
+        return apply_selected(
+            cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
+            options=PublishOptions(), journal_store=journals,
+            confirm=confirm, choose_mode=choose,
+        )
+
+    if mode is None:
+        assert apply() == 0
+    else:
+        with pytest.raises(OutboxChanged, match=r"config.*changed"):
+            apply()
+    mutation.assert_not_called()
+    confirm.assert_not_called()
 
 
 def register(prefix, root):

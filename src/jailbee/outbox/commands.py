@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
     from jailbee.outbox_io import JournalStore
-    from jailbee.pr_outbox import ChooseMode
+    from jailbee.pr_outbox import ChooseMode, DraftPreview, PublishMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
@@ -221,6 +221,14 @@ def apply_selected(
             _recheck_target(cfg, incus, container.name, target)
         return accepted
 
+    checked_mode: ChooseMode | None = None
+    if choose_mode is not None:
+        def checked_mode(total: int, preview: DraftPreview) -> PublishMode | None:
+            mode = choose_mode(total, preview)
+            if mode is not None:
+                _recheck_target(cfg, incus, container.name, target)
+            return mode
+
     _recheck_target(cfg, incus, container.name, target)
     return publish_selected(
         target,
@@ -230,7 +238,7 @@ def apply_selected(
         journal_store=journal_store,
         options=options,
         confirm=checked_confirm,
-        choose_mode=choose_mode,
+        choose_mode=checked_mode,
         confirm_foreign=confirm_foreign,
         expected_revision=view.revision,
         raise_errors=True,
