@@ -1212,3 +1212,154 @@ def test_pr_review_error_is_a_pr_error():
     from jailbee.pr import PrError, PrReviewError
 
     assert issubclass(PrReviewError, PrError)
+
+
+@pytest.mark.parametrize("commit", ["abc", None])
+def test_create_pending_review_omits_event(mocker, commit):
+    from jailbee.pr import PendingReview, create_pending_review
+
+    response = {"id": 5, "node_id": "PRR_x", "html_url": "https://x/5", "body": "b"}
+    if commit is not None:
+        response["commit_id"] = commit
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps(response)))
+    assert create_pending_review(
+        Path("/repo"), 7, commit_id="abc", body="b", comments=[], repo="acme/widgets"
+    ) == PendingReview(5, "PRR_x", "https://x/5", "b", "abc")
+    assert json.loads(run.call_args.kwargs["input"]) == {
+        "commit_id": "abc", "body": "b", "comments": []
+    }
+    assert run.call_args.args[0] == [
+        "gh", "api", "--method", "POST", "repos/acme/widgets/pulls/7/reviews", "--input", "-"
+    ]
+
+
+@pytest.mark.parametrize("repo", [None, "acme/widgets"])
+def test_find_pending_review_returns_viewer_node(mocker, repo):
+    from jailbee.pr import PendingReview, find_pending_review
+
+    node = {"viewerDidAuthor": True, "databaseId": 9, "id": "PRR_x", "url": "https://x/9",
+            "body": "b", "commit": {"oid": "abc"}}
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps({
+        "data": {"repository": {"pullRequest": {"reviews": {"nodes": [
+            {**node, "viewerDidAuthor": False, "databaseId": 1}, node
+        ]}}}}
+    })))
+    assert find_pending_review(Path("/repo"), 7, repo=repo) == PendingReview(
+        9, "PRR_x", "https://x/9", "b", "abc"
+    )
+    cmd = run.call_args.args[0]
+    assert cmd[:3] == ["gh", "api", "graphql"]
+    assert f"owner={'acme' if repo else '{owner}'}" in cmd
+    assert f"name={'widgets' if repo else '{repo}'}" in cmd
+    assert any("states: PENDING, first: 20" in part for part in cmd)
+    assert "number=7" in cmd
+
+
+@pytest.mark.parametrize("nodes", [[], [{"viewerDidAuthor": False}]])
+def test_find_pending_review_none_when_empty(mocker, nodes):
+    from jailbee.pr import find_pending_review
+
+    mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps({
+        "data": {"repository": {"pullRequest": {"reviews": {"nodes": nodes}}}}
+    })))
+    assert find_pending_review(Path("/repo"), 7) is None
+
+
+@pytest.mark.parametrize("multiline", [True, False])
+def test_add_pending_review_thread_maps_fields(mocker, multiline):
+    from jailbee.pr import PendingReview, add_pending_review_thread
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout='{"data": {}}'))
+    comment = {"path": "a.py", "line": 5, "side": "RIGHT", "body": "b"}
+    if multiline:
+        comment.update(start_line=3, start_side="RIGHT")
+    add_pending_review_thread(Path("/repo"), PendingReview(5, "PRR_x", "u", "b", "abc"), comment)
+    payload = json.loads(run.call_args.kwargs["input"])
+    assert "addPullRequestReviewThread" in payload["query"]
+    expected = {"pullRequestReviewId": "PRR_x", "path": "a.py", "line": 5,
+                "side": "RIGHT", "body": "b"}
+    if multiline:
+        expected.update(startLine=3, startSide="RIGHT")
+    assert payload["variables"]["input"] == expected
+
+
+@pytest.mark.parametrize("repo", [None, "acme/widgets"])
+def test_update_pending_review_body_puts_body(mocker, repo):
+    from jailbee.pr import PendingReview, update_pending_review_body
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout="{}"))
+    update_pending_review_body(
+        Path("/repo"), 7, PendingReview(5, "PRR_x", "u", "b", "abc"), "new", repo=repo
+    )
+    assert run.call_args.args[0] == [
+        "gh", "api", "--method", "PUT",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/7/reviews/5", "--input", "-"
+    ]
+    assert json.loads(run.call_args.kwargs["input"]) == {"body": "new"}
+
+
+@pytest.mark.parametrize("repo", [None, "acme/widgets"])
+def test_add_pending_reply_resolves_node_id_then_mutates(mocker, repo):
+    from jailbee.pr import PendingReview, add_pending_reply
+
+    run = mocker.patch("subprocess.run", side_effect=[
+        _completed(stdout='{"node_id": "PRRC_node"}'), _completed(stdout='{"data": {}}')
+    ])
+    add_pending_reply(Path("/repo"), PendingReview(5, "PRR_x", "u", "b", "abc"), 42, "reply",
+                      repo=repo)
+    assert run.call_count == 2
+    assert run.call_args_list[0].args[0] == [
+        "gh", "api", "--method", "GET", f"repos/{repo or '{owner}/{repo}'}/pulls/comments/42"
+    ]
+    payload = json.loads(run.call_args.kwargs["input"])
+    assert "addPullRequestReviewComment" in payload["query"]
+    assert payload["variables"]["input"] == {
+        "pullRequestReviewId": "PRR_x", "inReplyTo": "PRRC_node", "body": "reply"
+    }
+
+
+def test_graphql_errors_raise_pr_review_error(mocker):
+    from jailbee.pr import PrError, PrReviewError, _run_gh_graphql
+
+    mocker.patch("subprocess.run", return_value=_completed(
+        stdout='{"errors":[{"message":"nope"}],"data":{}}'
+    ))
+    with pytest.raises(PrReviewError, match="'lookup' failed: nope") as exc:
+        _run_gh_graphql(Path("/repo"), "query { viewer { login } }", {}, "lookup")
+    assert isinstance(exc.value, PrError)
+
+
+@pytest.mark.parametrize("stdout", ['not json', '{"data":{"repository":null}}'])
+def test_pending_lookup_invalid_response_raises_review_error(mocker, stdout):
+    from jailbee.pr import PrReviewError, find_pending_review
+
+    mocker.patch("subprocess.run", return_value=_completed(stdout=stdout))
+    with pytest.raises(PrReviewError):
+        find_pending_review(Path("/repo"), 7)
+
+
+def test_create_pending_review_preserves_comments(mocker):
+    from jailbee.pr import create_pending_review
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps({
+        "id": 5, "node_id": "PRR_x", "html_url": "u", "body": "", "commit_id": "abc"
+    })))
+    comments = [{"path": "a.py", "line": 5, "side": "LEFT", "body": "b",
+                 "start_line": 3, "start_side": "LEFT"}]
+    create_pending_review(Path("/repo"), 7, commit_id="abc", body="", comments=comments)
+    assert json.loads(run.call_args.kwargs["input"]) == {
+        "commit_id": "abc", "body": "", "comments": comments
+    }
+    assert "repos/{owner}/{repo}/pulls/7/reviews" in run.call_args.args[0]
+
+
+def test_graphql_maps_auth_and_missing_binary(mocker):
+    from jailbee.pr import PrReviewError, _run_gh_graphql
+
+    run = mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    with pytest.raises(PrReviewError, match="requires the 'gh' CLI"):
+        _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
+    run.side_effect = None
+    run.return_value = _completed(returncode=1, stderr="gh auth login required")
+    with pytest.raises(PrReviewError, match="not authenticated"):
+        _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")

@@ -467,6 +467,157 @@ def _run_gh_api(repo_root: Path, cmd: list[str], payload: str | None, label: str
     return data if isinstance(data, dict) else {}
 
 
+@dataclass(frozen=True)
+class PendingReview:
+    """An unpublished review, identified for both REST and GraphQL."""
+
+    id: int
+    node_id: str
+    url: str
+    body: str
+    commit_oid: str
+
+
+def _run_gh_graphql(
+    repo_root: Path, query: str, variables: dict[str, Any], label: str
+) -> dict[str, Any]:
+    """Run GraphQL with typed variables and report application-level errors."""
+    cmd = ["gh", "api", "graphql"]
+    payload = None
+    if "owner" in variables and "name" in variables:
+        # gh expands repository placeholders in typed fields, not in stdin JSON.
+        cmd += ["-f", f"query={query}"]
+        for key, value in variables.items():
+            cmd += ["-F", f"{key}={value}"]
+    else:
+        cmd += ["--input", "-"]
+        payload = json.dumps({"query": query, "variables": variables})
+    data = _run_gh_api(repo_root, cmd, payload, label)
+    if errors := data.get("errors"):
+        raise PrReviewError(f"'{label}' failed: {errors[0]['message']}")
+    return data
+
+
+def find_pending_review(
+    repo_root: Path, number: int, *, repo: str | None = None
+) -> PendingReview | None:
+    """Find the viewer's pending review, if any."""
+    owner, name = "{owner}", "{repo}"
+    if repo is not None:
+        try:
+            owner, name = repo.split("/")
+        except ValueError as e:
+            raise PrReviewError("repository must be an owner/name slug") from e
+    query = """
+        query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              reviews(states: PENDING, first: 20) {
+                nodes { databaseId id url body viewerDidAuthor commit { oid } }
+              }
+            }
+          }
+        }
+    """
+    response = _run_gh_graphql(
+        repo_root, query, {"owner": owner, "name": name, "number": number}, "find pending review"
+    )
+    try:
+        nodes = response["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
+        for node in nodes:
+            if node["viewerDidAuthor"]:
+                return PendingReview(
+                    int(node["databaseId"]), node["id"], node["url"], node["body"],
+                    node["commit"]["oid"],
+                )
+    except (KeyError, TypeError, ValueError) as e:
+        raise PrReviewError("'find pending review' returned an invalid review response") from e
+    return None
+
+
+def create_pending_review(
+    repo_root: Path,
+    number: int,
+    *,
+    commit_id: str,
+    body: str,
+    comments: list[dict[str, Any]],
+    repo: str | None = None,
+) -> PendingReview:
+    """Create a pending review without submitting it."""
+    cmd = [
+        "gh", "api", "--method", "POST",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews", "--input", "-",
+    ]
+    response = _run_gh_api(
+        repo_root, cmd, json.dumps({"commit_id": commit_id, "body": body, "comments": comments}),
+        "create pending review",
+    )
+    try:
+        return PendingReview(
+            int(response["id"]), response["node_id"], response["html_url"], response["body"],
+            response.get("commit_id") or commit_id,
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise PrReviewError("'create pending review' returned an invalid review response") from e
+
+
+def add_pending_review_thread(
+    repo_root: Path, review: PendingReview, comment: dict[str, Any]
+) -> None:
+    """Append an inline thread to an existing pending review."""
+    try:
+        fields = {key: comment[key] for key in ("path", "line", "side", "body")}
+        fields["pullRequestReviewId"] = review.node_id
+        for source, target in (("start_line", "startLine"), ("start_side", "startSide")):
+            if source in comment:
+                fields[target] = comment[source]
+    except KeyError as e:
+        raise PrReviewError(f"pending review comment is missing {e}") from e
+    _run_gh_graphql(
+        repo_root,
+        """mutation($input: AddPullRequestReviewThreadInput!) {
+          addPullRequestReviewThread(input: $input) { thread { id } }
+        }""",
+        {"input": fields}, "add pending review thread",
+    )
+
+
+def update_pending_review_body(
+    repo_root: Path, number: int, review: PendingReview, body: str, *, repo: str | None = None
+) -> None:
+    """Replace a pending review's summary without submitting it."""
+    cmd = [
+        "gh", "api", "--method", "PUT",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews/{review.id}", "--input", "-",
+    ]
+    _run_gh_api(repo_root, cmd, json.dumps({"body": body}), "update pending review body")
+
+
+def add_pending_reply(
+    repo_root: Path, review: PendingReview, comment_id: int, body: str,
+    *, repo: str | None = None,
+) -> None:
+    """Resolve a REST comment ID and attach a reply to a pending review."""
+    cmd = [
+        "gh", "api", "--method", "GET",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/comments/{comment_id}",
+    ]
+    response = _run_gh_api(repo_root, cmd, None, "get review comment")
+    try:
+        node_id = response["node_id"]
+    except KeyError as e:
+        raise PrReviewError("'get review comment' returned no node_id") from e
+    _run_gh_graphql(
+        repo_root,
+        """mutation($input: AddPullRequestReviewCommentInput!) {
+          addPullRequestReviewComment(input: $input) { comment { id } }
+        }""",
+        {"input": {"pullRequestReviewId": review.node_id, "inReplyTo": node_id, "body": body}},
+        "add pending reply",
+    )
+
+
 def submit_review(
     repo_root: Path,
     number: int,
