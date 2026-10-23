@@ -776,6 +776,7 @@ def test_clear_snapshot_options_share_clear_policy_and_never_unlock_host_paths(o
     with pytest.raises(RouteError, match="config"):
         policy_allows((*argv, "--config", "/etc/passwd"), FULL)
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
     with pytest.raises(RouteError):
         policy_allows(argv, FULL, scope=RemoteRepoScope(frozenset({"secret"})))
 

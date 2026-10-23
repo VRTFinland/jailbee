@@ -46,7 +46,6 @@ from jailbee.dashboard.bulk import (
     mount_confirm_question,
     needs_confirm,
     nothing_to_do,
-    outbox_clear_lines,
     plan_bulk,
     plan_bulk_mount,
     ttl_entries,
@@ -2634,7 +2633,8 @@ class DashboardSession:
         from jailbee.outbox.models import OutboxError
 
         preparing = Picker(
-            "outbox-clear-preparing", "Reading outbox revisions…",
+            "outbox-clear-preparing",
+            "Reading outbox revisions…",
             (PickerEntry("Cancel", "cancel"),),
         )
         pending = set(action.eligible)
@@ -2681,15 +2681,21 @@ class DashboardSession:
                 check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
                 argv = ["jailbee", *dact.addressed(canonical, repo.flags(), over_ssh=self.over_ssh)]
                 self.jobs.start(
-                    f"clear-snapshot:{name}", f"reading outbox {name}…", argv, repo.cwd(),
-                    partial(finish, name), capture_stdout=True,
+                    f"clear-snapshot:{name}",
+                    f"reading outbox {name}…",
+                    argv,
+                    repo.cwd(),
+                    partial(finish, name),
+                    capture_stdout=True,
                 )
             except (OSError, ValueError, RouteError) as exc:
                 finish(name, JobResult(1, str(exc)))
         # Synchronous spawn failures have no poll callback to close this overlay.
         if not pending:
             self.set_notice("; ".join(errors) or "No outbox snapshot available")
-            return Picker("outbox-clear-preparing", "Snapshot unavailable", (PickerEntry("Close", "cancel"),))
+            return Picker(
+                "outbox-clear-preparing", "Snapshot unavailable", (PickerEntry("Close", "cancel"),)
+            )
         return preparing
 
     def _run_clear_approved(self, tokens: Sequence[str]) -> None:
@@ -2700,15 +2706,28 @@ class DashboardSession:
         approved = {decode_snapshot(token)[0].name: token for token in tokens}
         # Fresh eligibility can only shrink the original set, never add current marks.
         action = plan_bulk(
-            self.groups, list(approved), "outbox clear", remote=self.remote,
-            ssh_policy=self.ssh_policy, over_ssh=self.over_ssh, busy=self.bulk_running(),
+            self.groups,
+            list(approved),
+            "outbox clear",
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
         )
         if not action.eligible:
             self.set_notice(nothing_to_do(action))
             return
         self._run_parallel(
-            replace(action, eligible=tuple(n for n in action.eligible if n in approved)), (),
-            argv_for=lambda name: ["outbox", "clear", name, "-y", "--approved-snapshot", approved[name]],
+            replace(action, eligible=tuple(n for n in action.eligible if n in approved)),
+            (),
+            argv_for=lambda name: [
+                "outbox",
+                "clear",
+                name,
+                "-y",
+                "--approved-snapshot",
+                approved[name],
+            ],
         )
 
     def begin_destroy(self, name: str) -> Picker | None:

@@ -46,17 +46,31 @@ class _Snapshot(BaseModel):
 def encode_snapshot(plans: Sequence[ContainerClearPlan]) -> str:
     def item(value: ClearItem) -> dict[str, object]:
         return {
-            "proposal": str(value.proposal), "revision": value.revision,
+            "proposal": str(value.proposal),
+            "revision": value.revision,
             "state": value.state,
             "archive": bool(value.selection and value.selection.archive_journal),
             "reason": value.reason,
         }
 
-    token = json.dumps({"version": 1, "plans": [
-        {"name": p.name, "available": p.available, "error": p.error,
-         "delete": [item(v) for v in p.delete], "keep": [item(v) for v in p.keep],
-         "warnings": list(p.warnings)} for p in plans
-    ]}, separators=(",", ":"), ensure_ascii=True)
+    token = json.dumps(
+        {
+            "version": 1,
+            "plans": [
+                {
+                    "name": p.name,
+                    "available": p.available,
+                    "error": p.error,
+                    "delete": [item(v) for v in p.delete],
+                    "keep": [item(v) for v in p.keep],
+                    "warnings": list(p.warnings),
+                }
+                for p in plans
+            ],
+        },
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
     decode_snapshot(token)
     return token
 
@@ -76,24 +90,36 @@ def decode_snapshot(token: str) -> tuple[ContainerClearPlan, ...]:
             names.add(plan.name)
             ids: set[ProposalId] = set()
 
-            def items(values: list[_Item], *, delete: bool) -> tuple[ClearItem, ...]:
+            def items(
+                values: list[_Item], ids: set[ProposalId], *, delete: bool
+            ) -> tuple[ClearItem, ...]:
                 result = []
                 for value in values:
                     pid = ProposalId.parse(value.proposal)
                     if pid in ids or (delete and value.reason is not None):
                         raise ValueError("invalid proposal plan")
                     ids.add(pid)
-                    result.append(ClearItem(
-                        pid, value.revision, value.state,
-                        DeleteSelection(archive_journal=value.archive) if delete else None,
-                        value.reason,
-                    ))
+                    result.append(
+                        ClearItem(
+                            pid,
+                            value.revision,
+                            value.state,
+                            DeleteSelection(archive_journal=value.archive) if delete else None,
+                            value.reason,
+                        )
+                    )
                 return tuple(result)
 
-            plans.append(ContainerClearPlan(
-                plan.name, plan.available, plan.error,
-                items(plan.delete, delete=True), items(plan.keep, delete=False), tuple(plan.warnings),
-            ))
+            plans.append(
+                ContainerClearPlan(
+                    plan.name,
+                    plan.available,
+                    plan.error,
+                    items(plan.delete, ids, delete=True),
+                    items(plan.keep, ids, delete=False),
+                    tuple(plan.warnings),
+                )
+            )
         return tuple(plans)
     except (ValueError, ValidationError, RecursionError) as exc:
         # Never echo the payload (nor Pydantic's input_value) into notices.

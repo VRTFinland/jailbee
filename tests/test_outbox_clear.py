@@ -110,7 +110,11 @@ def test_plan_total_counts_only_containers_with_deletions(tmp_path):
 
     plans = (
         plan_clear(inspected(tmp_path, "issue", issue_files())),
-        plan_clear(inspected(tmp_path, "pr", pr_files() | {"applied.log": "now 001.json pr=42 actions=1 urls=x"})),
+        plan_clear(
+            inspected(
+                tmp_path, "pr", pr_files() | {"applied.log": "now 001.json pr=42 actions=1 urls=x"}
+            )
+        ),
         plan_clear(inspected(tmp_path, "pr", {})),
         plan_clear(ContainerView(None, "acme-gone", False, "gone", (), ())),
     )

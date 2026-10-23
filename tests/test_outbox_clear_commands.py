@@ -62,9 +62,7 @@ def test_clears_both_stores_after_one_confirmation(env, mocker, capsys):
     assert len(confirm.call_args.args[0]) == 2
     mutation = env[4]
     assert mutation.call_count == 4
-    assert {
-        (c.args[1], c.args[2], c.kwargs["delete_names"]) for c in mutation.call_args_list
-    } == {
+    assert {(c.args[1], c.args[2], c.kwargs["delete_names"]) for c in mutation.call_args_list} == {
         (name, kind, ("001.json", "body.md") if kind == "issue" else ("001.json",))
         for name in ("acme-feature", "acme-other")
         for kind in ("pr", "issue")
@@ -72,7 +70,9 @@ def test_clears_both_stores_after_one_confirmation(env, mocker, capsys):
     assert "acme-feature: deleted 2 (1 PR, 1 issue)" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("error", [OutboxError("vanished"), OutboxExecutionError("I/O failed"), OSError("offline")])
+@pytest.mark.parametrize(
+    "error", [OutboxError("vanished"), OutboxExecutionError("I/O failed"), OSError("offline")]
+)
 def test_initial_discovery_failure_does_not_block_healthy_target(env, mocker, capsys, error):
     real = commands.discover
 
@@ -89,17 +89,24 @@ def test_initial_discovery_failure_does_not_block_healthy_target(env, mocker, ca
 
 
 def test_approved_snapshot_survives_detached_handoff_without_expanding(env):
-    from jailbee.outbox.clear_snapshot import encode_snapshot, decode_snapshot
+    from jailbee.outbox.clear_snapshot import decode_snapshot, encode_snapshot
 
     cfg, incus, files, _, mutation, journals = env
     plans = commands.prepare_clear(cfg, incus, ["acme-feature"], journal_store=journals)
     approved = decode_snapshot(encode_snapshot(plans))
     files["acme-feature", "pr"]["001.json"] += "\n"
     files["acme-feature", "issue"]["002.json"] = issue_files()["001.json"]
-    assert commands.clear_selected(
-        cfg, incus, ["acme-feature"], journal_store=journals,
-        confirm=lambda plans: True, approved=approved,
-    ) == 1
+    assert (
+        commands.clear_selected(
+            cfg,
+            incus,
+            ["acme-feature"],
+            journal_store=journals,
+            confirm=lambda plans: True,
+            approved=approved,
+        )
+        == 1
+    )
     assert mutation.call_count == 1
     assert mutation.call_args.args[1:3] == ("acme-feature", "issue")
     assert mutation.call_args.kwargs["delete_names"] == ("001.json",)

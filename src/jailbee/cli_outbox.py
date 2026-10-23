@@ -416,10 +416,18 @@ def clear(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be deleted.")] = False,
     yes: YesOption = False,
     prepare_snapshot: Annotated[
-        bool, typer.Option("--prepare-snapshot", hidden=True, help="Internal: prepare a read-only clear snapshot.")
+        bool,
+        typer.Option(
+            "--prepare-snapshot", hidden=True, help="Internal: prepare a read-only clear snapshot."
+        ),
     ] = False,
     approved_snapshot: Annotated[
-        str | None, typer.Option("--approved-snapshot", hidden=True, help="Internal: bound deletion to this validated snapshot JSON.")
+        str | None,
+        typer.Option(
+            "--approved-snapshot",
+            hidden=True,
+            help="Internal: bound deletion to this validated snapshot JSON.",
+        ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
@@ -427,8 +435,8 @@ def clear(
     from jailbee import prompting
     from jailbee.outbox.clear_snapshot import decode_snapshot, encode_snapshot
     from jailbee.outbox.commands import clear_selected, discover, prepare_clear
-    from jailbee.outbox.models import OutboxError
     from jailbee.outbox.delete import ContainerClearPlan
+    from jailbee.outbox.models import OutboxError
     from jailbee.outbox_io import JournalStore
 
     def confirm(plans: Sequence[ContainerClearPlan]) -> bool:
@@ -461,7 +469,12 @@ def clear(
             )
             names = [chosen]
         return clear_selected(
-            cfg, incus, names, journal_store=store, confirm=confirm, dry_run=dry_run,
+            cfg,
+            incus,
+            names,
+            journal_store=store,
+            confirm=confirm,
+            dry_run=dry_run,
             approved=approved,
         )
 

@@ -279,7 +279,12 @@ def _snapshot_jobs(mocker, session):
     def start(key, label, argv, cwd, on_done, **kwargs):
         if kwargs.get("capture_stdout"):
             name = argv[3]
-            items = tuple(ClearItem(ProposalId(kind, "001.json"), "a" * 64, "pending", DeleteSelection(), None) for kind in ("pr", "issue"))
+            items = tuple(
+                ClearItem(
+                    ProposalId(kind, "001.json"), "a" * 64, "pending", DeleteSelection(), None
+                )
+                for kind in ("pr", "issue")
+            )
             token = encode_snapshot((ContainerClearPlan(name, True, None, items, (), ()),))
             session.jobs._labels[key] = label
             session.jobs._finished.append((key, on_done, JobResult(0, "", token)))
@@ -330,14 +335,19 @@ def test_preparation_never_prompts_or_deletes_after_cancel_or_failure(mocker, tm
     elif failure == "spawn":
         mocker.patch.object(session.jobs, "start", side_effect=OSError("cannot spawn"))
     else:
+
         def start(key, label, argv, cwd, on_done, **kwargs):
-            token = '{}' if failure != "bad-json" else 'garbage'
+            token = "{}" if failure != "bad-json" else "garbage"
             if failure == "wrong-target":
                 from jailbee.outbox.clear_snapshot import encode_snapshot
                 from jailbee.outbox.delete import ContainerClearPlan
+
                 token = encode_snapshot((ContainerClearPlan("alpha-b", True, None, (), (), ()),))
             session.jobs._labels[key] = label
-            session.jobs._finished.append((key, on_done, JobResult(1 if failure == "exit" else 0, "failed", token)))
+            session.jobs._finished.append(
+                (key, on_done, JobResult(1 if failure == "exit" else 0, "failed", token))
+            )
+
         mocker.patch.object(session.jobs, "start", side_effect=start)
     session.overlay = session.begin_bulk("outbox clear")
     if failure == "cancel":
@@ -435,7 +445,14 @@ def test_clear_outbox_from_the_container_menu_asks_then_runs_detached(mocker, tm
 
     session.picker_chosen(picker.entries[1])
 
-    assert child.call_args.args[0][:6] == ["jailbee", "outbox", "clear", "alpha-a", "-y", "--approved-snapshot"]
+    assert child.call_args.args[0][:6] == [
+        "jailbee",
+        "outbox",
+        "clear",
+        "alpha-a",
+        "-y",
+        "--approved-snapshot",
+    ]
     assert session.overlay is None
     assert terminal.handed == []
     assert session.view().running == frozenset({"alpha-a"})

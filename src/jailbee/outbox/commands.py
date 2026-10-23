@@ -265,8 +265,10 @@ def clear_selected(
 
     if approved is not None and tuple(names) != tuple(p.name for p in approved):
         raise OutboxError("approved snapshot containers must match the explicit full names")
-    plans = approved if approved is not None else prepare_clear(
-        cfg, incus, names, journal_store=journal_store
+    plans = (
+        approved
+        if approved is not None
+        else prepare_clear(cfg, incus, names, journal_store=journal_store)
     )
     print_lines(clear_plan_lines(plans))
     kept = sum(len(plan.keep) for plan in plans)
