@@ -434,6 +434,7 @@ _CONTAINER_COMMANDS = frozenset(
         "outbox ls",
         "outbox show",
         "outbox drop",
+        "outbox clear",
         "outbox apply",
         "pool ls",
         "pool prune",

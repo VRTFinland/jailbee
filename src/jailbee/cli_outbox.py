@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from jailbee.outbox.models import ProposalId
     from jailbee.outbox_io import JournalStore
 
-_COMMANDS = frozenset(("browse", "ls", "show", "drop", "apply"))
+_COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply"))
 
 
 def _normalize_local(argv: Sequence[str]) -> list[str]:
@@ -401,6 +401,53 @@ def drop(
             journal_store=store,
             confirm=confirm,
             expected_revision=revision,
+        )
+
+    _run(ctx, config, operation)
+
+
+@app.command()
+def clear(
+    ctx: typer.Context,
+    containers: Annotated[
+        list[str] | None,
+        typer.Argument(help="Full or short container names. Asked for when omitted."),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show what would be deleted.")
+    ] = False,
+    yes: YesOption = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete every unpublished proposal in the containers' PR and issue outboxes."""
+    from jailbee import prompting
+    from jailbee.outbox.commands import clear_selected, discover
+    from jailbee.outbox.delete import ContainerClearPlan
+    from jailbee.outbox_io import JournalStore
+
+    def confirm(plans: Sequence[ContainerClearPlan]) -> bool:
+        total = sum(len(plan.delete) for plan in plans)
+        count = len(plans)
+        proposal_word = "proposal" if total == 1 else "proposals"
+        container_word = "container" if count == 1 else "containers"
+        return yes or typer.confirm(
+            f"Delete {total} {proposal_word} in {count} {container_word}?", default=False
+        )
+
+    def operation(cfg: Config, incus: Incus) -> int:
+        store = JournalStore()
+        names = containers
+        if not names:
+            views = discover(cfg, incus, None, all_repos=False, journal_store=store)
+            chosen = prompting.choose_one(
+                "container",
+                [prompting.Option(v.name, v.name, v.name) for v in views if v.proposals],
+                destructive=True,
+                empty_reason="no container has pending proposals",
+            )
+            names = [chosen]
+        return clear_selected(
+            cfg, incus, names, journal_store=store, confirm=confirm, dry_run=dry_run
         )
 
     _run(ctx, config, operation)
