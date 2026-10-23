@@ -106,6 +106,22 @@ def _leaf_identity(command: object) -> int:
     return id(getattr(callback, "__wrapped__", callback))
 
 
+# Hidden, deprecated aliases (`jailbee review|issue ls|show|drop`, superseded
+# by `outbox ls|show|drop`) with their own callbacks, so alias detection by
+# callback identity cannot find them. They keep exactly the remote routing
+# they had while public: container-scoped, allow-listable, routable.
+_DEPRECATED_HIDDEN_COMMANDS = frozenset(
+    {
+        "issue drop",
+        "issue ls",
+        "issue show",
+        "review drop",
+        "review ls",
+        "review show",
+    }
+)
+
+
 @functools.cache
 def _command_tree() -> _CommandTree:
     """Walk the Click command tree exactly once per process.
@@ -143,12 +159,13 @@ def _command_tree() -> _CommandTree:
             return
         path = " ".join(prefix)
         commands[path] = command
-        if is_hidden:
+        if is_hidden and path not in _DEPRECATED_HIDDEN_COMMANDS:
             hidden_leaves.append((path, _leaf_identity(command)))
         else:
             public_leaves.add(path)
             public_by_identity[_leaf_identity(command)] = path
-            public_short_help[path] = command.get_short_help_str()
+            if not is_hidden:
+                public_short_help[path] = command.get_short_help_str()
 
     root = cast(TyperCommand | TyperGroup, get_command(app))
     walk(root, (), False)
@@ -386,7 +403,7 @@ class RemoteUnlocks:
 # immutable value, since a call in a default argument trips ruff B008.
 NO_UNLOCKS = RemoteUnlocks()
 
-_CONTAINER_COMMANDS = frozenset(
+_CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
     {
         "account ls",
         "account group ls",

@@ -1696,3 +1696,38 @@ def test_draft_apply_allowed_but_yes_denied(command):
     assert policy_allows(argv, FULL) == f"{command} apply"
     with pytest.raises(RouteError, match="may not set --yes"):
         policy_allows((*argv, "-y"), FULL)
+
+
+def test_deprecated_hidden_aliases_classify_as_container_commands() -> None:
+    from jailbee.remote_ssh.router import (
+        _CONTAINER_COMMANDS,
+        _DEPRECATED_HIDDEN_COMMANDS,
+        command_path,
+        is_host_command,
+    )
+
+    assert _DEPRECATED_HIDDEN_COMMANDS == {
+        f"{group} {sub}" for group in ("review", "issue") for sub in ("ls", "show", "drop")
+    }
+    for path in _DEPRECATED_HIDDEN_COMMANDS:
+        assert path in known_command_paths()
+        assert path in _CONTAINER_COMMANDS
+        assert not is_host_command(path)
+        assert command_path(path.split()) == path
+
+
+def test_unclassified_hidden_command_is_still_not_routable(monkeypatch) -> None:
+    from jailbee import cli
+    from jailbee.remote_ssh import router
+
+    @cli.app.command("zz-hidden-probe", hidden=True)
+    def _probe() -> None: ...
+
+    router._command_tree.cache_clear()
+    try:
+        assert "zz-hidden-probe" not in known_command_paths()
+        assert "zz-hidden-probe" not in router.routable_leaf_paths()
+        assert "review ls" in known_command_paths()
+    finally:
+        cli.app.registered_commands.pop()
+        router._command_tree.cache_clear()
