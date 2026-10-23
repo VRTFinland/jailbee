@@ -1030,3 +1030,38 @@ def test_a_bulk_mount_with_nothing_left_says_so(mocker, tmp_path):
 
     child.assert_not_called()
     assert session.notice == "Unmount 'aws': nothing to do (alpha-a: not mounted)"
+
+
+def _orphan_session(mocker, *states):
+    group = dmodel.RepoGroup(
+        "ghost",
+        None,
+        None,
+        [ci(f"ghost-{c}", "ghost", s) for c, s in zip("abc", states, strict=False)],
+    )
+    session, _ = bare_session(mocker, [group])
+    session.jobs = SyncJobs()
+    return session
+
+
+def test_marked_orphans_offer_a_bulk_destroy_run_from_home(mocker):
+    child = _children(mocker)
+    session = _orphan_session(mocker, "Running", "Stopped")
+    session.marked = frozenset({"ghost-a", "ghost-b"})
+
+    picker = session.bulk_menu()
+
+    assert picker is not None
+    assert [e.value for e in picker.entries] == ["orphan destroy"]
+    session.overlay = session.begin_bulk("orphan destroy")
+    assert isinstance(session.overlay, Picker)
+    assert session.overlay.purpose == "bulk-destroy-confirm"
+    assert "orphan containers: ghost-a, ghost-b" in session.overlay.title
+
+    session.picker_chosen(PickerEntry("Yes, destroy 2", "yes"))
+
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "orphan", "destroy", "ghost-a", "--force"],
+        ["jailbee", "orphan", "destroy", "ghost-b", "--force"],
+    ]
+    assert all(c.kwargs["cwd"] == dmodel.RepoTarget.orphan().cwd() for c in child.call_args_list)

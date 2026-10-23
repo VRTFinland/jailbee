@@ -95,6 +95,33 @@ def test_an_orphan_container_is_view_only(tmp_path):
     assert action.skipped == (("ghost-a", "view-only"),)
 
 
+def test_orphans_take_orphan_destroy_when_the_frontend_allows_it(tmp_path):
+    orphan = dmodel.RepoGroup("ghost", None, None, [ci("ghost-a", "ghost"), ci("ghost-b", "ghost")])
+    repo = _group(tmp_path, ci("alpha-a", "alpha"))
+
+    plan = bulk.plan_bulk(
+        [orphan, repo], ["ghost-a", "ghost-b", "alpha-a"], "orphan destroy", orphans=True
+    )
+    offered = [a.verb for a in bulk.bulk_actions([orphan], ["ghost-a"], orphans=True)]
+
+    assert plan.eligible == ("ghost-a", "ghost-b")
+    assert plan.skipped == (("alpha-a", "not an orphan"),)
+    assert offered == ["orphan destroy"]
+    # The Qt window never passes `orphans`: orphans stay view-only there.
+    assert bulk.bulk_actions([orphan], ["ghost-a"]) == []
+
+
+def test_orphan_destroy_is_parallel_forced_and_asks_for_itself():
+    assert bulk.BulkAction("orphan destroy", ("ghost-a",)).mode == "parallel"
+    assert bulk.bulk_argv("orphan destroy", "ghost-a") == [
+        "orphan",
+        "destroy",
+        "ghost-a",
+        "--force",
+    ]
+    assert not bulk.needs_confirm(bulk.BulkAction("orphan destroy", ("a", "b")))
+
+
 def test_a_vanished_name_is_skipped_as_gone(tmp_path):
     action = bulk.plan_bulk([_group(tmp_path, ci("alpha-a", "alpha"))], ["alpha-z"], "stop")
 
