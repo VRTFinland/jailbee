@@ -1026,7 +1026,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   skips the check); `restart` refuses too, with no `--force` — cancel the
   run with `jailbee autostart cancel [<name>]` first. `jailbee destroy <name>
   --force`, or `jailbee destroy --all` (whole repo,
-  one confirmation), or `jailbee destroy` with no args for an interactive checkbox (exit 2 listing
+  one confirmation), `jailbee destroy --stopped` (only the stopped ones), or `jailbee destroy` with no args for an interactive checkbox (exit 2 listing
   the candidates without a terminal — name the container).
   Add `--background`/`-b` to detach. Before the confirmation, JailBee
   assesses what destroying would discard — a dirty working tree, a changed
