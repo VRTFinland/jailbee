@@ -31,9 +31,7 @@ def env(mocker, make_cfg, tmp_path):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    mocker.patch(
-        "jailbee.outbox_io.JournalStore", return_value=JournalStore(tmp_path / "journals")
-    )
+    mocker.patch("jailbee.outbox_io.JournalStore", return_value=JournalStore(tmp_path / "journals"))
     return incus, mutation, raw, snapshots
 
 

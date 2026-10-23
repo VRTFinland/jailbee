@@ -413,9 +413,7 @@ def clear(
         list[str] | None,
         typer.Argument(help="Full or short container names. Asked for when omitted."),
     ] = None,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Show what would be deleted.")
-    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be deleted.")] = False,
     yes: YesOption = False,
     config: ConfigOption = None,
 ) -> None:
