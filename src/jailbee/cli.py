@@ -12354,6 +12354,175 @@ def unmount_cmd(
     success(f"Unmounted '{kind}' from container '{short_name(cfg, name)}'")
 
 
+# ---- Orphan commands ----
+
+orphan_app = typer.Typer(
+    name="orphan",
+    help=(
+        "Containers whose repo can no longer be found (deleted, moved, or its "
+        "config no longer loads): list, attach, start, stop, destroy — by full name."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(orphan_app)
+
+OrphanArg = Annotated[
+    str | None,
+    typer.Argument(
+        help="Full container name, as `jailbee orphan ls` lists it. Asked for when omitted."
+    ),
+]
+
+
+def _orphan_context(config: Path | None) -> tuple["Config", "IncusType", list[Path]]:
+    """The base config, Incus, and the registered repo roots orphans are checked against."""
+    from jailbee.dashboard.model import registered_repo_roots
+    from jailbee.incus import Incus
+
+    return _load_or_exit(config), Incus(), registered_repo_roots()
+
+
+def _resolve_orphan(
+    config: Path | None, name: str | None, *, destructive: bool = False
+) -> tuple["IncusType", "ContainerInfo"]:
+    """The orphan to act on: ``name``, or one picked per the missing-value policy."""
+    from jailbee import orphans, prompting
+
+    cfg, incus, roots = _orphan_context(config)
+    if name is None:
+        found = orphans.list_orphans(cfg, incus, roots)
+        return incus, prompting.choose_one(
+            "container",
+            [prompting.Option(c, f"{c.name}  ({c.state})", c.name) for c in found],
+            destructive=destructive,
+            empty_reason="no orphan containers",
+        )
+    try:
+        return incus, orphans.resolve_orphan(cfg, incus, roots, name)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+
+
+def _require_running(container: "ContainerInfo") -> None:
+    if container.state != "Running":
+        error(
+            f"'{container.name}' is {container.state.lower()} — "
+            f"run `jailbee orphan start {container.name}` first"
+        )
+        raise typer.Exit(1)
+
+
+@orphan_app.command("ls")
+def orphan_ls_cmd(config: ConfigOption = None) -> None:
+    """List orphan containers."""
+    from rich.table import Table
+
+    from jailbee import orphans
+    from jailbee.tui import console
+
+    cfg, incus, roots = _orphan_context(config)
+    found = orphans.list_orphans(cfg, incus, roots)
+    if not found:
+        info("No orphan containers")
+        return
+    table = Table("NAME", "REPO", "STATE")
+    for c in found:
+        table.add_row(c.name, c.repo or "", c.state)
+    console.print(table)
+
+
+@orphan_app.command("tmux")
+def orphan_tmux_cmd(name: OrphanArg = None, config: ConfigOption = None) -> None:
+    """Attach to an orphan's autostart tmux session."""
+    from jailbee import orphans
+
+    incus, container = _resolve_orphan(config, name)
+    _require_running(container)
+    raise typer.Exit(orphans.attach_tmux(incus, container.name))
+
+
+@orphan_app.command("shell")
+def orphan_shell_cmd(
+    name: OrphanArg = None,
+    user: Annotated[
+        str,
+        typer.Option(
+            "--user",
+            "-u",
+            help="dev or root",
+            autocompletion=completion.complete_choices("dev", "root"),
+        ),
+    ] = "dev",
+    config: ConfigOption = None,
+) -> None:
+    """Open an interactive shell in an orphan."""
+    from jailbee import orphans
+
+    if user not in ("dev", "root"):
+        error(f"Invalid user: {user} (must be 'dev' or 'root')")
+        raise typer.Exit(2)
+    incus, container = _resolve_orphan(config, name)
+    _require_running(container)
+    raise typer.Exit(orphans.attach_shell(incus, container.name, user))
+
+
+@orphan_app.command("start")
+def orphan_start_cmd(name: OrphanArg = None, config: ConfigOption = None) -> None:
+    """Start an orphan (no autostart steps: those were the lost repo's)."""
+    incus, container = _resolve_orphan(config, name)
+    if container.state == "Running":
+        info(f"'{container.name}' is already running")
+        return
+    incus.start(container.name)
+    success(f"Started {container.name}")
+
+
+@orphan_app.command("stop")
+def orphan_stop_cmd(
+    name: OrphanArg = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Skip the clean shutdown and stop it now.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Stop an orphan."""
+    from jailbee.stopping import stop_container
+
+    incus, container = _resolve_orphan(config, name)
+    if container.state != "Running":
+        info(f"'{container.name}' is not running")
+        return
+    stop_container(incus, container.name, force=force, force_fallback=True)
+    success(f"Stopped {container.name}")
+
+
+@orphan_app.command("destroy")
+def orphan_destroy_cmd(
+    name: OrphanArg = None,
+    force: Annotated[bool, typer.Option("--force", help="Destroy without asking.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Destroy an orphan.
+
+    Only the cleanup that needs no repo is done: the container, its egress ACL
+    and its background-job row. Transfer refs (``refs/jailbee/*``) left in the
+    lost repo stay there.
+    """
+    from jailbee import orphans, prompting
+
+    incus, container = _resolve_orphan(config, name, destructive=True)
+    if not force:
+        if not prompting.is_interactive():
+            error(f"Refusing to destroy '{container.name}' without a terminal; pass --force")
+            raise typer.Exit(2)
+        if not prompting.confirm(f"Destroy orphan container '{container.name}'?", default=False):
+            raise typer.Abort()
+    # Asked (or --force): no clean-shutdown courtesy, as `jailbee destroy` does.
+    orphans.destroy_orphan(incus, container.name, force=True)
+    success(f"Destroyed {container.name}")
+
+
 # ---- Snapshot commands ----
 
 snapshot_app = typer.Typer(
