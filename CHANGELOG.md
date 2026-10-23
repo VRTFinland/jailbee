@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **`jailbee outbox clear`** deletes eligible unpublished proposals in one or
+  more containers' PR and issue outboxes, with a dry-run preview and protection
+  for uncertain or partially published work. The terminal dashboard offers
+  **Clear outbox…** (`[X]`) for a container or the marked ones, always confirmed.
+
 ## 1.7.8 - 2026-10-23
 
 ### Added

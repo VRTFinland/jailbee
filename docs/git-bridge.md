@@ -1183,6 +1183,45 @@ or action content. Uncertain outcomes must first be reconciled with the
 existing `jb issue resolve` command. There is no general text editor in the
 browser.
 
+### Clearing outboxes
+
+To discard proposals across both stores in one or more containers without
+publishing anything or changing GitHub:
+
+```bash
+jb outbox clear smoke other --dry-run  # preview delete/keep decisions
+jb outbox clear smoke other            # show the plan, then confirm once (default No)
+jb outbox clear smoke other --yes      # skip only that confirmation
+```
+
+Names may be full or short. With no names, a terminal offers a destructive
+single-container picker over containers with proposals, even with only one
+candidate. Off-terminal, missing names exit 2; `--yes` does not supply a
+container or bypass that picker. `--dry-run` never deletes or asks for deletion
+confirmation, but still needs a container selection.
+
+`clear` removes eligible whole PR and issue manifests and their body files
+only when no other pending manifest in the same store references them. Settled
+issue journal progress is archived automatically before deletion. It keeps
+issue manifests with any **uncertain** action: reconcile the outcome with
+`jb issue resolve` first. PR manifests with publication evidence (including
+partial publication) are also kept; inspect them with `jb outbox browse` or
+finish with `jb outbox apply`. Malformed or unreadable progress evidence is
+not treated as permission to delete. Unsafe rejected files are reported as
+warnings, not deleted.
+
+The plan lists what will be deleted or kept and why. Before each deletion,
+JailBee rereads the proposal and its neighbors: proposals whose revision
+changed since listing are kept, and newly arrived proposals are never added
+to this run. Failures do not stop attempts on other listed proposals.
+Declining the deletion confirmation exits 0 without deleting anything.
+Otherwise, exit 0 means nothing was kept or failed (including an empty outbox);
+exit 1 means something was kept, unavailable or failed; exit 2 means a usage
+error or missing required selection. A dry run uses the
+same kept/unavailable status rules despite deleting nothing.
+
+### Inspecting and publishing proposals
+
 `show` includes the revision token, raw JSON, full proposed text and available
 receipts. `ls`/`show` support `-o json` (also `--format`/`--output`) for
 structured inspection. A stopped or inaccessible container is
@@ -1260,6 +1299,13 @@ revision; that terminal owns the authoritative approval. Launching it is
 not evidence of publication. Refresh after returning. Closing during load
 hides the dialog while its owned worker finishes; shutdown waits for workers
 rather than terminating them.
+
+The terminal dashboard also offers **Clear outbox…** (`[X]`) in the container
+menu and the **N selected** list for marked containers. It always confirms
+with **No** first, even if general confirmations are disabled, showing proposal
+counts and any skipped containers. It runs the same safe local cleanup
+[described above](#clearing-outboxes); protected or changed proposals remain.
+This entry is terminal-only: it is not offered in Qt.
 
 Over remote SSH the browser is always read-only, even in unrestricted mode.
 Shorthand is policy-checked as `outbox browse`; use explicit `outbox drop`
