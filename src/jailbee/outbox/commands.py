@@ -233,6 +233,22 @@ def apply_selected(
     )
 
 
+def prepare_clear(
+    cfg: Config, incus: Incus, names: Sequence[str], *, journal_store: JournalStore
+) -> tuple[ContainerClearPlan, ...]:
+    """Isolate unavailable targets while fixing the exact pre-question revisions."""
+    from jailbee.outbox.delete import plan_clear
+
+    plans: list[ContainerClearPlan] = []
+    for name in dict.fromkeys(names):
+        try:
+            views = discover(cfg, incus, name, all_repos=False, journal_store=journal_store)
+        except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
+            views = (ContainerView(None, name, False, str(exc), (), ()),)
+        plans.extend(plan_clear(view) for view in views)
+    return tuple(plans)
+
+
 def clear_selected(
     cfg: Config,
     incus: Incus,
@@ -241,17 +257,17 @@ def clear_selected(
     journal_store: JournalStore,
     confirm: Callable[[Sequence[ContainerClearPlan]], bool],
     dry_run: bool = False,
+    approved: Sequence[ContainerClearPlan] | None = None,
 ) -> int:
     """Clear only listed revisions, replanning each deletion against fresh neighbors."""
-    from jailbee.outbox.delete import clear_plan_lines, plan_clear
+    from jailbee.outbox.delete import clear_plan_lines
     from jailbee.tui import info_plain, success_plain, warn_plain
 
-    views = [
-        view
-        for name in names
-        for view in discover(cfg, incus, name, all_repos=False, journal_store=journal_store)
-    ]
-    plans = [plan_clear(view) for view in views]
+    if approved is not None and tuple(names) != tuple(p.name for p in approved):
+        raise OutboxError("approved snapshot containers must match the explicit full names")
+    plans = approved if approved is not None else prepare_clear(
+        cfg, incus, names, journal_store=journal_store
+    )
     print_lines(clear_plan_lines(plans))
     kept = sum(len(plan.keep) for plan in plans)
     failed = sum(not plan.available for plan in plans)
@@ -288,7 +304,7 @@ def clear_selected(
                         plan_delete(fresh, item.proposal, item.selection),
                         journal_store=journal_store,
                     )
-                except (OutboxError, OutboxExecutionError) as exc:
+                except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
                     failed += 1
                     container_failed += 1
                     warn_plain(f"{plan.name}: failed {item.proposal}: {exc}", stderr=True)

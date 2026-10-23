@@ -1851,11 +1851,14 @@ class DashboardSession:
             return None
         if picker.purpose.startswith("container-snapshot"):
             return self.submit_snapshot_picker(picker, entry)
-        if picker.purpose == "container-outbox-clear-confirm":
+        if picker.purpose in ("container-outbox-clear-confirm", "bulk-outbox-clear-confirm"):
             if entry.value == "yes":
-                self._run_planned_one("outbox clear", picker.target)
+                self._run_clear_approved(picker.carry)
             else:
                 self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "outbox-clear-preparing":
+            self.set_notice("Cancelled")
             return None
         if picker.purpose.startswith("container-outbox"):
             return self.submit_outbox_picker(picker, entry)
@@ -1915,7 +1918,7 @@ class DashboardSession:
                 return self.begin_bulk(picker.carry[0], confirmed=True)
             self.set_notice("Cancelled")
             return None
-        if picker.purpose in ("bulk-destroy-confirm", "bulk-outbox-clear-confirm"):
+        if picker.purpose == "bulk-destroy-confirm":
             if entry.value == "yes":
                 self._run_planned(picker.carry[0])
             else:
@@ -2592,20 +2595,7 @@ class DashboardSession:
                 detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
             )
         if verb == "outbox clear":
-            n = len(action.eligible)
-            return Picker(
-                "bulk-outbox-clear-confirm",
-                f"Clear the outbox of {n} container{'s' if n != 1 else ''}: "
-                f"{', '.join(action.eligible)}?",
-                (PickerEntry("No", "no"), PickerEntry(f"Yes, clear {n}", "yes")),
-                carry=(verb,),
-                detail=_cap_detail(
-                    (
-                        *outbox_clear_lines(self.groups, action.eligible),
-                        *(f"skipped {name}: {reason}" for name, reason in action.skipped),
-                    )
-                ),
-            )
+            return self._prepare_outbox_clear(action, single=False)
         if verb == "net loose":
             default = bulk_loose_default(self.groups, action.eligible)
             if default is not None:
@@ -2635,12 +2625,90 @@ class DashboardSession:
         if not action.eligible:
             self.set_notice(nothing_to_do(action))
             return None
-        return Picker(
-            "container-outbox-clear-confirm",
-            f"Clear the outbox of container '{self._merge_display([name])}'?",
-            (PickerEntry("No", "no"), PickerEntry("Yes, clear", "yes")),
-            target=name,
-            detail=_cap_detail(outbox_clear_lines(self.groups, action.eligible)),
+        return self._prepare_outbox_clear(action, single=True)
+
+    def _prepare_outbox_clear(self, action: BulkAction, *, single: bool) -> Picker:
+        """Read actual revisions in detached children, then ask once on the UI thread."""
+        from jailbee.outbox.clear_snapshot import decode_snapshot
+        from jailbee.outbox.delete import clear_plan_lines
+        from jailbee.outbox.models import OutboxError
+
+        preparing = Picker(
+            "outbox-clear-preparing", "Reading outbox revisions…",
+            (PickerEntry("Cancel", "cancel"),),
+        )
+        pending = set(action.eligible)
+        tokens: dict[str, str] = {}
+        errors = [f"skipped {n}: {r}" for n, r in action.skipped]
+
+        def finish(name: str, result: JobResult) -> None:
+            pending.discard(name)
+            if result.returncode:
+                errors.append(f"{name}: {result.failure_line() or 'snapshot failed'}")
+            else:
+                try:
+                    plans = decode_snapshot(result.stdout)
+                    if tuple(p.name for p in plans) != (name,):
+                        raise OutboxError("snapshot target mismatch")
+                    tokens[name] = result.stdout.strip()
+                except OutboxError as exc:
+                    errors.append(f"{name}: {exc}")
+            if pending or self.overlay is not preparing:
+                return
+            if not tokens:
+                self.overlay = None
+                self.set_notice("; ".join(errors) or "No outbox snapshot available")
+                return
+            ordered = tuple(tokens[n] for n in action.eligible if n in tokens)
+            plans = tuple(p for token in ordered for p in decode_snapshot(token))
+            count = sum(bool(p.delete) for p in plans)
+            self.overlay = Picker(
+                "container-outbox-clear-confirm" if single else "bulk-outbox-clear-confirm",
+                f"Clear the outbox of {len(plans)} container{'s' if len(plans) != 1 else ''}: "
+                f"{', '.join(p.name for p in plans)}?",
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, clear {count}", "yes")),
+                target=plans[0].name if single else "",
+                carry=ordered,
+                detail=_cap_detail((*clear_plan_lines(plans), *errors)),
+            )
+
+        for name in action.eligible:
+            repo = self.repo_for(name, "container")
+            canonical = ["outbox", "clear", name, "--prepare-snapshot"]
+            try:
+                if repo is None:
+                    raise ValueError("repository unavailable")
+                check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
+                argv = ["jailbee", *dact.addressed(canonical, repo.flags(), over_ssh=self.over_ssh)]
+                self.jobs.start(
+                    f"clear-snapshot:{name}", f"reading outbox {name}…", argv, repo.cwd(),
+                    partial(finish, name), capture_stdout=True,
+                )
+            except (OSError, ValueError, RouteError) as exc:
+                finish(name, JobResult(1, str(exc)))
+        # Synchronous spawn failures have no poll callback to close this overlay.
+        if not pending:
+            self.set_notice("; ".join(errors) or "No outbox snapshot available")
+            return Picker("outbox-clear-preparing", "Snapshot unavailable", (PickerEntry("Close", "cancel"),))
+        return preparing
+
+    def _run_clear_approved(self, tokens: Sequence[str]) -> None:
+        from dataclasses import replace
+
+        from jailbee.outbox.clear_snapshot import decode_snapshot
+
+        approved = {decode_snapshot(token)[0].name: token for token in tokens}
+        # Fresh eligibility can only shrink the original set, never add current marks.
+        action = plan_bulk(
+            self.groups, list(approved), "outbox clear", remote=self.remote,
+            ssh_policy=self.ssh_policy, over_ssh=self.over_ssh, busy=self.bulk_running(),
+        )
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return
+        self._run_parallel(
+            replace(action, eligible=tuple(n for n in action.eligible if n in approved)), (),
+            argv_for=lambda name: ["outbox", "clear", name, "-y", "--approved-snapshot", approved[name]],
         )
 
     def begin_destroy(self, name: str) -> Picker | None:

@@ -765,6 +765,21 @@ def test_outbox_leaves_follow_policy(leaf):
     )
 
 
+@pytest.mark.parametrize("options", [("--prepare-snapshot",), ("-y", "--approved-snapshot", "{}")])
+def test_clear_snapshot_options_share_clear_policy_and_never_unlock_host_paths(options):
+    argv = ("outbox", "clear", "box", *options)
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["outbox clear"])
+    assert policy_allows(argv, policy) == "outbox clear"
+    check_dashboard_command(list(argv), RemoteSSHConfig(commands=policy), over_ssh=True)
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=["outbox ls"]))
+    with pytest.raises(RouteError, match="config"):
+        policy_allows((*argv, "--config", "/etc/passwd"), FULL)
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+    with pytest.raises(RouteError):
+        policy_allows(argv, FULL, scope=RemoteRepoScope(frozenset({"secret"})))
+
+
 def test_outbox_clear_yes_is_allowed():
     argv = ("outbox", "clear", "box", "-y")
     assert policy_allows(argv, FULL) == "outbox clear"

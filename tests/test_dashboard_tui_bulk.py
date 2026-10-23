@@ -268,6 +268,86 @@ def _pending_outbox(group):
         )
 
 
+def _snapshot_jobs(mocker, session):
+    from jailbee.dashboard.jobs import JobResult
+    from jailbee.outbox.clear_snapshot import encode_snapshot
+    from jailbee.outbox.delete import ClearItem, ContainerClearPlan, DeleteSelection
+    from jailbee.outbox.models import ProposalId
+
+    original = session.jobs.start
+
+    def start(key, label, argv, cwd, on_done, **kwargs):
+        if kwargs.get("capture_stdout"):
+            name = argv[3]
+            items = tuple(ClearItem(ProposalId(kind, "001.json"), "a" * 64, "pending", DeleteSelection(), None) for kind in ("pr", "issue"))
+            token = encode_snapshot((ContainerClearPlan(name, True, None, items, (), ()),))
+            session.jobs._labels[key] = label
+            session.jobs._finished.append((key, on_done, JobResult(0, "", token)))
+        else:
+            original(key, label, argv, cwd, on_done)
+
+    return mocker.patch.object(session.jobs, "start", side_effect=start)
+
+
+def test_clear_snapshot_is_async_and_only_approved_names_reach_children(mocker, tmp_path):
+    from jailbee.outbox.clear_snapshot import decode_snapshot
+
+    child = _children(mocker)
+    session, terminal, group = _session(mocker, tmp_path, "Running", "Running")
+    _pending_outbox(group)
+    group.containers[1].git_status = None
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    jobs = _snapshot_jobs(mocker, session)
+    session.overlay = session.begin_bulk("outbox clear")
+    assert session.overlay.purpose == "outbox-clear-preparing"
+    child.assert_not_called()
+    session.tick()
+    assert isinstance(session.overlay, Picker)
+    assert "alpha-b" not in session.overlay.title
+    _pending_outbox(group)  # previously skipped target becomes eligible
+    session.picker_chosen(session.overlay.entries[1])
+    assert child.call_count == 1
+    argv = child.call_args.args[0]
+    assert argv[3] == "alpha-a"
+    assert "--approved-snapshot" in argv
+    plans = decode_snapshot(argv[argv.index("--approved-snapshot") + 1])
+    assert [p.name for p in plans] == ["alpha-a"]
+    assert [str(i.proposal) for i in plans[0].delete] == ["pr/001.json", "issue/001.json"]
+    assert jobs.call_count == 2  # one read child, one mutation child
+    assert terminal.handed == []
+
+
+@pytest.mark.parametrize("failure", ["cancel", "bad-json", "spawn", "wrong-target", "exit"])
+def test_preparation_never_prompts_or_deletes_after_cancel_or_failure(mocker, tmp_path, failure):
+    from jailbee.dashboard.jobs import JobResult
+
+    child = _children(mocker)
+    session, terminal, group = _session(mocker, tmp_path, "Running")
+    _pending_outbox(group)
+    session.marked = frozenset({"alpha-a"})
+    if failure == "cancel":
+        _snapshot_jobs(mocker, session)
+    elif failure == "spawn":
+        mocker.patch.object(session.jobs, "start", side_effect=OSError("cannot spawn"))
+    else:
+        def start(key, label, argv, cwd, on_done, **kwargs):
+            token = '{}' if failure != "bad-json" else 'garbage'
+            if failure == "wrong-target":
+                from jailbee.outbox.clear_snapshot import encode_snapshot
+                from jailbee.outbox.delete import ContainerClearPlan
+                token = encode_snapshot((ContainerClearPlan("alpha-b", True, None, (), (), ()),))
+            session.jobs._labels[key] = label
+            session.jobs._finished.append((key, on_done, JobResult(1 if failure == "exit" else 0, "failed", token)))
+        mocker.patch.object(session.jobs, "start", side_effect=start)
+    session.overlay = session.begin_bulk("outbox clear")
+    if failure == "cancel":
+        session.picker_chosen(session.overlay.entries[0])
+    session.tick()
+    assert session.overlay is None or session.overlay.purpose != "bulk-outbox-clear-confirm"
+    child.assert_not_called()
+    assert terminal.handed == []
+
+
 def test_clear_outbox_with_one_mark_still_asks(mocker, tmp_path):
     child = _children(mocker)
     session, terminal, group = _session(mocker, tmp_path, "Running")
@@ -275,13 +355,15 @@ def test_clear_outbox_with_one_mark_still_asks(mocker, tmp_path):
     session.marked = frozenset({"alpha-a"})
     session.handle_key("down")
 
+    _snapshot_jobs(mocker, session)
     _bulk_key(session, "X")
+    session.tick()
 
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "bulk-outbox-clear-confirm"
     assert tuple(e.label for e in picker.entries) == ("No", "Yes, clear 1")
     assert picker.entries[0].value == "no"
-    assert any("2 manifests" in line for line in picker.detail)
+    assert any("Delete 2 proposals in 1 container" in line for line in picker.detail)
     child.assert_not_called()
     assert terminal.handed == []
 
@@ -291,21 +373,24 @@ def test_confirmed_bulk_clear_starts_one_child_each_with_yes(mocker, tmp_path):
     config = tmp_path / "c.yaml"
     session, terminal, group = _session(mocker, tmp_path, "Running", "Running", config=config)
     _pending_outbox(group)
-    start = mocker.spy(session.jobs, "start")
+    start = _snapshot_jobs(mocker, session)
     session.marked = frozenset({"alpha-a", "alpha-b"})
     session.overlay = session.begin_bulk("outbox clear")
+    session.tick()
     assert isinstance(session.overlay, Picker)
     assert session.overlay.purpose == "bulk-outbox-clear-confirm"
     child.assert_not_called()
-    start.assert_not_called()
+    assert start.call_count == 2
 
     session.picker_chosen(session.overlay.entries[1])
 
-    assert start.call_count == 2
-    assert [c.args[0] for c in child.call_args_list] == [
-        ["jailbee", "outbox", "clear", "alpha-a", "-y", "--config", str(config)],
-        ["jailbee", "outbox", "clear", "alpha-b", "-y", "--config", str(config)],
+    assert start.call_count == 4
+    argv = [c.args[0] for c in child.call_args_list]
+    assert [a[:5] for a in argv] == [
+        ["jailbee", "outbox", "clear", "alpha-a", "-y"],
+        ["jailbee", "outbox", "clear", "alpha-b", "-y"],
     ]
+    assert all(a[5] == "--approved-snapshot" and a[-2:] == ["--config", str(config)] for a in argv)
     assert session.overlay is None
     assert terminal.handed == []
 
@@ -316,9 +401,11 @@ def test_declined_clear_runs_nothing(mocker, tmp_path, single):
     session, _, group = _session(mocker, tmp_path, "Running")
     _pending_outbox(group)
     session.marked = frozenset({"alpha-a"})
+    _snapshot_jobs(mocker, session)
     session.overlay = (
         session.begin_outbox_clear("alpha-a") if single else session.begin_bulk("outbox clear")
     )
+    session.tick()
     assert isinstance(session.overlay, Picker)
 
     session.picker_chosen(session.overlay.entries[0])
@@ -335,18 +422,20 @@ def test_clear_outbox_from_the_container_menu_asks_then_runs_detached(mocker, tm
     session.handle_key("down")
     assert session.open_menu_for_letter("o")
 
+    _snapshot_jobs(mocker, session)
     session.menu_chosen("outbox clear", "Outbox →", 2)
+    session.tick()
 
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "container-outbox-clear-confirm"
     assert [e.value for e in picker.entries] == ["no", "yes"]
-    assert any("2 manifests" in line for line in picker.detail)
+    assert any("Delete 2 proposals in 1 container" in line for line in picker.detail)
     child.assert_not_called()
     assert terminal.handed == []
 
     session.picker_chosen(picker.entries[1])
 
-    assert child.call_args.args[0] == ["jailbee", "outbox", "clear", "alpha-a", "-y"]
+    assert child.call_args.args[0][:6] == ["jailbee", "outbox", "clear", "alpha-a", "-y", "--approved-snapshot"]
     assert session.overlay is None
     assert terminal.handed == []
     assert session.view().running == frozenset({"alpha-a"})
@@ -357,7 +446,9 @@ def test_a_kept_item_shows_in_the_notice(mocker, tmp_path):
     session, _, group = _session(mocker, tmp_path, "Running")
     _pending_outbox(group)
     session.marked = frozenset({"alpha-a"})
+    _snapshot_jobs(mocker, session)
     session.overlay = session.begin_bulk("outbox clear")
+    session.tick()
     assert isinstance(session.overlay, Picker)
 
     session.picker_chosen(session.overlay.entries[1])

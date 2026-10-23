@@ -1009,13 +1009,31 @@ def test_qt_bulk_actions_hide_clear_outbox(qtbot, monkeypatch):
         dashboard_bulk,
         "bulk_actions",
         lambda _groups, _names: [
-            BulkAction("outbox browse", ("p-foo", "p-bar")),
+            BulkAction("stop", ("p-foo", "p-bar")),
             BulkAction("outbox clear", ("p-foo", "p-bar")),
         ],
     )
 
     actions = win._bulk_actions_for(["p-foo", "p-bar"])
-    assert [action.verb for action in actions] == ["outbox browse"]
+    assert [action.verb for action in actions] == ["stop"]
+
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication, QMenu
+
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    _select_both(win)
+    labels = []
+
+    def inspect_popup():
+        popup = QApplication.activePopupWidget()
+        if isinstance(popup, QMenu):
+            labels.extend(a.text() for a in popup.actions())
+            popup.close()
+
+    QTimer.singleShot(0, inspect_popup)
+    win._on_context_menu(QPoint(0, 0))
+    assert "Stop (2)" in labels
+    assert not any("Clear outbox" in label for label in labels)
 
 
 def test_context_menu_with_two_rows_offers_bulk_actions(qtbot):

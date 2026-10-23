@@ -34,6 +34,7 @@ NEEDS_TERMINAL_MARKERS: tuple[str, ...] = (
 class JobResult:
     returncode: int
     stderr: str
+    stdout: str = ""
 
     def failure_line(self) -> str:
         """The last non-empty stderr line: the reason, for a one-line notice."""
@@ -76,6 +77,8 @@ class JobRunner:
         argv: list[str],
         cwd: Path,
         on_done: Callable[[JobResult], None],
+        *,
+        capture_stdout: bool = False,
     ) -> None:
         """Spawn ``argv``; ``on_done`` gets the result from a later ``poll``.
 
@@ -90,7 +93,7 @@ class JobRunner:
             proc = subprocess.Popen(
                 argv,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
                 errors="replace",
@@ -103,8 +106,8 @@ class JobRunner:
             raise
 
         def wait() -> None:
-            _, stderr = proc.communicate()
-            result = JobResult(proc.returncode, stderr or "")
+            stdout, stderr = proc.communicate()
+            result = JobResult(proc.returncode, stderr or "", stdout or "")
             with self._lock:
                 self._finished.append((key, on_done, result))
 

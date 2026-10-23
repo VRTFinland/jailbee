@@ -42,7 +42,9 @@ def test_pr_with_sidecar_or_log_is_kept(tmp_path, evidence):
     files = pr_files() | evidence
     plan = plan_clear(inspected(tmp_path, "pr", files))
 
+    assert plan.delete == ()
     assert len(plan.keep) == 1
+    assert plan.keep[0].selection is None
     assert "partially published" in plan.keep[0].reason
     assert "jailbee outbox apply" in plan.keep[0].reason
 
@@ -75,8 +77,10 @@ def test_uncertain_issue_is_kept_with_resolve_hint(tmp_path):
     )
     journals.mark_prepared(key, 0, repo="acme/repo")
 
-    item = plan_clear(inspected(tmp_path, "issue", files, journals=journals)).keep[0]
-
+    plan = plan_clear(inspected(tmp_path, "issue", files, journals=journals))
+    assert plan.delete == ()
+    item = plan.keep[0]
+    assert item.selection is None
     assert "jailbee issue resolve" in item.reason
 
 
@@ -99,6 +103,18 @@ def test_unavailable_container_plans_nothing():
     assert plan.available is False
     assert plan.error == "container is stopped"
     assert plan.delete == plan.keep == ()
+
+
+def test_plan_total_counts_only_containers_with_deletions(tmp_path):
+    from jailbee.outbox.delete import clear_plan_lines
+
+    plans = (
+        plan_clear(inspected(tmp_path, "issue", issue_files())),
+        plan_clear(inspected(tmp_path, "pr", pr_files() | {"applied.log": "now 001.json pr=42 actions=1 urls=x"})),
+        plan_clear(inspected(tmp_path, "pr", {})),
+        plan_clear(ContainerView(None, "acme-gone", False, "gone", (), ())),
+    )
+    assert clear_plan_lines(plans)[-1] == "Delete 1 proposal in 1 container."
 
 
 def test_plan_lines_name_every_item_and_the_total(tmp_path):

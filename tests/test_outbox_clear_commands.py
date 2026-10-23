@@ -3,7 +3,7 @@
 import pytest
 
 from jailbee.outbox import commands, service
-from jailbee.outbox.models import OutboxExecutionError
+from jailbee.outbox.models import OutboxError, OutboxExecutionError
 from jailbee.outbox_io import JournalStore
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
@@ -61,14 +61,48 @@ def test_clears_both_stores_after_one_confirmation(env, mocker, capsys):
     confirm.assert_called_once()
     assert len(confirm.call_args.args[0]) == 2
     mutation = env[4]
+    assert mutation.call_count == 4
     assert {
-        (c.args[1], c.args[2], c.kwargs["delete_names"][0]) for c in mutation.call_args_list
+        (c.args[1], c.args[2], c.kwargs["delete_names"]) for c in mutation.call_args_list
     } == {
-        (name, kind, "001.json")
+        (name, kind, ("001.json", "body.md") if kind == "issue" else ("001.json",))
         for name in ("acme-feature", "acme-other")
         for kind in ("pr", "issue")
     }
     assert "acme-feature: deleted 2 (1 PR, 1 issue)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", [OutboxError("vanished"), OutboxExecutionError("I/O failed"), OSError("offline")])
+def test_initial_discovery_failure_does_not_block_healthy_target(env, mocker, capsys, error):
+    real = commands.discover
+
+    def discover(cfg, incus, name, **kwargs):
+        if name == "acme-feature":
+            raise error
+        return real(cfg, incus, name, **kwargs)
+
+    mocker.patch.object(commands, "discover", side_effect=discover)
+    assert clear(env, lambda plans: True) == 1
+    assert env[4].call_count == 2
+    assert {c.args[1] for c in env[4].call_args_list} == {"acme-other"}
+    assert "acme-feature: unavailable" in capsys.readouterr().out
+
+
+def test_approved_snapshot_survives_detached_handoff_without_expanding(env):
+    from jailbee.outbox.clear_snapshot import encode_snapshot, decode_snapshot
+
+    cfg, incus, files, _, mutation, journals = env
+    plans = commands.prepare_clear(cfg, incus, ["acme-feature"], journal_store=journals)
+    approved = decode_snapshot(encode_snapshot(plans))
+    files["acme-feature", "pr"]["001.json"] += "\n"
+    files["acme-feature", "issue"]["002.json"] = issue_files()["001.json"]
+    assert commands.clear_selected(
+        cfg, incus, ["acme-feature"], journal_store=journals,
+        confirm=lambda plans: True, approved=approved,
+    ) == 1
+    assert mutation.call_count == 1
+    assert mutation.call_args.args[1:3] == ("acme-feature", "issue")
+    assert mutation.call_args.kwargs["delete_names"] == ("001.json",)
 
 
 def test_declined_confirmation_deletes_nothing(env, mocker, capsys):

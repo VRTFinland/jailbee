@@ -261,8 +261,7 @@ def clear_plan_lines(plans: Sequence[ContainerClearPlan]) -> list[str]:
             lines.append(f"{plan.name}: unavailable — {plan.error}")
             continue
         lines.append(f"{plan.name}:")
-        if plan.delete or plan.keep:
-            containers += 1
+        containers += bool(plan.delete)
         for item in plan.delete:
             lines.append(f"  delete {item.proposal} [{item.state}]")
             deleted += 1
