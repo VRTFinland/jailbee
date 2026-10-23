@@ -40,6 +40,40 @@ READ_ONLY_LINE = "Read-only over SSH: use explicit `jailbee outbox drop` / `outb
 _LOADING = "reading the outbox…"
 
 
+def container_repo(target: RepoTarget, name: str) -> RepoTarget | None:
+    """The repo that owns container ``name``, seen from ``target``; None when unknown.
+
+    The `outbox` children find a container's own repo themselves
+    (`outbox.commands.resolve_target`); `pr` and `submodule pr` act on the repo
+    they are addressed at, so a hand-off of one must be addressed at the
+    container's repo, not the app's (they differ in the all-repos view).
+    """
+    from jailbee.config import ConfigError, load_config, load_repo_config
+    from jailbee.incus import Incus, IncusError
+    from jailbee.outbox.commands import resolve_target
+    from jailbee.outbox.models import OutboxError, OutboxExecutionError
+    from jailbee.paths import repo_config_path
+    from jailbee.remote_ssh.repo_scope import RepoScopeError
+
+    try:
+        path = target.config_path
+        cfg = load_config(path) if path is not None else load_repo_config(target.repo_root)
+        own, _ = resolve_target(cfg, Incus(), name)
+    except (ConfigError, IncusError, OutboxError, OutboxExecutionError, RepoScopeError, OSError):
+        return None
+    return RepoTarget(own.repo_root, repo_config_path(own.repo_root))
+
+
+def _handed_container(argv: Sequence[str]) -> str | None:
+    """The container of a `pr NAME` / `submodule pr NAME PATH` hand-off, else None."""
+    words = list(argv)
+    if words[:1] == ["pr"] and len(words) > 1:
+        return words[1]
+    if words[:2] == ["submodule", "pr"] and len(words) > 2:
+        return words[2]
+    return None
+
+
 class LocalOutboxRunner:
     """`OutboxRunner` for the standalone app: children of `jailbee` against ``target``."""
 
@@ -50,6 +84,16 @@ class LocalOutboxRunner:
         self.read_only = read_only
         self.suspend = suspend
         self.jobs = JobRunner()
+        # Container -> its repo, for PR hand-offs; only successes are kept.
+        self._repos: dict[str, RepoTarget] = {}
+
+    def _repo_of(self, name: str) -> RepoTarget | None:
+        repo = self._repos.get(name)
+        if repo is None:
+            repo = container_repo(self.target, name)
+            if repo is not None:
+                self._repos[name] = repo
+        return repo
 
     def _full(self, argv: Sequence[str]) -> list[str]:
         return [*argv, *self.target.flags()]
@@ -61,12 +105,15 @@ class LocalOutboxRunner:
         exclusions are enforced by the router, which these children bypass.
         """
         if not self.read_only:
-            return True
+            name = _handed_container(argv)
+            return name is None or self._repo_of(name) is not None
         return list(argv[:2]) == ["outbox", "ls"] and "--all-repos" not in argv
 
     def _refusal(self, argv: Sequence[str]) -> str | None:
         if self.permitted(argv):
             return None
+        if not self.read_only:
+            return f"the repository of '{_handed_container(argv)}' is unknown"
         return f"not available read-only over SSH: jailbee {' '.join(argv[:2])}"
 
     def run_quiet(self, argv: Sequence[str]) -> da.CliResult:
@@ -91,10 +138,12 @@ class LocalOutboxRunner:
         """``argv`` on the real terminal; None when it could not run (or is refused)."""
         if self._refusal(argv) is not None:
             return None
+        name = _handed_container(argv)
+        repo = self.target if name is None else self._repo_of(name)
+        if repo is None:
+            return None
         try:
-            return self.suspend(
-                lambda: _run_cli_foreground(self.target, list(argv), style="output")
-            )
+            return self.suspend(lambda: _run_cli_foreground(repo, list(argv), style="output"))
         except (RouteError, OSError):
             return None
 

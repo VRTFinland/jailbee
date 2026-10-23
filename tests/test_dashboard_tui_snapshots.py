@@ -249,6 +249,9 @@ def test_snapshot_outbox_app(snap_compare, mocker):
         _container(name="alpha-two", available=False, error="container is stopped"),
     )
     mocker.patch.object(da, "run_cli_quiet", return_value=da.CliResult(False, "exited 2", listing))
+    mocker.patch(
+        "jailbee.dashboard.tui.outbox_app.container_repo", side_effect=lambda target, _n: target
+    )
     app = OutboxApp(
         RepoTarget(Path("/repos/alpha"), None), container=None, all_repos=False, read_only=False
     )

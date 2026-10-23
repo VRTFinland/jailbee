@@ -492,8 +492,9 @@ class OutboxController:
             elif any(_fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None):
                 return done, _CHANGED
             if key is None:
+                # Archive consent is what the question showed, not a later listing's.
                 argv = dob.outbox_drop_argv(
-                    name, fresh.id, fresh.revision, archive_journal=fresh.delete_archive
+                    name, fresh.id, fresh.revision, archive_journal=listed.delete_archive
                 )
             elif key[3] is None:
                 action = _action(fresh, key[2] or 0)
@@ -653,6 +654,11 @@ class OutboxController:
         argv = dob.create_pr_argv(container.name, listed.create_scope) if same else None
         if argv is None:
             self._set(replace(state, status=(*state.status, _PR_CHANGED)))
+            return
+        if not self.runner.permitted(argv):
+            # Checked per container: the abilities were judged on the first one listed.
+            unavailable = f"{_safe(container.name)}: creating a PR is not available here"
+            self._set(replace(state, status=(*state.status, unavailable)))
             return
         self.state = state
         self.runner.hand_off(argv)

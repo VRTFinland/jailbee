@@ -378,6 +378,18 @@ def test_delete_whole_settled_issue_archives_journal():
     ]
 
 
+def test_delete_whole_takes_archive_consent_from_the_listing_shown():
+    shown = _proposal("issue/i.json", state="applied", delete_archive=False)
+    fresh = _proposal("issue/i.json", state="applied", delete_archive=True)
+    runner = FakeRunner(_listing(shown), _listing(fresh))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key("issue/i.json"))
+    ctl.intent("delete", None)
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "issue/i.json", "r1")]
+
+
 # --- publish ---------------------------------------------------------------
 
 

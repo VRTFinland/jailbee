@@ -45,6 +45,16 @@ class FakeJobs:
             on_done(result)
 
 
+@pytest.fixture(autouse=True)
+def repos(mocker):
+    """Every container belongs to the app's repo unless a test says otherwise."""
+    owners: dict[str, RepoTarget | None] = {}
+    mocker.patch.object(
+        outbox_app, "container_repo", side_effect=lambda target, name: owners.get(name, target)
+    )
+    return owners
+
+
 @pytest.fixture
 def quiet(mocker):
     calls: list[list[str]] = []
@@ -264,3 +274,77 @@ def test_scope_after_failed_first_listing_keeps_the_named_container(mocker):
     assert len(calls) >= 2
     for argv in calls[1:]:
         assert argv[:3] == ["outbox", "ls", "feature"] and "--all-repos" not in argv
+
+
+BETA = RepoTarget(Path("/repos/beta"), Path("/repos/beta/.jailbee/config.yaml"))
+
+
+def _awaiting_listing() -> str:
+    awaiting = _proposal("pr/d.json", state="awaiting-pr", create_scope={"kind": "repo"})
+    return _listing(_container(_proposal("pr/a.json")), _container(awaiting, name="beta-one"))
+
+
+def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker, repos):
+    repos["beta-one"] = BETA
+    mocker.patch.object(
+        da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
+    )
+    handed = []
+
+    def foreground(target, argv, *, style):  # type: ignore[no-untyped-def]
+        handed.append((target, argv, target.flags(), target.cwd()))
+        return 0
+
+    mocker.patch.object(outbox_app, "_run_cli_foreground", side_effect=foreground)
+    app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("down", "c")  # the beta-one proposal
+        await pilot.pause()
+
+    drive(app, scenario, size=(160, 30))
+    assert handed == [
+        (BETA, ["pr", "beta-one"], ["--config", "/repos/beta/.jailbee/config.yaml"],
+         Path("/repos/beta")),
+    ]  # fmt: skip
+
+
+def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
+    repos["beta-one"] = None
+    mocker.patch.object(
+        da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
+    )
+    fg = mocker.patch.object(outbox_app, "_run_cli_foreground")
+    app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("down", "c")
+        await pilot.pause()
+
+    drive(app, scenario, size=(160, 30))
+    fg.assert_not_called()
+    assert app.controller.state.status[-1] == "beta-one: creating a PR is not available here"
+    runner = app.runner
+    assert runner.permitted(["pr", "beta-one"]) is False
+    assert runner.hand_off(["pr", "beta-one"]) is None
+
+
+def test_container_repo_is_the_resolved_owner(mocker, tmp_path):
+    mocker.stopall()  # the autouse stand-in: test the real lookup
+    own = mocker.Mock(repo_root=tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text("{}\n")
+    cfg = mocker.Mock()
+    load = mocker.patch("jailbee.config.load_config", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    resolve = mocker.patch("jailbee.outbox.commands.resolve_target", return_value=(own, "b-one"))
+    assert outbox_app.container_repo(TARGET, "b-one") == RepoTarget(
+        tmp_path, tmp_path / ".jailbee" / "config.yaml"
+    )
+    load.assert_called_once_with(TARGET.config_path)
+    assert resolve.call_args.args[0] is cfg and resolve.call_args.args[2] == "b-one"
+
+    from jailbee.outbox.models import OutboxError
+
+    resolve.side_effect = OutboxError("no such container")
+    assert outbox_app.container_repo(TARGET, "b-one") is None
