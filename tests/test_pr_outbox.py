@@ -1265,8 +1265,14 @@ def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cf
     manifest, _ = _draft_manifest()
     target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
     outcome = apply_manifest(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", target, Progress(frozenset(), {}),
-        uid=1000, indices=frozenset({0, 1, 3}), draft=True,
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        target,
+        Progress(frozenset(), {}),
+        uid=1000,
+        indices=frozenset({0, 1, 3}),
+        draft=True,
     )
     factory.assert_called_once_with(target)
     assert outcome.applied == (0, 1, 3)
@@ -1293,7 +1299,13 @@ def test_normal_after_draft_posts_only_held_back(mocker, make_cfg, tmp_path):
 def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remaining):
     from jailbee.outbox.models import StoreSnapshot
     from jailbee.pr_outbox import (
-        Outbox, Progress, Target, apply_manifest, draft_indices, finalize, read_progress,
+        Outbox,
+        Progress,
+        Target,
+        apply_manifest,
+        draft_indices,
+        finalize,
+        read_progress,
     )
 
     calls = _apply_mocks(mocker)
@@ -1309,8 +1321,14 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
     _pr_transport(mocker, tmp_path, incus, reader)
     target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
     outcome = apply_manifest(
-        make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000,
-        indices=draft_indices(manifest, range(4)), draft=True,
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        target,
+        Progress(frozenset(), {}),
+        uid=1000,
+        indices=draft_indices(manifest, range(4)),
+        draft=True,
     )
     finalize(incus, "c", outbox, target, outcome, uid=1000)
     files = reader.return_value.as_dict()
@@ -1323,15 +1341,17 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
         calls["edit"].reset_mock()
         outbox = Outbox(files=files)
         outcome = apply_manifest(
-            make_cfg(tmp_path), incus, "c", target, read_progress(outbox, manifest.name),
+            make_cfg(tmp_path),
+            incus,
+            "c",
+            target,
+            read_progress(outbox, manifest.name),
             uid=1000,
         )
         assert outcome.applied == (2,)
         assert not outcome.draft
         finalize(incus, "c", outbox, target, outcome, uid=1000)
-        calls["comment"].assert_called_once_with(
-            tmp_path, 7, "held back", repo="acme/widgets"
-        )
+        calls["comment"].assert_called_once_with(tmp_path, 7, "held back", repo="acme/widgets")
         calls["review"].assert_not_called()
         calls["reply"].assert_not_called()
         calls["edit"].assert_not_called()
@@ -1347,8 +1367,14 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
     target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
     with pytest.raises(AssertionError):
         apply_manifest(
-            make_cfg(tmp_path), mocker.MagicMock(), "c", target, Progress(frozenset(), {}),
-            uid=1000, indices=frozenset({2}), draft=True,
+            make_cfg(tmp_path),
+            mocker.MagicMock(),
+            "c",
+            target,
+            Progress(frozenset(), {}),
+            uid=1000,
+            indices=frozenset({2}),
+            draft=True,
         )
     calls["comment"].assert_not_called()
 

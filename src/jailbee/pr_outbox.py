@@ -55,10 +55,9 @@ from jailbee.tui import console, error_plain, info, warn, warn_plain
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
-    from jailbee.pr_draft import DraftSession
-
     from jailbee.config import Config
     from jailbee.pr import PrInfo
+    from jailbee.pr_draft import DraftSession
     from jailbee.pr_flow import PrScope
 
 OUTBOX_SUBPATH = ".jailbee/pr-outbox"
@@ -1049,7 +1048,9 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
     repo_root = target.scope.repo_root
     number = target.pr.number
     if session is not None:
-        assert not isinstance(action, CommentAction), "general comments must be held back in draft mode"
+        assert not isinstance(action, CommentAction), (
+            "general comments must be held back in draft mode"
+        )
         if isinstance(action, ReviewAction):
             return session.review(action)
         if isinstance(action, ReplyAction):
