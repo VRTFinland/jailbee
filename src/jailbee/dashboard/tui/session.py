@@ -1047,16 +1047,27 @@ class DashboardSession:
             target=container,
         )
 
-    def change_memory(self, container: str, size: str, *, force: bool = False) -> Picker | None:
+    def change_memory(self, container: str, size: str, *, force: bool = False, confirmed_target: str | None = None) -> Picker | None:
         """Re-resolve the target and require consent before a potentially unsafe cap."""
         repo = self.dispatchable(container, "mem")
         found = self._listed_container(container)
         if repo is None or found is None:
             return None
-        from jailbee.memory_limit import DEFAULT_WORD, below_usage, validate_size
+        from jailbee.incus import IncusError
+        from jailbee.memory_limit import DEFAULT_WORD, below_usage, inherited_limit, same_size, validate_size
 
-        group, info = found
-        target = group.memory_default if size == DEFAULT_WORD else size
+        _, info = found
+        try:
+            target = inherited_limit(self.incus, container) if size == DEFAULT_WORD else size
+        except (IncusError, ValueError) as exc:
+            self.set_notice(str(exc))
+            return None
+        if target is None:
+            self.set_notice("Cannot clear memory override without an inherited cap; run `jb apply` first.")
+            return None
+        if confirmed_target is not None and not same_size(target, confirmed_target):
+            self.set_notice("Memory target changed; select it again.")
+            return None
         if error := validate_size(target):
             self.set_notice(error)
             return None
@@ -1066,13 +1077,17 @@ class DashboardSession:
                 f"Set memory to {target}?",
                 (PickerEntry("No", "no", "n"), PickerEntry("Yes", "yes", "y")),
                 target=container,
-                carry=(size,),
+                carry=(size, target),
                 detail=(
                     "The limit is below current usage; the kernel will reclaim memory",
                     "and may OOM-kill processes.",
                 ),
             )
-        self.run_quiet_cli(repo, dact.mem_argv(container, size, force=force))
+        argv = dact.mem_argv(container, size, force=force)
+        if confirmed_target is not None:
+            # The CLI rechecks after this action-time read, before granting force.
+            argv[1:1] = ["--confirmed-target", confirmed_target]
+        self.run_quiet_cli(repo, argv)
         return None
 
     def open_retarget(self, container: str) -> TextPrompt | None:
@@ -1763,7 +1778,7 @@ class DashboardSession:
             return self.change_memory(picker.target, entry.value)
         if picker.purpose == "container-memory-confirm":
             if entry.value == "yes":
-                return self.change_memory(picker.target, picker.carry[0], force=True)
+                return self.change_memory(picker.target, picker.carry[0], force=True, confirmed_target=picker.carry[1])
             self.set_notice("Cancelled")
             return None
         if picker.purpose == "repo-group":

@@ -4989,6 +4989,9 @@ def mem_cmd(
     force: Annotated[
         bool, typer.Option("--force", help="Allow a limit below current memory usage.")
     ] = False,
+    confirmed_target: Annotated[
+        str | None, typer.Option("--confirmed-target", hidden=True)
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Set a container's memory limit, or follow the repository default."""
@@ -5009,7 +5012,7 @@ def mem_cmd(
         )
         size = prompting.choose_one(
             "memory limit",
-            [prompting.Option(row.value, row.label, row.label) for row in rows],
+            [prompting.Option(row.value, row.label + (" *" if row.current else ""), row.label) for row in rows],
         )
         if size == OTHER_VALUE:
             size = prompting.ask_text("memory limit", validate=validate_size)
@@ -5022,6 +5025,7 @@ def mem_cmd(
             force=force,
             confirm=lambda question: prompting.confirm(question, default=False),
             interactive=prompting.is_interactive(),
+            confirmed_target=confirmed_target,
         )
     except ValueError as exc:
         error_plain(str(exc))

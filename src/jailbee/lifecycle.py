@@ -1696,6 +1696,17 @@ def new_container(
             f"(or `jailbee apply` if some already exist)."
         )
 
+    if opts.memory is None:
+        from jailbee.memory_limit import profile_limit
+
+        planned_profiles = ["default", names.base, names.binds]
+        planned_profiles.extend(
+            [f"{cfg.container_prefix}-net-work", f"{cfg.container_prefix}-net-work-{opts.network}"]
+            if generation == "work" else [names.net_by_mode[opts.network]]
+        )
+        if profile_limit(incus, planned_profiles) is None:
+            raise ValueError("Repository profiles have no inherited memory cap; run `jb apply` before creating without --memory.")
+
     _phase("creating")
     if generation == "work":
         from jailbee.network import strict_nic_acls

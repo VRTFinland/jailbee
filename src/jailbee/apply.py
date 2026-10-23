@@ -377,6 +377,8 @@ def run_apply(
             info("Removed a stale LiteLLM service rule (its container no longer exists).")
     except IncusError as e:
         warn_plain(f"Could not reconcile the LiteLLM service rule: {e}")
+    # Capture usage before profile updates can reclaim memory or OOM-kill.
+    containers = _list_containers(cfg, incus)
     info("Checking profiles...")
     profiles_changed: list[str] = []
     # Profiles whose change a running container only picks up on restart. The
@@ -426,8 +428,6 @@ def run_apply(
     hosts_repinned: list[str] = []
     docker_stale: list[str] = []
     mirror_port = mirror_endpoint[1] if mirror_endpoint else None
-
-    containers = _list_containers(cfg, incus)
 
     from jailbee import egress_proxy
 

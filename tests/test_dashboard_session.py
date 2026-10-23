@@ -119,6 +119,8 @@ def _memory_session(mocker, tmp_path, usage=None):
     info.memory_limit, info.memory_override, info.memory_usage = "24GiB", True, usage
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [info], memory_default="16GiB")
     session, _ = bare_session(mocker, [group])
+    session.incus.config_show.return_value = "profiles: [base]"
+    session.incus.profile_show.return_value = "config: {limits.memory: 16GiB}"
     return session, mocker.patch.object(session, "run_quiet_cli", return_value=True)
 
 
@@ -178,15 +180,16 @@ def test_memory_below_usage(mocker, tmp_path, size, answer):
     quiet.assert_not_called()
     session.submit_picker(confirm, PickerEntry(answer, answer))
     if answer == "yes":
-        assert quiet.call_args.args[1] == ["mem", "--force", "--", "alpha-one", size]
+        assert quiet.call_args.args[1] == ["mem", "--confirmed-target", "16GiB" if size == "default" else size, "--force", "--", "alpha-one", size]
     else:
         quiet.assert_not_called()
         assert session.notice == "Cancelled"
 
 
-def test_memory_default_uses_repo_value_and_rechecks_vanished_target(mocker, tmp_path):
+def test_memory_default_uses_actual_profile_and_rechecks_vanished_target(mocker, tmp_path):
     session, quiet = _memory_session(mocker, tmp_path, 12 * 1024**3)
-    session.groups[0].memory_default = "8GiB"
+    session.groups[0].memory_default = "32GiB"
+    session.incus.profile_show.return_value = "config: {limits.memory: 8GiB}"
     picker = session.open_memory_picker("alpha-one")
     confirm = session.submit_picker(picker, PickerEntry("Default", "default"))
     assert isinstance(confirm, Picker)
@@ -219,3 +222,21 @@ def test_memory_ssh_denial_never_opens_picker(mocker, tmp_path):
     )
     assert session.open_memory_picker("alpha-one") is None
     quiet.assert_not_called()
+
+
+def test_memory_confirmation_cannot_force_different_inherited_target(mocker, tmp_path):
+    session, quiet = _memory_session(mocker, tmp_path, 20 * 1024**3)
+    confirm = session.change_memory('alpha-one', 'default')
+    assert isinstance(confirm, Picker)
+    session.incus.profile_show.return_value = 'config: {limits.memory: 8GiB}'
+    session.submit_picker(confirm, PickerEntry('Yes', 'yes'))
+    quiet.assert_not_called()
+    assert 'changed' in session.notice
+
+
+def test_memory_default_refuses_uncapped_target(mocker, tmp_path):
+    session, quiet = _memory_session(mocker, tmp_path)
+    session.incus.profile_show.return_value = 'config: {}'
+    assert session.change_memory('alpha-one', 'default') is None
+    quiet.assert_not_called()
+    assert 'apply' in session.notice
