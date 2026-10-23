@@ -2453,6 +2453,19 @@ def _offer_locked(
     total = sum(
         len(idx) if idx is not None else len(pending_indices(t.manifest, p)) for t, p, idx in plans
     )
+    draft_plans = []
+    for target, progress, idx in plans:
+        pending = pending_indices(target.manifest, progress) if idx is None else idx
+        if draftable(target.manifest, pending):
+            assert target.pr is not None
+            draft_plans.append((target, progress, pending))
+    if draft and not draft_plans:
+        message = "nothing here can be a draft review: no review comments or replies are pending"
+        if raise_errors:
+            raise OutboxError(message)
+        error_plain(message)
+        return len(refusals) + 1
+
     if not can_prompt:
         plural = "" if total == 1 else "s"
         info(
@@ -2494,19 +2507,6 @@ def _offer_locked(
         warning = foreign_warning(target, short)
         if warning is not None:
             console.print(Text(f"⚠ {safe_text(warning)}", style="bold yellow"), highlight=False)
-
-    draft_plans = []
-    for target, progress, idx in plans:
-        pending = pending_indices(target.manifest, progress) if idx is None else idx
-        if draftable(target.manifest, pending):
-            assert target.pr is not None
-            draft_plans.append((target, progress, pending))
-    if draft and not draft_plans:
-        message = "nothing here can be a draft review: no review comments or replies are pending"
-        if raise_errors:
-            raise OutboxError(message)
-        error_plain(message)
-        return len(refusals) + 1
 
     previews = []
     if draft_plans and (draft or choose_mode is not None):

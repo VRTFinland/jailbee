@@ -3189,6 +3189,41 @@ def test_draft_with_nothing_draftable_is_an_error(mocker, make_cfg, tmp_path, ca
         assert message in captured.out + captured.err
 
 
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_draft_no_prompt_requires_draftable_actions(
+    mocker, make_cfg, tmp_path, capsys, empty, raise_errors
+):
+    from jailbee.pr_outbox import OutboxError, offer_pending_comments
+
+    cfg, incus, *_ = _selected_setup(
+        mocker, make_cfg, tmp_path, files={} if empty else None
+    )
+    apply = mocker.patch("jailbee.pr_outbox.apply_manifest")
+    confirm = mocker.Mock(side_effect=AssertionError("no prompt allowed"))
+    choose = mocker.Mock(side_effect=AssertionError("no choice allowed"))
+    message = "nothing here can be a draft review: no review comments or replies are pending"
+
+    def offer():
+        return offer_pending_comments(
+            cfg, incus, "c", "feature", pr_number=None,
+            manifest_names=() if empty else ("one.json",),
+            draft=True, can_prompt=False, raise_errors=raise_errors,
+            confirm=confirm, choose_mode=choose,
+        )
+
+    if raise_errors:
+        with pytest.raises(OutboxError, match=message):
+            offer()
+    else:
+        assert offer() == 1
+        captured = capsys.readouterr()
+        assert message in captured.out + captured.err
+    apply.assert_not_called()
+    confirm.assert_not_called()
+    choose.assert_not_called()
+
+
 def test_draft_skips_non_draftable_manifest_in_same_run(mocker, make_cfg, tmp_path, capsys):
     from jailbee.pr_outbox import offer_pending_comments
 
