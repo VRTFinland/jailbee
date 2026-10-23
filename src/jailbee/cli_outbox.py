@@ -432,7 +432,10 @@ def apply(
         bool,
         typer.Option(
             "--draft",
-            help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it).",
+            help=(
+                "Publish PR review comments and replies as your pending GitHub review "
+                "(only you see it until you submit it)."
+            ),
         ),
     ] = False,
     yes: YesOption = False,
