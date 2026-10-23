@@ -36,7 +36,7 @@ from pydantic import (
 
 from jailbee.egress import parse_egress_entry
 
-PINNED_LITELLM_VERSION = "1.106.2"
+PINNED_LITELLM_VERSION = "1.106.0"
 """The version `provision/litellm/requirements.lock` was compiled for."""
 
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
