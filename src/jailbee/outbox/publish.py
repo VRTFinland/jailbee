@@ -160,7 +160,10 @@ def issue_plan_json(
     Text fields come from the container and are emitted as-is; consumers
     sanitize them before display.
     """
-    warnings = [f"{issue_outbox.FOREIGN_WARNING.strip()}: {slug}" for slug in batch.foreign_slugs]
+    warnings = [
+        f"foreign repository {slug}: not this repo or one of its submodules"
+        for slug in batch.foreign_slugs
+    ]
     actions: list[dict[str, object]] = []
     pending = 0
     for prepared in batch.manifests:
@@ -413,8 +416,12 @@ def publish_selected(
         pr.PrError,
         pr_outbox.GateError,
     ) as exc:
-        if plan_sink is not None and isinstance(
-            exc, (pr_outbox.GateError, issue_outbox.IssueGateError)
+        # A failed read or transport (IssueExecutionError) is not a refusal of
+        # the plan: it takes the normal error path.
+        if (
+            plan_sink is not None
+            and isinstance(exc, (pr_outbox.GateError, issue_outbox.IssueGateError))
+            and not isinstance(exc, issue_outbox.IssueExecutionError)
         ):
             plan_sink(_gate_refusal_plan(proposal, plan_revision, exc))
             return 1

@@ -1219,7 +1219,7 @@ def test_ask_publish_mode_aggregate_draft_count(mocker):
 # --- machine-readable plan (publish_selected plan_sink) ----------------------
 
 
-def _sink_publish(env, kind, sink, *, options=None, raise_errors=False):
+def _sink_publish(env, kind, sink, *, options=None, raise_errors=False, expected_revision=None):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
     cfg, incus, _, journals, *_ = env
@@ -1232,6 +1232,7 @@ def _sink_publish(env, kind, sink, *, options=None, raise_errors=False):
         options=options or PublishOptions(dry_run=True, foreign=True),
         confirm=lambda n: pytest.fail("a plan never asks"),
         raise_errors=raise_errors,
+        expected_revision=expected_revision,
         plan_sink=sink,
     )
 
@@ -1398,3 +1399,61 @@ def test_plan_sink_requires_one_selected_manifest(env):
             raise_errors=True,
             plan_sink=lambda d: None,
         )
+
+
+def _stale_pr_env(env, mocker):
+    payload = json.loads(pr_files()["001.json"])
+    payload["repo"] = "acme/repo"
+    env[2]["pr"] = store("pr", {"001.json": json.dumps(payload)})
+    mocker.patch.object(
+        pr,
+        "resolve_pr",
+        return_value=pr.PrInfo(
+            number=42, head_ref="feature", head_sha="b" * 40, state="OPEN", base_ref="main"
+        ),
+    )
+
+
+def test_plan_sink_stale_refusal_with_raise_errors(env, mocker):
+    # The production path (apply_selected passes raise_errors=True): the sink
+    # catch must run before the raise_errors re-raise.
+    _stale_pr_env(env, mocker)
+    got = []
+    assert _sink_publish(env, "pr", got.append, raise_errors=True) == 1
+    (data,) = got
+    assert data["refusals"][0]["stale"] is True
+
+
+def test_plan_sink_gate_refusal_with_raise_errors(env, mocker):
+    mocker.patch.object(
+        issue_outbox, "prepare_batch", side_effect=issue_outbox.IssueGateError("nope")
+    )
+    got = []
+    assert _sink_publish(env, "issue", got.append, raise_errors=True) == 1
+    assert got[0]["refusals"] == [{"reason": "nope", "stale": False}]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_plan_sink_execution_error_is_not_a_refusal(env, mocker, raise_errors, capsys):
+    from jailbee.outbox.models import OutboxExecutionError
+
+    mocker.patch.object(
+        issue_outbox, "prepare_batch", side_effect=issue_outbox.IssueExecutionError("gh down")
+    )
+    got = []
+    if raise_errors:
+        with pytest.raises(OutboxExecutionError, match="gh down"):
+            _sink_publish(env, "issue", got.append, raise_errors=True)
+    else:
+        assert _sink_publish(env, "issue", got.append) == 1
+        assert "gh down" in capsys.readouterr().err
+    assert got == []
+
+
+def test_plan_sink_outbox_changed_still_propagates(env):
+    from jailbee.outbox.models import OutboxChanged
+
+    got = []
+    with pytest.raises(OutboxChanged):
+        _sink_publish(env, "issue", got.append, expected_revision="stale-token", raise_errors=True)
+    assert got == []
