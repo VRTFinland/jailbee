@@ -78,7 +78,7 @@ class LocalOutboxRunner:
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
     ) -> None:
-        """A detached job; OSError/ValueError (no cwd, already running, refused) reach the controller."""
+        """A detached job; OSError/ValueError (no cwd, running, refused) reach the controller."""
         refusal = self._refusal(argv)
         if refusal is not None:
             raise ValueError(refusal)
