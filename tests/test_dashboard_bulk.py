@@ -31,6 +31,49 @@ def test_stop_takes_the_running_and_skips_the_stopped(tmp_path):
     assert action.label == "Stop (1)"
 
 
+def test_outbox_clear_takes_containers_with_pending_manifests(tmp_path):
+    pending = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2, pending_issue_actions=0)
+    empty = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=0, pending_issue_actions=0)
+    groups = [_group(tmp_path,
+        ci("alpha-a", "alpha", git_status=pending),
+        ci("alpha-b", "alpha", git_status=empty),
+        ci("alpha-c", "alpha", "Stopped", git_status=pending),
+    )]
+
+    action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b", "alpha-c"], "outbox clear")
+
+    assert action.eligible == ("alpha-a",)
+    assert action.skipped == (("alpha-b", "outbox empty"), ("alpha-c", "not running"))
+    assert action.mode == "parallel"
+    assert action.label == "Clear outbox… (1)"
+    assert bulk.BULK_KEYS[action.verb] == "X"
+    assert action.verb in bulk.TUI_ONLY_VERBS
+    assert action.verb not in bulk.DETACHED_MENU_VERBS
+    verbs = [a.verb for a in bulk.bulk_actions(groups, ["alpha-a"])]
+    assert verbs[-2:] == ["outbox clear", "destroy"]
+    assert bulk.BULK_VERBS.index("outbox clear") == bulk.BULK_VERBS.index("rename --clear") + 1
+
+
+def test_outbox_clear_argv_confirms_itself():
+    assert bulk.bulk_argv("outbox clear", "alpha-a") == ["outbox", "clear", "alpha-a", "-y"]
+
+
+def test_outbox_clear_asks_itself():
+    assert not bulk.needs_confirm(bulk.BulkAction("outbox clear", ("alpha-a", "alpha-b")))
+
+
+def test_outbox_clear_lines_count_per_store(tmp_path):
+    groups = [_group(tmp_path,
+        ci("alpha-a", "alpha", git_status=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2, pending_issue_actions=3)),
+        ci("alpha-b", "alpha", git_status=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=None, pending_issue_actions=1)),
+    )]
+
+    assert bulk.outbox_clear_lines(groups, ["alpha-b", "alpha-a"]) == (
+        "alpha-b: 1 manifests (0 PR, 1 issue)",
+        "alpha-a: 5 manifests (2 PR, 3 issue)",
+    )
+
+
 def test_start_skips_a_running_container(tmp_path):
     groups = [_group(tmp_path, ci("alpha-a", "alpha"), ci("alpha-b", "alpha", "Stopped"))]
 

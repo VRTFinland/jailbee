@@ -255,6 +255,7 @@ _MENU_KEYS: dict[str, str] = {
     "tmux": "t",
     "shell": "s",
     "outbox browse": "o",
+    "outbox clear": "X",
     "Launch →": "a",
     "start": "s",
     "job log": "b",
