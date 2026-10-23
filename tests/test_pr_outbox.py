@@ -3092,6 +3092,161 @@ def _selected_offer(cfg, incus, **kwargs):
     )
 
 
+def _draft_offer_setup(mocker, make_cfg, tmp_path, *, extra=False):
+    from jailbee.pr_outbox import ApplyOutcome
+
+    _, text = _draft_manifest()
+    files = {"one.json": text}
+    if extra:
+        files["two.json"] = _manifest_text(
+            pr=7,
+            actions=[{"type": "comment", "body": "public"},
+                     {"type": "description", "body": "not public"}],
+        )
+    cfg, incus, *rest = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7))
+    incus.config_get.side_effect = lambda c, key: {"user.jailbee.pr": "7"}.get(key)
+    mocker.patch("jailbee.pr_outbox._current_pr_body", return_value="old")
+    apply = mocker.patch("jailbee.pr_outbox.apply_manifest", return_value=ApplyOutcome((), (), None))
+    mocker.patch("jailbee.pr_outbox.finalize")
+    return cfg, incus, apply
+
+
+def test_choose_mode_offered_only_when_draftable(mocker, make_cfg, tmp_path):
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    choose = mocker.Mock(return_value="draft")
+    confirm = mocker.Mock(return_value=False)
+    assert _selected_offer(cfg, incus, confirm=confirm, choose_mode=choose) == 0
+    choose.assert_not_called()
+    confirm.assert_called_once_with(1)
+
+
+@pytest.mark.parametrize("mode,indices", [("draft", {0, 1, 3}), ("publish", None)])
+def test_choose_mode_draft_publishes_into_pending(mocker, make_cfg, tmp_path, mode, indices):
+    from jailbee.pr_outbox import DraftPreview
+
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    choose = mocker.Mock(return_value=mode)
+    confirm = mocker.Mock(side_effect=AssertionError("no extra question"))
+    assert _selected_offer(cfg, incus, confirm=confirm, choose_mode=choose) == 0
+    choose.assert_called_once_with(4, DraftPreview(7, 2, 1, True))
+    assert apply.call_args.kwargs["indices"] == indices
+    assert apply.call_args.kwargs.get("draft", False) == (mode == "draft")
+
+
+def test_choose_mode_none_publishes_nothing(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    assert _selected_offer(cfg, incus, choose_mode=lambda *_: None) == 0
+    apply.assert_not_called()
+    assert "Nothing published." in capsys.readouterr().out
+
+
+def test_preselected_draft_asks_yes_no_with_draft_total(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    confirm = mocker.Mock(return_value=True)
+    choose = mocker.Mock(side_effect=AssertionError("preselected"))
+    assert _selected_offer(cfg, incus, confirm=confirm, draft=True, choose_mode=choose) == 0
+    confirm.assert_called_once_with(3)
+    assert apply.call_args.kwargs["indices"] == {0, 1, 3}
+    assert apply.call_args.kwargs["draft"] is True
+    output = capsys.readouterr().out
+    assert "held back in draft mode: action 2 (general comment)" in output
+    assert "action 0: pending" in output
+    assert "action 1: pending" in output
+    assert "action 3: published" in output
+
+
+def test_draft_summary_line_above_question(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, _ = _draft_offer_setup(mocker, make_cfg, tmp_path)
+
+    def choose(total, preview):
+        output = capsys.readouterr().out
+        assert output.rstrip().endswith(
+            "As a draft: 2 go into your pending review on PR #7; "
+            "1 general comment(s) held back; the description is published."
+        )
+        return None
+
+    assert _selected_offer(cfg, incus, choose_mode=choose) == 0
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_draft_with_nothing_draftable_is_an_error(mocker, make_cfg, tmp_path, capsys, raise_errors):
+    from jailbee.pr_outbox import OutboxError
+
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    message = "nothing here can be a draft review: no review comments or replies are pending"
+    if raise_errors:
+        with pytest.raises(OutboxError, match=message):
+            _selected_offer(cfg, incus, draft=True, raise_errors=True)
+    else:
+        assert _selected_offer(cfg, incus, draft=True) == 1
+        captured = capsys.readouterr()
+        assert message in captured.out + captured.err
+
+
+def test_draft_skips_non_draftable_manifest_in_same_run(mocker, make_cfg, tmp_path, capsys):
+    from jailbee.pr_outbox import offer_pending_comments
+
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path, extra=True)
+    confirm = mocker.Mock(return_value=True)
+    assert offer_pending_comments(
+        cfg, incus, "c", "feature", pr_number=None, confirm=confirm,
+        manifest_names=("one.json", "two.json"), draft=True,
+    ) == 0
+    confirm.assert_called_once_with(3)
+    apply.assert_called_once()
+    assert apply.call_args.args[3].manifest.name == "one.json"
+    assert "two.json: no review comments or replies; left for a normal publish" in capsys.readouterr().out
+
+
+def test_dry_run_draft_lists_held_back_and_publishes_nothing(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    confirm = mocker.Mock(side_effect=AssertionError("dry run"))
+    assert _selected_offer(cfg, incus, confirm=confirm, draft=True, dry_run=True) == 0
+    apply.assert_not_called()
+    output = capsys.readouterr().out
+    assert "As a draft: 2 go into your pending review on PR #7" in output
+    assert "held back in draft mode: action 2 (general comment)" in output
+    assert output.rstrip().endswith("Dry run: nothing was published.")
+
+
+def test_pr_offer_subset_draft_excludes_description(mocker, make_cfg, tmp_path):
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    previews = []
+    assert _selected_offer(
+        cfg, incus, pr_number=7,
+        choose_mode=lambda total, preview: previews.append((total, preview)) or "draft",
+    ) == 0
+    assert previews[0][0] == 3
+    assert previews[0][1].description is False
+    assert apply.call_args.kwargs["indices"] == {0, 1}
+
+
+@pytest.mark.parametrize("indices", [frozenset(), frozenset({2, 3})])
+def test_draft_does_not_offer_applied_or_excluded_review(mocker, make_cfg, tmp_path, indices):
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    from jailbee.pr_outbox import Target
+
+    manifest, _ = _draft_manifest()
+    target = Target(manifest=manifest, scope=PrScope.for_repo(cfg), pr=_pr_info(number=7), stale=False)
+    mocker.patch("jailbee.pr_outbox._gate_manifests", return_value=([target], [], []))
+    mocker.patch("jailbee.pr_outbox._offerable_indices", return_value=indices)
+    assert _selected_offer(cfg, incus, pr_number=7, draft=True) == 1
+    apply.assert_not_called()
+
+
+def test_draft_counts_only_pending_indices(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress
+
+    cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.pr_outbox._publication_progress", return_value=Progress(frozenset({0}), {}))
+    confirm = mocker.Mock(return_value=True)
+    assert _selected_offer(cfg, incus, draft=True, confirm=confirm) == 0
+    confirm.assert_called_once_with(2)
+    assert apply.call_args.kwargs["indices"] == {1, 3}
+
+
 def _revision(tmp_path, identity, store):
     from jailbee.outbox.inspect import build_views
     from jailbee.outbox_io import JournalStore

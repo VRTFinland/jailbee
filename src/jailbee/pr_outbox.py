@@ -20,9 +20,10 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, assert_never
+from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from rich.markup import escape
 from rich.text import Text
@@ -53,7 +54,7 @@ from jailbee.pr_ai import PrText
 from jailbee.tui import console, error_plain, info, warn, warn_plain
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from jailbee.config import Config
     from jailbee.pr import PrInfo
@@ -959,6 +960,10 @@ class DraftPreview:
     pending: int
     held_back: int
     description: bool
+
+
+PublishMode = Literal["publish", "draft"]
+ChooseMode = Callable[[int, DraftPreview], PublishMode | None]
 
 
 def draftable(manifest: Manifest, indices: Iterable[int]) -> bool:
@@ -2244,6 +2249,8 @@ def offer_pending_comments(
     raise_errors: bool = False,
     allow_foreign: bool = False,
     allow_foreign_repo: bool = False,
+    draft: bool = False,
+    choose_mode: ChooseMode | None = None,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2268,7 +2275,7 @@ def offer_pending_comments(
             raise OutboxError("expected_revision requires one selected manifest")
         if not explicit and outbox is None:
             outbox = read_outbox(incus, container, uid=cfg.container_user.uid)
-            if not outbox.manifest_names:
+            if not outbox.manifest_names and not draft:
                 return 0
         identity = container_identity(incus, container)
         with manager.lock(identity):
@@ -2322,6 +2329,8 @@ def offer_pending_comments(
                 raise_errors=raise_errors,
                 allow_foreign=allow_foreign,
                 allow_foreign_repo=allow_foreign_repo,
+                draft=draft,
+                choose_mode=choose_mode,
             )
     except (
         OutboxReadError,
@@ -2360,6 +2369,8 @@ def _offer_locked(
     raise_errors: bool = False,
     allow_foreign: bool = False,
     allow_foreign_repo: bool = False,
+    draft: bool = False,
+    choose_mode: ChooseMode | None = None,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -2405,7 +2416,7 @@ def _offer_locked(
     """
     for_offer = pr_number is not None
     uid = cfg.container_user.uid
-    if not outbox.manifest_names:
+    if not outbox.manifest_names and not draft:
         return 0
 
     targets, refusals, notes = _gate_manifests(
@@ -2426,7 +2437,7 @@ def _offer_locked(
         error_plain(message)
     for message in notes:
         warn_plain(message)
-    if not targets:
+    if not targets and not draft:
         # Refusals are failures; a deferral or a held-back manifest only means
         # the work belongs to another command, which is not a reason to fail.
         return max(1, len(refusals)) if selected_publication else len(refusals)
@@ -2484,6 +2495,45 @@ def _offer_locked(
         if warning is not None:
             console.print(Text(f"⚠ {safe_text(warning)}", style="bold yellow"), highlight=False)
 
+    draft_plans = []
+    for target, progress, idx in plans:
+        pending = pending_indices(target.manifest, progress) if idx is None else idx
+        if draftable(target.manifest, pending):
+            assert target.pr is not None
+            draft_plans.append((target, progress, pending))
+    if draft and not draft_plans:
+        message = "nothing here can be a draft review: no review comments or replies are pending"
+        if raise_errors:
+            raise OutboxError(message)
+        error_plain(message)
+        return len(refusals) + 1
+
+    previews = []
+    if draft_plans and (draft or choose_mode is not None):
+        for target, progress, pending in draft_plans:
+            assert target.pr is not None
+            preview = draft_preview(target.manifest, target.pr.number, pending)
+            previews.append(preview)
+            if draft:
+                for i in sorted(pending):
+                    action = target.manifest.actions[i]
+                    if isinstance(action, CommentAction):
+                        label = f"held back in draft mode: action {i} (general comment)"
+                    elif isinstance(action, DescriptionAction):
+                        label = f"action {i}: published (description)"
+                    else:
+                        label = f"action {i}: pending (in your pending review)"
+                    console.print(f"  {label}", markup=False, highlight=False)
+        # Keep all summaries together immediately above the single choice.
+        for preview in previews:
+            clauses = [f"{preview.pending} go into your pending review on PR #{preview.pr}"]
+            if preview.held_back:
+                clauses.append(f"{preview.held_back} general comment(s) held back")
+            if preview.description:
+                clauses.append("the description is published")
+            console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
+
+    total_draft = sum(len(draft_indices(t.manifest, pending)) for t, _, pending in draft_plans)
     if dry_run:
         info("Dry run: nothing was published.")
         # A refusal sets the exit code on every path: something the container
@@ -2495,13 +2545,36 @@ def _offer_locked(
         # it. There is nothing to publish and so nothing to confirm — only the
         # bookkeeping below, which deletes the spent manifests.
         info("Every action here has already been published; finishing the bookkeeping.")
-    elif not confirm(total):
-        info(
-            f"Nothing published. `jailbee review apply {short}` posts them later."
-            if for_offer
-            else "Nothing published."
-        )
-        return len(refusals)
+    else:
+        if draft:
+            accepted = confirm(total_draft)
+        elif draft_plans and choose_mode is not None:
+            mode = choose_mode(total, previews[0])
+            accepted = mode is not None
+            draft = mode == "draft"
+        else:
+            accepted = confirm(total)
+        if not accepted:
+            info(
+                f"Nothing published. `jailbee review apply {short}` posts them later."
+                if for_offer
+                else "Nothing published."
+            )
+            return len(refusals)
+
+    if draft:
+        selected_plans: list[tuple[Target, Progress, frozenset[int] | None]] = []
+        for target, progress, idx in plans:
+            pending = pending_indices(target.manifest, progress) if idx is None else idx
+            if not draftable(target.manifest, pending):
+                console.print(
+                    f"  {safe_text(target.manifest.name)}: no review comments or replies; "
+                    "left for a normal publish",
+                    markup=False, highlight=False, soft_wrap=True,
+                )
+                continue
+            selected_plans.append((target, progress, draft_indices(target.manifest, pending)))
+        plans = selected_plans
 
     from jailbee.outbox import io as store_io
 
@@ -2540,7 +2613,7 @@ def _offer_locked(
     outbox = Outbox(fresh_store.as_dict(), fresh_store.rejected, identity)
     failures = len(refusals)
     for position, (target, progress, idx) in enumerate(plans):
-        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid, indices=idx)
+        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft)
         _print_receipts(target, outcome)
         stop = False
         try:
