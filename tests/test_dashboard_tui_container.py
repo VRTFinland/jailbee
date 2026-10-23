@@ -11,6 +11,8 @@ import pytest
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
+from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import (
     autostart_ci,
@@ -1336,3 +1338,54 @@ def test_outbox_apply_permission_does_not_authorize_create_pr(mocker, tmp_path):
     )
     actions = [p for p in run.of_type(tsession.Picker) if p.purpose == "container-outbox-proposal"]
     assert [e.value for e in actions[0].entries] == ["show"]
+
+
+def test_an_orphan_row_opens_its_own_small_menu(mocker):
+    group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
+
+    menu = tmenu.open_menu([group], "gamma-x")
+
+    assert menu is not None
+    assert [verb for _label, verb in menu.actions] == [
+        "orphan tmux",
+        "orphan shell",
+        "orphan stop",
+        "orphan destroy",
+    ]
+
+
+def test_an_orphan_row_has_no_menu_in_a_remote_session():
+    group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
+
+    assert tmenu.open_menu([group], "gamma-x", remote=True, over_ssh=True) is None
+
+
+def test_an_orphan_action_runs_from_home_with_no_config_flag(mocker):
+    group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
+    dispatch = mocker.patch.object(tsession, "_dispatch_action", return_value=0)
+
+    drive(mocker, container_menu_keys(group, "orphan tmux"), groups=[group])
+
+    dispatch.assert_called_once()
+    target, verb, name = dispatch.call_args.args[:3]
+    assert (target, verb, name) == (dmodel.RepoTarget.orphan(), "orphan tmux", "gamma-x")
+
+
+def test_an_orphan_destroy_is_dispatched_so_the_cli_asks(mocker):
+    group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
+    dispatch = mocker.patch.object(tsession, "_dispatch_action", return_value=0)
+
+    drive(mocker, container_menu_keys(group, "orphan destroy"), groups=[group])
+
+    assert dispatch.call_args.args[1] == "orphan destroy"
+
+
+def test_the_dispatcher_runs_an_orphan_verb_as_a_plain_cli_child(mocker):
+    run = mocker.patch.object(ddispatch.subprocess, "run")
+    run.return_value.returncode = 0
+    mocker.patch.object(ddispatch, "_wait_for_return")
+
+    ddispatch._dispatch_action(dmodel.RepoTarget.orphan(), "orphan stop", "gamma-x")
+
+    assert run.call_args.args[0] == ["jailbee", "orphan", "stop", "gamma-x"]
+    assert run.call_args.kwargs["cwd"] == dmodel.RepoTarget.orphan().cwd()

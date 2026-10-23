@@ -232,6 +232,14 @@ class RepoTarget:
             return None
         return cls(Path(group.repo_root), group.config_path)
 
+    @classmethod
+    def orphan(cls) -> RepoTarget:
+        """The target for an orphan row's `jailbee orphan …` child: no repo, run from home.
+
+        `orphan` commands read no repo, so the cwd only has to exist.
+        """
+        return cls(Path.home(), None)
+
     def flags(self) -> list[str]:
         """The ``--config`` argv fragment, empty when there is no file."""
         return ["--config", str(self.config_path)] if self.config_path is not None else []

@@ -249,6 +249,8 @@ def command_path(argv: Sequence[str]) -> str:
 #     `remote.ssh.mounts` unlocks it (`RemoteUnlocks`), `port to-container`;
 #   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`;
 #   - a second console: `console` runs with the local, unrestricted policy;
+#   - containers no repo owns: `orphan` — the excluded-repo scope has no repo
+#     to check them against;
 # `tests/test_remote_ssh_router.py` partitions every public leaf between this
 # set and the container-side rest, so a new command fails the suite until
 # someone decides which side it is on.
@@ -300,6 +302,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "browser",
         "apps run",
         "console",
+        "orphan",
     }
 )
 

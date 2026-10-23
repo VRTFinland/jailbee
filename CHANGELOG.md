@@ -42,6 +42,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **A `jailbee-bug-report` agent skill.** An in-container agent that finds
+  JailBee itself misbehaving can stage a bug report against the JailBee
+  repository through the issue outbox; a human publishes it on the host. The
+  skill is copied into each agent's skills directory by `jailbee apply`.
 - **Dashboard: clock times in the agent activity.** The tool line, the last
   message and each history row on a container card lead with a dim local
   `HH:MM`, so you can tell when each step happened.

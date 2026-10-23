@@ -363,6 +363,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "root-only, so non-root programs in strict containers ignored the pinned IPs"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the `jailbee-bug-report` skill is new and `jailbee apply` syncs it "
+            "into the shared skills mount"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

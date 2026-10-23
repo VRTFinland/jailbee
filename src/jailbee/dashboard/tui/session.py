@@ -88,6 +88,7 @@ from jailbee.dashboard.jobs import JobResult, JobRunner, needs_terminal
 from jailbee.dashboard.menus import (
     APPS_RUN_PREFIX,
     ATTACH_VERBS,
+    ORPHAN_VERB_PREFIX,
     REMOTE_CONFIG_EDIT_NOTE,
     actions_for_container,
     config_edit_reject_note_for_prefix,
@@ -645,7 +646,9 @@ class DashboardSession:
             return None
         repo = RepoTarget.of(group)
         if repo is None:
-            return None  # an orphan group: no repo root to address a child at
+            if not verb.startswith(ORPHAN_VERB_PREFIX):
+                return None  # an orphan group: no repo root to address a child at
+            repo = RepoTarget.orphan()
         try:
             check_dashboard_command(
                 dashboard_action_argv(
@@ -667,6 +670,7 @@ class DashboardSession:
                 remote=self.remote,
                 ssh_policy=self.ssh_policy,
                 over_ssh=self.over_ssh,
+                orphans=True,
             )
         }:
             self.set_notice(f"Action '{verb}' is no longer available for '{target}'")

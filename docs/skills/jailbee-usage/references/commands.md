@@ -526,6 +526,26 @@ autostart run — destroying a container mid-run tears it down out from
 under its own supervisor. Cancel first with `jailbee autostart cancel` if
 that matters to you.
 
+### `jailbee orphan ls|tmux|shell|start|stop|destroy [NAME]`
+
+An **orphan** is a jailbee container whose repo can no longer be found — the
+directory was deleted or moved, or its config no longer loads. Every ordinary
+command resolves names through the current repo's prefix and cannot reach one;
+these take the **full container name** and read no repo. `ls` lists them (the
+rows the dashboard files under `(orphan)`).
+
+| Command | Effect |
+|---|---|
+| `tmux` / `shell [--user dev\|root]` | Attach to a running orphan (the repo dir comes from its `user.jailbee.repo_dir` label, else the dev home). A stopped one is refused with the `start` command to run. |
+| `start` / `stop [--force]` | Change its state; no autostart steps, those were the lost repo's. |
+| `destroy [--force]` | Stop, delete, drop its egress ACL and background-job row. Always picks from a list when `NAME` is omitted; asks unless `--force` (off a terminal without `--force`: exit 2). |
+
+`destroy` leaves what needs the lost repo: `refs/jailbee/*` transfer refs there,
+and pooled cache slots (the pool reclaims them itself). A `NAME` that belongs to
+a repo that does load exits 1 — use the ordinary command from that repo. All six
+are host commands over remote SSH. The terminal dashboard's orphan rows run
+these; the Qt dashboard still shows them view-only.
+
 **The destroy guard.** Before the confirmation above, JailBee assesses what the
 destroy would discard: a dirty working tree, a changed submodule, commits
 that exist on neither the host nor a remote-tracking ref (`remote_contained
@@ -869,7 +889,7 @@ transcript, so the details panel and Qt tooltip show no activity lines), and the
 `-i`/`--interval`, `--git-interval` and `--no-git` are deprecated: warned about
 and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
 make the service gather. Requires a TTY on stdin, stdout and stderr (`jailbee dashboard 2>file` is refused). Orphan containers (jailbee-managed but
-repo not registered) show view-only.
+repo not registered) get a small menu in the terminal dashboard — Attach tmux, Open shell, Start/Stop, Destroy — running `jailbee orphan …`; the Qt dashboard and remote SSH sessions show them view-only.
 
 `Space` toggles a container's mark without moving the cursor. Marked rows show `●`;
 while anything is marked, Enter on a container opens an *N selected*

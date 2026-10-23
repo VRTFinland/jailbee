@@ -390,13 +390,17 @@ def actions_for_container(
     remote: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
+    orphans: bool = False,
 ) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
 
     Single source of truth shared by the TUI action menu, the Qt table view,
     and the Qt card view. Returns ``[]`` for an unknown container or a
-    view-only (orphan) group. ``remote`` is :attr:`MenuContext.remote`; the
-    Qt views never pass it, since a remote session never gets them.
+    view-only (orphan) group — unless ``orphans`` is set, which only the
+    terminal dashboard does: it gives an orphan the :func:`orphan_actions`
+    (`jailbee orphan …`, never offered remotely: they are host commands).
+    ``remote`` is :attr:`MenuContext.remote`; the Qt views never pass it,
+    since a remote session never gets them.
     """
     group = _find_group(groups, name)
     if group is None or name is None:
@@ -404,6 +408,8 @@ def actions_for_container(
     container = next((c for c in group.containers if c.name == name), None)
     if container is None:
         return []
+    if RepoTarget.of(group) is None:
+        return orphan_actions(container.state) if orphans and not (remote or over_ssh) else []
     from jailbee import background
 
     job_clearable = (
@@ -446,6 +452,27 @@ def actions_for_container(
             permitted.append((label, verb))
         return permitted
     return actions
+
+
+ORPHAN_VERB_PREFIX = "orphan "
+
+
+def orphan_actions(state: str) -> list[tuple[str, str]]:
+    """The whole menu of an orphan row: what `jailbee orphan` can do without a repo.
+
+    Session, then lifecycle; `Start` only for a stopped one, the rest only for
+    a running one, `Destroy` always.
+    """
+    if state == "Running":
+        return [
+            ("Attach tmux", "orphan tmux"),
+            ("Open shell", "orphan shell"),
+            ("Stop", "orphan stop"),
+            ("Destroy", "orphan destroy"),
+        ]
+    if state == "Stopped":
+        return [("Start", "orphan start"), ("Destroy", "orphan destroy")]
+    return [("Destroy", "orphan destroy")]
 
 
 def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
