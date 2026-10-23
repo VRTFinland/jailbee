@@ -46,8 +46,12 @@ def env(mocker, make_cfg, tmp_path):
 def clear(env, confirm, **kwargs):
     cfg, incus, _, _, _, journals = env
     return commands.clear_selected(
-        cfg, incus, ["acme-feature", "acme-other"],
-        journal_store=journals, confirm=confirm, **kwargs
+        cfg,
+        incus,
+        ["acme-feature", "acme-other"],
+        journal_store=journals,
+        confirm=confirm,
+        **kwargs,
     )
 
 
@@ -57,9 +61,12 @@ def test_clears_both_stores_after_one_confirmation(env, mocker, capsys):
     confirm.assert_called_once()
     assert len(confirm.call_args.args[0]) == 2
     mutation = env[4]
-    assert {(c.args[1], c.args[2], c.kwargs["delete_names"][0]) for c in mutation.call_args_list} == {
+    assert {
+        (c.args[1], c.args[2], c.kwargs["delete_names"][0]) for c in mutation.call_args_list
+    } == {
         (name, kind, "001.json")
-        for name in ("acme-feature", "acme-other") for kind in ("pr", "issue")
+        for name in ("acme-feature", "acme-other")
+        for kind in ("pr", "issue")
     }
     assert "acme-feature: deleted 2 (1 PR, 1 issue)" in capsys.readouterr().out
 
