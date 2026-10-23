@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
     from jailbee.outbox.delete import ContainerClearPlan
     from jailbee.outbox_io import JournalStore
-    from jailbee.pr_outbox import ChooseMode, DraftPreview, PublishMode
+    from jailbee.pr_outbox import ChooseMode, DraftPreview, PlanSink, PublishMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
@@ -205,6 +205,7 @@ def apply_selected(
     confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
     choose_mode: ChooseMode | None = None,
+    plan_sink: PlanSink | None = None,
 ) -> int:
     if proposal.kind == "issue" and options.draft:
         raise OutboxError("draft is only valid for PR publication")
@@ -244,6 +245,7 @@ def apply_selected(
         confirm_foreign=confirm_foreign,
         expected_revision=view.revision,
         raise_errors=True,
+        plan_sink=plan_sink,
     )
 
 

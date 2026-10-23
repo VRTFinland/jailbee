@@ -800,6 +800,26 @@ def test_outbox_shorthand_is_browse_not_help(argv):
         policy_allows(argv, RemoteCommandPolicy())
 
 
+def test_outbox_apply_json_dry_run_allowed_over_ssh():
+    argv = (
+        "outbox",
+        "apply",
+        "c",
+        "pr/x.json",
+        "--dry-run",
+        "-o",
+        "json",
+        "--foreign",
+        "--revision",
+        "r",
+    )
+    for policy in (FULL, RemoteCommandPolicy(mode="allowlist", allow=["outbox apply"])):
+        assert policy_allows(argv, policy) == "outbox apply"
+    check_arguments(argv)
+    with pytest.raises(RouteError):
+        policy_allows((*argv, "-y"), FULL)
+
+
 @pytest.mark.parametrize(
     "options", [("--yes",), ("-y",), ("-yy",), ("--yes=true",), ("--yes=false",), ("-fy",)]
 )

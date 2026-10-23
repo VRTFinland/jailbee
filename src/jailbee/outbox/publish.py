@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee import issue_outbox, pr, pr_outbox, prompting
+from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.outbox.inspect import build_views, safe_text
 from jailbee.outbox.io import PrManagement
@@ -152,6 +152,83 @@ def print_issue_outcome(
             info_plain(safe_text(line.text))
 
 
+def issue_plan_json(
+    batch: issue_outbox.PreparedBatch, *, proposal: str, revision: str
+) -> dict[str, object]:
+    """The machine-readable plan of an issue batch; mirrors `pr_outbox.pr_plan_json`.
+
+    Text fields come from the container and are emitted as-is; consumers
+    sanitize them before display.
+    """
+    warnings = [f"{issue_outbox.FOREIGN_WARNING.strip()}: {slug}" for slug in batch.foreign_slugs]
+    actions: list[dict[str, object]] = []
+    pending = 0
+    for prepared in batch.manifests:
+        for resolved in prepared.actions:
+            action = resolved.action
+            kind = (
+                "create"
+                if isinstance(action, issue_manifest.CreateAction)
+                else "edit"
+                if isinstance(action, issue_manifest.EditAction)
+                else "comment"
+                if isinstance(action, issue_manifest.CommentAction)
+                else "labels"
+                if isinstance(action, issue_manifest.LabelsAction)
+                else "state"
+            )
+            if resolved.issue.number is not None:
+                target = f"{resolved.repo.slug}#{resolved.issue.number}"
+            else:
+                target = f"{resolved.repo.slug} (new: {resolved.issue.ref})"
+            will = {"pending": "publish", "applied": "already_published"}.get(
+                resolved.status, "refused"
+            )
+            pending += resolved.status == "pending"
+            actions.append(
+                {
+                    "index": resolved.index,
+                    "kind": kind,
+                    "target": target,
+                    "will": will,
+                    "will_draft": None,
+                }
+            )
+    return {
+        "schema": 1,
+        "proposal": proposal,
+        "kind": "issue",
+        "revision": revision,
+        "login": batch.login,
+        "foreign": bool(batch.foreign_slugs),
+        "draftable": False,
+        "total": pending,
+        "total_draft": 0,
+        "warnings": warnings,
+        "refusals": [],
+        "notes": [],
+        "actions": actions,
+    }
+
+
+def _gate_refusal_plan(proposal: ProposalId, revision: str, exc: Exception) -> dict[str, object]:
+    return {
+        "schema": 1,
+        "proposal": str(proposal),
+        "kind": proposal.kind,
+        "revision": revision,
+        "refusals": [{"reason": str(exc), "stale": isinstance(exc, pr_outbox.StaleError)}],
+        "actions": [],
+        "warnings": [],
+        "notes": [],
+        "foreign": False,
+        "draftable": False,
+        "total": 0,
+        "total_draft": 0,
+        "login": None,
+    }
+
+
 def publish_selected(
     cfg: Config,
     incus: Incus,
@@ -165,6 +242,7 @@ def publish_selected(
     expected_revision: str | None = None,
     raise_errors: bool = False,
     choose_mode: pr_outbox.ChooseMode | None = None,
+    plan_sink: pr_outbox.PlanSink | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
 
@@ -173,8 +251,14 @@ def publish_selected(
     the domain's own content, target and recovery gates remain mandatory.
     raise_errors preserves typed validation/execution failures for UI callers;
     the default retains legacy printed diagnostics and integer failure counts.
+    plan_sink (dry runs only) receives the plan as JSON instead of any text;
+    a gate refusal while planning is reported to it as a refusal-only plan.
     """
+    # Known once the first freshness check passed; a refusal plan carries it.
+    plan_revision = expected_revision or ""
     try:
+        if plan_sink is not None and not options.dry_run:
+            raise OutboxError("plan output requires a dry run")
         if proposal.kind == "issue" and options.draft:
             raise OutboxError("draft is only valid for PR publication")
         if proposal.kind == "issue" and options.force:
@@ -197,6 +281,7 @@ def publish_selected(
                 expected_revision,
                 raise_errors=raise_errors,
             )
+            plan_revision = revision
             snapshot = next(s for s in fresh.stores if s.kind == proposal.kind)
             if manager is not None:
                 return pr_outbox.offer_pending_comments(
@@ -215,6 +300,7 @@ def publish_selected(
                     management=manager,
                     expected_revision=revision,
                     raise_errors=raise_errors,
+                    plan_sink=plan_sink,
                     allow_foreign=options.foreign,
                     # The outbox alone relaxes the repository lock, under the
                     # same consent: the plan names the repository it is not.
@@ -256,6 +342,9 @@ def publish_selected(
                 revision,
                 raise_errors=raise_errors,
             )
+            if plan_sink is not None:
+                plan_sink(issue_plan_json(batch, proposal=str(proposal), revision=revision))
+                return 0
             print_lines(issue_outbox.plan_lines(batch))
             if options.dry_run:
                 info_plain("Dry run: nothing was published.")
@@ -324,6 +413,11 @@ def publish_selected(
         pr.PrError,
         pr_outbox.GateError,
     ) as exc:
+        if plan_sink is not None and isinstance(
+            exc, (pr_outbox.GateError, issue_outbox.IssueGateError)
+        ):
+            plan_sink(_gate_refusal_plan(proposal, plan_revision, exc))
+            return 1
         if raise_errors:
             if isinstance(exc, (OutboxError, OutboxExecutionError)):
                 raise

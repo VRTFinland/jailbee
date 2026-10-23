@@ -1250,3 +1250,53 @@ def test_outbox_apply_draft_off_tty_refuses(publication_env, mocker):
     assert "confirmation" in result.output or "Aborted" in result.output
     picker.assert_not_called()
     draft.assert_not_called()
+
+
+def test_apply_dry_run_json_one_line(env, mocker):
+    def fake(cfg, incus, name, pid, **kwargs):
+        kwargs["plan_sink"]({"schema": 1, "proposal": str(pid), "note": "café [red]x"})
+        return 0
+
+    mocker.patch("jailbee.outbox.commands.apply_selected", side_effect=fake)
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "issue/001.json", "--dry-run", "-o", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["proposal"] == "issue/001.json"
+    assert json.loads(lines[0])["note"] == "café [red]x"
+
+
+def test_apply_json_requires_dry_run(env, mocker):
+    apply = mocker.patch("jailbee.outbox.commands.apply_selected")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json", "-o", "json"])
+    assert result.exit_code == 2
+    assert "--dry-run" in result.output
+    apply.assert_not_called()
+
+
+def test_apply_dry_run_json_never_prompts(env, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    apply = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    prompt = mocker.spy(typer, "confirm")
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "pr/001.json", "--dry-run", "-o", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    kwargs = apply.call_args.kwargs
+    assert kwargs["choose_mode"] is None
+    assert kwargs["confirm_foreign"] is None
+    assert kwargs["plan_sink"] is not None
+    assert kwargs["options"].foreign is False
+    prompt.assert_not_called()
+
+
+def test_apply_real_dry_run_json_is_parseable(publication_env, capsys):
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "issue/001.json", "--dry-run", "-o", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    (line,) = result.stdout.splitlines()
+    data = json.loads(line)
+    assert data["kind"] == "issue" and len(data["actions"]) == 3

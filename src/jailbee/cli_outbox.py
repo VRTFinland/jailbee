@@ -515,18 +515,31 @@ def apply(
     ] = False,
     yes: YesOption = False,
     revision: RevisionOption = None,
+    output: OutputOption = Output.table,
     config: ConfigOption = None,
 ) -> None:
-    """Publish one whole manifest through its existing domain gates."""
+    """Publish one whole manifest through its existing domain gates.
+
+    `-o json` (with `--dry-run` only) prints the plan as one JSON object and
+    never prompts.
+    """
+    import json
+
     from jailbee import prompting
     from jailbee.outbox.commands import apply_selected
+    from jailbee.outbox.markdown_view import print_lines
+    from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, ask_publish_mode
     from jailbee.outbox_io import JournalStore
 
+    as_json = output is Output.json
+
     def operation(cfg: Config, incus: Incus) -> int:
+        if as_json and not dry_run:
+            raise OutboxError("JSON output requires --dry-run")
         store = JournalStore()
         name, pid = _pick_target(
-            cfg, incus, container, proposal, journal_store=store, destructive=True
+            cfg, incus, container, proposal, journal_store=store, destructive=not as_json
         )
         return apply_selected(
             cfg,
@@ -539,11 +552,12 @@ def apply(
             options=PublishOptions(
                 dry_run,
                 force,
-                foreign or (pid.kind == "pr" and prompting.is_interactive() and not yes),
+                foreign
+                or (pid.kind == "pr" and prompting.is_interactive() and not yes and not as_json),
                 draft=draft,
             ),
             choose_mode=ask_publish_mode
-            if prompting.is_interactive() and not yes and not draft
+            if prompting.is_interactive() and not yes and not draft and not as_json
             else None,
             journal_store=store,
             confirm=lambda total: (
@@ -555,10 +569,15 @@ def apply(
             ),
             confirm_foreign=(
                 None
-                if yes or not prompting.is_interactive()
+                if yes or as_json or not prompting.is_interactive()
                 else (lambda question: typer.confirm(question, default=False))
             ),
             expected_revision=revision,
+            plan_sink=(
+                (lambda data: print_lines((json.dumps(data, ensure_ascii=True),)))
+                if as_json
+                else None
+            ),
         )
 
     _run(ctx, config, operation)

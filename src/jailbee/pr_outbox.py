@@ -2683,6 +2683,15 @@ def _offer_locked(
     if plan_sink is not None:
         if len(manifest_names) != 1 or revisions is None or manifest_names[0] not in revisions:
             raise OutboxError("plan output requires one selected manifest")
+        if draft and not draft_plans:
+            # Same verdict as the text path below; nothing reaches the sink.
+            message = (
+                "nothing here can be a draft review: no review comments or replies are pending"
+            )
+            if raise_errors:
+                raise OutboxError(message)
+            error_plain(message)
+            return len(refusals) + 1
         name = manifest_names[0]
         plan_sink(
             pr_plan_json(

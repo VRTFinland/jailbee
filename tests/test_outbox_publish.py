@@ -1214,3 +1214,187 @@ def test_ask_publish_mode_aggregate_draft_count(mocker):
     choose = mocker.patch("jailbee.prompting.choose", return_value=None)
     assert ask_publish_mode(12, DraftPreview(7, 1, 1, True, draft_total=5)) is None
     assert "5 pending actions" in choose.call_args.args[1][1].title
+
+
+# --- machine-readable plan (publish_selected plan_sink) ----------------------
+
+
+def _sink_publish(env, kind, sink, *, options=None, raise_errors=False):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    cfg, incus, _, journals, *_ = env
+    return publish_selected(
+        cfg,
+        incus,
+        IDENTITY.full_name,
+        ProposalId(kind, "001.json"),
+        journal_store=journals,
+        options=options or PublishOptions(dry_run=True, foreign=True),
+        confirm=lambda n: pytest.fail("a plan never asks"),
+        raise_errors=raise_errors,
+        plan_sink=sink,
+    )
+
+
+def test_issue_plan_json_foreign_and_states(env):
+    from jailbee.outbox.publish import issue_plan_json
+
+    cfg, incus, _, journals, *_ = env
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {"type": "create", "repo": ".", "ref": "n", "title": "T", "body": "B"},
+                    {"type": "comment", "repo": "github:o/x", "issue": 5, "body": "hi"},
+                    {
+                        "type": "edit",
+                        "repo": ".",
+                        "issue": 42,
+                        "title": "Done",
+                        "expected": {"title": "Old"},
+                    },
+                    {
+                        "type": "state",
+                        "repo": ".",
+                        "issue": 42,
+                        "state": "closed",
+                        "reason": "completed",
+                        "expected": {"state": "open"},
+                    },
+                ],
+            }
+        )
+    }
+    env[2]["issue"] = store("issue", files)
+    batch = issue_outbox.prepare_batch(
+        cfg,
+        incus,
+        IDENTITY.full_name,
+        ("001.json",),
+        uid=cfg.container_user.uid,
+        journal_store=journals,
+    )
+    (prepared,) = batch.manifests
+    statuses = ("pending", "pending", "applied", "uncertain")
+    prepared = replace(
+        prepared,
+        actions=tuple(
+            replace(a, status=st) for a, st in zip(prepared.actions, statuses, strict=True)
+        ),
+    )
+    batch = replace(batch, manifests=(prepared,))
+    data = issue_plan_json(batch, proposal="issue/001.json", revision="r1")
+    assert [a["will"] for a in data["actions"]] == [
+        "publish",
+        "publish",
+        "already_published",
+        "refused",
+    ]
+    assert [a["kind"] for a in data["actions"]] == ["create", "comment", "edit", "state"]
+    assert data["actions"][0]["target"] == "acme/repo (new: n)"
+    assert data["actions"][1]["target"] == "o/x#5"
+    assert all(a["will_draft"] is None for a in data["actions"])
+    assert data["foreign"] is True
+    assert any("o/x" in w for w in data["warnings"])
+    assert (data["kind"], data["draftable"], data["total_draft"], data["login"]) == (
+        "issue",
+        False,
+        0,
+        "alice",
+    )
+    assert data["proposal"] == "issue/001.json" and data["revision"] == "r1"
+    assert data["schema"] == 1 and data["total"] == 2
+
+
+def test_plan_sink_issue_prints_nothing(env, capsys):
+    got = []
+    assert _sink_publish(env, "issue", got.append) == 0
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+    (data,) = got
+    assert data["kind"] == "issue" and data["proposal"] == "issue/001.json"
+    assert data["revision"] == revision(env, "issue")
+    assert_no_mutation(env)
+
+
+def test_plan_sink_pr_prints_nothing(env, capsys):
+    got = []
+    assert _sink_publish(env, "pr", got.append) == 0
+    assert capsys.readouterr().out == ""
+    (data,) = got
+    assert data["kind"] == "pr" and data["revision"] == revision(env, "pr")
+
+
+def test_plan_sink_reports_stale_refusal(env, mocker, capsys):
+    from jailbee.outbox.publish import PublishOptions
+
+    payload = json.loads(pr_files()["001.json"])
+    payload["repo"] = "acme/repo"
+    env[2]["pr"] = store("pr", {"001.json": json.dumps(payload)})
+    mocker.patch.object(
+        pr,
+        "resolve_pr",
+        return_value=pr.PrInfo(
+            number=42, head_ref="feature", head_sha="b" * 40, state="OPEN", base_ref="main"
+        ),
+    )
+    got = []
+    assert (
+        _sink_publish(
+            env, "pr", got.append, options=PublishOptions(dry_run=True, foreign=True, force=False)
+        )
+        == 1
+    )
+    (data,) = got
+    assert len(data["refusals"]) == 1
+    assert data["refusals"][0]["stale"] is True
+    assert data["actions"] == []
+    assert capsys.readouterr().out == ""
+
+
+def test_plan_sink_gate_refusal_is_reported_to_sink(env, mocker, capsys):
+    mocker.patch.object(
+        issue_outbox, "prepare_batch", side_effect=issue_outbox.IssueGateError("nope [x]")
+    )
+    got = []
+    assert _sink_publish(env, "issue", got.append) == 1
+    (data,) = got
+    assert data["refusals"] == [{"reason": "nope [x]", "stale": False}]
+    assert data["kind"] == "issue" and data["proposal"] == "issue/001.json"
+    assert data["actions"] == [] and data["login"] is None and data["total"] == 0
+    assert data["revision"] == revision(env, "issue")
+    assert capsys.readouterr().out == ""
+
+
+def test_plan_sink_pr_draft_with_nothing_draftable_is_an_error(env):
+    from jailbee.outbox.models import OutboxError
+    from jailbee.outbox.publish import PublishOptions
+
+    got = []
+    options = PublishOptions(dry_run=True, foreign=True, draft=True)
+    with pytest.raises(OutboxError, match="nothing here can be a draft review"):
+        _sink_publish(env, "pr", got.append, options=options, raise_errors=True)
+    assert got == []
+
+
+def test_plan_sink_requires_one_selected_manifest(env):
+    from jailbee import pr_outbox
+    from jailbee.outbox.models import OutboxError
+
+    cfg, incus, _, _journals, *_ = env
+    with pytest.raises(OutboxError, match="plan output requires one selected manifest"):
+        pr_outbox.offer_pending_comments(
+            cfg,
+            incus,
+            IDENTITY.full_name,
+            IDENTITY.full_name,
+            pr_number=None,
+            confirm=lambda n: False,
+            outbox=pr_outbox.Outbox(env[2]["pr"].as_dict(), (), IDENTITY),
+            dry_run=True,
+            manifest_names=("001.json", "002.json"),
+            management=env[7],
+            raise_errors=True,
+            plan_sink=lambda d: None,
+        )
