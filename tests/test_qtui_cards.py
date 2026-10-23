@@ -801,7 +801,7 @@ def test_compact_card_shows_used_and_mem_pct_with_the_limit_in_a_tooltip(qtbot):
     qtbot.addWidget(card)
 
     chip = next(label for label in card.findChildren(QLabel) if label.text() == "▪ 1.0G 25%")
-    assert chip.toolTip() == "Memory limit: 4GiB"
+    assert chip.toolTip() == "Memory limit: 4GiB (default)"
 
 
 def test_compact_card_falls_back_to_the_mem_field_without_used_and_pct(qtbot):
@@ -883,3 +883,19 @@ def test_repo_header_is_marked_and_explains_its_warning_in_a_tooltip(qtbot):
     assert "local target behind fetched origin/main" in header._title.toolTip()
     assert any("⚠" in t for t in _label_texts(_card(view, "p-foo")))
     assert not any("⚠" in t for t in _label_texts(_card(view, "p-bar")))
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_memory_chip_tooltip_distinguishes_override_from_default(qtbot, override):
+    view = CardView()
+    qtbot.addWidget(view)
+    groups = _groups()
+    c = groups[0].containers[0]
+    c.memory_limit = "24GiB"
+    c.memory_usage = 1024**3
+    c.memory_override = override
+    view.set_groups(groups, now=datetime.now().astimezone(), columns=None)
+    chip = next(label for label in _card(view, "p-foo").findChildren(QLabel)
+                if label.text().startswith("▪ 1.0G"))
+    kind = "override" if override else "default"
+    assert chip.toolTip() == f"Memory limit: 24GiB ({kind})"

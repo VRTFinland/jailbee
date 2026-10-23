@@ -11097,3 +11097,38 @@ def test_list_containers_reads_root_pool(make_cfg, tmp_path):
     incus.list_containers.return_value = [with_root, via_devices, bare]
     pools = {c.name: c.root_pool for c in list_containers(cfg, incus)}
     assert pools == {"myrepo-a": "fast", "myrepo-b": "slow", "myrepo-c": None}
+
+
+@pytest.mark.parametrize("config,expanded,expected,override", [
+    ({}, {"limits.memory": "16GiB"}, "16GiB", False),
+    ({"limits.memory": "24GiB"}, {"limits.memory": "24GiB"}, "24GiB", True),
+    ({"limits.memory": "24GiB"}, None, "24GiB", True),
+    ({"limits.memory": "24GiB"}, {}, None, True),
+])
+def test_effective_memory_limit(make_cfg, tmp_path, config, expanded, expected, override):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    raw = _container()
+    raw["config"] = config
+    if expanded is not None:
+        raw["expanded_config"] = expanded
+    incus = MagicMock()
+    incus.list_containers.return_value = [raw]
+    [info] = list_containers(cfg, incus)
+    assert info.memory_limit == expected
+    assert info.memory_override is override
+
+
+@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize("state", ["Running", "Stopped"])
+def test_memory_override_cells_and_json(override, state):
+    c = _running(memory_usage=2 * 1024**3, memory_limit="24GiB", state=state)
+    c.memory_override = override
+    limit = "24GiB*" if override else "24GiB"
+    assert _ls_spec("memory_limit").cell(c) == limit
+    assert _ls_spec("mem").cell(c) == (f"2.0G / {limit}" if state == "Running" else limit)
+    assert _ls_spec("memory_limit").json(c) == "24GiB"
+    assert _ls_spec("mem").json(c) == {
+        "usage": 2 * 1024**3, "limit": "24GiB", "override": override
+    }

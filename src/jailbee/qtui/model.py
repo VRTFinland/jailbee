@@ -105,9 +105,9 @@ class CardContent:
     # same reason as `job_error`.
     agent_tooltip: str | None = None
     agent_waiting: bool = False
-    # Raw `limits.memory`, the memory chip's tooltip: the card shows used and
-    # MEM% only.
+    # Effective raw limit and its source for the memory chip's tooltip.
     memory_limit: str | None = None
+    memory_override: bool = False
     # The busy processes, plain text, filled whatever the column selection:
     # the card keeps its DOING line by default, as the TUI details panel does.
     doing: str | None = None
@@ -156,6 +156,7 @@ def card_content(
         agent_tooltip=tooltip or None,
         agent_waiting=any(s.state == "waiting" for s in c.agent_status),
         memory_limit=c.memory_limit,
+        memory_override=c.memory_override,
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
         warning=tracking_warning(c),
         fork_of=fork_source(c),

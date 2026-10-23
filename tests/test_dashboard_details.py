@@ -1153,3 +1153,12 @@ def test_activity_rows_lead_with_the_local_clock_time_of_their_event() -> None:
         f"{hhmm(1)} “older”",
         f"{hhmm(0)} Bash  old",
     ]
+
+
+@pytest.mark.parametrize("state", ["Running", "Stopped"])
+def test_details_render_memory_override_without_changing_bar_values(state):
+    c = _c(state=state, memory_usage=3 * GIB, memory_limit="24GiB")
+    c.memory_override = True
+    panel = dd.container_panel(c, NOW)
+    assert panel.memory == ((3 * GIB, 24 * GIB) if state == "Running" else None)
+    assert "24GiB* (override)" in "\n".join(_panel_body(_panel_view(c), None, 120))
