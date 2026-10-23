@@ -213,6 +213,7 @@ def plan_clear(container: ContainerView) -> ContainerClearPlan:
         f"rejected: {name}" for snapshot in container.stores for name in snapshot.rejected
     )
     rejected = {snapshot.kind: set(snapshot.rejected) for snapshot in container.stores}
+    selection: DeleteSelection | None
     for view in container.proposals:
         if view.id.name in rejected.get(view.id.kind, set()):
             continue
