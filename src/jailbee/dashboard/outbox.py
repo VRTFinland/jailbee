@@ -566,6 +566,8 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
     if state.question is not None:
         return "↑/↓ choose · Enter confirm · Esc cancel"
     ab = state.abilities
+    if standalone:
+        return _standalone_hint(ab)
     parts = ["↑/↓ move", "Enter open", "Space mark"]
     if ab.delete:
         parts.append("d delete")
@@ -581,6 +583,28 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
     parts.append("r refresh")
     parts.append("q quit" if standalone else "Esc close")
     return " · ".join(parts)
+
+
+def _standalone_hint(ab: Abilities) -> str:
+    """The full-screen app's hint: quit first, short labels, fits 96 columns with every ability.
+
+    96 is the content width of the box at 100 terminal columns; ↑/↓ and Enter
+    (open) are left out as the conventional keys.
+    """
+    parts = ["q quit", "Space mark"]
+    if ab.delete:
+        parts.append("d delete")
+    if ab.publish or ab.publish_hand_off:
+        parts.append("p publish")
+    if ab.create_pr:
+        parts.append("c PR")
+    if ab.clear:
+        parts.append("X clear")
+    parts += ["v preview", "m raw"]
+    if ab.scope:
+        parts.append("a all repos")
+    parts.append("r refresh")
+    return "  ".join(parts)
 
 
 def outbox_ls_argv(name: str | None, *, all_repos: bool = False) -> list[str]:

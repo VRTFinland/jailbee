@@ -792,3 +792,16 @@ def test_clear_with_nothing_to_delete_asks_nothing():
     assert ctl.state.question is None
     assert ctl.state.status[-1] == "Delete 0 proposals in 0 containers."
     assert len(runner.jobs) == 1
+
+
+def test_scope_ability_follows_the_all_repos_listing_permission():
+    refuse_all = FakeRunner(_listing(_proposal()), allow=lambda argv: "--all-repos" not in argv)
+    ctl = _controller(refuse_all, standalone=True)
+    ctl.load()
+    assert ctl.state.abilities.scope is False
+    ctl.intent("scope", None)
+    assert ctl.state.all_repos is False
+    assert all("--all-repos" not in argv for _, argv in refuse_all.calls)
+    allowed = _controller(FakeRunner(_listing(_proposal())), standalone=True)
+    allowed.load()
+    assert allowed.state.abilities.scope is True

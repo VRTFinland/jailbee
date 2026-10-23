@@ -253,9 +253,11 @@ class OutboxController:
             return f"could not list the outbox: {(not result.ok and result.message) or exc}"
 
     def _abilities(self, containers: Sequence[dob.ContainerListing]) -> dob.Abilities:
+        # Scope: only the app switches it, and only where an all-repos listing may run.
+        scope = self.standalone and self.runner.permitted(dob.outbox_ls_argv(None, all_repos=True))
         live = next((c for c in containers if c.error is None), None)
         if live is None:
-            return replace(_NO_ABILITIES, scope=self.standalone)
+            return replace(_NO_ABILITIES, scope=scope)
         first = live.proposals[0] if live.proposals else None
         pid = first.id if first else _ANY_PROPOSAL
         rev = first.revision if first else _ANY_REVISION
@@ -269,7 +271,7 @@ class OutboxController:
             and ok(dob.outbox_apply_argv(live.name, pid, rev, yes=False)),
             create_pr=create is not None and ok(create),
             clear=ok(dob.clear_approved_argv(live.name, "0")),
-            scope=self.standalone,
+            scope=scope,
         )
 
     def _listed(

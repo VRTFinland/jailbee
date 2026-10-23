@@ -55,23 +55,42 @@ class LocalOutboxRunner:
         return [*argv, *self.target.flags()]
 
     def permitted(self, argv: Sequence[str]) -> bool:
-        """Listing always; anything else only when not read-only (over SSH)."""
-        return list(argv[:2]) == ["outbox", "ls"] or not self.read_only
+        """Anything when writable; read-only (over SSH): only a listing of this repo.
+
+        `--all-repos` is refused read-only too: the SSH session's repository
+        exclusions are enforced by the router, which these children bypass.
+        """
+        if not self.read_only:
+            return True
+        return list(argv[:2]) == ["outbox", "ls"] and "--all-repos" not in argv
+
+    def _refusal(self, argv: Sequence[str]) -> str | None:
+        if self.permitted(argv):
+            return None
+        return f"not available read-only over SSH: jailbee {' '.join(argv[:2])}"
 
     def run_quiet(self, argv: Sequence[str]) -> da.CliResult:
+        refusal = self._refusal(argv)
+        if refusal is not None:
+            return da.CliResult(False, refusal)
         return da.run_cli_quiet(self._full(argv), cwd=self.target.cwd())
 
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
     ) -> None:
-        """A detached job; OSError/ValueError (no cwd, already running) reach the controller."""
+        """A detached job; OSError/ValueError (no cwd, already running, refused) reach the controller."""
+        refusal = self._refusal(argv)
+        if refusal is not None:
+            raise ValueError(refusal)
         self.jobs.start(
             key, label, ["jailbee", *self._full(argv)], self.target.cwd(), on_done,
             capture_stdout=True,
         )  # fmt: skip
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
-        """``argv`` on the real terminal; None when it could not run."""
+        """``argv`` on the real terminal; None when it could not run (or is refused)."""
+        if self._refusal(argv) is not None:
+            return None
         try:
             return self.suspend(
                 lambda: _run_cli_foreground(self.target, list(argv), style="output")
@@ -177,7 +196,11 @@ class OutboxApp(App[int], inherit_bindings=False):
         if message.name == "cancel" and controller.state.question is None:
             self.exit(0)
             return
-        if message.name == "scope" and self._container is not None:
+        if (
+            message.name == "scope"
+            and self._container is not None
+            and controller.state.abilities.scope
+        ):
             controller.container = self._container if controller.state.all_repos else None
         controller.intent(message.name, message.row, message.value)
 

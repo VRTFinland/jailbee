@@ -308,6 +308,16 @@ def test_not_markable_when_blocked():
     assert [r.markable for r in rows] == [False, False, True]
 
 
+def test_standalone_hint_fits_100_columns_with_every_ability():
+    every = dob.Abilities(True, True, True, True, True, True)
+    hint = dob.outbox_hint(_state(_proposal(), abilities=every), standalone=True)
+    # 96: the box's content width at 100 terminal columns (border and padding).
+    assert len(hint) <= 96
+    assert hint.startswith("q quit")
+    for part in ("d delete", "p publish", "c PR", "X clear", "a all repos", "r refresh"):
+        assert part in hint
+
+
 def test_hint_drops_unavailable_abilities():
     full = dob.Abilities(True, True, False, True, True, True)
     state = _state(_proposal(), abilities=full)
@@ -317,7 +327,7 @@ def test_hint_drops_unavailable_abilities():
         " · v preview · m manifest · r refresh · Esc close"
     )
     standalone = dob.outbox_hint(state, standalone=True)
-    assert "a all repos" in standalone and standalone.endswith("q quit")
+    assert "a all repos" in standalone and standalone.startswith("q quit")
     none = dob.outbox_hint(_state(_proposal()), standalone=False)
     assert "d delete" not in none and "p publish" not in none and "a all" not in none
     q = dob.Question("p", "T", (), (), "")

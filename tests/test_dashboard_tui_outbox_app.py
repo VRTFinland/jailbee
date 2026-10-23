@@ -14,6 +14,7 @@ from jailbee.dashboard.jobs import JobResult
 from jailbee.dashboard.model import RepoTarget
 from jailbee.dashboard.tui import outbox_app
 from jailbee.dashboard.tui.outbox_app import LocalOutboxRunner, OutboxApp
+from jailbee.dashboard.tui.outbox_box import OutboxBox
 from tests.dashboard_pilot import screen_text
 from tests.test_dashboard_outbox import _container, _listing, _proposal
 from tests.test_dashboard_outbox_flow import _plan
@@ -190,3 +191,76 @@ def test_hand_off_runs_in_the_foreground_through_suspend(mocker):
     assert runner.hand_off(["pr", "alpha-x"]) == 3
     assert seen == [True]
     fg.assert_called_once_with(TARGET, ["pr", "alpha-x"], style="output")
+
+
+def test_read_only_scope_key_does_nothing(quiet):
+    app = make(read_only=True)
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("a")
+        await pilot.pause()
+        return screen_text(app)
+
+    text = drive(app, scenario, size=(160, 30))
+    assert app.controller.state.abilities.scope is False
+    assert len(quiet) == 1 and "--all-repos" not in quiet[0]
+    assert "a all repos" not in text
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["outbox", "ls", "--all-repos", "-o", "json"],
+        ["outbox", "drop", "alpha-x", "pr/a.json", "--revision", "r1", "--yes"],
+        ["outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1", "-y"],
+        ["outbox", "clear", "alpha-x", "--prepare-snapshot"],
+        ["pr", "alpha-x"],
+    ],
+)
+def test_read_only_runner_refuses_what_it_does_not_permit(mocker, argv):
+    quiet = mocker.patch.object(da, "run_cli_quiet")
+    fg = mocker.patch.object(outbox_app, "_run_cli_foreground")
+    suspend = mocker.Mock()
+    runner = LocalOutboxRunner(TARGET, read_only=True, suspend=suspend)
+    runner.jobs = mocker.Mock()
+    assert runner.permitted(argv) is False
+
+    result = runner.run_quiet(argv)
+    assert result.ok is False and "read-only" in result.message
+    with pytest.raises(ValueError, match="read-only"):
+        runner.start("k", "label", argv, lambda _r: None)
+    assert runner.hand_off(argv) is None
+
+    quiet.assert_not_called()
+    runner.jobs.start.assert_not_called()
+    suspend.assert_not_called()
+    fg.assert_not_called()
+
+
+def test_scope_after_failed_first_listing_keeps_the_named_container(mocker):
+    calls: list[list[str]] = []
+    results = [da.CliResult(False, "exited 2", "not json")]
+
+    def run(argv, *, cwd, timeout=60.0):  # type: ignore[no-untyped-def]
+        calls.append(list(argv))
+        return results.pop(0) if results else da.CliResult(True, "done", LISTING)
+
+    mocker.patch.object(da, "run_cli_quiet", side_effect=run)
+    app = make(container="feature")
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        assert app.controller.state.abilities.scope is False
+        await pilot.press("a")  # the box eats it: no scope ability
+        await pilot.pause()
+        # A scope intent reaching the app anyway (a click, a future key) must not
+        # narrow/widen the listing behind the controller's back.
+        app.on_outbox_box_intent(OutboxBox.Intent(app.box.key, "scope", None))
+        await pilot.press("r")
+        await pilot.pause()
+
+    drive(app, scenario)
+    assert app.controller.container == "feature"
+    assert app.controller.state.all_repos is False
+    assert len(calls) >= 2
+    for argv in calls[1:]:
+        assert argv[:3] == ["outbox", "ls", "feature"] and "--all-repos" not in argv
