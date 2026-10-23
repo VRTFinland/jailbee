@@ -229,6 +229,7 @@ class ViewPrefs(SQLModel, table=True):
     show_details: bool = Field(
         default=True, sa_column=Column(Boolean, nullable=False, server_default="1")
     )
+    details_rows: int | None = None
     columns_version: int = Field(
         default=0, sa_column=Column(Integer, nullable=False, server_default="0")
     )
