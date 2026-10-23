@@ -2074,3 +2074,38 @@ def test_a_yes_no_picker_answers_to_y_and_n():
 
     assert "[n] No" in text
     assert "[y] Yes, destroy" in text
+
+
+def _dim_at(app, x: int, y: int) -> bool:
+    return bool(app.screen.get_style_at(x, y).dim)
+
+
+def test_a_floating_confirm_dims_the_dashboard_behind_it(mocker, tmp_path):
+    seen: list[tuple[bool, bool, bool]] = []
+
+    def open_confirm(app) -> None:
+        app.session.overlay = Picker(
+            "container-destroy-confirm",
+            "Destroy alpha-a?",
+            (PickerEntry("No", "no"), PickerEntry("Yes, destroy", "yes")),
+        )
+
+    def close(app) -> None:
+        app.session.overlay = None
+
+    def probe(app) -> None:
+        box = app.frame.native_box
+        table = app.frame.table.region
+        behind = _dim_at(app, table.x + 1, table.y)
+        inside = box is not None and _dim_at(app, box.region.x + 3, box.region.y + 1)
+        border = _dim_at(app, 0, 0)
+        seen.append((behind, border, inside))
+
+    drive(
+        mocker,
+        [probe, open_confirm, probe, close, probe],
+        [wide_group(tmp_path)],
+        size=(80, 30),
+    )
+
+    assert seen == [(False, False, False), (True, True, False), (False, False, False)]

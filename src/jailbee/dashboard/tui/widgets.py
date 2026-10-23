@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
 
@@ -13,12 +13,15 @@ from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
+from textual.color import Color
 from textual.containers import Horizontal, Vertical
+from textual.filter import LineFilter
 from textual.geometry import Region, Size, Spacing
 from textual.message import Message
 from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollDown, ScrollLeft, ScrollRight, ScrollTo, ScrollUp
 from textual.strip import Strip
+from textual.widget import Widget
 from textual.widgets import Static
 
 from jailbee.dashboard import actions as dact
@@ -50,6 +53,39 @@ from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
 _CACHE_MAX = 4096
+
+
+class _BehindDialog(LineFilter):
+    """Dim every cell: the dashboard under a floating dialog.
+
+    The frame draws in the terminal's own colours, which Textual cannot blend
+    toward a backdrop, so the SGR dim attribute stands in for a tint.
+    """
+
+    def apply(self, segments: list[Segment], background: Color) -> list[Segment]:
+        return list(Segment.apply_style(segments, post_style=_DIM))
+
+
+_DIM = Style(dim=True)
+_BEHIND_DIALOG = _BehindDialog()
+
+
+def _frame_filters(widget: Widget, filters: Sequence[LineFilter]) -> Sequence[LineFilter]:
+    """``filters``, led by the dim one while ``widget``'s frame sits behind a dialog.
+
+    First, so a filter of the app's own (``TEXTUAL_FILTERS=dim``) still sees the dim.
+    """
+    for node in widget.ancestors_with_self:
+        if isinstance(node, DashboardFrame):
+            return [_BEHIND_DIALOG, *filters] if node.behind_dialog else filters
+    return filters
+
+
+class _FramePart(Static):
+    """A plain line of the frame (status, notice, hint, filler) that dims with it."""
+
+    def get_line_filters(self) -> Sequence[LineFilter]:
+        return _frame_filters(self, super().get_line_filters())
 
 
 class FleetTable(ScrollView, can_focus=False):
@@ -101,6 +137,9 @@ class FleetTable(ScrollView, can_focus=False):
         self._height = -1
         self._drawn: tuple[tuple[object, ...], ...] = ()
         self._strips: dict[tuple[object, ...], Strip] = {}
+
+    def get_line_filters(self) -> Sequence[LineFilter]:
+        return _frame_filters(self, super().get_line_filters())
 
     @property
     def content_width(self) -> int:
@@ -364,6 +403,9 @@ class DetailsPanel(Static):
         super().__init__(id=id)
         self._shown: tuple[DetailsView, int, dhit.Hit | None] | None = None
 
+    def get_line_filters(self) -> Sequence[LineFilter]:
+        return _frame_filters(self, super().get_line_filters())
+
     class Scrolled(Message):
         """The wheel turned over the panel: ``step`` rows down (negative: up)."""
 
@@ -453,19 +495,24 @@ class DashboardFrame(Vertical):
         self.details_furthest = 0
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
+        # Whether a floating dialog is open over the frame, which then draws dimmed.
+        self.behind_dialog = False
         self._native_overlay_key: tuple[object, ...] | None = None
         # Mounting and removing are awaited one after the other, never interleaved.
         self._settle_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
-        yield Static(id="system")
+        yield _FramePart(id="system")
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
-        yield Static(id="notice")
-        yield Static(id="fill-above", classes="fill")
+        yield _FramePart(id="notice")
+        yield _FramePart(id="fill-above", classes="fill")
         with Horizontal(id="bottom"):
             yield DetailsPanel(id="details")
-        yield Static(id="hint")
-        yield Static(id="fill-below", classes="fill")
+        yield _FramePart(id="hint")
+        yield _FramePart(id="fill-below", classes="fill")
+
+    def get_line_filters(self) -> Sequence[LineFilter]:
+        return _frame_filters(self, super().get_line_filters())
 
     @cached_property
     def table(self) -> FleetTable:
@@ -571,6 +618,10 @@ class DashboardFrame(Vertical):
         overlay = view.overlay
         box = self._sync_native(overlay)
         floating = box is not None and box.floating
+        if floating != self.behind_dialog:
+            self.behind_dialog = floating
+            for widget in self.walk_children(with_self=True):
+                widget.refresh()
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
             details_for(
