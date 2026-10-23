@@ -972,7 +972,10 @@ def test_host_wide_instructions_render_in_the_existing_claude_apply_reason() -> 
 def test_memory_profile_upgrade_note() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
-    reason = "`defaults.memory` now lives in the base profile, so containers follow it; per-container limits are set with `jailbee mem`"
+    reason = (
+        "`defaults.memory` now lives in the base profile, so containers follow it; "
+        "per-container limits are set with `jailbee mem`"
+    )
     assert any(
         note.version == (1, 7, 8) and note.actions == {"apply"} and note.reason == reason
         for note in UPGRADE_NOTES

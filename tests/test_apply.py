@@ -3373,14 +3373,20 @@ def test_apply_migrates_memory_after_profile_write_and_warns_from_old_snapshot(
         ("no-base", "Running", True, 20, "other-base", cfg.defaults.memory),
     ]
     containers = [
-        ContainerInfo(name, state, "loose", None, cfg.defaults.memory,
-                      memory_override=override, memory_usage=usage * 1024**3 if usage else None)
+        ContainerInfo(
+            name,
+            state,
+            "loose",
+            None,
+            cfg.defaults.memory,
+            memory_override=override,
+            memory_usage=usage * 1024**3 if usage else None,
+        )
         for name, state, override, usage, _profile, _limit in rows
     ]
     mocker.patch("jailbee.apply._list_containers", return_value=containers)
     incus.list_containers.return_value = [
-        {"name": name, "profiles": [profile],
-         "config": {"limits.memory": limit} if limit else {}}
+        {"name": name, "profiles": [profile], "config": {"limits.memory": limit} if limit else {}}
         for name, _state, _override, _usage, profile, limit in rows
     ] + [{"name": "foreign", "profiles": [base], "config": {"limits.memory": cfg.defaults.memory}}]
 

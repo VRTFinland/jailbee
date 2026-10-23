@@ -1691,9 +1691,7 @@ def apply(
         raise typer.Exit(1) from e
 
     if result.memory_defaulted:
-        success(
-            f"Moved {len(result.memory_defaulted)} container(s) to the default memory limit"
-        )
+        success(f"Moved {len(result.memory_defaulted)} container(s) to the default memory limit")
     if result.memory_low:
         warn_plain(
             f"Containers use more memory than the new default {cfg.defaults.memory}: "
