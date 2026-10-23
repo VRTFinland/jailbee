@@ -3196,9 +3196,7 @@ def test_draft_no_prompt_requires_draftable_actions(
 ):
     from jailbee.pr_outbox import OutboxError, offer_pending_comments
 
-    cfg, incus, *_ = _selected_setup(
-        mocker, make_cfg, tmp_path, files={} if empty else None
-    )
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={} if empty else None)
     apply = mocker.patch("jailbee.pr_outbox.apply_manifest")
     confirm = mocker.Mock(side_effect=AssertionError("no prompt allowed"))
     choose = mocker.Mock(side_effect=AssertionError("no choice allowed"))
@@ -3206,10 +3204,17 @@ def test_draft_no_prompt_requires_draftable_actions(
 
     def offer():
         return offer_pending_comments(
-            cfg, incus, "c", "feature", pr_number=None,
+            cfg,
+            incus,
+            "c",
+            "feature",
+            pr_number=None,
             manifest_names=() if empty else ("one.json",),
-            draft=True, can_prompt=False, raise_errors=raise_errors,
-            confirm=confirm, choose_mode=choose,
+            draft=True,
+            can_prompt=False,
+            raise_errors=raise_errors,
+            confirm=confirm,
+            choose_mode=choose,
         )
 
     if raise_errors:
