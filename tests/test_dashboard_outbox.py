@@ -202,9 +202,9 @@ def test_expand_shows_actions_then_comments():
         _key(action=0, comment=1),
         _key(action=1),
     ]
-    assert rows[1].text.plain == "▾   review · 2 comments  [pending]"
-    assert rows[2].text.plain == "  src/a.py:5  c0"
-    assert rows[4].text.plain == "    reply to #123  [pending]"
+    assert rows[1].text.plain == "  ▾   review · 2 comments  [pending]"
+    assert rows[2].text.plain == "        src/a.py:5  c0"
+    assert rows[4].text.plain == "      reply to #123  [pending]"
     assert [r.depth for r in rows] == [0, 1, 2, 2, 1]
 
 
@@ -378,3 +378,93 @@ def test_argv_builders():
     assert dob.clear_approved_argv("c", "tok") == [
         "outbox", "clear", "c", "--approved-snapshot", "tok", "--yes",
     ]  # fmt: skip
+
+
+def test_every_container_field_is_sanitised_and_literal():
+    import dataclasses
+
+    evil = "[red]x[/red]\x1b]0;pwn\x07\u200b"
+    comments = [{"index": 0, "label": evil, "text": evil, "path": evil, "line": 1}]
+    pr = _proposal(
+        error=evil,
+        edit_block=evil,
+        actions=[_action(0, repo=evil, target=evil, receipt=evil, comments=comments)],
+    )
+    containers = dob.parse_outbox_listing(
+        _listing(
+            _container(pr, name=evil, stores=[{"warnings": [evil]}]),
+            _container(name=evil + "2", available=False, error=evil),
+        )
+    )
+    q = dob.Question("p", evil, (evil,), (), "")
+    state = dob.OutboxState(
+        "t",
+        containers,
+        expanded=frozenset({(evil, "pr/a.json", None, None), (evil, "pr/a.json", 0, None)}),
+        question=q,
+        status=(evil,),
+    )
+
+    def check(text) -> None:
+        assert "\x1b" not in text.plain and "\x07" not in text.plain and "\u200b" not in text.plain
+        assert not any("red" in str(s.style) for s in text.spans)
+        assert "red" not in str(text.style)
+
+    rows = dob.visible_rows(state, 400)
+    assert len(rows) == 6
+    for row in rows:
+        check(row.text)
+        if row.role != "action":
+            assert "[red]x[/red]" in row.text.plain
+    key = (evil, "pr/a.json", None, None)
+    for st in (
+        state,
+        dataclasses.replace(state, question=None),
+        dataclasses.replace(state, question=None, raw=True),
+    ):
+        for k in (key, (evil, "pr/a.json", 0, None), (evil, "pr/a.json", 0, 0)):
+            for line in dob.preview_lines(st, k, 80):
+                check(line)
+    plain = [t.plain for t in dob.preview_lines(dataclasses.replace(state, question=None), key, 80)]
+    assert any("Receipt: [red]x[/red]" in line for line in plain)
+    assert any("Action 0: comment [red]x[/red]" in line for line in plain)
+    shown = [t.plain for t in dob.preview_lines(state, key, 80)]
+    assert shown == ["[red]x[/red]]0;pwn", "", "[red]x[/red]]0;pwn"]
+
+
+def test_hint_publish_with_hand_off_only():
+    state = _state(_proposal(), abilities=dob.Abilities(False, False, True, False, False, False))
+    assert "p publish" in dob.outbox_hint(state, standalone=False)
+
+
+def test_comment_markability_follows_parent_action():
+    comments = [{"index": 0, "label": "l", "text": "t", "path": "a", "line": 1}]
+    ok = _action(0, kind="review", comments=comments)
+    blocked = _action(1, kind="review", comments=comments, delete_scope=None, delete_block="no")
+    state = _state(
+        _proposal(actions=[ok, blocked]),
+        expanded=frozenset({_key(), _key(action=0), _key(action=1)}),
+    )
+    rows = dob.visible_rows(state, 100)
+    assert [(r.role, r.markable) for r in rows] == [
+        ("proposal", True),
+        ("action", True),
+        ("comment", True),
+        ("action", False),
+        ("comment", False),
+    ]
+
+
+def test_delete_scope_lines_prefix_container_when_several():
+    containers = dob.parse_outbox_listing(
+        _listing(
+            _container(_proposal("pr/a.json")),
+            _container(_proposal("pr/b.json"), name="beta-y"),
+        )
+    )
+    state = dob.OutboxState("t", containers)
+    keys = [("beta-y", "pr/b.json", None, None), ("alpha-x", "pr/a.json", 1, None)]
+    assert dob.delete_scope_lines(state, keys) == (
+        "alpha-x: pr/a.json action 1 (comment)",
+        "beta-y: pr/b.json (whole)",
+    )

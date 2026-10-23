@@ -378,6 +378,8 @@ class OutboxState:
 
 @dataclass(frozen=True)
 class Row:
+    """One line of the manager. ``text`` is complete, indentation included: render as-is."""
+
     key: RowKey | None
     depth: int
     text: Text
@@ -558,10 +560,15 @@ def _target(item: ProposalItem) -> str:
 
 
 def _fit(text: Text, width: int, depth: int) -> Text:
-    text.no_wrap = True
-    text.overflow = "ellipsis"
-    text.truncate(max(width - 2 * depth, 1), overflow="ellipsis")
-    return text
+    """Indent two spaces per depth level, then cut the whole line to ``width``."""
+    line = text
+    if depth:
+        line = Text("  " * depth, style=text.style)
+        line.append_text(text)
+    line.no_wrap = True
+    line.overflow = "ellipsis"
+    line.truncate(max(width, 1), overflow="ellipsis")
+    return line
 
 
 def _build_proposal_row(
@@ -627,7 +634,7 @@ def _comment_row(
         if comment.path is not None and comment.line is not None
         else _clean(comment.label)
     )
-    text = Text(f"{mark}{where}  {_first_line(comment.text) or ''}".rstrip())
+    text = Text(f"  {mark}{where}  {_first_line(comment.text) or ''}".rstrip())
     return Row(key, 2, _fit(text, width, 2), action.delete_scope is not None, "comment")
 
 
