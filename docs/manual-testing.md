@@ -3297,8 +3297,9 @@ jailbee new feat/dashsmoke --background
 #           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
 #           Press `s` (Open shell is not in the menu) -> lands in the container; exit -> returns to the
 #           dashboard, which refreshes.
-#           On an orphan (view-only) row, Enter opens nothing and prints a
-#           yellow note in the panel footer for ~2.5s instead of going silent.
+#           On an orphan row, Enter opens the small orphan menu (tmux, shell,
+#           stop/start, destroy); in a remote SSH session it opens nothing and
+#           prints a yellow note in the panel footer instead of going silent.
 #  t -> attaches tmux for the highlighted container without the menu; exit ->
 #       back to the dashboard. s = shell, i = IDE, c = Chrome, p = open PR,
 #       P = create/update the PR, u = update from base, d = show the diff.
@@ -3431,8 +3432,12 @@ jailbee dashboard
 jailbee dashboard --no-git -i 2   # "--interval is ignored; set dashboard.refresh ..."
 
 # Orphans: a jailbee-managed container whose repo isn't registered and isn't the
-# cwd repo shows under its prefix as "(orphan — no config)" and is view-only
-# (Enter reports it's view-only).
+# cwd repo shows under its prefix as "(orphan — no config)". Enter opens a small
+# menu: Attach tmux, Open shell, Stop (Start when stopped), Destroy. Each runs
+# `jailbee orphan <verb> <name>` in the terminal; Destroy asks there. Make one by
+# creating a container and then moving its repo away, then refresh. CLI:
+# `jailbee orphan ls`, `jailbee orphan tmux`, `jailbee orphan destroy <full-name>`.
+# Qt and remote SSH sessions still show it view-only.
 
 # Cleanup:
 jailbee destroy feat-dashsmoke --force
