@@ -800,8 +800,12 @@ def refresh_all(
         # registered repo; it acts on whatever `user.jailbee.loose_until` labels
         # exist, independent of the repo's `loose_auto_revert` policy (that
         # policy only decides whether jailbee writes a label in the first place).
+        # The revert re-pins /etc/hosts, so it needs the mirror endpoint to
+        # keep the mirror row.
         try:
-            check_and_revert_loose(cfg, incus, now=now)
+            check_and_revert_loose(
+                cfg, incus, now=now, mirror_endpoint=_compute_mirror_endpoint(cfg, incus, gcfg)
+            )
         except Exception as e:
             log.warning(
                 "refresh_all: loose_revert failed for %s: %s",
