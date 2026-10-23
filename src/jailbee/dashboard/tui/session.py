@@ -1039,8 +1039,11 @@ class DashboardSession:
             host_total=self.system.memory.total if self.system and self.system.memory else None,
         )
         return Picker(
-            "container-memory", f"Memory for '{info.display_name}'",
-            tuple(PickerEntry(row.label + (" *" if row.current else ""), row.value) for row in options),
+            "container-memory",
+            f"Memory for '{info.display_name}'",
+            tuple(
+                PickerEntry(row.label + (" *" if row.current else ""), row.value) for row in options
+            ),
             target=container,
         )
 
@@ -1059,11 +1062,15 @@ class DashboardSession:
             return None
         if not force and below_usage(target, info.memory_usage):
             return Picker(
-                "container-memory-confirm", f"Set memory to {target}?",
+                "container-memory-confirm",
+                f"Set memory to {target}?",
                 (PickerEntry("No", "no", "n"), PickerEntry("Yes", "yes", "y")),
-                target=container, carry=(size,),
-                detail=("The limit is below current usage; the kernel will reclaim memory",
-                        "and may OOM-kill processes."),
+                target=container,
+                carry=(size,),
+                detail=(
+                    "The limit is below current usage; the kernel will reclaim memory",
+                    "and may OOM-kill processes.",
+                ),
             )
         self.run_quiet_cli(repo, dact.mem_argv(container, size, force=force))
         return None
@@ -1750,7 +1757,9 @@ class DashboardSession:
             from jailbee.memory_limit import OTHER_VALUE
 
             if entry.value == OTHER_VALUE:
-                return TextPrompt("container-memory-other", picker.title, "Memory size", target=picker.target)
+                return TextPrompt(
+                    "container-memory-other", picker.title, "Memory size", target=picker.target
+                )
             return self.change_memory(picker.target, entry.value)
         if picker.purpose == "container-memory-confirm":
             if entry.value == "yes":

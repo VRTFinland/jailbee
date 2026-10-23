@@ -1742,7 +1742,13 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
 def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
     menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(_ctx(state="Stopped")))
 
-    assert _hotkeys(menu) == {"Start": "s", "Rename…": "R", "Memory: unknown…": "z", "Network →": "w", "Destroy": "D"}
+    assert _hotkeys(menu) == {
+        "Start": "s",
+        "Rename…": "R",
+        "Memory: unknown…": "z",
+        "Network →": "w",
+        "Destroy": "D",
+    }
 
 
 def test_menu_hotkeys_cover_the_repo_menu():
@@ -7131,7 +7137,10 @@ def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe)
 @pytest.mark.parametrize("allowed", ["mem", "shell"])
 def test_memory_menu_policy(tmp_path, state, override, limit, allowed):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
-    info = dataclasses.replace(_ci("alpha-x", "alpha"), state=state, memory_limit=limit, memory_override=override)
+
+    info = dataclasses.replace(
+        _ci("alpha-x", "alpha"), state=state, memory_limit=limit, memory_override=override
+    )
     group = _cfg_group(tmp_path, (info,))
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
     actions = dmenus.actions_for_container([group], "alpha-x", over_ssh=True, ssh_policy=policy)

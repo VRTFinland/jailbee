@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from jailbee import memory_limit
-from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt, validate_answer
-from jailbee.dashboard.system import SystemStatus
-from jailbee.sysstat import MemoryStatus
 from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt, validate_answer
+from jailbee.dashboard.system import SystemStatus
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
+from jailbee.sysstat import MemoryStatus
 from tests.dashboard_fixtures import ci, wide_group
 from tests.dashboard_pilot import bare_session, make_app
 
@@ -114,7 +114,6 @@ def test_the_app_starts_with_optimized_widths(mocker, tmp_path):
     assert app.session.column_widths == _optimized(app.session)
 
 
-
 def _memory_session(mocker, tmp_path, usage=None):
     info = ci("alpha-one", "alpha")
     info.memory_limit, info.memory_override, info.memory_usage = "24GiB", True, usage
@@ -126,26 +125,41 @@ def _memory_session(mocker, tmp_path, usage=None):
 @pytest.mark.parametrize("host_total", [None, 20 * 1024**3])
 def test_memory_picker_shared_rows(mocker, tmp_path, host_total):
     session, _ = _memory_session(mocker, tmp_path)
-    session.system = None if host_total is None else SystemStatus(memory=MemoryStatus(total=host_total, available=0, cache=0), pools=(), root=None)
+    session.system = (
+        None
+        if host_total is None
+        else SystemStatus(
+            memory=MemoryStatus(total=host_total, available=0, cache=0), pools=(), root=None
+        )
+    )
     session.selected = dmodel.Row("container", "alpha-one")
     session.handle_key("enter")
     session.menu_chosen("mem", None, 0)
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "container-memory"
-    options = memory_limit.size_options(current="24GiB", override=True, default="16GiB", host_total=host_total)
-    assert [(e.label, e.value) for e in picker.entries] == [(o.label + (" *" if o.current else ""), o.value) for o in options]
+    options = memory_limit.size_options(
+        current="24GiB", override=True, default="16GiB", host_total=host_total
+    )
+    assert [(e.label, e.value) for e in picker.entries] == [
+        (o.label + (" *" if o.current else ""), o.value) for o in options
+    ]
 
 
 @pytest.mark.parametrize("size", ["8GiB", "default"])
 def test_memory_selection(mocker, tmp_path, size):
     session, quiet = _memory_session(mocker, tmp_path)
-    assert session.submit_picker(session.open_memory_picker("alpha-one"), PickerEntry(size, size)) is None
+    assert (
+        session.submit_picker(session.open_memory_picker("alpha-one"), PickerEntry(size, size))
+        is None
+    )
     assert quiet.call_args.args[1] == ["mem", "--", "alpha-one", size]
 
 
 def test_memory_other(mocker, tmp_path):
     session, quiet = _memory_session(mocker, tmp_path)
-    prompt = session.submit_picker(session.open_memory_picker("alpha-one"), PickerEntry("Other", memory_limit.OTHER_VALUE))
+    prompt = session.submit_picker(
+        session.open_memory_picker("alpha-one"), PickerEntry("Other", memory_limit.OTHER_VALUE)
+    )
     assert isinstance(prompt, TextPrompt) and prompt.purpose == "container-memory-other"
     assert validate_answer(prompt, "garbage") == memory_limit.validate_size("garbage")
     assert validate_answer(prompt, "12GiB") is None
@@ -157,7 +171,9 @@ def test_memory_other(mocker, tmp_path):
 @pytest.mark.parametrize("answer", ["yes", "no"])
 def test_memory_below_usage(mocker, tmp_path, size, answer):
     session, quiet = _memory_session(mocker, tmp_path, 20 * 1024**3)
-    confirm = session.submit_picker(session.open_memory_picker("alpha-one"), PickerEntry(size, size))
+    confirm = session.submit_picker(
+        session.open_memory_picker("alpha-one"), PickerEntry(size, size)
+    )
     assert isinstance(confirm, Picker) and confirm.purpose == "container-memory-confirm"
     quiet.assert_not_called()
     session.submit_picker(confirm, PickerEntry(answer, answer))
@@ -166,7 +182,6 @@ def test_memory_below_usage(mocker, tmp_path, size, answer):
     else:
         quiet.assert_not_called()
         assert session.notice == "Cancelled"
-
 
 
 def test_memory_default_uses_repo_value_and_rechecks_vanished_target(mocker, tmp_path):
@@ -183,7 +198,9 @@ def test_memory_default_uses_repo_value_and_rechecks_vanished_target(mocker, tmp
 
 def test_memory_invalid_submit_and_escape_never_dispatch(mocker, tmp_path):
     session, quiet = _memory_session(mocker, tmp_path)
-    prompt = session.submit_picker(session.open_memory_picker("alpha-one"), PickerEntry("Other", "other"))
+    prompt = session.submit_picker(
+        session.open_memory_picker("alpha-one"), PickerEntry("Other", "other")
+    )
     session.submit_prompt(prompt, "invalid")
     assert "positive Incus memory size" in session.notice
     session.overlay = prompt
@@ -194,8 +211,11 @@ def test_memory_invalid_submit_and_escape_never_dispatch(mocker, tmp_path):
 
 def test_memory_ssh_denial_never_opens_picker(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
     session, quiet = _memory_session(mocker, tmp_path)
     session.over_ssh = True
-    session.ssh_policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"]))
+    session.ssh_policy = RemoteSSHConfig(
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"])
+    )
     assert session.open_memory_picker("alpha-one") is None
     quiet.assert_not_called()
