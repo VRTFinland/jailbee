@@ -4126,3 +4126,147 @@ def test_draft_chooser_multiple_manifests_partial_progress(mocker, make_cfg, tmp
             "three.json",
         ]
         assert all(call.kwargs["indices"] == {1, 3} for call in applied.call_args_list)
+
+
+_PINNED_PLAN = (
+    "Container: c\nHead: abc1234\none.json  acme/widgets  PR #7\n\n"
+    "action 0 \u00b7 REVIEW (COMMENT)\nreview\n\n"
+    "action 1 \u00b7 REPLY to review comment #9\nreply\n\n"
+    "action 2 \u00b7 COMMENT (general)\nheld back\n\n"
+    "action 3 \u00b7 DESCRIPTION\ndescription\n\n"
+)
+
+
+def test_text_plan_unchanged_after_refactor(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, _ = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    assert _selected_offer(cfg, incus, choose_mode=lambda *_: None) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == (
+        _PINNED_PLAN + "4 actions will be published to GitHub as octocat.\n"
+        "As a draft: 2 go into your pending review on PR #7; "
+        "1 general comment(s) held back; the description is published.\n"
+        "Nothing published.\n"
+    )
+
+
+def test_text_plan_unchanged_for_preselected_draft(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, _ = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    assert _selected_offer(cfg, incus, draft=True, confirm=lambda n: False) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == (
+        _PINNED_PLAN + "3 actions will be published to GitHub as octocat.\n"
+        "  action 0: pending (in your pending review)\n"
+        "  action 1: pending (in your pending review)\n"
+        "  held back in draft mode: action 2 (general comment)\n"
+        "  action 3: published (description)\n"
+        "As a draft: 2 go into your pending review on PR #7; "
+        "1 general comment(s) held back; the description is published.\n"
+        "Nothing published.\n"
+    )
+
+
+def _plan_offer(cfg, incus, **kwargs):
+    plans = []
+    kwargs.setdefault("dry_run", True)
+    result = _selected_offer(cfg, incus, plan_sink=plans.append, **kwargs)
+    return result, plans
+
+
+def test_plan_sink_receives_one_json_and_prints_nothing(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, _ = _draft_offer_setup(mocker, make_cfg, tmp_path)
+    confirm = mocker.Mock(side_effect=AssertionError("no question"))
+    result, plans = _plan_offer(cfg, incus, confirm=confirm)
+    captured = capsys.readouterr()
+    assert (result, captured.out, captured.err) == (0, "", "")
+    (plan,) = plans
+    assert plan["schema"] == 1 and plan["kind"] == "pr" and plan["proposal"] == "pr/one.json"
+    assert plan["login"] == "octocat"
+    assert [(a["kind"], a["will"], a["will_draft"]) for a in plan["actions"]] == [
+        ("review", "publish", "draft"),
+        ("reply", "publish", "draft"),
+        ("comment", "publish", "held_back"),
+        ("description", "publish", "publish"),
+    ]
+    assert plan["actions"][0]["target"] == "acme/widgets#7"
+    assert (plan["total"], plan["total_draft"], plan["draftable"]) == (4, 3, True)
+    assert (plan["foreign"], plan["warnings"], plan["refusals"], plan["notes"]) == (
+        False,
+        [],
+        [],
+        [],
+    )
+
+
+def test_plan_json_carries_the_inspection_revision(mocker, make_cfg, tmp_path):
+    cfg, incus, identity, store, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    _, plans = _plan_offer(cfg, incus)
+    assert plans[0]["revision"] == _revision(tmp_path, identity, store)
+
+
+def test_plan_json_already_published_index(mocker, make_cfg, tmp_path):
+    text = _manifest_text(
+        actions=[
+            {"type": "comment", "body": "a"},
+            {"type": "comment", "body": "b"},
+            {"type": "comment", "body": "c"},
+            {"type": "comment", "body": "d"},
+        ]
+    )
+    files = {"one.json": text, "one.json.progress.json": '{"applied": [0], "urls": {"0": "u"}}'}
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    _, plans = _plan_offer(cfg, incus)
+    actions = plans[0]["actions"]
+    assert actions[0]["will"] == "already_published"
+    assert [a["will"] for a in actions[1:]] == ["publish"] * 3
+    assert plans[0]["total"] == 3
+
+
+def test_plan_json_resolved_foreign_target(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import foreign_warning
+
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    incus.config_get.side_effect = lambda c, key: "9999" if key == "user.jailbee.pr" else None
+    _, plans = _plan_offer(cfg, incus, allow_foreign=True)
+    plan = plans[0]
+    assert plan["foreign"] is True
+    # The warning text is derived from the same gated target.
+    assert plan["warnings"][0] == foreign_warning(
+        _resolved_foreign_target(mocker, cfg, incus), "feature"
+    )
+
+
+def _resolved_foreign_target(mocker, cfg, incus):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    manifest = parse_manifest("one.json", _manifest_text(), {})
+    return resolve_target(cfg, incus, "c", manifest, force=False, allow_foreign=True)
+
+
+def test_plan_json_not_draftable(mocker, make_cfg, tmp_path):
+    text = _manifest_text(
+        actions=[{"type": "comment", "body": "c"}, {"type": "description", "body": "d"}]
+    )
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
+    _, plans = _plan_offer(cfg, incus)
+    plan = plans[0]
+    assert plan["draftable"] is False and plan["total_draft"] == 0
+    assert [a["will_draft"] for a in plan["actions"]] == [None, None]
+
+
+def test_plan_json_reports_a_refusal(mocker, make_cfg, tmp_path):
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    incus.config_get.side_effect = lambda c, key: "9999" if key == "user.jailbee.pr" else None
+    result, plans = _plan_offer(cfg, incus)
+    assert result == 1
+    assert plans[0]["actions"] == [] and len(plans[0]["refusals"]) == 1
+    assert plans[0]["refusals"][0]["stale"] is False
+
+
+def test_plan_sink_requires_dry_run(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import OutboxError
+
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
+    with pytest.raises(OutboxError, match="plan output requires a dry run"):
+        _selected_offer(cfg, incus, plan_sink=lambda plan: None, raise_errors=True)

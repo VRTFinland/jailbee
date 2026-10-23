@@ -21,7 +21,7 @@ import difflib
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, assert_never
 
@@ -985,6 +985,100 @@ def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) ->
         held_back=sum(isinstance(a, CommentAction) for a in actions),
         description=any(isinstance(a, DescriptionAction) for a in actions),
     )
+
+
+@dataclass(frozen=True)
+class PlannedManifest:
+    """One gated manifest and what a publication would do with it."""
+
+    target: Target
+    progress: Progress
+    # `None` = every pending index (`review apply`, `outbox apply`).
+    indices: frozenset[int] | None
+    # What a normal publish sends.
+    pending: frozenset[int]
+    draftable: bool
+
+
+@dataclass(frozen=True)
+class PrPlan:
+    """The gate results of one `_offer_locked` run, collected once.
+
+    Rendered as text or as JSON (`pr_plan_json`); the gates never run twice.
+    """
+
+    manifests: tuple[PlannedManifest, ...]
+    refusals: tuple[str, ...]
+    notes: tuple[str, ...]
+    total: int
+    total_draft: int
+    previews: tuple[DraftPreview, ...]
+    # Filled in only for the JSON rendering (it costs a `gh` call).
+    login: str | None = None
+
+
+PlanSink = Callable[[dict[str, object]], None]
+
+_ACTION_KIND: dict[type, str] = {
+    ReviewAction: "review",
+    ReplyAction: "reply",
+    CommentAction: "comment",
+    DescriptionAction: "description",
+}
+
+
+def pr_plan_json(plan: PrPlan, short: str, *, proposal: str, revision: str) -> dict[str, object]:
+    """The machine-readable form of `plan`, for `outbox apply --dry-run -o json`."""
+    warnings: list[str] = []
+    for planned in plan.manifests:
+        warning = foreign_warning(planned.target, short)
+        if warning is not None:
+            warnings.append(warning)
+        if planned.target.stale:
+            warnings.append("the PR head has moved since this was written")
+    actions: list[dict[str, object]] = []
+    for planned in plan.manifests:
+        target = planned.target
+        assert target.pr is not None
+        for index, action in enumerate(target.manifest.actions):
+            applied = index in planned.progress.applied
+            if not applied and index not in planned.pending:
+                continue
+            kind = _ACTION_KIND.get(type(action), "other")
+            will_draft: str | None = None
+            if planned.draftable:
+                if applied:
+                    will_draft = "already_published"
+                elif isinstance(action, (ReviewAction, ReplyAction)):
+                    will_draft = "draft"
+                elif isinstance(action, CommentAction):
+                    will_draft = "held_back"
+                else:
+                    will_draft = "publish"
+            actions.append(
+                {
+                    "index": index,
+                    "kind": kind,
+                    "target": f"{target.manifest.repo}#{target.pr.number}",
+                    "will": "already_published" if applied else "publish",
+                    "will_draft": will_draft,
+                }
+            )
+    return {
+        "schema": 1,
+        "proposal": proposal,
+        "kind": "pr",
+        "revision": revision,
+        "login": plan.login,
+        "foreign": any(m.target.foreign for m in plan.manifests),
+        "draftable": any(m.draftable for m in plan.manifests),
+        "total": plan.total,
+        "total_draft": plan.total_draft,
+        "warnings": warnings,
+        "refusals": [{"reason": r, "stale": "head moved" in r} for r in plan.refusals],
+        "notes": list(plan.notes),
+        "actions": actions,
+    }
 
 
 @dataclass(frozen=True)
@@ -2252,6 +2346,7 @@ def offer_pending_comments(
     allow_foreign_repo: bool = False,
     draft: bool = False,
     choose_mode: ChooseMode | None = None,
+    plan_sink: PlanSink | None = None,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2263,6 +2358,8 @@ def offer_pending_comments(
     not own (see `resolve_target`); the plan then warns about each such target.
     allow_foreign_repo extends that consent to a repository that is none of the
     container's own; only the unified outbox passes it.
+    plan_sink (one selected manifest, dry run only) receives the plan as JSON
+    and nothing is printed.
     """
     from jailbee.outbox import io as store_io
     from jailbee.outbox.inspect import pr_progress_evidence
@@ -2272,6 +2369,8 @@ def offer_pending_comments(
     try:
         if raise_errors and (not explicit or pr_number is not None):
             raise OutboxError("typed errors require selected PR publication")
+        if plan_sink is not None and not dry_run:
+            raise OutboxError("plan output requires a dry run")
         if expected_revision is not None and (manifest_names is None or len(manifest_names) != 1):
             raise OutboxError("expected_revision requires one selected manifest")
         if not explicit and outbox is None:
@@ -2332,6 +2431,8 @@ def offer_pending_comments(
                 allow_foreign_repo=allow_foreign_repo,
                 draft=draft,
                 choose_mode=choose_mode,
+                plan_sink=plan_sink,
+                revisions=revisions,
             )
     except (
         OutboxReadError,
@@ -2349,6 +2450,126 @@ def offer_pending_comments(
             return 0
         error_plain(str(exc))
         return 1
+
+
+def _collect_pr_plan(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    short: str,
+    outbox: Outbox,
+    *,
+    force: bool,
+    for_offer: bool,
+    manifest_names: Sequence[str],
+    raise_errors: bool,
+    allow_foreign: bool,
+    allow_foreign_repo: bool,
+    selected_publication: bool,
+) -> PrPlan:
+    """Run the gates once and gather everything a rendering needs. Prints nothing."""
+    targets, refusals, notes = _gate_manifests(
+        cfg,
+        incus,
+        container,
+        outbox,
+        short,
+        force=force,
+        comments_only=for_offer,
+        manifest_names=manifest_names,
+        raise_errors=raise_errors,
+        allow_foreign=allow_foreign,
+        allow_foreign_repo=allow_foreign_repo,
+        selected_publication=selected_publication,
+    )
+    # Per target: the progress snapshot, and which of its pending indices this
+    # run will publish (`None` = all of them, `jailbee review apply`'s mode).
+    manifests: list[PlannedManifest] = []
+    for target in targets:
+        progress = _publication_progress(outbox, target.manifest.name, len(target.manifest.actions))
+        idx = _offerable_indices(target.manifest, progress) if for_offer else None
+        pending = frozenset(pending_indices(target.manifest, progress) if idx is None else idx)
+        is_draftable = draftable(target.manifest, pending)
+        if is_draftable:
+            assert target.pr is not None
+        manifests.append(PlannedManifest(target, progress, idx, pending, is_draftable))
+    total = sum(len(m.pending) for m in manifests)
+    drafts = [m for m in manifests if m.draftable]
+    total_draft = sum(len(draft_indices(m.target.manifest, m.pending)) for m in drafts)
+    previews = []
+    for m in drafts:
+        assert m.target.pr is not None
+        previews.append(draft_preview(m.target.manifest, m.target.pr.number, m.pending))
+    return PrPlan(
+        tuple(manifests), tuple(refusals), tuple(notes), total, total_draft, tuple(previews)
+    )
+
+
+def _print_pr_plan(
+    cfg: Config,
+    container: str,
+    short: str,
+    plan: PrPlan,
+    *,
+    selected_publication: bool,
+    draft: bool,
+    choose_mode: ChooseMode | None,
+) -> None:
+    """Render `plan` as the text a person confirms. Refusals and notes are not here."""
+    from jailbee.outbox.inspect import safe_text
+
+    for planned in plan.manifests:
+        target, progress = planned.target, planned.progress
+        if selected_publication:
+            # Full literal bodies are required for selected approval, not only
+            # the legacy offer's first-line preview. Use the freshly gated PR.
+            assert target.pr is not None
+            displayed = Manifest(
+                target.manifest.name,
+                target.manifest.repo,
+                target.pr.number,
+                target.manifest.head_sha,
+                target.manifest.actions,
+            )
+            console.print(f"Container: {safe_text(container)}", markup=False, highlight=False)
+            console.print(f"Head: {safe_text(target.pr.head_sha)}", markup=False, highlight=False)
+            print_lines(show_lines(displayed))
+            if progress.applied:
+                console.print(f"Already published (skipped): {sorted(progress.applied)}")
+            if target.stale:
+                console.print("The PR head has moved since this was written.")
+        else:
+            _print_plan(cfg, short, target, progress, indices=planned.indices)
+    _print_identity(cfg, plan.total_draft if draft else plan.total)
+    # Last, directly above the question: at the top of a long plan a warning
+    # scrolls out of sight before anyone answers.
+    # The repository name comes from the container: strip control characters.
+    for planned in plan.manifests:
+        warning = foreign_warning(planned.target, short)
+        if warning is not None:
+            console.print(Text(f"⚠ {safe_text(warning)}", style="bold yellow"), highlight=False)
+
+    drafts = [m for m in plan.manifests if m.draftable]
+    if drafts and (draft or choose_mode is not None):
+        if draft:
+            for planned in drafts:
+                for i in sorted(planned.pending):
+                    action = planned.target.manifest.actions[i]
+                    if isinstance(action, CommentAction):
+                        label = f"held back in draft mode: action {i} (general comment)"
+                    elif isinstance(action, DescriptionAction):
+                        label = f"action {i}: published (description)"
+                    else:
+                        label = f"action {i}: pending (in your pending review)"
+                    console.print(f"  {label}", markup=False, highlight=False)
+        # Keep all summaries together immediately above the single choice.
+        for preview in plan.previews:
+            clauses = [f"{preview.pending} go into your pending review on PR #{preview.pr}"]
+            if preview.held_back:
+                clauses.append(f"{preview.held_back} general comment(s) held back")
+            if preview.description:
+                clauses.append("the description is published")
+            console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
 
 
 def _offer_locked(
@@ -2372,6 +2593,8 @@ def _offer_locked(
     allow_foreign_repo: bool = False,
     draft: bool = False,
     choose_mode: ChooseMode | None = None,
+    plan_sink: PlanSink | None = None,
+    revisions: Mapping[str, str] | None = None,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -2414,52 +2637,63 @@ def _offer_locked(
     is read here, and a container that will not answer is reported and treated
     as nothing pending rather than raised — the offer's caller has a PR on
     screen that must not be retracted by this.
+
+    `plan_sink` (dry runs only) receives the plan as JSON instead of any text
+    being printed; `revisions` names the inspection revision of each manifest.
     """
+    if plan_sink is not None and not dry_run:
+        raise OutboxError("plan output requires a dry run")
     for_offer = pr_number is not None
     uid = cfg.container_user.uid
     if not outbox.manifest_names and not draft:
         return 0
 
-    targets, refusals, notes = _gate_manifests(
+    from jailbee.outbox.inspect import safe_text
+
+    plan = _collect_pr_plan(
         cfg,
         incus,
         container,
-        outbox,
         short,
+        outbox,
         force=force,
-        comments_only=for_offer,
+        for_offer=for_offer,
         manifest_names=manifest_names,
         raise_errors=raise_errors,
         allow_foreign=allow_foreign,
         allow_foreign_repo=allow_foreign_repo,
         selected_publication=selected_publication,
     )
-    for message in refusals:
+    refusals = plan.refusals
+    plans = [(m.target, m.progress, m.indices) for m in plan.manifests]
+    draft_plans = [m for m in plan.manifests if m.draftable]
+    total, total_draft, previews = plan.total, plan.total_draft, list(plan.previews)
+
+    if plan_sink is not None:
+        if len(manifest_names) != 1 or revisions is None or manifest_names[0] not in revisions:
+            raise OutboxError("plan output requires one selected manifest")
+        name = manifest_names[0]
+        plan_sink(
+            pr_plan_json(
+                replace(plan, login=pr.gh_login(cfg.repo_root)),
+                short,
+                proposal=f"pr/{name}",
+                revision=revisions[name],
+            )
+        )
+        if not plan.manifests and not draft:
+            return max(1, len(refusals)) if selected_publication else len(refusals)
+        return len(refusals)
+
+    for message in plan.refusals:
         error_plain(message)
-    for message in notes:
+    for message in plan.notes:
         warn_plain(message)
-    if not targets and not draft:
+    if not plan.manifests and not draft:
         # Refusals are failures; a deferral or a held-back manifest only means
         # the work belongs to another command, which is not a reason to fail.
         return max(1, len(refusals)) if selected_publication else len(refusals)
 
-    # Per target: the progress snapshot, and which of its pending indices this
-    # run will publish (`None` = all of them, `jailbee review apply`'s mode).
-    plans: list[tuple[Target, Progress, frozenset[int] | None]] = []
-    for target in targets:
-        progress = _publication_progress(outbox, target.manifest.name, len(target.manifest.actions))
-        plans.append(
-            (target, progress, _offerable_indices(target.manifest, progress) if for_offer else None)
-        )
-    total = sum(
-        len(idx) if idx is not None else len(pending_indices(t.manifest, p)) for t, p, idx in plans
-    )
-    draft_plans = []
-    for target, progress, idx in plans:
-        pending = pending_indices(target.manifest, progress) if idx is None else idx
-        if draftable(target.manifest, pending):
-            assert target.pr is not None
-            draft_plans.append((target, progress, pending))
     if draft and not draft_plans:
         message = "nothing here can be a draft review: no review comments or replies are pending"
         if raise_errors:
@@ -2475,65 +2709,15 @@ def _offer_locked(
         )
         return len(refusals)
 
-    for target, progress, idx in plans:
-        if selected_publication:
-            from jailbee.outbox.inspect import safe_text
-
-            # Full literal bodies are required for selected approval, not only
-            # the legacy offer's first-line preview. Use the freshly gated PR.
-            assert target.pr is not None
-            displayed = Manifest(
-                target.manifest.name,
-                target.manifest.repo,
-                target.pr.number,
-                target.manifest.head_sha,
-                target.manifest.actions,
-            )
-            console.print(f"Container: {safe_text(container)}", markup=False, highlight=False)
-            console.print(f"Head: {safe_text(target.pr.head_sha)}", markup=False, highlight=False)
-            print_lines(show_lines(displayed))
-            if progress.applied:
-                console.print(f"Already published (skipped): {sorted(progress.applied)}")
-            if target.stale:
-                console.print("The PR head has moved since this was written.")
-        else:
-            _print_plan(cfg, short, target, progress, indices=idx)
-    total_draft = sum(len(draft_indices(t.manifest, pending)) for t, _, pending in draft_plans)
-    _print_identity(cfg, total_draft if draft else total)
-    # Last, directly above the question: at the top of a long plan a warning
-    # scrolls out of sight before anyone answers.
-    # The repository name comes from the container: strip control characters.
-    from jailbee.outbox.inspect import safe_text
-
-    for target, _, _ in plans:
-        warning = foreign_warning(target, short)
-        if warning is not None:
-            console.print(Text(f"⚠ {safe_text(warning)}", style="bold yellow"), highlight=False)
-
-    previews = []
-    if draft_plans and (draft or choose_mode is not None):
-        for target, _progress, pending in draft_plans:
-            assert target.pr is not None
-            preview = draft_preview(target.manifest, target.pr.number, pending)
-            previews.append(preview)
-            if draft:
-                for i in sorted(pending):
-                    action = target.manifest.actions[i]
-                    if isinstance(action, CommentAction):
-                        label = f"held back in draft mode: action {i} (general comment)"
-                    elif isinstance(action, DescriptionAction):
-                        label = f"action {i}: published (description)"
-                    else:
-                        label = f"action {i}: pending (in your pending review)"
-                    console.print(f"  {label}", markup=False, highlight=False)
-        # Keep all summaries together immediately above the single choice.
-        for preview in previews:
-            clauses = [f"{preview.pending} go into your pending review on PR #{preview.pr}"]
-            if preview.held_back:
-                clauses.append(f"{preview.held_back} general comment(s) held back")
-            if preview.description:
-                clauses.append("the description is published")
-            console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
+    _print_pr_plan(
+        cfg,
+        container,
+        short,
+        plan,
+        selected_publication=selected_publication,
+        draft=draft,
+        choose_mode=choose_mode,
+    )
 
     if dry_run:
         info("Dry run: nothing was published.")
