@@ -483,3 +483,168 @@ def test_titles_stay_apart_from_markdown_bodies(tmp_path):
     assert (create.title, create.body, create.markdown) == ("Example", "Original body", True)
     assert create.text == "Example\n\nOriginal body"
     assert labels.title is None and labels.markdown is False
+
+
+def _container(tmp_path, *stores):
+    views = build_views(IDENTITY, stores, journal_store=JournalStore(tmp_path / "journals"))
+    return ContainerView(IDENTITY, "c1", True, None, tuple(stores), views)
+
+
+def _pr_manifest(actions, pr=42):
+    return json.dumps(
+        {"version": 1, "repo": ".", "pr": pr, "head_sha": "a" * 40, "actions": actions}
+    )
+
+
+def _proposals(tmp_path, *stores):
+    out = overview_json([_container(tmp_path, *stores)])
+    return {p["id"]: p for p in out["containers"][0]["proposals"]}  # type: ignore[index]
+
+
+def test_overview_json_splits_title_body_markdown(tmp_path):
+    proposals = _proposals(tmp_path, store("issue", issue_files()))
+    action = proposals["issue/001.json"]["actions"][0]
+    assert action["title"] == "Example"
+    assert action["body"] == "Original body"
+    assert action["markdown"] is True
+    assert action["text"] == "Example\n\nOriginal body"
+
+
+def test_overview_json_comment_anchor_fields(tmp_path):
+    files = {
+        "001.json": _pr_manifest(
+            [
+                {
+                    "type": "review",
+                    "event": "COMMENT",
+                    "body": "b",
+                    "comments": [{"path": "src/a.py", "start_line": 3, "line": 5, "body": "x"}],
+                }
+            ]
+        )
+    }
+    comment = _proposals(tmp_path, store("pr", files))["pr/001.json"]["actions"][0]["comments"][0]
+    assert comment["path"] == "src/a.py"
+    assert comment["line"] == 5
+    assert comment["start_line"] == 3
+    assert comment["label"] == "src/a.py:5"
+
+
+def test_overview_json_reply_to(tmp_path):
+    files = {
+        "001.json": _pr_manifest(
+            [
+                {"type": "reply", "comment_id": 123, "body": "r"},
+                {"type": "comment", "body": "c"},
+            ]
+        )
+    }
+    actions = _proposals(tmp_path, store("pr", files))["pr/001.json"]["actions"]
+    assert actions[0]["reply_to"] == 123
+    assert actions[1]["reply_to"] is None
+
+
+def test_overview_json_draftable(tmp_path):
+    comment_only = {
+        "001.json": _pr_manifest(
+            [{"type": "comment", "body": "c"}, {"type": "description", "title": "t", "body": "d"}]
+        )
+    }
+    applied = {
+        "001.json": _pr_manifest(
+            [
+                {"type": "review", "event": "COMMENT", "body": "b", "comments": []},
+                {"type": "comment", "body": "c"},
+            ]
+        ),
+        "001.json.progress.json": json.dumps({"applied": [0], "urls": {"0": "https://x/1"}}),
+    }
+    proposals = _proposals(
+        tmp_path,
+        store(
+            "pr",
+            pr_files()
+            | {"002.json": comment_only["001.json"]}
+            | {
+                "003.json": applied["001.json"],
+                "003.json.progress.json": applied["001.json.progress.json"],
+            },
+        ),
+        store("issue", issue_files()),
+    )
+    assert proposals["pr/001.json"]["draftable"] is True
+    assert proposals["pr/002.json"]["draftable"] is False
+    assert proposals["pr/003.json"]["draftable"] is False
+    assert proposals["issue/001.json"]["draftable"] is False
+
+
+def test_overview_json_delete_eligibility_matches_plan_clear(tmp_path):
+    from jailbee.outbox.delete import plan_clear
+
+    sidecar = json.dumps({"applied": [0], "urls": {"0": "https://x/1"}})
+    pr = pr_files() | {
+        "002.json": _pr_manifest([{"type": "comment", "body": "c"}]),
+        "003.json": _pr_manifest(
+            [{"type": "comment", "body": "a"}, {"type": "comment", "body": "b"}]
+        ),
+        "003.json.progress.json": sidecar,
+    }
+    journals = JournalStore(tmp_path / "journals")
+    files = issue_files()
+    digest = proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]})
+    key = journal_key(IDENTITY, "001.json")
+    journals.create(key, digest, 3)
+    for i in range(3):
+        journals.mark_prepared(key, i, repo="acme/repo")
+        journals.mark_applied(key, i, repo="acme/repo", url=f"https://x/{i}", issue=i + 1)
+    uncertain = issue_files()
+    ukey = journal_key(IDENTITY, "002.json")
+    uncertain_text = uncertain.pop("001.json")
+    uncertain["002.json"] = uncertain_text
+    journals.create(
+        ukey, proposal_digest("002.json", uncertain_text, {"body.md": uncertain["body.md"]}), 3
+    )
+    journals.mark_prepared(ukey, 2, repo="acme/repo")
+    # Separate snapshots: the settled journal belongs to 001.json, the uncertain one to 002.json.
+    issue_store = store("issue", files | {"002.json": uncertain_text})
+    views = build_views(IDENTITY, (store("pr", pr), issue_store), journal_store=journals)
+    container = ContainerView(IDENTITY, "c1", True, None, (store("pr", pr), issue_store), views)
+    plan = plan_clear(container)
+    keep = {i.proposal: i for i in plan.keep}
+    delete = {i.proposal: i for i in plan.delete}
+    out = {p["id"]: p for p in overview_json([container])["containers"][0]["proposals"]}  # type: ignore[index]
+    assert out["pr/001.json"]["deletable"] is True
+    assert out["pr/001.json"]["delete_block"] is None
+    assert out["pr/001.json"]["delete_archive"] is False
+    blocked = out["pr/003.json"]
+    assert blocked["deletable"] is False
+    assert blocked["delete_block"] == keep[ProposalId("pr", "003.json")].reason
+    settled = out["issue/001.json"]
+    assert settled["deletable"] is True
+    assert settled["delete_archive"] is True
+    assert delete[ProposalId("issue", "001.json")].selection.archive_journal
+    stuck = out["issue/002.json"]
+    assert stuck["deletable"] is False
+    assert "jailbee issue resolve" in stuck["delete_block"]
+
+
+def test_overview_json_action_delete_scope(tmp_path):
+    actions = _proposals(tmp_path, store("issue", issue_files()))["issue/001.json"]["actions"]
+    assert [a["delete_scope"] for a in actions] == [[0, 1], [1], [2]]
+    assert all(a["delete_block"] is None for a in actions)
+    journals = JournalStore(tmp_path / "journals")
+    files = issue_files()
+    key = journal_key(IDENTITY, "001.json")
+    journals.create(
+        key, proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}), 3
+    )
+    journals.mark_prepared(key, 0, repo="acme/repo")
+    journals.mark_applied(key, 0, repo="acme/repo", url="https://x/1", issue=1)
+    st = store("issue", files)
+    views = build_views(IDENTITY, (st,), journal_store=journals)
+    container = ContainerView(IDENTITY, "c1", True, None, (st,), views)
+    proposal = overview_json([container])["containers"][0]["proposals"][0]  # type: ignore[index]
+    assert views[0].edit_block
+    for action in proposal["actions"]:
+        assert action["delete_scope"] is None
+        assert action["delete_block"] == views[0].edit_block

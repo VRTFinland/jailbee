@@ -54,6 +54,9 @@ class CommentView:
     index: int
     label: str
     text: str
+    path: str | None = None
+    line: int | None = None
+    start_line: int | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,7 @@ class ActionView:
     state: Literal["pending", "applied", "uncertain"]
     receipt: str | None
     comments: tuple[CommentView, ...]
+    reply_to: int | None = None
 
     @property
     def text(self) -> str:

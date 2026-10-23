@@ -12,6 +12,7 @@ from typing import Literal
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
+from jailbee.outbox import delete
 from jailbee.outbox.models import (
     ActionView,
     CommentView,
@@ -164,7 +165,8 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
         if isinstance(action, prs.ReviewAction):
             kind = "review"
             comments = tuple(
-                CommentView(i, f"{c.path}:{c.line}", c.body) for i, c in enumerate(action.comments)
+                CommentView(i, f"{c.path}:{c.line}", c.body, c.path, c.line, c.start_line)
+                for i, c in enumerate(action.comments)
             )
         elif isinstance(action, prs.DescriptionAction):
             kind = "description"
@@ -185,6 +187,7 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
                 "pending",
                 None,
                 comments,
+                action.comment_id if isinstance(action, prs.ReplyAction) else None,
             )
         )
     return tuple(result)
@@ -344,7 +347,68 @@ def build_views(
     return tuple(views)
 
 
-def _proposal_json(proposal: ProposalView) -> dict[str, object]:
+def _draftable(proposal: ProposalView) -> bool:
+    """Same rule as `pr_outbox.draftable`, read off the action views.
+
+    A PR proposal is draftable while a review or reply is still pending.
+    """
+    return proposal.id.kind == "pr" and any(
+        a.state == "pending" and a.kind in ("review", "reply") for a in proposal.actions
+    )
+
+
+def _action_scope(
+    container: ContainerView, proposal: ProposalView, action: ActionView
+) -> tuple[list[int] | None, str | None]:
+    """Indices a single-action drop removes, or why it is not allowed."""
+    selection = delete.DeleteSelection(
+        action=action.index,
+        with_dependents=proposal.id.kind == "issue" and action.kind == "create",
+    )
+    try:
+        plan = delete.plan_delete(container, proposal.id, selection)
+    except OutboxError as exc:
+        return None, str(exc)
+    return list(plan.removed_actions), None
+
+
+def _proposal_json(
+    container: ContainerView, proposal: ProposalView, clear: delete.ContainerClearPlan
+) -> dict[str, object]:
+    item = next((i for i in (*clear.delete, *clear.keep) if i.proposal == proposal.id), None)
+    deletable = item is not None and item in clear.delete
+    archive = bool(item and item.selection and item.selection.archive_journal)
+    actions: list[dict[str, object]] = []
+    for a in proposal.actions:
+        scope, block = _action_scope(container, proposal, a)
+        actions.append(
+            {
+                "index": a.index,
+                "kind": a.kind,
+                "repo": a.repo,
+                "target": a.target,
+                "text": a.text,
+                "title": a.title,
+                "body": a.body,
+                "markdown": a.markdown,
+                "reply_to": a.reply_to,
+                "state": a.state,
+                "receipt": a.receipt,
+                "delete_scope": scope,
+                "delete_block": block,
+                "comments": [
+                    {
+                        "index": c.index,
+                        "label": c.label,
+                        "text": c.text,
+                        "path": c.path,
+                        "line": c.line,
+                        "start_line": c.start_line,
+                    }
+                    for c in a.comments
+                ],
+            }
+        )
     return {
         "id": str(proposal.id),
         "kind": proposal.id.kind,
@@ -354,21 +418,11 @@ def _proposal_json(proposal: ProposalView) -> dict[str, object]:
         "state": proposal.state,
         "error": proposal.error,
         "edit_block": proposal.edit_block,
-        "actions": [
-            {
-                "index": a.index,
-                "kind": a.kind,
-                "repo": a.repo,
-                "target": a.target,
-                "text": a.text,
-                "state": a.state,
-                "receipt": a.receipt,
-                "comments": [
-                    {"index": c.index, "label": c.label, "text": c.text} for c in a.comments
-                ],
-            }
-            for a in proposal.actions
-        ],
+        "draftable": _draftable(proposal),
+        "deletable": deletable,
+        "delete_archive": archive,
+        "delete_block": item.reason if item is not None and not deletable else None,
+        "actions": actions,
     }
 
 
@@ -390,13 +444,15 @@ def _container_json(container: ContainerView) -> dict[str, object]:
     }
 
 
+def _proposals_json(container: ContainerView) -> list[dict[str, object]]:
+    clear = delete.plan_clear(container)
+    return [_proposal_json(container, p, clear) for p in container.proposals]
+
+
 def overview_json(containers: Sequence[ContainerView]) -> dict[str, object]:
     return {
         "schema": 1,
-        "containers": [
-            _container_json(c) | {"proposals": [_proposal_json(p) for p in c.proposals]}
-            for c in containers
-        ],
+        "containers": [_container_json(c) | {"proposals": _proposals_json(c)} for c in containers],
     }
 
 
@@ -404,5 +460,5 @@ def detail_json(container: ContainerView, proposal: ProposalView) -> dict[str, o
     return {
         "schema": 1,
         "container": _container_json(container),
-        "proposal": _proposal_json(proposal),
+        "proposal": _proposal_json(container, proposal, delete.plan_clear(container)),
     }
