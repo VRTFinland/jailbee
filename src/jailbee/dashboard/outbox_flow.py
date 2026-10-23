@@ -50,7 +50,7 @@ Intent = Literal[
 _Preview = Literal["auto", "on", "off"]
 _PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off"}
 
-_STALE_HINT ="use `jailbee outbox apply --force` from a terminal"
+_STALE_HINT = "use `jailbee outbox apply --force` from a terminal"
 _CHANGED = "changed; refreshed"
 _PR_CHANGED = "Proposal changed; refresh the outbox before creating a PR"
 _NO_ABILITIES = dob.Abilities(False, False, False, False, False, False)
@@ -202,7 +202,8 @@ class OutboxController:
         return dob.Abilities(
             delete=ok(dob.outbox_drop_argv(live.name, pid, rev)),
             publish=publish,
-            publish_hand_off=not publish and ok(dob.outbox_apply_argv(live.name, pid, rev, yes=False)),
+            publish_hand_off=not publish
+            and ok(dob.outbox_apply_argv(live.name, pid, rev, yes=False)),
             create_pr=create is not None and ok(create),
             clear=ok(dob.clear_approved_argv(live.name, "0")),
             scope=self.standalone,
@@ -220,9 +221,7 @@ class OutboxController:
         for key in (cursor, self.state.cursor):
             if key is not None:
                 candidates += [(key[0], key[1], key[2], None), (key[0], key[1], None, None)]
-        first = next(
-            ((c.name, p.id, None, None) for c in containers for p in c.proposals), None
-        )
+        first = next(((c.name, p.id, None, None) for c in containers for p in c.proposals), None)
         chosen = next((k for k in candidates if k is not None and k in keys), first)
         return replace(
             self.state,
@@ -314,7 +313,11 @@ class OutboxController:
             return
         if key not in self.state.expanded and key[2] is not None:
             # A collapsed child: collapse its parent and move there.
-            key = (key[0], key[1], key[2], None) if key[3] is not None else (key[0], key[1], None, None)
+            key = (
+                (key[0], key[1], key[2], None)
+                if key[3] is not None
+                else (key[0], key[1], None, None)
+            )
         self._set(replace(self.state, expanded=self.state.expanded - {key}, cursor=key))
 
     def _toggle(self, key: dob.RowKey | None) -> None:
@@ -394,7 +397,8 @@ class OutboxController:
         children = [
             k
             for k in chosen
-            if k[2] is not None and not (k[3] is not None and (name, listed.id, k[2], None) in chosen)
+            if k[2] is not None
+            and not (k[3] is not None and (name, listed.id, k[2], None) in chosen)
         ]
         children.sort(key=lambda k: (k[2] or 0, -1 if k[3] is None else k[3]), reverse=True)
         expected = {k: _fingerprint(listed, k) for k in children}
@@ -450,7 +454,11 @@ class OutboxController:
             self._status(f"{pid} awaits its PR: press c to create it")
             return
         if not proposal.publishable:
-            self._status(f"{pid}: {_safe(proposal.error)}" if proposal.error else f"{pid} is {_safe(proposal.state)}: nothing to publish")
+            self._status(
+                f"{pid}: {_safe(proposal.error)}"
+                if proposal.error
+                else f"{pid} is {_safe(proposal.state)}: nothing to publish"
+            )
             return
         name, revision = container.name, proposal.revision
         if self.state.abilities.publish:
@@ -496,7 +504,9 @@ class OutboxController:
                 line += f" / draft: {_safe(action['will_draft'])}"
             lines.append(line)
         lines.extend(line for note in plan.get("notes") or () for line in _lines(_safe(note)))
-        lines.append(f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)")
+        lines.append(
+            f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)"
+        )
         lines.extend(f"⚠ {line}" for w in plan.get("warnings") or () for line in _lines(_safe(w)))
         choices: list[tuple[str, str]] = [("Publish", "publish")]
         if plan.get("draftable") is True:
@@ -530,7 +540,9 @@ class OutboxController:
             self.state = replace(self.state, busy=None)
             self._after_mutation(_lines(result.stdout, result.stderr) or ("published",))
 
-        self._start("publishing…", f"outbox-apply:{name}:{pid}", f"publishing {_safe(pid)}…", argv, done)
+        self._start(
+            "publishing…", f"outbox-apply:{name}:{pid}", f"publishing {_safe(pid)}…", argv, done
+        )
 
     # -- create PR ----------------------------------------------------------
 
@@ -627,7 +639,13 @@ class OutboxController:
             )
             self._after_mutation((_safe(last),) if last else ())
 
-        self._start("clearing…", f"outbox-clear:{name}", f"clearing outbox {name}…", dob.clear_approved_argv(name, token), done)
+        self._start(
+            "clearing…",
+            f"outbox-clear:{name}",
+            f"clearing outbox {name}…",
+            dob.clear_approved_argv(name, token),
+            done,
+        )
 
     # -- questions ----------------------------------------------------------
 
