@@ -19,6 +19,7 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee outbox` on a terminal opens the new full-screen outbox manager instead of the questionary browser, and the dashboard's Outbox entry opens the manager instead of its chain of pickers; `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo.
 - `jailbee review ls|show|drop` and `jailbee issue ls|show|drop` are deprecated in favour of `jailbee outbox ls|show|drop`; they still work and print a hint.
 
 ## 1.7.8 - 2026-10-23

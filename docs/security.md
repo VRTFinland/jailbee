@@ -81,10 +81,12 @@ remote:
 Each entry is an exact registered `container_prefix`, not a path, glob, or
 key-specific grant. The excluded repo is unavailable via direct SSH repo
 selection and is omitted from the remote dashboard and console. Supported
-aggregates such as `ls --all`, `job ls --all-repos`, `review ls --all-repos`,
-`base usage --all`, and repo summaries such as `net status` operate only on
-visible repos; filtering is applied before probing, rendering, totals, or
-actions. Unknown and excluded repo selections give the same error. This is one
+aggregates such as `ls --all`, `job ls --all-repos`, `base usage --all`, and
+repo summaries such as `net status` operate only on visible repos; filtering
+is applied before probing, rendering, totals, or actions. The unified
+`outbox` commands, `outbox ls --all-repos` included, are refused outright
+while any repo is excluded (the deprecated `review ls --all-repos` is still a
+filtered aggregate). Unknown and excluded repo selections give the same error. This is one
 host-wide visibility boundary for all keys, not per-key authorization, and it
 does not alter local CLI, TUI, or Qt behavior. Each new command channel takes
 a routing/repo-scope policy snapshot; a running channel keeps that snapshot.
