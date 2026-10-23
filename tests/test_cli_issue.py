@@ -114,12 +114,15 @@ def _prepared_batch(tmp_path: Path, *, login: str = "octocat", manifest_name: st
 # ---- registration / help ----------------------------------------------------
 
 
-def test_issue_help_lists_all_five_subcommands():
-    result = runner.invoke(app, ["issue", "--help"])
+def test_issue_help_lists_the_visible_subcommands():
+    import typer.main
 
-    assert result.exit_code == 0, result.output
-    for name in ("ls", "show", "apply", "drop", "resolve"):
-        assert name in result.output
+    group = typer.main.get_command(app).commands["issue"]  # type: ignore[attr-defined]  # click Group
+
+    for name in ("apply", "resolve"):
+        assert not group.commands[name].hidden
+    for name in ("ls", "show", "drop"):
+        assert group.commands[name].hidden
 
 
 def test_ls_help_shows_format_and_fields_options():
@@ -1563,3 +1566,37 @@ def test_apply_dry_run_with_foreign_asks_nothing(mocker, tmp_path):
     confirm.assert_not_called()
     revalidate.assert_not_called()
     apply_batch.assert_not_called()
+
+
+# ---- deprecated aliases -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sub", "new"),
+    [("ls", "outbox ls"), ("show", "outbox show"), ("drop", "outbox drop")],
+)
+def test_issue_alias_is_hidden_and_hints(mocker, tmp_path, sub, new):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
+
+    import typer.main
+
+    group = typer.main.get_command(app).commands["issue"]  # type: ignore[attr-defined]  # click Group
+    assert group.commands[sub].hidden
+
+    result = runner.invoke(app, ["issue", sub, "-y"] if sub == "drop" else ["issue", sub])
+
+    assert f"`jailbee issue {sub}` is deprecated; use `jailbee {new}`." in result.stderr
+    assert "deprecated" not in result.stdout
+
+
+def test_issue_ls_json_stdout_stays_clean_json(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
+    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
+
+    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["manifest"] == "001.json"
+    assert "deprecated" in result.stderr

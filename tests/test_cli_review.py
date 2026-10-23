@@ -1131,3 +1131,37 @@ def test_review_apply_draft_off_tty_refuses(mocker, tmp_path):
     assert "-y" in result.output
     applied.assert_not_called()
     picker.assert_not_called()
+
+
+# ---- deprecated aliases ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sub", "new"),
+    [("ls", "outbox ls"), ("show", "outbox show"), ("drop", "outbox drop")],
+)
+def test_review_alias_is_hidden_and_hints(mocker, tmp_path, sub, new):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
+
+    import typer.main
+
+    group = typer.main.get_command(app).commands["review"]  # type: ignore[attr-defined]  # click Group
+    assert group.commands[sub].hidden
+
+    result = runner.invoke(app, ["review", sub, "-y"] if sub == "drop" else ["review", sub])
+
+    assert f"`jailbee review {sub}` is deprecated; use `jailbee {new}`." in result.stderr
+    assert "deprecated" not in result.stdout
+
+
+def test_review_ls_json_stdout_stays_clean_json(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
+
+    result = runner.invoke(app, ["review", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["manifest"] == "001-x.json"
+    assert "deprecated" in result.stderr

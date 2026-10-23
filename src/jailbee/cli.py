@@ -13420,7 +13420,14 @@ def review_apply_cmd(
         raise typer.Exit(1)
 
 
-@review_app.command("ls")
+def _deprecated_alias_hint(old: str, new: str) -> None:
+    """Tell, on stderr, that `jailbee <old>` is deprecated for `jailbee <new>`."""
+    from jailbee.tui import warn_plain
+
+    warn_plain(f"`jailbee {old}` is deprecated; use `jailbee {new}`.", stderr=True)
+
+
+@review_app.command("ls", hidden=True)
 def review_ls_cmd(
     all_repos: Annotated[
         bool,
@@ -13450,6 +13457,7 @@ def review_ls_cmd(
     cannot be read, so it is named in a note under the table rather than
     listed as having nothing — JSON output describes manifests only.
     """
+    _deprecated_alias_hint("review ls", "outbox ls")
     from rich.markup import escape
 
     from jailbee import pr_outbox
@@ -13609,7 +13617,7 @@ def _print_manifest_bodies(manifest: "Manifest") -> None:
     print_lines(pr_outbox.show_lines(manifest))
 
 
-@review_app.command("show")
+@review_app.command("show", hidden=True)
 def review_show_cmd(
     name: ReviewContainerArg = None,
     manifest: Annotated[
@@ -13619,6 +13627,7 @@ def review_show_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Print every pending body in full: rendered on a terminal, raw when piped."""
+    _deprecated_alias_hint("review show", "outbox show")
     from jailbee import pr_outbox
     from jailbee.lifecycle import short_name
 
@@ -13649,7 +13658,7 @@ def review_show_cmd(
         raise typer.Exit(1)
 
 
-@review_app.command("drop")
+@review_app.command("drop", hidden=True)
 def review_drop_cmd(
     name: ReviewContainerArg = None,
     manifest: Annotated[
@@ -13660,6 +13669,7 @@ def review_drop_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Delete pending PR actions, unapplied — nothing is published."""
+    _deprecated_alias_hint("review drop", "outbox drop")
     from jailbee import pr_outbox, prompting
     from jailbee.lifecycle import short_name
 
@@ -13860,7 +13870,7 @@ def _issue_manifest_state(journal: "IssueJournal | None") -> str:
     return "in progress"
 
 
-@issue_app.command("ls")
+@issue_app.command("ls", hidden=True)
 def issue_ls_cmd(
     name: Annotated[
         str | None,
@@ -13898,6 +13908,7 @@ def issue_ls_cmd(
     read at all, so it is named in a note under the table rather than
     listed as having nothing.
     """
+    _deprecated_alias_hint("issue ls", "outbox ls")
     from rich.markup import escape
 
     from jailbee import issue_outbox
@@ -14073,7 +14084,7 @@ def issue_ls_cmd(
         )
 
 
-@issue_app.command("show")
+@issue_app.command("show", hidden=True)
 def issue_show_cmd(
     name: IssueContainerArg = None,
     manifest: Annotated[
@@ -14087,6 +14098,7 @@ def issue_show_cmd(
     Never reads GitHub: what is shown is exactly what the container proposed
     and what jailbee itself has durably recorded about it so far.
     """
+    _deprecated_alias_hint("issue show", "outbox show")
     from jailbee import issue_outbox
     from jailbee.issue_manifest import IssueManifestError, parse_manifest
     from jailbee.lifecycle import short_name
@@ -14250,7 +14262,7 @@ def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -
     print_issue_outcome(batch, report)
 
 
-@issue_app.command("drop")
+@issue_app.command("drop", hidden=True)
 def issue_drop_cmd(
     name: IssueContainerArg = None,
     manifest: Annotated[
@@ -14278,6 +14290,7 @@ def issue_drop_cmd(
     progress, but shows applied receipts and untouched pending actions and
     then keeps a record of the settled ones before removing the manifest.
     """
+    _deprecated_alias_hint("issue drop", "outbox drop")
     from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import IssueManifestError, parse_manifest
     from jailbee.lifecycle import short_name

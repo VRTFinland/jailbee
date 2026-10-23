@@ -1349,6 +1349,8 @@ PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
 
 ### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
 
+**Deprecated** alias of `jailbee outbox ls` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
+
 One row per pending manifest across running containers: CONTAINER, PR,
 MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
 does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
@@ -1359,6 +1361,8 @@ manifests only (no stopped-container note).
 
 ### `jailbee review show [NAME] [MANIFEST]`
 
+**Deprecated** alias of `jailbee outbox show` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
+
 Print every pending manifest's action bodies in full — never truncated, so
 this is the way to actually read a comment before deciding to publish it. On
 a terminal the Markdown is wrapped to the window and coloured, with HTML tags
@@ -1366,6 +1370,8 @@ and image URLs shown as text rather than hidden; piped output is the raw text
 exactly as the container wrote it. Omit `MANIFEST` for every pending manifest in the container.
 
 ### `jailbee review drop [NAME] [MANIFEST] [-y]`
+
+**Deprecated** alias of `jailbee outbox drop` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
 
 Delete pending manifests **without publishing them** — no GitHub call, no
 `applied.log` line. Confirms first unless `-y`; refuses off a TTY without
@@ -1435,6 +1441,8 @@ reference.
 
 ### `jailbee issue ls [NAME] [-o table|json] [--fields …]`
 
+**Deprecated** alias of `jailbee outbox ls` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
+
 One row per pending manifest across this repo's containers — CONTAINER,
 MANIFEST, ACTIONS (counts by kind, e.g. `create:1 comment:2`), REPOS, STATE
 (`pending`, `in progress`, `uncertain`, or `error`) — read from each
@@ -1447,6 +1455,8 @@ comma-separated from `container, manifest, actions, repos, state, error`
 (`error` hidden from the default table); `-o json` includes it always.
 
 ### `jailbee issue show [NAME] [MANIFEST]`
+
+**Deprecated** alias of `jailbee outbox show` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
 
 Print every pending manifest's validated proposal and host journal state,
 in full — never truncated, bodies Markdown-rendered on a terminal (HTML and
@@ -1474,6 +1484,8 @@ an earlier run blocks the whole manifest until `jailbee issue resolve`
 reconciles it.
 
 ### `jailbee issue drop [NAME] [MANIFEST] [--archive-journal] [-y]`
+
+**Deprecated** alias of `jailbee outbox drop` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
 
 Delete pending issue actions **without publishing them** — no GitHub call,
 no `applied.log` line. Refuses by default the instant the manifest has any

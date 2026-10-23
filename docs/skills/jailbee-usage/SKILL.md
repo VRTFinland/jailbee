@@ -1435,11 +1435,11 @@ the **container-side** contract, exact schema and worked examples live in
 the **jailbee-pr-review** skill, not here. What matters on the host:
 
 ```bash
-jailbee review ls                    # every running container's pending manifests
-jailbee review show <name>           # print every pending body in full (rendered on a terminal)
+jailbee review ls                    # (deprecated: use `jailbee outbox ...`) every running container's pending manifests
+jailbee review show <name>           # (deprecated: use `jailbee outbox ...`) print every pending body in full (rendered on a terminal)
 jailbee review apply <name> --dry-run   # print the plan, publish nothing
 jailbee review apply <name>          # ask once, then publish to GitHub
-jailbee review drop <name>           # delete pending manifests unapplied
+jailbee review drop <name>           # (deprecated: use `jailbee outbox ...`) delete pending manifests unapplied
 ```
 
 No `<name>` and a TTY picks the one container with something pending, or
@@ -1527,10 +1527,10 @@ submodule, since each action names its own `repo` — and a human publishes
 them from the host:
 
 ```bash
-jailbee issue ls                  # pending manifests across this repo's containers
-jailbee issue show feat-foo       # (omit the name on a terminal to pick) every pending proposal in full, never truncated
+jailbee issue ls                  # (deprecated: use `jailbee outbox ...`) pending manifests across this repo's containers
+jailbee issue show feat-foo       # (deprecated: use `jailbee outbox ...`) (omit the name on a terminal to pick) every pending proposal in full, never truncated
 jailbee issue apply feat-foo      # one plan across all of them, one confirmation
-jailbee issue drop feat-foo 001-triage.json
+jailbee issue drop feat-foo 001-triage.json   # deprecated: use `jailbee outbox drop`
 ```
 
 `apply` refuses the whole batch if any action's `expected` block (the issue

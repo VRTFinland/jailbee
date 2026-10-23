@@ -10,11 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Outbox manager.** `jailbee outbox` and the terminal dashboard's Outbox entry open one list-based manager: one-line summaries, expandable actions and comments, a rendered preview, deleting proposals/actions/comments with one confirmation, publishing (or publishing as a draft review) and clearing without leaving the dashboard. `outbox apply --dry-run -o json` prints the plan.
 - **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox. Summaries are supported when creating a review. Existing pending reviews accept empty-summary inline comments and replies, but refuse nonempty summaries before adding that action's comments to avoid public edits after concurrent submission; add the summary in GitHub or stage an empty summary.
 - **`jailbee outbox clear`** deletes eligible unpublished proposals in one or
   more containers' PR and issue outboxes, with a dry-run preview and protection
   for uncertain or partially published work. The terminal dashboard offers
   **Clear outbox…** (`[X]`) for a container or the marked ones, always confirmed.
+
+### Changed
+
+- `jailbee review ls|show|drop` and `jailbee issue ls|show|drop` are deprecated in favour of `jailbee outbox ls|show|drop`; they still work and print a hint.
 
 ## 1.7.8 - 2026-10-23
 

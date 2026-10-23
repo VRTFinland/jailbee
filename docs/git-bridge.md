@@ -1363,9 +1363,10 @@ explicit `outbox drop` or `outbox apply` commands for mutations, each subject
 to remote command and host-protection policy. Native Qt is not offered over
 SSH.
 
-The existing `jb review ls/show/apply/drop`, `jb issue
-ls/show/apply/drop/resolve`, `jb pr` and `jb submodule pr` workflows remain
-available. The unified interface does not authorize agents to publish:
+`jb review apply`, `jb issue apply/resolve`, `jb pr` and `jb submodule pr`
+workflows remain available. `jb review ls/show/drop` and `jb issue
+ls/show/drop` are **deprecated** in favour of `jb outbox ls/show/drop`: they are
+hidden from `--help`, behave as before and print a hint on stderr. The unified interface does not authorize agents to publish:
 agents stage proposals; humans inspect and approve on the host.
 
 ## Issue management
@@ -1423,11 +1424,14 @@ proposal checks. Unknown local paths are refused.
 
 ### `jailbee issue ls / show / apply / drop / resolve`
 
+`issue ls`, `issue show` and `issue drop` are deprecated aliases of
+`jailbee outbox ls|show|drop` (hidden, hint on stderr); prefer `jailbee outbox`.
+
 ```bash
-jailbee issue ls [<name>] [-o table|json] [--fields …]
-jailbee issue show [<name>] [<manifest>]
+jailbee issue ls [<name>] [-o table|json] [--fields …]    # deprecated
+jailbee issue show [<name>] [<manifest>]                  # deprecated
 jailbee issue apply [<name>] [--manifest <name>] [--yes] [--foreign] [--dry-run]
-jailbee issue drop [<name>] [<manifest>] [--archive-journal] [--yes]
+jailbee issue drop [<name>] [<manifest>] [--archive-journal] [--yes]   # deprecated
 jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
 ```
 
