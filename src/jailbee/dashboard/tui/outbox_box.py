@@ -95,6 +95,13 @@ def _line(text: str, style: str = "") -> Text:
     return Text(text, style=style, no_wrap=True, overflow="ellipsis")
 
 
+def _safe(text: str) -> str:
+    """``text`` without control or zero-width characters (it may come from the container)."""
+    from jailbee.outbox.inspect import safe_text
+
+    return safe_text(text)
+
+
 class PreviewScroll(VerticalScroll):
     DEFAULT_CSS = f"""
     PreviewScroll {{
@@ -102,6 +109,7 @@ class PreviewScroll(VerticalScroll):
         background: ansi_default;
         color: ansi_default;
         padding: 0 1;
+        min-height: 3;
         {_SCROLLBAR_CSS}
     }}
     PreviewScroll > Static {{ background: ansi_default; color: ansi_default; }}
@@ -156,6 +164,10 @@ class OutboxBox(OverlayBox):
         self.standalone = standalone
         self._width = 0
         self._rows: tuple[Row, ...] = ()
+        # The row key of the last intent this box posted. Limit: while it equals the
+        # state's cursor, every show() treats that cursor as a stale echo, so a
+        # controller that really re-selects that same row cannot move us off where
+        # the user has since scrolled to.
         self._last_sent: RowKey | None = None
         self._asked: object = None
         self.set_class(standalone, "-standalone")
@@ -263,7 +275,7 @@ class OutboxBox(OverlayBox):
         self._sync_question()
         self._update_preview()
         status = panel.busy or (panel.status[-1] if panel.status else "")
-        self.query_one("#outbox-status", Static).update(_line(status, "dim"))
+        self.query_one("#outbox-status", Static).update(_line(_safe(status), "dim"))
         if self.standalone:
             self.query_one("#outbox-hint", Static).update(
                 _line(outbox_hint(panel, standalone=True), "dim")
@@ -291,7 +303,10 @@ class OutboxBox(OverlayBox):
         both = self._list_shown()
         room = self._width - self._width * _LIST_SHARE // _BODY_SHARES if both else self._width
         width = max(20, room - 3)
-        lines = preview_lines(self.panel, self._cursor_key(), width)
+        lines = list(preview_lines(self.panel, self._cursor_key(), width))
+        if self.panel.question is not None:
+            heading = Text(_safe(self.panel.question.title), style="bold")
+            lines = [heading, *lines]
         self.query_one("#outbox-preview-text", Static).update(Text("\n").join(lines))
 
     # -- overlay protocol ---------------------------------------------------
@@ -307,7 +322,8 @@ class OutboxBox(OverlayBox):
 
     def content_rows(self) -> int:
         rows = self._rows or visible_rows(self.panel, self._list_width() if self._width else 80)
-        return max(MIN_OUTBOX_ROWS, len(rows) + 1)
+        question = self.panel.question
+        return max(MIN_OUTBOX_ROWS, len(rows) + 1) + (len(question.choices) if question else 0)
 
     def state(self) -> NativeState:
         return NativeState("outbox", self._list.highlighted, text=self.panel.preview)

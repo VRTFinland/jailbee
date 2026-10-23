@@ -25,8 +25,12 @@ class Host(App[None]):
 
     def __init__(self, spec: dob.OutboxState, standalone: bool = False) -> None:
         super().__init__(ansi_color=True)
+        self.intents: list[OutboxBox.Intent] = []
         self.spec = spec
         self.standalone = standalone
+
+    def on_outbox_box_intent(self, message: OutboxBox.Intent) -> None:
+        self.intents.append(message)
 
     def compose(self) -> ComposeResult:
         yield OutboxBox(self.spec, mouse_enabled=lambda: True, standalone=self.standalone)
@@ -248,3 +252,70 @@ def test_build_box_and_overlay_key():
     spec = replace(state2(), prefix="alpha", scope_name="alpha-x")
     assert isinstance(build_box(spec, mouse_enabled=lambda: True), OutboxBox)
     assert overlay_key(spec) == ("outbox", "alpha", "alpha-x")
+
+
+def test_question_title_is_visible_and_bold_first_line():
+    async def scenario(app, box, pilot):
+        return screen_text(app).splitlines()
+
+    lines = run(state2(question=question()), scenario, size=(100, 30))
+    body = [line for line in lines if line.startswith("│")]
+    assert "Publish?" in body[0]
+    assert "line one" in body[1]
+
+
+def test_hostile_status_busy_and_title_are_sanitised():
+    hostile = "\x1b]0;pwn\x07[red]x[/red]\u200b"
+
+    async def scenario(app, box, pilot):
+        return screen_text(app)
+
+    for over in (
+        {"status": (hostile,)},
+        {"busy": hostile},
+        {"question": replace(question(), title=hostile)},
+    ):
+        text = run(state2(**over), scenario, size=(100, 30))
+        assert "[red]x[/red]" in text
+        assert not any(c in text for c in ("\x1b", "\x07", "\u200b"))
+
+
+def test_question_open_adds_its_rows_to_content_rows():
+    async def scenario(app, box, pilot):
+        return box.content_rows()
+
+    base = run(state2(), scenario)
+    assert run(state2(question=question()), scenario) == base + 3
+
+
+def test_question_keeps_three_preview_rows_in_a_short_box():
+    async def scenario(app, box, pilot):
+        return app.query_one("#outbox-preview").size.height
+
+    assert run(state2(question=question()), scenario, size=(100, 12)) >= 3
+
+
+def test_ctrl_c_cancels_a_question():
+    async def scenario(app, box, pilot):
+        return await press(box, "ctrl+c")
+
+    got = run(state2(question=question()), scenario)
+    assert (got.name, got.value) == ("cancel", None)
+
+
+def test_double_click_row_posts_toggle_and_click_choice_posts_answer():
+    async def rows(app, box, pilot):
+        await pilot.click("#native-list", offset=(5, 1), times=2)
+        await pilot.pause()
+        return app.intents
+
+    got = run(state2(), rows)
+    assert [(i.name, i.row) for i in got][-1] == ("toggle", _key(B))
+
+    async def choice(app, box, pilot):
+        await pilot.click("#outbox-question", offset=(3, 1))
+        await pilot.pause()
+        return app.intents
+
+    got = run(state2(question=question()), choice)
+    assert [(i.name, i.value) for i in got] == [("answer", "draft")]
