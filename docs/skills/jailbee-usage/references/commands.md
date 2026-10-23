@@ -367,7 +367,7 @@ use `jailbee git retarget`.
 | `--mount` / `-m` | Mount mode: bind-mount the host repo RW instead of cloning. The positional becomes the **container name** (no slashes). Incompatible with `BASE`, `--current`, `--pr`. The git bridge refuses on mount-mode containers. Autostart always comes from your checkout in this mode — there is no distinct target branch to read. |
 | `--name <n>` | Override the derived container name. |
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
-| `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
+| `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). `--memory` is an explicit instance override; `jailbee apply` updates the inherited profile limit live. A fork does not copy the source's memory override unless `--memory` is supplied. |
 | `--storage <pool>` | Incus storage pool the container is created on (else `defaults.storage_pool`, else the `default` profile's pool). Exit 2 listing the pools if it does not exist. |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
 | `--credential-group <name>\|none` | Put this container in a credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee account group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `account group set`. See `jailbee account group` below. Hidden legacy alias: `--claude-group`. |
@@ -378,6 +378,8 @@ use `jailbee git retarget`.
 | `--attach <mode>` / `--tmux` / `--shell` / `--no-attach` | What to do once the container is up: `--attach shell\|tmux\|none`, or the `--tmux` / `--shell` shorthands. Overrides the `after_new` config key. All four are mutually exclusive. `--attach shell`/`--attach tmux` (and the `--tmux`/`--shell` shorthands) also force foreground provisioning, so `--tmux` works in a repo with `new.background: true` without adding `--no-background`; `--attach none` / `--no-attach` don't need to, since there's nothing to attach to. `--tmux` lands in the autostart tmux session (created on demand, and focused on the `claude` window when `claude.autostart` is set). |
 | `--wait` | Run every `autostart` stage in the foreground, ignoring any `detach: true` (the pre-1.4 behaviour). Mutually exclusive with `--no-wait`. |
 | `--no-wait` | Run only the first `autostart` stage before handing the session over; every later stage runs in the background regardless of the config's own `detach:`. Mutually exclusive with `--wait`. |
+
+A fork's `--memory` is explicit-only: without it, the fork inherits `defaults.memory`, not the source container's memory override.
 
 Clone source: defaults to the **upstream** tip (`origin/<default>`), controlled by
 `new.clone_from` (`origin`|`local`) and `new.autofetch`. Submodules are brought

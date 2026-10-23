@@ -1021,7 +1021,7 @@ def test_action_menu_has_no_apps_when_none_are_configured():
 
 def test_menu_actions_stopped():
     actions = dmenus.menu_actions(_ctx(state="Stopped"))
-    assert [a for _, a in actions] == ["start", "rename", "net egress ls", "destroy"]
+    assert [a for _, a in actions] == ["start", "rename", "mem", "net egress ls", "destroy"]
 
 
 def test_menu_actions_orphan_disabled():
@@ -1242,6 +1242,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
         ("Start", "start"),
         ("Open PR", "pr --open"),
         ("Rename…", "rename"),
+        ("Memory: unknown…", "mem"),
         ("Egress…", "net egress ls"),
         ("Destroy", "destroy"),
     ]
@@ -1249,6 +1250,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
         ("Start", "start"),
         dmenus.MenuGroup("PR →", (("Open PR", "pr --open"),)),
         ("Rename…", "rename"),
+        ("Memory: unknown…", "mem"),
         dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
         ("Destroy", "destroy"),
     ]
@@ -1342,6 +1344,7 @@ def test_menu_actions_running_offers_the_workflow_verbs():
         "git diff",
         "fork",
         "rename",
+        "mem",
         "net loose",
         "net egress ls",
         "restart",
@@ -1549,6 +1552,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
         "shell",
         "outbox browse",
         "rename",
+        "mem",
         "net loose",
         "net egress ls",
         "restart",
@@ -1559,7 +1563,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
 
 def test_menu_actions_stopped_has_no_workflow_verbs():
     verbs = [v for _, v in dmenus.menu_actions(_ctx(state="Stopped"))]
-    assert verbs == ["start", "rename", "net egress ls", "destroy"]
+    assert verbs == ["start", "rename", "mem", "net egress ls", "destroy"]
 
 
 def test_menu_actions_hides_git_pull_when_nothing_is_ahead():
@@ -1715,6 +1719,7 @@ def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
         "Network →": "w",
         "Fork…": "f",
         "Rename…": "R",
+        "Memory: unknown…": "z",
     }
 
 
@@ -1738,7 +1743,13 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
 def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
     menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(_ctx(state="Stopped")))
 
-    assert _hotkeys(menu) == {"Start": "s", "Rename…": "R", "Network →": "w", "Destroy": "D"}
+    assert _hotkeys(menu) == {
+        "Start": "s",
+        "Rename…": "R",
+        "Memory: unknown…": "z",
+        "Network →": "w",
+        "Destroy": "D",
+    }
 
 
 def test_menu_hotkeys_cover_the_repo_menu():
@@ -2452,7 +2463,7 @@ def test_actions_for_container_matches_menu_actions():
             apps=_apps("ide"),
         )
     ]
-    expected = menu_actions(_ctx(apps=_apps("ide")))
+    expected = menu_actions(_ctx(apps=_apps("ide"), memory_limit="2GB"))
     assert actions_for_container(groups, "p-foo") == expected
     assert actions_for_container(groups, "nope") == []
     assert actions_for_container(groups, None) == []
@@ -6492,7 +6503,7 @@ def test_dashboard_formatting_contracts():
     mem = next(f for f in dcolumns.visible_fields(now, [container()], ["mem"]) if f.name == "mem")
     memory = container(memory_usage=1_073_741_824)
     assert mem.cell(memory) == "1.0G/4 GiB"
-    assert mem.json(memory) == {"usage": 1_073_741_824, "limit": "4 GiB"}
+    assert mem.json(memory) == {"usage": 1_073_741_824, "limit": "4 GiB", "override": False}
 
     content = card_content(
         container(), dcolumns.visible_fields(now, [container()], ["name", "state"])
@@ -7155,3 +7166,26 @@ def test_orphan_repo_target_runs_from_home_without_config_flags():
 
     assert target.cwd() == Path.home()
     assert target.flags() == []
+
+
+@pytest.mark.parametrize("state", ["Running", "Stopped"])
+@pytest.mark.parametrize("override,limit", [(True, "24GiB"), (False, "16GiB")])
+@pytest.mark.parametrize("allowed", ["mem", "shell"])
+def test_memory_menu_policy(tmp_path, state, override, limit, allowed):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    info = dataclasses.replace(
+        _ci("alpha-x", "alpha"), state=state, memory_limit=limit, memory_override=override
+    )
+    group = _cfg_group(tmp_path, (info,))
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
+    actions = dmenus.actions_for_container([group], "alpha-x", over_ssh=True, ssh_policy=policy)
+    assert ((f"Memory: {limit}{'*' if override else ''}…", "mem") in actions) == (allowed == "mem")
+
+
+def test_gather_rows_memory_default(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha", defaults={"memory": "8GiB"})
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+    groups = dmodel.gather_rows(mocker.MagicMock(), [tmp_path / "alpha"], with_git=False)
+    assert groups[0].memory_default == "8GiB"

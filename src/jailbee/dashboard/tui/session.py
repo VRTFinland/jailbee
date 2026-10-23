@@ -1025,6 +1025,85 @@ class DashboardSession:
             return self.open_mount_picker(container)
         return None
 
+    def open_memory_picker(self, container: str) -> Picker | None:
+        """Offer the same memory choices as the CLI, using the current host snapshot."""
+        if self.dispatchable(container, "mem") is None:
+            return None
+        found = self._listed_container(container)
+        if found is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        from jailbee.memory_limit import size_options
+
+        group, info = found
+        options = size_options(
+            current=info.memory_limit,
+            override=info.memory_override,
+            default=group.memory_default,
+            host_total=self.system.memory.total if self.system and self.system.memory else None,
+        )
+        return Picker(
+            "container-memory",
+            f"Memory for '{info.display_name}'",
+            tuple(
+                PickerEntry(row.label + (" *" if row.current else ""), row.value) for row in options
+            ),
+            target=container,
+        )
+
+    def change_memory(
+        self, container: str, size: str, *, force: bool = False, confirmed_target: str | None = None
+    ) -> Picker | None:
+        """Re-resolve the target and require consent before a potentially unsafe cap."""
+        repo = self.dispatchable(container, "mem")
+        found = self._listed_container(container)
+        if repo is None or found is None:
+            return None
+        from jailbee.incus import IncusError
+        from jailbee.memory_limit import (
+            DEFAULT_WORD,
+            below_usage,
+            inherited_limit,
+            same_size,
+            validate_size,
+        )
+
+        _, info = found
+        try:
+            target = inherited_limit(self.incus, container) if size == DEFAULT_WORD else size
+        except (IncusError, ValueError) as exc:
+            self.set_notice(str(exc))
+            return None
+        if target is None:
+            self.set_notice(
+                "Cannot clear memory override without an inherited cap; run `jb apply` first."
+            )
+            return None
+        if confirmed_target is not None and not same_size(target, confirmed_target):
+            self.set_notice("Memory target changed; select it again.")
+            return None
+        if error := validate_size(target):
+            self.set_notice(error)
+            return None
+        if not force and below_usage(target, info.memory_usage):
+            return Picker(
+                "container-memory-confirm",
+                f"Set memory to {target}?",
+                (PickerEntry("No", "no", "n"), PickerEntry("Yes", "yes", "y")),
+                target=container,
+                carry=(size, target),
+                detail=(
+                    "The limit is below current usage; the kernel will reclaim memory",
+                    "and may OOM-kill processes.",
+                ),
+            )
+        argv = dact.mem_argv(container, size, force=force)
+        if confirmed_target is not None:
+            # The CLI rechecks after this action-time read, before granting force.
+            argv[1:1] = ["--confirmed-target", confirmed_target]
+        self.run_quiet_cli(repo, argv)
+        return None
+
     def open_retarget(self, container: str) -> TextPrompt | None:
         """Ask for the new base inline; the CLI's own picker would blank the screen."""
         if self.dispatchable(container, "git retarget") is None:
@@ -1650,6 +1729,8 @@ class DashboardSession:
 
             self.run_new_container(prompt.target, branch, branch_argv)
             return None
+        if prompt.purpose == "container-memory-other":
+            return self.change_memory(prompt.target, answer)
         if prompt.purpose == "container-retarget":
             self.run_dashboard_command(
                 prompt.target, "container", dact.retarget_argv(prompt.target, answer)
@@ -1701,6 +1782,21 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
+        if picker.purpose == "container-memory":
+            from jailbee.memory_limit import OTHER_VALUE
+
+            if entry.value == OTHER_VALUE:
+                return TextPrompt(
+                    "container-memory-other", picker.title, "Memory size", target=picker.target
+                )
+            return self.change_memory(picker.target, entry.value)
+        if picker.purpose == "container-memory-confirm":
+            if entry.value == "yes":
+                return self.change_memory(
+                    picker.target, picker.carry[0], force=True, confirmed_target=picker.carry[1]
+                )
+            self.set_notice("Cancelled")
+            return None
         if picker.purpose == "repo-group":
             if entry.value == "__new__":
                 return TextPrompt(
@@ -2220,6 +2316,8 @@ class DashboardSession:
                 self.overlay = self.open_retarget(target)
             elif verb == "fork":
                 self.overlay = self.open_fork(target)
+            elif verb == "mem":
+                self.overlay = self.open_memory_picker(target)
             elif verb == "rename":
                 self.overlay = self.open_rename(target)
             elif verb == "merge":

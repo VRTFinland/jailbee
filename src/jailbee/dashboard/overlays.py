@@ -82,6 +82,10 @@ def validate_answer(prompt: TextPrompt, text: str) -> str | None:
     answer = text.strip()
     if not answer and prompt.purpose != "container-rename":  # empty clears the alias
         return f"{prompt.label} cannot be empty"
+    if prompt.purpose == "container-memory-other":
+        from jailbee.memory_limit import validate_size
+
+        return validate_size(answer)
     if prompt.purpose == "new-pr" and parse_pr_number(text) is None:
         return "PR number must be a positive whole number"
     if prompt.require_suggestion and prompt.suggestions and answer not in prompt.suggestions:

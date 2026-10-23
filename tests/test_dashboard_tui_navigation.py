@@ -382,10 +382,10 @@ def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    run = drive(mocker, ["j", "enter", "z"], groups=[group])
+    run = drive(mocker, ["j", "enter", "!"], groups=[group])
 
     assert isinstance(run.trace[3].overlay, tmenu.MenuState)
-    assert run.natives[3] == toverlay.NativeState("menu", 0, level=None)  # `z` is nobody's key
+    assert run.natives[3] == toverlay.NativeState("menu", 0, level=None)  # `!` is nobody's key
     child.assert_not_called()
 
 

@@ -474,3 +474,14 @@ def test_advisory_argv_and_pickers():
     chosen = dact.dismiss_picker("alpha", [adv])
     assert chosen.purpose == "repo-dismiss-advisory"
     assert [(e.label, e.value) for e in chosen.entries] == [("apply owed", "apply")]
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_mem_argv(force):
+    assert dact.mem_argv("alpha-x", "8GiB", force=force) == [
+        "mem",
+        *(["--force"] if force else []),
+        "--",
+        "alpha-x",
+        "8GiB",
+    ]

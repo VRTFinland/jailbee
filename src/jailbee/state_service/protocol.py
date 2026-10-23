@@ -29,8 +29,9 @@ from jailbee.update_check import UpdateNotice
 
 # Bumped on any change a client of another version could misread. 8 added
 # RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
-# and root_pool. 9 added Refresh.settle.
-PROTOCOL = 9
+# and root_pool. 9 added Refresh.settle. 10 added RepoGroup.memory_default
+# and ContainerInfo.memory_override, needed for safe memory-limit editing.
+PROTOCOL = 10
 
 
 class ProtocolError(ValueError):

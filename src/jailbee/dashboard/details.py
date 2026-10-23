@@ -366,6 +366,8 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     # CPU are the summary bar and the process lines, the table has the age.
     group = escape(c.credential_group) if c.credential_group else "inherits repo"
     footer = [escape(c.mode), f"group {group}"]
+    if c.memory_override and c.memory_limit:
+        footer.append(f"memory {escape(c.memory_limit)}* (override)")
     if (source := fork_source(c)) is not None:
         footer.append(f"⑂ forked from {escape(source)}")
     return ContainerPanel(

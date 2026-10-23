@@ -34,6 +34,7 @@ from jailbee.git import (
 from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
 from jailbee.host_target import TargetSnapshot, resolve_target
 from jailbee.incus import Incus, IncusError
+from jailbee.memory_limit import LIMIT_KEY
 from jailbee.procstat import ActivitySampler, SampleInput
 from jailbee.profiles import (
     _device_name_from_path,
@@ -75,6 +76,7 @@ class ContainerInfo:
     credential_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
+    memory_override: bool = False
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
     # payload as `memory_usage`. `init_pid` is the container's pid 1 on the
     # host, which is how `procstat` finds the container's cgroup.
@@ -514,7 +516,9 @@ def list_containers(
                 break
 
         config = raw.get("config") or {}
-        memory_limit = config.get("limits.memory")
+        effective_config = raw.get("expanded_config", config) or {}
+        memory_limit = effective_config.get(LIMIT_KEY)
+        memory_override = LIMIT_KEY in config
 
         mem_usage_raw = (state_data.get("memory") or {}).get("usage")
         memory_usage = mem_usage_raw if isinstance(mem_usage_raw, int) else None
@@ -579,6 +583,7 @@ def list_containers(
                 network=network,
                 ip=ip,
                 memory_limit=memory_limit,
+                memory_override=memory_override,
                 repo=repo,
                 mode=mode_value,
                 loose_until=loose_until,
@@ -1053,7 +1058,7 @@ class NewContainerOptions:
     container_branch: str
     name: str | None
     network: str
-    memory: str
+    memory: str | None
     cpu: int
     from_base: str
     clone: bool
@@ -1691,6 +1696,21 @@ def new_container(
             f"(or `jailbee apply` if some already exist)."
         )
 
+    if opts.memory is None:
+        from jailbee.memory_limit import profile_limit
+
+        planned_profiles = ["default", names.base, names.binds]
+        planned_profiles.extend(
+            [f"{cfg.container_prefix}-net-work", f"{cfg.container_prefix}-net-work-{opts.network}"]
+            if generation == "work"
+            else [names.net_by_mode[opts.network]]
+        )
+        if profile_limit(incus, planned_profiles) is None:
+            raise ValueError(
+                "Repository profiles have no inherited memory cap; "
+                "run `jb apply` before creating without --memory."
+            )
+
     _phase("creating")
     if generation == "work":
         from jailbee.network import strict_nic_acls
@@ -1760,7 +1780,8 @@ def new_container(
             # the assign error is what the user has to act on.
             pass
         raise
-    incus.config_set(name, "limits.memory", opts.memory)
+    if opts.memory is not None:
+        incus.config_set(name, LIMIT_KEY, opts.memory)
     incus.config_set(name, "limits.cpu", str(opts.cpu))
 
     # Persist the in-container clone path so later commands (shell,
@@ -3224,11 +3245,16 @@ def ls_field_specs(
             return "[dim]—[/dim]"
         return c.created_at.astimezone().strftime("%Y-%m-%d %H:%M")
 
+    def _memory_limit_cell(c: ContainerInfo) -> str:
+        if not c.memory_limit:
+            return "-"
+        return c.memory_limit + ("*" if c.memory_override else "")
+
     def _mem_cell(c: ContainerInfo) -> str:
         if c.state != "Running" or c.memory_usage is None:
-            return c.memory_limit or "[dim]—[/dim]"
+            return _memory_limit_cell(c) if c.memory_limit else "[dim]—[/dim]"
         used = _format_bytes(c.memory_usage)
-        return f"{used} / {c.memory_limit}" if c.memory_limit else used
+        return f"{used} / {_memory_limit_cell(c)}" if c.memory_limit else used
 
     def _mem_used(c: ContainerInfo) -> int | None:
         return c.memory_usage if c.state == "Running" else None
@@ -3568,7 +3594,7 @@ def ls_field_specs(
             sort=_limit_key,
             sort_desc_first=True,
             header="MEMORY LIMIT",
-            cell=lambda c: c.memory_limit or "-",
+            cell=_memory_limit_cell,
             json=lambda c: c.memory_limit,
             # The default table shows `mem` (used / limit) instead; the bare
             # limit stays available via `--fields memory_limit`. JSON keeps
@@ -3581,7 +3607,11 @@ def ls_field_specs(
             sort_desc_first=True,
             header="MEM",
             cell=_mem_cell,
-            json=lambda c: {"usage": c.memory_usage, "limit": c.memory_limit},
+            json=lambda c: {
+                "usage": c.memory_usage,
+                "limit": c.memory_limit,
+                "override": c.memory_override,
+            },
             # A live number, and therefore a dashboard column rather than an
             # `ls` one: in a one-shot listing it is a single stale sample,
             # while in a view that refreshes it is the reason to keep the

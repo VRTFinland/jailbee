@@ -1690,6 +1690,13 @@ def apply(
         error(str(e))
         raise typer.Exit(1) from e
 
+    if result.memory_defaulted:
+        success(f"Moved {len(result.memory_defaulted)} container(s) to the default memory limit")
+    if result.memory_low:
+        warn_plain(
+            f"Containers use more memory than the new default {cfg.defaults.memory}: "
+            f"{', '.join(short_name(cfg, n) for n in result.memory_low)}"
+        )
     if result.restarted:
         success(f"Restarted: {', '.join(short_name(cfg, n) for n in result.restarted)}")
     if not any(
@@ -1700,6 +1707,8 @@ def apply(
             result.docker_restarted,
             result.docker_restart_pending,
             result.offline_migrated,
+            result.memory_defaulted,
+            result.memory_low,
             result.ports_changed,
             result.litellm_restarted,
             result.litellm_pending,
@@ -1997,7 +2006,8 @@ def new_cmd(
         typer.Option(
             "--memory",
             help=(
-                "Memory limit as an Incus size string (e.g. '8GiB'). Overrides `defaults.memory`."
+                "Per-container memory override (e.g. '8GiB' or '50%'); "
+                "omitted follows `defaults.memory`."
             ),
         ),
     ] = None,
@@ -2267,6 +2277,13 @@ def new_cmd(
         except PrefixCollisionError as e:
             error_plain(str(e))
             raise typer.Exit(1) from e
+
+    if memory is not None:
+        from jailbee.memory_limit import validate_size
+
+        if message := validate_size(memory):
+            error(message)
+            raise typer.Exit(2)
 
     # Only the post-install hint here. The upgrade advice waits until after
     # the implicit-apply pre-flight below: in a scratch directory the profile
@@ -2671,7 +2688,7 @@ def new_cmd(
             container_branch="",
             name=full_name,
             network=net_mode,
-            memory=memory or cfg.defaults.memory,
+            memory=memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
             clone=False,
@@ -2691,7 +2708,7 @@ def new_cmd(
             container_branch=container_branch,
             name=name,
             network=net_mode,
-            memory=memory or cfg.defaults.memory,
+            memory=memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
             clone=not no_clone,
@@ -2960,7 +2977,13 @@ def fork_cmd(
     ] = "",
     memory: Annotated[
         str | None,
-        typer.Option("--memory", help="Memory limit. Overrides `defaults.memory`."),
+        typer.Option(
+            "--memory",
+            help=(
+                "Per-container memory override; omitted follows `defaults.memory`, "
+                "not the source override."
+            ),
+        ),
     ] = None,
     cpu: Annotated[
         int | None,
@@ -4954,6 +4977,68 @@ def start(
         ),
     )
     _clear_superseded_boot_job(cfg, name)
+
+
+@app.command("mem")
+def mem_cmd(
+    name: ContainerArg = None,
+    size: Annotated[
+        str | None,
+        typer.Argument(help="Memory limit (e.g. 24GiB), or 'default' to clear the override."),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Allow a limit below current memory usage.")
+    ] = False,
+    confirmed_target: Annotated[
+        str | None,
+        typer.Option(
+            "--confirmed-target",
+            hidden=True,
+            help="Require the memory target to match the value confirmed by the dashboard.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Set a container's memory limit, or follow the repository default."""
+    from jailbee import prompting, sysstat
+    from jailbee.lifecycle import list_containers
+    from jailbee.memory_limit import OTHER_VALUE, run_mem, size_options, validate_size
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    if size is None:
+        container = next((row for row in list_containers(cfg, incus) if row.name == full), None)
+        host = sysstat.read_memory()
+        rows = size_options(
+            current=container.memory_limit if container else None,
+            override=container.memory_override if container else False,
+            default=cfg.defaults.memory,
+            host_total=host.total if host else None,
+        )
+        size = prompting.choose_one(
+            "memory limit",
+            [
+                prompting.Option(row.value, row.label + (" *" if row.current else ""), row.label)
+                for row in rows
+            ],
+        )
+        if size == OTHER_VALUE:
+            size = prompting.ask_text("memory limit", validate=validate_size)
+    try:
+        notice = run_mem(
+            cfg,
+            incus,
+            full,
+            size,
+            force=force,
+            confirm=lambda question: prompting.confirm(question, default=False),
+            interactive=prompting.is_interactive(),
+            confirmed_target=confirmed_target,
+        )
+    except ValueError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(2) from exc
+    success(notice)
 
 
 @app.command("rename")

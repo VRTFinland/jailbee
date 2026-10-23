@@ -193,8 +193,9 @@ class _Card(QFrame):
         if ip or mem or cpu:
             res = QHBoxLayout()
             res.addWidget(QLabel(ip or "—"))
+            memory_source = "override" if self._content.memory_override else "default"
             for text, tooltip in (
-                (mem, f"Memory limit: {self._content.memory_limit or 'none'}"),
+                (mem, f"Memory limit: {self._content.memory_limit or 'none'} ({memory_source})"),
                 (cpu, None),
             ):
                 if text:

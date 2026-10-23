@@ -21,6 +21,11 @@ def _cfg():
     return load_config(FIXTURES / "full_config.yaml")
 
 
+def test_base_profile_renders_default_memory():
+    cfg = _cfg()
+    assert yaml.safe_load(base_profile_yaml(cfg))["config"]["limits.memory"] == cfg.defaults.memory
+
+
 def test_base_profile_has_security_nesting():
     cfg = _cfg()
     out = base_profile_yaml(cfg)

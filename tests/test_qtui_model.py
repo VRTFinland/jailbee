@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
@@ -507,3 +509,15 @@ def test_card_content_carries_doing_whatever_the_columns():
 def test_group_header_shows_the_checked_out_branch():
     group = RepoGroup("p", "/r", None, [], checkout="main")
     assert m.group_header(group) == ("p [main]", False)
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_card_content_keeps_raw_limit_and_override(override):
+    from jailbee.lifecycle import ls_field_specs
+    from jailbee.qtui.model import card_content
+
+    c = _container()
+    c.memory_override = override
+    cc = card_content(c, ls_field_specs(now=datetime.now(UTC)))
+    assert cc.memory_limit == "2GB"
+    assert cc.memory_override is override

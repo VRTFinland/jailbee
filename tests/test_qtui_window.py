@@ -80,6 +80,8 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
                     has_repo=True,
                     apps=[ide_entry],
                     current_network="strict",
+                    memory_limit=running.memory_limit,
+                    memory_override=running.memory_override,
                 )
             )
         )

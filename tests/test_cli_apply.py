@@ -288,3 +288,16 @@ def test_cli_apply_does_not_call_a_litellm_problem_up_to_date(mocker: MockerFixt
     result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
     assert result.exit_code == 0, result.output
     assert "already up to date" not in result.output
+
+
+def test_cli_apply_reports_memory_migration_and_low_default(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "jailbee.apply.run_apply",
+        return_value=_fake_result(memory_defaulted=["a"], memory_low=["a", "b"]),
+    )
+    mocker.patch("jailbee.incus.Incus")
+    result = runner.invoke(app, ["apply", "--config", str(FIXTURES / "full_config.yaml")])
+    assert result.exit_code == 0, result.output
+    assert "Moved 1 container(s) to the default memory limit" in result.output
+    assert "use more memory than the new default 16GiB: a, b" in result.output
+    assert "already up to date" not in result.output

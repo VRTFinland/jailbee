@@ -444,6 +444,7 @@ _CONTAINER_COMMANDS = frozenset(
         "prune",
         "registry status",
         "registry verify",
+        "mem",
         "rename",
         "restart",
         "review apply",
