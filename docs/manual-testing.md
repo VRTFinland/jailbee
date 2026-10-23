@@ -1940,20 +1940,33 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
    general `comment` action, and a `description` action. Keep the manifest's
    `head_sha` equal to the PR head. See the jailbee-pr-review skill's manifest
    schema for exact field names.
-3. On the host, run `jailbee review apply <name> --dry-run`. Confirm the plan
-   labels review/reply actions pending, the general comment held back, and the
-   description published; GitHub must remain unchanged. Run
+3. On the host, run `jailbee review apply <name> --dry-run --draft`. Confirm
+   the plan labels review/reply actions pending, the general comment held back,
+   and the description published; GitHub must remain unchanged. Then run
    `jailbee review apply <name>` and choose **Publish as draft review**.
 4. In the GitHub UI, verify that the pending review contains the review body,
    inline comment and reply, and is visible only to the host user's account.
    Confirm the general comment was not posted and the PR description changed.
-   The description edit is public. Do not submit the pending review from JailBee;
-   inspect, edit or discard it, and submit it in GitHub when ready.
+   The description edit is public. Inspect, edit or discard the pending review
+   in GitHub; JailBee does not submit it.
 5. Stage a second manifest with a review action and publish it as a draft.
-   Verify it appends to the same pending review. Then create a pending review
-   manually on another scratch PR commit and stage a manifest anchored to the
-   PR's current head; `jailbee review apply <name> --draft -y` must refuse it
-   with the other-commit message before adding comments.
+   Verify it appends to the same pending review. Submit or discard that review
+   in GitHub before continuing, so the account has no pending review.
+6. For reply-only creation, use a fresh scratch PR with an existing review
+   comment to reply to, and verify the host account has no pending review on
+   that PR. Stage a manifest containing only a `reply` action. Run
+   `jailbee review apply <name> --draft -y`; verify GitHub shows a new pending
+   review with an empty summary and the reply, visible only to the host account.
+   Confirm no public reply was posted. This specifically tests whether GitHub
+   accepts creating an empty pending review before attaching a reply.
+7. For the other-commit refusal, start with no pending review. Record PR head A,
+   then create a pending review at A in the GitHub UI (or with
+   `gh api repos/<owner>/<repo>/pulls/<N>/reviews --method POST \\
+     -f commit_id=<A> -f body=''`). Advance the PR head to B and record B; pushing
+   that commit to the scratch PR requires separate approval. Stage a fresh
+   manifest with `head_sha` B and a review comment. `jailbee review apply <name>
+   --draft -y` must refuse because the existing pending review is on A. Verify
+   the pending review and its comments are unchanged.
 
 A pending reply uses GraphQL `addPullRequestReviewComment` with the pending
 review's node ID and `inReplyTo` comment node ID. JailBee first resolves the
