@@ -229,9 +229,7 @@ def browse(
         from jailbee.dashboard.tui.outbox_app import run_outbox_app
 
         target = RepoTarget(cfg.repo_root, path.resolve() if path is not None else None)
-        return run_outbox_app(
-            target, container=container, all_repos=all_repos, read_only=read_only
-        )
+        return run_outbox_app(target, container=container, all_repos=all_repos, read_only=read_only)
 
     _run(ctx, config, operation)
 
