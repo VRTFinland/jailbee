@@ -361,3 +361,46 @@ def test_details_show_event_age_separately_from_selected_status_duration():
     text = aa.describe(_summary(state="waiting", activity=activity), NOW)
     assert text is not None
     assert text.head == "active 14s ago (busy for 23m)"
+
+
+def test_describe_head_drops_an_idle_duration_that_repeats_the_activity_age() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=25),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 25m ago"
+
+
+def test_describe_head_keeps_an_idle_duration_that_differs_from_the_activity_age() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=3),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 3m ago (idle for 25m)"
+
+
+def test_describe_head_keeps_the_subagent_count_when_the_idle_duration_is_dropped() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        2,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=25),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 25m ago · ~2 subagents"

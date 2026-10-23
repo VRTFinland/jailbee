@@ -6036,7 +6036,7 @@ def test_details_panel_shows_under_the_table_for_the_highlighted_container(tmp_p
     title = next(i for i, ln in enumerate(lines) if "╭─ row01" in ln)
     assert title > header + 3  # under the heading and three container rows
     text = "\n".join(lines[title:])
-    assert "git" in text and "group " in text
+    assert "git" in text
 
 
 def test_details_toggled_off_draws_no_panel(tmp_path):

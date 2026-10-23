@@ -377,9 +377,9 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         git = (root, *subs)
 
     # What no other row says: the base is the git table's "vs" header, memory and
-    # CPU are the summary bar and the process lines, the table has the age.
-    group = escape(c.credential_group) if c.credential_group else "inherits repo"
-    footer = [escape(c.mode), f"group {group}"]
+    # CPU are the summary bar and the process lines, the table has the age, the
+    # mode and the group. Usually that leaves nothing.
+    footer: list[str] = []
     if c.memory_override and c.memory_limit:
         footer.append(f"memory {escape(c.memory_limit)}* (override)")
     if (source := fork_source(c)) is not None:
@@ -687,10 +687,12 @@ def _panel_lines(
         one("[dim]git —[/dim]")
     else:
         lines.extend(console.render_lines(_git_table(panel, options.max_width), render, pad=False))
-    lines.append([_BLANK])
     if pad_to is not None:
-        lines += [[_BLANK] for _ in range(pad_to - len(lines) - 1)]
-    one(f"[dim]{' · '.join(panel.footer)}[/dim]")
+        lines += [[_BLANK] for _ in range(pad_to - len(lines) - bool(panel.footer))]
+    if panel.footer:
+        if pad_to is None:
+            lines.append([_BLANK])
+        one(f"[dim]{' · '.join(panel.footer)}[/dim]")
     return lines
 
 

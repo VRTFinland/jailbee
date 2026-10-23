@@ -618,7 +618,7 @@ def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:
     assert all(r.extra == "" for r in subs)
 
 
-def test_footer_carries_only_what_no_other_row_says() -> None:
+def test_footer_is_empty_when_nothing_is_out_of_the_ordinary() -> None:
     c = _c(
         base_branch="dev",
         credential_group="[work]",
@@ -628,15 +628,21 @@ def test_footer_carries_only_what_no_other_row_says() -> None:
         cpu_percent=34.0,
     )
 
-    # Not the base (the git table's "vs" header), the age (a table column), nor
-    # memory and CPU (the summary bar and the process lines).
-    assert _panel_plain(dd.container_panel(c, NOW).footer) == ["clone", "group [work]"]
+    # Not the base (the git table's "vs" header), the age, the mode or the group
+    # (table columns), nor memory and CPU (the summary bar and the process lines).
+    assert dd.container_panel(c, NOW).footer == ()
 
 
-def test_footer_names_a_forks_source_after_its_group() -> None:
+def test_footer_names_a_memory_override() -> None:
+    c = _c(memory_limit="4GiB", memory_override=True)
+
+    assert _panel_plain(dd.container_panel(c, NOW).footer) == ["memory 4GiB* (override)"]
+
+
+def test_footer_names_a_forks_source() -> None:
     footer = _panel_plain(dd.container_panel(_c(base_branch="dev", fork_of="alpha-a"), NOW).footer)
 
-    assert footer == ["clone", "group inherits repo", "⑂ forked from a"]
+    assert footer == ["⑂ forked from a"]
     assert not any("forked" in p for p in _panel_plain(dd.container_panel(_c(), NOW).footer))
 
 
@@ -647,7 +653,7 @@ def test_a_bare_container_panel() -> None:
     assert panel.exceptions == ()
     assert panel.git is None
     assert panel.base == "base"
-    assert "group inherits repo" in _panel_plain(panel.footer)
+    assert panel.footer == ()
 
 
 def _rich_container(subs: int = 1) -> ContainerInfo:
@@ -681,6 +687,7 @@ def _rich_container(subs: int = 1) -> ContainerInfo:
         ip="10.0.3.7",
         pr_number=123,
         pr_author=True,
+        fork_of="alpha-a",
     )
 
 
@@ -735,7 +742,7 @@ def test_the_panel_reads_summary_git_table_footer() -> None:
     assert body[3].startswith("feat") and "merge" in body[3] and "host HEAD" in body[3]
     assert "deps/module-0" in body[4] and "modified" in body[4]
     assert body[5] == ""
-    assert body[6].startswith("clone") and "group inherits repo" in body[6]
+    assert body[6].startswith("⑂ forked from")
     # One column per fact: the diffs sit under "vs dev", the working trees under "working".
     assert body[3].index("+245 -18") == body[2].index("vs dev") == body[4].index("+40 -2")
     assert body[3].index("+12 -3") == body[2].index("working") == body[4].index("+5 -0")
@@ -749,7 +756,7 @@ def test_many_submodules_scroll_and_keep_the_footer_at_the_end() -> None:
     assert "deps/module-3" in "\n".join(body) and "deps/module-4" not in "\n".join(body)
     last, _ = _panel_scrolled(replace(view, scroll=99), 8, 120, fixed=True)
     assert "deps/module-9" in "\n".join(last)
-    assert last[-1].startswith("clone")
+    assert last[-1].startswith("⑂")
     assert "more submodules" not in "\n".join(body + last)
 
 
@@ -758,7 +765,7 @@ def test_a_fixed_panel_pins_the_footer_to_the_last_grid_row() -> None:
 
     assert len(body) == 8
     assert body[0].startswith("▶ Running")
-    assert body[7].startswith("clone")
+    assert body[7].startswith("⑂")
     assert body[4:7] == ["", "", ""]
 
 
@@ -766,7 +773,7 @@ def test_a_narrow_panel_wraps_its_rows_and_drops_host_head() -> None:
     for width in (dd.DETAILS_PAIR_WIDTH, 59):
         body = _panel_body(_panel_view(_rich_container(subs=2)), None, width)
         assert "host HEAD" not in "\n".join(body), width
-        assert any(ln.startswith("clone") for ln in body), width
+        assert any(ln.startswith("⑂") for ln in body), width
     wide = _panel_body(_panel_view(_rich_container()), 8, 100, fixed=True)
     assert "host HEAD" in "\n".join(wide)
 
@@ -795,8 +802,16 @@ def test_the_git_table_keeps_every_column_at_every_width() -> None:
 
 def test_no_git_status_renders_one_git_line() -> None:
     body = _panel_body(_panel_view(_c()), None, 80)
-    assert body == [body[0], "", "git —", "", body[-1]]
-    assert body[0].startswith("▶ Running") and body[-1].startswith("clone")
+    assert body == [body[0], "", "git —"]
+    assert body[0].startswith("▶ Running")
+
+
+def test_a_fixed_panel_without_a_footer_keeps_the_grid_height() -> None:
+    body = _panel_body(_panel_view(_c()), 8, 80, fixed=True)
+
+    assert len(body) == 8
+    assert body[0].startswith("▶ Running") and body[2] == "git —"
+    assert body[3:] == [""] * 5
 
 
 def test_container_written_text_renders_literally() -> None:
@@ -812,12 +827,12 @@ def test_container_written_text_renders_literally() -> None:
         job_phase="failed",
         job_kind="new",
         job_error="boom [red]",
-        credential_group="[work]",
+        fork_of="alpha-[b]",
         activity=(ProcessActivity(comm="[/dim]", percent=10.0, count=1),),
     )
     text = "\n".join(_panel_body(_panel_view(c), None, 160))
 
-    for literal in ("deps/[bold]x", "boom [red]", "group [work]", "[/dim]"):
+    for literal in ("deps/[bold]x", "boom [red]", "forked from [b]", "[/dim]"):
         assert literal in text, literal
 
 
