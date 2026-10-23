@@ -137,3 +137,54 @@ def test_snapshot_choice_prompt(snap_compare, mocker):
         assert app.frame.native_state().cursor == 0
 
     assert snap_compare(app, terminal_size=(100, 30), run_before=open_prompt)
+
+
+def _outbox_alone_state(**over):
+    from jailbee.dashboard import outbox as dob
+    from tests.test_dashboard_outbox import _action, _key, _proposal, _state
+
+    first = _proposal(
+        "pr/a.json",
+        actions=[_action(0, title="[red]x[/red]", body="hello"), _action(1, body="second")],
+    )
+    return _state(
+        first,
+        _proposal("issue/b.json", actions=[_action(0, kind="create", body="an issue")]),
+        abilities=dob.Abilities(True, True, False, True, True, True),
+        expanded=frozenset({_key("pr/a.json")}),
+        marks=frozenset({_key("issue/b.json")}),
+        status=("Nothing deleted.",),
+        **over,
+    )
+
+
+def _outbox_alone(spec):
+    from textual.app import App
+
+    from jailbee.dashboard.tui.outbox_box import OutboxBox
+
+    class Alone(App[None]):
+        CSS = "Screen { background: ansi_default; }"
+
+        def compose(self):
+            yield OutboxBox(spec, mouse_enabled=lambda: True, standalone=True)
+
+    return Alone(ansi_color=True)
+
+
+def test_snapshot_outbox_box_alone(snap_compare):
+    assert snap_compare(_outbox_alone(_outbox_alone_state()), terminal_size=(100, 30))
+
+
+def test_snapshot_outbox_box_alone_question(snap_compare):
+    from jailbee.dashboard import outbox as dob
+
+    question = dob.Question(
+        "delete",
+        "Delete from the outbox?",
+        ("pr/a.json (whole)", "[red]x[/red] stays literal"),
+        (("No", "no"), ("Yes, delete", "yes")),
+        default="no",
+    )
+    spec = _outbox_alone_state(question=question)
+    assert snap_compare(_outbox_alone(spec), terminal_size=(100, 30))

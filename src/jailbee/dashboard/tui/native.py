@@ -42,6 +42,7 @@ from jailbee.dashboard.commands import apply_completion
 from jailbee.dashboard.egress import EgressState, egress_label
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
+from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.overlays import (
     SUGGESTION_ROWS,
     Picker,
@@ -163,8 +164,9 @@ class OverlayList(OptionList, can_focus=True):
         *options: Option,
         mouse_enabled: Callable[[], bool],
         double_click_chooses: bool = False,
+        list_id: str = NATIVE_LIST_ID,
     ) -> None:
-        super().__init__(*options, id=NATIVE_LIST_ID)
+        super().__init__(*options, id=list_id)
         self.mouse_enabled = mouse_enabled
         self.double_click_chooses = double_click_chooses
 
@@ -1435,4 +1437,9 @@ def build_box(
         return PromptBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, CommandState):
         return CommandBox(spec, mouse_enabled=mouse_enabled, candidates=candidates)
+    if isinstance(spec, OutboxState):
+        # Lazy: outbox_box imports this module for the box base classes.
+        from jailbee.dashboard.tui.outbox_box import OutboxBox
+
+        return OutboxBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

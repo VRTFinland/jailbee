@@ -9,6 +9,7 @@ from jailbee.dashboard import accounts as da
 from jailbee.dashboard.egress import (
     EgressState,
 )
+from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.overlays import (
     Picker,
     TextPrompt,
@@ -35,6 +36,7 @@ Overlay = (
     | TextPrompt
     | Picker
     | da.AccountsState
+    | OutboxState
     | Literal["help"]
 )
 
@@ -96,6 +98,8 @@ def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:
         return ("egress", overlay.prefix, overlay.container)
     if isinstance(overlay, da.AccountsState):
         return ("accounts", overlay.prefix)
+    if isinstance(overlay, OutboxState):
+        return ("outbox", overlay.prefix, overlay.scope_name)
     if isinstance(overlay, TextPrompt):
         return ("prompt", overlay.purpose, overlay.target)
     return ("command",)
