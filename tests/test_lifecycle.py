@@ -1560,8 +1560,15 @@ def test_new_container_memory_override_is_explicit(tmp_path, mocker, memory, for
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     opts = NewContainerOptions(
-        container_branch="feat/x", name=None, network="strict", memory=memory,
-        cpu=4, from_base="gisgro-base", clone=True, autostart=False, fork_of=fork_of,
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory=memory,
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+        fork_of=fork_of,
     )
 
     new_container(cfg, incus, opts)

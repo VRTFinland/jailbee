@@ -2006,7 +2006,8 @@ def new_cmd(
         typer.Option(
             "--memory",
             help=(
-                "Per-container memory override (e.g. '8GiB' or '50%'); omitted follows `defaults.memory`."
+                "Per-container memory override (e.g. '8GiB' or '50%'); "
+                "omitted follows `defaults.memory`."
             ),
         ),
     ] = None,
@@ -2978,7 +2979,10 @@ def fork_cmd(
         str | None,
         typer.Option(
             "--memory",
-            help="Per-container memory override; omitted follows `defaults.memory`, not the source override.",
+            help=(
+                "Per-container memory override; omitted follows `defaults.memory`, "
+                "not the source override."
+            ),
         ),
     ] = None,
     cpu: Annotated[
