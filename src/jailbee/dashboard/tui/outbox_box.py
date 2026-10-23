@@ -14,7 +14,6 @@ list under the preview and take the keys.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
 
 from rich.text import Text
 from textual import events
@@ -168,7 +167,7 @@ class OutboxBox(OverlayBox):
         inset = BOX_INSET_COLS + (0 if self.standalone else FRAME_INSET_COLS)
         try:
             return max(1, self.app.size.width - inset)
-        except Exception:  # noqa: BLE001  # no active app yet (a box measured before mount)
+        except Exception:  # no active app yet (a box measured before mount)
             return 80
 
     def _side(self) -> bool:
@@ -278,16 +277,20 @@ class OutboxBox(OverlayBox):
             self._asked = question
             lst.clear_options()
             if question is not None:
-                lst.add_options([Option(_line(label), id=value) for label, value in question.choices])
+                lst.add_options(
+                    [Option(_line(label), id=value) for label, value in question.choices]
+                )
                 values = [value for _, value in question.choices]
-                lst.highlighted = values.index(question.default) if question.default in values else 0
+                default = question.default
+                lst.highlighted = values.index(default) if default in values else 0
         lst.display = question is not None
 
     def _update_preview(self) -> None:
         if not self._preview_shown():
             return
         both = self._list_shown()
-        width = max(20, self._width - self._width * _LIST_SHARE // _BODY_SHARES - 3 if both else self._width - 3)
+        room = self._width - self._width * _LIST_SHARE // _BODY_SHARES if both else self._width
+        width = max(20, room - 3)
         lines = preview_lines(self.panel, self._cursor_key(), width)
         self.query_one("#outbox-preview-text", Static).update(Text("\n").join(lines))
 
@@ -327,7 +330,11 @@ class OutboxBox(OverlayBox):
         cursor = next(
             (
                 i
-                for i in (self._index_of(moved), self._index_of(old_key), self._index_of(spec.cursor))
+                for i in (
+                    self._index_of(moved),
+                    self._index_of(old_key),
+                    self._index_of(spec.cursor),
+                )
                 if i is not None
             ),
             self._nearest(old_index),
