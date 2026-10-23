@@ -371,6 +371,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "into the shared skills mount"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the bundled LiteLLM version moves from 1.106.0 to 1.106.2; `jailbee apply` "
+            "says when the proxy needs `jailbee litellm up` to reinstall it"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

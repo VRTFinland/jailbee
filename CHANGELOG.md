@@ -8,6 +8,15 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- **The LiteLLM proxy is pinned to 1.106.2** (was 1.106.0). The patch
+  releases fix signed Anthropic thinking blocks dropped on multi-turn
+  requests and tool calls landing on `choices[1]` with gpt-5.4+ models. The
+  compromised 1.107.0 release was never pinned. An instance without
+  `litellm.version` is reinstalled on the next `jailbee litellm up`;
+  `jailbee apply` says when one is due.
+
 ### Fixed
 
 - **`jailbee branch` reports submodule alignment failures without a traceback.**
