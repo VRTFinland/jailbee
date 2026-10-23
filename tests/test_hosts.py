@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import stat
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 import yaml
 
 from jailbee.docker_daemon import MIRROR_DNS_NAME
@@ -247,6 +251,30 @@ def test_apply_hosts_invokes_incus_exec_with_bash_script():
     assert END_SENTINEL in script
     assert "mktemp" in script
     assert "mv " in script
+
+
+def _run_against(script: str, hosts: Path) -> None:
+    """Run a generated script with /etc/hosts redirected to `hosts`."""
+    subprocess.run(["bash", "-c", script.replace("/etc/hosts", str(hosts))], check=True)
+
+
+@pytest.mark.parametrize("write", ["apply", "clear"])
+def test_hosts_rewrite_leaves_the_file_world_readable(tmp_path: Path, write: str) -> None:
+    """`mktemp` creates 0600 and `mv` keeps it: without a chmod every
+    non-root process in the container stops reading /etc/hosts — and with it
+    every pin, the mirror row included."""
+    hosts = tmp_path / "hosts"
+    hosts.write_text("127.0.0.1 localhost\n")
+    hosts.chmod(0o644)
+    incus = MagicMock()
+    if write == "apply":
+        apply_hosts(_make_cfg([]), incus, "c", entries=[], mirror_endpoint=("10.42.0.7", 3128))
+    else:
+        clear_hosts(_make_cfg([]), incus, "c")
+
+    _run_against(incus.exec.call_args.args[1][2], hosts)
+
+    assert stat.S_IMODE(hosts.stat().st_mode) == 0o644
 
 
 def test_apply_hosts_script_strips_existing_block():

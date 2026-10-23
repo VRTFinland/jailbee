@@ -10124,7 +10124,9 @@ def _switch(
 
     incus, resolved = _resolve_existing(cfg, name)
     _warn_if_autostart_runs(cfg, resolved)
-    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus) if mode == "strict" else None
+    # Both directions: loose keeps the mirror's /etc/hosts row too, since
+    # only jailbee-loose's dnsmasq knows the name (see `hosts.sync_hosts`).
+    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     if mode == "strict" and mirror_endpoint is None:
         # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
         # `restart` path, where the pin is incidental. Here it is not: going

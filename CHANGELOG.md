@@ -14,6 +14,13 @@ before editing `## Unreleased`.
   If the superproject already switched branches, the error names that partial
   state and explains how to retry. Submodule update errors no longer assume
   that a commit is missing or a submodule is uninitialized.
+- **`docker pull` keeps working after `jailbee net loose` on the work
+  network.** The switch, and the timer's revert at the end of a loose period,
+  removed the registry mirror's `/etc/hosts` row, so dockerd failed with
+  `lookup jailbee-registry-mirror.incus ... no such host`.
+- **`/etc/hosts` is readable by every user again.** Rewrites left it
+  root-only, so non-root programs in a strict container ignored its pinned
+  IPs. Run `jailbee apply` to fix existing containers.
 
 ## 1.7.7 - 2026-10-20
 
@@ -35,6 +42,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **A `jailbee-bug-report` agent skill.** An in-container agent that finds
+  JailBee itself misbehaving can stage a bug report against the JailBee
+  repository through the issue outbox; a human publishes it on the host. The
+  skill is copied into each agent's skills directory by `jailbee apply`.
 - **Dashboard: clock times in the agent activity.** The tool line, the last
   message and each history row on a container card lead with a dim local
   `HH:MM`, so you can tell when each step happened.

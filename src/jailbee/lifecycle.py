@@ -1944,6 +1944,29 @@ def new_container(
         except (IncusError, OSError) as e:
             warn(f"Could not write the LiteLLM settings: {e}; run `jailbee apply` to retry.")
 
+    # Identity snapshot for an agent inside, which has no `jailbee` binary but
+    # must tell the operator which host command to run. Best-effort: purely
+    # informational, so a failure warns and must not abort a good container.
+    from jailbee.container_info import build_payload, write_container_info
+
+    try:
+        write_container_info(
+            incus,
+            name,
+            build_payload(
+                cfg,
+                name,
+                mode="mount" if opts.mount else "clone",
+                branch=None if opts.mount else opts.container_branch,
+                base_branch=base_label,
+                repo_dir=repo_dir,
+                pr=opts.pr,
+                fork_of=opts.fork_of,
+            ),
+        )
+    except (IncusError, OSError) as e:
+        warn(f"Could not write /etc/jailbee/container.json: {e}")
+
     if opts.clone:
         assert source_branch is not None
         _phase("cloning")

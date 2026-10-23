@@ -2247,6 +2247,93 @@ def test_new_container_persists_user_gie_branch(tmp_path):
     assert ("repo-feat-x", "environment.JAILBEE_BRANCH", "feat/x") in config_set_calls
 
 
+def _container_info_scripts(incus):
+    return [
+        c.args[2]
+        for c in incus.exec_with_input.call_args_list
+        if "/etc/jailbee/container.json" in c.args[2]
+    ]
+
+
+def _container_info_body(script):
+    import json
+
+    return json.loads(script.split("<<'JB_EOF'\n", 1)[1].split("\nJB_EOF", 1)[0])
+
+
+def test_new_container_writes_identity_snapshot(tmp_path):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+        pr=7,
+    )
+    new_container(cfg, incus, opts)
+
+    (script,) = _container_info_scripts(incus)
+    body = _container_info_body(script)
+    assert body["name"] == "repo-feat-x"
+    assert body["mode"] == "clone"
+    assert body["branch"] == "feat/x"
+    assert body["base_branch"] == cfg.default_branch
+    assert body["pr"] == 7
+    assert body["repo_dir"] == f"/home/dev/{cfg.container_prefix}"
+
+
+def test_new_container_identity_snapshot_for_mount_has_no_branch(tmp_path):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+
+    opts = NewContainerOptions(
+        container_branch="",
+        name="box",
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+        mount=True,
+    )
+    new_container(cfg, incus, opts)
+
+    (script,) = _container_info_scripts(incus)
+    body = _container_info_body(script)
+    assert body["mode"] == "mount"
+    assert body["branch"] is None
+
+
+def test_new_container_survives_a_failed_identity_snapshot(tmp_path):
+    from jailbee.incus import IncusError
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec_with_input.side_effect = IncusError("boom")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)  # must not raise
+
+
 def test_container_repo_dir_returns_label_when_present(tmp_path):
     """When user.jailbee.repo_dir is set, that exact path is returned."""
     from jailbee.lifecycle import container_repo_dir
