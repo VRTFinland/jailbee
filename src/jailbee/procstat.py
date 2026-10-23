@@ -230,6 +230,46 @@ def read_container_pids(
     return pids
 
 
+def read_container_cache(
+    init_pid: int,
+    container: str,
+    *,
+    proc_root: Path = PROC_ROOT,
+    cgroup_root: Path = CGROUP_ROOT,
+) -> int | None:
+    """Bytes of reclaimable page cache charged to the container's cgroup.
+
+    Incus reports ``memory.current`` as the container's usage, and that
+    figure includes file cache the kernel gives back under pressure. The
+    cache is ``file`` less ``shmem`` from the container's ``memory.stat``:
+    shared memory (tmpfs) is counted in ``file`` but cannot be reclaimed.
+
+    None when the figure cannot be read; the caller then keeps what Incus said.
+    Same host-side cgroup-namespace assumption as ``read_container_pids``.
+    """
+    try:
+        raw = (proc_root / str(init_pid) / "cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    rel = _container_cgroup(raw, container)
+    if rel is None:
+        return None
+    try:
+        text = (cgroup_root / rel / "memory.stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fields: dict[str, int] = {}
+    for line in text.splitlines():
+        key, _, value = line.partition(" ")
+        try:
+            fields[key] = int(value)
+        except ValueError:
+            continue
+    if "file" not in fields:
+        return None
+    return max(0, fields["file"] - fields.get("shmem", 0))
+
+
 @dataclass(frozen=True)
 class ProcessActivity:
     """One busy program inside a container, over the last sampling window."""

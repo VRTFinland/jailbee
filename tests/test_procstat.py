@@ -454,3 +454,28 @@ def test_top_mem_caps_at_three(tmp_path):
     out = sampler.sample([procstat.SampleInput("gie-demo", 500, None)])["gie-demo"]
 
     assert [m.comm for m in out.top_mem] == ["e", "d", "c"]
+
+
+def _write_memory_stat(cg: Path, rel: str, text: str) -> None:
+    d = cg / rel.lstrip("/")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "memory.stat").write_text(text)
+
+
+def test_read_container_cache_is_file_less_shmem(tmp_path):
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/lxc.payload.gie-demo/init.scope")
+    _write_memory_stat(cg, "/lxc.payload.gie-demo", "anon 100\nfile 1000\nshmem 300\n")
+
+    cache = procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg)
+
+    assert cache == 700
+
+
+def test_read_container_cache_is_none_when_unreadable(tmp_path):
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/lxc.payload.gie-demo/init.scope")
+
+    assert procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg) is None
+    _write_memory_stat(cg, "/lxc.payload.gie-demo", "anon 100\n")
+    assert procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg) is None

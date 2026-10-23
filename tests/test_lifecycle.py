@@ -11294,3 +11294,17 @@ def test_new_refuses_unupgraded_memory_profile_before_creation(
     incus.init.assert_not_called()
     incus.copy.assert_not_called()
     incus.start.assert_not_called()
+
+
+def test_list_containers_memory_usage_excludes_page_cache(make_cfg, tmp_path, mocker):
+    """Incus reports memory.current, cache included; the row shows it without."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-feat-x", state="Running", pid=4242)
+    ]
+    mocker.patch("jailbee.lifecycle.read_container_cache", return_value=1_500_000_000)
+    result = list_containers(cfg, incus)
+    assert result[0].memory_usage == 2_500_000_000
