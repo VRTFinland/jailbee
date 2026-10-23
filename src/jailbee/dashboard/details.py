@@ -42,6 +42,7 @@ from jailbee.lifecycle import (
     submodule_sub_rows,
     tracking_warning,
 )
+from jailbee.outbox.markdown_view import markdown_text_lines
 from jailbee.upgrade import ACTION_COMMANDS
 
 if TYPE_CHECKING:
@@ -157,9 +158,9 @@ class AdvisoryBlock:
 class DetailsView:
     """What the panel shows: a title and its rows, before any sizing.
 
-    ``activity`` is the agent's head and tool lines, ``message`` its last
-    message and ``history`` its recent steps, newest first — all Rich markup,
-    already escaped. ``reserve_rows`` is how many rows under the grid every
+    ``activity`` is the agent's head and tool lines and ``history`` its recent
+    steps, newest first — Rich markup, already escaped. ``message`` is its last
+    message, rendered as Markdown. ``reserve_rows`` is how many rows under the grid every
     view is guaranteed while any container has activity, so the table keeps
     its height as the cursor moves; the panel grows past it only into rows
     the table does not need. ``panel`` is a container's summary / git table /
@@ -174,7 +175,7 @@ class DetailsView:
     items: tuple[DetailItem, ...]
     activity: tuple[str, ...] = ()
     reserve_rows: int = 0
-    message: str | None = None
+    message: ActivityMessage | None = None
     history: tuple[str, ...] = ()
     panel: ContainerPanel | None = None
     warnings: tuple[str, ...] = ()
@@ -189,11 +190,24 @@ class DetailsView:
 
 
 @dataclass(frozen=True)
+class ActivityMessage:
+    """An agent's last message: Markdown it wrote, and the time it wrote it.
+
+    ``text`` is untrusted and raw — it is rendered as Markdown, never as Rich
+    markup. ``clock`` is escaped markup (the dim ``HH:MM `` or ``""``) that
+    leads the first rendered line; the rest hang under the message.
+    """
+
+    text: str
+    clock: str = ""
+
+
+@dataclass(frozen=True)
 class ActivityBlock:
     """A container's agent activity as escaped Rich markup; empty when it has none."""
 
     lines: tuple[str, ...] = ()
-    message: str | None = None
+    message: ActivityMessage | None = None
     history: tuple[str, ...] = ()
 
 
@@ -238,7 +252,8 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
     The first agent summary that carries activity speaks (summaries are most
     urgent first). Every part is text an agent wrote, so it is escaped here.
     History tool entries have a coloured name and dim arguments, message
-    entries are white; the newest message is bold white so it stands out. The newest tool
+    entries are white; the newest message is kept whole and is rendered as
+    Markdown, the way the agent laid it out. The newest tool
     event is left out of the history when the tool line shows it, and the
     newest message event when ``message`` shows it: ``last_tool`` /
     ``last_message`` are by construction those same newest events, so the
@@ -265,8 +280,7 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
         message = (
             None
             if text.message is None
-            else f"{_clock(newest.get('message'))}"
-            f"[bold white]{escape(f'“{text.message}”')}[/bold white]"
+            else ActivityMessage(text.message, _clock(newest.get("message")))
         )
         history = tuple(earlier)
         return ActivityBlock(tuple(lines), message, history)
@@ -777,10 +791,20 @@ class _DetailsBody:
             yield from line
 
     def message_lines(self, console: Console, width: int) -> list[Text]:
-        """The last message wrapped to ``width``; ``[]`` when there is none."""
-        if self.view.message is None:
+        """The last message rendered as Markdown ``width`` wide; ``[]`` when there is none.
+
+        The clock leads the first line and the rest hang under the message.
+        """
+        message = self.view.message
+        if message is None:
             return []
-        return list(Text.from_markup(self.view.message).wrap(console, max(1, width)))
+        clock = Text.from_markup(message.clock)
+        indent = clock.cell_len
+        body = markdown_text_lines(message.text, max(1, width - indent))
+        return [
+            (clock.copy() if index == 0 else Text(" " * indent)) + line
+            for index, line in enumerate(body)
+        ] or [clock]
 
     def _activity_rows(self, console: Console, width: int) -> list[Text]:
         head = [_one_row(markup) for markup in self.view.activity]

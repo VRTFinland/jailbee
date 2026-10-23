@@ -184,16 +184,15 @@ def _with_activity(**kw: Any) -> ContainerInfo:
     return _c(agent_status=(summary,))
 
 
-def test_activity_block_is_escaped_and_the_message_is_white() -> None:
+def test_activity_block_is_escaped_and_keeps_the_message_raw_for_markdown() -> None:
     block = dd.activity_block(_with_activity(), NOW)
 
     assert [_plain(line) for line in block.lines] == [
         "active 1m ago (busy for 2m) · ~2 subagents · 1 shell",
         "↳ Bash  uv run pytest -x",
     ]
-    assert block.message is not None
-    assert _plain(block.message) == "“all [red]green[/red] <b>”"  # shown, not interpreted
-    assert block.message.startswith("[bold white]")
+    # Raw: the panel renders it as Markdown, never as Rich markup.
+    assert block.message == dd.ActivityMessage("all [red]green[/red] <b>", "")
 
 
 def test_tool_markup_colours_the_name_by_kind_and_dims_unknown_tools() -> None:
@@ -367,10 +366,10 @@ def test_a_panel_without_a_reservation_renders_as_before() -> None:
 
 
 HEAD = ("busy 2m", "↳ Bash  ls")
-MESSAGE = "[bold white]“done”[/bold white]"
+MESSAGE = dd.ActivityMessage("done")
 
 
-def _full(history: int = 6, message: str | None = MESSAGE) -> dd.DetailsView:
+def _full(history: int = 6, message: dd.ActivityMessage | None = MESSAGE) -> dd.DetailsView:
     items = tuple(dd.DetailItem(f"k{i}", f"v{i}") for i in range(6))
     return dd.DetailsView("t", items, HEAD, 3, message, tuple(f"h{i}" for i in range(history)))
 
@@ -378,7 +377,7 @@ def _full(history: int = 6, message: str | None = MESSAGE) -> dd.DetailsView:
 def test_uncapped_activity_runs_head_message_then_history() -> None:
     body = _body(_full(), None)
 
-    assert body[-9:] == ["busy 2m", "↳ Bash  ls", "“done”", "h0", "h1", "h2", "h3", "h4", "h5"]
+    assert body[-9:] == ["busy 2m", "↳ Bash  ls", "done", "h0", "h1", "h2", "h3", "h4", "h5"]
 
 
 def test_details_rows_base_is_the_reservation_and_want_is_everything() -> None:
@@ -412,7 +411,7 @@ def test_history_that_does_not_fit_scrolls_into_view() -> None:
 
 def test_a_long_message_is_wrapped_in_full() -> None:
     words = " ".join(f"w{i:02d}" for i in range(60))
-    view = _full(history=0, message=f"[bold white]“{words}”[/bold white]")
+    view = _full(history=0, message=dd.ActivityMessage(words))
     rows = dd.details_rows(view, Console(width=60), 60)
 
     lines = _text(dd.render_details(view, rows.want, fixed=True), width=60).splitlines()[1:-1]
@@ -426,7 +425,7 @@ def test_a_long_message_is_wrapped_in_full() -> None:
 
 def test_a_message_cut_short_scrolls_instead_of_ending_in_an_ellipsis() -> None:
     words = " ".join(f"w{i:02d}" for i in range(60))
-    view = _full(history=0, message=f"[bold white]“{words}”[/bold white]")
+    view = _full(history=0, message=dd.ActivityMessage(words))
     rows = dd.details_rows(view, Console(width=60), 60)
 
     first, _ = _scrolled(view, rows.want - 1, width=60, fixed=True)
@@ -450,7 +449,7 @@ def test_hostile_transcript_text_renders_literally() -> None:
 
     body = _body(view, None)
 
-    assert "“last [bold]”" in body
+    assert "last [bold]" in body
     assert "Bash  echo [/dim] \\" in body
     assert "“[red]x[/red] \\”" in body
 
@@ -1147,7 +1146,7 @@ def test_activity_rows_lead_with_the_local_clock_time_of_their_event() -> None:
     block = dd.activity_block(_c(agent_status=(summary,)), NOW)
 
     assert _plain(block.lines[1]) == "↳ Bash  undated"  # no time recorded: no prefix
-    assert block.message is not None and _plain(block.message).startswith(hhmm(3))
+    assert block.message is not None and _plain(block.message.clock) == f"{hhmm(3)} "
     assert [_plain(h) for h in block.history] == [
         f"{hhmm(2)} Bash  ls",
         f"{hhmm(1)} “older”",
@@ -1162,3 +1161,53 @@ def test_details_render_memory_override_without_changing_bar_values(state):
     panel = dd.container_panel(c, NOW)
     assert panel.memory == ((3 * GIB, 24 * GIB) if state == "Running" else None)
     assert "24GiB* (override)" in "\n".join(_panel_body(_panel_view(c), None, 120))
+
+
+def _message_body(text: str, clock: str = "", width: int = 60) -> list[str]:
+    view = _full(history=0, message=dd.ActivityMessage(text, clock))
+    rows = dd.details_rows(view, Console(width=width), width)
+    lines = _text(dd.render_details(view, rows.want, fixed=True), width=width).splitlines()
+    return [ln[2:-2].rstrip() for ln in lines[1:-1]][8 + 2 :]
+
+
+def test_the_message_is_rendered_as_markdown() -> None:
+    text = "# Summary\n\nFixed **two** things:\n\n- `a.py` cleaned\n- tests run"
+
+    body = _message_body(text)
+
+    assert body == [
+        "Summary",
+        "",
+        "Fixed two things:",
+        "",
+        " • a.py cleaned",
+        " • tests run",
+    ]
+
+
+def test_markdown_emphasis_reaches_the_rendered_line_as_style() -> None:
+    view = dd.DetailsView("t", (), message=dd.ActivityMessage("plain **strong**"))
+
+    (line,) = dd._DetailsBody(view, None, False).message_lines(Console(), 40)
+
+    assert line.plain.rstrip() == "plain strong"
+    styled = {line.plain[span.start : span.end] for span in line.spans if "bold" in str(span.style)}
+    assert styled == {"strong"}
+
+
+def test_the_clock_leads_the_message_and_its_other_lines_hang_under_it() -> None:
+    body = _message_body("first\n\nsecond", clock="[dim]09:41[/dim] ")
+
+    assert body == ["09:41 first", "", "      second"]
+
+
+def test_hostile_markdown_shows_html_and_drops_terminal_controls() -> None:
+    view = dd.DetailsView(
+        "t", (), message=dd.ActivityMessage("<b>x</b> \x1b[31mred [bold]y[/bold] &#x202e;z")
+    )
+
+    lines = dd._DetailsBody(view, None, False).message_lines(Console(), 80)
+
+    shown = " ".join(line.plain for line in lines)
+    assert "<b>x</b>" in shown and "[bold]y[/bold]" in shown
+    assert "\x1b" not in shown and "\u202e" not in shown

@@ -289,6 +289,7 @@ class AgentActivity:
 
     last_tool: str | None
     last_message: str | None
+    """The latest text the agent wrote, line breaks kept (it is usually Markdown)."""
     subagents: int | None = None
     shells: int | None = None
     modified: float | None = None

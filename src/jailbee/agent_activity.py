@@ -104,8 +104,8 @@ class ActivityReader:
 
 
 TOOLTIP_MESSAGE_CHARS = 200
-"""`lines()` cuts the message here: a tooltip does not wrap, and the details
-panel, which does, reads `message` itself."""
+"""`lines()` cuts the message here, on one line: a tooltip does not wrap, and the
+details panel, which renders it as Markdown, reads `message` itself."""
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ class ActivityText:
         if self.tool is not None:
             out.append(f"↳ {self.tool}")
         if self.message is not None:
-            message = self.message
+            message = " ".join(self.message.split())
             if len(message) > TOOLTIP_MESSAGE_CHARS:
                 message = message[: TOOLTIP_MESSAGE_CHARS - 1] + "…"
             out.append(f"“{message}”")

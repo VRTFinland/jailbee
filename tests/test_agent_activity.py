@@ -275,6 +275,15 @@ def test_the_tooltip_lines_cut_a_long_message_but_the_text_keeps_it() -> None:
     assert aa.TOOLTIP_MESSAGE_CHARS == 200
 
 
+def test_the_tooltip_flattens_a_multi_line_message_but_the_text_keeps_it() -> None:
+    markdown = "Done:\n\n- one\n- two"
+    text = aa.describe(_summary(activity=AgentActivity("Bash  ls", markdown)), NOW)
+
+    assert text is not None
+    assert text.message == markdown
+    assert text.lines()[-1] == "“Done: - one - two”"
+
+
 def test_describe_without_activity_is_none() -> None:
     assert aa.describe(_summary(activity=None), NOW) is None
 

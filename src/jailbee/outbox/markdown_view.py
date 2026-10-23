@@ -30,11 +30,14 @@ import os
 import shutil
 import sys
 from collections.abc import Iterable
+from functools import lru_cache
+from typing import ClassVar
 
 from markdown_it import MarkdownIt
 from rich.console import Console
-from rich.markdown import Markdown
+from rich.markdown import Heading, Markdown, MarkdownElement
 from rich.segment import Segment, Segments
+from rich.text import Text
 
 # Never wrap narrower than this, however deep the indent: a few columns of
 # text per line is less readable than a long line.
@@ -64,6 +67,56 @@ class _VerbatimMarkdown(Markdown):
                     src = str(child.attrs.get("src", ""))
                     child.type, child.tag, child.children = "text", "", None
                     child.content = f"![{child.content}]({src})"
+
+
+class _LeftHeading(Heading):
+    """A heading flush left: a centred one floats oddly in a narrow panel."""
+
+    LEVEL_ALIGN = dict.fromkeys(Heading.LEVEL_ALIGN, "left")
+
+
+class _PanelMarkdown(_VerbatimMarkdown):
+    """`_VerbatimMarkdown` for a panel: every heading left-aligned."""
+
+    elements: ClassVar[dict[str, type[MarkdownElement]]] = {
+        **Markdown.elements,
+        "heading_open": _LeftHeading,
+    }
+
+
+@lru_cache(maxsize=64)
+def _markdown_lines(text: str, width: int) -> tuple[Text, ...]:
+    from jailbee.outbox.inspect import safe_text
+
+    console = Console(width=width, height=_ROWS, force_terminal=True, highlight=False)
+    rendered = console.render_lines(
+        _PanelMarkdown(text), console.options.update(width=width), pad=False
+    )
+    lines: list[Text] = []
+    for row in rendered:
+        line = Text()
+        for segment in row:
+            if not segment.control:
+                line.append(safe_text(segment.text), segment.style)
+        # Not stripped: a code block's trailing spaces carry its background.
+        lines.append(line)
+    while lines and not lines[-1].plain.strip():
+        lines.pop()
+    while lines and not lines[0].plain.strip():
+        lines.pop(0)
+    return tuple(lines)
+
+
+def markdown_text_lines(text: str, width: int) -> list[Text]:
+    """`text` laid out as Markdown `width` cells wide, one styled `Text` per line.
+
+    For a Rich-drawn panel (the dashboard's details): the same sanitising as
+    `render_markdown`, but the lines stay `Text`, so no ANSI round trip, and
+    headings are flush left. Leading and trailing blank lines are dropped.
+    Cached per (text, width): a panel is redrawn on every refresh, and each
+    call returns copies, so a caller may style them.
+    """
+    return [line.copy() for line in _markdown_lines(text, max(1, width))]
 
 
 def _terminal_width() -> int | None:

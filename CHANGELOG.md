@@ -8,6 +8,16 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- **Dashboard: the agent's last message is rendered as Markdown.** The details
+  panel keeps the message's line breaks and lays out its lists, headings,
+  emphasis, code and quotes, with the clock on the first line and the rest
+  hanging under it, instead of one quoted run of text. It is kept up to 3000
+  characters (was 1000). HTML is shown as written and terminal controls are
+  dropped, as in `jailbee outbox show`; history entries and the Qt tooltip stay
+  one line.
+
 ## 1.7.8 - 2026-10-23
 
 ### Added
