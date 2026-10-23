@@ -5784,3 +5784,114 @@ push step). Run `jb dashboard`.
 8. Qt (`jb dashboard --gui`): select two rows with Ctrl+click and right-click.
    Expected: a "2 selected" menu; a bulk action reports skipped rows and launch
    failures once.
+
+## Outbox manager (dashboard box and `jailbee outbox`)
+
+> **Status: not yet run — needs a rig with host `jb net loose` for image
+> pulls.** The steps below are derived from the code
+> (`dashboard/tui/outbox_box.py`, `outbox_app.py`, `dashboard/outbox.py`,
+> `dashboard/outbox_flow.py`) and have not been driven in a pty. Real
+> publication to GitHub is a host check: a container's `gh` is read-only, so
+> the rig can only get as far as the plan and the cancel.
+
+Needs a disposable Incus rig with two running containers, `a` and `b`, of one
+repo, and the terminal dashboard. Drive it in tmux on a **private socket**
+(`tmux -L outbox-rig`, size set with `new-session -x 140 -y 40`); never run
+`tmux kill-server`, which would also kill the session you are working in.
+Send arrow keys as `ESC [ B` (`tmux send-keys -H 1b 5b 42`), not `ESC O B`:
+the dashboard's input routing does not read the application-mode form.
+
+### Seed two containers
+
+Stage manifests with the `jailbee-pr-review` and `jailbee-issue-management`
+skills (formats: `docs/skills/*/references/manifest-schema.md`), or write them
+by hand with `jailbee exec <container> -- sh`. Both stores are
+`~/.jailbee/pr-outbox/` and `~/.jailbee/issue-outbox/` of the container user.
+
+1. In container `a`, `pr-outbox/001-review.json`: `repo` the origin's
+   `owner/name`, a real open `pr`, its `head_sha`, and one `review` action
+   with two inline `comments` (`path`, `line`, `body`). Add
+   `pr-outbox/002-reply.json` (one `reply` action with a real `comment_id`)
+   and `pr-outbox/003-general.json` (one `comment` action).
+2. In container `b`, `issue-outbox/001-triage.json` with a `create` action
+   (`"ref": "new-bug"`, `title`, `body`, `labels`) and a `comment` action with
+   `"issue_ref": "new-bug"` (the dependent comment). Add a second, independent
+   `pr-outbox/001-general.json` so `b` shows both kinds.
+3. `jailbee outbox ls`. Expected: both containers, `a` with three PR
+   proposals, `b` with one issue and one PR proposal.
+
+### Dashboard box
+
+Run `jb dashboard` (terminal at 140 columns).
+
+1. Select `a`, press Enter. Expected: its menu has an `Outbox` entry (offered
+   on running containers unless both outboxes are known empty). Choose it.
+   Expected: a box titled `Outbox · a` with the proposal tree on the left and
+   a preview on the right, side by side (content width at least
+   `SIDE_BY_SIDE_MIN_COLS` = 110). The frame hint reads
+   `↑/↓ move · Enter open · Space mark · d delete · p publish · c create PR ·
+   X clear · v preview · m manifest · r refresh · Esc close` (entries drop out
+   for abilities the container lacks).
+2. Move to `001-review.json` and press Enter (or Right). Expected: the review
+   expands to its action and the two inline comments; the preview follows the
+   cursor row (whole proposal, action, or one comment with its path and line).
+   Left collapses. `m` swaps the preview to the raw manifest, `m` again back.
+3. Narrow the terminal to 60 columns (`tmux resize-window -x 60`). Expected:
+   the preview no longer sits beside the list. The list fills the box; `v`
+   shows the preview in place of the list and `v` again brings the list back.
+   Widen to 140 again and both panes return.
+4. Expand the review, put the cursor on the first inline comment, press `d`.
+   Expected: a question `Delete from the outbox?` in the preview area, its
+   lines naming the comment, choices `No` (selected) and `Yes, delete`. Down,
+   Enter on `Yes, delete`. Expected: the status line reads `Deleted 1 from the
+   outbox.`, the review now has one comment, and `jailbee outbox show a
+   pr/001-review.json` agrees.
+5. `Space` on `002-reply.json` and on `003-general.json` (a mark shows on the
+   row; the cursor moves down), press `d`. Expected: one question covering
+   both proposals. Choose `Yes, delete`. Expected: both vanish from the tree
+   and from `~/.jailbee/pr-outbox/`.
+6. Put the cursor on the remaining review and press `p`. Expected: a
+   `Publish 001-review.json?` question whose lines are the plan (target PR,
+   the action list), with choices `Publish`, `Publish as draft review — only
+   you see it until you submit it on GitHub`, and `Cancel` (the last is the
+   default; the draft choice only appears when the plan says it is
+   draftable). Choose `Cancel`. Expected: the question closes, nothing is
+   posted, the proposal is still listed. **Do not choose Publish in the rig**:
+   the container's `gh` is read-only and publication is a host check.
+7. Press `X` on a row of `a` (needs an available container). Expected: a
+   `Clear the outbox of a?` question listing what would be deleted, choices
+   `No` (selected) and `Yes, clear N`. Choose `No`. Expected: nothing
+   deleted.
+8. `Esc` closes the box and returns to the dashboard rows. Esc inside an open
+   question cancels the question only.
+
+### `jailbee outbox`
+
+1. Run `jailbee outbox` from the repo (140 columns). Expected: the box fills
+   the screen with `a` and `b` and their proposals in one tree; the bottom
+   hint reads `q quit  Space mark  d delete  p publish  c PR  X clear
+   v preview  m raw  a all repos  r refresh`. `Space`, `d`, `v`, `m` and `p`
+   behave as in the dashboard.
+2. Press `a`. Expected: the scope widens to every registered repo (`a all
+   repos` toggles), the list reloads; press `a` again to return to this
+   repo. With a named container (`jailbee outbox a`), `a` toggles between
+   that container and the repo.
+3. Press `r`: the listing reloads. Press `q`: the app exits 0 (Ctrl-C does
+   too, unless a question is open, in which case it cancels the question).
+4. Read-only over SSH: from a client of the remote SSH service run
+   `ssh <host> outbox`. Expected: a yellow line `Read-only over SSH: use
+   explicit `jailbee outbox drop` / `outbox apply` commands.`; the
+   mutation keys do nothing but a message, and listing still works (`r`).
+   `--all-repos` is refused read-only.
+
+### Cleanup
+
+```bash
+jailbee destroy a --force; jailbee destroy b --force   # rig containers
+tmux -L outbox-rig list-sessions 2>/dev/null           # then kill only that session
+tmux -L outbox-rig kill-session -t <name>
+sudo systemctl stop incus incus.socket
+pgrep -a tmux                                          # no stray -L outbox-rig server
+```
+
+Never `tmux kill-server`. The private socket vanishes with its last session.
