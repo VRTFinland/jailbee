@@ -895,7 +895,10 @@ def test_memory_chip_tooltip_distinguishes_override_from_default(qtbot, override
     c.memory_usage = 1024**3
     c.memory_override = override
     view.set_groups(groups, now=datetime.now().astimezone(), columns=None)
-    chip = next(label for label in _card(view, "p-foo").findChildren(QLabel)
-                if label.text().startswith("▪ 1.0G"))
+    chip = next(
+        label
+        for label in _card(view, "p-foo").findChildren(QLabel)
+        if label.text().startswith("▪ 1.0G")
+    )
     kind = "override" if override else "default"
     assert chip.toolTip() == f"Memory limit: 24GiB ({kind})"

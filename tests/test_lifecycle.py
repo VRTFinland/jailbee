@@ -11099,12 +11099,15 @@ def test_list_containers_reads_root_pool(make_cfg, tmp_path):
     assert pools == {"myrepo-a": "fast", "myrepo-b": "slow", "myrepo-c": None}
 
 
-@pytest.mark.parametrize("config,expanded,expected,override", [
-    ({}, {"limits.memory": "16GiB"}, "16GiB", False),
-    ({"limits.memory": "24GiB"}, {"limits.memory": "24GiB"}, "24GiB", True),
-    ({"limits.memory": "24GiB"}, None, "24GiB", True),
-    ({"limits.memory": "24GiB"}, {}, None, True),
-])
+@pytest.mark.parametrize(
+    "config,expanded,expected,override",
+    [
+        ({}, {"limits.memory": "16GiB"}, "16GiB", False),
+        ({"limits.memory": "24GiB"}, {"limits.memory": "24GiB"}, "24GiB", True),
+        ({"limits.memory": "24GiB"}, None, "24GiB", True),
+        ({"limits.memory": "24GiB"}, {}, None, True),
+    ],
+)
 def test_effective_memory_limit(make_cfg, tmp_path, config, expanded, expected, override):
     repo = tmp_path / "myrepo"
     repo.mkdir()
@@ -11129,6 +11132,4 @@ def test_memory_override_cells_and_json(override, state):
     assert _ls_spec("memory_limit").cell(c) == limit
     assert _ls_spec("mem").cell(c) == (f"2.0G / {limit}" if state == "Running" else limit)
     assert _ls_spec("memory_limit").json(c) == "24GiB"
-    assert _ls_spec("mem").json(c) == {
-        "usage": 2 * 1024**3, "limit": "24GiB", "override": override
-    }
+    assert _ls_spec("mem").json(c) == {"usage": 2 * 1024**3, "limit": "24GiB", "override": override}
