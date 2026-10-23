@@ -1001,6 +1001,14 @@ class PlannedManifest:
 
 
 @dataclass(frozen=True)
+class PlanRefusal:
+    """A refusal's text plus a flag set only by the gate that knows it is a stale head."""
+
+    text: str
+    stale: bool = False
+
+
+@dataclass(frozen=True)
 class PrPlan:
     """The gate results of one `_offer_locked` run, collected once.
 
@@ -1008,7 +1016,7 @@ class PrPlan:
     """
 
     manifests: tuple[PlannedManifest, ...]
-    refusals: tuple[str, ...]
+    refusals: tuple[PlanRefusal, ...]
     notes: tuple[str, ...]
     total: int
     total_draft: int
@@ -1044,7 +1052,7 @@ def pr_plan_json(plan: PrPlan, short: str, *, proposal: str, revision: str) -> d
             applied = index in planned.progress.applied
             if not applied and index not in planned.pending:
                 continue
-            kind = _ACTION_KIND.get(type(action), "other")
+            kind = _ACTION_KIND[type(action)]
             will_draft: str | None = None
             if planned.draftable:
                 if applied:
@@ -1075,7 +1083,7 @@ def pr_plan_json(plan: PrPlan, short: str, *, proposal: str, revision: str) -> d
         "total": plan.total,
         "total_draft": plan.total_draft,
         "warnings": warnings,
-        "refusals": [{"reason": r, "stale": "head moved" in r} for r in plan.refusals],
+        "refusals": [{"reason": r.text, "stale": r.stale} for r in plan.refusals],
         "notes": list(plan.notes),
         "actions": actions,
     }
@@ -2163,7 +2171,7 @@ def _gate_manifests(
     allow_foreign: bool = False,
     allow_foreign_repo: bool = False,
     selected_publication: bool = False,
-) -> tuple[list[Target], list[str], list[str]]:
+) -> tuple[list[Target], list[PlanRefusal], list[str]]:
     """Gate every pending manifest: (publishable targets, refusals, notes).
 
     Nothing is printed here. All three lists go back to the caller so it can
@@ -2193,7 +2201,7 @@ def _gate_manifests(
     routing bug rather than as anything the user did.
     """
     targets: list[Target] = []
-    refusals: list[str] = []
+    refusals: list[PlanRefusal] = []
     notes: list[str] = []
     for name in outbox.manifest_names if manifest_names is None else manifest_names:
         try:
@@ -2204,7 +2212,7 @@ def _gate_manifests(
             if comments_only:
                 notes.append(f"Ignoring outbox manifest {name}: {e}")
             else:
-                refusals.append(str(e))
+                refusals.append(PlanRefusal(str(e)))
             continue
         if comments_only:
             progress = _publication_progress(outbox, name, len(manifest.actions))
@@ -2252,9 +2260,11 @@ def _gate_manifests(
                 )
             elif foreign:
                 # Two lines, so the flag is never split across a wrap.
-                refusals.append(f"{e}.\n  Re-run with --foreign to publish to it anyway.")
+                refusals.append(
+                    PlanRefusal(f"{e}.\n  Re-run with --foreign to publish to it anyway.")
+                )
             else:
-                refusals.append(str(e))
+                refusals.append(PlanRefusal(str(e), stale=isinstance(e, StaleError)))
             continue
         except (pr.PrError, IncusError) as e:
             # Only on the offer path: `resolve_target` reaches `gh` and the
@@ -2484,6 +2494,7 @@ def _collect_pr_plan(
     )
     # Per target: the progress snapshot, and which of its pending indices this
     # run will publish (`None` = all of them, `jailbee review apply`'s mode).
+    # Progress evidence was already validated upstream, in `offer_pending_comments`.
     manifests: list[PlannedManifest] = []
     for target in targets:
         progress = _publication_progress(outbox, target.manifest.name, len(target.manifest.actions))
@@ -2685,8 +2696,8 @@ def _offer_locked(
             return max(1, len(refusals)) if selected_publication else len(refusals)
         return len(refusals)
 
-    for message in plan.refusals:
-        error_plain(message)
+    for refusal in plan.refusals:
+        error_plain(refusal.text)
     for message in plan.notes:
         warn_plain(message)
     if not plan.manifests and not draft:

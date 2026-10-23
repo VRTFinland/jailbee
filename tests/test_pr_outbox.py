@@ -4270,3 +4270,43 @@ def test_plan_sink_requires_dry_run(mocker, make_cfg, tmp_path):
     cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path)
     with pytest.raises(OutboxError, match="plan output requires a dry run"):
         _selected_offer(cfg, incus, plan_sink=lambda plan: None, raise_errors=True)
+
+
+_REVIEW = {"type": "review", "body": "r", "comments": []}
+
+
+def test_plan_json_stale_flag_is_structural(mocker, make_cfg, tmp_path):
+    text = _manifest_text(head_sha="old0000", actions=[_REVIEW])
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
+    result, plans = _plan_offer(cfg, incus)
+    assert result == 1
+    assert plans[0]["refusals"][0]["stale"] is True
+
+
+def test_plan_json_container_text_cannot_set_the_stale_flag(mocker, make_cfg, tmp_path):
+    text = _manifest_text(actions=[{"type": "comment", "body_file": "../head moved"}])
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
+    result, plans = _plan_offer(cfg, incus)
+    assert result == 1
+    (refusal,) = plans[0]["refusals"]
+    assert "head moved" in refusal["reason"] and refusal["stale"] is False
+
+
+def test_plan_json_warns_about_a_moved_head_when_forced(mocker, make_cfg, tmp_path):
+    text = _manifest_text(head_sha="old0000", actions=[_REVIEW])
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
+    _, plans = _plan_offer(cfg, incus, force=True)
+    assert "the PR head has moved since this was written" in plans[0]["warnings"]
+
+
+def test_plan_json_applied_review_is_already_published_in_a_draft(mocker, make_cfg, tmp_path):
+    text = _manifest_text(actions=[_REVIEW, {"type": "reply", "comment_id": 9, "body": "x"}])
+    files = {"one.json": text, "one.json.progress.json": '{"applied": [0], "urls": {"0": "u"}}'}
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    _, plans = _plan_offer(cfg, incus)
+    plan = plans[0]
+    assert plan["draftable"] is True
+    assert [(a["will"], a["will_draft"]) for a in plan["actions"]] == [
+        ("already_published", "already_published"),
+        ("publish", "draft"),
+    ]
