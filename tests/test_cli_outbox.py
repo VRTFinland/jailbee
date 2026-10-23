@@ -151,6 +151,14 @@ def test_browse_container_and_all_repos_is_usage_error(env, mocker):
     run_app.assert_not_called()
 
 
+def test_browse_all_repos_over_ssh_is_refused_before_the_app(env, mocker):
+    run_app = _app(mocker, read_only=True)
+    result = CliRunner().invoke(app, ["outbox", "browse", "--all-repos"])
+    assert result.exit_code == 2, result.output
+    assert "--all-repos is unavailable in the outbox manager over SSH" in result.output
+    run_app.assert_not_called()
+
+
 @pytest.mark.parametrize("all_repos", [False, True])
 def test_browse_off_tty_prints_overview(env, mocker, all_repos):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)

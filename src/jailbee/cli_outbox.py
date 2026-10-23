@@ -219,12 +219,18 @@ def browse(
             )
         if container is not None and all_repos:
             raise OutboxError("pass a container or --all-repos, not both")
+        read_only = browser_read_only()
+        if all_repos and read_only:
+            raise OutboxError(
+                "--all-repos is unavailable in the outbox manager over SSH; "
+                "use `jailbee outbox ls --all-repos`"
+            )
         from jailbee.dashboard.model import RepoTarget
         from jailbee.dashboard.tui.outbox_app import run_outbox_app
 
         target = RepoTarget(cfg.repo_root, path.resolve() if path is not None else None)
         return run_outbox_app(
-            target, container=container, all_repos=all_repos, read_only=browser_read_only()
+            target, container=container, all_repos=all_repos, read_only=read_only
         )
 
     _run(ctx, config, operation)
