@@ -4989,7 +4989,14 @@ def mem_cmd(
     force: Annotated[
         bool, typer.Option("--force", help="Allow a limit below current memory usage.")
     ] = False,
-    confirmed_target: Annotated[str | None, typer.Option("--confirmed-target", hidden=True)] = None,
+    confirmed_target: Annotated[
+        str | None,
+        typer.Option(
+            "--confirmed-target",
+            hidden=True,
+            help="Require the memory target to match the value confirmed by the dashboard.",
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Set a container's memory limit, or follow the repository default."""
