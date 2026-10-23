@@ -427,7 +427,7 @@ def test_dashboard_description_publish_warns_before_consent(publication_env, moc
 
     result = CliRunner().invoke(
         app,
-        dashboard_outbox.outbox_apply_argv("feature", "pr/001.json", revision),
+        dashboard_outbox.legacy_outbox_apply_argv("feature", "pr/001.json", revision),
         input="y\n" if accepted else "n\n",
     )
 

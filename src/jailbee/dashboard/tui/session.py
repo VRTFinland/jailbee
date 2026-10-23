@@ -1228,14 +1228,16 @@ class DashboardSession:
         if repo is None:
             self.set_notice(f"'{container}' is gone")
             return None
-        argv = dact.addressed(dob.outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh)
+        argv = dact.addressed(
+            dob.legacy_outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
+        )
         try:
             check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
             # `outbox ls` exits 2 for an unavailable container but still
             # prints the listing, whose error says why; parse it first.
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
             try:
-                listing = dob.parse_outbox_listing(result.stdout, container)
+                listing = dob.legacy_parse_outbox_listing(result.stdout, container)
             except dob.OutboxLoadError:
                 if result.ok:
                     raise
@@ -1294,13 +1296,13 @@ class DashboardSession:
                     )
                     if row.state == "awaiting-pr"
                     else permitted(
-                        dob.outbox_apply_argv(container, row.id, row.revision),
+                        dob.legacy_outbox_apply_argv(container, row.id, row.revision),
                         self.ssh_policy,
                         over_ssh=self.over_ssh,
                     )
                 ),
                 can_delete=permitted(
-                    dob.outbox_drop_argv(container, row.id, row.revision),
+                    dob.legacy_outbox_drop_argv(container, row.id, row.revision),
                     self.ssh_policy,
                     over_ssh=self.over_ssh,
                 ),
@@ -1329,12 +1331,12 @@ class DashboardSession:
                     self.set_notice(f"'{container}' is gone")
                     return None
                 fresh_argv = dact.addressed(
-                    dob.outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
+                    dob.legacy_outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
                 )
                 try:
                     check_dashboard_command(fresh_argv, self.ssh_policy, over_ssh=self.over_ssh)
                     listing_result = da.run_cli_quiet(fresh_argv, cwd=repo.cwd())
-                    fresh = dob.parse_outbox_listing(listing_result.stdout, container)
+                    fresh = dob.legacy_parse_outbox_listing(listing_result.stdout, container)
                     if not listing_result.ok or fresh.error is not None:
                         raise dob.OutboxLoadError(fresh.error or listing_result.message)
                 except (RouteError, dob.OutboxLoadError) as exc:
@@ -1359,7 +1361,7 @@ class DashboardSession:
             if entry.value == dob.PUBLISH:
                 # The terminal shows the plan and asks once, under it.
                 self.run_dashboard_command(
-                    container, "container", dob.outbox_apply_argv(container, pid, revision)
+                    container, "container", dob.legacy_outbox_apply_argv(container, pid, revision)
                 )
                 return None
             if entry.value == dob.DELETE:
@@ -1373,7 +1375,7 @@ class DashboardSession:
             repo = self.repo_for(container, "container")
             if repo is None:
                 self.set_notice(f"'{container}' is gone")
-            elif self.run_quiet_cli(repo, dob.outbox_drop_argv(container, pid, revision)):
+            elif self.run_quiet_cli(repo, dob.legacy_outbox_drop_argv(container, pid, revision)):
                 self.client.refresh()
             return None
         return None

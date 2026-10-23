@@ -1,29 +1,54 @@
-"""Tests for the dashboard's Outbox entry (pure; no terminal)."""
+"""Tests for the pure Outbox manager core (no terminal)."""
 
 from __future__ import annotations
 
 import json
 
 import pytest
+from rich.cells import cell_len
 
 from jailbee.dashboard import outbox as dob
-from jailbee.dashboard.model import prompt_target_kind
+
+
+def _action(index: int = 0, **over: object) -> dict[str, object]:
+    return {
+        "index": index,
+        "kind": "comment",
+        "repo": "o/r",
+        "target": "42",
+        "title": None,
+        "body": "hello",
+        "markdown": True,
+        "reply_to": None,
+        "state": "pending",
+        "receipt": None,
+        "delete_scope": [index],
+        "delete_block": None,
+        "comments": [],
+        **over,
+    }
 
 
 def _proposal(pid: str = "pr/a.json", **over: object) -> dict[str, object]:
     return {
         "id": pid,
+        "kind": pid.split("/")[0],
         "state": "pending",
         "revision": "r1",
-        "actions": [{"index": 0}, {"index": 1}],
+        "raw_text": '{"raw": 1}\n{"more": 2}',
         "error": None,
         "edit_block": None,
+        "draftable": False,
+        "deletable": True,
+        "delete_block": None,
+        "delete_archive": False,
+        "actions": [_action(0), _action(1)],
         **over,
     }
 
 
-def _listing(*proposals: dict[str, object], name: str = "alpha-x", **over: object) -> str:
-    container = {
+def _container(*proposals: dict[str, object], name: str = "alpha-x", **over: object):
+    return {
         "name": name,
         "available": True,
         "error": None,
@@ -31,209 +56,325 @@ def _listing(*proposals: dict[str, object], name: str = "alpha-x", **over: objec
         "proposals": list(proposals),
         **over,
     }
-    return json.dumps({"schema": 1, "containers": [container]})
 
 
-def _row(**over: object) -> dob.ProposalRow:
-    base: dict[str, object] = {
-        "id": "pr/a.json",
-        "state": "pending",
-        "revision": "r1",
-        "actions": 2,
-        "error": None,
-        "edit_block": None,
-        "create_scope": None,
-    }
-    return dob.ProposalRow(**{**base, **over})  # type: ignore[arg-type]  # test-only overrides
+def _listing(*containers: dict[str, object]) -> str:
+    return json.dumps({"schema": 1, "containers": list(containers)})
 
 
-def test_parse_reads_the_named_containers_proposals():
-    stdout = _listing(_proposal(), _proposal("issue/b.json", state="partial", actions=[]))
-    listing = dob.parse_outbox_listing(stdout, "alpha-x")
-    assert listing == dob.OutboxListing(
-        (_row(), _row(id="issue/b.json", state="partial", actions=0)), None, ()
-    )
+def _state(*proposals: dict[str, object], **over: object) -> dob.OutboxState:
+    containers = dob.parse_outbox_listing(_listing(_container(*proposals)))
+    return dob.OutboxState("Outbox", containers, **over)  # type: ignore[arg-type]  # test overrides
 
 
-def test_parse_of_an_unlisted_container_is_an_empty_outbox():
-    assert dob.parse_outbox_listing(_listing(_proposal()), "other") == dob.OutboxListing(
-        (), None, ()
-    )
+def _key(pid: str = "pr/a.json", action: int | None = None, comment: int | None = None):
+    return ("alpha-x", pid, action, comment)
 
 
-def test_parse_carries_an_unavailable_containers_reason():
-    listing = dob.parse_outbox_listing(_listing(available=False, error="not running"), "alpha-x")
-    assert listing.error == "not running"
-    assert dob.parse_outbox_listing(_listing(available=False), "alpha-x").error == (
-        "container unavailable"
-    )
-
-
-def test_parse_collects_store_warnings_and_rejections():
-    stores = [{"kind": "pr", "warnings": ["w1"], "rejected": ["bad.json"]}]
-    assert dob.parse_outbox_listing(_listing(stores=stores), "alpha-x").warnings == (
-        "w1",
-        "bad.json",
-    )
-
-
-@pytest.mark.parametrize(
-    "stdout",
-    [
-        "",
-        "Container  Proposal",
-        "[]",
-        '{"containers": {}}',
-        _listing("not-a-proposal"),  # type: ignore[arg-type]  # deliberately malformed
-        _listing({"state": "pending", "revision": "r", "actions": []}),
-        _listing(_proposal(actions=3)),
-        _listing(_proposal(revision=None)),
-    ],
-    ids=["empty", "table", "list", "containers-object", "row", "no-id", "actions", "revision"],
-)
-def test_parse_refuses_anything_else(stdout):
-    with pytest.raises(dob.OutboxLoadError, match="unexpected output"):
-        dob.parse_outbox_listing(stdout, "alpha-x")
-
-
-def test_outbox_picker_lists_the_proposals_then_the_browser():
-    rows = (_row(), _row(id="issue/b.json", actions=1, error="bad manifest"))
-    picker = dob.outbox_picker("alpha-x", rows, can_browse=True)
-    assert picker.title == "Outbox — alpha-x"
-    assert [(e.label, e.value) for e in picker.entries] == [
-        ("pr/a.json  pending  (2 actions)", "proposal:pr/a.json"),
-        ("issue/b.json  pending  (bad manifest)", "proposal:issue/b.json"),
-        ("Browse actions & comments…", dob.BROWSE),
-    ]
-    assert [e.value for e in dob.outbox_picker("alpha-x", rows, can_browse=False).entries] == [
-        "proposal:pr/a.json",
-        "proposal:issue/b.json",
-    ]
-
-
-def test_a_proposal_value_never_reads_as_the_browse_entry():
-    assert dob.proposal_id(dob.proposal_value(dob.BROWSE)) == dob.BROWSE
-    assert dob.proposal_id(dob.BROWSE) is None
-
-
-@pytest.mark.parametrize(
-    ("row", "values"),
-    [
-        (_row(), [dob.SHOW, dob.PUBLISH, dob.DELETE]),
-        (
-            _row(state="awaiting-pr", create_scope={"kind": "repo"}),
-            [dob.SHOW, dob.CREATE_PR, dob.DELETE],
-        ),
-        (_row(state="awaiting-pr"), [dob.SHOW, dob.DELETE]),
-        (_row(state="applied"), [dob.SHOW, dob.DELETE]),
-        (_row(error="bad"), [dob.SHOW, dob.DELETE]),
-        (_row(state="partial", edit_block="settle first"), [dob.SHOW, dob.PUBLISH]),
-    ],
-    ids=[
-        "pending",
-        "awaiting-pr-scoped",
-        "awaiting-pr-unscoped",
-        "applied",
-        "invalid",
-        "edit-block",
-    ],
-)
-def test_proposal_picker_offers_what_the_proposal_allows(row, values):
-    picker = dob.proposal_picker("alpha-x", row, can_show=True, can_publish=True, can_delete=True)
-    assert [e.value for e in picker.entries] == values
-    assert picker.carry == (row.id, row.revision, str(row.actions))
-    if row.state == "awaiting-pr" and row.create_scope is not None:
-        assert next(e for e in picker.entries if e.value == dob.CREATE_PR).label == "Create PR…"
-
-
-def test_create_pr_argv_uses_verified_scope_only():
-    assert dob.create_pr_argv("alpha-x", {"kind": "repo"}) == ["pr", "alpha-x"]
-    assert dob.create_pr_argv("alpha-x", {"kind": "submodule", "path": "libs/core"}) == [
-        "submodule",
-        "pr",
-        "alpha-x",
-        "libs/core",
-    ]
-    assert dob.create_pr_argv("alpha-x", None) is None
-
-
-def test_proposal_picker_offers_only_permitted_entries():
-    picker = dob.proposal_picker(
-        "alpha-x", _row(), can_show=False, can_publish=False, can_delete=True
-    )
-    assert [e.value for e in picker.entries] == [dob.DELETE]
-
-
-def test_outbox_delete_confirm_puts_no_first():
-    picker = dob.outbox_delete_confirm_picker("alpha-x", "pr/a.json", "r1", 2)
-    assert [e.value for e in picker.entries] == ["no", "yes"]
-    assert picker.carry == ("pr/a.json", "r1")
-
-
-def test_parse_collects_foreign_repos_from_action_repo_values():
-    listing = dob.parse_outbox_listing(
-        _listing(
-            _proposal(
-                "issue/a.json",
-                actions=[
-                    {"index": 0, "repo": "github:BerriAI/litellm"},
-                    {"index": 1, "repo": "."},
-                    {"index": 2, "repo": "github:berriai/litellm"},
-                    {"index": 3, "repo": "github:acme/x"},
-                ],
+def test_parse_listing_all_containers_and_new_fields():
+    issue = _proposal(
+        "issue/b.json",
+        edit_block="blocked",
+        deletable=False,
+        delete_block="why",
+        delete_archive=True,
+        draftable=True,
+        actions=[
+            _action(
+                0,
+                kind="create",
+                repo="github:x/y",
+                target="x/y",
+                title="T",
+                delete_scope=[0, 1],
+                comments=[],
             )
-        ),
-        "alpha-x",
+        ],
     )
-    assert listing.rows[0].foreign_repos == ("acme/x", "BerriAI/litellm")
-
-
-def test_rows_without_github_actions_have_no_foreign_repos():
-    listing = dob.parse_outbox_listing(_listing(_proposal()), "alpha-x")
-    assert listing.rows[0].foreign_repos == ()
-
-
-def test_foreign_repos_show_in_the_label():
-    row = _row(id="issue/a.json", foreign_repos=("BerriAI/litellm",))
-    picker = dob.outbox_picker("alpha-x", (row,), can_browse=False)
-    assert "⚠ foreign: BerriAI/litellm" in picker.entries[0].label
-
-
-def test_every_outbox_question_is_about_the_container():
-    questions = (
-        dob.outbox_picker("alpha-x", (_row(),), can_browse=True),
-        dob.proposal_picker("alpha-x", _row(), can_show=True, can_publish=True, can_delete=True),
-        dob.outbox_delete_confirm_picker("alpha-x", "pr/a.json", "r1", 2),
+    pr = _proposal(
+        actions=[
+            _action(
+                0,
+                kind="review",
+                comments=[{"index": 0, "label": "a:1", "text": "t", "path": "a", "line": 1}],
+            )
+        ]
     )
-    for question in questions:
-        assert prompt_target_kind(question.purpose) == "container"
-        assert question.target == "alpha-x"
+    got = dob.parse_outbox_listing(
+        _listing(_container(pr), _container(issue, name="beta-y", stores=[{"warnings": ["w"]}]))
+    )
+    assert [c.name for c in got] == ["alpha-x", "beta-y"]
+    item = got[1].proposals[0]
+    assert (item.deletable, item.delete_block, item.delete_archive, item.draftable) == (
+        False,
+        "why",
+        True,
+        True,
+    )
+    assert item.actions[0].delete_scope == (0, 1) and item.actions[0].title == "T"
+    assert got[1].warnings == ("w",)
+    assert item.foreign_repos == ("x/y",)
+    comment = got[0].proposals[0].actions[0].comments[0]
+    assert (comment.path, comment.line) == ("a", 1)
 
 
-def _parsed(argv: list[str]) -> dict[str, object]:
-    """``argv`` parsed by its real Click command, as the child will parse it."""
-    from jailbee.remote_ssh import router
-
-    typed, command = router.command_leaf(argv)
-    words = typed.split()
-    with command.make_context(words[-1], argv[len(words) :], resilient_parsing=True) as ctx:
-        return dict(ctx.params)
+@pytest.mark.parametrize("stdout", ["[]", "{", json.dumps({"schema": 1}), '{"containers": {}}'])
+def test_parse_rejects_non_listing(stdout):
+    with pytest.raises(dob.OutboxLoadError):
+        dob.parse_outbox_listing(stdout)
 
 
-@pytest.mark.parametrize(
-    ("build_argv", "yes"),
-    [(dob.outbox_apply_argv, False), (dob.outbox_drop_argv, True)],
-    ids=["publish-asks-under-plan", "delete-already-confirmed"],
-)
-def test_change_argv_pins_revision_and_preserves_domain_consent(build_argv, yes):
-    params = _parsed(build_argv("alpha-x", "pr/a.json", "r1"))
-    assert (params["container"], params["proposal"]) == ("alpha-x", "pr/a.json")
-    assert (params["revision"], params["yes"]) == ("r1", yes)
-    if not yes:
-        assert params["foreign"] is False
+def test_unavailable_container_rows():
+    containers = dob.parse_outbox_listing(
+        _listing(_container(name="gone", available=False, error="boom"))
+    )
+    rows = dob.visible_rows(dob.OutboxState("t", containers), 80)
+    assert len(rows) == 1 and rows[0].role == "header" and rows[0].key is None
+    assert rows[0].text.plain == "gone  ⚠ boom"
+    assert rows[0].text.style == "yellow"
 
 
-def test_listing_argv_asks_for_json():
-    params = _parsed(dob.outbox_ls_argv("alpha-x"))
-    assert params["container"] == "alpha-x"
-    assert str(params["output"]) == "json"
+def test_proposal_row_text_pr_and_issue():
+    pr = _proposal(actions=[_action(i, title="Fix it" if i == 0 else None) for i in range(3)])
+    issue = _proposal(
+        "issue/b.json",
+        state="partial",
+        actions=[
+            _action(0, kind="create", repo="o/r", target="o/r", title="Add x", state="applied"),
+            _action(1, kind="create", repo="o/r", target="o/r", title="Y"),
+        ],
+    )
+    rows = dob.visible_rows(_state(pr, issue), 120)
+    assert rows[0].text.plain == "▸   PR  o/r#42  Fix it  · 3 actions · pending"
+    assert rows[1].text.plain == "▸   ISS o/r  Add x  · 2 actions · applied 1/2"
+    marked = dob.visible_rows(_state(pr, marks=frozenset({_key()})), 120)
+    assert marked[0].text.plain.startswith("▸ ● PR  ")
+
+
+def test_error_and_foreign_proposal_rows():
+    bad = _proposal(error="bad json")
+    foreign = _proposal(
+        "issue/f.json", actions=[_action(0, kind="create", repo="github:a/b", title="T")]
+    )
+    rows = dob.visible_rows(_state(bad, foreign), 120)
+    assert "bad json" in rows[0].text.plain
+    assert any(s.style == "yellow" for s in rows[0].text.spans)
+    assert rows[1].text.plain.endswith("  ⚠ foreign")
+
+
+def test_summary_prefers_title_then_first_body_line():
+    item = dob.parse_outbox_listing(
+        _listing(
+            _container(
+                _proposal(actions=[_action(0, title="T", body="b")]),
+                _proposal("pr/b.json", actions=[_action(0, title=None, body="\n\n second \nx")]),
+                _proposal("pr/c.json", actions=[_action(0, title=None, body="")]),
+            )
+        )
+    )[0].proposals
+    assert [dob.proposal_summary(p) for p in item] == ["T", "second", "(no text)"]
+
+
+def test_summary_truncates_to_width():
+    long = _proposal(actions=[_action(0, title="x" * 200)])
+    row = dob.visible_rows(_state(long), 40)[0]
+    assert cell_len(row.text.plain) <= 40
+    assert row.text.plain.endswith("…")
+
+
+def test_expand_shows_actions_then_comments():
+    comments = [
+        {"index": i, "label": "l", "text": f"c{i}\nmore", "path": "src/a.py", "line": 5 + i}
+        for i in range(2)
+    ]
+    pr = _proposal(
+        actions=[
+            _action(0, kind="review", comments=comments),
+            _action(1, kind="reply", reply_to=123),
+        ]
+    )
+    state = _state(pr, expanded=frozenset({_key(), _key(action=0)}))
+    rows = dob.visible_rows(state, 100)
+    assert [r.role for r in rows] == ["proposal", "action", "comment", "comment", "action"]
+    assert [r.key for r in rows[1:]] == [
+        _key(action=0),
+        _key(action=0, comment=0),
+        _key(action=0, comment=1),
+        _key(action=1),
+    ]
+    assert rows[1].text.plain == "▾   review · 2 comments  [pending]"
+    assert rows[2].text.plain == "  src/a.py:5  c0"
+    assert rows[4].text.plain == "    reply to #123  [pending]"
+    assert [r.depth for r in rows] == [0, 1, 2, 2, 1]
+
+
+def test_notes_close_their_container_group():
+    containers = dob.parse_outbox_listing(
+        _listing(
+            _container(_proposal(), stores=[{"warnings": ["w1"], "rejected": ["r1"]}]),
+            _container(name="beta-y"),
+        )
+    )
+    rows = dob.visible_rows(dob.OutboxState("t", containers), 100)
+    assert [(r.role, r.markable) for r in rows] == [
+        ("header", False),
+        ("proposal", True),
+        ("note", False),
+        ("note", False),
+        ("header", False),
+    ]
+
+
+def test_rows_and_preview_strip_controls_and_keep_markup_literal():
+    evil = "[red]x[/red]\x1b]0;pwn\x07​"
+    pr = _proposal(actions=[_action(0, title=evil, body=evil)])
+    state = _state(pr)
+    row = dob.visible_rows(state, 100)[0]
+    assert "[red]x[/red]" in row.text.plain
+    assert "\x1b" not in row.text.plain and "​" not in row.text.plain
+    assert not any(s.style == "red" for s in row.text.spans)
+    for line in dob.preview_lines(state, _key(), 80):
+        assert "\x1b" not in line.plain and "​" not in line.plain
+        assert not any(s.style == "red" for s in line.spans)
+    assert any("[red]x[/red]" in line.plain for line in dob.preview_lines(state, _key(), 80))
+
+
+def test_preview_markdown_rendered_and_raw_toggle():
+    pr = _proposal(actions=[_action(0, body="# H\n\n*e*")])
+    state = _state(pr)
+    plain = [t.plain for t in dob.preview_lines(state, _key(), 60)]
+    assert plain[0] == "Action 0: comment o/r 42 [pending]"
+    assert "# H" not in plain
+    assert any("H" in line for line in plain)
+    raw = dob.preview_lines(_state(pr, raw=True), _key(), 60)
+    assert [t.plain for t in raw] == ['{"raw": 1}', '{"more": 2}']
+
+
+def test_preview_action_comment_question_and_status():
+    comments = [{"index": 0, "label": "a.py:3", "text": "note", "path": "a.py", "line": 3}]
+    pr = _proposal(
+        actions=[
+            _action(0, kind="review", comments=comments, receipt="https://x"),
+            _action(1, title="Tt", body=None),
+        ]
+    )
+    state = _state(pr)
+    whole = [t.plain for t in dob.preview_lines(state, _key(), 60)]
+    assert whole[0].startswith("Action 0: review") and "Receipt: https://x" in whole
+    assert "Comment 0: a.py:3" in whole and "Title: Tt" in whole
+    one = [t.plain for t in dob.preview_lines(state, _key(action=1), 60)]
+    assert one == ["Action 1: comment o/r 42 [pending]", "Title: Tt"]
+    cm = [t.plain for t in dob.preview_lines(state, _key(action=0, comment=0), 60)]
+    assert cm[0] == "Comment 0: a.py:3"
+    q = dob.Question("p", "T", ("sure?", "really"), (("y", "Yes"),), "y")
+    import dataclasses
+
+    shown = dataclasses.replace(state, question=q, status=("done",))
+    assert [t.plain for t in dob.preview_lines(shown, _key(), 60)] == [
+        "sure?",
+        "really",
+        "",
+        "done",
+    ]
+
+
+def test_delete_scope_lines_include_dependents_and_archive():
+    issue_a = _proposal("issue/a.json", delete_archive=True)
+    issue_b = _proposal(
+        "issue/b.json",
+        actions=[_action(0, kind="create", delete_scope=[0, 1]), _action(1, kind="comment")],
+    )
+    comments = [{"index": 2, "label": "x", "text": "t", "path": "src/a.py", "line": 5}]
+    pr_c = _proposal("pr/c.json", actions=[_action(0, kind="review", comments=comments)])
+    state = _state(issue_a, issue_b, pr_c)
+    keys = [
+        ("alpha-x", "pr/c.json", 0, 2),
+        ("alpha-x", "issue/b.json", 0, None),
+        ("alpha-x", "issue/a.json", None, None),
+    ]
+    assert dob.delete_scope_lines(state, keys) == (
+        "issue/a.json (whole, journal archived)",
+        "issue/b.json action 0 (create) + dependent 1",
+        "pr/c.json action 0 comment 2 (src/a.py:5)",
+    )
+
+
+def test_not_markable_when_blocked():
+    pr = _proposal(
+        deletable=False,
+        actions=[_action(0, delete_scope=None, delete_block="no"), _action(1)],
+    )
+    rows = dob.visible_rows(_state(pr, expanded=frozenset({_key()})), 100)
+    assert [r.markable for r in rows] == [False, False, True]
+
+
+def test_hint_drops_unavailable_abilities():
+    full = dob.Abilities(True, True, False, True, True, True)
+    state = _state(_proposal(), abilities=full)
+    hint = dob.outbox_hint(state, standalone=False)
+    assert hint == (
+        "↑/↓ move · Enter open · Space mark · d delete · p publish · c create PR · X clear"
+        " · v preview · m manifest · r refresh · Esc close"
+    )
+    standalone = dob.outbox_hint(state, standalone=True)
+    assert "a all repos" in standalone and standalone.endswith("q quit")
+    none = dob.outbox_hint(_state(_proposal()), standalone=False)
+    assert "d delete" not in none and "p publish" not in none and "a all" not in none
+    q = dob.Question("p", "T", (), (), "")
+    import dataclasses
+
+    assert (
+        dob.outbox_hint(dataclasses.replace(state, question=q), standalone=False)
+        == "↑/↓ choose · Enter confirm · Esc cancel"
+    )
+
+
+def test_find_proposal():
+    state = _state(_proposal())
+    found = dob.find_proposal(state, _key(action=1))
+    assert found is not None and found[1].id == "pr/a.json"
+    assert dob.find_proposal(state, _key("pr/zz.json")) is None
+    assert dob.find_proposal(state, None) is None
+
+
+def test_proposal_flags():
+    state = _state(
+        _proposal(state="awaiting-pr", create_scope={"kind": "repo"}),
+        _proposal("pr/b.json", error="e"),
+        _proposal("pr/c.json", state="partial"),
+    )
+    a, b, c = state.containers[0].proposals
+    assert (a.creatable, a.publishable) == (True, False)
+    assert b.publishable is False and c.publishable is True
+
+
+def test_argv_builders():
+    assert dob.outbox_ls_argv(None) == ["outbox", "ls", "-o", "json"]
+    assert dob.outbox_ls_argv("c", all_repos=True) == [
+        "outbox", "ls", "c", "--all-repos", "-o", "json",
+    ]  # fmt: skip
+    assert dob.outbox_plan_argv("c", "pr/x.json", "r") == [
+        "outbox", "apply", "c", "pr/x.json", "--dry-run", "--foreign",
+        "--revision", "r", "-o", "json",
+    ]  # fmt: skip
+    assert dob.outbox_apply_argv("c", "pr/x.json", "r", yes=False) == [
+        "outbox", "apply", "c", "pr/x.json", "--revision", "r",
+    ]  # fmt: skip
+    assert dob.outbox_apply_argv("c", "pr/x.json", "r", yes=True, draft=True, foreign=True) == [
+        "outbox", "apply", "c", "pr/x.json", "--revision", "r", "-y", "--draft", "--foreign",
+    ]  # fmt: skip
+    assert dob.outbox_drop_argv("c", "pr/x.json", "r", action=1, comment=0) == [
+        "outbox", "drop", "c", "pr/x.json", "--action", "1", "--comment", "0",
+        "--yes", "--revision", "r",
+    ]  # fmt: skip
+    assert dob.outbox_drop_argv(
+        "c", "issue/x.json", "r", with_dependents=True, archive_journal=True
+    ) == [
+        "outbox", "drop", "c", "issue/x.json", "--with-dependents", "--archive-journal",
+        "--yes", "--revision", "r",
+    ]  # fmt: skip
+    assert dob.create_pr_argv("c", {"kind": "repo"}) == ["pr", "c"]
+    assert dob.clear_prepare_argv("c") == ["outbox", "clear", "c", "--prepare-snapshot"]
+    assert dob.clear_approved_argv("c", "tok") == [
+        "outbox", "clear", "c", "--approved-snapshot", "tok", "--yes",
+    ]  # fmt: skip
