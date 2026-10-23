@@ -1749,7 +1749,7 @@ def test_run_wires_config_edit_signal(mocker):
 def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
     qtbot, mocker, make_cfg, tmp_path, operation
 ):
-    from threading import Event, Thread
+    from threading import Event
 
     from jailbee.dashboard.model import RepoTarget
     from jailbee.db.models import GuiState
@@ -1777,7 +1777,15 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
     mocker.patch.object(qapp, "dashboard_config_migration_notice", return_value=None)
     mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
     failure = OSError("disk full")
-    mocker.patch("jailbee.db.gui_state.save_gui_state", side_effect=failure)
+
+    def fail_persistence(*args, **kwargs):
+        assert entered.is_set()
+        assert not completed.is_set()
+        assert requests[0].isRunning()
+        release.set()
+        raise failure
+
+    mocker.patch("jailbee.db.gui_state.save_gui_state", side_effect=fail_persistence)
     mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
     mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
     mocker.patch.object(outbox, "Incus", return_value=mocker.Mock())
@@ -1812,13 +1820,11 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
             mutation.side_effect = blocked
             select(dialog, action=0, comment=0)
             dialog.delete_selected()
-        qtbot.waitUntil(entered.is_set)
         requests.append(dialog._request)
+        qtbot.waitUntil(entered.is_set)
         return 0
 
     fake_app.exec.side_effect = event_loop
-    releaser = Thread(target=lambda: (entered.wait(3) and release.wait(0.1)) or release.set())
-    releaser.start()
     try:
         with pytest.raises(OSError) as caught:
             qapp.run(None)
@@ -1831,7 +1837,6 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
         client.close.assert_called_once()
     finally:
         release.set()
-        releaser.join(3)
         controllers[0]._finish_outboxes()
 
 
