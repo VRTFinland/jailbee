@@ -435,7 +435,10 @@ class PrReviewError(PrError):
     """Posting a review, a reply, or a comment failed."""
 
 
-def _run_gh_api(repo_root: Path, cmd: list[str], payload: str | None, label: str) -> dict[str, Any]:
+def _run_gh_api(
+    repo_root: Path, cmd: list[str], payload: str | None, label: str,
+    *, graphql_errors: bool = False,
+) -> dict[str, Any]:
     """Run a `gh api` call, return its parsed JSON response.
 
     The sibling of `_run_gh_mutation` for calls whose *response* matters:
@@ -459,6 +462,14 @@ def _run_gh_api(repo_root: Path, cmd: list[str], payload: str | None, label: str
         stderr = proc.stderr.lower()
         if "not logged" in stderr or "authentication" in stderr or "gh auth login" in stderr:
             raise PrReviewError("'gh' is not authenticated. Run: gh auth login")
+        if graphql_errors:
+            # gh exits nonzero for GraphQL application errors, even with HTTP 200.
+            try:
+                response = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                response = None
+            if isinstance(response, dict) and (errors := response.get("errors")):
+                raise PrReviewError(f"'{label}' failed: {errors[0]['message']}")
         raise PrReviewError(f"'{label}' failed: {proc.stderr.strip()}")
     try:
         data = json.loads(proc.stdout or "{}")
@@ -488,11 +499,12 @@ def _run_gh_graphql(
         # gh expands repository placeholders in typed fields, not in stdin JSON.
         cmd += ["-f", f"query={query}"]
         for key, value in variables.items():
-            cmd += ["-F", f"{key}={value}"]
+            flag = "-f" if isinstance(value, str) and value not in ("{owner}", "{repo}") else "-F"
+            cmd += [flag, f"{key}={value}"]
     else:
         cmd += ["--input", "-"]
         payload = json.dumps({"query": query, "variables": variables})
-    data = _run_gh_api(repo_root, cmd, payload, label)
+    data = _run_gh_api(repo_root, cmd, payload, label, graphql_errors=True)
     if errors := data.get("errors"):
         raise PrReviewError(f"'{label}' failed: {errors[0]['message']}")
     return data

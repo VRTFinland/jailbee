@@ -1318,15 +1318,58 @@ def test_add_pending_reply_resolves_node_id_then_mutates(mocker, repo):
     }
 
 
-def test_graphql_errors_raise_pr_review_error(mocker):
+@pytest.mark.parametrize("repo", [None, "acme/123", "123/true", "acme/null", "acme/false"])
+def test_pending_lookup_preserves_string_variables(mocker, repo):
+    from jailbee.pr import find_pending_review
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps({
+        "data": {"repository": {"pullRequest": {"reviews": {"nodes": []}}}}
+    })))
+    assert find_pending_review(Path("/repo"), 7, repo=repo) is None
+    cmd = run.call_args.args[0]
+    fields = list(zip(cmd[3::2], cmd[4::2], strict=True))
+    owner, name = repo.split("/") if repo else ("{owner}", "{repo}")
+    string_flag = "-f" if repo else "-F"
+    assert (string_flag, f"owner={owner}") in fields
+    assert (string_flag, f"name={name}") in fields
+    assert ("-F", "number=7") in fields
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_graphql_errors_raise_pr_review_error(mocker, returncode):
     from jailbee.pr import PrError, PrReviewError, _run_gh_graphql
 
     mocker.patch("subprocess.run", return_value=_completed(
-        stdout='{"errors":[{"message":"nope"}],"data":{}}'
+        returncode=returncode, stderr="gh: nope",
+        stdout='{"errors":[{"message":"nope"},{"message":"second"}],"data":{}}'
     ))
     with pytest.raises(PrReviewError, match="'lookup' failed: nope") as exc:
         _run_gh_graphql(Path("/repo"), "query { viewer { login } }", {}, "lookup")
     assert isinstance(exc.value, PrError)
+    assert str(exc.value) == "'lookup' failed: nope"
+
+
+@pytest.mark.parametrize("stdout", ["not json", "{}", "[]"])
+def test_graphql_nonzero_without_errors_preserves_transport_diagnostic(mocker, stdout):
+    from jailbee.pr import PrReviewError, _run_gh_graphql
+
+    mocker.patch("subprocess.run", return_value=_completed(
+        returncode=1, stdout=stdout, stderr="connection refused"
+    ))
+    with pytest.raises(PrReviewError) as exc:
+        _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
+    assert str(exc.value) == "'lookup' failed: connection refused"
+
+
+def test_gh_api_nonzero_does_not_reinterpret_graphql_envelope(mocker):
+    from jailbee.pr import PrReviewError, _run_gh_api
+
+    mocker.patch("subprocess.run", return_value=_completed(
+        returncode=1, stdout='{"errors":[{"message":"nope"}]}', stderr="HTTP 422"
+    ))
+    with pytest.raises(PrReviewError) as exc:
+        _run_gh_api(Path("/repo"), ["gh", "api", "example"], None, "REST")
+    assert str(exc.value) == "'REST' failed: HTTP 422"
 
 
 @pytest.mark.parametrize("stdout", ['not json', '{"data":{"repository":null}}'])
@@ -1360,6 +1403,9 @@ def test_graphql_maps_auth_and_missing_binary(mocker):
     with pytest.raises(PrReviewError, match="requires the 'gh' CLI"):
         _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
     run.side_effect = None
-    run.return_value = _completed(returncode=1, stderr="gh auth login required")
+    run.return_value = _completed(
+        returncode=1, stderr="gh auth login required",
+        stdout='{"errors":[{"message":"must not mask authentication"}]}'
+    )
     with pytest.raises(PrReviewError, match="not authenticated"):
         _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
