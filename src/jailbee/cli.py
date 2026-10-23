@@ -5321,6 +5321,16 @@ def destroy(
             help="Destroy every container in this repo (asks for confirmation unless --force).",
         ),
     ] = False,
+    stopped: Annotated[
+        bool,
+        typer.Option(
+            "--stopped",
+            help=(
+                "Destroy every stopped container in this repo (asks for "
+                "confirmation unless --force)."
+            ),
+        ),
+    ] = False,
     force: Annotated[
         bool,
         typer.Option(
@@ -5357,7 +5367,8 @@ def destroy(
 
     With no arguments, opens an interactive checkbox list of this repo's
     containers (TTY required). With ``--all``, destroys every container
-    in this repo after a single confirmation.
+    in this repo after a single confirmation; ``--stopped`` does the same
+    for the stopped ones only.
     """
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
@@ -5372,6 +5383,9 @@ def destroy(
 
     if name is not None and all_:
         error("--all and a container name are mutually exclusive")
+        raise typer.Exit(2)
+    if stopped and (all_ or name is not None):
+        error("--stopped and --all or a container name are mutually exclusive")
         raise typer.Exit(2)
 
     if background and no_background:
@@ -5459,12 +5473,18 @@ def destroy(
     # `incus exec` per running container — would be pure waste. The
     # interactive picker always needs it regardless of `--force`: its
     # checkbox rows render the git columns.
-    containers = list_containers(cfg, incus, with_git_status=not (all_ and force))
+    bulk = all_ or stopped
+    containers = list_containers(cfg, incus, with_git_status=not (bulk and force))
+    if stopped:
+        containers = [c for c in containers if c.state == "Stopped"]
+        if not containers:
+            info("No stopped containers to destroy.")
+            return
     if not containers:
         info("No containers to destroy.")
         return
 
-    if all_:
+    if bulk:
         targets = [c.name for c in containers]
         if not force:
             shorts = ", ".join(short_name(cfg, n) for n in targets)

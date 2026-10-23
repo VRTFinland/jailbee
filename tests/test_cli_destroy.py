@@ -367,6 +367,66 @@ def test_destroy_all_with_name_argument_is_mutex_error(tmp_path, mocker):
     destroy_mock.assert_not_called()
 
 
+def _setup_mixed(tmp_path: Path, mocker):
+    incus, destroy_mock = _setup(tmp_path, mocker, [])
+    incus.list_containers.return_value = [
+        _payload("myrepo-feat-a", "Running"),
+        _payload("myrepo-feat-b", "Stopped"),
+        _payload("myrepo-feat-c", "Stopped"),
+    ]
+    return incus, destroy_mock
+
+
+def test_destroy_stopped_destroys_only_stopped_containers(tmp_path, mocker):
+    _, destroy_mock = _setup_mixed(tmp_path, mocker)
+
+    result = CliRunner().invoke(app, ["destroy", "--stopped"], input="y\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert "Destroy 2 container(s)" in result.stdout
+    destroyed = [c.args[2] for c in destroy_mock.call_args_list]
+    assert destroyed == ["myrepo-feat-b", "myrepo-feat-c"]
+
+
+def test_destroy_stopped_force_skips_prompt(tmp_path, mocker):
+    _, destroy_mock = _setup_mixed(tmp_path, mocker)
+
+    result = CliRunner().invoke(app, ["destroy", "--stopped", "--force"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Destroy 2 container(s)" not in result.stdout
+    assert destroy_mock.call_count == 2
+
+
+def test_destroy_stopped_prompt_rejected_aborts(tmp_path, mocker):
+    _, destroy_mock = _setup_mixed(tmp_path, mocker)
+
+    result = CliRunner().invoke(app, ["destroy", "--stopped"], input="n\n")
+
+    assert result.exit_code != 0
+    destroy_mock.assert_not_called()
+
+
+def test_destroy_stopped_with_none_stopped_exits_zero(tmp_path, mocker):
+    _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
+
+    result = CliRunner().invoke(app, ["destroy", "--stopped"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "No stopped containers to destroy" in result.stdout
+    destroy_mock.assert_not_called()
+
+
+def test_destroy_stopped_is_mutex_with_name_and_all(tmp_path, mocker):
+    _, destroy_mock = _setup_mixed(tmp_path, mocker)
+
+    for argv in (["destroy", "feat-b", "--stopped"], ["destroy", "--all", "--stopped"]):
+        result = CliRunner().invoke(app, argv)
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.stdout + (result.stderr or "")
+    destroy_mock.assert_not_called()
+
+
 def test_destroy_no_args_non_tty_errors(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
