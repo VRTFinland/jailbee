@@ -231,6 +231,27 @@ def complete_container(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 @_completion_guard
+def complete_orphan(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete the full name of an orphan container (`jailbee orphan …`).
+
+    Full names only: an orphan has no repo prefix to strip, and the command
+    accepts nothing else.
+    """
+    from jailbee.dashboard.model import registered_repo_roots
+    from jailbee.orphans import list_orphans
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, incus = loaded
+    return sorted(
+        c.name
+        for c in list_orphans(cfg, incus, registered_repo_roots())
+        if c.name.startswith(incomplete)
+    )
+
+
+@_completion_guard
 def complete_branch(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a branch name from the host repo's local branches.
 

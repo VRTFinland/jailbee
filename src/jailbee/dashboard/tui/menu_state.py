@@ -75,7 +75,7 @@ def open_menu(
     """The menu for ``name``, or None when there is nothing to show.
 
     None covers every no-actions case — unknown container, nothing selected,
-    or a view-only (orphan) group. Callers surface :func:`view_only_note`
+    or a remote session's view-only (orphan) group. Callers surface :func:`view_only_note`
     instead, because an empty menu frame is indistinguishable from a broken one.
 
     The terminal menu also offers ``Credential group…`` and the
@@ -84,7 +84,7 @@ def open_menu(
     here, not in :func:`menu_actions`, because the Qt dashboard shares that list.
     """
     actions = actions_for_container(
-        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
+        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, orphans=True
     )
     if name is None:
         return None
@@ -94,9 +94,10 @@ def open_menu(
     )
     if group is None or container is None:
         return None
-    # An orphan group is view-only: no shared action and no terminal extra either.
-    if not actions and RepoTarget.of(group) is None:
-        return None
+    # An orphan group has only its own few actions (none when remote) and no
+    # terminal extra: those all address a repo.
+    if RepoTarget.of(group) is None:
+        return MenuState(name, actions) if actions else None
     extras = dact.container_extras(
         container,
         group.optional_mounts,

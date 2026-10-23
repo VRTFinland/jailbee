@@ -12369,7 +12369,8 @@ app.add_typer(orphan_app)
 OrphanArg = Annotated[
     str | None,
     typer.Argument(
-        help="Full container name, as `jailbee orphan ls` lists it. Asked for when omitted."
+        help="Full container name, as `jailbee orphan ls` lists it. Asked for when omitted.",
+        autocompletion=completion.complete_orphan,
     ),
 ]
 

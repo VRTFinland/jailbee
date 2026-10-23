@@ -1632,14 +1632,15 @@ def test_open_menu_captures_the_actions_and_opens_at_the_root_top(tmp_path):
 
 
 def test_open_menu_is_none_for_a_view_only_group():
-    """A config-less (orphan) group has no actions, so there is no menu to open.
+    """An orphan group is view-only in a remote session: no actions, so no menu.
 
     The caller shows `view_only_note` instead — an empty menu panel would be
-    indistinguishable from a broken one.
+    indistinguishable from a broken one. Locally an orphan has its own small
+    menu (`jailbee orphan …`).
     """
     group = dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
 
-    assert tmenu.open_menu([group], "gamma-x") is None
+    assert tmenu.open_menu([group], "gamma-x", remote=True, over_ssh=True) is None
 
 
 def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
@@ -7119,3 +7120,38 @@ def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe)
     )
 
     assert ("chrome" in {verb for _label, verb in actions}) is in_waypipe
+
+
+def test_actions_for_container_gives_an_orphan_nothing_unless_asked():
+    """The Qt views cannot dispatch an orphan, so they keep seeing a view-only row."""
+    groups = [dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
+
+    assert dmenus.actions_for_container(groups, "gamma-x") == []
+
+
+def test_actions_for_container_offers_orphan_actions_when_asked():
+    groups = [dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
+
+    verbs = [v for _, v in dmenus.actions_for_container(groups, "gamma-x", orphans=True)]
+
+    assert verbs == ["orphan tmux", "orphan shell", "orphan stop", "orphan destroy"]
+
+
+def test_orphan_actions_follow_the_state():
+    assert [v for _, v in dmenus.orphan_actions("Stopped")] == ["orphan start", "orphan destroy"]
+    assert [v for _, v in dmenus.orphan_actions("Frozen")] == ["orphan destroy"]
+
+
+@pytest.mark.parametrize("kwargs", [{"remote": True}, {"over_ssh": True}])
+def test_orphan_actions_are_never_offered_to_a_remote_session(kwargs):
+    """`orphan *` is a host command: no repo for the SSH scope to judge it by."""
+    groups = [dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
+
+    assert dmenus.actions_for_container(groups, "gamma-x", orphans=True, **kwargs) == []
+
+
+def test_orphan_repo_target_runs_from_home_without_config_flags():
+    target = dmodel.RepoTarget.orphan()
+
+    assert target.cwd() == Path.home()
+    assert target.flags() == []

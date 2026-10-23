@@ -26,6 +26,9 @@ from jailbee.cli import app
 # `completion.complete_pool_names`, not `completion.complete_container` —
 # hence the exclusion.
 #
+# `jailbee orphan …` takes the full name of a container no repo owns, completed
+# by `completion.complete_orphan`: `complete_container` lists only this repo's.
+#
 # Blind spot this guard does not cover: a container-name *positional* under
 # any other name (e.g. a hypothetical future `container: ...` positional
 # distinct from both "name" and the "container" Option matched below) would
@@ -35,6 +38,7 @@ from jailbee.cli import app
 NON_CONTAINER_NAME_ARGS: set[tuple[str, str]] = {
     ("jailbee pool ls", "name"),
     ("jailbee pool prune", "name"),
+    *((f"jailbee orphan {verb}", "name") for verb in ("tmux", "shell", "start", "stop", "destroy")),
 }
 
 
@@ -285,3 +289,18 @@ def test_no_claude_only_completer_remains():
 
     assert not hasattr(completion, "complete_claude_account")
     assert not hasattr(completion, "complete_claude_group")
+
+
+def test_the_orphan_commands_use_the_orphan_completer():
+    from jailbee.completion import complete_orphan
+
+    cli = typer.main.get_command(app)
+    orphan_names = [
+        param
+        for cmd_path, param in _walk(cli)
+        if cmd_path.startswith("jailbee orphan ")
+        and isinstance(param, TyperArgument)
+        and param.name == "name"
+    ]
+    assert len(orphan_names) == 5
+    assert all(_underlying_completer(p) is complete_orphan for p in orphan_names)

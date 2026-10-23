@@ -39,6 +39,9 @@ _PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
 # The printing verbs whose clean run leaves nothing to read: the pause is kept
 # for a failure or a warning only. `git push --pr` is not one — its PR URL is.
 _REPORT_VERBS: frozenset[str] = frozenset({"git push", "git pull"})
+# The orphan lifecycle verbs: terminal-dashboard only (so not in the Qt-shared
+# `PRINTING_VERBS`), and nothing else says whether they worked.
+_ORPHAN_OUTPUT_VERBS: frozenset[str] = frozenset({"orphan start", "orphan stop", "orphan destroy"})
 _OUTPUT_VERBS: frozenset[str] = PRINTING_VERBS - _PAGED_VERBS - _REPORT_VERBS
 
 # "report" is "output" whose pause is kept only for a failure or a warning:
@@ -52,7 +55,7 @@ def dispatch_style(verb: str) -> DispatchStyle:
         return "paged"
     if verb in _REPORT_VERBS:
         return "report"
-    if verb in _OUTPUT_VERBS:
+    if verb in _OUTPUT_VERBS or verb in _ORPHAN_OUTPUT_VERBS:
         return "output"
     return "plain"
 
