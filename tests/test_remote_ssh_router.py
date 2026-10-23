@@ -9,6 +9,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+from jailbee.dashboard.commands import check_dashboard_command
 from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -749,9 +750,11 @@ def test_publishing_itself_stays_allowed(argv, monkeypatch) -> None:
     assert policy_allows(argv, FULL)
 
 
-@pytest.mark.parametrize("leaf", ["browse", "ls", "show", "drop", "apply"])
+@pytest.mark.parametrize("leaf", ["browse", "ls", "show", "drop", "clear", "apply"])
 def test_outbox_leaves_follow_policy(leaf):
     argv = ("outbox", leaf)
+    if leaf == "clear":
+        argv += ("box",)
     if leaf in {"show", "drop", "apply"}:
         argv += ("box", "pr/a.json")
     assert command_path(argv) == f"outbox {leaf}"
@@ -760,6 +763,28 @@ def test_outbox_leaves_follow_policy(leaf):
         policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=[f"outbox {leaf}"]))
         == f"outbox {leaf}"
     )
+
+
+@pytest.mark.parametrize("options", [("--prepare-snapshot",), ("-y", "--approved-snapshot", "{}")])
+def test_clear_snapshot_options_share_clear_policy_and_never_unlock_host_paths(options):
+    argv = ("outbox", "clear", "box", *options)
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["outbox clear"])
+    assert policy_allows(argv, policy) == "outbox clear"
+    check_dashboard_command(list(argv), RemoteSSHConfig(commands=policy), over_ssh=True)
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=["outbox ls"]))
+    with pytest.raises(RouteError, match="config"):
+        policy_allows((*argv, "--config", "/etc/passwd"), FULL)
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    with pytest.raises(RouteError):
+        policy_allows(argv, FULL, scope=RemoteRepoScope(frozenset({"secret"})))
+
+
+def test_outbox_clear_yes_is_allowed():
+    argv = ("outbox", "clear", "box", "-y")
+    assert policy_allows(argv, FULL) == "outbox clear"
+    check_dashboard_command(list(argv), RemoteSSHConfig(commands=FULL), over_ssh=True)
 
 
 @pytest.mark.parametrize(

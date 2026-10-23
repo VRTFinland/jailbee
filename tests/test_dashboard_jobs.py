@@ -37,6 +37,16 @@ def test_success_reports_returncode_to_callback(tmp_path: Path) -> None:
     assert runner.active() == []
 
 
+def test_snapshot_job_captures_stdout_only_when_requested(tmp_path: Path) -> None:
+    results: list[JobResult] = []
+    runner = JobRunner()
+    runner.start(
+        "k", "snapshot", _py("print('snapshot')"), tmp_path, results.append, capture_stdout=True
+    )
+    _drain(runner)
+    assert results[0].stdout == "snapshot\n"
+
+
 def test_failure_keeps_stderr_and_failure_line(tmp_path: Path) -> None:
     results: list[JobResult] = []
     runner = JobRunner()

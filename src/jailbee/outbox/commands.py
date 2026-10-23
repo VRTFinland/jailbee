@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.outbox.delete import ContainerClearPlan
     from jailbee.outbox_io import JournalStore
     from jailbee.pr_outbox import ChooseMode, DraftPreview, PublishMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -244,6 +245,106 @@ def apply_selected(
         expected_revision=view.revision,
         raise_errors=True,
     )
+
+
+def prepare_clear(
+    cfg: Config, incus: Incus, names: Sequence[str], *, journal_store: JournalStore
+) -> tuple[ContainerClearPlan, ...]:
+    """Isolate unavailable targets while fixing the exact pre-question revisions."""
+    from jailbee.outbox.delete import plan_clear
+
+    plans: list[ContainerClearPlan] = []
+    for name in dict.fromkeys(names):
+        try:
+            views = discover(cfg, incus, name, all_repos=False, journal_store=journal_store)
+        except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
+            views = (ContainerView(None, name, False, str(exc), (), ()),)
+        plans.extend(plan_clear(view) for view in views)
+    return tuple(plans)
+
+
+def clear_selected(
+    cfg: Config,
+    incus: Incus,
+    names: Sequence[str],
+    *,
+    journal_store: JournalStore,
+    confirm: Callable[[Sequence[ContainerClearPlan]], bool],
+    dry_run: bool = False,
+    approved: Sequence[ContainerClearPlan] | None = None,
+) -> int:
+    """Clear only listed revisions, replanning each deletion against fresh neighbors."""
+    from jailbee.outbox.delete import clear_plan_lines
+    from jailbee.tui import info_plain, success_plain, warn_plain
+
+    if approved is not None and tuple(names) != tuple(p.name for p in approved):
+        raise OutboxError("approved snapshot containers must match the explicit full names")
+    plans = (
+        approved
+        if approved is not None
+        else prepare_clear(cfg, incus, names, journal_store=journal_store)
+    )
+    print_lines(clear_plan_lines(plans))
+    kept = sum(len(plan.keep) for plan in plans)
+    failed = sum(not plan.available for plan in plans)
+    cleared = 0
+    if not dry_run and any(plan.delete for plan in plans):
+        if not confirm(plans):
+            info_plain("Nothing deleted.")
+            return 0
+        for plan in plans:
+            if not plan.available:
+                continue
+            deleted_prs = deleted_issues = 0
+            container_kept = len(plan.keep)
+            container_failed = 0
+            for item in plan.delete:
+                try:
+                    target, full = resolve_target(cfg, incus, plan.name)
+                    fresh = load_container(
+                        target, incus, full, journal_store=journal_store, raise_errors=True
+                    )
+                    view = next((v for v in fresh.proposals if v.id == item.proposal), None)
+                    if view is None or view.revision != item.revision:
+                        kept += 1
+                        container_kept += 1
+                        warn_plain(
+                            f"{plan.name}: kept {item.proposal}: changed since listing", stderr=True
+                        )
+                        continue
+                    assert item.selection is not None
+                    execute_delete(
+                        target,
+                        incus,
+                        full,
+                        plan_delete(fresh, item.proposal, item.selection),
+                        journal_store=journal_store,
+                    )
+                except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
+                    failed += 1
+                    container_failed += 1
+                    warn_plain(f"{plan.name}: failed {item.proposal}: {exc}", stderr=True)
+                    continue
+                cleared += 1
+                if item.proposal.kind == "pr":
+                    deleted_prs += 1
+                else:
+                    deleted_issues += 1
+            summary = (
+                f"{plan.name}: deleted {deleted_prs + deleted_issues} "
+                f"({deleted_prs} PR, {deleted_issues} issue), "
+                f"kept {container_kept}, failed {container_failed}."
+            )
+            if container_kept or container_failed:
+                warn_plain(summary, stderr=True)
+            else:
+                info_plain(summary)
+    summary = f"Cleared {cleared}, kept {kept}, failed {failed}."
+    if kept or failed:
+        warn_plain(summary, stderr=True)
+        return 1
+    success_plain(summary)
+    return 0
 
 
 def _attach_create_scopes(

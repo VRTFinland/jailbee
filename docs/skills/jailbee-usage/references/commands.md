@@ -44,7 +44,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 - [PR publishing (`pr`)](#pr-publishing)
 - [PR review outbox (`review apply|ls|show|drop`)](#pr-review-outbox)
 - [Issue management outbox (`issue ls|show|apply|drop|resolve`)](#issue-management-outbox)
-- [Unified outbox (`outbox`, `outbox ls|show|drop|apply`)](#unified-outbox)
+- [Unified outbox (`outbox`, `outbox ls|show|drop|clear|apply`)](#unified-outbox)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install|migrate`, `net egress ls|add|rm|export`)](#network)
@@ -1516,6 +1516,7 @@ management](../../../git-bridge.md#unified-proposal-management).
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
 | `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json] [--color\|--no-color]` | The complete proposal, with zero-based action and inline-comment indices. Markdown bodies are rendered on a terminal, verbatim in a pipe unless `--color`. |
 | `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
+| `jailbee outbox clear [CONTAINER...] [--dry-run] [-y\|--yes]` | Discard eligible whole PR and issue proposals in the named containers without publishing. Omitted names open a destructive single-container picker even with one candidate (exit 2 off-terminal). Shows delete/keep reasons; `--dry-run` only previews, `-y` skips only deletion confirmation. Uncertain issue actions, PR publication evidence and changed revisions are protected; newly arrived proposals are excluded. Settled issue journals are archived and shared body files retained. Exit 0: no kept/failed items or declined confirmation; 1: kept/unavailable/failed (also in dry-run); 2: usage/missing selection. See [clearing outboxes](../../../git-bridge.md#clearing-outboxes). Terminal dashboard only: **Clear outbox…** (`[X]`) in the container and **N selected** menus, always confirmed with **No** first, regardless of general confirmation settings; not offered in Qt. |
 | `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [--foreign] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and `--foreign` admits a PR the container does not own — here even in a repository that is not the container's — under `-y`; both are invalid for issues. |
 
 ## Branch placement

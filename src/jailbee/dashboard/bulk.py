@@ -38,6 +38,7 @@ BULK_VERBS: tuple[str, ...] = (
     "net strict",
     "net loose",
     "rename --clear",
+    "outbox clear",
     "destroy",
     "orphan destroy",
 )
@@ -51,6 +52,7 @@ PARALLEL_VERBS: frozenset[str] = frozenset(
         "net strict",
         "net loose",
         "rename --clear",
+        "outbox clear",
         "destroy",
         "orphan destroy",
     }
@@ -64,6 +66,7 @@ TRACKED_VERBS: frozenset[str] = frozenset({"start", "restart", "destroy"})
 # rather than taking the terminal: they print nothing worth reading and can
 # take minutes.
 DETACHED_MENU_VERBS: frozenset[str] = frozenset({"start", "stop", "restart"})
+TUI_ONLY_VERBS: frozenset[str] = frozenset({"outbox clear"})
 BULK_LABELS: dict[str, str] = {
     "start": "Start",
     "stop": "Stop",
@@ -74,6 +77,7 @@ BULK_LABELS: dict[str, str] = {
     "git pull": "Send commits to host (git pull)",
     "merge": "Merge into…",
     "rename --clear": "Clear name",
+    "outbox clear": "Clear outbox…",
     "destroy": "Destroy…",
     "orphan destroy": "Destroy orphans…",
 }
@@ -90,6 +94,7 @@ BULK_KEYS: dict[str, str] = {
     "net strict": "n",
     "net loose": "w",
     "rename --clear": "R",
+    "outbox clear": "X",
     "destroy": "D",
     "orphan destroy": "O",
 }
@@ -97,7 +102,7 @@ _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
 # Verbs that put their own question to the user. `destroy` shows its risk
 # summary; `merge` is asked once the targets are picked (by the terminal
 # dashboard itself, by the CLI for Qt), so the question can name both ends.
-ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "orphan destroy", "merge"})
+ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "orphan destroy", "merge", "outbox clear"})
 # Foreground verbs the dashboard confirms itself: their CLI run is told not to
 # ask again (`--no-confirm`).
 DASHBOARD_CONFIRMED: frozenset[str] = frozenset({"git push", "git pull"})
@@ -195,6 +200,8 @@ def _skip_reason(container: ContainerInfo | None, verb: str) -> str:
         return "mount mode"
     if state != "Running":
         return "already stopped" if verb == "stop" and state == "Stopped" else "not running"
+    if verb == "outbox clear":
+        return "outbox empty"
     if verb.startswith("net "):
         return f"already {container.network}"
     if verb == "git pull":
@@ -291,6 +298,7 @@ def bulk_argv(verb: str, name: str, extra: Sequence[str] = ()) -> list[str]:
         *verb.split(),
         name,
         *(["--force"] if verb in ("destroy", "orphan destroy") else []),
+        *(["-y"] if verb == "outbox clear" else []),
         *(["--background"] if verb in TRACKED_VERBS else []),
         *extra,
     ]
@@ -362,6 +370,20 @@ class BulkBatch:
         if self.skipped:
             parts.append(f"{len(self.skipped)} skipped ({listed(self.skipped)})")
         return f"{self.verb}: " + ", ".join(parts)
+
+
+def outbox_clear_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tuple[str, ...]:
+    """The probed manifest counts per store, in the requested container order."""
+    lines: list[str] = []
+    for name in names:
+        container = _container(groups, name)
+        if container is None or container.git_status is None:
+            continue
+        status = container.git_status
+        pr = status.pending_pr_actions or 0
+        issue = status.pending_issue_actions or 0
+        lines.append(f"{name}: {pr + issue} manifests ({pr} PR, {issue} issue)")
+    return tuple(lines)
 
 
 def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tuple[str, ...]:

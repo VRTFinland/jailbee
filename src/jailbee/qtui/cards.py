@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jailbee.dashboard.bulk import TUI_ONLY_VERBS
 from jailbee.dashboard.columns import visible_fields
 from jailbee.dashboard.menus import actions_for_container, view_only_note
 from jailbee.dashboard.model import RepoTarget
@@ -561,7 +562,11 @@ class CardView(QScrollArea):
     def _on_context(self, name: str, pos: QPoint) -> None:
         self._selected = name
         self._apply_selection(name)
-        actions = actions_for_container(self._groups, name)
+        actions = [
+            (label, verb)
+            for label, verb in actions_for_container(self._groups, name)
+            if verb not in TUI_ONLY_VERBS
+        ]
         menu = QMenu(self)
         if not actions:
             # View-only container: say so rather than declining to open, which

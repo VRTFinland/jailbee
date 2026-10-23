@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
 from jailbee.outbox.cleanup import exclusive_body_names
-from jailbee.outbox.models import ContainerView, Kind, OutboxError, ProposalId, StoreSnapshot
+from jailbee.outbox.models import (
+    ContainerView,
+    Kind,
+    OutboxError,
+    ProposalId,
+    StoreSnapshot,
+)
 
 
 @dataclass(frozen=True)
@@ -172,3 +179,96 @@ def plan_delete(
         delete_names,
         summary,
     )
+
+
+@dataclass(frozen=True)
+class ClearItem:
+    proposal: ProposalId
+    revision: str
+    state: str
+    selection: DeleteSelection | None
+    reason: str | None
+
+
+@dataclass(frozen=True)
+class ContainerClearPlan:
+    name: str
+    available: bool
+    error: str | None
+    delete: tuple[ClearItem, ...]
+    keep: tuple[ClearItem, ...]
+    warnings: tuple[str, ...]
+
+
+def plan_clear(container: ContainerView) -> ContainerClearPlan:
+    if not container.available or container.identity is None:
+        return ContainerClearPlan(
+            container.name, False, container.error or "container is unavailable", (), (), ()
+        )
+
+    deleted: list[ClearItem] = []
+    kept: list[ClearItem] = []
+    warnings = [warning for snapshot in container.stores for warning in snapshot.warnings]
+    warnings.extend(
+        f"rejected: {name}" for snapshot in container.stores for name in snapshot.rejected
+    )
+    rejected = {snapshot.kind: set(snapshot.rejected) for snapshot in container.stores}
+    selection: DeleteSelection | None
+    for view in container.proposals:
+        if view.id.name in rejected.get(view.id.kind, set()):
+            continue
+        selection = DeleteSelection()
+        try:
+            plan_delete(container, view.id, selection)
+        except OutboxError as exc:
+            if view.id.kind == "issue":
+                selection = DeleteSelection(archive_journal=True)
+                try:
+                    plan_delete(container, view.id, selection)
+                except OutboxError:
+                    selection = None
+            else:
+                selection = None
+            if selection is not None:
+                deleted.append(ClearItem(view.id, view.revision, view.state, selection, None))
+                continue
+            reason = str(exc)
+            if any(action.state == "uncertain" for action in view.actions):
+                index = next(action.index for action in view.actions if action.state == "uncertain")
+                reason = (
+                    "uncertain — reconcile with: jailbee issue resolve "
+                    f"{container.name} {view.id.name} {index} (--applied --url <url> | --retry)"
+                )
+            elif view.id.kind == "pr" and view.edit_block:
+                reason = (
+                    "partially published; finish with `jailbee outbox apply` or inspect with "
+                    "`jailbee outbox browse`"
+                )
+            kept.append(ClearItem(view.id, view.revision, view.state, None, reason))
+        else:
+            deleted.append(ClearItem(view.id, view.revision, view.state, selection, None))
+    return ContainerClearPlan(
+        container.name, True, None, tuple(deleted), tuple(kept), tuple(warnings)
+    )
+
+
+def clear_plan_lines(plans: Sequence[ContainerClearPlan]) -> list[str]:
+    lines: list[str] = []
+    deleted = 0
+    containers = 0
+    for plan in plans:
+        if not plan.available:
+            lines.append(f"{plan.name}: unavailable — {plan.error}")
+            continue
+        lines.append(f"{plan.name}:")
+        containers += bool(plan.delete)
+        for item in plan.delete:
+            lines.append(f"  delete {item.proposal} [{item.state}]")
+            deleted += 1
+        for item in plan.keep:
+            lines.append(f"  keep {item.proposal} [{item.state}]: {item.reason}")
+        lines.extend(f"  warning: {warning}" for warning in plan.warnings)
+    noun = "proposal" if deleted == 1 else "proposals"
+    container_noun = "container" if containers == 1 else "containers"
+    lines.append(f"Delete {deleted} {noun} in {containers} {container_noun}.")
+    return lines

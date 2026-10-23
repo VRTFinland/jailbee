@@ -1518,9 +1518,31 @@ def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
         _ctx(git_status=_dirty(pending_pr_actions=pr, pending_issue_actions=issue))
     )
     lead = (f"Outbox ({total} pending)", "outbox browse")
-    assert actions[:3] == [lead, ("Attach tmux", "tmux"), ("Open shell", "shell")]
+    assert actions[:4] == [
+        lead,
+        ("Clear outbox…", "outbox clear"),
+        ("Attach tmux", "tmux"),
+        ("Open shell", "shell"),
+    ]
     menu = tmenu.MenuState("alpha-x", actions)
     assert tmenu.menu_entries(menu)[0] == lead
+
+
+@pytest.mark.parametrize(("pr", "issue"), [(2, 0), (0, 1), (2, None), (None, 1)])
+def test_clear_outbox_follows_the_pending_outbox_entry(pr, issue):
+    actions = dmenus.menu_actions(
+        _ctx(git_status=_dirty(pending_pr_actions=pr, pending_issue_actions=issue))
+    )
+    verbs = [verb for _, verb in actions]
+    assert actions[verbs.index("outbox browse") + 1] == ("Clear outbox…", "outbox clear")
+
+
+@pytest.mark.parametrize(("pr", "issue"), [(0, 0), (None, None), (0, None), (None, 0)])
+def test_clear_outbox_needs_a_known_nonzero_count(pr, issue):
+    actions = dmenus.menu_actions(
+        _ctx(git_status=_dirty(pending_pr_actions=pr, pending_issue_actions=issue))
+    )
+    assert "outbox clear" not in {verb for _, verb in actions}
 
 
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
@@ -1704,13 +1726,16 @@ def _hotkeys(
 
 
 def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
-    ctx = _ctx(pr_number=7, has_job=True, job_clearable=True)
+    ctx = _ctx(
+        pr_number=7, has_job=True, job_clearable=True, git_status=_dirty(pending_pr_actions=2)
+    )
     menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(ctx))
 
     assert _hotkeys(menu) == {
         "Attach tmux": "t",
         "Open shell": "s",
-        "Outbox": "o",
+        "Outbox (2 pending)": "o",
+        "Clear outbox…": "X",
         "Clear failed job": "x",
         "Job log": "b",
         "Git →": "g",

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from jailbee.outbox.models import ProposalId
     from jailbee.outbox_io import JournalStore
 
-_COMMANDS = frozenset(("browse", "ls", "show", "drop", "apply"))
+_COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply"))
 
 
 def _normalize_local(argv: Sequence[str]) -> list[str]:
@@ -402,6 +402,81 @@ def drop(
             journal_store=store,
             confirm=confirm,
             expected_revision=revision,
+        )
+
+    _run(ctx, config, operation)
+
+
+@app.command()
+def clear(
+    ctx: typer.Context,
+    containers: Annotated[
+        list[str] | None,
+        typer.Argument(help="Full or short container names. Asked for when omitted."),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be deleted.")] = False,
+    yes: YesOption = False,
+    prepare_snapshot: Annotated[
+        bool,
+        typer.Option(
+            "--prepare-snapshot", hidden=True, help="Internal: prepare a read-only clear snapshot."
+        ),
+    ] = False,
+    approved_snapshot: Annotated[
+        str | None,
+        typer.Option(
+            "--approved-snapshot",
+            hidden=True,
+            help="Internal: bound deletion to this validated snapshot JSON.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Delete every unpublished proposal in the containers' PR and issue outboxes."""
+    from jailbee import prompting
+    from jailbee.outbox.clear_snapshot import decode_snapshot, encode_snapshot
+    from jailbee.outbox.commands import clear_selected, discover, prepare_clear
+    from jailbee.outbox.delete import ContainerClearPlan
+    from jailbee.outbox.models import OutboxError
+    from jailbee.outbox_io import JournalStore
+
+    def confirm(plans: Sequence[ContainerClearPlan]) -> bool:
+        total = sum(len(plan.delete) for plan in plans)
+        count = sum(bool(plan.delete) for plan in plans)
+        proposal_word = "proposal" if total == 1 else "proposals"
+        container_word = "container" if count == 1 else "containers"
+        return yes or typer.confirm(
+            f"Delete {total} {proposal_word} in {count} {container_word}?", default=False
+        )
+
+    def operation(cfg: Config, incus: Incus) -> int:
+        store = JournalStore()
+        names = containers
+        if prepare_snapshot and (approved_snapshot is not None or dry_run or yes):
+            raise OutboxError("snapshot preparation cannot be combined with execution options")
+        if (prepare_snapshot or approved_snapshot is not None) and not names:
+            raise OutboxError("snapshot transport requires explicit full container names")
+        approved = decode_snapshot(approved_snapshot) if approved_snapshot is not None else None
+        if prepare_snapshot:
+            typer.echo(encode_snapshot(prepare_clear(cfg, incus, names or (), journal_store=store)))
+            return 0
+        if not names:
+            views = discover(cfg, incus, None, all_repos=False, journal_store=store)
+            chosen = prompting.choose_one(
+                "container",
+                [prompting.Option(v.name, v.name, v.name) for v in views if v.proposals],
+                destructive=True,
+                empty_reason="no container has pending proposals",
+            )
+            names = [chosen]
+        return clear_selected(
+            cfg,
+            incus,
+            names,
+            journal_store=store,
+            confirm=confirm,
+            dry_run=dry_run,
+            approved=approved,
         )
 
     _run(ctx, config, operation)
