@@ -223,6 +223,7 @@ def apply_selected(
 
     checked_mode: ChooseMode | None = None
     if choose_mode is not None:
+
         def checked_mode(total: int, preview: DraftPreview) -> PublishMode | None:
             mode = choose_mode(total, preview)
             if mode is not None:

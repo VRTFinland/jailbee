@@ -125,9 +125,14 @@ def test_choose_mode_rechecks_target_config_only_after_approval(env, mocker, mod
 
     def apply():
         return apply_selected(
-            cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
-            options=PublishOptions(), journal_store=journals,
-            confirm=confirm, choose_mode=choose,
+            cfg,
+            incus,
+            IDENTITY.full_name,
+            ProposalId("pr", "001.json"),
+            options=PublishOptions(),
+            journal_store=journals,
+            confirm=confirm,
+            choose_mode=choose,
         )
 
     if mode is None:
