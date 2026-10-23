@@ -32,13 +32,30 @@ def test_stop_takes_the_running_and_skips_the_stopped(tmp_path):
 
 
 def test_outbox_clear_takes_containers_with_pending_manifests(tmp_path):
-    pending = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2, pending_issue_actions=0)
-    empty = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=0, pending_issue_actions=0)
-    groups = [_group(tmp_path,
-        ci("alpha-a", "alpha", git_status=pending),
-        ci("alpha-b", "alpha", git_status=empty),
-        ci("alpha-c", "alpha", "Stopped", git_status=pending),
-    )]
+    pending = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        pending_pr_actions=2,
+        pending_issue_actions=0,
+    )
+    empty = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        pending_pr_actions=0,
+        pending_issue_actions=0,
+    )
+    groups = [
+        _group(
+            tmp_path,
+            ci("alpha-a", "alpha", git_status=pending),
+            ci("alpha-b", "alpha", git_status=empty),
+            ci("alpha-c", "alpha", "Stopped", git_status=pending),
+        )
+    ]
 
     action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b", "alpha-c"], "outbox clear")
 
@@ -63,10 +80,35 @@ def test_outbox_clear_asks_itself():
 
 
 def test_outbox_clear_lines_count_per_store(tmp_path):
-    groups = [_group(tmp_path,
-        ci("alpha-a", "alpha", git_status=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2, pending_issue_actions=3)),
-        ci("alpha-b", "alpha", git_status=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=None, pending_issue_actions=1)),
-    )]
+    groups = [
+        _group(
+            tmp_path,
+            ci(
+                "alpha-a",
+                "alpha",
+                git_status=GitStatus(
+                    wt="clean",
+                    ahead_diff="clean",
+                    ahead_count="0",
+                    conflict="ok",
+                    pending_pr_actions=2,
+                    pending_issue_actions=3,
+                ),
+            ),
+            ci(
+                "alpha-b",
+                "alpha",
+                git_status=GitStatus(
+                    wt="clean",
+                    ahead_diff="clean",
+                    ahead_count="0",
+                    conflict="ok",
+                    pending_pr_actions=None,
+                    pending_issue_actions=1,
+                ),
+            ),
+        )
+    ]
 
     assert bulk.outbox_clear_lines(groups, ["alpha-b", "alpha-a"]) == (
         "alpha-b: 1 manifests (0 PR, 1 issue)",

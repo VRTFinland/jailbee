@@ -1519,7 +1519,10 @@ def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
     )
     lead = (f"Outbox ({total} pending)", "outbox browse")
     assert actions[:4] == [
-        lead, ("Clear outbox…", "outbox clear"), ("Attach tmux", "tmux"), ("Open shell", "shell")
+        lead,
+        ("Clear outbox…", "outbox clear"),
+        ("Attach tmux", "tmux"),
+        ("Open shell", "shell"),
     ]
     menu = tmenu.MenuState("alpha-x", actions)
     assert tmenu.menu_entries(menu)[0] == lead
@@ -1723,8 +1726,9 @@ def _hotkeys(
 
 
 def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
-    ctx = _ctx(pr_number=7, has_job=True, job_clearable=True,
-        git_status=_dirty(pending_pr_actions=2))
+    ctx = _ctx(
+        pr_number=7, has_job=True, job_clearable=True, git_status=_dirty(pending_pr_actions=2)
+    )
     menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(ctx))
 
     assert _hotkeys(menu) == {

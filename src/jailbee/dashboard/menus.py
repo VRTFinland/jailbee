@@ -280,11 +280,13 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         session = [("Attach tmux", "tmux"), ("Open shell", "shell")]
         pending = _outbox_pending(ctx.git_status)
         if pending:
-            actions.extend([
-                (f"Outbox ({pending} pending)", "outbox browse"),
-                ("Clear outbox…", "outbox clear"),
-                *session,
-            ])
+            actions.extend(
+                [
+                    (f"Outbox ({pending} pending)", "outbox browse"),
+                    ("Clear outbox…", "outbox clear"),
+                    *session,
+                ]
+            )
         elif _outbox_empty(ctx.git_status):
             actions.extend(session)
         else:
