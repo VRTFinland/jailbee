@@ -8,6 +8,31 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **`jailbee mac setup` (experimental): JailBee on a Mac in one command.** It
+  builds a kernel with what strict containers need, creates an Apple
+  `container` machine, installs Incus and JailBee in it and wires the Mac to
+  it; re-running it resumes an interrupted setup or upgrades the layers whose
+  input changed, and `jailbee mac doctor` lists the ones out of date. Apple
+  silicon only, run end to end on one Mac. The hand recipe it automates is in
+  the new [Apple container machine](https://jailbee.gisgro.io/docs/apple-container-machine/) page.
+- **`jailbee orphan ls|tmux|shell|start|stop|destroy`** reach containers whose
+  repo can no longer be found (directory moved or deleted, or its config no
+  longer loads). In the terminal dashboard, Enter on an orphan row opens a
+  small menu with the same actions instead of doing nothing.
+- **`/etc/jailbee/container.json` in new containers** records the container's
+  name, prefix, mode, branch, base, PR and fork source, so an agent inside can
+  tell you which host command to run.
+- **A `jailbee-bug-report` agent skill.** An in-container agent that finds
+  JailBee itself misbehaving can stage a bug report against the JailBee
+  repository through the issue outbox; a human publishes it on the host. The
+  skill is copied into each agent's skills directory by `jailbee apply`.
+- **`jailbee doctor` checks the kernel for strict containers:** bridge
+  connection tracking (without it a strict container fails to start on an
+  nftables `Protocol error`), AppArmor that is enabled but unusable, and
+  btrfs POSIX ACLs while a btrfs pool exists.
+
 ### Changed
 
 - **The LiteLLM proxy is pinned to 1.106.2** (was 1.106.0). The patch
@@ -16,6 +41,11 @@ before editing `## Unreleased`.
   compromised 1.107.0 release was never pinned. An instance without
   `litellm.version` is reinstalled on the next `jailbee litellm up`;
   `jailbee apply` says when one is due.
+- **Containers use the golden image's fonts** instead of a bind mount of the
+  host's `/usr/share/fonts`, so rendering no longer depends on the host
+  distribution. A `host_mounts` entry adds host fonts beside the image's
+  ([config](https://jailbee.gisgro.io/docs/config/)). Run `jailbee apply`.
+- **Dashboard: a confirmation dialog dims the frame behind it.**
 
 ### Fixed
 
@@ -27,6 +57,20 @@ before editing `## Unreleased`.
   network.** The switch, and the timer's revert at the end of a loose period,
   removed the registry mirror's `/etc/hosts` row, so dockerd failed with
   `lookup jailbee-registry-mirror.incus ... no such host`.
+- **Hosts without `/etc/localtime` or `/usr/share/fonts` can start
+  containers.** The mounts pointed at missing sources and every start failed,
+  as on a minimal VM image. The golden image now carries a UTC zone file
+  instead of an empty placeholder. Run `jailbee base build` and
+  `jailbee apply`.
+- **A terminal without kitty's terminfo on the host works in containers.** The
+  golden image ships `xterm-kitty` itself; the host-file mount stays until
+  2.0.0 for containers built from older images. Run `jailbee base build`.
+- **`jailbee base build` no longer fails when the dev GID is already taken by
+  a system group** (GID 20 from a macOS account is Ubuntu's `dialout`); that
+  group is renamed to `dev`.
+- **The first `jailbee display up` on a fresh cloud image finds weston and
+  waypipe.** Provisioning waits for cloud-init's first boot before
+  refreshing apt.
 - **`/etc/hosts` is readable by every user again.** Rewrites left it
   root-only, so non-root programs in a strict container ignored its pinned
   IPs. Run `jailbee apply` to fix existing containers.
@@ -51,10 +95,6 @@ before editing `## Unreleased`.
 
 ### Added
 
-- **A `jailbee-bug-report` agent skill.** An in-container agent that finds
-  JailBee itself misbehaving can stage a bug report against the JailBee
-  repository through the issue outbox; a human publishes it on the host. The
-  skill is copied into each agent's skills directory by `jailbee apply`.
 - **Dashboard: clock times in the agent activity.** The tool line, the last
   message and each history row on a container card lead with a dim local
   `HH:MM`, so you can tell when each step happened.
