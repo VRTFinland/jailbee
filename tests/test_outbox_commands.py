@@ -52,9 +52,15 @@ def test_issue_draft_is_rejected(env):
 
     cfg, incus, _, reader, _, journals = env
     with pytest.raises(OutboxError, match="draft is only valid for PR publication"):
-        apply_selected(cfg, incus, IDENTITY.full_name, ProposalId("issue", "001.json"),
-                       options=PublishOptions(draft=True), journal_store=journals,
-                       confirm=lambda n: True)
+        apply_selected(
+            cfg,
+            incus,
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            options=PublishOptions(draft=True),
+            journal_store=journals,
+            confirm=lambda n: True,
+        )
     reader.assert_not_called()
 
 
@@ -68,9 +74,19 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
     reader.side_effect = lambda i, c, k, **kw: store(k, pr_files() if k == "pr" else {})
     publish = mocker.patch("jailbee.outbox.commands.publish_selected", return_value=0)
     callback = mocker.Mock(return_value="draft")
-    assert apply_selected(cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
-                          options=PublishOptions(draft=True), journal_store=journals,
-                          confirm=lambda n: False, choose_mode=callback) == 0
+    assert (
+        apply_selected(
+            cfg,
+            incus,
+            IDENTITY.full_name,
+            ProposalId("pr", "001.json"),
+            options=PublishOptions(draft=True),
+            journal_store=journals,
+            confirm=lambda n: False,
+            choose_mode=callback,
+        )
+        == 0
+    )
     assert publish.call_args.kwargs["options"].draft is True
     assert publish.call_args.kwargs["choose_mode"] is callback
 

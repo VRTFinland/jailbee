@@ -49,15 +49,15 @@ def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.P
     """Offer publication modes for one selected manifest, with their distinct counts."""
     draft_total = preview.pending + int(preview.description)
     options: list[prompting.Option[pr_outbox.PublishMode | None]] = [
-            prompting.Option("publish", "Publish", "publish"),
-            prompting.Option(
-                "draft",
-                "Publish as draft review — only you see it until you submit it on GitHub"
-                f" ({draft_total} pending actions; {preview.held_back} general comments held back)",
-                "draft",
-            ),
-            prompting.Option(None, "Cancel", "cancel"),
-        ]
+        prompting.Option("publish", "Publish", "publish"),
+        prompting.Option(
+            "draft",
+            "Publish as draft review — only you see it until you submit it on GitHub"
+            f" ({draft_total} pending actions; {preview.held_back} general comments held back)",
+            "draft",
+        ),
+        prompting.Option(None, "Cancel", "cancel"),
+    ]
     return prompting.choose(f"Publish {total} pending actions?", options)
 
 

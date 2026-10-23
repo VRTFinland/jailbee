@@ -663,11 +663,19 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
     offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
     callback = mocker.Mock(return_value="draft")
     cfg, incus, _, journals, *_ = env
-    assert publish_selected(
-        cfg, incus, IDENTITY.full_name, ProposalId("pr", "001.json"),
-        journal_store=journals, options=PublishOptions(draft=True),
-        confirm=lambda n: False, choose_mode=callback,
-    ) == 0
+    assert (
+        publish_selected(
+            cfg,
+            incus,
+            IDENTITY.full_name,
+            ProposalId("pr", "001.json"),
+            journal_store=journals,
+            options=PublishOptions(draft=True),
+            confirm=lambda n: False,
+            choose_mode=callback,
+        )
+        == 0
+    )
     assert offer.call_args.kwargs["draft"] is True
     assert offer.call_args.kwargs["choose_mode"] is callback
 

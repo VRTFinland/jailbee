@@ -27,13 +27,13 @@ from jailbee.outbox.service import execute_delete, load_container
 from jailbee.remote_ssh import repo_scope
 
 if TYPE_CHECKING:
-    from jailbee.pr_outbox import ChooseMode
     from pathlib import Path
 
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
     from jailbee.outbox_io import JournalStore
+    from jailbee.pr_outbox import ChooseMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
