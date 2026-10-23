@@ -472,3 +472,8 @@ def snapshot_tag_prompt(container: str) -> TextPrompt:
     return TextPrompt(
         "container-snapshot-tag", f"New snapshot — {container}", "Snapshot tag", target=container
     )
+
+
+def mem_argv(name: str, size: str, *, force: bool = False) -> list[str]:
+    """Set or clear an override without interpreting positional values as options."""
+    return ["mem", *(["--force"] if force else []), "--", name, size]

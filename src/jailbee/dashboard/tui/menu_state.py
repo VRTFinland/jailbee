@@ -270,6 +270,7 @@ _MENU_KEYS: dict[str, str] = {
     "Network →": "w",
     "fork": "f",
     "rename": "R",
+    "mem": "z",
     # Git →
     "merge": "m",
     "git pull": "l",

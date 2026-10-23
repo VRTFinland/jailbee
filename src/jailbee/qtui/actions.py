@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 LaunchMode = Literal["terminal", "output", "detached"]
 
 _TERMINAL_VERBS: frozenset[str] = frozenset(
-    {"shell", "tmux", "merge", "review apply", "issue apply", "outbox browse", "fork", "rename"}
+    {"shell", "tmux", "merge", "review apply", "issue apply", "outbox browse", "fork", "rename", "mem"}
 )
 
 # Verbs that warrant a confirmation dialog before dispatching.

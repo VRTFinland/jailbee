@@ -201,6 +201,7 @@ class RepoGroup:
     remote_mountable: tuple[str, ...] = ()
     checkout: str | None = None
     advisories: tuple[RepoAdvisory, ...] = ()
+    memory_default: str = "16GiB"
 
 
 @dataclass(frozen=True)
@@ -506,6 +507,7 @@ def _gather_rows(
                 remote_mountable=grantable_kinds(gcfg.remote.ssh, cfg),
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
+                memory_default=cfg.defaults.memory,
             )
         )
 

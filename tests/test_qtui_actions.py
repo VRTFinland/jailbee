@@ -320,7 +320,7 @@ def test_retarget_runs_as_output_with_the_base_last():
     assert cmd.argv[-1] == "develop"
 
 
-@pytest.mark.parametrize("verb", ["fork", "rename"])
+@pytest.mark.parametrize("verb", ["fork", "rename", "mem"])
 def test_fork_and_rename_hand_the_terminal_to_the_cli(verb):
     """The CLI asks the name itself, so Qt only hands it a terminal."""
     cmd = a.build_action(verb, "alpha-x", _t("/repo/.gie/config.yaml"))

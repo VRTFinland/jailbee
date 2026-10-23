@@ -69,6 +69,8 @@ class MenuContext:
     remote: bool = False
     gui_remote: bool = False
     alias: str | None = None
+    memory_limit: str | None = None
+    memory_override: bool = False
 
 
 @dataclass(frozen=True)
@@ -317,6 +319,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         actions.append(("Rename…", "rename"))
         if ctx.alias:
             actions.append(("Clear name", "rename --clear"))
+        limit = ctx.memory_limit or "unknown"
+        actions.append((f"Memory: {limit}{'*' if ctx.memory_override else ''}…", "mem"))
     if ctx.state == "Running":
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
@@ -430,6 +434,8 @@ def actions_for_container(
             remote=remote,
             gui_remote=bool(remote and ssh_policy is not None and RemoteUnlocks.of(ssh_policy).gui),
             alias=container.alias,
+            memory_limit=container.memory_limit,
+            memory_override=container.memory_override,
         )
     )
     if over_ssh:
