@@ -29,12 +29,12 @@ class DraftSession:
                 repo=self.target.manifest.repo,
             )
             self._looked_up = True
-            expected = self.target.manifest.head_sha or self.target.pr.head_sha
-            if self._pending is not None and self._pending.commit_oid != expected:
-                raise pr.PrReviewError(
-                    f"your pending review on PR #{self.target.pr.number} is on commit "
-                    f"{self._pending.commit_oid[:12]}; submit or discard it on GitHub first"
-                )
+        expected = self.target.manifest.head_sha or self.target.pr.head_sha
+        if self._pending is not None and self._pending.commit_oid != expected:
+            raise pr.PrReviewError(
+                f"your pending review on PR #{self.target.pr.number} is on commit "
+                f"{self._pending.commit_oid[:12]}; submit or discard it on GitHub first"
+            )
         return self._pending
 
     def _create_pending(self) -> PendingReview:

@@ -32,19 +32,23 @@ def _pending(*, body="old", commit_oid="manifest-sha"):
 
 def test_review_creates_pending_when_none(mocker):
     from jailbee.pr_draft import DraftSession
+    from jailbee.pr_outbox import LineComment
 
     mocker.patch("jailbee.pr.find_pending_review", return_value=None)
     create = mocker.patch("jailbee.pr.create_pending_review", return_value=_pending())
-    comment = mocker.patch("jailbee.pr_outbox._comment_payload", return_value={"path": "a.py"})
-    action = ReviewAction("new", (), "COMMENT")
+    action = ReviewAction("new", (LineComment("a.py", 12, "inline"),), "COMMENT")
 
     receipt = DraftSession(_target()).review(action)
 
     assert receipt == _pending().url
     create.assert_called_once_with(
-        Path("/repo"), 7, commit_id="manifest-sha", body="new", comments=[], repo="acme/widgets"
+        Path("/repo"),
+        7,
+        commit_id="manifest-sha",
+        body="new",
+        comments=[{"path": "a.py", "line": 12, "body": "inline", "side": "RIGHT"}],
+        repo="acme/widgets",
     )
-    comment.assert_not_called()
 
 
 def test_review_appends_to_existing_pending(mocker):
@@ -104,6 +108,33 @@ def test_pending_on_other_commit_refuses(mocker):
     create.assert_not_called()
     thread.assert_not_called()
     update.assert_not_called()
+
+
+def test_cached_pending_on_other_commit_refuses_later_actions(mocker):
+    from jailbee.pr_draft import DraftSession
+    from jailbee.pr_outbox import LineComment
+
+    find = mocker.patch(
+        "jailbee.pr.find_pending_review", return_value=_pending(commit_oid="different")
+    )
+    create = mocker.patch("jailbee.pr.create_pending_review")
+    thread = mocker.patch("jailbee.pr.add_pending_review_thread")
+    update = mocker.patch("jailbee.pr.update_pending_review_body")
+    reply = mocker.patch("jailbee.pr.add_pending_reply")
+    session = DraftSession(_target())
+
+    with pytest.raises(PrReviewError, match="submit or discard it on GitHub first"):
+        session.review(ReviewAction("new", (), "COMMENT"))
+    with pytest.raises(PrReviewError, match="submit or discard it on GitHub first"):
+        session.reply(ReplyAction(42, "reply"))
+    with pytest.raises(PrReviewError, match="submit or discard it on GitHub first"):
+        session.review(ReviewAction("", (LineComment("a.py", 1, "inline"),), "COMMENT"))
+
+    find.assert_called_once()
+    create.assert_not_called()
+    thread.assert_not_called()
+    update.assert_not_called()
+    reply.assert_not_called()
 
 
 def test_reply_without_pending_creates_empty_pending(mocker):
