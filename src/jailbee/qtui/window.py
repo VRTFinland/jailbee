@@ -51,6 +51,7 @@ from jailbee.qtui.model import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from jailbee.dashboard.bulk import BulkAction
     from jailbee.dashboard.columns import FieldSpecCI
     from jailbee.dashboard.model import RepoGroup
 
@@ -592,9 +593,23 @@ class MainWindow(QMainWindow):
         ]
 
     def _actions_for(self, container_name: str) -> list[tuple[str, str]]:
+        from jailbee.dashboard.bulk import TUI_ONLY_VERBS
         from jailbee.dashboard.menus import actions_for_container
 
-        return actions_for_container(self._groups, container_name)
+        return [
+            (label, verb)
+            for label, verb in actions_for_container(self._groups, container_name)
+            if verb not in TUI_ONLY_VERBS
+        ]
+
+    def _bulk_actions_for(self, names: list[str]) -> list[BulkAction]:
+        from jailbee.dashboard.bulk import TUI_ONLY_VERBS, bulk_actions
+
+        return [
+            action
+            for action in bulk_actions(self._groups, names)
+            if action.verb not in TUI_ONLY_VERBS
+        ]
 
     def _selected_names(self) -> list[str]:
         """Every selected container row's name, in tree order; group rows are skipped."""
@@ -614,11 +629,9 @@ class MainWindow(QMainWindow):
 
     def _bulk_context_menu(self, names: list[str], pos: object) -> None:
         """The menu for several selected rows: what at least one of them can take."""
-        from jailbee.dashboard.bulk import bulk_actions
-
         menu = QMenu(self)
         menu.addAction(f"{len(names)} selected").setEnabled(False)
-        actions = bulk_actions(self._groups, names)
+        actions = self._bulk_actions_for(names)
         if not actions:
             menu.addAction("No action applies to all of them").setEnabled(False)
         for action in actions:

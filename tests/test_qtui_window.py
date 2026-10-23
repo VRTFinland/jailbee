@@ -93,6 +93,27 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
     assert "Network: strict" not in expected
 
 
+def test_qt_container_actions_keep_browse_but_hide_clear(qtbot):
+    from jailbee.git_status import GitStatus
+
+    groups = _groups()
+    groups[0].containers[0].git_status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        pending_pr_actions=1,
+        pending_issue_actions=1,
+    )
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.set_groups(groups, now=datetime.now().astimezone())
+
+    verbs = [verb for _label, verb in win._actions_for("p-foo")]
+    assert "outbox browse" in verbs
+    assert "outbox clear" not in verbs
+
+
 @pytest.mark.parametrize("config_path", [Path("/repo/.jailbee/config.yaml"), None])
 def test_outbox_browse_launches_in_terminal_with_repo_target(config_path):
     from jailbee.dashboard.model import RepoTarget
@@ -976,6 +997,25 @@ def test_a_refresh_keeps_every_selected_row(qtbot):
     win.set_groups(_groups(), now=datetime.now().astimezone())
 
     assert win._selected_names() == ["p-foo", "p-bar"]
+
+
+def test_qt_bulk_actions_hide_clear_outbox(qtbot, monkeypatch):
+    from jailbee.dashboard import bulk as dashboard_bulk
+    from jailbee.dashboard.bulk import BulkAction
+
+    win = MainWindow(layout="table")
+    qtbot.addWidget(win)
+    monkeypatch.setattr(
+        dashboard_bulk,
+        "bulk_actions",
+        lambda _groups, _names: [
+            BulkAction("outbox browse", ("p-foo", "p-bar")),
+            BulkAction("outbox clear", ("p-foo", "p-bar")),
+        ],
+    )
+
+    actions = win._bulk_actions_for(["p-foo", "p-bar"])
+    assert [action.verb for action in actions] == ["outbox browse"]
 
 
 def test_context_menu_with_two_rows_offers_bulk_actions(qtbot):

@@ -308,6 +308,28 @@ def test_context_menu_emits_action_requested(qtbot):
     assert isinstance(verb, str) and verb
 
 
+def test_card_context_menu_hides_clear_but_keeps_browse(qtbot):
+    from jailbee.git_status import GitStatus
+
+    groups = _groups()
+    groups[0].containers[0].git_status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        pending_pr_actions=1,
+        pending_issue_actions=1,
+    )
+    view = CardView()
+    qtbot.addWidget(view)
+    view.set_groups(groups, now=datetime.now().astimezone())
+
+    labels = [label for label, _enabled in _popup_actions(view, "p-foo")]
+
+    assert any(label.startswith("Outbox") for label in labels)
+    assert "Clear outbox…" not in labels
+
+
 def test_card_context_menu_submenus_dispatch_leaf_verb(qtbot):
     from PySide6.QtCore import QPoint, QTimer
     from PySide6.QtWidgets import QApplication, QMenu
