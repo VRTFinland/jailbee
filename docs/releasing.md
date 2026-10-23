@@ -81,6 +81,109 @@ make publish-testpypi
 Then check the rendered project page and, optionally, install from TestPyPI in
 a throwaway environment.
 
+## Reviewing dependencies before a release
+
+Do this while preparing the CHANGELOG — before `make release`, on the branch
+that will be merged to `main` — so any bump lands in the release it is
+reviewed for and gets its own CHANGELOG entry and, where needed, an
+`UPGRADE_NOTES` entry.
+
+### Dependabot pull requests
+
+Dependabot opens weekly PRs against `uv.lock` (and GitHub Actions). List the
+open ones:
+
+```bash
+gh pr list -R VRTFinland/jailbee --author 'app/dependabot' --state open
+```
+
+For each:
+
+- **Already superseded?** Compare the PR's target version with `uv.lock` on
+  the release branch. A later bump (another PR, or a manual `uv lock`) leaves
+  the PR stale; close it on GitHub.
+- **Read the upstream changelog**, at least for the range being skipped.
+  Major versions (mypy 1 → 2 and the like) usually need code changes; leave
+  those for their own commit rather than folding them into the release.
+- **Check CI** (`gh pr checks <n>`). A red PR is not merged as is.
+- **Merge** the ones that pass. From inside a container, where `gh` is
+  read-only, apply the same bump locally and commit it — Dependabot closes
+  its PR once the change reaches the default branch:
+  ```bash
+  uv lock --upgrade-package <name>==<version>
+  ```
+  Edit `pyproject.toml` first when the dependency is pinned there with `==`.
+  Run `make check` (and `make site site-check` for the docs toolchain).
+
+These are development and build dependencies; a runtime dependency bump of
+`jailbee` itself goes in the CHANGELOG only if a user would notice.
+
+### The LiteLLM proxy pin
+
+`PINNED_LITELLM_VERSION` in `src/jailbee/config/models_litellm.py` and the
+hash-locked `src/jailbee/provision/litellm/requirements.lock` decide what
+`jailbee litellm up` installs into a container that holds provider
+credentials. LiteLLM has been compromised on PyPI twice (1.82.7/1.82.8 in
+March 2026, 1.107.0 on 2026-10-21 — both credential stealers that ran at
+Python startup), so this pin is updated **conservatively and by hand**:
+
+1. **Check whether there is a reason to move.** List the releases since the
+   pin (`https://pypi.org/pypi/litellm/json`, or the GitHub releases page)
+   and read their notes. Prefer patch releases on the pinned stable line
+   (`1.106.x`) over a new minor. No security fix and no bug that affects
+   jailbee's routes → stay where you are.
+2. **Let a candidate age.** Pin only a stable release (no `rc`/`dev`) that has
+   been on PyPI for at least **7 days**, and search for security advisories
+   or incident reports about it and its neighbours before trusting it.
+   Compromised uploads have so far been found and pulled within hours to
+   days.
+3. **Verify the artifacts.** Download the wheel(s) and sdist into an empty
+   scratch directory — never `pip install` them — and check:
+   - the sha256 of each file equals the digest PyPI publishes for it;
+   - there is no `.pth` file and no new top-level module outside the
+     package, and `entry_points.txt` and `Requires-Dist` changed only as the
+     release notes explain;
+   - the Python sources are byte-identical to the GitHub release tag
+     (`diff -r` of the extracted wheel against the tag's tarball); the same
+     for `litellm-enterprise` and any other `litellm-*` package whose version
+     moves;
+   - skim the diff from the current pin (`gh api
+     repos/BerriAI/litellm/compare/v<old>...v<new>`), at least for anything
+     touching packaging, startup hooks, network calls or credential handling.
+   A native extension (`rust_bridge/_native.abi3.so`) cannot be checked
+   against source this way; note that in the commit message.
+4. **Regenerate the lock moving only LiteLLM's own packages.** Keep every
+   other pin as it is, and cut the index off at a date you have reviewed:
+   ```bash
+   cp src/jailbee/provision/litellm/requirements.lock new.lock
+   echo 'litellm[proxy]==<version>' > litellm-req.in
+   uv pip compile litellm-req.in --universal --generate-hashes \
+     --python-version 3.12 --prerelease=if-necessary-or-explicit -o new.lock \
+     --upgrade-package litellm --upgrade-package litellm-enterprise \
+     --upgrade-package litellm-proxy-extras \
+     --exclude-newer <ISO timestamp just after the candidate's upload>
+   ```
+   Run this in a scratch directory and copy `new.lock` back. Diff the
+   package lines: anything beyond the `litellm-*` packages moving is a
+   transitive change the new release requires — review each one like the
+   candidate itself, or do not take the release.
+5. **Update the pin everywhere** — `PINNED_LITELLM_VERSION`, the version in
+   `docs/litellm.md` and `docs/config.md`, the test fixtures that carry it —
+   and add a `### Changed` CHANGELOG entry plus an `UPGRADE_NOTES` entry
+   (`apply`: `jailbee apply` reports that the proxy needs
+   `jailbee litellm up`). The commit message records what was verified and
+   what could not be.
+
+The proxy's egress lockdown (package hosts only, without the state volume,
+while installing; provider hosts only afterwards) limits what a malicious
+release could reach, but it does not make one harmless: the proxy holds
+provider credentials, can spend them on the allowed providers, and resolves
+names through the bridge's DNS.
+
+A user who sets `litellm.version` installs without hashes and takes
+whatever PyPI serves for that version; that is documented as their choice,
+and nothing here protects it.
+
 ## Cutting a release
 
 ```bash
@@ -103,8 +206,11 @@ happens. Step by step:
    `UPGRADE_NOTES` in `src/jailbee/upgrade.py` needs an entry at **this**
    release's version, with a one-line reason a user can act on. The entry is
    invisible until that version ships and silently wrong if the version
-   number changes afterward, so confirm it matches `VERSION` above. Save and
-   exit when it reads the way you want.
+   number changes afterward, so confirm it matches `VERSION` above. Also
+   confirm the [dependency review](#reviewing-dependencies-before-a-release)
+   was done for this release: open Dependabot PRs handled, and the LiteLLM
+   pin either deliberately kept or bumped through the verified procedure.
+   Save and exit when it reads the way you want.
 3. **Confirmation** — you are asked `Proceed with release v1.0.1? [y/N]`.
    Answering anything but `y`/`Y` aborts with no changes pushed or published.
 4. **Publish** — only after confirmation: bump the version (`uv version`),
