@@ -1047,14 +1047,22 @@ class DashboardSession:
             target=container,
         )
 
-    def change_memory(self, container: str, size: str, *, force: bool = False, confirmed_target: str | None = None) -> Picker | None:
+    def change_memory(
+        self, container: str, size: str, *, force: bool = False, confirmed_target: str | None = None
+    ) -> Picker | None:
         """Re-resolve the target and require consent before a potentially unsafe cap."""
         repo = self.dispatchable(container, "mem")
         found = self._listed_container(container)
         if repo is None or found is None:
             return None
         from jailbee.incus import IncusError
-        from jailbee.memory_limit import DEFAULT_WORD, below_usage, inherited_limit, same_size, validate_size
+        from jailbee.memory_limit import (
+            DEFAULT_WORD,
+            below_usage,
+            inherited_limit,
+            same_size,
+            validate_size,
+        )
 
         _, info = found
         try:
@@ -1063,7 +1071,9 @@ class DashboardSession:
             self.set_notice(str(exc))
             return None
         if target is None:
-            self.set_notice("Cannot clear memory override without an inherited cap; run `jb apply` first.")
+            self.set_notice(
+                "Cannot clear memory override without an inherited cap; run `jb apply` first."
+            )
             return None
         if confirmed_target is not None and not same_size(target, confirmed_target):
             self.set_notice("Memory target changed; select it again.")
@@ -1778,7 +1788,9 @@ class DashboardSession:
             return self.change_memory(picker.target, entry.value)
         if picker.purpose == "container-memory-confirm":
             if entry.value == "yes":
-                return self.change_memory(picker.target, picker.carry[0], force=True, confirmed_target=picker.carry[1])
+                return self.change_memory(
+                    picker.target, picker.carry[0], force=True, confirmed_target=picker.carry[1]
+                )
             self.set_notice("Cancelled")
             return None
         if picker.purpose == "repo-group":

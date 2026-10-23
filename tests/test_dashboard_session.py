@@ -180,7 +180,15 @@ def test_memory_below_usage(mocker, tmp_path, size, answer):
     quiet.assert_not_called()
     session.submit_picker(confirm, PickerEntry(answer, answer))
     if answer == "yes":
-        assert quiet.call_args.args[1] == ["mem", "--confirmed-target", "16GiB" if size == "default" else size, "--force", "--", "alpha-one", size]
+        assert quiet.call_args.args[1] == [
+            "mem",
+            "--confirmed-target",
+            "16GiB" if size == "default" else size,
+            "--force",
+            "--",
+            "alpha-one",
+            size,
+        ]
     else:
         quiet.assert_not_called()
         assert session.notice == "Cancelled"
@@ -226,17 +234,17 @@ def test_memory_ssh_denial_never_opens_picker(mocker, tmp_path):
 
 def test_memory_confirmation_cannot_force_different_inherited_target(mocker, tmp_path):
     session, quiet = _memory_session(mocker, tmp_path, 20 * 1024**3)
-    confirm = session.change_memory('alpha-one', 'default')
+    confirm = session.change_memory("alpha-one", "default")
     assert isinstance(confirm, Picker)
-    session.incus.profile_show.return_value = 'config: {limits.memory: 8GiB}'
-    session.submit_picker(confirm, PickerEntry('Yes', 'yes'))
+    session.incus.profile_show.return_value = "config: {limits.memory: 8GiB}"
+    session.submit_picker(confirm, PickerEntry("Yes", "yes"))
     quiet.assert_not_called()
-    assert 'changed' in session.notice
+    assert "changed" in session.notice
 
 
 def test_memory_default_refuses_uncapped_target(mocker, tmp_path):
     session, quiet = _memory_session(mocker, tmp_path)
-    session.incus.profile_show.return_value = 'config: {}'
-    assert session.change_memory('alpha-one', 'default') is None
+    session.incus.profile_show.return_value = "config: {}"
+    assert session.change_memory("alpha-one", "default") is None
     quiet.assert_not_called()
-    assert 'apply' in session.notice
+    assert "apply" in session.notice

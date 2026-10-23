@@ -3362,7 +3362,9 @@ def test_apply_migrates_memory_after_profile_write_and_warns_from_old_snapshot(
     incus.profile_exists.return_value = True
     applied_profiles = {base: "config: {}"}
     incus.profile_show.side_effect = lambda name: applied_profiles.get(name, "config: {}")
-    incus.profile_set_yaml.side_effect = lambda name, content: applied_profiles.__setitem__(name, content)
+    incus.profile_set_yaml.side_effect = lambda name, content: applied_profiles.__setitem__(
+        name, content
+    )
     mocker.patch("jailbee.apply._profile_differs", side_effect=lambda _i, n, _y: n == base)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
     rows = [
@@ -3408,33 +3410,49 @@ def test_apply_samples_usage_before_live_memory_enforcement(make_cfg, tmp_path, 
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
     from jailbee.profiles import profile_names
+
     cfg = make_cfg(tmp_path)
-    cfg = cfg.model_copy(update={'defaults': cfg.defaults.model_copy(update={'memory': '8GiB'})})
+    cfg = cfg.model_copy(update={"defaults": cfg.defaults.model_copy(update={"memory": "8GiB"})})
     base = profile_names(cfg).base
     incus = MagicMock(spec=Incus)
     incus.network_acl_list.return_value = []
-    incus.network_get.return_value = ''
+    incus.network_get.return_value = ""
     incus.profile_exists.return_value = True
-    profiles = {base: 'config: {limits.memory: 16GiB}'}
+    profiles = {base: "config: {limits.memory: 16GiB}"}
     events = []
+
     def write(name, content):
-        events.append('write')
+        events.append("write")
         profiles[name] = content
-    incus.profile_show.side_effect = lambda n: profiles.get(n, 'config: {}')
+
+    incus.profile_show.side_effect = lambda n: profiles.get(n, "config: {}")
     incus.profile_set_yaml.side_effect = write
-    incus.config_unset_checked.side_effect = lambda *args: events.append('unset')
+    incus.config_unset_checked.side_effect = lambda *args: events.append("unset")
     incus.list_containers.return_value = [
-        {'name': n, 'profiles': [base], 'config': {'limits.memory': '8GiB'} if n == 'pin' else {}}
-        for n in ['following', 'pin']
+        {"name": n, "profiles": [base], "config": {"limits.memory": "8GiB"} if n == "pin" else {}}
+        for n in ["following", "pin"]
     ]
-    mocker.patch('jailbee.apply._profile_differs', side_effect=lambda _i, n, _y: n == base)
-    mocker.patch('jailbee.apply._acl_differs', return_value=False)
+    mocker.patch("jailbee.apply._profile_differs", side_effect=lambda _i, n, _y: n == base)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+
     def listing(*args):
-        usage = 6 if 'write' in events else 12
-        events.append('usage')
-        return [ContainerInfo(n, 'Running', 'loose', None, '16GiB', memory_override=n == 'pin', memory_usage=usage * 1024**3) for n in ['following', 'pin']]
-    mocker.patch('jailbee.apply._list_containers', side_effect=listing)
+        usage = 6 if "write" in events else 12
+        events.append("usage")
+        return [
+            ContainerInfo(
+                n,
+                "Running",
+                "loose",
+                None,
+                "16GiB",
+                memory_override=n == "pin",
+                memory_usage=usage * 1024**3,
+            )
+            for n in ["following", "pin"]
+        ]
+
+    mocker.patch("jailbee.apply._list_containers", side_effect=listing)
     result = run_apply(cfg, incus, GlobalConfig(), no_restart=True)
-    assert result.memory_low == ['following', 'pin']
-    assert result.memory_defaulted == ['pin']
-    assert events.index('usage') < events.index('write') < events.index('unset')
+    assert result.memory_low == ["following", "pin"]
+    assert result.memory_defaulted == ["pin"]
+    assert events.index("usage") < events.index("write") < events.index("unset")

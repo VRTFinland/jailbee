@@ -1558,7 +1558,9 @@ def test_new_container_memory_override_is_explicit(tmp_path, mocker, memory, for
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
-    incus.profile_show.return_value = "config: {limits.memory: 16GiB}" if memory is None else "config: {}"
+    incus.profile_show.return_value = (
+        "config: {limits.memory: 16GiB}" if memory is None else "config: {}"
+    )
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     opts = NewContainerOptions(
         container_branch="feat/x",
@@ -11163,23 +11165,44 @@ def test_memory_override_cells_and_json(override, state):
     assert _ls_spec("mem").json(c) == {"usage": 2 * 1024**3, "limit": "24GiB", "override": override}
 
 
-@pytest.mark.parametrize('fork_of', [None, 'repo-source'])
-@pytest.mark.parametrize('worker', [False, True])
-@pytest.mark.parametrize('mount', [False, True])
-@pytest.mark.parametrize('golden', [False, True])
-def test_new_refuses_unupgraded_memory_profile_before_creation(tmp_path, mocker, fork_of, worker, mount, golden):
+@pytest.mark.parametrize("fork_of", [None, "repo-source"])
+@pytest.mark.parametrize("worker", [False, True])
+@pytest.mark.parametrize("mount", [False, True])
+@pytest.mark.parametrize("golden", [False, True])
+def test_new_refuses_unupgraded_memory_profile_before_creation(
+    tmp_path, mocker, fork_of, worker, mount, golden
+):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = golden
-    incus.profile_show.return_value = 'config: {}'
+    incus.profile_show.return_value = "config: {}"
     incus.list_containers.return_value = []
-    mocker.patch('jailbee.lifecycle.branch_exists_locally', return_value=True)
-    opts = NewContainerOptions(container_branch='feat/x', name=None, network='strict', memory=None, cpu=4, from_base=cfg.golden.alias if golden else 'gisgro-base', clone=not mount, mount=mount, autostart=False, fork_of=fork_of)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory=None,
+        cpu=4,
+        from_base=cfg.golden.alias if golden else "gisgro-base",
+        clone=not mount,
+        mount=mount,
+        autostart=False,
+        fork_of=fork_of,
+    )
     if worker:
         import json
-        from jailbee.background import op_to_job, job_to_opts
-        opts, _, _ = job_to_opts(json.loads(json.dumps(op_to_job(opts, container_name='repo-feat-x', log_path='/tmp/create.log'))))
-    with pytest.raises(ValueError, match='apply'):
+
+        from jailbee.background import job_to_opts, op_to_job
+
+        opts, _, _ = job_to_opts(
+            json.loads(
+                json.dumps(
+                    op_to_job(opts, container_name="repo-feat-x", log_path="/tmp/create.log")
+                )
+            )
+        )
+    with pytest.raises(ValueError, match="apply"):
         new_container(cfg, incus, opts, on_phase=(lambda _: None) if worker else None)
     incus.init.assert_not_called()
     incus.copy.assert_not_called()

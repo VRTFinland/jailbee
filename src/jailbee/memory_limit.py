@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-
-import yaml
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from jailbee.incus import Incus
 
@@ -164,9 +164,13 @@ def run_mem(
     clear = size == DEFAULT_WORD
     target = inherited_limit(incus, name) if clear else size
     if target is None:
-        raise ValueError("Cannot clear memory override without an inherited cap; run `jb apply` first.")
+        raise ValueError(
+            "Cannot clear memory override without an inherited cap; run `jb apply` first."
+        )
     if confirmed_target is not None and not same_size(target, confirmed_target):
-        raise ValueError(f"Memory target changed from {confirmed_target} to {target}; select it again.")
+        raise ValueError(
+            f"Memory target changed from {confirmed_target} to {target}; select it again."
+        )
     if message := validate_size(target):
         raise ValueError(message)
     container = next((row for row in list_containers(cfg, incus) if row.name == name), None)

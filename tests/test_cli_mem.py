@@ -103,76 +103,95 @@ def test_mem_missing_positionals_uses_resolver_and_size_options(rig, mocker, cho
     expected = size_options(
         current=row.memory_limit, override=True, default=cfg.defaults.memory, host_total=20 * GiB
     )
-    assert [(o.value, o.title) for o in options] == [(o.value, o.label + (" *" if o.current else "")) for o in expected]
+    assert [(o.value, o.title) for o in options] == [
+        (o.value, o.label + (" *" if o.current else "")) for o in expected
+    ]
     incus.config_set.assert_called_once_with(
         full, "limits.memory", "12GiB" if choice == "other" else "8GiB"
     )
     assert ask.called is (choice == "other")
 
 
-@pytest.mark.parametrize(('configured', 'inherited', 'force', 'allowed'), [
-    ('32GiB', '8GiB', False, False), ('32GiB', '8GiB', True, True),
-    ('8GiB', '32GiB', False, True), ('32GiB', None, True, False),
-])
-def test_clear_uses_actual_inheritance_not_unapplied_config(rig, configured, inherited, force, allowed):
+@pytest.mark.parametrize(
+    ("configured", "inherited", "force", "allowed"),
+    [
+        ("32GiB", "8GiB", False, False),
+        ("32GiB", "8GiB", True, True),
+        ("8GiB", "32GiB", False, True),
+        ("32GiB", None, True, False),
+    ],
+)
+def test_clear_uses_actual_inheritance_not_unapplied_config(
+    rig, configured, inherited, force, allowed
+):
     cfg, incus, _, row, _, _ = rig
     cfg.defaults.memory = configured
     row.memory_usage = 12 * GiB
-    incus.profile_show.return_value = f'config: {{limits.memory: {inherited}}}' if inherited else 'config: {}'
-    result = runner.invoke(app, ['mem', 'feat-1', 'default', *(['--force'] if force else [])])
+    incus.profile_show.return_value = (
+        f"config: {{limits.memory: {inherited}}}" if inherited else "config: {}"
+    )
+    result = runner.invoke(app, ["mem", "feat-1", "default", *(["--force"] if force else [])])
     assert result.exit_code == (0 if allowed else 2), result.output
     assert incus.config_unset_checked.called is allowed
     incus.config_set.assert_not_called()
-    assert (inherited or 'apply') in result.output
+    assert (inherited or "apply") in result.output
 
 
-@pytest.mark.parametrize('accept', [False, True])
+@pytest.mark.parametrize("accept", [False, True])
 def test_clear_tty_confirmation_names_actual_target(rig, mocker, accept):
     cfg, incus, _, row, _, _ = rig
-    cfg.defaults.memory = '32GiB'
+    cfg.defaults.memory = "32GiB"
     row.memory_usage = 12 * GiB
-    incus.profile_show.return_value = 'config: {limits.memory: 8GiB}'
-    mocker.patch('jailbee.prompting.is_interactive', return_value=True)
-    confirm = mocker.patch('jailbee.prompting._confirm', return_value=accept)
-    result = runner.invoke(app, ['mem', 'feat-1', 'default'])
+    incus.profile_show.return_value = "config: {limits.memory: 8GiB}"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=accept)
+    result = runner.invoke(app, ["mem", "feat-1", "default"])
     assert result.exit_code == (0 if accept else 1), result.output
-    assert '8GiB' in confirm.call_args.args[0]
+    assert "8GiB" in confirm.call_args.args[0]
     assert incus.config_unset_checked.called is accept
     incus.config_set.assert_not_called()
     if accept:
-        assert '(8GiB)' in result.output
+        assert "(8GiB)" in result.output
 
 
-@pytest.mark.parametrize(('current', 'override', 'marked'), [('16384MiB', True, '16GiB'), ('50%', True, '50%'), ('16GiB', False, 'default')])
+@pytest.mark.parametrize(
+    ("current", "override", "marked"),
+    [("16384MiB", True, "16GiB"), ("50%", True, "50%"), ("16GiB", False, "default")],
+)
 def test_cli_picker_renders_current_marker(rig, mocker, current, override, marked):
     _, _, _, row, _, _ = rig
     row.memory_limit, row.memory_override = current, override
-    mocker.patch('jailbee.sysstat.read_memory', return_value=None)
-    mocker.patch('jailbee.prompting.is_interactive', return_value=True)
-    select = mocker.patch('jailbee.prompting._select', return_value='24GiB')
-    result = runner.invoke(app, ['mem', 'feat-1'])
+    mocker.patch("jailbee.sysstat.read_memory", return_value=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="24GiB")
+    result = runner.invoke(app, ["mem", "feat-1"])
     assert result.exit_code == 0, result.output
     options = select.call_args.args[1]
-    assert [o.value for o in options if o.title.endswith(' *')] == [marked]
+    assert [o.value for o in options if o.title.endswith(" *")] == [marked]
 
 
 def test_confirmed_target_is_checked_again_in_cli(rig):
     _, incus, _, row, _, _ = rig
     row.memory_usage = 12 * GiB
-    incus.profile_show.return_value = 'config: {limits.memory: 4GiB}'
-    result = runner.invoke(app, ['mem', 'feat-1', 'default', '--force', '--confirmed-target', '8GiB'])
+    incus.profile_show.return_value = "config: {limits.memory: 4GiB}"
+    result = runner.invoke(
+        app, ["mem", "feat-1", "default", "--force", "--confirmed-target", "8GiB"]
+    )
     assert result.exit_code == 2, result.output
-    assert 'changed' in result.output
+    assert "changed" in result.output
     incus.config_unset_checked.assert_not_called()
 
 
 def test_clear_rechecks_profile_after_interactive_consent(rig, mocker):
     _, incus, _, row, _, _ = rig
     row.memory_usage = 20 * GiB
-    incus.profile_show.side_effect = ['config: {limits.memory: 16GiB}', 'config: {limits.memory: 4GiB}']
-    mocker.patch('jailbee.prompting.is_interactive', return_value=True)
-    mocker.patch('jailbee.prompting._confirm', return_value=True)
-    result = runner.invoke(app, ['mem', 'feat-1', 'default'])
+    incus.profile_show.side_effect = [
+        "config: {limits.memory: 16GiB}",
+        "config: {limits.memory: 4GiB}",
+    ]
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    result = runner.invoke(app, ["mem", "feat-1", "default"])
     assert result.exit_code == 2, result.output
-    assert 'changed' in result.output
+    assert "changed" in result.output
     incus.config_unset_checked.assert_not_called()

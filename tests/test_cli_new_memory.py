@@ -47,21 +47,22 @@ def test_invalid_memory_exits_before_creation(tmp_path, mocker, command, memory)
     pin.assert_not_called()
 
 
-@pytest.mark.parametrize('command', ['new', 'fork'])
+@pytest.mark.parametrize("command", ["new", "fork"])
 def test_cli_creation_reaches_shared_unupgraded_profile_guard(tmp_path, mocker, command):
     from jailbee.lifecycle import new_container
+
     _, create = _setup(tmp_path, mocker)
     create.side_effect = new_container
-    incus = __import__('jailbee.incus', fromlist=['Incus']).Incus.return_value
+    incus = __import__("jailbee.incus", fromlist=["Incus"]).Incus.return_value
     incus.list_containers.return_value = []
-    incus.profile_show.return_value = 'config: {}'
-    mocker.patch('jailbee.cli._resolve_existing', return_value=(incus, 'myrepo-src'))
-    mocker.patch('jailbee.forking.prepare_fork', return_value=SRC)
-    mocker.patch('jailbee.lifecycle.branch_exists_locally', return_value=True)
-    args = ['new', 'feat-a', '--no-clone'] if command == 'new' else ['fork', 'src', 'b']
-    result = CliRunner().invoke(app, [*args, '--no-autostart', '--no-background'])
+    incus.profile_show.return_value = "config: {}"
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-src"))
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    args = ["new", "feat-a", "--no-clone"] if command == "new" else ["fork", "src", "b"]
+    result = CliRunner().invoke(app, [*args, "--no-autostart", "--no-background"])
     assert result.exit_code == 2, result.output
-    assert 'jb apply' in result.output
+    assert "jb apply" in result.output
     incus.init.assert_not_called()
     incus.copy.assert_not_called()
     incus.start.assert_not_called()

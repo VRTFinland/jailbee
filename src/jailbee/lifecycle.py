@@ -1702,10 +1702,14 @@ def new_container(
         planned_profiles = ["default", names.base, names.binds]
         planned_profiles.extend(
             [f"{cfg.container_prefix}-net-work", f"{cfg.container_prefix}-net-work-{opts.network}"]
-            if generation == "work" else [names.net_by_mode[opts.network]]
+            if generation == "work"
+            else [names.net_by_mode[opts.network]]
         )
         if profile_limit(incus, planned_profiles) is None:
-            raise ValueError("Repository profiles have no inherited memory cap; run `jb apply` before creating without --memory.")
+            raise ValueError(
+                "Repository profiles have no inherited memory cap; "
+                "run `jb apply` before creating without --memory."
+            )
 
     _phase("creating")
     if generation == "work":
