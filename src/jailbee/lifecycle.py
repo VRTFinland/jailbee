@@ -526,8 +526,8 @@ def list_containers(
         pid_raw = state_data.get("pid")
         init_pid = pid_raw if isinstance(pid_raw, int) and pid_raw > 0 else None
 
-        # Incus reports `memory.current`, which counts reclaimable page cache;
-        # the memory a container really uses leaves that out.
+        # Incus reports `memory.current`, which counts memory the kernel frees
+        # under pressure; what is left is what drives a container towards OOM.
         if memory_usage is not None and init_pid is not None:
             cache = read_container_cache(init_pid, raw["name"])
             if cache is not None:

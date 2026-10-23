@@ -462,10 +462,14 @@ def _write_memory_stat(cg: Path, rel: str, text: str) -> None:
     (d / "memory.stat").write_text(text)
 
 
-def test_read_container_cache_is_file_less_shmem(tmp_path):
+def test_read_container_cache_is_inactive_file_plus_reclaimable_slab(tmp_path):
     proc, cg = tmp_path / "proc", tmp_path / "cgroup"
     write_cgroup(proc, 500, "/lxc.payload.gie-demo/init.scope")
-    _write_memory_stat(cg, "/lxc.payload.gie-demo", "anon 100\nfile 1000\nshmem 300\n")
+    _write_memory_stat(
+        cg,
+        "/lxc.payload.gie-demo",
+        "anon 100\nfile 1000\ninactive_file 600\nslab_reclaimable 100\nshmem 300\n",
+    )
 
     cache = procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg)
 

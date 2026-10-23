@@ -237,12 +237,15 @@ def read_container_cache(
     proc_root: Path = PROC_ROOT,
     cgroup_root: Path = CGROUP_ROOT,
 ) -> int | None:
-    """Bytes of reclaimable page cache charged to the container's cgroup.
+    """Bytes of the container's memory the kernel frees before it OOM-kills.
 
     Incus reports ``memory.current`` as the container's usage, and that
-    figure includes file cache the kernel gives back under pressure. The
-    cache is ``file`` less ``shmem`` from the container's ``memory.stat``:
-    shared memory (tmpfs) is counted in ``file`` but cannot be reclaimed.
+    figure includes cache the kernel gives back under pressure. What is
+    freed first is ``inactive_file`` plus ``slab_reclaimable`` in the
+    container's ``memory.stat``; active file pages (running binaries and
+    libraries) are kept in the usage, so it nears the limit only when an OOM
+    kill is near. Shared memory (tmpfs) sits on the anon LRU, so it stays in
+    the usage as well.
 
     None when the figure cannot be read; the caller then keeps what Incus said.
     Same host-side cgroup-namespace assumption as ``read_container_pids``.
@@ -265,9 +268,9 @@ def read_container_cache(
             fields[key] = int(value)
         except ValueError:
             continue
-    if "file" not in fields:
+    if "inactive_file" not in fields:
         return None
-    return max(0, fields["file"] - fields.get("shmem", 0))
+    return fields["inactive_file"] + fields.get("slab_reclaimable", 0)
 
 
 @dataclass(frozen=True)
