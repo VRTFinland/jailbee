@@ -1451,6 +1451,24 @@ as outdated). Applying deletes the manifest and appends a line to
 `~/.jailbee/pr-outbox/applied.log`; re-running `apply` is a no-op for
 anything already published, so nothing double-posts.
 
+When a PR manifest has a pending review comment or reply, `apply` offers
+**Publish**, **Publish as draft review**, and **Cancel** (Esc cancels too).
+`--draft` preselects the draft choice; `--draft -y` publishes without asking,
+while plain `-y` confirms normal publication. A draft keeps review summaries,
+inline comments and replies in your pending review, visible only to the host's
+GitHub account until submission. An existing pending review on the same commit
+is appended to; a pending review on another commit is refused until submitted
+or discarded on GitHub. If appending fails partway, inspect that pending review
+before retrying because some comments may already be there.
+
+Draft mode holds general PR comments in the outbox for later normal
+publication. A staged PR description is still edited on GitHub immediately and
+is public. JailBee never submits the pending review: inspect or edit it and
+submit it in GitHub's UI, choosing Comment, Approve or Request changes there.
+The draft choice is offered only when a review comment or reply is pending;
+`--draft` is invalid if none is available. See the host-only
+[manual verification recipe](../../manual-testing.md#draft-review-publication).
+
 **`jailbee pr --no-outbox`** skips the outbox lookup entirely, including the
 offer described below — use it when a stray or unwanted manifest should be
 ignored for this run.

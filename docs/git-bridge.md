@@ -1207,7 +1207,25 @@ Existing repository/PR/head gates, issue `expected` checks, host identity,
 confirmation, receipts, resume and cleanup rules remain authoritative.
 `--force` overrides PR stale anchors only and is invalid for issues.
 `--yes` skips confirmation only; `--dry-run` publishes nothing but publication
-preflight can still read GitHub, unlike inspection.
+preflight can still read GitHub, unlike inspection. For PR manifests that have
+at least one pending review comment or reply, the host can choose **Publish**,
+**Publish as draft review**, or **Cancel** (the default/Esc choice). `--draft`
+preselects draft mode; with `-y` it confirms without a prompt. A draft review
+keeps review summaries, inline comments and replies in the host user's single
+pending GitHub review. An existing pending review on the same commit is
+appended to, including the review body; one attached to another commit is
+refused until it is submitted or discarded on GitHub. A partial append failure
+can leave some comments in that pending review, so inspect it before retrying.
+
+Draft mode does not post general PR comments: those actions stay pending in the
+manifest for a later normal publish. A staged PR description is still edited
+normally and is public. The pending review itself is not submitted by JailBee;
+inspect, edit or discard it and choose Comment / Approve / Request changes when
+you submit it in GitHub. Draft mode is available only when a review or reply is
+pending; Cancel leaves everything unpublished. A dry run with `--draft` marks
+actions as pending, held back, or published without changing GitHub. This
+GitHub write path has not yet been verified against a real host PR; see the
+host-only recipe in [Manual testing](manual-testing.md#draft-review-publication).
 
 A PR manifest normally names a PR the container owns: the one it was created
 from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked

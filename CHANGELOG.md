@@ -8,6 +8,10 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox.
+
 ## 1.7.8 - 2026-10-23
 
 ### Added

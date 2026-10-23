@@ -1924,6 +1924,43 @@ jailbee destroy feat-outboxsmoke --force
 git push origin --delete feat/outboxsmoke   # requires explicit user approval
 ```
 
+## Draft review publication
+
+> Host-only GitHub write verification, still owed. Requires `gh auth login` on
+> the host with write access to a disposable scratch PR and its repository.
+> Use a fresh PR so the draft review can be submitted or discarded afterward.
+> This recipe checks live GitHub behavior; unit tests mock these mutations.
+
+1. Create a scratch PR with a committed file, for example `review.txt`, and
+   note its current head SHA. Ensure the host's `gh` identity is the account
+   whose pending review should be created.
+2. In a review container for that PR, stage one PR manifest with a `review`
+   action containing a body and an inline comment on `review.txt` line 1, a
+   `reply` action targeting an existing review comment's REST database ID, a
+   general `comment` action, and a `description` action. Keep the manifest's
+   `head_sha` equal to the PR head. See the jailbee-pr-review skill's manifest
+   schema for exact field names.
+3. On the host, run `jailbee review apply <name> --dry-run`. Confirm the plan
+   labels review/reply actions pending, the general comment held back, and the
+   description published; GitHub must remain unchanged. Run
+   `jailbee review apply <name>` and choose **Publish as draft review**.
+4. In the GitHub UI, verify that the pending review contains the review body,
+   inline comment and reply, and is visible only to the host user's account.
+   Confirm the general comment was not posted and the PR description changed.
+   The description edit is public. Do not submit the pending review from JailBee;
+   inspect, edit or discard it, and submit it in GitHub when ready.
+5. Stage a second manifest with a review action and publish it as a draft.
+   Verify it appends to the same pending review. Then create a pending review
+   manually on another scratch PR commit and stage a manifest anchored to the
+   PR's current head; `jailbee review apply <name> --draft -y` must refuse it
+   with the other-commit message before adding comments.
+
+A pending reply uses GraphQL `addPullRequestReviewComment` with the pending
+review's node ID and `inReplyTo` comment node ID. JailBee first resolves the
+REST comment database ID via `GET repos/{owner}/{repo}/pulls/comments/{id}` to
+obtain that node ID. This mutation remains documented in GitHub's current
+schema but is deprecated; live verification on a real host PR is still owed.
+
 ## `jailbee issue ls/show/apply/drop/resolve` smoke test
 
 > Host-only. Requires `gh auth login` on the host with write access to a
