@@ -12382,7 +12382,20 @@ def _orphan_context(config: Path | None) -> tuple["Config", "IncusType", list[Pa
     from jailbee.dashboard.model import registered_repo_roots
     from jailbee.incus import Incus
 
-    return _load_or_exit(config), Incus(), registered_repo_roots()
+    return _load_orphan_base_or_exit(config), Incus(), registered_repo_roots()
+
+
+def _load_orphan_base_or_exit(config_path: Path | None) -> "Config":
+    """`_load_or_exit` for `jailbee orphan …`, which the dashboard runs from `$HOME`."""
+    from jailbee.config import load_orphan_base_config
+
+    if config_path is not None or _resolve_config_path_or_none(None) is not None:
+        return _load_or_exit(config_path)
+    try:
+        return load_orphan_base_config(Path.cwd())
+    except ConfigError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
 
 
 def _resolve_orphan(
