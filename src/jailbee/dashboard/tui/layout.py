@@ -36,6 +36,8 @@ class FrameLayout:
     """Bottom area lines before cropping."""
     crop_top: int
     """Lines removed from the bottom area's top."""
+    details_room: int = 0
+    """The most details content rows this frame could give, whatever is asked for."""
 
 
 def frame_layout(
@@ -49,12 +51,14 @@ def frame_layout(
     details_want: int,
     details_fit: bool,
     bottom_lines: Callable[[int, int | None], int],
+    details_pref: int | None = None,
 ) -> FrameLayout:
     """Budget the frame's inner height using a bottom-area line counter.
 
     ``details_cap`` is the rows the details panel is guaranteed, ``details_want``
     the rows it would use; it gets the difference only from rows the table
-    does not need.
+    does not need. ``details_pref``, the user's chosen height, replaces both,
+    still within what the table's floor leaves.
     """
     rest = height - notice_lines - hint_lines
     if not has_bottom:
@@ -62,6 +66,8 @@ def frame_layout(
         return _fit(height, table_rows, notice_lines, False, None, MIN_LIST_ROWS, 0, hint_lines)
     floor = min(table_lines, MIN_TABLE_ROWS + 1)
     room = max(0, rest - 1 - floor) - OVERLAY_BORDER_ROWS
+    if details_pref is not None:
+        details_cap = details_want = max(MIN_DETAILS_ROWS, details_pref)
     details_rows = min(details_cap, room)
     shown_details = details_rows if details_fit and details_rows >= MIN_DETAILS_ROWS else None
     list_rows = max(room, MIN_LIST_ROWS)
@@ -73,7 +79,17 @@ def frame_layout(
         if spare > 0:
             shown_details = min(details_want, shown_details + spare)
             bottom = bottom_lines(list_rows, shown_details)
-    return _fit(height, table_rows, notice_lines, gap, shown_details, list_rows, bottom, hint_lines)
+    return _fit(
+        height,
+        table_rows,
+        notice_lines,
+        gap,
+        shown_details,
+        list_rows,
+        bottom,
+        hint_lines,
+        max(0, room),
+    )
 
 
 def _fit(
@@ -85,6 +101,7 @@ def _fit(
     list_rows: int,
     bottom: int,
     hint_lines: int,
+    details_room: int = 0,
 ) -> FrameLayout:
     """Lose lines from the top until everything fits."""
     over = table_rows + notice_rows + int(gap) + bottom + hint_lines - height
@@ -98,4 +115,6 @@ def _fit(
         gap = False
         over -= 1
     crop_top = min(max(0, over), bottom)
-    return FrameLayout(table_rows, notice_rows, gap, details_rows, list_rows, bottom, crop_top)
+    return FrameLayout(
+        table_rows, notice_rows, gap, details_rows, list_rows, bottom, crop_top, details_room
+    )
