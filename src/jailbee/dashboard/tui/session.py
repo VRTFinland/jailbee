@@ -1910,7 +1910,7 @@ class DashboardSession:
             return None
         if picker.purpose == "bulk-destroy-confirm":
             if entry.value == "yes":
-                self._run_planned("destroy")
+                self._run_planned(picker.carry[0])
             else:
                 self.set_notice("Cancelled")
             return None
@@ -2447,6 +2447,7 @@ class DashboardSession:
             ssh_policy=self.ssh_policy,
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
+            orphans=True,
         )
 
     def _run_planned(self, verb: str, extra: Sequence[str] = ()) -> None:
@@ -2467,6 +2468,7 @@ class DashboardSession:
             ssh_policy=self.ssh_policy,
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
+            orphans=True,
         )
         entries = [PickerEntry(a.label, a.verb, BULK_KEYS[a.verb]) for a in actions]
         if self._bulk_mounts(names):
@@ -2570,12 +2572,14 @@ class DashboardSession:
         if verb == "merge":
             self.begin_merge_pick(action.eligible)
             return None
-        if verb == "destroy":
+        if verb in ("destroy", "orphan destroy"):
             n = len(action.eligible)
             return Picker(
                 "bulk-destroy-confirm",
-                f"Destroy {n} container{'s' if n != 1 else ''}: {', '.join(action.eligible)}?",
+                f"Destroy {n} {'orphan ' if verb == 'orphan destroy' else ''}"
+                f"container{'s' if n != 1 else ''}: {', '.join(action.eligible)}?",
                 (PickerEntry("No", "no"), PickerEntry(f"Yes, destroy {n}", "yes")),
+                carry=(verb,),
                 detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
             )
         if verb == "net loose":
@@ -2598,6 +2602,7 @@ class DashboardSession:
             ssh_policy=self.ssh_policy,
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
+            orphans=True,
         )
 
     def begin_destroy(self, name: str) -> Picker | None:
@@ -2655,6 +2660,8 @@ class DashboardSession:
         for name in action.eligible:
             group = _find_group(self.groups, name)
             target = RepoTarget.of(group) if group is not None else None
+            if target is None and group is not None and action.verb.startswith(ORPHAN_VERB_PREFIX):
+                target = RepoTarget.orphan()
             if target is None:
                 batch.skipped[name] = "gone"
                 continue

@@ -39,11 +39,21 @@ BULK_VERBS: tuple[str, ...] = (
     "net loose",
     "rename --clear",
     "destroy",
+    "orphan destroy",
 )
 # One detached child per container. The rest run once per repo, in the
 # terminal, over every name: their CLI asks questions and prints a roll-up.
 PARALLEL_VERBS: frozenset[str] = frozenset(
-    {"start", "stop", "restart", "net strict", "net loose", "rename --clear", "destroy"}
+    {
+        "start",
+        "stop",
+        "restart",
+        "net strict",
+        "net loose",
+        "rename --clear",
+        "destroy",
+        "orphan destroy",
+    }
 )
 # Parallel verbs whose CLI can hand the work to a tracked background worker.
 # Their child then returns at once and the job row (the JOB column, the yellow
@@ -65,6 +75,7 @@ BULK_LABELS: dict[str, str] = {
     "merge": "Merge into…",
     "rename --clear": "Clear name",
     "destroy": "Destroy…",
+    "orphan destroy": "Destroy orphans…",
 }
 # Each bulk verb's own key in the "N selected" list: the container menu's letter
 # for the same verb where there is one. The two network modes were never at the
@@ -80,12 +91,13 @@ BULK_KEYS: dict[str, str] = {
     "net loose": "w",
     "rename --clear": "R",
     "destroy": "D",
+    "orphan destroy": "O",
 }
 _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
 # Verbs that put their own question to the user. `destroy` shows its risk
 # summary; `merge` is asked once the targets are picked (by the terminal
 # dashboard itself, by the CLI for Qt), so the question can name both ends.
-ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "merge"})
+ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "orphan destroy", "merge"})
 # Foreground verbs the dashboard confirms itself: their CLI run is told not to
 # ask again (`--no-confirm`).
 DASHBOARD_CONFIRMED: frozenset[str] = frozenset({"git push", "git pull"})
@@ -153,11 +165,17 @@ def _offered(
     remote: bool,
     ssh_policy: RemoteSSHConfig | None,
     over_ssh: bool,
+    orphans: bool = False,
 ) -> set[str]:
     return {
         verb
         for _label, verb in actions_for_container(
-            list(groups), name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
+            list(groups),
+            name,
+            remote=remote,
+            ssh_policy=ssh_policy,
+            over_ssh=over_ssh,
+            orphans=orphans,
         )
     }
 
@@ -166,6 +184,8 @@ def _skip_reason(container: ContainerInfo | None, verb: str) -> str:
     """Why a container's menu does not offer ``verb``, in a few words."""
     if container is None:
         return "gone"
+    if verb == "orphan destroy":
+        return "not an orphan"
     state = container.state
     if verb == "rename --clear" and not container.alias:
         return "no alias"
@@ -191,11 +211,14 @@ def plan_bulk(
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
     busy: frozenset[str] = frozenset(),
+    orphans: bool = False,
 ) -> BulkAction:
     """Split ``names`` into the containers that take ``verb`` and the rest, with reasons.
 
     ``names`` keeps its order; a repeated name counts once. A name in ``busy``
-    (an operation on it is still running) is skipped as "busy".
+    (an operation on it is still running) is skipped as "busy". ``orphans`` is
+    :func:`actions_for_container`'s: only the terminal dashboard sets it, which
+    is what lets an orphan take ``orphan destroy``.
     """
     eligible: list[str] = []
     skipped: list[tuple[str, str]] = []
@@ -203,7 +226,9 @@ def plan_bulk(
         if name in busy:
             skipped.append((name, "busy"))
             continue
-        if verb in _offered(groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh):
+        if verb in _offered(
+            groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, orphans=orphans
+        ):
             eligible.append(name)
             continue
         group = _find_group(list(groups), name)
@@ -227,11 +252,19 @@ def bulk_actions(
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
     busy: frozenset[str] = frozenset(),
+    orphans: bool = False,
 ) -> list[BulkAction]:
     """Every bulk verb at least one of ``names`` takes, in :data:`BULK_VERBS` order."""
     plans = (
         plan_bulk(
-            groups, names, verb, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, busy=busy
+            groups,
+            names,
+            verb,
+            remote=remote,
+            ssh_policy=ssh_policy,
+            over_ssh=over_ssh,
+            busy=busy,
+            orphans=orphans,
         )
         for verb in BULK_VERBS
     )
@@ -248,7 +281,8 @@ def bulk_argv(verb: str, name: str, extra: Sequence[str] = ()) -> list[str]:
     """One parallel child's canonical argv: no ``jailbee``, no ``--config``.
 
     ``destroy`` gets ``--force``: the dashboard has asked already, and a
-    detached child has no stdin for the CLI's own question. The verbs in
+    detached child has no stdin for the CLI's own question; so does
+    ``orphan destroy``. The verbs in
     :data:`TRACKED_VERBS` get ``--background``, so their progress is a job row
     every view shows. ``extra`` carries the answers the dashboard collected
     (``--for <ttl>``).
@@ -256,7 +290,7 @@ def bulk_argv(verb: str, name: str, extra: Sequence[str] = ()) -> list[str]:
     return [
         *verb.split(),
         name,
-        *(["--force"] if verb == "destroy" else []),
+        *(["--force"] if verb in ("destroy", "orphan destroy") else []),
         *(["--background"] if verb in TRACKED_VERBS else []),
         *extra,
     ]

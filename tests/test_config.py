@@ -4609,6 +4609,30 @@ def test_home_directory_is_refused(tmp_path, monkeypatch, mocker, private_home):
     assert "home directory" in str(exc.value)
 
 
+def test_orphan_base_config_loads_from_home(tmp_path, monkeypatch, mocker, private_home):
+    """`jailbee orphan …` runs from `$HOME` in the dashboard: it must not be refused."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    from jailbee.config import ORPHAN_BASE_PREFIX, load_orphan_base_config
+
+    cfg = load_orphan_base_config(private_home)
+
+    assert cfg.container_prefix == ORPHAN_BASE_PREFIX
+
+
+def test_orphan_base_config_still_raises_for_a_broken_config_file(
+    tmp_path, monkeypatch, mocker, private_home
+):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    (private_home / ".jailbee").mkdir()
+    (private_home / ".jailbee" / "config.yaml").write_text("container_prefix: [not, a, string]\n")
+    from jailbee.config import ConfigError, load_orphan_base_config
+
+    with pytest.raises(ConfigError):
+        load_orphan_base_config(private_home)
+
+
 def test_filesystem_root_is_refused(tmp_path, monkeypatch, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     _write_global(tmp_path, monkeypatch)
