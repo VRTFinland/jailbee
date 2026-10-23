@@ -289,7 +289,9 @@ def _quiet(mocker, stdout: str | None = None, ok: bool = True):  # type: ignore[
     return mocker.patch.object(
         tsession.da,
         "run_cli_quiet",
-        return_value=tsession.da.CliResult(ok, "done" if ok else "exit 2", stdout or _outbox_json()),
+        return_value=tsession.da.CliResult(
+            ok, "done" if ok else "exit 2", stdout or _outbox_json()
+        ),
     )
 
 

@@ -21,10 +21,6 @@ from tests.dashboard_fixtures import (
     every_verb_group,
     mount_group,
 )
-from tests.test_dashboard_outbox import _action as _ob_action
-from tests.test_dashboard_outbox import _container as _ob_container
-from tests.test_dashboard_outbox import _listing as _ob_listing
-from tests.test_dashboard_outbox import _proposal as _ob_proposal
 from tests.dashboard_pilot import (
     Run,
     container_menu_keys,
@@ -34,6 +30,10 @@ from tests.dashboard_pilot import (
     patch_pause,
     repo_menu_keys,
 )
+from tests.test_dashboard_outbox import _action as _ob_action
+from tests.test_dashboard_outbox import _container as _ob_container
+from tests.test_dashboard_outbox import _listing as _ob_listing
+from tests.test_dashboard_outbox import _proposal as _ob_proposal
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 

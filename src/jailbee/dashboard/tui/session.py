@@ -157,6 +157,7 @@ from jailbee.dashboard.tui.menu_state import (
     open_menu,
     open_repo_menu,
 )
+from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
 from jailbee.dashboard.tui.overlay import (
     CommandState,
     Overlay,
@@ -164,7 +165,6 @@ from jailbee.dashboard.tui.overlay import (
     _with_egress_panel,
     overlay_key,
 )
-from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
 from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
