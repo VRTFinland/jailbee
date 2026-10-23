@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from jailbee import pr
@@ -68,23 +67,19 @@ class DraftSession:
             self._looked_up = True
             return self._pending.url
 
+        # A pending snapshot can be submitted in GitHub at any time. Neither
+        # review-body update API guarantees an atomic pending-only write.
+        if action.body:
+            raise pr.PrReviewError(
+                f"cannot add a summary to your existing review on PR #{self.target.pr.number} "
+                "safely as a draft; add the summary in GitHub or stage an empty summary"
+            )
+
         appended = False
         try:
             for comment in comments:
                 pr.add_pending_review_thread(self.target.scope.repo_root, pending, comment)
                 appended = True
-            if action.body:
-                body = f"{pending.body}\n\n{action.body}" if pending.body else action.body
-                pr.update_pending_review_body(
-                    self.target.scope.repo_root,
-                    self.target.pr.number,
-                    pending,
-                    body,
-                    repo=self.target.manifest.repo,
-                )
-                # The frozen value models GitHub's current pending review; later
-                # actions in this session must append to this updated body.
-                self._pending = replace(pending, body=body)
         except pr.PrReviewError as exc:
             if appended:
                 raise pr.PrReviewError(

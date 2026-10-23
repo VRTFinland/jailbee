@@ -1949,9 +1949,19 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
    Confirm the general comment was not posted and the PR description changed.
    The description edit is public. Inspect, edit or discard the pending review
    in GitHub; JailBee does not submit it.
-5. Stage a second manifest with a review action and publish it as a draft.
-   Verify it appends to the same pending review. Submit or discard that review
-   in GitHub before continuing, so the account has no pending review.
+5. Stage a second manifest with a nonempty review summary and an inline
+   comment. Draft publication must refuse with instructions to add the summary
+   in GitHub or stage an empty summary; neither the summary nor the comment may
+   change remotely. Repeat with a body-only action: it must also refuse. For a
+   concurrent-submission check, submit the existing review in GitHub immediately
+   after JailBee's pending lookup (use a debugger pause in `DraftSession.review`
+   after `_get_pending` if needed), then resume the body-only action. It must
+   refuse without editing the now-public summary. Verify with a second account
+   that the unseen text was not published. Create a fresh pending review and
+   retry the inline action with `body: ""`; it must append to that review without
+   changing its summary. Replies must also remain private. Submit or discard
+   that review in GitHub before continuing. Summaries remain supported only on
+   initial creation, not on later actions even within the same session.
 6. For reply-only creation, use a fresh scratch PR with an existing review
    comment to reply to, and verify the host account has no pending review on
    that PR. Stage a manifest containing only a `reply` action. Run
@@ -1961,8 +1971,7 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
    accepts creating an empty pending review before attaching a reply.
 7. For the other-commit refusal, start with no pending review. Record PR head A,
    then create a pending review at A in the GitHub UI (or with
-   `gh api repos/<owner>/<repo>/pulls/<N>/reviews --method POST \\
-     -f commit_id=<A> -f body=''`). Advance the PR head to B and record B; pushing
+   `gh api repos/<owner>/<repo>/pulls/<N>/reviews --method POST -f commit_id=<A> -f body=''`). Advance the PR head to B and record B; pushing
    that commit to the scratch PR requires separate approval. Stage a fresh
    manifest with `head_sha` B and a review comment. `jailbee review apply <name>
    --draft -y` must refuse because the existing pending review is on A. Verify

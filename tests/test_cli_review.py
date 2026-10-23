@@ -1113,7 +1113,7 @@ def test_review_apply_draft_wiring(mocker, tmp_path, interactive, flags, draft, 
     if draft:
         assert kw["confirm"](3) is ("-y" in flags)
         if "-y" not in flags:
-            assert "as a draft review" in confirm.call_args.args[0]
+            assert confirm.call_args.args[0] == "Publish 3 actions as a draft review?"
             assert confirm.call_args.kwargs["default"] is False
 
 

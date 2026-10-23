@@ -13376,7 +13376,7 @@ def review_apply_cmd(
         info(f"Nothing pending in {short}.")
         return
 
-    def _confirm(_count: int) -> bool:
+    def _confirm(count: int) -> bool:
         """Answer the plan's single question — or refuse to answer it for the user.
 
         `--yes` is the whole answer when it was given. Without it, a run that
@@ -13384,8 +13384,7 @@ def review_apply_cmd(
         for "you have to say so yourself" belongs here rather than in
         `pr_outbox`, which only ever returns a failure count.
 
-        The count is ignored: the plan's identity line has just said how much
-        is about to be published, in the sentence directly above this prompt.
+        Draft confirmation repeats the selected-mode count from the plan.
         """
         if yes:
             return True
@@ -13395,7 +13394,8 @@ def review_apply_cmd(
                 "Re-run with -y, or from a terminal."
             )
             raise typer.Exit(2)
-        return typer.confirm("Proceed as a draft review?" if draft else "Proceed?", default=False)
+        question = f"Publish {count} actions as a draft review?" if draft else "Proceed?"
+        return typer.confirm(question, default=False)
 
     if pr_outbox.offer_pending_comments(
         cfg,

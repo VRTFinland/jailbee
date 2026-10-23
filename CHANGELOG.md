@@ -10,7 +10,7 @@ before editing `## Unreleased`.
 
 ### Added
 
-- **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox.
+- **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox. Summaries are supported when creating a review. Existing pending reviews accept empty-summary inline comments and replies, but refuse nonempty summaries before adding that action's comments to avoid public edits after concurrent submission; add the summary in GitHub or stage an empty summary.
 
 ## 1.7.8 - 2026-10-23
 

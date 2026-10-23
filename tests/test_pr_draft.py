@@ -65,7 +65,7 @@ def test_review_appends_to_existing_pending(mocker):
         side_effect=[{"path": "a.py", "line": 2}, {"path": "b.py", "line": 4}],
     )
     action = ReviewAction(
-        "new",
+        "",
         (LineComment("a.py", 2, "one"), LineComment("b.py", 4, "two")),
         "COMMENT",
     )
@@ -78,7 +78,7 @@ def test_review_appends_to_existing_pending(mocker):
         {"path": "a.py", "line": 2},
         {"path": "b.py", "line": 4},
     ]
-    update.assert_called_once_with(Path("/repo"), 7, pending, "old\n\nnew", repo="acme/widgets")
+    update.assert_not_called()
     create.assert_not_called()
 
 
@@ -192,22 +192,68 @@ def test_partial_append_failure_names_pending_review(mocker):
     assert thread.call_count == 2
 
 
-def test_updated_pending_body_is_cached_for_later_actions(mocker):
-    from dataclasses import FrozenInstanceError
+@pytest.mark.parametrize("with_comments", [False, True])
+def test_existing_pending_summary_refuses_before_any_mutation(mocker, with_comments):
+    from jailbee.pr_draft import DraftSession
+    from jailbee.pr_outbox import LineComment
 
+    mocker.patch("jailbee.pr.find_pending_review", return_value=_pending())
+    create = mocker.patch("jailbee.pr.create_pending_review")
+    thread = mocker.patch("jailbee.pr.add_pending_review_thread")
+    update = mocker.patch("jailbee.pr.update_pending_review_body")
+    comments = (LineComment("a.py", 1, "inline"),) if with_comments else ()
+
+    with pytest.raises(PrReviewError, match="add the summary in GitHub or stage an empty summary"):
+        DraftSession(_target()).review(ReviewAction("unseen summary", comments, "COMMENT"))
+
+    create.assert_not_called()
+    thread.assert_not_called()
+    update.assert_not_called()
+
+
+def test_body_only_concurrent_submission_never_edits_public_review(mocker):
     from jailbee.pr_draft import DraftSession
 
-    pending = _pending()
-    mocker.patch("jailbee.pr.find_pending_review", return_value=pending)
-    mocker.patch("jailbee.pr.update_pending_review_body")
+    remote = {"state": "PENDING", "body": "old"}
+
+    def lookup(*args, **kwargs):
+        snapshot = _pending(body=remote["body"])
+        remote["state"] = "COMMENTED"
+        return snapshot
+
+    def update_body(*args, **kwargs):
+        remote["body"] = args[3]
+
+    mocker.patch("jailbee.pr.find_pending_review", side_effect=lookup)
+    update = mocker.patch("jailbee.pr.update_pending_review_body", side_effect=update_body)
+    with pytest.raises(PrReviewError, match="empty summary"):
+        DraftSession(_target()).review(ReviewAction("unseen summary", (), "COMMENT"))
+
+    assert remote == {"state": "COMMENTED", "body": "old"}
+    update.assert_not_called()
+
+
+@pytest.mark.parametrize("created_by", ["review", "reply"])
+def test_summary_refuses_for_pending_created_earlier_in_session(mocker, created_by):
+    from jailbee.pr_draft import DraftSession
+    from jailbee.pr_outbox import LineComment
+
+    find = mocker.patch("jailbee.pr.find_pending_review", return_value=None)
+    create = mocker.patch("jailbee.pr.create_pending_review", return_value=_pending())
     reply = mocker.patch("jailbee.pr.add_pending_reply")
+    thread = mocker.patch("jailbee.pr.add_pending_review_thread")
+    update = mocker.patch("jailbee.pr.update_pending_review_body")
     session = DraftSession(_target())
+    if created_by == "review":
+        session.review(ReviewAction("first summary", (), "COMMENT"))
+    else:
+        session.reply(ReplyAction(42, "reply"))
 
-    session.review(ReviewAction("new", (), "COMMENT"))
-    session.reply(ReplyAction(42, "reply"))
+    with pytest.raises(PrReviewError, match="empty summary"):
+        session.review(ReviewAction("later summary", (LineComment("a.py", 1, "inline"),), "COMMENT"))
 
-    cached = reply.call_args.args[1]
-    assert cached.body == "old\n\nnew"
-    assert cached is not pending
-    with pytest.raises(FrozenInstanceError):
-        cached.body = "changed"
+    find.assert_called_once()
+    create.assert_called_once()
+    assert reply.call_count == (created_by == "reply")
+    thread.assert_not_called()
+    update.assert_not_called()

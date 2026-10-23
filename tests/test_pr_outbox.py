@@ -3154,6 +3154,8 @@ def test_preselected_draft_asks_yes_no_with_draft_total(mocker, make_cfg, tmp_pa
     assert apply.call_args.kwargs["indices"] == {0, 1, 3}
     assert apply.call_args.kwargs["draft"] is True
     output = capsys.readouterr().out
+    assert "3 actions will be published to GitHub" in output
+    assert "4 actions will be published to GitHub" not in output
     assert "held back in draft mode: action 2 (general comment)" in output
     assert "action 0: pending" in output
     assert "action 1: pending" in output

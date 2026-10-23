@@ -2498,7 +2498,8 @@ def _offer_locked(
                 console.print("The PR head has moved since this was written.")
         else:
             _print_plan(cfg, short, target, progress, indices=idx)
-    _print_identity(cfg, total)
+    total_draft = sum(len(draft_indices(t.manifest, pending)) for t, _, pending in draft_plans)
+    _print_identity(cfg, total_draft if draft else total)
     # Last, directly above the question: at the top of a long plan a warning
     # scrolls out of sight before anyone answers.
     # The repository name comes from the container: strip control characters.
@@ -2534,7 +2535,6 @@ def _offer_locked(
                 clauses.append("the description is published")
             console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
 
-    total_draft = sum(len(draft_indices(t.manifest, pending)) for t, _, pending in draft_plans)
     if dry_run:
         info("Dry run: nothing was published.")
         # A refusal sets the exit code on every path: something the container

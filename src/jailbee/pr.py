@@ -616,7 +616,11 @@ def add_pending_review_thread(
 def update_pending_review_body(
     repo_root: Path, number: int, review: PendingReview, body: str, *, repo: str | None = None
 ) -> None:
-    """Replace a pending review's summary without submitting it."""
+    """Replace a review summary unconditionally; unsafe for draft publication.
+
+    A stale PendingReview can refer to a submitted review. GitHub does not
+    document an atomic pending-only condition for this endpoint.
+    """
     cmd = [
         "gh",
         "api",

@@ -1211,11 +1211,17 @@ preflight can still read GitHub, unlike inspection. For PR manifests that have
 at least one pending review comment or reply, the host can choose **Publish**,
 **Publish as draft review**, or **Cancel** (the default/Esc choice). `--draft`
 preselects draft mode; with `-y` it confirms without a prompt. A draft review
-keeps review summaries, inline comments and replies in the host user's single
-pending GitHub review. An existing pending review on the same commit is
-appended to, including the review body; one attached to another commit is
-refused until it is submitted or discarded on GitHub. A partial append failure
-can leave some comments in that pending review, so inspect it before retrying.
+can include a summary when creating the host user's pending GitHub review.
+An existing pending review on the same commit accepts inline comments and
+replies, but a review action with a nonempty summary is refused before adding
+any of that action's comments. Add the summary in GitHub or stage an empty
+summary instead. This also applies to a review created earlier in the same
+publication session: GitHub offers no proven atomic pending-only summary
+update, so concurrent submission could otherwise publish unseen text. JailBee
+does not attempt a GET-then-PUT workaround. A review attached to another commit
+is refused until submitted or discarded on GitHub. A partial inline-comment
+append failure can leave some comments in that pending review, so inspect it
+before retrying.
 
 Draft mode does not post general PR comments: those actions stay pending in the
 manifest for a later normal publish. A staged PR description is still edited

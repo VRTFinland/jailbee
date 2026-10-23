@@ -1456,10 +1456,16 @@ When a PR manifest has a pending review comment or reply, `apply` offers
 `--draft` preselects the draft choice; `--draft -y` publishes without asking,
 while plain `-y` confirms normal publication. A draft keeps review summaries,
 inline comments and replies in your pending review, visible only to the host's
-GitHub account until submission. An existing pending review on the same commit
-is appended to; a pending review on another commit is refused until submitted
-or discarded on GitHub. If appending fails partway, inspect that pending review
-before retrying because some comments may already be there.
+GitHub account until submission. A summary is supported when creating a new
+pending review. An existing pending review accepts inline comments with an
+empty summary and replies, but a nonempty review summary is refused before
+adding that action's comments. Add the summary in GitHub or stage an empty
+summary; this restriction also covers reviews created earlier in the same
+session. There is no proven atomic pending-only summary update, so JailBee
+never risks editing a review that was concurrently submitted. A pending review
+on another commit is refused until submitted or discarded on GitHub. If inline
+appending fails partway, inspect that pending review before retrying because
+some comments may already be there.
 
 Draft mode holds general PR comments in the outbox for later normal
 publication. A staged PR description is still edited on GitHub immediately and
