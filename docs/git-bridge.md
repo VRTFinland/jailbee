@@ -1152,8 +1152,9 @@ containers are not retroactively repaired; an agent may use idempotent
 `gh` or network calls.
 
 ```bash
-jb outbox                          # terminal overview and drill-down
+jb outbox                          # the outbox manager: this repo's containers
 jb outbox smoke                    # shorthand for outbox browse smoke
+jb outbox browse --all-repos       # every registered repo's containers
 jb outbox browse ls                # escape a container/subcommand collision
 jb outbox ls --all-repos -o json
 jb outbox show smoke pr/001-review.json -o json
@@ -1167,7 +1168,7 @@ and not GitHub IDs. Action and inline review-comment selectors are
 With neither selector, `drop` deletes the whole manifest; removing the last
 action deletes it too. Deleting an issue `create` with `issue_ref`
 dependents is refused unless `--with-dependents` explicitly includes them.
-The terminal browser asks about that cascade, then confirms the exact scope;
+The outbox manager names that cascade in its one confirmation;
 Qt shows the expanded scope in its confirmation dialog. Referenced body
 files are retained while another pending manifest in the same store still
 uses them. Surviving JSON fields are preserved, not rebuilt from defaults.
@@ -1181,7 +1182,7 @@ inspect its receipts and pending actions before approving whole-manifest
 archival deletion. Direct `outbox drop` previews deletion scope, not receipts
 or action content. Uncertain outcomes must first be reconciled with the
 existing `jb issue resolve` command. There is no general text editor in the
-browser.
+outbox manager.
 
 ### Clearing outboxes
 
@@ -1205,7 +1206,7 @@ only when no other pending manifest in the same store references them. Settled
 issue journal progress is archived automatically before deletion. It keeps
 issue manifests with any **uncertain** action: reconcile the outcome with
 `jb issue resolve` first. PR manifests with publication evidence (including
-partial publication) are also kept; inspect them with `jb outbox browse` or
+partial publication) are also kept; inspect them with `jb outbox` or
 finish with `jb outbox apply`. Malformed or unreadable progress evidence is
 not treated as permission to delete. Unsafe rejected files are reported as
 warnings, not deleted.
@@ -1239,7 +1240,7 @@ jb outbox apply smoke issue/001-triage.json --revision TOKEN
 `TOKEN` is the revision from inspection. `--revision` on `drop` or `apply`
 refuses a changed proposal, including a changed referenced body or progress
 evidence: refresh and inspect again, do not blindly reuse child indices.
-The browsers carry that revision automatically. Publication always covers
+The outbox manager and the dashboards carry that revision automatically. Publication always covers
 **all pending actions in the selected manifest**, even when an action or
 comment is highlighted; there is no publish-all-across-manifests operation.
 Existing repository/PR/head gates, issue `expected` checks, host identity,
@@ -1282,7 +1283,7 @@ directly above the confirmation, which on a terminal is the consent. With `-y` n
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
 `jb outbox apply` and `jb review apply`).
 
-The unified outbox (`jb outbox apply`, the terminal browser and both
+The unified outbox (`jb outbox apply`, the outbox manager and both
 dashboards' Outbox entries) goes one step further: a numbered PR manifest may
 name a PR in **a repository that is neither the superproject nor one of its
 submodules** — a description fix on a plugin repository the change also
@@ -1292,27 +1293,31 @@ never sent to another repository, and `jb review apply` and `jb pr` keep the
 repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
-The terminal
-browser and the Qt dashboard's publication terminal ask under the plan, so
-they need no flag; the terminal dashboard's Outbox box shows the plan and its
-warnings above its own choice, and choosing Publish there is the consent
-(`--foreign` is passed only then). Publication asks exactly once, under the
+The Qt
+dashboard's publication terminal asks under the plan, so it needs no flag;
+the outbox manager (`jb outbox`, and the terminal dashboard's Outbox box)
+shows the plan and its warnings above its own choice, and choosing Publish
+there is the consent (`--foreign` is passed only then). Publication asks exactly once, under the
 plan. `jb pr`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
 `jb review apply --foreign <container>`. `jb review ls` lists it with the state
 `not bound`.
 
-The terminal browser offers containers, proposals, actions and comments,
-with Back, Refresh and Exit at each level. Without a TTY, the shorthand
-prints an overview rather than prompting. The terminal dashboard's
-**Outbox** entry opens the Outbox box under the table: the container's
-proposals as a tree (proposal, its actions, a review's comments) beside a
-preview of the highlighted row. Keys, also shown in the hint line:
-↑/↓ move, Enter/→ expand, ← collapse, `Space` mark, `d` delete the marked
-rows (or the highlighted one), `p` publish, `c` create PR, `X` clear the
-outbox, `v` preview on/off, `m` the raw manifest, `r` refresh, Esc back to
-the container menu.
+On a terminal, `jb outbox` (or `jb outbox browse [<container>]`) opens the
+**outbox manager** full screen: every container of the current repository
+with its proposals as a tree (proposal, its actions, a review's comments)
+beside a preview of the highlighted row; a container named on the command
+line narrows it to that one, and `--all-repos` widens it to every registered
+repository. Without a TTY the same command prints the overview table instead
+(`--all-repos` widens that too). The terminal dashboard's **Outbox** entry
+opens the same manager under the table, for its container. Keys, also shown
+in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark, `d`
+delete the marked rows (or the highlighted one), `p` publish, `c` create PR,
+`X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
+in `jb outbox`, `a` switches between this repository and all registered ones
+and `q` or Esc quits, while in the dashboard Esc goes back to the container
+menu.
 
 - **Delete** asks once, "No" first, naming exactly what goes — proposals,
   `action N (kind)` with any dependents, `comment N (path:line)` — and runs
@@ -1330,11 +1335,11 @@ the container menu.
 - **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
   below does.
 
-An unavailable container still opens the box, with the reason in its header
-row and nothing offered that changes it. After every change the box re-lists
-and the dashboard refreshes, so the OUTBOX column follows. Over remote SSH a
-key works, and appears in the hint line, only when the session's policy
-permits its command; `outbox apply -y` is refused there, so `p` hands the
+An unavailable container is still listed, with the reason in its header
+row and nothing offered that changes it. After every change the manager
+re-lists (and the dashboard refreshes, so the OUTBOX column follows). In the
+dashboard over remote SSH a key works, and appears in the hint line, only
+when the session's policy permits its command; `outbox apply -y` is refused there, so `p` hands the
 terminal to the interactive `outbox apply … --revision`, which asks under
 its plan. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication
@@ -1351,10 +1356,12 @@ counts and any skipped containers. It runs the same safe local cleanup
 [described above](#clearing-outboxes); protected or changed proposals remain.
 This entry is terminal-only: it is not offered in Qt.
 
-Over remote SSH the browser is always read-only, even in unrestricted mode.
-Shorthand is policy-checked as `outbox browse`; use explicit `outbox drop`
-or `outbox apply` commands for mutations, each subject to remote command and
-host-protection policy. Native Qt is not an SSH browser.
+Over remote SSH `jb outbox` is always read-only, even in unrestricted mode:
+it lists and previews, offers no delete, publish, create-PR or clear key, and
+says so on its top line. Shorthand is policy-checked as `outbox browse`; use
+explicit `outbox drop` or `outbox apply` commands for mutations, each subject
+to remote command and host-protection policy. Native Qt is not offered over
+SSH.
 
 The existing `jb review ls/show/apply/drop`, `jb issue
 ls/show/apply/drop/resolve`, `jb pr` and `jb submodule pr` workflows remain

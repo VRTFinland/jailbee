@@ -1514,7 +1514,7 @@ management](../../../git-bridge.md#unified-proposal-management).
 
 | Command | What it does |
 |---|---|
-| `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER]` | Interactive browser on a TTY, an overview off one. `browse` is the unambiguous spelling for a container named like a subcommand. The Qt dashboard has a native window for it. |
+| `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER] [--all-repos]` | The full-screen outbox manager on a TTY — this repo's containers, the named one, or (`--all-repos`, `a` inside) every registered repo's, as a tree with a preview: `Space` mark, `d` delete, `p` publish under the plan, `c` create PR, `X` clear, `v`/`m` preview/raw, `r` refresh, `q` quit — and the overview table off one. A container with `--all-repos` is exit 2. `browse` is the unambiguous spelling for a container named like a subcommand. Read-only over remote SSH. The Qt dashboard has a native window for it. |
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
 | `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json] [--color\|--no-color]` | The complete proposal, with zero-based action and inline-comment indices. Markdown bodies are rendered on a terminal, verbatim in a pipe unless `--color`. |
 | `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |

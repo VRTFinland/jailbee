@@ -94,6 +94,91 @@ def test_browser_overview_without_prompt(env, mocker, args):
     prompt.assert_not_called()
 
 
+def _app(mocker, *, read_only=False):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.cli_outbox.browser_read_only", return_value=read_only)
+    return mocker.patch("jailbee.dashboard.tui.outbox_app.run_outbox_app", return_value=0)
+
+
+@pytest.mark.parametrize(
+    ("args", "container", "all_repos"),
+    [
+        (["browse", "feature"], "feature", False),
+        (["browse", "--all-repos"], None, True),
+        (["browse"], None, False),
+    ],
+)
+def test_browse_tty_runs_app(env, mocker, args, container, all_repos):
+    from jailbee.dashboard.model import RepoTarget
+
+    run_app = _app(mocker)
+    overview = mocker.patch("jailbee.outbox.commands.show_overview", return_value=0)
+    result = CliRunner().invoke(app, ["outbox", *args])
+    assert result.exit_code == 0, result.output
+    run_app.assert_called_once_with(
+        RepoTarget(env[0].repo_root, None),
+        container=container,
+        all_repos=all_repos,
+        read_only=False,
+    )
+    overview.assert_not_called()
+
+
+def test_browse_tty_passes_config_path_and_read_only(env, mocker, tmp_path):
+    from jailbee.dashboard.model import RepoTarget
+
+    config = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}\n")
+    run_app = _app(mocker, read_only=True)
+    result = CliRunner().invoke(app, ["outbox", "--config", str(config), "browse"])
+    assert result.exit_code == 0, result.output
+    run_app.assert_called_once_with(
+        RepoTarget(env[0].repo_root, config.resolve()),
+        container=None,
+        all_repos=False,
+        read_only=True,
+    )
+    # The read-only line is the app's now, not the command's.
+    assert "read-only" not in result.output.lower()
+
+
+def test_browse_container_and_all_repos_is_usage_error(env, mocker):
+    run_app = _app(mocker)
+    result = CliRunner().invoke(app, ["outbox", "browse", "feature", "--all-repos"])
+    assert result.exit_code == 2, result.output
+    assert "not both" in result.output
+    run_app.assert_not_called()
+
+
+@pytest.mark.parametrize("all_repos", [False, True])
+def test_browse_off_tty_prints_overview(env, mocker, all_repos):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    run_app = mocker.patch("jailbee.dashboard.tui.outbox_app.run_outbox_app")
+    overview = mocker.patch("jailbee.outbox.commands.show_overview", return_value=0)
+    args = ["outbox", "browse", *(["--all-repos"] if all_repos else ["feature"])]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    run_app.assert_not_called()
+    assert overview.call_args.args[2] == (None if all_repos else "feature")
+    assert overview.call_args.kwargs["all_repos"] is all_repos
+    assert overview.call_args.kwargs["output"] == "table"
+
+
+@pytest.mark.parametrize(("args", "container"), [([], None), (["feature"], "feature")])
+def test_bare_outbox_shorthand_still_browse(env, mocker, args, container):
+    run_app = _app(mocker)
+    result = CliRunner().invoke(app, ["outbox", *args])
+    assert result.exit_code == 0, result.output
+    assert run_app.call_args.kwargs["container"] == container
+
+
+def test_questionary_browser_removed():
+    import importlib.util
+
+    assert importlib.util.find_spec("jailbee.outbox.browser") is None
+
+
 @pytest.mark.parametrize("option", ["--format", "--output", "-o"])
 @pytest.mark.parametrize("leaf", ["ls", "show"])
 def test_json_aliases(env, option, leaf):
@@ -1134,31 +1219,6 @@ def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
     assert result.exit_code == 0, result.output
     assert select.call_count == 1
     env[4].assert_called_once()
-
-
-@pytest.mark.parametrize(("kind", "foreign"), [("pr", True), ("issue", False)])
-def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(env, mocker, kind, foreign):
-    """The browser always asks under the plan, so its consent covers a PR the
-    container does not own; an issue proposal must not carry the PR-only flag."""
-    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.cli_outbox.browser_read_only", return_value=False)
-    actions = {}
-    mocker.patch(
-        "jailbee.outbox.browser.run_browser",
-        side_effect=lambda a, _container: actions.setdefault("a", a) and 0,
-    )
-    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
-
-    result = CliRunner().invoke(app, ["outbox", "browse", "feature"])
-    assert result.exit_code == 0, result.output
-    actions["a"].publish("feature", ProposalId(kind, "001.json"), "a" * 64)
-
-    from jailbee.outbox.publish import ask_publish_mode
-
-    assert applied.call_args.kwargs["choose_mode"] is ask_publish_mode
-    assert applied.call_args.kwargs["options"].foreign is foreign
-    if kind == "issue":
-        assert callable(applied.call_args.kwargs["confirm_foreign"])
 
 
 def _description_store():

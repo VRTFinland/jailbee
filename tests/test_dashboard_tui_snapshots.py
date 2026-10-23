@@ -227,3 +227,35 @@ def test_snapshot_outbox_box_wide(snap_compare, mocker, groups):
 def test_snapshot_outbox_box_narrow(snap_compare, mocker, groups):
     app, open_outbox = _outbox_in_dashboard(mocker, groups)
     assert snap_compare(app, terminal_size=(60, 20), run_before=open_outbox)
+
+
+def test_snapshot_outbox_app(snap_compare, mocker):
+    from pathlib import Path
+
+    from jailbee.dashboard import accounts as da
+    from jailbee.dashboard.model import RepoTarget
+    from jailbee.dashboard.tui.outbox_app import OutboxApp
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    listing = _listing(
+        _container(
+            _proposal(
+                "pr/a.json",
+                actions=[_action(0, title="Fix the [red]x[/red] parser", body="hello"), _action(1)],
+            ),
+            _proposal("issue/b.json", actions=[_action(0, kind="create", title="An issue")]),
+            name="alpha-one",
+        ),
+        _container(name="alpha-two", available=False, error="container is stopped"),
+    )
+    mocker.patch.object(da, "run_cli_quiet", return_value=da.CliResult(False, "exited 2", listing))
+    app = OutboxApp(
+        RepoTarget(Path("/repos/alpha"), None), container=None, all_repos=False, read_only=False
+    )
+
+    async def loaded(pilot):
+        await pilot.pause()
+        await pilot.pause()
+        assert app.controller.state.containers
+
+    assert snap_compare(app, terminal_size=(100, 30), run_before=loaded)

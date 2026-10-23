@@ -94,7 +94,7 @@ class OutboxDialog(QDialog):
         self, target: RepoTarget, container: str, *, parent: QWidget | None = None
     ) -> None:
         if is_ssh_session():
-            raise OutboxError("Use the read-only terminal outbox browser over SSH")
+            raise OutboxError("Use the read-only terminal outbox manager over SSH")
         super().__init__(parent)
         self._target, self._container = target, container
         self._request: _Request | None = None

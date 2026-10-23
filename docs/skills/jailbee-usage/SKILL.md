@@ -1546,12 +1546,22 @@ is the **jailbee-issue-management** skill's; flags are in
 
 ## Browsing both outboxes — `jailbee outbox`
 
-`jailbee outbox [CONTAINER]` opens one browser over a container's PR **and**
-issue proposals (the Qt dashboard has a native window for it). The
-scriptable forms address a proposal as `pr/<manifest>.json` or
+On the host, start with `jailbee outbox`: on a terminal it opens the
+full-screen **outbox manager** over the PR **and** issue proposals of every
+container in the current repo (`jailbee outbox CONTAINER` narrows it to one,
+`jailbee outbox browse --all-repos` — or `a` inside — widens it to every
+registered repo). The proposals form a tree beside a preview: `Space` marks,
+`d` deletes after one "No"-first question, `p` shows the publication plan and
+publishes on a choice, `c` creates the PR a staged description awaits, `X`
+clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
+refreshes, `q` quits. Off a terminal it prints the overview table. The
+dashboard's container menu opens the same manager for its container, and the
+Qt dashboard has a native window for it. Over remote SSH the manager is
+read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or
 `issue/<manifest>.json`:
 
 ```bash
+jailbee outbox                         # the outbox manager (overview off a TTY)
 jailbee outbox ls --all-repos
 jailbee outbox show feat-foo pr/001-review.json
 jailbee outbox drop feat-foo pr/001-review.json --action 0 --comment 1   # one inline comment
@@ -1578,7 +1588,7 @@ deletes or asks for deletion confirmation. Shared body files stay while
 another pending manifest in that store uses them; settled issue journals are
 archived automatically. Issue manifests with uncertain actions stay until
 `jailbee issue resolve` reconciles them. PR manifests with publication evidence
-(including partial publication) stay: inspect with `outbox browse` or finish
+(including partial publication) stay: inspect with `jailbee outbox` or finish
 with `outbox apply`. Changed-since-listing proposals stay and newly arrived
 ones are not included. Exit 0 means no kept/failed items (also empty or declined);
 exit 1 means anything kept, unavailable or failed, including in dry-run;

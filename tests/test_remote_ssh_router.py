@@ -925,16 +925,24 @@ def test_ssh_outbox_browser_is_read_only_through_real_cli(
     policy = RemoteCommandPolicy(mode="allowlist", allow=["outbox browse"])
     assert policy_allows(["outbox", *args], policy, restrict_host=restricted) == "outbox browse"
 
+    run_app = mocker.patch("jailbee.dashboard.tui.outbox_app.run_outbox_app", return_value=0)
+
     result = CliRunner().invoke(app, ["outbox", *args])
 
+    # Off a TTY: the overview table, nothing that could change the outbox.
     assert result.exit_code == 0, result.output
-    assert "read-only" in result.output
-    assert "outbox drop" in result.output and "outbox apply" in result.output
     from jailbee.cli_outbox import browser_read_only
 
     assert browser_read_only() is True
     assert overview.call_count == 1
     assert "confirm" not in overview.call_args.kwargs
+    run_app.assert_not_called()
+
+    # On a TTY: the outbox manager, read-only (it says so and offers no mutation).
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    result = CliRunner().invoke(app, ["outbox", *args])
+    assert result.exit_code == 0, result.output
+    assert run_app.call_args.kwargs["read_only"] is True
     drop.assert_not_called()
     publish.assert_not_called()
     for leaf in ("drop", "apply"):

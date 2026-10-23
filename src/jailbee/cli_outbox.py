@@ -179,7 +179,7 @@ def _pick_target(
 
 
 def browser_read_only() -> bool:
-    """Browser policy for UI wiring: never supply mutation callbacks over SSH.
+    """Outbox manager policy: no mutation from the app over SSH.
 
     This includes unrestricted SSH sessions. Mutations must use explicit
     drop/apply commands so the router checks each command's permissions.
@@ -193,95 +193,38 @@ def browser_read_only() -> bool:
 def browse(
     ctx: typer.Context,
     container: Annotated[str | None, typer.Argument(help="Full or short container name.")] = None,
+    all_repos: Annotated[
+        bool, typer.Option("--all-repos", help="Include registered repositories.")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Overview (also off-TTY). Unambiguous spelling for subcommand-name containers."""
+    """Outbox manager on a TTY, overview table off it. Unambiguous spelling for
+    subcommand-name containers."""
     from jailbee import prompting
-    from jailbee.outbox.browser import BrowserActions, run_browser
-    from jailbee.outbox.commands import (
-        apply_selected,
-        discover,
-        drop_selected,
-        show_overview,
-    )
-    from jailbee.outbox.delete import DeletePlan
-    from jailbee.outbox.markdown_view import print_lines
-    from jailbee.outbox.models import OutboxChanged
-    from jailbee.outbox.publish import PublishOptions, ask_publish_mode
+    from jailbee.outbox.commands import show_overview
+    from jailbee.outbox.models import OutboxError
     from jailbee.outbox_io import JournalStore
 
+    path = config if config is not None else ctx.obj
+
     def operation(cfg: Config, incus: Incus) -> int:
-        journals = JournalStore()
-        read_only = browser_read_only()
-        if read_only:
-            print_lines(
-                (
-                    "Outbox browser is read-only over SSH. Use explicit outbox drop or "
-                    "outbox apply commands when permitted by the remote command policy.",
-                )
-            )
         if not prompting.is_interactive():
             return show_overview(
-                cfg, incus, container, all_repos=False, output="table", journal_store=journals
-            )
-
-        def choose(message: str, options: Sequence[tuple[str, str]]) -> str | None:
-            import questionary
-
-            result = questionary.select(
-                message,
-                choices=[questionary.Choice(title=label, value=key) for key, label in options],
-            ).ask()
-            return result if isinstance(result, str) else None
-
-        def delete(name: str, plan: DeletePlan) -> tuple[str, ...]:
-            def exact_scope(fresh: DeletePlan) -> bool:
-                if fresh != plan:
-                    raise OutboxChanged("deletion scope changed; refresh required")
-                return True
-
-            drop_selected(
                 cfg,
                 incus,
-                name,
-                plan.proposal,
-                selection=plan.selection,
-                journal_store=journals,
-                confirm=exact_scope,
-                expected_revision=plan.expected_revision,
+                container,
+                all_repos=all_repos,
+                output="table",
+                journal_store=JournalStore(),
             )
-            return ("Deletion completed.",)
+        if container is not None and all_repos:
+            raise OutboxError("pass a container or --all-repos, not both")
+        from jailbee.dashboard.model import RepoTarget
+        from jailbee.dashboard.tui.outbox_app import run_outbox_app
 
-        def publish(name: str, proposal: ProposalId, revision: str) -> int:
-            return apply_selected(
-                cfg,
-                incus,
-                name,
-                proposal,
-                # Always interactive: the plan warns about a PR the container
-                # does not own, and the confirmation below it is the consent.
-                options=PublishOptions(foreign=proposal.kind == "pr"),
-                choose_mode=ask_publish_mode,
-                journal_store=journals,
-                confirm=lambda total: typer.confirm(
-                    f"Publish {total} pending actions in the whole manifest?", default=False
-                ),
-                confirm_foreign=lambda question: typer.confirm(question, default=False),
-                expected_revision=revision,
-            )
-
-        return run_browser(
-            BrowserActions(
-                load=lambda name: discover(
-                    cfg, incus, name, all_repos=False, journal_store=journals
-                ),
-                delete=None if read_only else delete,
-                publish=None if read_only else publish,
-                confirm=lambda message: typer.confirm(message, default=False),
-                choose=choose,
-                show=lambda text: print_lines((text,)),
-            ),
-            container,
+        target = RepoTarget(cfg.repo_root, path.resolve() if path is not None else None)
+        return run_outbox_app(
+            target, container=container, all_repos=all_repos, read_only=browser_read_only()
         )
 
     _run(ctx, config, operation)
