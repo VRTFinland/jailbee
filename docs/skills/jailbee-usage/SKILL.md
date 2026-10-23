@@ -1621,6 +1621,40 @@ What you can still do from inside:
 - For host-side bridge actions (`jailbee git pull`, `jailbee destroy`, `jailbee net loose`, …),
   describe what you need and let the host operator run it — you can't from here.
 
+### Which container am I? — `/etc/jailbee/container.json`
+
+Read this file before telling the operator which `jailbee` command to run. It
+is written when `jailbee new` creates the container and is a **snapshot of
+that moment**, never refreshed — network mode, alias and credential group
+are deliberately absent, and a later `jailbee retarget` or `jailbee rename`
+does not show up in it. Containers created before this file existed do not
+have it.
+
+```json
+{
+  "version": 1,
+  "name": "repo-feat-x",
+  "short_name": "feat-x",
+  "container_prefix": "repo",
+  "mode": "clone",
+  "branch": "feat/x",
+  "base_branch": "main",
+  "repo_dir": "/home/dev/repo",
+  "pr": null,
+  "fork_of": null
+}
+```
+
+- `name` is the full Incus name every command accepts; `short_name` works too.
+  Pass `--repo <container_prefix>` when the operator may be outside the repo:
+  `jailbee --repo repo git pull feat-x`.
+- `mode: "mount"` means `branch` is `null` and the git bridge does not apply
+  (host and container share one tree); `pr` is the PR number of a `jailbee
+  new --pr` review container, `fork_of` the source of a `jailbee fork`.
+- Without the file, `hostname` is the full container name (the same `name`),
+  and `$JAILBEE_BRANCH` is the branch in a clone-mode container. Nothing else
+  is available from inside.
+
 ## Checking what an agent preset resolved to
 
 `jailbee config show` prints the merged effective config, including the
