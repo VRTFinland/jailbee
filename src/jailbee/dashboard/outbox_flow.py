@@ -160,9 +160,7 @@ def _scope_was_shown(listed: dob.ProposalItem, fresh: dob.ProposalItem, index: i
     if _action_print(fresh_action) != _action_print(shown_action):
         return False
     shown = {
-        _action_print(a)
-        for i in shown_action.delete_scope
-        if (a := _action(listed, i)) is not None
+        _action_print(a) for i in shown_action.delete_scope if (a := _action(listed, i)) is not None
     }
     for i in fresh_action.delete_scope:
         dependent = _action(fresh, i)
