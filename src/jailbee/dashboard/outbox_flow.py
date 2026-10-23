@@ -50,6 +50,12 @@ Intent = Literal[
 _Preview = Literal["auto", "on", "off"]
 _PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off"}
 
+_ASK_AGAIN = "outbox refreshed; ask again"
+_BAD_PLAN = "unexpected plan output"
+_FOREIGN_FALLBACK = "⚠ foreign target: check where this will be published"
+# Phrases of the plan's foreign warnings (`pr_outbox.foreign_warning`,
+# `outbox.publish.issue_plan_json`); without one, the fallback line is shown.
+_FOREIGN_MARKERS = ("foreign", "not bound to container", "not a repository of container")
 _STALE_HINT = "use `jailbee outbox apply --force` from a terminal"
 _CHANGED = "changed; refreshed"
 _PR_CHANGED = "Proposal changed; refresh the outbox before creating a PR"
@@ -129,6 +135,42 @@ def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, .
     return ("comment", action.kind, comment.label, comment.text)
 
 
+def _action_print(action: dob.ActionItem) -> tuple[object, ...]:
+    """An action with everything a drop of it deletes: its text and its comments."""
+    return (
+        action.kind,
+        action.title,
+        action.body,
+        tuple((c.label, c.text) for c in action.comments),
+    )
+
+
+def _scope_was_shown(listed: dob.ProposalItem, fresh: dob.ProposalItem, index: int) -> bool:
+    """Whether dropping action ``index`` of ``fresh`` deletes only what the question showed.
+
+    Every action the fresh `delete_scope` pulls in (itself and its dependents,
+    with their comments) must match one of the scope shown. The fresh scope may
+    be smaller — a marked dependent dropped earlier — but never gain anything.
+    """
+    shown_action, fresh_action = _action(listed, index), _action(fresh, index)
+    if shown_action is None or fresh_action is None:
+        return False
+    if not shown_action.delete_scope or not fresh_action.delete_scope:
+        return False
+    if _action_print(fresh_action) != _action_print(shown_action):
+        return False
+    shown = {
+        _action_print(a)
+        for i in shown_action.delete_scope
+        if (a := _action(listed, i)) is not None
+    }
+    for i in fresh_action.delete_scope:
+        dependent = _action(fresh, i)
+        if dependent is None or _action_print(dependent) not in shown:
+            return False
+    return True
+
+
 def _block_reason(state: dob.OutboxState, key: dob.RowKey) -> str | None:
     """None when ``key`` may be marked for deletion, else why not."""
     found = dob.find_proposal(state, key)
@@ -143,6 +185,26 @@ def _block_reason(state: dob.OutboxState, key: dob.RowKey) -> str | None:
     if action.delete_scope is not None:
         return None
     return action.delete_block or "cannot be deleted"
+
+
+def _well_formed(plan: dict[str, object], revision: str) -> bool:
+    """A publishable plan for the revision asked about, with every field the question uses."""
+    actions, warnings, notes = plan.get("actions"), plan.get("warnings"), plan.get("notes", [])
+    total = plan.get("total")
+    return (
+        plan.get("revision") == revision
+        and isinstance(actions, list)
+        and bool(actions)
+        and all(isinstance(a, dict) for a in actions)
+        and isinstance(warnings, list)
+        and all(isinstance(w, str) for w in warnings)
+        and isinstance(notes, list)
+        and isinstance(plan.get("login"), str)
+        and isinstance(total, int)
+        and not isinstance(total, bool)
+        and isinstance(plan.get("foreign"), bool)
+        and isinstance(plan.get("draftable"), bool)
+    )
 
 
 class OutboxController:
@@ -167,7 +229,10 @@ class OutboxController:
         self.standalone = standalone
         self.on_change = on_change
         self.state = dob.OutboxState(title, (), prefix=prefix, scope_name=container)
-        self._pending_delete: frozenset[dob.RowKey] = frozenset()
+        # The keys asked about and the listing the question showed them from.
+        self._pending_delete: (
+            tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]] | None
+        ) = None
 
     # -- plumbing -----------------------------------------------------------
 
@@ -249,16 +314,27 @@ class OutboxController:
     def _start(
         self, busy: str, key: str, label: str, argv: list[str], done: Callable[[JobResult], None]
     ) -> None:
-        self._set(replace(self.state, busy=busy, question=None, status=()))
+        self.state = replace(self.state, busy=busy, question=None, status=())
         try:
             self.runner.start(key, label, argv, done)
         except (OSError, ValueError) as exc:
             self._set(replace(self.state, busy=None, status=(str(exc),)))
+            return
+        self.on_change(self.state)
 
     # -- public API ---------------------------------------------------------
 
     def load(self, *, cursor: dob.RowKey | None = None, status: tuple[str, ...] = ()) -> bool:
-        """Re-list the outbox; False after a load error (``state.status`` says why)."""
+        """Re-list the outbox; False after a load error (``state.status`` says why).
+
+        An open question was asked about the listing being replaced, so it is
+        withdrawn (with its carry and any pending delete): the user asks again.
+        The flows' own re-lists between steps do not come through here.
+        """
+        if self.state.question is not None:
+            self.state = replace(self.state, question=None)
+            self._pending_delete = None
+            status = (_ASK_AGAIN, *status)
         state, ok = self._reloaded(cursor=cursor, status=status)
         self._set(state)
         return ok
@@ -288,11 +364,10 @@ class OutboxController:
         elif name == "raw":
             self._set(replace(self.state, raw=not self.state.raw))
         elif name == "refresh":
-            self.state = replace(self.state, question=None)
             self.load(cursor=key)
         elif name == "scope":
             if self.state.abilities.scope:
-                self.state = replace(self.state, all_repos=not self.state.all_repos, question=None)
+                self.state = replace(self.state, all_repos=not self.state.all_repos)
             self.load(cursor=key)
         elif name == "answer":
             self._answer(value)
@@ -350,7 +425,7 @@ class OutboxController:
         if refused:
             self._status(*(f"{_safe(k[1])}: {_safe(r)}" for k, r in refused))
             return
-        self._pending_delete = frozenset(keys)
+        self._pending_delete = (frozenset(keys), self.state.containers)
         self._set(
             replace(
                 self.state,
@@ -366,19 +441,18 @@ class OutboxController:
         )
 
     def _run_delete(self) -> None:
-        keys, self._pending_delete = self._pending_delete, frozenset()
-        shown = self.state
+        pending, self._pending_delete = self._pending_delete, None
+        keys, shown = pending if pending is not None else (frozenset(), ())
         status: list[str] = []
         deleted = 0
         groups: dict[tuple[str, str], list[dob.RowKey]] = {}
-        for container in shown.containers:
-            for proposal in container.proposals:
-                chosen = [k for k in keys if k[:2] == (container.name, proposal.id)]
-                if chosen:
-                    groups[(container.name, proposal.id)] = chosen
+        for key in sorted(keys, key=str):
+            groups.setdefault((key[0], key[1]), []).append(key)
         for (name, pid), chosen in groups.items():
-            listed = _find(shown.containers, name, pid)
+            # Checked against the listing the question showed, never a later one.
+            listed = _find(shown, name, pid)
             if listed is None:
+                status.append(f"{_safe(pid)}: {_CHANGED}")
                 continue
             done, failure = self._delete_proposal(name, listed, chosen)
             deleted += done
@@ -424,6 +498,8 @@ class OutboxController:
             elif key[3] is None:
                 action = _action(fresh, key[2] or 0)
                 scope = action.delete_scope if action is not None else None
+                if not _scope_was_shown(listed, fresh, key[2] or 0):
+                    return done, _CHANGED
                 argv = dob.outbox_drop_argv(
                     name,
                     fresh.id,
@@ -485,6 +561,9 @@ class OutboxController:
         if not isinstance(plan, dict):
             self._status(_safe(result.failure_line()) or "could not read the publication plan")
             return
+        if plan.get("schema") != 1 or plan.get("proposal") != pid:
+            self._status(_BAD_PLAN)
+            return
         refusals = [r for r in plan.get("refusals") or () if isinstance(r, dict)]
         if refusals:
             lines = [line for r in refusals for line in _lines(_safe(r.get("reason", "")))]
@@ -492,10 +571,11 @@ class OutboxController:
                 lines.append(_STALE_HINT)
             self._status(*(lines or ["publication refused"]))
             return
+        if not _well_formed(plan, revision):
+            self._status(_BAD_PLAN)
+            return
         lines = []
-        for action in plan.get("actions") or ():
-            if not isinstance(action, dict):
-                continue
+        for action in plan["actions"]:
             line = (
                 f"action {_safe(action.get('index'))} {_safe(action.get('kind', ''))} → "
                 f"{_safe(action.get('target', ''))}: {_safe(action.get('will', ''))}"
@@ -507,7 +587,12 @@ class OutboxController:
         lines.append(
             f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)"
         )
-        lines.extend(f"⚠ {line}" for w in plan.get("warnings") or () for line in _lines(_safe(w)))
+        warnings = [line for w in plan["warnings"] for line in _lines(_safe(w))]
+        lines.extend(f"⚠ {line}" for line in warnings)
+        if plan["foreign"] and not any(
+            marker in line.casefold() for line in warnings for marker in _FOREIGN_MARKERS
+        ):
+            lines.append(_FOREIGN_FALLBACK)
         choices: list[tuple[str, str]] = [("Publish", "publish")]
         if plan.get("draftable") is True:
             choices.append(
@@ -665,7 +750,7 @@ class OutboxController:
 
     def _cancel(self) -> None:
         question = self.state.question
-        self._pending_delete = frozenset()
+        self._pending_delete = None
         message = {
             "publish": "Nothing published.",
             "delete": "Nothing deleted.",

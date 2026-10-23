@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.accounts import CliResult
@@ -392,7 +393,7 @@ def _publishing(plan: str, **proposal: object) -> tuple[FakeRunner, OutboxContro
 
 def test_publish_runs_plan_then_question():
     runner, ctl = _publishing(
-        _plan(foreign=True, warnings=["PR o/r#42 is not this container's \x1b[31mPR"])
+        _plan(foreign=True, warnings=["PR #42 is not bound to container \x1b[31malpha"])
     )
     assert runner.jobs[0][0] == f"outbox-plan:{C}:pr/a.json"
     assert runner.jobs[0][1] == dob.outbox_plan_argv(C, "pr/a.json", "r1")
@@ -402,7 +403,7 @@ def test_publish_runs_plan_then_question():
     assert q.default == "cancel"
     assert q.lines[0] == "action 0 review → o/r#42: publish / draft: draft"
     assert "octo publishes 2 action(s)" in q.lines
-    assert q.lines[-1] == "⚠ PR o/r#42 is not this container's [31mPR"
+    assert q.lines[-1] == "⚠ PR #42 is not bound to container [31malpha"
     assert ctl.state.busy is None
 
 
@@ -561,7 +562,8 @@ def test_clear_bad_snapshot_reports():
     ctl.intent("clear", _key())
     runner.finish(JobResult(0, "", "garbage"))
     assert ctl.state.question is None
-    assert ctl.state.status and ctl.state.busy is None
+    assert ctl.state.status == (f"{C}: invalid approved clear snapshot",)
+    assert ctl.state.busy is None
 
 
 # --- busy / start failure --------------------------------------------------
@@ -611,3 +613,182 @@ def test_expand_collapse_preview_raw_scope():
     ctl.intent("scope", None)
     assert ctl.state.all_repos is True
     assert runner.calls[-1] == ("quiet", dob.outbox_ls_argv(C, all_repos=True))
+
+
+# --- fix round 1 -------------------------------------------------------------
+
+
+def test_load_while_delete_question_open_withdraws_it():
+    a = _proposal(actions=[_action(0), _action(1)])
+    other = _proposal(revision="r2", actions=[_action(0, body="different"), _action(1)])
+    runner = FakeRunner(_listing(a), _listing(other))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    assert ctl.state.question is not None
+    ctl.load()
+    assert ctl.state.question is None
+    assert ctl.state.status == ("outbox refreshed; ask again",)
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == []
+
+
+def test_delete_checks_against_the_listing_the_question_showed():
+    # A refresh that keeps the question (a frontend bypassing load) cannot steer
+    # the drops: the snapshot taken when the question opened is what is checked.
+    a = _proposal(actions=[_action(0), _action(1)])
+    other = _proposal(revision="r2", actions=[_action(0, body="different"), _action(1)])
+    runner = FakeRunner(_listing(a), _listing(other))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key(action=0))
+    question = ctl.state.question
+    ctl.load()
+    ctl.state = replace(ctl.state, question=question)
+    ctl._pending_delete = (frozenset({_key(action=0)}), dob.parse_outbox_listing(_listing(a)))
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == []
+    assert ctl.state.status == ("pr/a.json: changed; refreshed",)
+
+
+def test_delete_vanished_proposal_says_changed():
+    runner = FakeRunner(_listing(_proposal(), _proposal("pr/b.json")), _listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key("pr/b.json"))
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == []
+    assert ctl.state.status == ("pr/b.json: changed; refreshed",)
+
+
+def test_delete_stops_when_a_dependent_appears_between_drops():
+    shown = _proposal(
+        "issue/i.json",
+        actions=[
+            _action(0, kind="create", title="T", delete_scope=[0]),
+            _action(1, kind="comment", target="9", delete_scope=[1]),
+        ],
+    )
+    grown = _proposal(
+        "issue/i.json",
+        revision="r2",
+        actions=[
+            _action(0, kind="create", title="T", delete_scope=[0, 2]),
+            _action(1, kind="comment", target="9", delete_scope=[1]),
+            _action(2, kind="comment", target="", body="new dependent", delete_scope=[2]),
+        ],
+    )
+    runner = FakeRunner(_listing(shown), _listing(shown), _listing(grown))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key("issue/i.json", 0))
+    ctl.intent("mark", _key("issue/i.json", 1))
+    ctl.intent("delete", None)
+    ctl.intent("answer", None, "yes")
+    drops = runner.argvs("drop")
+    assert drops == [dob.outbox_drop_argv(C, "issue/i.json", "r1", action=1)]
+    assert all("--with-dependents" not in argv for argv in drops)
+    assert ctl.state.status == ("issue/i.json: changed; refreshed",)
+
+
+def test_delete_with_a_dependent_dropped_first_still_runs():
+    shown = _proposal(
+        "issue/i.json",
+        actions=[
+            _action(0, kind="create", title="T", delete_scope=[0, 1]),
+            _action(1, kind="comment", target="", delete_scope=[1]),
+        ],
+    )
+    after = _proposal(
+        "issue/i.json",
+        revision="r2",
+        actions=[_action(0, kind="create", title="T", delete_scope=[0])],
+    )
+    runner = FakeRunner(_listing(shown), _listing(shown), _listing(after))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key("issue/i.json", 0))
+    ctl.intent("mark", _key("issue/i.json", 1))
+    ctl.intent("delete", None)
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == [
+        dob.outbox_drop_argv(C, "issue/i.json", "r1", action=1),
+        dob.outbox_drop_argv(C, "issue/i.json", "r2", action=0),
+    ]
+
+
+def test_delete_failure_in_one_proposal_still_deletes_the_other():
+    runner = FakeRunner(_listing(_proposal(), _proposal("pr/b.json")))
+    runner.drop_results = [CliResult(False, "locked"), CliResult(True, "")]
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.intent("mark", _key("pr/b.json"))
+    ctl.intent("delete", None)
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == [
+        dob.outbox_drop_argv(C, "pr/a.json", "r1"),
+        dob.outbox_drop_argv(C, "pr/b.json", "r1"),
+    ]
+    assert ctl.state.status == ("pr/a.json: locked",)
+
+
+def _planned_status(plan: str) -> dob.OutboxState:
+    _, ctl = _publishing(plan)
+    return ctl.state
+
+
+def test_publish_rejects_malformed_or_mismatched_plan():
+    for plan in (
+        _plan(schema=2),
+        _plan(proposal="pr/other.json"),
+        _plan(revision="r9"),
+        _plan(actions=[]),
+        json.dumps({"schema": 1, "proposal": "pr/a.json", "revision": "r1"}),
+        _plan(total="2"),
+    ):
+        state = _planned_status(plan)
+        assert state.question is None
+        assert state.status == ("unexpected plan output",)
+
+
+def test_publish_foreign_without_foreign_warning_gets_fallback_line():
+    _, ctl = _publishing(_plan(foreign=True, warnings=["the PR head has moved"]))
+    q = ctl.state.question
+    assert q is not None
+    assert q.lines[-2:] == (
+        "⚠ the PR head has moved",
+        "⚠ foreign target: check where this will be published",
+    )
+    _, ctl = _publishing(_plan(foreign=False, warnings=[]))
+    assert ctl.state.question is not None
+    assert not any(line.startswith("⚠") for line in ctl.state.question.lines)
+
+
+def test_start_failure_notifies_once():
+    runner = FakeRunner(_listing(_proposal()))
+    runner.start_error = ValueError("refused")
+    ctl = _controller(runner)
+    ctl.load()
+    seen = ctl.seen  # type: ignore[attr-defined]
+    before = len(seen)
+    ctl.intent("publish", _key())
+    assert len(seen) == before + 1
+    assert seen[-1].busy is None and seen[-1].status == ("refused",)
+
+
+def test_clear_with_nothing_to_delete_asks_nothing():
+    from jailbee.outbox.clear_snapshot import encode_snapshot
+    from jailbee.outbox.delete import ClearItem, ContainerClearPlan
+    from jailbee.outbox.models import ProposalId
+
+    kept = ClearItem(ProposalId.parse("pr/a.json"), "a" * 64, "partial", None, "published")
+    token = encode_snapshot([ContainerClearPlan(C, True, None, (), (kept,), ())])
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("clear", _key())
+    runner.finish(JobResult(0, "", token))
+    assert ctl.state.question is None
+    assert ctl.state.status[-1] == "Delete 0 proposals in 0 containers."
+    assert len(runner.jobs) == 1
