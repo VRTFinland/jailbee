@@ -250,7 +250,9 @@ def test_summary_refuses_for_pending_created_earlier_in_session(mocker, created_
         session.reply(ReplyAction(42, "reply"))
 
     with pytest.raises(PrReviewError, match="empty summary"):
-        session.review(ReviewAction("later summary", (LineComment("a.py", 1, "inline"),), "COMMENT"))
+        session.review(
+            ReviewAction("later summary", (LineComment("a.py", 1, "inline"),), "COMMENT")
+        )
 
     find.assert_called_once()
     create.assert_called_once()
