@@ -2510,7 +2510,7 @@ def _offer_locked(
 
     previews = []
     if draft_plans and (draft or choose_mode is not None):
-        for target, progress, pending in draft_plans:
+        for target, _progress, pending in draft_plans:
             assert target.pr is not None
             preview = draft_preview(target.manifest, target.pr.number, pending)
             previews.append(preview)
@@ -2570,7 +2570,9 @@ def _offer_locked(
                 console.print(
                     f"  {safe_text(target.manifest.name)}: no review comments or replies; "
                     "left for a normal publish",
-                    markup=False, highlight=False, soft_wrap=True,
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,
                 )
                 continue
             selected_plans.append((target, progress, draft_indices(target.manifest, pending)))
@@ -2613,7 +2615,9 @@ def _offer_locked(
     outbox = Outbox(fresh_store.as_dict(), fresh_store.rejected, identity)
     failures = len(refusals)
     for position, (target, progress, idx) in enumerate(plans):
-        outcome = apply_manifest(cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft)
+        outcome = apply_manifest(
+            cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft
+        )
         _print_receipts(target, outcome)
         stop = False
         try:

@@ -3100,14 +3100,18 @@ def _draft_offer_setup(mocker, make_cfg, tmp_path, *, extra=False):
     if extra:
         files["two.json"] = _manifest_text(
             pr=7,
-            actions=[{"type": "comment", "body": "public"},
-                     {"type": "description", "body": "not public"}],
+            actions=[
+                {"type": "comment", "body": "public"},
+                {"type": "description", "body": "not public"},
+            ],
         )
-    cfg, incus, *rest = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7))
     incus.config_get.side_effect = lambda c, key: {"user.jailbee.pr": "7"}.get(key)
     mocker.patch("jailbee.pr_outbox._current_pr_body", return_value="old")
-    apply = mocker.patch("jailbee.pr_outbox.apply_manifest", return_value=ApplyOutcome((), (), None))
+    apply = mocker.patch(
+        "jailbee.pr_outbox.apply_manifest", return_value=ApplyOutcome((), (), None)
+    )
     mocker.patch("jailbee.pr_outbox.finalize")
     return cfg, incus, apply
 
@@ -3190,14 +3194,26 @@ def test_draft_skips_non_draftable_manifest_in_same_run(mocker, make_cfg, tmp_pa
 
     cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path, extra=True)
     confirm = mocker.Mock(return_value=True)
-    assert offer_pending_comments(
-        cfg, incus, "c", "feature", pr_number=None, confirm=confirm,
-        manifest_names=("one.json", "two.json"), draft=True,
-    ) == 0
+    assert (
+        offer_pending_comments(
+            cfg,
+            incus,
+            "c",
+            "feature",
+            pr_number=None,
+            confirm=confirm,
+            manifest_names=("one.json", "two.json"),
+            draft=True,
+        )
+        == 0
+    )
     confirm.assert_called_once_with(3)
     apply.assert_called_once()
     assert apply.call_args.args[3].manifest.name == "one.json"
-    assert "two.json: no review comments or replies; left for a normal publish" in capsys.readouterr().out
+    assert (
+        "two.json: no review comments or replies; left for a normal publish"
+        in capsys.readouterr().out
+    )
 
 
 def test_dry_run_draft_lists_held_back_and_publishes_nothing(mocker, make_cfg, tmp_path, capsys):
@@ -3214,10 +3230,15 @@ def test_dry_run_draft_lists_held_back_and_publishes_nothing(mocker, make_cfg, t
 def test_pr_offer_subset_draft_excludes_description(mocker, make_cfg, tmp_path):
     cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
     previews = []
-    assert _selected_offer(
-        cfg, incus, pr_number=7,
-        choose_mode=lambda total, preview: previews.append((total, preview)) or "draft",
-    ) == 0
+    assert (
+        _selected_offer(
+            cfg,
+            incus,
+            pr_number=7,
+            choose_mode=lambda total, preview: previews.append((total, preview)) or "draft",
+        )
+        == 0
+    )
     assert previews[0][0] == 3
     assert previews[0][1].description is False
     assert apply.call_args.kwargs["indices"] == {0, 1}
@@ -3229,7 +3250,9 @@ def test_draft_does_not_offer_applied_or_excluded_review(mocker, make_cfg, tmp_p
     from jailbee.pr_outbox import Target
 
     manifest, _ = _draft_manifest()
-    target = Target(manifest=manifest, scope=PrScope.for_repo(cfg), pr=_pr_info(number=7), stale=False)
+    target = Target(
+        manifest=manifest, scope=PrScope.for_repo(cfg), pr=_pr_info(number=7), stale=False
+    )
     mocker.patch("jailbee.pr_outbox._gate_manifests", return_value=([target], [], []))
     mocker.patch("jailbee.pr_outbox._offerable_indices", return_value=indices)
     assert _selected_offer(cfg, incus, pr_number=7, draft=True) == 1
@@ -3240,7 +3263,9 @@ def test_draft_counts_only_pending_indices(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import Progress
 
     cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
-    mocker.patch("jailbee.pr_outbox._publication_progress", return_value=Progress(frozenset({0}), {}))
+    mocker.patch(
+        "jailbee.pr_outbox._publication_progress", return_value=Progress(frozenset({0}), {})
+    )
     confirm = mocker.Mock(return_value=True)
     assert _selected_offer(cfg, incus, draft=True, confirm=confirm) == 0
     confirm.assert_called_once_with(2)
