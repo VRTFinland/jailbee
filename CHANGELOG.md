@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.8 - 2026-10-23
+
 ### Added
 
 - **`jailbee mac setup` (experimental): JailBee on a Mac in one command.** It
