@@ -271,12 +271,20 @@ def test_cli_browser_real_publication(publication_env, mocker, kind):
     mocker.patch(
         "questionary.select", side_effect=lambda *a, **kw: mocker.Mock(ask=lambda: next(answers))
     )
+    choose = mocker.patch("jailbee.prompting.choose", return_value="publish")
     mocker.patch("typer.confirm", return_value=True)
     result = CliRunner().invoke(app, ["outbox"])
     assert result.exit_code == 0, result.output
     if kind == "pr":
+        choose.assert_called_once()
+        assert [option.value for option in choose.call_args.args[1]] == [
+            "publish",
+            "draft",
+            None,
+        ]
         review.assert_called_once()
     else:
+        choose.assert_not_called()
         create.assert_called_once()
         assert comment.call_count == 2
     assert "001.json" not in env[2][kind].as_dict()
