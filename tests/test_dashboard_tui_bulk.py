@@ -10,6 +10,7 @@ from jailbee.dashboard.bulk import BulkAction, plan_bulk
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
+from jailbee.git_status import GitStatus
 from jailbee.remote_ssh.router import RouteError
 from jailbee.tui import DIAGNOSTICS_ENV
 from tests.dashboard_fixtures import ci
@@ -253,6 +254,113 @@ def test_no_eligible_container_explains_itself(mocker, tmp_path):
     assert (
         session.notice == "Stop: nothing to do (alpha-a: already stopped; alpha-b: already stopped)"
     )
+
+
+def _pending_outbox(group):
+    for container in group.containers:
+        container.git_status = GitStatus(
+            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok",
+            pending_pr_actions=1, pending_issue_actions=1,
+        )
+
+
+def test_clear_outbox_with_one_mark_still_asks(mocker, tmp_path):
+    child = _children(mocker)
+    session, terminal, group = _session(mocker, tmp_path, "Running")
+    _pending_outbox(group)
+    session.marked = frozenset({"alpha-a"})
+    session.handle_key("down")
+
+    _bulk_key(session, "X")
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "bulk-outbox-clear-confirm"
+    assert tuple(e.label for e in picker.entries) == ("No", "Yes, clear 1")
+    assert picker.entries[0].value == "no"
+    assert any("2 manifests" in line for line in picker.detail)
+    child.assert_not_called()
+    assert terminal.handed == []
+
+
+def test_confirmed_bulk_clear_starts_one_child_each_with_yes(mocker, tmp_path):
+    child = _children(mocker)
+    config = tmp_path / "c.yaml"
+    session, terminal, group = _session(mocker, tmp_path, "Running", "Running", config=config)
+    _pending_outbox(group)
+    start = mocker.spy(session.jobs, "start")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.overlay = session.begin_bulk("outbox clear")
+    assert isinstance(session.overlay, Picker)
+    assert session.overlay.purpose == "bulk-outbox-clear-confirm"
+    child.assert_not_called()
+    start.assert_not_called()
+
+    session.picker_chosen(session.overlay.entries[1])
+
+    assert start.call_count == 2
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "outbox", "clear", "alpha-a", "-y", "--config", str(config)],
+        ["jailbee", "outbox", "clear", "alpha-b", "-y", "--config", str(config)],
+    ]
+    assert session.overlay is None
+    assert terminal.handed == []
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_declined_clear_runs_nothing(mocker, tmp_path, single):
+    child = _children(mocker)
+    session, _, group = _session(mocker, tmp_path, "Running")
+    _pending_outbox(group)
+    session.marked = frozenset({"alpha-a"})
+    session.overlay = (
+        session.begin_outbox_clear("alpha-a") if single else session.begin_bulk("outbox clear")
+    )
+    assert isinstance(session.overlay, Picker)
+
+    session.picker_chosen(session.overlay.entries[0])
+
+    child.assert_not_called()
+    assert session.notice == "Cancelled"
+    assert session.overlay is None
+
+
+def test_clear_outbox_from_the_container_menu_asks_then_runs_detached(mocker, tmp_path):
+    child = _children(mocker)
+    session, terminal, group = _session(mocker, tmp_path, "Running")
+    _pending_outbox(group)
+    session.handle_key("down")
+    assert session.open_menu_for_letter("o")
+
+    session.menu_chosen("outbox clear", "Outbox →", 2)
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "container-outbox-clear-confirm"
+    assert [e.value for e in picker.entries] == ["no", "yes"]
+    assert any("2 manifests" in line for line in picker.detail)
+    child.assert_not_called()
+    assert terminal.handed == []
+
+    session.picker_chosen(picker.entries[1])
+
+    assert child.call_args.args[0] == ["jailbee", "outbox", "clear", "alpha-a", "-y"]
+    assert session.overlay is None
+    assert terminal.handed == []
+    assert session.view().running == frozenset({"alpha-a"})
+
+
+def test_a_kept_item_shows_in_the_notice(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",), stderr="details\nCleared 1, kept 1, failed 0.")
+    session, _, group = _session(mocker, tmp_path, "Running")
+    _pending_outbox(group)
+    session.marked = frozenset({"alpha-a"})
+    session.overlay = session.begin_bulk("outbox clear")
+    assert isinstance(session.overlay, Picker)
+
+    session.picker_chosen(session.overlay.entries[1])
+    session.tick()
+
+    assert "Cleared 1, kept 1, failed 0." in session.notice
+    assert session.marked == frozenset({"alpha-a"})
 
 
 def test_capital_d_with_marks_asks_once_for_all(mocker, tmp_path):

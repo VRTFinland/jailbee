@@ -46,6 +46,7 @@ from jailbee.dashboard.bulk import (
     mount_confirm_question,
     needs_confirm,
     nothing_to_do,
+    outbox_clear_lines,
     plan_bulk,
     plan_bulk_mount,
     ttl_entries,
@@ -1850,6 +1851,12 @@ class DashboardSession:
             return None
         if picker.purpose.startswith("container-snapshot"):
             return self.submit_snapshot_picker(picker, entry)
+        if picker.purpose == "container-outbox-clear-confirm":
+            if entry.value == "yes":
+                self._run_planned_one("outbox clear", picker.target)
+            else:
+                self.set_notice("Cancelled")
+            return None
         if picker.purpose.startswith("container-outbox"):
             return self.submit_outbox_picker(picker, entry)
         if picker.purpose == "container-mounts":
@@ -1908,7 +1915,7 @@ class DashboardSession:
                 return self.begin_bulk(picker.carry[0], confirmed=True)
             self.set_notice("Cancelled")
             return None
-        if picker.purpose == "bulk-destroy-confirm":
+        if picker.purpose in ("bulk-destroy-confirm", "bulk-outbox-clear-confirm"):
             if entry.value == "yes":
                 self._run_planned(picker.carry[0])
             else:
@@ -2327,6 +2334,8 @@ class DashboardSession:
             elif verb == "destroy":
                 # Asked here, as a bulk destroy is, not in the CLI on a blanked screen.
                 self.overlay = self.begin_destroy(target)
+            elif verb == "outbox clear":
+                self.overlay = self.begin_outbox_clear(target)
             elif verb in DETACHED_MENU_VERBS:
                 # Detached, as a bulk run of one: the dashboard stays usable
                 # through a shutdown or an autostart run.
@@ -2582,6 +2591,19 @@ class DashboardSession:
                 carry=(verb,),
                 detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
             )
+        if verb == "outbox clear":
+            n = len(action.eligible)
+            return Picker(
+                "bulk-outbox-clear-confirm",
+                f"Clear the outbox of {n} container{'s' if n != 1 else ''}: "
+                f"{', '.join(action.eligible)}?",
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, clear {n}", "yes")),
+                carry=(verb,),
+                detail=_cap_detail((
+                    *outbox_clear_lines(self.groups, action.eligible),
+                    *(f"skipped {name}: {reason}" for name, reason in action.skipped),
+                )),
+            )
         if verb == "net loose":
             default = bulk_loose_default(self.groups, action.eligible)
             if default is not None:
@@ -2603,6 +2625,20 @@ class DashboardSession:
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
             orphans=True,
+        )
+
+    def begin_outbox_clear(self, name: str) -> Picker | None:
+        """Ask before clearing one container's outbox, with manifest counts."""
+        action = self._plan_one("outbox clear", name)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return None
+        return Picker(
+            "container-outbox-clear-confirm",
+            f"Clear the outbox of container '{self._merge_display([name])}'?",
+            (PickerEntry("No", "no"), PickerEntry("Yes, clear", "yes")),
+            target=name,
+            detail=_cap_detail(outbox_clear_lines(self.groups, action.eligible)),
         )
 
     def begin_destroy(self, name: str) -> Picker | None:
