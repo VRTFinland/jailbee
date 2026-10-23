@@ -394,9 +394,12 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
     env, _create, _comment, review = publication_env
     _unowned(env)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.prompting.choose", side_effect=lambda question, options: print(question) or "publish")
+    mocker.patch(
+        "jailbee.prompting.choose",
+        side_effect=lambda question, options: print(question) or "publish",
+    )
 
-    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"] )
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"])
 
     assert result.exit_code == 0, result.output
     assert result.output.index("not bound to container") < result.output.index("Publish 1")
@@ -1151,6 +1154,7 @@ def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(env, mock
     actions["a"].publish("feature", ProposalId(kind, "001.json"), "a" * 64)
 
     from jailbee.outbox.publish import ask_publish_mode
+
     assert applied.call_args.kwargs["choose_mode"] is ask_publish_mode
     assert applied.call_args.kwargs["options"].foreign is foreign
     if kind == "issue":
@@ -1209,15 +1213,25 @@ def test_show_no_color_keeps_bodies_verbatim_on_a_terminal(env, mocker):
     assert "- **first** item" in result.stdout.split("Raw manifest:")[0]
 
 
-@pytest.mark.parametrize("interactive,flags,draft,chooser", [(True,["--draft"],True,False),(True,[],False,True),(True,["-y"],False,False),(False,["-y","--draft"],True,False),(False,[],False,False)])
-def test_outbox_apply_draft_wiring(env,mocker,interactive,flags,draft,chooser):
+@pytest.mark.parametrize(
+    "interactive,flags,draft,chooser",
+    [
+        (True, ["--draft"], True, False),
+        (True, [], False, True),
+        (True, ["-y"], False, False),
+        (False, ["-y", "--draft"], True, False),
+        (False, [], False, False),
+    ],
+)
+def test_outbox_apply_draft_wiring(env, mocker, interactive, flags, draft, chooser):
     from jailbee.outbox.publish import ask_publish_mode
-    mocker.patch("jailbee.prompting.is_interactive",return_value=interactive)
-    applied=mocker.patch("jailbee.outbox.commands.apply_selected",return_value=0)
-    confirm=mocker.patch("typer.confirm",return_value=False)
-    result=CliRunner().invoke(app,["outbox","apply","feature","pr/001.json",*flags])
-    assert result.exit_code==0,result.output
-    kw=applied.call_args.kwargs
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", *flags])
+    assert result.exit_code == 0, result.output
+    kw = applied.call_args.kwargs
     assert kw["options"].draft is draft
     assert kw.get("choose_mode") is (ask_publish_mode if chooser else None)
     if draft:
@@ -1227,12 +1241,12 @@ def test_outbox_apply_draft_wiring(env,mocker,interactive,flags,draft,chooser):
             assert confirm.call_args.kwargs["default"] is False
 
 
-def test_outbox_apply_draft_off_tty_refuses(publication_env,mocker):
-    mocker.patch("jailbee.prompting.is_interactive",return_value=False)
-    picker=mocker.patch("jailbee.prompting.choose",side_effect=AssertionError("picker"))
-    draft=mocker.patch("jailbee.pr_draft.DraftSession")
-    result=CliRunner().invoke(app,["outbox","apply","feature","pr/001.json","--draft"])
-    assert result.exit_code!=0,result.output
+def test_outbox_apply_draft_off_tty_refuses(publication_env, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    picker = mocker.patch("jailbee.prompting.choose", side_effect=AssertionError("picker"))
+    draft = mocker.patch("jailbee.pr_draft.DraftSession")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "--draft"])
+    assert result.exit_code != 0, result.output
     assert "confirmation" in result.output or "Aborted" in result.output
     picker.assert_not_called()
     draft.assert_not_called()

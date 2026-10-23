@@ -2553,7 +2553,9 @@ def _offer_locked(
             first = previews[0]
             mode = choose_mode(
                 total,
-                DraftPreview(first.pr, first.pending, first.held_back, first.description, total_draft),
+                DraftPreview(
+                    first.pr, first.pending, first.held_back, first.description, total_draft
+                ),
             )
             accepted = mode is not None
             draft = mode == "draft"

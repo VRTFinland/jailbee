@@ -1637,9 +1637,9 @@ def test_gui_refusal_names_waypipe_only_when_it_is_available(waypipe_on, monkeyp
     assert ("waypipe ssh" in str(exc.value)) is waypipe_on
 
 
-@pytest.mark.parametrize("command",["outbox","review"])
+@pytest.mark.parametrize("command", ["outbox", "review"])
 def test_draft_apply_allowed_but_yes_denied(command):
-    argv=(command,"apply","box",*(("pr/a.json",) if command=="outbox" else ()),"--draft")
-    assert policy_allows(argv,FULL)==f"{command} apply"
-    with pytest.raises(RouteError,match="may not set --yes"):
-        policy_allows((*argv,"-y"),FULL)
+    argv = (command, "apply", "box", *(("pr/a.json",) if command == "outbox" else ()), "--draft")
+    assert policy_allows(argv, FULL) == f"{command} apply"
+    with pytest.raises(RouteError, match="may not set --yes"):
+        policy_allows((*argv, "-y"), FULL)

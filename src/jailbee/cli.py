@@ -13336,7 +13336,10 @@ def review_apply_cmd(
     name: ReviewContainerArg = None,
     draft: Annotated[
         bool,
-        typer.Option("--draft", help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it)."),
+        typer.Option(
+            "--draft",
+            help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it).",
+        ),
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
@@ -13401,7 +13404,9 @@ def review_apply_cmd(
         pr_number=None,
         confirm=_confirm,
         draft=draft,
-        choose_mode=ask_publish_mode if prompting.is_interactive() and not yes and not draft else None,
+        choose_mode=ask_publish_mode
+        if prompting.is_interactive() and not yes and not draft
+        else None,
         outbox=outbox,
         force=force,
         dry_run=dry_run,

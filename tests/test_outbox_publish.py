@@ -1210,6 +1210,7 @@ def test_issue_expected_fields_revalidated_after_confirm(env):
 def test_ask_publish_mode_aggregate_draft_count(mocker):
     from jailbee.outbox.publish import ask_publish_mode
     from jailbee.pr_outbox import DraftPreview
-    choose=mocker.patch("jailbee.prompting.choose",return_value=None)
-    assert ask_publish_mode(12,DraftPreview(7,1,1,True,draft_total=5)) is None
+
+    choose = mocker.patch("jailbee.prompting.choose", return_value=None)
+    assert ask_publish_mode(12, DraftPreview(7, 1, 1, True, draft_total=5)) is None
     assert "5 pending actions" in choose.call_args.args[1][1].title

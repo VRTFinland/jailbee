@@ -3439,12 +3439,13 @@ def test_nested_publication_guard_never_rebinds_identity_and_releases(mocker, tm
     assert manager.identity is None
 
 
-@pytest.mark.parametrize("interactive",[True,False])
-def test_pr_offer_draft_choose_mode(mocker,tmp_path,interactive):
+@pytest.mark.parametrize("interactive", [True, False])
+def test_pr_offer_draft_choose_mode(mocker, tmp_path, interactive):
     from jailbee.cli import _offer_outbox_comments
     from jailbee.outbox.publish import ask_publish_mode
     from tests.conftest import make_cfg
-    mocker.patch("jailbee.prompting.is_interactive",return_value=interactive)
-    offer=mocker.patch("jailbee.pr_outbox.offer_pending_comments",return_value=0)
-    assert _offer_outbox_comments(make_cfg(tmp_path),mocker.Mock(),"box","box",number=7)==0
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
+    assert _offer_outbox_comments(make_cfg(tmp_path), mocker.Mock(), "box", "box", number=7) == 0
     assert offer.call_args.kwargs.get("choose_mode") is (ask_publish_mode if interactive else None)

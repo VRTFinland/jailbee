@@ -1088,16 +1088,26 @@ def test_drop_multiple_preserves_preview_identity(mocker, tmp_path):
     assert not (tmp_path / "review-store" / "two.json").exists()
 
 
-@pytest.mark.parametrize("interactive,flags,draft,chooser", [(True,["--draft"],True,False),(True,[],False,True),(True,["-y"],False,False),(False,["-y","--draft"],True,False),(False,[],False,False)])
-def test_review_apply_draft_wiring(mocker,tmp_path,interactive,flags,draft,chooser):
+@pytest.mark.parametrize(
+    "interactive,flags,draft,chooser",
+    [
+        (True, ["--draft"], True, False),
+        (True, [], False, True),
+        (True, ["-y"], False, False),
+        (False, ["-y", "--draft"], True, False),
+        (False, [], False, False),
+    ],
+)
+def test_review_apply_draft_wiring(mocker, tmp_path, interactive, flags, draft, chooser):
     from jailbee.outbox.publish import ask_publish_mode
-    _setup(mocker,tmp_path,files={"001-x.json":_manifest_text()})
-    mocker.patch("jailbee.prompting.is_interactive",return_value=interactive)
-    offer=mocker.patch("jailbee.pr_outbox.offer_pending_comments",return_value=0)
-    confirm=mocker.patch("typer.confirm",return_value=False)
-    result=runner.invoke(app,["review","apply","feat-foo",*flags])
-    assert result.exit_code==0,result.output
-    kw=offer.call_args.kwargs
+
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+    result = runner.invoke(app, ["review", "apply", "feat-foo", *flags])
+    assert result.exit_code == 0, result.output
+    kw = offer.call_args.kwargs
     assert kw["draft"] is draft
     assert kw.get("choose_mode") is (ask_publish_mode if chooser else None)
     if draft:
@@ -1107,15 +1117,17 @@ def test_review_apply_draft_wiring(mocker,tmp_path,interactive,flags,draft,choos
             assert confirm.call_args.kwargs["default"] is False
 
 
-def test_review_apply_draft_off_tty_refuses(mocker,tmp_path):
-    text=_manifest_text(actions=[{"type":"review","event":"COMMENT","body":"review","comments":[]}])
-    _setup(mocker,tmp_path,files={"001-x.json":text})
-    mocker.patch("jailbee.prompting.is_interactive",return_value=False)
-    mocker.patch("jailbee.pr_outbox.resolve_target",return_value=_a_target(text=text))
-    applied=mocker.patch("jailbee.pr_outbox.apply_manifest")
-    picker=mocker.patch("jailbee.prompting.choose",side_effect=AssertionError("picker"))
-    result=runner.invoke(app,["review","apply","feat-foo","--draft"])
-    assert result.exit_code==2,result.output
+def test_review_apply_draft_off_tty_refuses(mocker, tmp_path):
+    text = _manifest_text(
+        actions=[{"type": "review", "event": "COMMENT", "body": "review", "comments": []}]
+    )
+    _setup(mocker, tmp_path, files={"001-x.json": text})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(text=text))
+    applied = mocker.patch("jailbee.pr_outbox.apply_manifest")
+    picker = mocker.patch("jailbee.prompting.choose", side_effect=AssertionError("picker"))
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "--draft"])
+    assert result.exit_code == 2, result.output
     assert "-y" in result.output
     applied.assert_not_called()
     picker.assert_not_called()

@@ -430,7 +430,10 @@ def apply(
     ] = False,
     draft: Annotated[
         bool,
-        typer.Option("--draft", help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it)."),
+        typer.Option(
+            "--draft",
+            help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it).",
+        ),
     ] = False,
     yes: YesOption = False,
     revision: RevisionOption = None,
@@ -461,11 +464,15 @@ def apply(
                 foreign or (pid.kind == "pr" and prompting.is_interactive() and not yes),
                 draft=draft,
             ),
-            choose_mode=ask_publish_mode if prompting.is_interactive() and not yes and not draft else None,
+            choose_mode=ask_publish_mode
+            if prompting.is_interactive() and not yes and not draft
+            else None,
             journal_store=store,
             confirm=lambda total: (
-                yes or typer.confirm(
-                    f"Publish {total} pending actions{' as a draft review' if draft else ''}?", default=False
+                yes
+                or typer.confirm(
+                    f"Publish {total} pending actions{' as a draft review' if draft else ''}?",
+                    default=False,
                 )
             ),
             confirm_foreign=(

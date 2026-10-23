@@ -436,8 +436,12 @@ class PrReviewError(PrError):
 
 
 def _run_gh_api(
-    repo_root: Path, cmd: list[str], payload: str | None, label: str,
-    *, graphql_errors: bool = False,
+    repo_root: Path,
+    cmd: list[str],
+    payload: str | None,
+    label: str,
+    *,
+    graphql_errors: bool = False,
 ) -> dict[str, Any]:
     """Run a `gh api` call, return its parsed JSON response.
 
@@ -539,7 +543,10 @@ def find_pending_review(
         for node in nodes:
             if node["viewerDidAuthor"]:
                 return PendingReview(
-                    int(node["databaseId"]), node["id"], node["url"], node["body"],
+                    int(node["databaseId"]),
+                    node["id"],
+                    node["url"],
+                    node["body"],
                     node["commit"]["oid"],
                 )
     except (KeyError, TypeError, ValueError) as e:
@@ -558,16 +565,26 @@ def create_pending_review(
 ) -> PendingReview:
     """Create a pending review without submitting it."""
     cmd = [
-        "gh", "api", "--method", "POST",
-        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews", "--input", "-",
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews",
+        "--input",
+        "-",
     ]
     response = _run_gh_api(
-        repo_root, cmd, json.dumps({"commit_id": commit_id, "body": body, "comments": comments}),
+        repo_root,
+        cmd,
+        json.dumps({"commit_id": commit_id, "body": body, "comments": comments}),
         "create pending review",
     )
     try:
         return PendingReview(
-            int(response["id"]), response["node_id"], response["html_url"], response["body"],
+            int(response["id"]),
+            response["node_id"],
+            response["html_url"],
+            response["body"],
             response.get("commit_id") or commit_id,
         )
     except (KeyError, TypeError, ValueError) as e:
@@ -591,7 +608,8 @@ def add_pending_review_thread(
         """mutation($input: AddPullRequestReviewThreadInput!) {
           addPullRequestReviewThread(input: $input) { thread { id } }
         }""",
-        {"input": fields}, "add pending review thread",
+        {"input": fields},
+        "add pending review thread",
     )
 
 
@@ -600,19 +618,31 @@ def update_pending_review_body(
 ) -> None:
     """Replace a pending review's summary without submitting it."""
     cmd = [
-        "gh", "api", "--method", "PUT",
-        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews/{review.id}", "--input", "-",
+        "gh",
+        "api",
+        "--method",
+        "PUT",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews/{review.id}",
+        "--input",
+        "-",
     ]
     _run_gh_api(repo_root, cmd, json.dumps({"body": body}), "update pending review body")
 
 
 def add_pending_reply(
-    repo_root: Path, review: PendingReview, comment_id: int, body: str,
-    *, repo: str | None = None,
+    repo_root: Path,
+    review: PendingReview,
+    comment_id: int,
+    body: str,
+    *,
+    repo: str | None = None,
 ) -> None:
     """Resolve a REST comment ID and attach a reply to a pending review."""
     cmd = [
-        "gh", "api", "--method", "GET",
+        "gh",
+        "api",
+        "--method",
+        "GET",
         f"repos/{repo or '{owner}/{repo}'}/pulls/comments/{comment_id}",
     ]
     response = _run_gh_api(repo_root, cmd, None, "get review comment")

@@ -4071,24 +4071,56 @@ def test_offer_still_names_a_description_for_an_existing_pr(mocker, tmp_path):
 
 
 @pytest.mark.parametrize("mode", [None, "draft"])
-def test_draft_chooser_multiple_manifests_partial_progress(mocker,make_cfg,tmp_path,mode):
+def test_draft_chooser_multiple_manifests_partial_progress(mocker, make_cfg, tmp_path, mode):
     from jailbee.pr_outbox import DraftPreview, Progress
-    _,text=_draft_manifest()
-    files={"one.json":text,"two.json":_manifest_text(pr=7,actions=[{"type":"comment","body":"held"},{"type":"description","body":"skipped"}]),"three.json":text}
-    cfg,incus,*_=_selected_setup(mocker,make_cfg,tmp_path,files=files)
-    mocker.patch("jailbee.pr.resolve_pr",return_value=_pr_info(number=7))
-    incus.config_get.side_effect=lambda c,key:{"user.jailbee.pr":"7"}.get(key)
-    mocker.patch("jailbee.pr_outbox._current_pr_body",return_value="old")
-    mocker.patch("jailbee.pr_outbox._publication_progress",return_value=Progress(frozenset({0}),{}))
-    choose=mocker.Mock(return_value=mode)
+
+    _, text = _draft_manifest()
+    files = {
+        "one.json": text,
+        "two.json": _manifest_text(
+            pr=7,
+            actions=[
+                {"type": "comment", "body": "held"},
+                {"type": "description", "body": "skipped"},
+            ],
+        ),
+        "three.json": text,
+    }
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7))
+    incus.config_get.side_effect = lambda c, key: {"user.jailbee.pr": "7"}.get(key)
+    mocker.patch("jailbee.pr_outbox._current_pr_body", return_value="old")
+    mocker.patch(
+        "jailbee.pr_outbox._publication_progress", return_value=Progress(frozenset({0}), {})
+    )
+    choose = mocker.Mock(return_value=mode)
     from jailbee.pr_outbox import ApplyOutcome
-    applied=mocker.patch("jailbee.pr_outbox.apply_manifest",return_value=ApplyOutcome((),(),None))
+
+    applied = mocker.patch(
+        "jailbee.pr_outbox.apply_manifest", return_value=ApplyOutcome((), (), None)
+    )
     mocker.patch("jailbee.pr_outbox.finalize")
     from jailbee.pr_outbox import offer_pending_comments
-    assert offer_pending_comments(cfg,incus,"c","feature",pr_number=None,manifest_names=tuple(files),confirm=lambda _: True,choose_mode=choose)==0
-    choose.assert_called_once_with(7,DraftPreview(7,1,1,True,draft_total=4))
+
+    assert (
+        offer_pending_comments(
+            cfg,
+            incus,
+            "c",
+            "feature",
+            pr_number=None,
+            manifest_names=tuple(files),
+            confirm=lambda _: True,
+            choose_mode=choose,
+        )
+        == 0
+    )
+    choose.assert_called_once_with(7, DraftPreview(7, 1, 1, True, draft_total=4))
     if mode is None:
         applied.assert_not_called()
     else:
-        assert [call.args[3].manifest.name for call in applied.call_args_list] == ["one.json", "three.json"]
-        assert all(call.kwargs["indices"] == {1,3} for call in applied.call_args_list)
+        assert [call.args[3].manifest.name for call in applied.call_args_list] == [
+            "one.json",
+            "three.json",
+        ]
+        assert all(call.kwargs["indices"] == {1, 3} for call in applied.call_args_list)
