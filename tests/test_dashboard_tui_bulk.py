@@ -259,8 +259,12 @@ def test_no_eligible_container_explains_itself(mocker, tmp_path):
 def _pending_outbox(group):
     for container in group.containers:
         container.git_status = GitStatus(
-            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok",
-            pending_pr_actions=1, pending_issue_actions=1,
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=1,
+            pending_issue_actions=1,
         )
 
 

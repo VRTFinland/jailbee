@@ -2599,10 +2599,12 @@ class DashboardSession:
                 f"{', '.join(action.eligible)}?",
                 (PickerEntry("No", "no"), PickerEntry(f"Yes, clear {n}", "yes")),
                 carry=(verb,),
-                detail=_cap_detail((
-                    *outbox_clear_lines(self.groups, action.eligible),
-                    *(f"skipped {name}: {reason}" for name, reason in action.skipped),
-                )),
+                detail=_cap_detail(
+                    (
+                        *outbox_clear_lines(self.groups, action.eligible),
+                        *(f"skipped {name}: {reason}" for name, reason in action.skipped),
+                    )
+                ),
             )
         if verb == "net loose":
             default = bulk_loose_default(self.groups, action.eligible)
