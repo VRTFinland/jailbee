@@ -960,6 +960,7 @@ class DraftPreview:
     pending: int
     held_back: int
     description: bool
+    draft_total: int | None = None
 
 
 PublishMode = Literal["publish", "draft"]
@@ -2549,7 +2550,11 @@ def _offer_locked(
         if draft:
             accepted = confirm(total_draft)
         elif draft_plans and choose_mode is not None:
-            mode = choose_mode(total, previews[0])
+            first = previews[0]
+            mode = choose_mode(
+                total,
+                DraftPreview(first.pr, first.pending, first.held_back, first.description, total_draft),
+            )
             accepted = mode is not None
             draft = mode == "draft"
         else:

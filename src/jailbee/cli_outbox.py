@@ -207,7 +207,7 @@ def browse(
     from jailbee.outbox.delete import DeletePlan
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox.models import OutboxChanged
-    from jailbee.outbox.publish import PublishOptions
+    from jailbee.outbox.publish import PublishOptions, ask_publish_mode
     from jailbee.outbox_io import JournalStore
 
     def operation(cfg: Config, incus: Incus) -> int:
@@ -261,6 +261,7 @@ def browse(
                 # Always interactive: the plan warns about a PR the container
                 # does not own, and the confirmation below it is the consent.
                 options=PublishOptions(foreign=proposal.kind == "pr"),
+                choose_mode=ask_publish_mode,
                 journal_store=journals,
                 confirm=lambda total: typer.confirm(
                     f"Publish {total} pending actions in the whole manifest?", default=False
@@ -427,6 +428,10 @@ def apply(
             ),
         ),
     ] = False,
+    draft: Annotated[
+        bool,
+        typer.Option("--draft", help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it)."),
+    ] = False,
     yes: YesOption = False,
     revision: RevisionOption = None,
     config: ConfigOption = None,
@@ -434,7 +439,7 @@ def apply(
     """Publish one whole manifest through its existing domain gates."""
     from jailbee import prompting
     from jailbee.outbox.commands import apply_selected
-    from jailbee.outbox.publish import PublishOptions
+    from jailbee.outbox.publish import PublishOptions, ask_publish_mode
     from jailbee.outbox_io import JournalStore
 
     def operation(cfg: Config, incus: Incus) -> int:
@@ -454,10 +459,14 @@ def apply(
                 dry_run,
                 force,
                 foreign or (pid.kind == "pr" and prompting.is_interactive() and not yes),
+                draft=draft,
             ),
+            choose_mode=ask_publish_mode if prompting.is_interactive() and not yes and not draft else None,
             journal_store=store,
             confirm=lambda total: (
-                yes or typer.confirm(f"Publish {total} pending actions?", default=False)
+                yes or typer.confirm(
+                    f"Publish {total} pending actions{' as a draft review' if draft else ''}?", default=False
+                )
             ),
             confirm_foreign=(
                 None

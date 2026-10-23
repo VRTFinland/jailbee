@@ -8429,6 +8429,7 @@ def _offer_outbox_comments(
     not a new one of its own.
     """
     from jailbee import pr_outbox, prompting
+    from jailbee.outbox.publish import ask_publish_mode
 
     def _confirm(count: int) -> bool:
         plural = "" if count == 1 else "s"
@@ -8442,6 +8443,7 @@ def _offer_outbox_comments(
         pr_number=number,
         confirm=_confirm,
         can_prompt=prompting.is_interactive(),
+        choose_mode=ask_publish_mode if prompting.is_interactive() else None,
         management=management,
     )
 
@@ -13332,6 +13334,10 @@ def _select_manifests_or_exit(outbox: "Outbox", manifest: str | None, short: str
 @review_app.command("apply")
 def review_apply_cmd(
     name: ReviewContainerArg = None,
+    draft: Annotated[
+        bool,
+        typer.Option("--draft", help="Publish PR review comments and replies as your pending GitHub review (only you see it until you submit it)."),
+    ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
     force: Annotated[
@@ -13351,6 +13357,7 @@ def review_apply_cmd(
     """Show what a container wants to publish to GitHub, then publish it."""
     from jailbee import pr_outbox, prompting
     from jailbee.lifecycle import short_name
+    from jailbee.outbox.publish import ask_publish_mode
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_review_container(cfg, name)
@@ -13382,7 +13389,7 @@ def review_apply_cmd(
                 "Re-run with -y, or from a terminal."
             )
             raise typer.Exit(2)
-        return typer.confirm("Proceed?")
+        return typer.confirm("Proceed as a draft review?" if draft else "Proceed?", default=False)
 
     if pr_outbox.offer_pending_comments(
         cfg,
@@ -13393,6 +13400,8 @@ def review_apply_cmd(
         # one that publishes whatever `jailbee pr` did not.
         pr_number=None,
         confirm=_confirm,
+        draft=draft,
+        choose_mode=ask_publish_mode if prompting.is_interactive() and not yes and not draft else None,
         outbox=outbox,
         force=force,
         dry_run=dry_run,

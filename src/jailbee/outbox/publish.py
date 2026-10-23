@@ -46,8 +46,12 @@ class PublishOptions:
 
 
 def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.PublishMode | None:
-    """Offer publication modes for one selected manifest, with their distinct counts."""
-    draft_total = preview.pending + int(preview.description)
+    """Offer modes using the aggregate draft count, or a single-preview fallback."""
+    draft_total = (
+        preview.draft_total
+        if preview.draft_total is not None
+        else preview.pending + int(preview.description)
+    )
     options: list[prompting.Option[pr_outbox.PublishMode | None]] = [
         prompting.Option("publish", "Publish", "publish"),
         prompting.Option(
