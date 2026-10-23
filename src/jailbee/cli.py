@@ -1690,6 +1690,15 @@ def apply(
         error(str(e))
         raise typer.Exit(1) from e
 
+    if result.memory_defaulted:
+        success(
+            f"Moved {len(result.memory_defaulted)} container(s) to the default memory limit"
+        )
+    if result.memory_low:
+        warn_plain(
+            f"Containers use more memory than the new default {cfg.defaults.memory}: "
+            f"{', '.join(short_name(cfg, n) for n in result.memory_low)}"
+        )
     if result.restarted:
         success(f"Restarted: {', '.join(short_name(cfg, n) for n in result.restarted)}")
     if not any(
@@ -1700,6 +1709,8 @@ def apply(
             result.docker_restarted,
             result.docker_restart_pending,
             result.offline_migrated,
+            result.memory_defaulted,
+            result.memory_low,
             result.ports_changed,
             result.litellm_restarted,
             result.litellm_pending,

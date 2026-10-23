@@ -53,6 +53,8 @@ class ApplyResult:
     # Containers moved off the removed `<prefix>-net-offline` profile by
     # this run. Empty on every apply after the first one.
     offline_migrated: list[str] = field(default_factory=list)
+    memory_defaulted: list[str] = field(default_factory=list)
+    memory_low: list[str] = field(default_factory=list)
     # Containers whose port forwards this run added, replaced or removed.
     ports_changed: list[str] = field(default_factory=list)
     # (container, message) for containers whose port-forward reconciliation
@@ -119,7 +121,7 @@ def _only_attaches_services_acl(existing: str, candidate: str) -> bool:
 
 
 # Profile config keys Incus applies to a running container on the spot.
-_LIVE_PROFILE_KEYS = frozenset({"limits.cpu.allowance"})
+_LIVE_PROFILE_KEYS = frozenset({"limits.cpu.allowance", "limits.memory"})
 
 
 def _only_changes_live_config(existing: str, candidate: str) -> bool:
@@ -442,6 +444,24 @@ def run_apply(
     ports_changed: list[str] = []
     port_failures: list[tuple[str, str]] = []
     raw_by_name = {raw.get("name"): raw for raw in incus.list_containers()}
+    from jailbee.memory_limit import below_usage, migrate_pinned
+
+    # The base profile is already written: clearing a pin now inherits its cap.
+    memory_defaulted = migrate_pinned(
+        incus,
+        [raw_by_name[ci.name] for ci in containers if ci.name in raw_by_name],
+        default=cfg.defaults.memory,
+        base_profile=names.base,
+    )
+    defaulted_names = set(memory_defaulted)
+    memory_low = [
+        ci.name
+        for ci in containers
+        if ci.state == "Running"
+        # The lifecycle snapshot predates migration; those pins now follow default.
+        and (not ci.memory_override or ci.name in defaulted_names)
+        and below_usage(cfg.defaults.memory, ci.memory_usage)
+    ]
     from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
     from jailbee.work_network import work_network_lock
 
@@ -635,6 +655,8 @@ def run_apply(
         restarted=restarted,
         restart_failures=restart_failures,
         offline_migrated=offline_migrated,
+        memory_defaulted=memory_defaulted,
+        memory_low=memory_low,
         ports_changed=ports_changed,
         port_failures=port_failures,
         unresolved_pools=unresolved_pools,

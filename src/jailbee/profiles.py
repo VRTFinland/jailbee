@@ -217,6 +217,7 @@ def base_profile_yaml(cfg: Config) -> str:
         devices[_hostdev_device_name(dev.path)] = entry
 
     profile_config: dict[str, str] = {
+        "limits.memory": cfg.defaults.memory,
         "security.nesting": "true",
         "security.syscalls.intercept.mknod": "true",
         "raw.idmap": f"uid {uid} {uid}\ngid {gid} {gid}",

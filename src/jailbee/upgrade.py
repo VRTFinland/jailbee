@@ -331,6 +331,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`container.tmpfs.enabled` to get one back, capped by `container.tmpfs.size`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`defaults.memory` now lives in the base profile, so containers follow it; "
+            "per-container limits are set with `jailbee mem`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

@@ -3336,3 +3336,60 @@ def test_only_changes_live_config(old: str, new: str, expected: bool) -> None:
     from jailbee.apply import _only_changes_live_config
 
     assert _only_changes_live_config(old, new) is expected
+
+
+def test_memory_change_is_live() -> None:
+    from jailbee.apply import _only_changes_live_config
+
+    assert _only_changes_live_config(
+        "config: {limits.memory: 16GiB}", "config: {limits.memory: 8GiB}"
+    )
+
+
+def test_apply_migrates_memory_after_profile_write_and_warns_from_old_snapshot(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.profiles import base_profile_yaml, profile_names
+
+    cfg = make_cfg(tmp_path)
+    base = profile_names(cfg).base
+    incus = MagicMock(spec=Incus)
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    incus.profile_exists.return_value = True
+    incus.profile_show.return_value = "config: {}"
+    mocker.patch("jailbee.apply._profile_differs", side_effect=lambda _i, n, _y: n == base)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    rows = [
+        ("migrated", "Running", True, 20, base, cfg.defaults.memory),
+        ("following", "Running", False, 20, base, None),
+        ("override", "Running", True, 20, base, "24GiB"),
+        ("stopped", "Stopped", False, 20, base, None),
+        ("low", "Running", False, 1, base, None),
+        ("unknown", "Running", False, None, base, None),
+        ("no-base", "Running", True, 20, "other-base", cfg.defaults.memory),
+    ]
+    containers = [
+        ContainerInfo(name, state, "loose", None, cfg.defaults.memory,
+                      memory_override=override, memory_usage=usage * 1024**3 if usage else None)
+        for name, state, override, usage, _profile, _limit in rows
+    ]
+    mocker.patch("jailbee.apply._list_containers", return_value=containers)
+    incus.list_containers.return_value = [
+        {"name": name, "profiles": [profile],
+         "config": {"limits.memory": limit} if limit else {}}
+        for name, _state, _override, _usage, profile, limit in rows
+    ] + [{"name": "foreign", "profiles": [base], "config": {"limits.memory": cfg.defaults.memory}}]
+
+    result = run_apply(cfg, incus, GlobalConfig(), no_restart=True)
+
+    assert result.memory_defaulted == ["migrated"]
+    assert result.memory_low == ["migrated", "following"]
+    incus.config_unset_checked.assert_called_once_with("migrated", "limits.memory")
+    timeline = [(c[0], c.args) for c in incus.mock_calls]
+    assert timeline.index(("profile_set_yaml", (base, base_profile_yaml(cfg)))) < timeline.index(
+        ("config_unset_checked", ("migrated", "limits.memory"))
+    )
