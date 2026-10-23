@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -25,7 +26,7 @@ READ_ONLY_LINE = "Read-only over SSH: use explicit `jailbee outbox drop` / `outb
 class FakeJobs:
     """A `JobRunner` stand-in: records starts, delivers scripted results on `poll`."""
 
-    instances: list[FakeJobs] = []
+    instances: ClassVar[list[FakeJobs]] = []
 
     def __init__(self) -> None:
         self.started: list[list[str]] = []
