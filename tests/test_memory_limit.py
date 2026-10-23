@@ -38,10 +38,12 @@ def test_run_mem_propagates_write_errors(mocker, make_cfg, tmp_path, size):
     incus = Mock()
     incus.config_set.side_effect = RuntimeError("set failed")
     incus.config_unset_checked.side_effect = RuntimeError("unset failed")
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[SimpleNamespace(name="box", memory_usage=None)])
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[SimpleNamespace(name="box", memory_usage=None)],
+    )
     with pytest.raises(RuntimeError, match="failed"):
         run_mem(cfg, incus, "box", size, force=False, confirm=Mock(), interactive=False)
-
 
 
 def test_validate_incus_sizes_and_percentages() -> None:

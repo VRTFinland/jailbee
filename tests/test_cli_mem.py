@@ -15,7 +15,9 @@ def rig(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
     full = f"{cfg.container_prefix}-feat-1"
-    row = SimpleNamespace(name=full, memory_usage=5 * GiB, memory_limit="24GiB", memory_override=True)
+    row = SimpleNamespace(
+        name=full, memory_usage=5 * GiB, memory_limit="24GiB", memory_override=True
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     resolve = mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, full))
     gather = mocker.patch("jailbee.lifecycle.list_containers", return_value=[row])
@@ -25,7 +27,7 @@ def rig(mocker, make_cfg, tmp_path):
 
 @pytest.mark.parametrize("size", ["24GiB", "default"])
 def test_mem_sets_or_clears_override(rig, size):
-    cfg, incus, full, _, _, _ = rig
+    _, incus, full, _, _, _ = rig
     result = runner.invoke(app, ["mem", "feat-1", size])
     assert result.exit_code == 0, result.output
     if size == "default":
@@ -93,7 +95,11 @@ def test_mem_missing_positionals_uses_resolver_and_size_options(rig, mocker, cho
     resolve.assert_called_once_with(cfg, None)
     noun, options = select.call_args.args
     assert noun == "memory limit"
-    expected = size_options(current=row.memory_limit, override=True, default=cfg.defaults.memory, host_total=20 * GiB)
+    expected = size_options(
+        current=row.memory_limit, override=True, default=cfg.defaults.memory, host_total=20 * GiB
+    )
     assert [(o.value, o.title) for o in options] == [(o.value, o.label) for o in expected]
-    incus.config_set.assert_called_once_with(full, "limits.memory", "12GiB" if choice == "other" else "8GiB")
+    incus.config_set.assert_called_once_with(
+        full, "limits.memory", "12GiB" if choice == "other" else "8GiB"
+    )
     assert ask.called is (choice == "other")

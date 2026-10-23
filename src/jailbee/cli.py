@@ -4983,7 +4983,8 @@ def start(
 def mem_cmd(
     name: ContainerArg = None,
     size: Annotated[
-        str | None, typer.Argument(help="Memory limit (e.g. 24GiB), or 'default' to clear the override.")
+        str | None,
+        typer.Argument(help="Memory limit (e.g. 24GiB), or 'default' to clear the override."),
     ] = None,
     force: Annotated[
         bool, typer.Option("--force", help="Allow a limit below current memory usage.")
@@ -5014,7 +5015,10 @@ def mem_cmd(
             size = prompting.ask_text("memory limit", validate=validate_size)
     try:
         notice = run_mem(
-            cfg, incus, full, size,
+            cfg,
+            incus,
+            full,
+            size,
             force=force,
             confirm=lambda question: prompting.confirm(question, default=False),
             interactive=prompting.is_interactive(),
