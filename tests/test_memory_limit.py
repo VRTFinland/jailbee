@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+import pytest
+
 from jailbee.memory_limit import (
     SizeOption,
     below_usage,
@@ -11,6 +13,35 @@ from jailbee.memory_limit import (
 )
 
 GiB = 1024**3
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("usage unavailable"), None])
+def test_run_mem_does_not_write_when_usage_gather_fails(mocker, make_cfg, tmp_path, failure):
+    from jailbee.memory_limit import run_mem
+
+    cfg = make_cfg(tmp_path)
+    incus = Mock()
+    mocker.patch("jailbee.lifecycle.list_containers", side_effect=failure, return_value=[])
+    with pytest.raises((RuntimeError, ValueError)):
+        run_mem(cfg, incus, "missing", "8GiB", force=False, confirm=Mock(), interactive=False)
+    incus.config_set.assert_not_called()
+    incus.config_unset_checked.assert_not_called()
+
+
+@pytest.mark.parametrize("size", ["24GiB", "default"])
+def test_run_mem_propagates_write_errors(mocker, make_cfg, tmp_path, size):
+    from types import SimpleNamespace
+
+    from jailbee.memory_limit import run_mem
+
+    cfg = make_cfg(tmp_path)
+    incus = Mock()
+    incus.config_set.side_effect = RuntimeError("set failed")
+    incus.config_unset_checked.side_effect = RuntimeError("unset failed")
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[SimpleNamespace(name="box", memory_usage=None)])
+    with pytest.raises(RuntimeError, match="failed"):
+        run_mem(cfg, incus, "box", size, force=False, confirm=Mock(), interactive=False)
+
 
 
 def test_validate_incus_sizes_and_percentages() -> None:

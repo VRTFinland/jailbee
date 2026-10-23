@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jailbee.incus import Incus
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
 
 LIMIT_KEY = "limits.memory"
 DEFAULT_WORD = "default"
@@ -103,6 +106,41 @@ def set_limit(incus: Incus, name: str, size: str | None) -> None:
         incus.config_unset_checked(name, LIMIT_KEY)
     else:
         incus.config_set(name, LIMIT_KEY, size)
+
+
+def run_mem(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    size: str,
+    *,
+    force: bool,
+    confirm: Callable[[str], bool],
+    interactive: bool,
+) -> str:
+    """Change an override after checking the effective target against current use."""
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.prompting import Cancelled
+
+    clear = size == DEFAULT_WORD
+    target = cfg.defaults.memory if clear else size
+    if message := validate_size(target):
+        raise ValueError(message)
+    container = next((row for row in list_containers(cfg, incus) if row.name == name), None)
+    if container is None:
+        raise ValueError(f"Container {name} is not in the current repository")
+    if below_usage(target, container.memory_usage) and not force:
+        warning = (
+            f"{short_name(cfg, name)}: memory limit {target} is below current usage; "
+            "the kernel will reclaim memory and may OOM-kill processes"
+        )
+        if not interactive:
+            raise ValueError(f"{warning}; use --force to continue")
+        if not confirm(f"{warning}. Continue?"):
+            raise Cancelled()
+    set_limit(incus, name, None if clear else size)
+    description = f"follows the default ({target})" if clear else f"{size} (override)"
+    return f"{short_name(cfg, name)}: memory limit {description}"
 
 
 def migrate_pinned(

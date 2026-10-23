@@ -612,6 +612,10 @@ def test_litellm_host_actions_are_denied_remotely(command: str) -> None:
         policy_allows(("litellm", command), RemoteCommandPolicy(mode="full"))
 
 
+def test_mem_is_a_container_command() -> None:
+    assert policy_allows(("mem", "box", "8GiB"), FULL) == "mem"
+
+
 def test_litellm_status_is_allowed_remotely() -> None:
     assert (
         policy_allows(("litellm", "status"), RemoteCommandPolicy(mode="full")) == "litellm status"

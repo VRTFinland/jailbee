@@ -4979,6 +4979,52 @@ def start(
     _clear_superseded_boot_job(cfg, name)
 
 
+@app.command("mem")
+def mem_cmd(
+    name: ContainerArg = None,
+    size: Annotated[
+        str | None, typer.Argument(help="Memory limit (e.g. 24GiB), or 'default' to clear the override.")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Allow a limit below current memory usage.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Set a container's memory limit, or follow the repository default."""
+    from jailbee import prompting, sysstat
+    from jailbee.lifecycle import list_containers
+    from jailbee.memory_limit import OTHER_VALUE, run_mem, size_options, validate_size
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    if size is None:
+        container = next((row for row in list_containers(cfg, incus) if row.name == full), None)
+        host = sysstat.read_memory()
+        rows = size_options(
+            current=container.memory_limit if container else None,
+            override=container.memory_override if container else False,
+            default=cfg.defaults.memory,
+            host_total=host.total if host else None,
+        )
+        size = prompting.choose_one(
+            "memory limit",
+            [prompting.Option(row.value, row.label, row.label) for row in rows],
+        )
+        if size == OTHER_VALUE:
+            size = prompting.ask_text("memory limit", validate=validate_size)
+    try:
+        notice = run_mem(
+            cfg, incus, full, size,
+            force=force,
+            confirm=lambda question: prompting.confirm(question, default=False),
+            interactive=prompting.is_interactive(),
+        )
+    except ValueError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(2) from exc
+    success(notice)
+
+
 @app.command("rename")
 def rename_cmd(
     name: ContainerArg = None,
