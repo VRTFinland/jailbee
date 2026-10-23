@@ -211,6 +211,17 @@ def test_receipt_shaped_filename_ambiguity_never_authorizes_replay(tmp_path):
         assert ("applied.log", files["applied.log"]) in evidence.inputs
 
 
+def test_receipt_log_with_draft_marker_is_valid_evidence():
+    from jailbee.outbox.inspect import pr_progress_evidence
+
+    files = pr_files() | {
+        "001.json.progress.json": '{"applied":[0,1],"urls":{"0":"https://x","1":"https://x"}}',
+        "applied.log": "now 001.json pr=7 actions=2 urls=https://x (draft)",
+    }
+    evidence = pr_progress_evidence(store("pr", files), "001.json", 2)
+    assert evidence.error is None
+
+
 def test_suffix_shaped_url_preserves_valid_sidecar_and_revision(tmp_path):
     from jailbee.outbox.inspect import pr_progress_evidence
 

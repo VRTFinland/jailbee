@@ -1214,6 +1214,145 @@ def _apply_mocks(mocker):
     }
 
 
+def _draft_manifest():
+    from jailbee.pr_outbox import parse_manifest
+
+    text = _manifest_text(
+        pr=7,
+        actions=[
+            {"type": "review", "body": "review", "comments": []},
+            {"type": "reply", "comment_id": 9, "body": "reply"},
+            {"type": "comment", "body": "held back"},
+            {"type": "description", "body": "description"},
+        ],
+    )
+    return parse_manifest("draft.json", text, {}), text
+
+
+def test_draft_indices_drop_general_comments():
+    from jailbee.pr_outbox import draft_indices
+
+    manifest, _ = _draft_manifest()
+    assert draft_indices(manifest, iter(range(4))) == frozenset({0, 1, 3})
+    assert draft_indices(manifest, [1, 2]) == frozenset({1})
+
+
+def test_draftable_needs_review_or_reply():
+    from jailbee.pr_outbox import draftable
+
+    manifest, _ = _draft_manifest()
+    assert draftable(manifest, [0])
+    assert draftable(manifest, [1])
+    assert not draftable(manifest, [2, 3])
+    assert not draftable(manifest, [])
+
+
+def test_draft_preview_counts():
+    from jailbee.pr_outbox import DraftPreview, draft_preview
+
+    manifest, _ = _draft_manifest()
+    assert draft_preview(manifest, 7, iter(range(4))) == DraftPreview(7, 2, 1, True)
+    assert draft_preview(manifest, 8, [1, 2]) == DraftPreview(8, 1, 1, False)
+
+
+def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest
+
+    calls = _apply_mocks(mocker)
+    factory = mocker.patch("jailbee.pr_draft.DraftSession")
+    session = factory.return_value
+    session.review.return_value = session.reply.return_value = "https://x/draft"
+    manifest, _ = _draft_manifest()
+    target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
+    outcome = apply_manifest(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", target, Progress(frozenset(), {}),
+        uid=1000, indices=frozenset({0, 1, 3}), draft=True,
+    )
+    factory.assert_called_once_with(target)
+    assert outcome.applied == (0, 1, 3)
+    assert outcome.urls == ("https://x/draft", "https://x/draft", "")
+    assert outcome.failure is None and outcome.draft
+    session.review.assert_called_once_with(manifest.actions[0])
+    session.reply.assert_called_once_with(manifest.actions[1])
+    calls["review"].assert_not_called()
+    calls["reply"].assert_not_called()
+    calls["comment"].assert_not_called()
+    calls["edit"].assert_called_once_with(
+        tmp_path, 7, title=None, body="description", repo="acme/widgets"
+    )
+
+
+def test_draft_holds_back_general_comments_and_keeps_manifest(mocker, make_cfg, tmp_path):
+    _exercise_draft_finalization(mocker, make_cfg, tmp_path, publish_remaining=False)
+
+
+def test_normal_after_draft_posts_only_held_back(mocker, make_cfg, tmp_path):
+    _exercise_draft_finalization(mocker, make_cfg, tmp_path, publish_remaining=True)
+
+
+def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remaining):
+    from jailbee.outbox.models import StoreSnapshot
+    from jailbee.pr_outbox import (
+        Outbox, Progress, Target, apply_manifest, draft_indices, finalize, read_progress,
+    )
+
+    calls = _apply_mocks(mocker)
+    session = mocker.patch("jailbee.pr_draft.DraftSession").return_value
+    session.review.return_value = session.reply.return_value = "https://x/draft"
+    manifest, text = _draft_manifest()
+    outbox = Outbox(files={manifest.name: text})
+    incus = mocker.MagicMock()
+    reader = mocker.patch(
+        "jailbee.outbox.io.read_store",
+        return_value=StoreSnapshot("pr", tuple(outbox.files.items()), (), ()),
+    )
+    _pr_transport(mocker, tmp_path, incus, reader)
+    target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
+    outcome = apply_manifest(
+        make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000,
+        indices=draft_indices(manifest, range(4)), draft=True,
+    )
+    finalize(incus, "c", outbox, target, outcome, uid=1000)
+    files = reader.return_value.as_dict()
+    assert manifest.name in files
+    assert json.loads(files[f"{manifest.name}.progress.json"])["applied"] == [0, 1, 3]
+    assert files["applied.log"].rstrip().endswith(" (draft)")
+    calls["comment"].assert_not_called()
+
+    if publish_remaining:
+        calls["edit"].reset_mock()
+        outbox = Outbox(files=files)
+        outcome = apply_manifest(
+            make_cfg(tmp_path), incus, "c", target, read_progress(outbox, manifest.name),
+            uid=1000,
+        )
+        assert outcome.applied == (2,)
+        assert not outcome.draft
+        finalize(incus, "c", outbox, target, outcome, uid=1000)
+        calls["comment"].assert_called_once_with(
+            tmp_path, 7, "held back", repo="acme/widgets"
+        )
+        calls["review"].assert_not_called()
+        calls["reply"].assert_not_called()
+        calls["edit"].assert_not_called()
+        assert session.review.call_count == session.reply.call_count == 1
+        assert manifest.name not in reader.return_value.as_dict()
+
+
+def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest
+
+    calls = _apply_mocks(mocker)
+    manifest, _ = _draft_manifest()
+    target = Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
+    with pytest.raises(AssertionError):
+        apply_manifest(
+            make_cfg(tmp_path), mocker.MagicMock(), "c", target, Progress(frozenset(), {}),
+            uid=1000, indices=frozenset({2}), draft=True,
+        )
+    calls["comment"].assert_not_called()
+
+
 def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
     mocker, make_cfg, tmp_path
 ):

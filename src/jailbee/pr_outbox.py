@@ -53,7 +53,9 @@ from jailbee.pr_ai import PrText
 from jailbee.tui import console, error_plain, info, warn, warn_plain
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
+
+    from jailbee.pr_draft import DraftSession
 
     from jailbee.config import Config
     from jailbee.pr import PrInfo
@@ -953,6 +955,34 @@ def pending_indices(manifest: Manifest, progress: Progress) -> list[int]:
 
 
 @dataclass(frozen=True)
+class DraftPreview:
+    pr: int
+    pending: int
+    held_back: int
+    description: bool
+
+
+def draftable(manifest: Manifest, indices: Iterable[int]) -> bool:
+    """Whether the selected actions include a pending-review operation."""
+    return any(isinstance(manifest.actions[i], (ReviewAction, ReplyAction)) for i in indices)
+
+
+def draft_indices(manifest: Manifest, indices: Iterable[int]) -> frozenset[int]:
+    """Leave general comments pending while selecting draft-compatible actions."""
+    return frozenset(i for i in indices if not isinstance(manifest.actions[i], CommentAction))
+
+
+def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) -> DraftPreview:
+    actions = [manifest.actions[i] for i in indices]
+    return DraftPreview(
+        pr=pr_number,
+        pending=sum(isinstance(a, (ReviewAction, ReplyAction)) for a in actions),
+        held_back=sum(isinstance(a, CommentAction) for a in actions),
+        description=any(isinstance(a, DescriptionAction) for a in actions),
+    )
+
+
+@dataclass(frozen=True)
 class ApplyOutcome:
     """What one `apply_manifest` call did.
 
@@ -967,6 +997,7 @@ class ApplyOutcome:
     applied: tuple[int, ...]
     urls: tuple[str, ...]
     failure: str | None
+    draft: bool = False
 
 
 def _apply_order(actions: tuple[Action, ...]) -> list[int]:
@@ -1012,11 +1043,17 @@ def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
     return f"> [Replying to this comment](https://github.com/{slug}/pull/{number}#issuecomment-{comment_id})\n\n"
 
 
-def _apply_one(target: Target, action: Action) -> str:
+def _apply_one(target: Target, action: Action, session: DraftSession | None = None) -> str:
     """Post one action to GitHub via `pr.py`; return its receipt URL (or "")."""
     assert target.pr is not None  # apply_manifest's own precondition
     repo_root = target.scope.repo_root
     number = target.pr.number
+    if session is not None:
+        assert not isinstance(action, CommentAction), "general comments must be held back in draft mode"
+        if isinstance(action, ReviewAction):
+            return session.review(action)
+        if isinstance(action, ReplyAction):
+            return session.reply(action)
     if isinstance(action, ReviewAction):
         commit_id = target.manifest.head_sha or target.pr.head_sha
         comments = [_comment_payload(c) for c in action.comments]
@@ -1055,6 +1092,7 @@ def apply_manifest(
     *,
     uid: int | None,
     indices: frozenset[int] | None = None,
+    draft: bool = False,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
 
@@ -1081,6 +1119,10 @@ def apply_manifest(
     "explicit flags keep winning" cannot be reversed by a prompt about
     comments. `None` — `jailbee review apply`'s own mode — applies everything
     still pending.
+
+    With `draft=True`, review and reply actions share one pending-review
+    session; description edits still publish normally. Callers must select
+    `draft_indices(...)` to hold general comments back in the outbox.
 
     Stops at the first `PrError`; remaining actions are never attempted.
 
@@ -1109,12 +1151,17 @@ def apply_manifest(
     failure: str | None = None
     running_applied = set(progress.applied)
     running_urls = dict(progress.urls)
+    session = None
+    if draft:
+        from jailbee.pr_draft import DraftSession
+
+        session = DraftSession(target)
 
     for index in _apply_order(manifest.actions):
         if index in progress.applied or (indices is not None and index not in indices):
             continue
         try:
-            url = _apply_one(target, manifest.actions[index])
+            url = _apply_one(target, manifest.actions[index], session)
         except pr.PrError as e:
             failure = str(e)
             break
@@ -1137,7 +1184,7 @@ def apply_manifest(
             )
             break
 
-    return ApplyOutcome(applied=tuple(applied), urls=tuple(urls), failure=failure)
+    return ApplyOutcome(applied=tuple(applied), urls=tuple(urls), failure=failure, draft=draft)
 
 
 def _body_references(text: str) -> set[str]:
@@ -1319,6 +1366,7 @@ def finalize(
         line = (
             f"{_now_iso()} {manifest.name} pr={pr_field} "
             f"actions={len(outcome.applied)} urls={display_urls}"
+            f"{' (draft)' if outcome.draft else ''}"
         )
         try:
             _append_log_line(incus, container, line, uid=uid)
