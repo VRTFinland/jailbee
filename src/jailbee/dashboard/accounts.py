@@ -184,7 +184,8 @@ def run_cli_quiet(argv: Sequence[str], *, cwd: Path, timeout: float = 60.0) -> C
         or _verdict(proc.stdout, whole_paragraph=True)
         or f"exited {proc.returncode}"
     )
-    return CliResult(False, message)
+    # stdout too: `outbox ls` exits 2 for an unavailable container but still lists it.
+    return CliResult(False, message, proc.stdout)
 
 
 def use_argv(agent: str, group: str | None, ref: str) -> list[str]:

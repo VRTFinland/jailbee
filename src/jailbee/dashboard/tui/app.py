@@ -35,6 +35,7 @@ from jailbee.dashboard.tui.native import (
     SettingsBox,
     TextBox,
 )
+from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -282,6 +283,11 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_accounts_box_new_group(self, message: AccountsBox.NewGroup) -> None:
         if self._native_current(message.key):
             self.session.account_new_group(message.index)
+        self._after_native()
+
+    def on_outbox_box_intent(self, message: OutboxBox.Intent) -> None:
+        if self._native_current(message.key):
+            self.session.outbox_intent(message.name, message.row, message.value)
         self._after_native()
 
     def on_settings_box_toggled(self, message: SettingsBox.Toggled) -> None:

@@ -178,6 +178,17 @@ def test_run_cli_quiet_falls_back_to_exit_code(mocker: MockerFixture) -> None:
     assert da.run_cli_quiet(["x"], cwd=Path("/r")) == da.CliResult(False, "exited 3")
 
 
+def test_run_cli_quiet_keeps_stdout_on_failure(mocker: MockerFixture) -> None:
+    # `outbox ls` exits 2 for an unavailable container but still prints the listing.
+    run = mocker.patch.object(da.subprocess, "run")
+    run.return_value.returncode = 2
+    run.return_value.stdout = '{"containers": []}\n'
+    run.return_value.stderr = "error: stopped\n"
+    assert da.run_cli_quiet(["outbox", "ls"], cwd=Path("/r")) == da.CliResult(
+        False, "error: stopped", '{"containers": []}\n'
+    )
+
+
 def test_run_cli_quiet_success_timeout_and_oserror(mocker: MockerFixture) -> None:
     run = mocker.patch.object(da.subprocess, "run")
     run.return_value.returncode = 0

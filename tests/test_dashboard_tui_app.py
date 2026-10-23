@@ -313,3 +313,25 @@ def test_the_app_module_is_the_only_one_importing_textual():
         "jailbee.dashboard.overlays; sys.exit('textual' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_outbox_box_intent_reaches_session(mocker, tmp_path):
+    from tests.dashboard_fixtures import cfg_group
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(
+            True, "done", _listing(_container(_proposal(actions=[_action(0)])))
+        ),
+    )
+    intent = mocker.spy(tsession.DashboardSession, "outbox_intent")
+
+    run = drive(mocker, [*container_menu_keys(group, "outbox browse"), "d"], [group])
+
+    assert intent.call_args_list[0].args[1:3] == ("delete", ("alpha-x", "pr/a.json", None, None))
+    asked = [o.question for o in run.of_type(tsession.OutboxState) if o.question is not None]
+    assert asked and asked[0].purpose == "delete"

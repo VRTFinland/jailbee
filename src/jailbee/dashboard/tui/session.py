@@ -122,6 +122,9 @@ from jailbee.dashboard.model import (
     target_group,
     toggle_folded,
 )
+from jailbee.dashboard.outbox import OutboxState
+from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
+from jailbee.dashboard.outbox_flow import OutboxController
 from jailbee.dashboard.overlays import (
     Picker,
     PickerEntry,
@@ -159,7 +162,9 @@ from jailbee.dashboard.tui.overlay import (
     Overlay,
     _egress_panel,
     _with_egress_panel,
+    overlay_key,
 )
+from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
 from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
@@ -373,8 +378,9 @@ class DashboardSession:
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
-        # The last listing per container, so a proposal step needs no second one.
-        self.outbox_rows: dict[str, tuple[dob.ProposalRow, ...]] = {}
+        # The open Outbox box's controller and the menu its Esc returns to.
+        self.outbox: OutboxController | None = None
+        self.outbox_parent: MenuState | None = None
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
@@ -1219,166 +1225,70 @@ class DashboardSession:
             return None
         return picker
 
-    def open_outbox(self, container: str) -> Picker | None:
-        """List the container's staged proposals quietly and offer them, or notice why not.
+    def open_outbox(self, container: str) -> OutboxState | None:
+        """The Outbox box of ``container``, listed quietly, or None after a notice.
 
-        Each entry is gated on its own argv, as for snapshots.
+        An unavailable container still opens: `outbox ls` exits 2 for it but
+        prints the listing, whose header row says why, and the box offers
+        nothing that changes it. A listing that cannot be read at all (a
+        refused or failed `outbox ls`) is a notice, as before.
         """
         repo = self.repo_for(container, "container")
         if repo is None:
             self.set_notice(f"'{container}' is gone")
             return None
-        argv = dact.addressed(
-            dob.legacy_outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
+        group = _find_group(self.groups, container)
+        controller = OutboxController(
+            SessionOutboxRunner(self, container),
+            title=container,
+            container=container,
+            prefix=group.prefix if group is not None else "",
+            standalone=False,
+            on_change=lambda _state: None,  # nothing is on screen yet
         )
-        try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
-            # `outbox ls` exits 2 for an unavailable container but still
-            # prints the listing, whose error says why; parse it first.
-            result = da.run_cli_quiet(argv, cwd=repo.cwd())
-            try:
-                listing = dob.legacy_parse_outbox_listing(result.stdout, container)
-            except dob.OutboxLoadError:
-                if result.ok:
-                    raise
-                raise dob.OutboxLoadError(result.message) from None
-        except (RouteError, dob.OutboxLoadError) as exc:
-            self.set_notice(f"could not list the outbox: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+        if not controller.load():
+            reason = controller.state.status[-1] if controller.state.status else "unknown error"
+            self.set_notice(reason, seconds=FAILURE_NOTICE_SECONDS)
             return None
-        if listing.error is not None:
-            self.set_notice(
-                f"could not read the outbox: {listing.error}",
-                seconds=FAILURE_NOTICE_SECONDS,
-            )
-            return None
-        if not listing.rows:
-            self.set_notice(
-                listing.warnings[0] if listing.warnings else f"Outbox of '{container}' is empty",
-                seconds=FAILURE_NOTICE_SECONDS if listing.warnings else NOTICE_SECONDS,
-            )
-            return None
-        self.outbox_rows[container] = listing.rows
-        return dob.outbox_picker(
-            container,
-            listing.rows,
-            can_browse=permitted(
-                dob.outbox_browse_argv(container), self.ssh_policy, over_ssh=self.over_ssh
-            ),
-        )
+        controller.on_change = self._outbox_listener(controller)
+        self.outbox = controller
+        return controller.state
 
-    def submit_outbox_picker(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
-        """The `container-outbox*` steps. Show and Publish run in the terminal.
+    def _outbox_listener(self, controller: OutboxController) -> Callable[[OutboxState], None]:
+        """``controller``'s `on_change`: the box while it is open, else a notice."""
+        seen = [controller.state.status]
 
-        Publishing talks to GitHub and may outlast the quiet runner's
-        60 s cutoff; a delete is local and runs quietly.
+        def changed(state: OutboxState) -> None:
+            previous, seen[0] = seen[0], state.status
+            self._outbox_changed(controller, state, previous)
+
+        return changed
+
+    def _outbox_changed(
+        self, controller: OutboxController, state: OutboxState, previous: tuple[str, ...]
+    ) -> None:
+        """Show ``state`` in the open box; a result for a closed box becomes a notice.
+
+        A job (a plan, a publish, a clear) can finish after its box was closed
+        or replaced by a new one for the same container: its outcome must
+        neither reopen the box nor overwrite the new one's state.
         """
-        container = picker.target
-        if picker.purpose == "container-outbox":
-            if entry.value == dob.BROWSE:
-                self.run_dashboard_command(
-                    container, "container", dob.outbox_browse_argv(container), style="plain"
-                )
-                return None
-            pid = dob.proposal_id(entry.value)
-            row = next((r for r in self.outbox_rows.get(container, ()) if r.id == pid), None)
-            if row is None:
-                return None
-            actions = dob.proposal_picker(
-                container,
-                row,
-                can_show=permitted(
-                    dob.outbox_show_argv(container, row.id), self.ssh_policy, over_ssh=self.over_ssh
-                ),
-                can_publish=(
-                    (
-                        (create_argv := dob.create_pr_argv(container, row.create_scope)) is not None
-                        and permitted(create_argv, self.ssh_policy, over_ssh=self.over_ssh)
-                    )
-                    if row.state == "awaiting-pr"
-                    else permitted(
-                        dob.legacy_outbox_apply_argv(container, row.id, row.revision),
-                        self.ssh_policy,
-                        over_ssh=self.over_ssh,
-                    )
-                ),
-                can_delete=permitted(
-                    dob.legacy_outbox_drop_argv(container, row.id, row.revision),
-                    self.ssh_policy,
-                    over_ssh=self.over_ssh,
-                ),
-            )
-            if not actions.entries:
-                self.set_notice(f"Nothing can be done to {row.id} here")
-                return None
-            return actions
-        if picker.purpose == "container-outbox-proposal":
-            pid, revision, count = picker.carry
-            if entry.value == dob.SHOW:
-                self.run_dashboard_command(
-                    container,
-                    "container",
-                    dob.outbox_show_argv(container, pid),
-                    style="paged",
-                )
-                return None
-            if entry.value == dob.CREATE_PR:
-                row = next((r for r in self.outbox_rows.get(container, ()) if r.id == pid), None)
-                if row is None or row.state != "awaiting-pr" or row.create_scope is None:
-                    self.set_notice("Create PR is no longer available; refresh the outbox")
-                    return None
-                repo = self.repo_for(container, "container")
-                if repo is None:
-                    self.set_notice(f"'{container}' is gone")
-                    return None
-                fresh_argv = dact.addressed(
-                    dob.legacy_outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
-                )
-                try:
-                    check_dashboard_command(fresh_argv, self.ssh_policy, over_ssh=self.over_ssh)
-                    listing_result = da.run_cli_quiet(fresh_argv, cwd=repo.cwd())
-                    fresh = dob.legacy_parse_outbox_listing(listing_result.stdout, container)
-                    if not listing_result.ok or fresh.error is not None:
-                        raise dob.OutboxLoadError(fresh.error or listing_result.message)
-                except (RouteError, dob.OutboxLoadError) as exc:
-                    self.set_notice(
-                        f"could not verify the outbox: {exc}", seconds=FAILURE_NOTICE_SECONDS
-                    )
-                    return None
-                current = next((r for r in fresh.rows if r.id == pid), None)
-                if current is None or (current.revision, current.state, current.create_scope) != (
-                    row.revision,
-                    row.state,
-                    row.create_scope,
-                ):
-                    self.set_notice("Proposal changed; refresh the outbox before creating a PR")
-                    return None
-                argv = dob.create_pr_argv(container, row.create_scope)
-                if argv is None or not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
-                    self.set_notice("Create PR is not permitted here")
-                    return None
-                self.run_dashboard_command(container, "container", argv)
-                return None
-            if entry.value == dob.PUBLISH:
-                # The terminal shows the plan and asks once, under it.
-                self.run_dashboard_command(
-                    container, "container", dob.legacy_outbox_apply_argv(container, pid, revision)
-                )
-                return None
-            if entry.value == dob.DELETE:
-                return dob.outbox_delete_confirm_picker(container, pid, revision, int(count))
-            return None
-        if picker.purpose == "container-outbox-confirm":
-            if entry.value != "yes":
-                self.set_notice("Cancelled")
-                return None
-            pid, revision = picker.carry
-            repo = self.repo_for(container, "container")
-            if repo is None:
-                self.set_notice(f"'{container}' is gone")
-            elif self.run_quiet_cli(repo, dob.legacy_outbox_drop_argv(container, pid, revision)):
-                self.client.refresh()
-            return None
-        return None
+        if controller is self.outbox and overlay_key(self.overlay) == overlay_key(state):
+            self.overlay = state
+        elif state.status and state.status != previous:
+            self.set_notice(state.status[-1], seconds=FAILURE_NOTICE_SECONDS)
+
+    def outbox_intent(
+        self, name: OutboxIntent, row: dob.RowKey | None, value: str | None = None
+    ) -> None:
+        """A key or click in the Outbox box; Esc with no question goes back to the menu."""
+        state, controller = self.overlay, self.outbox
+        if not isinstance(state, OutboxState) or controller is None:
+            return
+        if name == "cancel" and state.question is None:
+            self.overlay_cancel()
+            return
+        controller.intent(name, row, value)
 
     def submit_snapshot_picker(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
         """The `container-snapshot*` steps. Every change runs in the terminal.
@@ -1861,8 +1771,6 @@ class DashboardSession:
         if picker.purpose == "outbox-clear-preparing":
             self.set_notice("Cancelled")
             return None
-        if picker.purpose.startswith("container-outbox"):
-            return self.submit_outbox_picker(picker, entry)
         if picker.purpose == "container-mounts":
             repo = self.repo_for(picker.target, "container")
             if repo is None:
@@ -2071,6 +1979,13 @@ class DashboardSession:
             self.set_notice("Egress target is gone — panel closed")
             self.overlay = None
         if (
+            isinstance(self.overlay, OutboxState)
+            and self.overlay.scope_name is not None
+            and self.repo_for(self.overlay.scope_name, "container") is None
+        ):
+            self.set_notice(f"'{self.overlay.scope_name}' is gone — outbox closed")
+            self.overlay = None
+        if (
             isinstance(self.overlay, da.AccountsState)
             and self.repo_for(self.overlay.prefix) is None
         ):
@@ -2114,6 +2029,8 @@ class DashboardSession:
             )  # pinned while the menu is open
         elif isinstance(self.overlay, RepoMenuState):
             self.selected = Row("repo", self.overlay.repo)
+        elif isinstance(self.overlay, OutboxState) and self.overlay.scope_name is not None:
+            self.selected = Row("container", self.overlay.scope_name)
         elif egress_panel is not None:
             # A question asked from the Egress panel keeps the panel's
             # row, so the cursor does not jump to the repo header.
@@ -2227,6 +2144,9 @@ class DashboardSession:
         if isinstance(overlay, EgressState):
             self.overlay = self.egress_parent
             self.egress_parent = None
+        elif isinstance(overlay, OutboxState):
+            self.overlay = self.outbox_parent
+            self.outbox_parent = None
         elif isinstance(overlay, Picker):
             self.overlay = overlay.back
             self.set_notice("Cancelled")
@@ -2243,6 +2163,7 @@ class DashboardSession:
         """Close the overlay and everything behind it (a click outside it)."""
         self.overlay = None
         self.egress_parent = None
+        self.outbox_parent = None
 
     def overlay_global_key(self, token: str) -> Outcome:
         """A dashboard-wide key (:data:`OVERLAY_GLOBAL_TOKENS`) while a native overlay is open.
@@ -2320,8 +2241,8 @@ class DashboardSession:
             elif verb in dact.CONTAINER_VERBS:
                 self.overlay = self.open_container_entry(target, verb)
             elif verb == "outbox browse":
-                # Qt hands the terminal to the browser; here
-                # it is the dashboard's own picker panels.
+                # Qt opens its own window; here it is the Outbox box.
+                self.outbox_parent = container_parent
                 self.overlay = self.open_outbox(target)
             elif verb == "git retarget":
                 self.overlay = self.open_retarget(target)

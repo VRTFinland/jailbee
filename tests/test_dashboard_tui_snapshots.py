@@ -188,3 +188,42 @@ def test_snapshot_outbox_box_alone_question(snap_compare):
     )
     spec = _outbox_alone_state(question=question)
     assert snap_compare(_outbox_alone(spec), terminal_size=(100, 30))
+
+
+def _outbox_in_dashboard(mocker, groups):
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    listing = _listing(
+        _container(
+            _proposal(
+                "pr/a.json",
+                actions=[_action(0, title="Fix the [red]x[/red] parser", body="hello"), _action(1)],
+            ),
+            _proposal("issue/b.json", actions=[_action(0, kind="create", title="An issue")]),
+            name="alpha-one",
+        )
+    )
+    mocker.patch.object(
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done", listing)
+    )
+    app = make_app(mocker, groups, view_state=ViewState(folded=frozenset({"beta"})))
+
+    async def open_outbox(pilot):
+        await pilot.pause()
+        await pilot.press("j", "enter", "o")
+        await pilot.pause()
+        await pilot.press("enter")  # expand the first proposal
+        await pilot.pause()
+        assert isinstance(app.session.overlay, tsession.OutboxState)
+
+    return app, open_outbox
+
+
+def test_snapshot_outbox_box_wide(snap_compare, mocker, groups):
+    app, open_outbox = _outbox_in_dashboard(mocker, groups)
+    assert snap_compare(app, terminal_size=(120, 34), run_before=open_outbox)
+
+
+def test_snapshot_outbox_box_narrow(snap_compare, mocker, groups):
+    app, open_outbox = _outbox_in_dashboard(mocker, groups)
+    assert snap_compare(app, terminal_size=(60, 20), run_before=open_outbox)

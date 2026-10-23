@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from rich.markup import escape
 from rich.style import Style
 from rich.text import Text
 
@@ -14,6 +15,7 @@ from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.model import RepoGroup, Row
+from jailbee.dashboard.outbox import OutboxState, outbox_hint
 from jailbee.dashboard.overlays import (
     PICKER_HINT,
     PROMPT_HINT,
@@ -169,6 +171,8 @@ def _hint_line(overlay: Overlay | None) -> str:
         return PICKER_HINT
     if isinstance(overlay, da.AccountsState):
         return da.ACCOUNTS_HINT
+    if isinstance(overlay, OutboxState):
+        return escape(outbox_hint(overlay, standalone=False))
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
     return ""

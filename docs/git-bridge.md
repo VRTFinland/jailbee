@@ -1293,10 +1293,11 @@ repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
 The terminal
-browser and both dashboards' publication terminals ask under the plan, so
-they need no flag. Publication asks exactly once, under the plan: the
-terminal dashboard's Publish… and the browser's publish entry open the plan
-without a question of their own. `jb pr`'s post-push
+browser and the Qt dashboard's publication terminal ask under the plan, so
+they need no flag; the terminal dashboard's Outbox box shows the plan and its
+warnings above its own choice, and choosing Publish there is the consent
+(`--foreign` is passed only then). Publication asks exactly once, under the
+plan. `jb pr`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
 `jb review apply --foreign <container>`. `jb review ls` lists it with the state
@@ -1305,18 +1306,37 @@ another PR: it holds such a manifest back and names
 The terminal browser offers containers, proposals, actions and comments,
 with Back, Refresh and Exit at each level. Without a TTY, the shorthand
 prints an overview rather than prompting. The terminal dashboard's
-**Outbox** entry lists the container's proposals in the same picker panels as
-its other menus: a proposal offers Show (paged), Publish… and Delete….
-A description awaiting a PR offers **Create PR…** instead of Publish…:
-it opens the existing `jb pr` or `jb submodule pr` flow for the resolved
-repository scope, with that command's own checks and confirmations. An
-unresolved scope is not offered for creation. Publish runs the explicit
-`outbox apply` pinned to the listed revision, which asks under its plan;
-Delete is confirmed in the dashboard with "No" first and runs `outbox drop`
-pinned to the listed revision. **Browse actions & comments…**
-opens this browser for deleting a single action or comment. Over
-remote SSH each entry appears only when the session's policy permits its
-command. The local Qt dashboard instead opens a native non-modal tree with
+**Outbox** entry opens the Outbox box under the table: the container's
+proposals as a tree (proposal, its actions, a review's comments) beside a
+preview of the highlighted row. Keys, also shown in the hint line:
+↑/↓ move, Enter/→ expand, ← collapse, `Space` mark, `d` delete the marked
+rows (or the highlighted one), `p` publish, `c` create PR, `X` clear the
+outbox, `v` preview on/off, `m` the raw manifest, `r` refresh, Esc back to
+the container menu.
+
+- **Delete** asks once, "No" first, naming exactly what goes — proposals,
+  `action N (kind)` with any dependents, `comment N (path:line)` — and runs
+  `outbox drop` pinned to the revision listed; a proposal that changed since
+  it was shown is left alone ("changed; refreshed").
+- **Publish** reads the plan (`outbox apply --dry-run -o json`) and shows it
+  in the preview with **Publish**, **Publish as draft review** (when the
+  proposal has a pending review) and **Cancel**; the publish then runs in the
+  background, pinned to the listed revision, and its outcome lines appear in
+  the box. A stale-head refusal says to use `--force` from a terminal; the box
+  never forces.
+- **Create PR** (a description awaiting its PR) re-reads the listing and,
+  if the proposal is unchanged, hands the terminal to `jb pr` or
+  `jb submodule pr` for the resolved scope, with that command's own checks.
+- **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
+  below does.
+
+An unavailable container still opens the box, with the reason in its header
+row and nothing offered that changes it. After every change the box re-lists
+and the dashboard refreshes, so the OUTBOX column follows. Over remote SSH a
+key works, and appears in the hint line, only when the session's policy
+permits its command; `outbox apply -y` is refused there, so `p` hands the
+terminal to the interactive `outbox apply … --revision`, which asks under
+its plan. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication
 opens a host terminal running the exact selected `outbox apply` with its
 revision; that terminal owns the authoritative approval. Launching it is

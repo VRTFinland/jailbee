@@ -794,11 +794,13 @@ The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 JetBrains IDE, and any `apps:` entries, in that order — empty repos get none),
 then `Outbox` (on a running container, left out while both its PR and
 issue outbox are empty — it moves to the very top as "Outbox (N pending)" while the PR or issue outbox
-holds staged manifests; it lists the proposals in a picker, each with Show,
-Publish… and Delete…; a description awaiting a PR offers Create PR… instead
-of Publish…, using `pr` for the main repo or `submodule pr` for its resolved
-submodule. Unresolved targets are not offered for creation. The menu also has
-`Browse actions & comments…` for the full `outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
+holds staged manifests; it opens the Outbox box: the proposals as a tree
+beside a preview, with `Space` mark, `d` delete (one "No"-first question naming
+exactly what goes), `p` publish (the plan and the choice shown in the box),
+`c` create the PR a description awaits (`pr` for the main repo or
+`submodule pr` for its resolved submodule), `X` clear, `v`/`m` preview and raw
+manifest, `r` refresh and Esc back; keys the SSH policy refuses are not
+offered), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr --open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mounts…`,

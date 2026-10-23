@@ -1,19 +1,11 @@
-"""The terminal dashboard's Outbox entry: the staged proposals of one container.
+"""The Outbox manager's pure state: rows, preview, hint and `jailbee outbox` argv.
 
-The same picker panels as Snapshots, not a second program: the proposals are
-listed quietly with `jailbee outbox ls -o json`, a proposal offers Show,
-Publish… and Delete…, and each change asks its own No-first question before a
-real `jailbee outbox …` child runs it. Deleting a single action or comment
-stays in `jailbee outbox browse`, which the last entry hands the terminal to.
-
-Everything here is pure; `jailbee.dashboard.tui.session` wires it into `DashboardSession`. Which
-entries a proposal offers is decided by the caller from the remote-SSH policy
-(`dashboard.commands.permitted`), as for snapshots.
-
-The second half of the module (from "Outbox manager") is the pure state of the
-Outbox manager that replaces the pickers; the picker-era names above it are
-kept, with `legacy_` names where the new API reuses a name, until their last
-caller is gone.
+Shared by the terminal dashboard's Outbox box (`jailbee.dashboard.tui.outbox_box`)
+and the standalone `jailbee outbox` app. The listing comes from
+`jailbee outbox ls -o json`; `jailbee.dashboard.outbox_flow.OutboxController`
+turns keys into state changes and children built from the argv helpers here.
+Which actions a frontend offers is decided from the remote-SSH policy
+(`dashboard.commands.permitted`) by the controller's runner.
 
 Must not import `jailbee.dashboard.tui`, which imports this module.
 """
@@ -21,60 +13,11 @@ Must not import `jailbee.dashboard.tui`, which imports this module.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
 from rich.text import Text
-
-from jailbee.dashboard.overlays import Picker, PickerEntry
-
-BROWSE = "browse"
-SHOW = "show"
-PUBLISH = "publish"
-CREATE_PR = "create-pr"
-DELETE = "delete"
-
-# Listed proposals carry this prefix in their picker value, so no proposal id
-# can ever be read as the browse entry.
-_PROPOSAL_VALUE = "proposal:"
-
-# The states `jailbee outbox apply` still has something to publish in.
-_PUBLISHABLE = frozenset({"pending", "partial", "awaiting-pr"})
-
-
-@dataclass(frozen=True)
-class ProposalRow:
-    """One proposal of `jailbee outbox ls -o json`, as much as the menu shows."""
-
-    id: str
-    state: str
-    revision: str
-    actions: int
-    error: str | None
-    edit_block: str | None
-    create_scope: dict[str, str] | None = None
-    # `github:` targets of an issue proposal; the host plan decides whether one is
-    # really foreign (a slug may name this repo), so this only marks them.
-    foreign_repos: tuple[str, ...] = ()
-
-    @property
-    def publishable(self) -> bool:
-        return self.error is None and self.state in _PUBLISHABLE
-
-    @property
-    def deletable(self) -> bool:
-        """Whole-manifest deletion; an issue manifest with an edit block refuses it."""
-        return self.edit_block is None
-
-
-@dataclass(frozen=True)
-class OutboxListing:
-    """The proposals of one container, or why it could not be read."""
-
-    rows: tuple[ProposalRow, ...]
-    error: str | None
-    warnings: tuple[str, ...]
 
 
 class OutboxLoadError(Exception):
@@ -87,35 +30,6 @@ def _bad_listing() -> OutboxLoadError:
 
 def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
-
-
-def _proposal_row(item: object) -> ProposalRow:
-    if not isinstance(item, dict):
-        raise _bad_listing()
-    pid, state, revision, actions = (
-        item.get("id"),
-        item.get("state"),
-        item.get("revision"),
-        item.get("actions"),
-    )
-    if not (
-        isinstance(pid, str)
-        and pid
-        and isinstance(state, str)
-        and isinstance(revision, str)
-        and isinstance(actions, list)
-    ):
-        raise _bad_listing()
-    return ProposalRow(
-        pid,
-        state,
-        revision,
-        len(actions),
-        _opt_str(item.get("error")),
-        _opt_str(item.get("edit_block")),
-        _scope(item.get("create_scope")),
-        _foreign_repos(actions),
-    )
 
 
 def _foreign_repos(actions: list[object]) -> tuple[str, ...]:
@@ -142,131 +56,12 @@ def _scope(value: object) -> dict[str, str] | None:
     return None
 
 
-def legacy_parse_outbox_listing(stdout: str, container: str) -> OutboxListing:
-    """``container``'s entry of the listing; a missing entry is an empty outbox."""
-    try:
-        data = json.loads(stdout)
-    except ValueError as exc:
-        raise _bad_listing() from exc
-    if not isinstance(data, dict) or not isinstance(data.get("containers"), list):
-        raise _bad_listing()
-    for entry in data["containers"]:
-        if not isinstance(entry, dict) or entry.get("name") != container:
-            continue
-        proposals = entry.get("proposals", [])
-        stores = entry.get("stores", [])
-        if not isinstance(proposals, list) or not isinstance(stores, list):
-            raise _bad_listing()
-        warnings = tuple(
-            text
-            for store in stores
-            if isinstance(store, dict)
-            for key in ("warnings", "rejected")
-            for text in store.get(key) or ()
-            if isinstance(text, str)
-        )
-        error = _opt_str(entry.get("error"))
-        if entry.get("available") is False and error is None:
-            error = "container unavailable"
-        return OutboxListing(tuple(_proposal_row(p) for p in proposals), error, warnings)
-    return OutboxListing((), None, ())
-
-
-def legacy_outbox_ls_argv(name: str) -> list[str]:
-    return ["outbox", "ls", name, "-o", "json"]
-
-
-def outbox_browse_argv(name: str) -> list[str]:
-    return ["outbox", "browse", name]
-
-
-def outbox_show_argv(name: str, proposal: str) -> list[str]:
-    """Shown through a pager, so `--color` keeps the bodies rendered across the pipe."""
-    return ["outbox", "show", name, proposal, "--color"]
-
-
 def create_pr_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
     if scope == {"kind": "repo"}:
         return ["pr", name]
     if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
         return ["submodule", "pr", name, scope["path"]]
     return None
-
-
-def legacy_outbox_apply_argv(name: str, proposal: str, revision: str) -> list[str]:
-    """Ask under the plan (including foreign-PR warnings), pinned to the listed revision."""
-    return ["outbox", "apply", name, proposal, "--revision", revision]
-
-
-def legacy_outbox_drop_argv(name: str, proposal: str, revision: str) -> list[str]:
-    """The whole manifest, confirmed in the dashboard and pinned to the listed revision."""
-    return ["outbox", "drop", name, proposal, "--yes", "--revision", revision]
-
-
-def proposal_value(pid: str) -> str:
-    return _PROPOSAL_VALUE + pid
-
-
-def proposal_id(value: str) -> str | None:
-    """The proposal a picker value names, or None for the browse entry."""
-    return value.removeprefix(_PROPOSAL_VALUE) if value.startswith(_PROPOSAL_VALUE) else None
-
-
-def _plural(count: int, word: str) -> str:
-    return f"{count} {word}" if count == 1 else f"{count} {word}s"
-
-
-def _proposal_label(row: ProposalRow) -> str:
-    foreign = f", ⚠ foreign: {', '.join(row.foreign_repos)}" if row.foreign_repos else ""
-    return f"{row.id}  {row.state}  ({row.error or _plural(row.actions, 'action')}{foreign})"
-
-
-def outbox_picker(container: str, rows: Sequence[ProposalRow], *, can_browse: bool) -> Picker:
-    """The proposals in listing order, then the full browser (when permitted)."""
-    listed = tuple(PickerEntry(_proposal_label(row), proposal_value(row.id)) for row in rows)
-    browse = (PickerEntry("Browse actions & comments…", BROWSE),) if can_browse else ()
-    return Picker("container-outbox", f"Outbox — {container}", (*listed, *browse), target=container)
-
-
-def proposal_picker(
-    container: str, row: ProposalRow, *, can_show: bool, can_publish: bool, can_delete: bool
-) -> Picker:
-    """What can be done to one proposal; ``carry`` pins it and the revision listed."""
-    entries: list[PickerEntry] = []
-    if can_show:
-        entries.append(PickerEntry("Show", SHOW))
-    if (
-        can_publish
-        and row.publishable
-        and row.state == "awaiting-pr"
-        and row.create_scope is not None
-    ):
-        entries.append(PickerEntry("Create PR…", CREATE_PR))
-    elif can_publish and row.publishable and row.state != "awaiting-pr":
-        entries.append(PickerEntry("Publish…", PUBLISH))
-    if can_delete and row.deletable:
-        entries.append(PickerEntry("Delete…", DELETE))
-    return Picker(
-        "container-outbox-proposal",
-        f"{row.id} — {container}",
-        tuple(entries),
-        target=container,
-        carry=(row.id, row.revision, str(row.actions)),
-    )
-
-
-def outbox_delete_confirm_picker(container: str, pid: str, revision: str, actions: int) -> Picker:
-    """Confirm a delete. "No" comes first, so a stray Enter changes nothing.
-
-    A publish has no dashboard question: `outbox apply` asks once, under its plan.
-    """
-    return Picker(
-        "container-outbox-confirm",
-        f"Delete {pid} ({_plural(actions, 'action')}) from {container}?",
-        (PickerEntry("No", "no"), PickerEntry("Yes, delete", "yes")),
-        target=container,
-        carry=(pid, revision),
-    )
 
 
 # ---------------------------------------------------------------------------
