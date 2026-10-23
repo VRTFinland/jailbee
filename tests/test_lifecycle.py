@@ -1552,6 +1552,26 @@ def test_new_container_creates_on_the_requested_storage_pool(tmp_path, mocker):
     incus.init.assert_called_once_with("gisgro-base", "repo-feat-x", storage_pool="cow")
 
 
+@pytest.mark.parametrize("memory", [None, "24GiB"])
+@pytest.mark.parametrize("fork_of", [None, "repo-source"])
+def test_new_container_memory_override_is_explicit(tmp_path, mocker, memory, fork_of):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    opts = NewContainerOptions(
+        container_branch="feat/x", name=None, network="strict", memory=memory,
+        cpu=4, from_base="gisgro-base", clone=True, autostart=False, fork_of=fork_of,
+    )
+
+    new_container(cfg, incus, opts)
+
+    writes = [c.args for c in incus.config_set.call_args_list if c.args[1] == "limits.memory"]
+    assert writes == ([] if memory is None else [("repo-feat-x", "limits.memory", memory)])
+    incus.init.assert_called_once_with("gisgro-base", "repo-feat-x", storage_pool=None)
+    incus.copy.assert_not_called()
+
+
 def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

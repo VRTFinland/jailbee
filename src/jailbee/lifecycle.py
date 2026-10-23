@@ -1058,7 +1058,7 @@ class NewContainerOptions:
     container_branch: str
     name: str | None
     network: str
-    memory: str
+    memory: str | None
     cpu: int
     from_base: str
     clone: bool
@@ -1765,7 +1765,8 @@ def new_container(
             # the assign error is what the user has to act on.
             pass
         raise
-    incus.config_set(name, "limits.memory", opts.memory)
+    if opts.memory is not None:
+        incus.config_set(name, LIMIT_KEY, opts.memory)
     incus.config_set(name, "limits.cpu", str(opts.cpu))
 
     # Persist the in-container clone path so later commands (shell,

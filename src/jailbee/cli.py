@@ -2006,7 +2006,7 @@ def new_cmd(
         typer.Option(
             "--memory",
             help=(
-                "Memory limit as an Incus size string (e.g. '8GiB'). Overrides `defaults.memory`."
+                "Per-container memory override (e.g. '8GiB' or '50%'); omitted follows `defaults.memory`."
             ),
         ),
     ] = None,
@@ -2276,6 +2276,13 @@ def new_cmd(
         except PrefixCollisionError as e:
             error_plain(str(e))
             raise typer.Exit(1) from e
+
+    if memory is not None:
+        from jailbee.memory_limit import validate_size
+
+        if message := validate_size(memory):
+            error(message)
+            raise typer.Exit(2)
 
     # Only the post-install hint here. The upgrade advice waits until after
     # the implicit-apply pre-flight below: in a scratch directory the profile
@@ -2680,7 +2687,7 @@ def new_cmd(
             container_branch="",
             name=full_name,
             network=net_mode,
-            memory=memory or cfg.defaults.memory,
+            memory=memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
             clone=False,
@@ -2700,7 +2707,7 @@ def new_cmd(
             container_branch=container_branch,
             name=name,
             network=net_mode,
-            memory=memory or cfg.defaults.memory,
+            memory=memory,
             cpu=cpu or cfg.defaults.cpu,
             from_base=from_base or cfg.golden.alias,
             clone=not no_clone,
@@ -2969,7 +2976,10 @@ def fork_cmd(
     ] = "",
     memory: Annotated[
         str | None,
-        typer.Option("--memory", help="Memory limit. Overrides `defaults.memory`."),
+        typer.Option(
+            "--memory",
+            help="Per-container memory override; omitted follows `defaults.memory`, not the source override.",
+        ),
     ] = None,
     cpu: Annotated[
         int | None,

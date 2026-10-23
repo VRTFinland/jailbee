@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 
@@ -483,7 +484,8 @@ def test_op_to_job_round_trip_preserves_assume_yes():
     assert restored.assume_yes is True
 
 
-def test_op_to_job_round_trip_preserves_every_field():
+@pytest.mark.parametrize("memory", [None, "8GiB"])
+def test_op_to_job_round_trip_preserves_every_field(memory):
     """Structural guard: no NewContainerOptions field may be dropped."""
     import dataclasses
     import json
@@ -496,7 +498,7 @@ def test_op_to_job_round_trip_preserves_every_field():
         container_branch="feature",
         name="p-feature",
         network="loose",
-        memory="8GiB",
+        memory=memory,
         cpu=4,
         from_base="base",
         clone=True,
@@ -522,7 +524,7 @@ def test_op_to_job_round_trip_preserves_every_field():
     job = op_to_job(opts, container_name="p-feature", log_path="/tmp/l.log")
     assert job["opts"]["litellm_payload"]["keys"] == {"default": "/host/default/master.key"}
     assert "sk-jb-" not in json.dumps(job)
-    restored, _name, _log = job_to_opts(job)
+    restored, _name, _log = job_to_opts(json.loads(json.dumps(job)))
 
     for f in dataclasses.fields(NewContainerOptions):
         assert getattr(restored, f.name) == getattr(opts, f.name), f.name
