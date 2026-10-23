@@ -215,3 +215,5 @@ class DashboardView:
     show_system: bool = True
     # Content rows scrolled off the top of the details panel.
     details_scroll: int = 0
+    # The details panel's chosen content height; None: the built-in one.
+    details_rows: int | None = None

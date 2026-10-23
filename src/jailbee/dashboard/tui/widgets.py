@@ -402,6 +402,7 @@ class DetailsPanel(Static):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self._shown: tuple[DetailsView, int, dhit.Hit | None] | None = None
+        self._drag: tuple[int, int] | None = None  # screen row and panel rows at the grab
 
     def get_line_filters(self) -> Sequence[LineFilter]:
         return _frame_filters(self, super().get_line_filters())
@@ -412,6 +413,39 @@ class DetailsPanel(Static):
         def __init__(self, step: int) -> None:
             super().__init__()
             self.step = step
+
+    class Resized(Message):
+        """The top border was dragged: the panel should now show ``rows`` content rows."""
+
+        def __init__(self, rows: int) -> None:
+            super().__init__()
+            self.rows = rows
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Grab the top border: dragging it up or down makes the panel taller or shorter."""
+        if event.button != 1 or event.y != 0 or self._shown is None:
+            return
+        event.stop()
+        self._drag = (event.screen_y, self._shown[1])
+        self.capture_mouse()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self._drag is None:
+            return
+        event.stop()
+        start_y, start_rows = self._drag
+        self.post_message(self.Resized(start_rows + start_y - event.screen_y))
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._drag is None:
+            return
+        event.stop()
+        self._drag = None
+        self.release_mouse()
+
+    def on_click(self, event: events.Click) -> None:
+        if event.y == 0:
+            event.stop()  # the end of a border drag is not a click on the table's selection
 
     def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         event.stop()
@@ -493,6 +527,8 @@ class DashboardFrame(Vertical):
         self._system_input: object = None
         # How far the shown details panel scrolls; the app hands it to the session.
         self.details_furthest = 0
+        self.details_shown = 0
+        self.details_room = 0
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
         # Whether a floating dialog is open over the frame, which then draws dimmed.
@@ -674,6 +710,7 @@ class DashboardFrame(Vertical):
                 details_want=DETAILS_MAX_ROWS if measured is None else measured.want,
                 details_fit=details_fit,
                 bottom_lines=bottom_lines,
+                details_pref=view.details_rows,
             )
 
         layout = fit(table_lines)
@@ -725,6 +762,8 @@ class DashboardFrame(Vertical):
             and (overlay is None or menu or floating)
         )
         shown = beside and layout.details_rows is not None
+        self.details_shown = layout.details_rows if shown and layout.details_rows else 0
+        self.details_room = layout.details_room
         self.details_furthest = (
             measured.furthest(layout.details_rows)
             if shown and measured is not None and layout.details_rows is not None

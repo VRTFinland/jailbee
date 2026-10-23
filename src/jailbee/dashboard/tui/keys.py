@@ -86,6 +86,9 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     KeyBinding("details", ("v",), "v", "show/hide the details panel", "View"),
     KeyBinding("details-up", ("pageup",), "PgUp/PgDn", "scroll the details panel", "View"),
     KeyBinding("details-down", ("pagedown",), "", "", "View"),
+    KeyBinding("details-grow", ("plus",), "+ / -", "make the details panel taller/shorter", "View"),
+    KeyBinding("details-shrink", ("minus",), "", "", "View"),
+    KeyBinding("details-reset", ("equals_sign",), "=", "reset the details panel's height", "View"),
     KeyBinding("mouse", ("M",), "M", "mouse on/off (off: select text with the terminal)", "View"),
     KeyBinding(
         "settings",

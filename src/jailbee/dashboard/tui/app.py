@@ -327,6 +327,8 @@ class DashboardApp(App[int], inherit_bindings=False):
             return
         self.frame.show(view)
         self.session.details_furthest = self.frame.details_furthest
+        self.session.details_shown = self.frame.details_shown
+        self.session.details_room = self.frame.details_room
         self._painted = painted
 
     def _after(self, outcome: Outcome) -> None:
@@ -398,6 +400,11 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_details_panel_scrolled(self, message: DetailsPanel.Scrolled) -> None:
         if self.mouse_on:
             self.session.scroll_details(message.step)
+            self.refresh_frame()
+
+    def on_details_panel_resized(self, message: DetailsPanel.Resized) -> None:
+        if self.mouse_on:
+            self.session.set_details_rows(message.rows)
             self.refresh_frame()
 
     def on_fleet_table_geometry_changed(self, _message: FleetTable.GeometryChanged) -> None:
