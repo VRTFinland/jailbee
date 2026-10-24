@@ -180,6 +180,20 @@ def test_stale_spec_cursor_does_not_pull_cursor_back():
     assert run(state2(), scenario) == _key(B)
 
 
+def test_repaint_with_unchanged_spec_cursor_keeps_arrow_moves():
+    # The dashboard repaints the box with the same state on every visible change;
+    # the controller's cursor (the first row) was never moved by arrow keys.
+    start = replace(state2(), cursor=_key(A))
+
+    async def scenario(app, box, pilot):
+        await press(box, "down")
+        box.show(start)
+        await pilot.pause()
+        return (await press(box, "d", "d")).row
+
+    assert run(start, scenario) == _key(B)
+
+
 def test_side_by_side_threshold():
     def visibility(app):
         return (

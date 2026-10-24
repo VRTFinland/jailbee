@@ -335,14 +335,17 @@ class OutboxBox(OverlayBox):
         before = self.content_rows()
         old_key = self._cursor_key()
         old_index = self._list.highlighted if self.is_mounted else None
+        old_cursor = self.panel.cursor
         self.panel = spec
         if not self.is_mounted:
             self._rows = visible_rows(spec, self._list_width() if self._width else 80)
             return
-        # The state's cursor is the controller's. One that is just what this box last
-        # sent is an echo (the user may have moved since); another one is a move.
+        # The state's cursor is the controller's. Arrow keys never reach it, so an
+        # unchanged one (a repaint) is stale, and one that is just what this box last
+        # sent is an echo (the user may have moved since); any other is a move.
         self._rows = visible_rows(spec, self._list_width())
-        moved = spec.cursor if spec.cursor != self._last_sent else None
+        fresh = spec.cursor not in (old_cursor, self._last_sent)
+        moved = spec.cursor if fresh else None
         cursor = next(
             (
                 i
