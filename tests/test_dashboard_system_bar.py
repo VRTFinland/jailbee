@@ -101,12 +101,24 @@ def test_tiny_widths_do_not_crash(width: int) -> None:
     assert "\n" not in line.plain
 
 
-def test_bars_have_equal_width_within_limits() -> None:
-    line = system_line(_status(), 300)
+@pytest.mark.parametrize("width", [80, 120, 121, 122, 300])
+def test_bars_stretch_to_fill_the_width_sharing_it_equally(width: int) -> None:
+    line = system_line(_status(), width)
+    assert line.cell_len == width
     bars = [seg.split("]")[0] for seg in line.plain.split("[")[1:]]
-    widths = {len(b) for b in bars}
-    assert len(widths) == 1
-    assert 4 <= widths.pop() <= 30
+    assert len(bars) == 3
+    widths = [len(b) for b in bars]
+    assert max(widths) - min(widths) <= 1
+
+
+def test_bars_stretch_when_the_root_is_compact() -> None:
+    status = _status()
+    for width in range(30, 120):
+        line = system_line(status, width)
+        if "[Mem" in line.plain and "[/" not in line.plain:
+            assert line.cell_len == width
+            return
+    pytest.fail("no width showed bars with a compact root")
 
 
 def test_numbers_sit_inside_the_bar_at_its_right_end() -> None:

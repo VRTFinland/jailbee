@@ -1,10 +1,11 @@
 """htop-style one-line host status: memory, swap, storage pools and root filesystem.
 
 Pure Rich, frontend-agnostic. `system_line` always returns a single line no
-wider than the given width, degrading as the terminal narrows: bars shrink
-(they share one width, at most 30, but a bar never gets narrower than its label
-and numbers plus two cells), then the root segment drops to ``/ NN%``, then
-every bar is dropped, and finally the line is cropped with an ellipsis.
+wider than the given width. While the bars fit, they stretch to fill the
+width, sharing it as equally as they can; as the terminal narrows they shrink
+(a bar never gets narrower than its label and numbers plus two cells), then
+the root segment drops to ``/ NN%``, then every bar is dropped, and finally
+the line is cropped with an ellipsis.
 
 The label sits inside the bar at its left end and the numbers at its right
 end, both coloured cell by cell like the bar beneath them: the level colour as
@@ -23,7 +24,6 @@ from jailbee.dashboard.system import SystemStatus, level
 from jailbee.lifecycle import _format_bytes
 from jailbee.sysstat import DiskStatus, MemoryStatus
 
-MAX_BAR = 30
 _PAD = 2  # bar cells left for the fill beyond the numbers
 _GAP = "  "
 _LEVEL_STYLE = {"ok": "bold green", "warn": "bold yellow", "crit": "bold red"}
@@ -153,37 +153,66 @@ def _min_bar(seg: _Segment) -> int:
     return len(seg.label) + len(_inner(seg)) + _PAD
 
 
-def _render(segs: list[_Segment], root: _Segment | None, bar: int | None, root_short: bool) -> Text:
-    """The line with every bar `bar` cells wide, or wider where its own content needs it."""
-    line = Text(no_wrap=True, overflow="ellipsis")
+def _items(
+    segs: list[_Segment], root: _Segment | None, root_short: bool
+) -> list[tuple[_Segment, bool]]:
+    """Every segment in line order, each with whether it is shown compact (no bar)."""
     items = [(s, False) for s in segs]
     if root is not None:
         items.append((root, root_short))
+    return items
+
+
+def _render(items: list[tuple[_Segment, bool]], widths: list[int] | None) -> Text:
+    """The line with the n-th bar `widths[n]` cells wide, or every segment compact on None."""
+    line = Text(no_wrap=True, overflow="ellipsis")
+    bars = iter(widths or ())
     for i, (seg, compact) in enumerate(items):
         if i:
             line.append(_GAP)
-        if compact or bar is None:
+        if compact or widths is None:
             line.append(seg.label + " ")
             line.append(_inner(seg), style=_numbers_style(seg))
             continue
-        line.append_text(_bar(seg, max(bar, _min_bar(seg)), _inner(seg)))
+        line.append_text(_bar(seg, next(bars), _inner(seg)))
     return line
+
+
+def _bar_widths(mins: list[int], room: int) -> list[int] | None:
+    """Bar widths filling exactly `room` cells, as equal as each bar's own minimum allows.
+
+    Every bar gets a shared width or its minimum, whichever is larger; the cells
+    left over go one each to the bars at the shared width, leftmost first. None
+    when the minimums alone do not fit.
+    """
+    if sum(mins) > room:
+        return None
+    shared = max(mins)
+    while sum(max(shared, m) for m in mins) > room:
+        shared -= 1
+    while sum(max(shared + 1, m) for m in mins) <= room:
+        shared += 1
+    widths = [max(shared, m) for m in mins]
+    extra = room - sum(widths)
+    for n, w in enumerate(widths):
+        if extra and w == shared:
+            widths[n] += 1
+            extra -= 1
+    return widths
 
 
 def _fit_bars(
     segs: list[_Segment], root: _Segment | None, width: int, root_short: bool
 ) -> Text | None:
-    """The line with the widest shared bar width that fits, or None if none does."""
-    shown = list(segs)
-    if root is not None and not root_short:
-        shown.append(root)
-    if not shown:
+    """The line with its bars stretched to fill `width`, or None if they do not fit."""
+    items = _items(segs, root, root_short)
+    bars = [seg for seg, compact in items if not compact]
+    if not bars:
         return None
-    for bar in range(MAX_BAR, 0, -1):
-        line = _render(segs, root, bar, root_short)
-        if line.cell_len <= width:
-            return line
-    return None
+    fixed = len(_GAP) * (len(items) - 1) + 2 * len(bars)  # gaps and brackets
+    fixed += sum(len(seg.label) + 1 + len(_inner(seg)) for seg, compact in items if compact)
+    widths = _bar_widths([_min_bar(seg) for seg in bars], width - fixed)
+    return None if widths is None else _render(items, widths)
 
 
 def system_line(status: SystemStatus, width: int) -> Text:
@@ -195,7 +224,7 @@ def system_line(status: SystemStatus, width: int) -> Text:
         fitted = _fit_bars(segs, root, width, root_short)
         if fitted is not None:
             return fitted
-    line = _render(segs, root, None, True)
+    line = _render(_items(segs, root, True), None)
     if line.cell_len > width:
         line.truncate(width, overflow="ellipsis")
     return line
