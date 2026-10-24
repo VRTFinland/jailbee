@@ -334,6 +334,22 @@ def test_question_title_is_visible_and_bold_first_line():
     assert "line one" in body[1]
 
 
+def test_busy_status_line_is_an_animated_spinner():
+    from rich.spinner import Spinner
+
+    async def scenario(app, box, pilot):
+        line = app.query_one("#outbox-status")
+        busy = (type(line.content), line.auto_refresh, screen_text(app))
+        box.show(state2(status=("done",)))
+        await pilot.pause()
+        return busy, (type(line.content), line.auto_refresh)
+
+    busy, idle = run(state2(busy="reading the outbox…"), scenario)
+    assert busy[0] is Spinner and busy[1]
+    assert "⏳ reading the outbox…" in busy[2]
+    assert idle[0] is not Spinner and idle[1] is None
+
+
 def test_hostile_status_busy_and_title_are_sanitised():
     hostile = "\x1b]0;pwn\x07[red]x[/red]\u200b"
 

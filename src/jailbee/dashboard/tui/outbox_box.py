@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from rich.spinner import Spinner
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -46,6 +47,9 @@ from jailbee.dashboard.tui.native import (
 from jailbee.dashboard.tui.overlay import NativeState, Overlay
 
 SIDE_BY_SIDE_MIN_COLS = 110
+# Rich's `console.status` defaults, as the CLI's waits show them.
+BUSY_SPINNER = "dots"
+BUSY_SPINNER_STYLE = "green"
 MIN_OUTBOX_ROWS = 10
 
 QUESTION_ID = "outbox-question"
@@ -275,8 +279,15 @@ class OutboxBox(OverlayBox):
         right.styles.width = f"{_BODY_SHARES - _LIST_SHARE}fr" if both else "1fr"
         self._sync_question()
         self._update_preview()
-        status = panel.busy or (panel.status[-1] if panel.status else "")
-        self.query_one("#outbox-status", Static).update(_line(_safe(status), "dim"))
+        line = self.query_one("#outbox-status", Static)
+        if panel.busy:
+            # A running child: the CLI's `console.status` look, spinner and hourglass.
+            text = _line(f"⏳ {_safe(panel.busy)}", "dim")
+            line.update(Spinner(BUSY_SPINNER, text=text, style=BUSY_SPINNER_STYLE))
+            line.auto_refresh = 1 / 12  # what animates it
+        else:
+            line.auto_refresh = None
+            line.update(_line(_safe(panel.status[-1] if panel.status else ""), "dim"))
         if self.standalone:
             self.query_one("#outbox-hint", Static).update(
                 _line(outbox_hint(panel, standalone=True), "dim")
