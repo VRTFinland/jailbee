@@ -550,6 +550,14 @@ def test_mounts_exception_lists_every_configured_kind_in_the_dashboard_colours()
     assert part.endswith("[dim]ssh[/dim]")
 
 
+def test_mounts_line_shows_the_offered_kinds_even_when_none_is_attached() -> None:
+    c = _c(configured_mounts=("gh", "aws"))
+    (part,) = dd.container_panel(c, NOW).exceptions
+    assert _panel_plain([part]) == ["○ mounts gh, aws"]
+    assert part == "[dim]○[/dim] mounts [dim]gh[/dim], [dim]aws[/dim]"
+    assert dd.container_panel(_c(), NOW).exceptions == ()
+
+
 def test_job_and_its_first_error_line_follow_the_state() -> None:
     c = _c(job_phase="failed", job_kind="new", job_error="boom [red]\nsecond line")
     first = dd.container_panel(c, NOW).summary[0]

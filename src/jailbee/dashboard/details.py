@@ -432,7 +432,8 @@ def _warnings(c: ContainerInfo) -> tuple[str, ...]:
 def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
     """What ``c`` may do beyond its repo's defaults, each marked with the red ●.
 
-    Loose network, then attached optional mounts with the time each has left,
+    Loose network, then the repo's optional mounts (a dim ○ instead of the ●
+    while none is attached) with the time each attached one has left,
     then the container's own egress entries, counted first so the count
     survives an ellipsis at the panel's edge.
     """
@@ -442,8 +443,12 @@ def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
         if c.loose_until is not None:
             loose += f" →{c.loose_until.astimezone():%H:%M}"
         parts.append(loose)
-    if c.optional_mounts:
-        parts.append(f"[red]●[/red] mounts {dashboard_format.mount_names_markup(c, now)}")
+    mounts = dashboard_format.mount_names_markup(c, now)
+    if mounts:
+        # Listed whenever the repo offers any, so the MOUNT column's letters can
+        # be read; the red ● is kept for a container that has one attached.
+        mark = "[red]●[/red]" if c.optional_mounts else "[dim]○[/dim]"
+        parts.append(f"{mark} mounts {mounts}")
     if c.egress_extra:
         entries = ", ".join(escape(e) for e in c.egress_extra)
         parts.append(f"[red]●[/red] egress +{len(c.egress_extra)}: {entries}")
