@@ -87,8 +87,9 @@ def _inventory(
 ) -> tuple[list[ContainerInfo], dict[str, Path]]:
     scope = repo_scope.scope_for_session()
     try:
+        # --fast: names, profiles and status are all the outbox reads.
         containers = list_containers(
-            cfg, incus, all_repos=all_repos, scope=scope, timeout=READ_TIMEOUT
+            cfg, incus, all_repos=all_repos, scope=scope, fast=True, timeout=READ_TIMEOUT
         )
     except IncusError as exc:
         raise OutboxExecutionError(str(exc)) from exc

@@ -501,3 +501,14 @@ def test_pr_creation_scope_requires_unique_matching_repo_with_body_file(
         assert proposal.get("create_scope") is None
     if len(scope_paths) == 1 and mode == "bound":
         assert proposal["state"] == "pending"
+
+
+def test_listing_never_fetches_instance_state(env):
+    # Names, status and created_at are all it reads; the full state of every
+    # instance on the host is what made opening the outbox slow.
+    from jailbee.outbox.commands import discover
+
+    cfg, incus, _, _, _, journals = env
+    discover(cfg, incus, None, all_repos=False, journal_store=journals)
+    calls = incus.list_containers.call_args_list
+    assert calls and all(call.kwargs.get("fast") is True for call in calls)

@@ -15,10 +15,11 @@ from jailbee.outbox_io import ContainerIdentity, JournalError, JournalStore, jou
 def _identity(incus: Incus, container: str) -> ContainerIdentity:
     # The shared legacy identity helper has no timeout parameter. Keep the same
     # raw/nonzero timestamp contract while bounding this interactive service.
+    # --fast: created_at is a top-level key; every instance's state is not needed.
     raw = next(
         (
             item
-            for item in incus.list_containers(timeout=READ_TIMEOUT)
+            for item in incus.list_containers(fast=True, timeout=READ_TIMEOUT)
             if item.get("name") == container
         ),
         None,
