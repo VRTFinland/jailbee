@@ -877,7 +877,9 @@ def test_refresh_while_listing_starts_no_second_listing():
 def test_scope_switched_while_listing_lists_the_new_scope():
     runner = FakeRunner(_listing(_proposal()), allow=lambda argv: True)
     runner.hold_loads = True
-    ctl = OutboxController(runner, title="t", container=None, standalone=True, on_change=lambda s: None)
+    ctl = OutboxController(
+        runner, title="t", container=None, standalone=True, on_change=lambda s: None
+    )
     ctl.load_later()
     runner.finish_loads()
     assert ctl.state.abilities.scope
