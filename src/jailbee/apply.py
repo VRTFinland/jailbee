@@ -223,7 +223,7 @@ def run_apply(
 ) -> ApplyResult:
     """Apply current config to profiles, ACL, and live container state."""
     from jailbee import egress_scope
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import reconcile_under_repo_host_mounts, short_name
     from jailbee.network_generation import default_generation, generation_of
     from jailbee.tui import info, warn, warn_plain
 
@@ -520,6 +520,19 @@ def run_apply(
             egress_scope.apply_container_acl(
                 cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
             )
+
+        # Under-repo host_mounts are per-container devices the binds profile
+        # leaves out, so this is the only place a changed entry reaches an
+        # existing container. Stopped ones too: the device applies at boot.
+        try:
+            mounts_changed = reconcile_under_repo_host_mounts(
+                cfg, incus, ci.name, local_devices=(raw or {}).get("devices") or {}
+            )
+        except IncusError as e:
+            warn(f"Could not update host mounts on {short_name(cfg, ci.name)}: {e}")
+        else:
+            if mounts_changed:
+                info(f"  Host mounts on {short_name(cfg, ci.name)}: {', '.join(mounts_changed)}")
 
         if ci.state != "Running":
             continue

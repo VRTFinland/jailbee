@@ -607,7 +607,10 @@ with conflicting `shared_dir` paths will fail loudly on the second
 
 ### `host_mounts`
 
-List of bind mounts added to every container.
+List of bind mounts added to every container. `jailbee apply` brings an added,
+changed or removed entry to existing containers as well, without a restart —
+including an entry whose `container` path is inside the repository checkout,
+which is attached per container rather than through the shared profile.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

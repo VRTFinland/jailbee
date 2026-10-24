@@ -623,6 +623,60 @@ def test_run_apply_re_materialises_container_acl_for_every_container(
     ]
 
 
+def test_run_apply_reconciles_under_repo_host_mounts_on_every_container(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Under-repo host_mounts are per-container devices outside the binds
+    profile, so `apply` is what brings a changed entry to existing containers —
+    stopped ones too. One container failing is warned about, not fatal."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    a_devices = {"host-x": {"type": "disk", "source": "/s", "path": "/p"}}
+    incus.list_containers.return_value = [{"name": "a", "devices": a_devices}, {"name": "b"}]
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="a",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+            ContainerInfo(
+                name="b",
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            ),
+        ],
+    )
+    reconcile = mocker.patch(
+        "jailbee.lifecycle.reconcile_under_repo_host_mounts",
+        side_effect=[IncusError("Missing source path"), ["host-y"]],
+    )
+    warn = mocker.patch("jailbee.tui.warn")
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    assert reconcile.call_args_list == [
+        mocker.call(cfg, incus, "a", local_devices=a_devices),
+        mocker.call(cfg, incus, "b", local_devices={}),
+    ]
+    assert any("Missing source path" in str(c) for c in warn.call_args_list)
+
+
 def test_run_apply_dispatches_all_network_generations_without_detaching_legacy_acl(
     make_cfg, tmp_path: Path, mocker: MockerFixture, _no_container_acl_apply: MagicMock
 ) -> None:

@@ -4826,6 +4826,94 @@ def test_new_container_mount_mode_attaches_under_repo_host_mount(tmp_path):
     assert props["readonly"] == "true"
 
 
+def _cfg_with_under_repo_mounts(tmp_path, *mounts):
+    """A Config whose repo dir is /home/dev/repo, carrying `mounts` only."""
+    cfg = _cfg_for_new(tmp_path).model_copy(update={"host_mounts": list(mounts)})
+    object.__setattr__(cfg, "container_prefix", "repo")
+    return cfg
+
+
+def test_reconcile_under_repo_host_mounts_adds_a_missing_device(tmp_path):
+    """An under-repo entry added to the config after the container was created
+    reaches it on `jailbee apply` — `new_container` was its only attach point."""
+    from jailbee.config import HostMount
+    from jailbee.lifecycle import reconcile_under_repo_host_mounts
+
+    src = tmp_path / "data"
+    cfg = _cfg_with_under_repo_mounts(
+        tmp_path, HostMount(host=src, container="/home/dev/repo/data", readonly=True)
+    )
+    incus = MagicMock()
+
+    changed = reconcile_under_repo_host_mounts(cfg, incus, "repo-x", local_devices={})
+
+    assert changed == ["host-data"]
+    incus.config_device_add.assert_called_once_with(
+        "repo-x",
+        "host-data",
+        "disk",
+        {"source": str(src), "path": "/home/dev/repo/data", "readonly": "true"},
+    )
+    incus.config_device_remove.assert_not_called()
+
+
+def test_reconcile_under_repo_host_mounts_leaves_a_matching_device_alone(tmp_path):
+    from jailbee.config import HostMount
+    from jailbee.lifecycle import reconcile_under_repo_host_mounts
+
+    src = tmp_path / "data"
+    cfg = _cfg_with_under_repo_mounts(
+        tmp_path, HostMount(host=src, container="/home/dev/repo/data", readonly=False)
+    )
+    incus = MagicMock()
+    local = {"host-data": {"type": "disk", "source": str(src), "path": "/home/dev/repo/data"}}
+
+    assert reconcile_under_repo_host_mounts(cfg, incus, "repo-x", local_devices=local) == []
+    incus.config_device_add.assert_not_called()
+    incus.config_device_remove.assert_not_called()
+
+
+def test_reconcile_under_repo_host_mounts_replaces_a_changed_device(tmp_path):
+    from jailbee.config import HostMount
+    from jailbee.lifecycle import reconcile_under_repo_host_mounts
+
+    src = tmp_path / "data"
+    cfg = _cfg_with_under_repo_mounts(
+        tmp_path, HostMount(host=src, container="/home/dev/repo/data", readonly=True)
+    )
+    incus = MagicMock()
+    local = {"host-data": {"type": "disk", "source": str(src), "path": "/home/dev/repo/old"}}
+
+    assert reconcile_under_repo_host_mounts(cfg, incus, "repo-x", local_devices=local) == [
+        "host-data"
+    ]
+    assert [c[0] for c in incus.method_calls] == ["config_device_remove", "config_device_add"]
+    incus.config_device_remove.assert_called_once_with("repo-x", "host-data")
+
+
+def test_reconcile_under_repo_host_mounts_removes_a_dropped_entry(tmp_path):
+    """A removed (or moved out of the repo dir) entry must not linger: a stale
+    local `host-<name>` would also shadow a same-named binds-profile device."""
+    from jailbee.lifecycle import reconcile_under_repo_host_mounts
+
+    cfg = _cfg_with_under_repo_mounts(tmp_path)
+    incus = MagicMock()
+    local = {
+        "host-old": {"type": "disk", "source": "/srv/old", "path": "/home/dev/repo/old"},
+        # Not ours: the clone source, the --mount bind, a device elsewhere.
+        "host-source": {"type": "disk", "source": "/r", "path": "/mnt/host-source"},
+        "host-repo-rw": {"type": "disk", "source": "/r", "path": "/home/dev/repo/sub"},
+        "host-misc": {"type": "disk", "source": "/srv/m", "path": "/opt/misc"},
+        "share-local": {"type": "disk", "source": "/r/.local", "path": "/home/dev/repo/.local"},
+    }
+
+    assert reconcile_under_repo_host_mounts(cfg, incus, "repo-x", local_devices=local) == [
+        "host-old"
+    ]
+    incus.config_device_remove.assert_called_once_with("repo-x", "host-old")
+    incus.config_device_add.assert_not_called()
+
+
 def test_new_container_attaches_under_repo_shared_cache_after_clone(tmp_path, mocker):
     """An auto-added shared_cache whose container_path lives under the
     repo (e.g. jetbrains-idea) is attached as a per-container disk device

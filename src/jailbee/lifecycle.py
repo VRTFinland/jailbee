@@ -2152,15 +2152,69 @@ def _attach_under_repo_host_mounts(cfg: Config, incus: Incus, name: str) -> None
     profile's entries; collisions are not expected because the profile
     excludes the same set of mounts (``profiles.binds_profile_yaml``).
     """
+    for device_name, props in _under_repo_host_mount_devices(cfg).items():
+        incus.config_device_add(name, device_name, "disk", props)
+
+
+def _under_repo_host_mount_devices(cfg: Config) -> dict[str, dict[str, str]]:
+    """Device name -> disk properties for each under-repo host_mount."""
+    devices: dict[str, dict[str, str]] = {}
     for mount in _under_repo_host_mounts(cfg):
-        device_name = "host-" + _device_name_from_path(mount.host)
         props: dict[str, str] = {
             "source": str(mount.host),
             "path": mount.container,
         }
         if mount.readonly:
             props["readonly"] = "true"
+        devices["host-" + _device_name_from_path(mount.host)] = props
+    return devices
+
+
+# Per-container `host-*` devices `new_container` adds for its own reasons.
+_NON_HOST_MOUNT_DEVICES = frozenset({"host-source", "host-repo-rw"})
+
+
+def reconcile_under_repo_host_mounts(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    local_devices: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    """Make one container's under-repo host_mount devices match the config.
+
+    `new_container` attaches these once, after the clone; without this an
+    entry added, changed or removed later never reaches an existing container,
+    not even across a restart — the binds profile excludes them by design.
+    Disk devices hotplug, so a running container sees the change at once.
+
+    ``local_devices`` is the instance's own ``devices`` map (from `incus
+    list`). A local ``host-*`` disk under the repo dir that no entry wants is
+    removed: it is a dropped or moved entry, and left in place it would also
+    shadow a same-named device of the binds profile. Returns the device names
+    added, replaced or removed.
+    """
+    wanted = _under_repo_host_mount_devices(cfg)
+    changed: list[str] = []
+    for device_name, props in wanted.items():
+        current = local_devices.get(device_name)
+        if current is not None:
+            if {k: str(v) for k, v in current.items() if k != "type"} == props:
+                continue
+            incus.config_device_remove(name, device_name)
         incus.config_device_add(name, device_name, "disk", props)
+        changed.append(device_name)
+    for device_name, current in local_devices.items():
+        if (
+            device_name.startswith("host-")
+            and device_name not in wanted
+            and device_name not in _NON_HOST_MOUNT_DEVICES
+            and current.get("type") == "disk"
+            and is_under_repo(str(current.get("path", "")), cfg)
+        ):
+            incus.config_device_remove(name, device_name)
+            changed.append(device_name)
+    return changed
 
 
 def _attach_share_local(
