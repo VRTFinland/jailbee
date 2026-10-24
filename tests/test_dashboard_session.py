@@ -258,13 +258,21 @@ class _HeldJobs:
 
     def __init__(self) -> None:
         self.started: list[tuple[str, list[str], object]] = []
+        self.calls: list[object] = []
 
     def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False):  # type: ignore[no-untyped-def]  # test double
         assert capture_stdout
         self.started.append((key, list(argv), on_done))
 
+    def call(self, key, label, fn, on_done):  # type: ignore[no-untyped-def]  # test double
+        """A listing: run now, delivered by the next `poll` (only calls are delivered)."""
+        value = fn()
+        self.calls.append(lambda: on_done(value))
+
     def poll(self) -> None:
-        pass
+        calls, self.calls = self.calls, []
+        for deliver in calls:
+            deliver()
 
     def busy(self, key: str) -> bool:
         return False
@@ -301,6 +309,18 @@ def _open_box(session) -> None:  # type: ignore[no-untyped-def]
     session.handle_key("enter")
     assert isinstance(session.overlay, MenuState)
     session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+
+def _settle(session) -> None:  # type: ignore[no-untyped-def]
+    """Tick until the box's background listing has arrived."""
+    import time
+
+    deadline = time.monotonic() + 5
+    while isinstance(session.overlay, tsession.OutboxState) and session.overlay.busy:
+        assert time.monotonic() < deadline, "the outbox listing never arrived"
+        time.sleep(0.005)
+        session.tick()
 
 
 _PLAN = (
@@ -323,6 +343,26 @@ def test_outbox_menu_opens_box(mocker, tmp_path):
         ["outbox", "ls", "alpha-x", "-o", "json", "--config", str(group.config_path)],
         cwd=tmp_path,
     )
+
+
+def test_outbox_box_opens_before_its_listing_arrives(mocker, tmp_path):
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # test double
+    session.handle_key("down")
+    session.tick()
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+
+    state = session.overlay
+    assert isinstance(state, tsession.OutboxState)
+    assert state.busy == "reading the outbox…" and state.containers == ()
+    assert len(session.jobs.calls) == 1 and quiet.call_count == 1
+
+    session.tick()  # delivers the listing
+    state = session.overlay
+    assert isinstance(state, tsession.OutboxState)
+    assert state.busy is None and state.containers
 
 
 def test_open_outbox_unavailable_shows_box_error(mocker, tmp_path):

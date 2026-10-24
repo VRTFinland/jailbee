@@ -1233,32 +1233,35 @@ class DashboardSession:
         return picker
 
     def open_outbox(self, container: str) -> OutboxState | None:
-        """The Outbox box of ``container``, listed quietly, or None after a notice.
+        """The Outbox box of ``container``, listing in the background, or None after a notice.
 
-        An unavailable container still opens: `outbox ls` exits 2 for it but
+        The box opens at once and fills when `outbox ls` returns. An
+        unavailable container still opens: `outbox ls` exits 2 for it but
         prints the listing, whose header row says why, and the box offers
-        nothing that changes it. A listing that cannot be read at all (a
-        refused or failed `outbox ls`) is a notice, as before.
+        nothing that changes it. A listing the session may not run is a
+        notice; one that fails to read is the box's status line.
         """
         repo = self.repo_for(container, "container")
         if repo is None:
             self.set_notice(f"'{container}' is gone")
             return None
         group = _find_group(self.groups, container)
+        runner = SessionOutboxRunner(self, container)
+        refusal = runner.refusal(dob.outbox_ls_argv(container))
+        if refusal is not None:
+            self.set_notice(f"could not list the outbox: {refusal}", seconds=FAILURE_NOTICE_SECONDS)
+            return None
         controller = OutboxController(
-            SessionOutboxRunner(self, container),
+            runner,
             title=container,
             container=container,
             prefix=group.prefix if group is not None else "",
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
         )
-        if not controller.load():
-            reason = controller.state.status[-1] if controller.state.status else "unknown error"
-            self.set_notice(reason, seconds=FAILURE_NOTICE_SECONDS)
-            return None
         controller.on_change = self._outbox_listener(controller)
         self.outbox = controller
+        controller.load_later()
         return controller.state
 
     def _outbox_listener(self, controller: OutboxController) -> Callable[[OutboxState], None]:

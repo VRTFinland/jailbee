@@ -122,6 +122,11 @@ class LocalOutboxRunner:
             return da.CliResult(False, refusal)
         return da.run_cli_quiet(self._full(argv), cwd=self.target.cwd())
 
+    def run_quiet_later(
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[da.CliResult], None]
+    ) -> None:
+        self.jobs.call(key, label, lambda: self.run_quiet(argv), on_done)
+
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
     ) -> None:
@@ -222,7 +227,7 @@ class OutboxApp(App[int], inherit_bindings=False):
 
     def _load(self) -> None:
         self.controller.state = replace(self.controller.state, busy=None)
-        self.controller.load()
+        self.controller.load_later()
 
     async def on_event(self, event: events.Event) -> None:
         # As in `DashboardApp`: keys are routed one at a time, never through focus.

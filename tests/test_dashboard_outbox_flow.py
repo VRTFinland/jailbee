@@ -90,6 +90,8 @@ class FakeRunner:
         self.drop_results: list[CliResult] = []
         self.start_error: Exception | None = None
         self.changes = 0
+        self.hold_loads = False
+        self.held: list[tuple[str, Callable[[], None]]] = []
 
     def permitted(self, argv: Sequence[str]) -> bool:
         return self.allow(argv)
@@ -100,6 +102,23 @@ class FakeRunner:
             item = self.listings.pop(0) if len(self.listings) > 1 else self.listings[0]
             return CliResult(True, "", item) if isinstance(item, str) else item
         return self.drop_results.pop(0) if self.drop_results else CliResult(True, "")
+
+    def run_quiet_later(
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[CliResult], None]
+    ) -> None:
+        """Delivered at once, unless `hold_loads`: then `finish_loads` delivers."""
+        if self.start_error is not None:
+            raise self.start_error
+        result = self.run_quiet(argv)
+        if self.hold_loads:
+            self.held.append((key, lambda: on_done(result)))
+        else:
+            on_done(result)
+
+    def finish_loads(self) -> None:
+        held, self.held = self.held, []
+        for _, deliver in held:
+            deliver()
 
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
@@ -817,3 +836,76 @@ def test_scope_ability_follows_the_all_repos_listing_permission():
     allowed = _controller(FakeRunner(_listing(_proposal())), standalone=True)
     allowed.load()
     assert allowed.state.abilities.scope is True
+
+
+def _held(*listings: str | CliResult) -> tuple[FakeRunner, OutboxController, list[dob.OutboxState]]:
+    runner = FakeRunner(*listings)
+    runner.hold_loads = True
+    seen: list[dob.OutboxState] = []
+    ctl = OutboxController(runner, title="t", container=C, standalone=False, on_change=seen.append)
+    return runner, ctl, seen
+
+
+def test_load_later_is_busy_until_the_listing_arrives():
+    runner, ctl, seen = _held(_listing(_proposal()))
+    ctl.load_later()
+    assert ctl.state.busy == "reading the outbox…" and ctl.state.containers == ()
+    assert seen == [ctl.state]  # on screen at once
+    runner.finish_loads()
+    assert ctl.state.busy is None
+    assert ctl.state.cursor == _key()
+    assert ctl.state.abilities.delete is True
+
+
+def test_load_later_failure_is_a_status_line():
+    runner, ctl, _ = _held(CliResult(False, "refused", ""))
+    ctl.load_later()
+    runner.finish_loads()
+    assert ctl.state.busy is None
+    assert ctl.state.status == ("could not list the outbox: refused",)
+
+
+def test_refresh_while_listing_starts_no_second_listing():
+    runner, ctl, _ = _held(_listing(_proposal()))
+    ctl.load_later()
+    ctl.intent("refresh", None)
+    assert len(runner.held) == 1 and len(runner.argvs("ls")) == 1
+    runner.finish_loads()
+    assert ctl.state.busy is None and ctl.state.containers
+
+
+def test_scope_switched_while_listing_lists_the_new_scope():
+    runner = FakeRunner(_listing(_proposal()), allow=lambda argv: True)
+    runner.hold_loads = True
+    ctl = OutboxController(runner, title="t", container=None, standalone=True, on_change=lambda s: None)
+    ctl.load_later()
+    runner.finish_loads()
+    assert ctl.state.abilities.scope
+    ctl.intent("scope", None)  # lists --all-repos
+    ctl.intent("scope", None)  # back, while that is on its way
+    runner.finish_loads()  # the --all-repos result is stale: listed again
+    assert ctl.state.busy == "reading the outbox…"
+    runner.finish_loads()
+    ls = runner.argvs("ls")
+    assert "--all-repos" in ls[1] and "--all-repos" not in ls[2]
+    assert ctl.state.busy is None and not ctl.state.all_repos
+
+
+def test_load_later_while_another_child_runs_lists_in_place():
+    runner, ctl, _ = _held(_listing(_proposal()))
+    ctl.state = replace(ctl.state, busy="publishing…")
+    ctl.load_later()
+    assert runner.held == [] and ctl.state.containers  # read synchronously
+    assert ctl.state.busy == "publishing…"
+
+
+def test_load_later_withdraws_an_open_question():
+    runner, ctl, _ = _held(_listing(_proposal()))
+    ctl.load_later()
+    runner.finish_loads()
+    ctl.intent("delete", _key())
+    assert ctl.state.question is not None
+    ctl.intent("refresh", None)
+    assert ctl.state.question is None
+    runner.finish_loads()
+    assert ctl.state.status[0] == "outbox refreshed; ask again"

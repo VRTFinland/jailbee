@@ -51,6 +51,7 @@ _Preview = Literal["auto", "on", "off"]
 _PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off"}
 
 _ASK_AGAIN = "outbox refreshed; ask again"
+_LOADING = "reading the outbox…"
 _BAD_PLAN = "unexpected plan output"
 _FOREIGN_FALLBACK = "⚠ foreign target: check where this will be published"
 # Phrases of the plan's foreign warnings (`pr_outbox.foreign_warning`,
@@ -71,6 +72,12 @@ class OutboxRunner(Protocol):
     def permitted(self, argv: Sequence[str]) -> bool: ...
 
     def run_quiet(self, argv: Sequence[str]) -> CliResult: ...
+
+    def run_quiet_later(
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[CliResult], None]
+    ) -> None:
+        """`run_quiet` off the UI thread; ``on_done`` runs on it. ValueError: ``key`` runs."""
+        ...
 
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
@@ -241,11 +248,15 @@ class OutboxController:
     def _status(self, *lines: str) -> None:
         self._set(replace(self.state, status=tuple(lines)))
 
+    def _ls_argv(self) -> list[str]:
+        return dob.outbox_ls_argv(self.container, all_repos=self.state.all_repos)
+
     def _fetch(self) -> tuple[dob.ContainerListing, ...] | str:
         """The current listing, or the reason it could not be read."""
-        result = self.runner.run_quiet(
-            dob.outbox_ls_argv(self.container, all_repos=self.state.all_repos)
-        )
+        return self._parse(self.runner.run_quiet(self._ls_argv()))
+
+    @staticmethod
+    def _parse(result: CliResult) -> tuple[dob.ContainerListing, ...] | str:
         # `outbox ls` exits 2 for an unavailable container but still prints the listing.
         try:
             return dob.parse_outbox_listing(result.stdout)
@@ -339,6 +350,50 @@ class OutboxController:
         self._set(state)
         return ok
 
+    def load_later(self, *, cursor: dob.RowKey | None = None) -> None:
+        """`load`, with the listing read off the UI thread; the state is busy meanwhile.
+
+        Opening and refreshing read every store in the container through a
+        `jailbee` child, which takes a second or two: the box must stay usable.
+        While a listing is already on its way this does nothing; while another
+        child is running (a publish) it is a plain `load`, so that child's busy
+        line is never replaced.
+        """
+        if self.state.busy == _LOADING:
+            self.on_change(self.state)  # already on its way
+            return
+        if self.state.busy is not None:
+            self.load(cursor=cursor)
+            return
+        status: tuple[str, ...] = ()
+        if self.state.question is not None:
+            self._pending_delete = None
+            status = (_ASK_AGAIN,)
+        self.state = replace(self.state, busy=_LOADING, question=None, status=())
+        argv = self._ls_argv()
+
+        def done(result: CliResult) -> None:
+            self.state = replace(self.state, busy=None)
+            if argv != self._ls_argv():
+                # The scope was switched while this was on its way: list that one.
+                self.load_later(cursor=cursor)
+                return
+            fetched = self._parse(result)
+            if isinstance(fetched, str):
+                self._set(replace(self.state, status=(*status, fetched)))
+            else:
+                self._set(self._listed(fetched, cursor=cursor, status=status))
+
+        where = self.container or "every container"
+        try:
+            self.runner.run_quiet_later(
+                f"outbox-ls:{id(self)}", f"listing the outbox of {where}…", argv, done
+            )
+        except ValueError as exc:
+            self._set(replace(self.state, busy=None, status=(*status, str(exc))))
+            return
+        self.on_change(self.state)
+
     def intent(self, name: Intent, key: dob.RowKey | None, value: str | None = None) -> None:
         if key is not None and name not in ("answer", "cancel"):
             self.state = replace(self.state, cursor=key)
@@ -364,11 +419,11 @@ class OutboxController:
         elif name == "raw":
             self._set(replace(self.state, raw=not self.state.raw))
         elif name == "refresh":
-            self.load(cursor=key)
+            self.load_later(cursor=key)
         elif name == "scope":
             if self.state.abilities.scope:
                 self.state = replace(self.state, all_repos=not self.state.all_repos)
-            self.load(cursor=key)
+            self.load_later(cursor=key)
         elif name == "answer":
             self._answer(value)
         else:

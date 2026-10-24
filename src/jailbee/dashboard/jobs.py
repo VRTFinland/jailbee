@@ -18,6 +18,9 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 # What `jailbee new` says when it needed an answer a detached run cannot give:
 # the branch-reuse confirmation (`typer.confirm` on EOF aborts) and the
@@ -58,7 +61,9 @@ class JobRunner:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._labels: dict[str, str] = {}
-        self._finished: list[tuple[str, Callable[[JobResult], None], JobResult]] = []
+        # Each finished job: its key, its callback and what the callback gets
+        # (a `JobResult` from `start`, the function's value from `call`).
+        self._finished: list[tuple[str, Callable[[Any], None], Any]] = []
 
     def busy(self, key: str) -> bool:
         """Whether ``key`` has a job that has not been delivered by ``poll`` yet."""
@@ -112,6 +117,26 @@ class JobRunner:
                 self._finished.append((key, on_done, result))
 
         threading.Thread(target=wait, name=f"jailbee-dashboard-job-{key}", daemon=True).start()
+
+    def call(
+        self, key: str, label: str, fn: Callable[[], _T], on_done: Callable[[_T], None]
+    ) -> None:
+        """Run ``fn`` on a daemon thread; ``on_done`` gets its return value from a later ``poll``.
+
+        For a blocking call that already captures a child's output (`run_cli_quiet`).
+        ``fn`` must not raise. Raises ``ValueError`` if ``key`` is already running.
+        """
+        with self._lock:
+            if key in self._labels:
+                raise ValueError(f"job '{key}' is already running")
+            self._labels[key] = label
+
+        def run() -> None:
+            value = fn()
+            with self._lock:
+                self._finished.append((key, on_done, value))
+
+        threading.Thread(target=run, name=f"jailbee-dashboard-call-{key}", daemon=True).start()
 
     def poll(self) -> None:
         """Deliver every finished job's result to its callback."""

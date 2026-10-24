@@ -62,6 +62,12 @@ class SyncJobs(JobRunner):
         stdout = proc.stdout if capture_stdout and isinstance(proc.stdout, str) else ""
         self._finished.append((key, on_done, JobResult(proc.returncode, stderr, stdout)))
 
+    def call(self, key, label, fn, on_done):  # type: ignore[no-untyped-def]  # test double
+        """Run ``fn`` now; its value reaches ``on_done`` on the next `poll()`."""
+        value = fn()
+        self._labels[key] = label
+        self._finished.append((key, on_done, value))
+
 
 class FakeStateClient:
     """Stands in for `StateClient`: `latest()` serves the *same* groups list

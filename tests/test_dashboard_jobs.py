@@ -92,6 +92,30 @@ def test_starting_a_busy_key_is_refused(tmp_path: Path) -> None:
     _drain(runner)
 
 
+def test_call_runs_off_thread_and_delivers_on_poll() -> None:
+    import threading
+
+    release = threading.Event()
+    ran_on: list[threading.Thread] = []
+    seen: list[tuple[str, threading.Thread]] = []
+
+    def fn() -> str:
+        ran_on.append(threading.current_thread())
+        release.wait(5)
+        return "listing"
+
+    runner = JobRunner()
+    runner.call("k", "listing", fn, lambda value: seen.append((value, threading.current_thread())))
+    assert runner.active() == ["listing"]  # returned before fn finished
+    with pytest.raises(ValueError, match="already running"):
+        runner.call("k", "again", lambda: "x", lambda _v: None)
+    release.set()
+    _drain(runner)
+    assert ran_on and ran_on[0] is not threading.current_thread()
+    assert seen == [("listing", threading.current_thread())]
+    assert runner.active() == []
+
+
 def test_unspawnable_command_raises_and_does_not_stay_busy(tmp_path: Path) -> None:
     runner = JobRunner()
     with pytest.raises(OSError):

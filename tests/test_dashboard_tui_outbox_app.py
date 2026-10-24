@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -21,6 +21,7 @@ from tests.test_dashboard_outbox_flow import _plan
 
 TARGET = RepoTarget(Path("/repos/alpha"), Path("/repos/alpha/.jailbee/config.yaml"))
 LISTING = _listing(_container(_proposal("pr/a.json"), _proposal("issue/b.json")))
+LOADING = "reading the outbox…"
 READ_ONLY_LINE = "Read-only over SSH: use explicit `jailbee outbox drop` / `outbox apply` commands."
 
 
@@ -31,13 +32,17 @@ class FakeJobs:
 
     def __init__(self) -> None:
         self.started: list[list[str]] = []
-        self._pending: list[tuple[Callable[[JobResult], None], JobResult]] = []
+        self._pending: list[tuple[Callable[[Any], None], Any]] = []
         FakeJobs.instances.append(self)
 
     def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False):  # type: ignore[no-untyped-def]
         self.started.append(list(argv))
         stdout = _plan() if "--dry-run" in argv else "published 2 action(s)"
         self._pending.append((on_done, JobResult(0, "", stdout)))
+
+    def call(self, key, label, fn, on_done):  # type: ignore[no-untyped-def]
+        """A listing: run now, delivered on the next `poll`."""
+        self._pending.append((on_done, fn()))
 
     def poll(self) -> None:
         pending, self._pending = self._pending, []
@@ -81,10 +86,20 @@ def drive(app: OutboxApp, scenario, size=(100, 30)):  # type: ignore[no-untyped-
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             await pilot.pause()
+            await listed(app, pilot)
             result.append(await scenario(pilot))
 
     asyncio.run(main())
     return result[0]
+
+
+async def listed(app: OutboxApp, pilot) -> None:  # type: ignore[no-untyped-def]
+    """Wait for the background listing (it arrives on the app's poll timer)."""
+    for _ in range(100):
+        if app.controller.state.busy != LOADING:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("the outbox listing never arrived")
 
 
 def make(read_only: bool = False, container: str | None = None) -> OutboxApp:
@@ -155,9 +170,9 @@ def test_scope_toggle_with_a_named_container_lists_every_repo(quiet):
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("a")
-        await pilot.pause()
+        await listed(app, pilot)
         await pilot.press("a")
-        await pilot.pause()
+        await listed(app, pilot)
 
     drive(app, scenario)
     assert quiet[0][:3] == ["outbox", "ls", "feature"]

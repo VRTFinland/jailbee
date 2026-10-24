@@ -915,15 +915,17 @@ def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
     ],
     ids=["cli-failed", "not-json"],
 )
-def test_an_unreadable_outbox_is_a_notice(mocker, tmp_path, result, notice):
+def test_an_unreadable_outbox_is_the_box_status(mocker, tmp_path, result, notice):
+    # The box opens before the listing arrives; a failed one is its status line.
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker, result)
 
     run = drive(mocker, container_menu_keys(group, "outbox browse"), [group])
     assert run.rc == 0
 
-    assert not _boxes(run)
-    assert notice in run.notices()
+    boxes = _boxes(run)
+    assert boxes and boxes[-1].containers == () and boxes[-1].busy is None
+    assert boxes[-1].status == (notice,)
 
 
 def test_an_empty_outbox_still_opens_the_box(mocker, tmp_path):

@@ -41,6 +41,14 @@ class SessionOutboxRunner:
         check_dashboard_command(full, session.ssh_policy, over_ssh=session.over_ssh)
         return repo, full
 
+    def refusal(self, argv: Sequence[str]) -> str | None:
+        """Why ``argv`` may not run for this container, or None."""
+        try:
+            self._addressed(argv)
+        except RouteError as exc:
+            return str(exc)
+        return None
+
     def permitted(self, argv: Sequence[str]) -> bool:
         return permitted(argv, self.session.ssh_policy, over_ssh=self.session.over_ssh)
 
@@ -50,6 +58,11 @@ class SessionOutboxRunner:
         except RouteError as exc:
             return da.CliResult(False, str(exc))
         return da.run_cli_quiet(full, cwd=repo.cwd())
+
+    def run_quiet_later(
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[da.CliResult], None]
+    ) -> None:
+        self.session.jobs.call(key, label, lambda: self.run_quiet(argv), on_done)
 
     def start(
         self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]

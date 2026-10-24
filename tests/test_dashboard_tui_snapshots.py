@@ -257,8 +257,11 @@ def test_snapshot_outbox_app(snap_compare, mocker):
     )
 
     async def loaded(pilot):
+        from tests.test_dashboard_tui_outbox_app import listed
+
         await pilot.pause()
         await pilot.pause()
+        await listed(app, pilot)
         assert app.controller.state.containers
 
     assert snap_compare(app, terminal_size=(100, 30), run_before=loaded)
