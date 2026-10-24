@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 
 
 def state_dir() -> Path:
@@ -274,6 +274,13 @@ def _migrate_to_v18(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v19(conn: Connection) -> None:
+    """v18 -> v19 adds the terminal dashboard's chosen details-panel height."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(view_prefs)")}
+    if "details_rows" not in cols:
+        conn.exec_driver_sql("ALTER TABLE view_prefs ADD COLUMN details_rows INTEGER")
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -293,6 +300,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     16: _migrate_to_v16,
     17: _migrate_to_v17,
     18: _migrate_to_v18,
+    19: _migrate_to_v19,
 }
 
 

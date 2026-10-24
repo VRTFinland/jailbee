@@ -48,7 +48,7 @@ _TERMINAL_BYTES = (
     "\x1b[15~",
     "?",
     "!",
-    *"neEAOvMShjkq<>I",
+    *"neEAOvMShjkq<>I+-=",
 )
 
 

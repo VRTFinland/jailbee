@@ -275,6 +275,15 @@ def test_the_tooltip_lines_cut_a_long_message_but_the_text_keeps_it() -> None:
     assert aa.TOOLTIP_MESSAGE_CHARS == 200
 
 
+def test_the_tooltip_flattens_a_multi_line_message_but_the_text_keeps_it() -> None:
+    markdown = "Done:\n\n- one\n- two"
+    text = aa.describe(_summary(activity=AgentActivity("Bash  ls", markdown)), NOW)
+
+    assert text is not None
+    assert text.message == markdown
+    assert text.lines()[-1] == "“Done: - one - two”"
+
+
 def test_describe_without_activity_is_none() -> None:
     assert aa.describe(_summary(activity=None), NOW) is None
 
@@ -352,3 +361,46 @@ def test_details_show_event_age_separately_from_selected_status_duration():
     text = aa.describe(_summary(state="waiting", activity=activity), NOW)
     assert text is not None
     assert text.head == "active 14s ago (busy for 23m)"
+
+
+def test_describe_head_drops_an_idle_duration_that_repeats_the_activity_age() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=25),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 25m ago"
+
+
+def test_describe_head_keeps_an_idle_duration_that_differs_from_the_activity_age() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=3),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 3m ago (idle for 25m)"
+
+
+def test_describe_head_keeps_the_subagent_count_when_the_idle_duration_is_dropped() -> None:
+    idle = AgentActivity(
+        "t",
+        None,
+        2,
+        state="idle",
+        since=NOW - timedelta(minutes=25),
+        last_event_at=NOW - timedelta(minutes=25),
+    )
+    text = aa.describe(_summary(activity=idle), NOW)
+
+    assert text is not None
+    assert text.head == "active 25m ago · ~2 subagents"

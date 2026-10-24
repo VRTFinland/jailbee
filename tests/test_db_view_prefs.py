@@ -233,3 +233,14 @@ def test_show_system_defaults_true_and_round_trips() -> None:
     assert load_view_state(engine, FRONTEND_TUI).show_system is False
     save_view_state(engine, FRONTEND_TUI, ViewState(show_system=True))
     assert load_view_state(engine, FRONTEND_TUI).show_system is True
+
+
+def test_details_rows_default_to_unset_and_round_trip() -> None:
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    assert load_view_state(engine, FRONTEND_TUI).details_rows is None
+    save_view_state(engine, FRONTEND_TUI, ViewState(details_rows=14))
+    assert load_view_state(engine, FRONTEND_TUI).details_rows == 14
+    save_view_state(engine, FRONTEND_TUI, ViewState(details_rows=None))
+    assert load_view_state(engine, FRONTEND_TUI).details_rows is None

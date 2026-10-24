@@ -22,9 +22,10 @@ from jailbee.accounts.models import RECENT_EVENTS, ActivityEvent, ActivityPaths,
 
 TAIL_BYTES = 64 * 1024
 MESSAGE_CHARS = 200
-LAST_MESSAGE_CHARS = 1000
-"""The latest message's own cap: the details panel wraps it in full. History
-entries keep `MESSAGE_CHARS`."""
+LAST_MESSAGE_CHARS = 3000
+"""The latest message's own cap: the details panel renders it in full, as
+Markdown, so its line breaks are kept. History entries keep `MESSAGE_CHARS`
+and one line."""
 ARG_CHARS = 80
 SUBAGENT_FRESH_SECONDS = 30.0
 """A subagent file modified within this window counts as running. An estimate:
@@ -58,6 +59,21 @@ _TOOL_ARGS = {
 def _one_line(text: str, limit: int) -> str:
     """Whitespace collapsed, printable characters only, cut to `limit` with `…`."""
     flat = "".join(ch for ch in " ".join(text.split()) if ch.isprintable())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _lines(text: str, limit: int) -> str:
+    """`text` with its line breaks, printable characters only, cut to `limit` with `…`.
+
+    Trailing whitespace goes from each line, runs of blank lines become one and
+    the text is stripped. Tabs become spaces: Markdown indents with either.
+    """
+    kept: list[str] = []
+    for raw in text.replace("\t", "    ").splitlines():
+        line = "".join(ch for ch in raw if ch.isprintable()).rstrip()
+        if line or (kept and kept[-1]):
+            kept.append(line)
+    flat = "\n".join(kept).strip()
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
@@ -188,7 +204,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                 if not isinstance(text, str):
                     continue
                 if last_message is None:
-                    last_message = _one_line(text, LAST_MESSAGE_CHARS) or None
+                    last_message = _lines(text, LAST_MESSAGE_CHARS) or None
                 short = _one_line(text, MESSAGE_CHARS)
                 if not short:
                     continue

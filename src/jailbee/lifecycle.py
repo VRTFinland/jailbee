@@ -35,7 +35,7 @@ from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_ma
 from jailbee.host_target import TargetSnapshot, resolve_target
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
-from jailbee.procstat import ActivitySampler, SampleInput
+from jailbee.procstat import ActivitySampler, SampleInput, read_container_cache
 from jailbee.profiles import (
     _device_name_from_path,
     is_under_repo,
@@ -525,6 +525,13 @@ def list_containers(
 
         pid_raw = state_data.get("pid")
         init_pid = pid_raw if isinstance(pid_raw, int) and pid_raw > 0 else None
+
+        # Incus reports `memory.current`, which counts memory the kernel frees
+        # under pressure; what is left is what drives a container towards OOM.
+        if memory_usage is not None and init_pid is not None:
+            cache = read_container_cache(init_pid, raw["name"])
+            if cache is not None:
+                memory_usage = max(0, memory_usage - cache)
 
         cpu_usage_raw = (state_data.get("cpu") or {}).get("usage")
         cpu_usage_ns = cpu_usage_raw if isinstance(cpu_usage_raw, int) else None

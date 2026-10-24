@@ -1100,7 +1100,7 @@ def test_v15_db_gains_columns_version_defaulting_zero() -> None:
     assert row is not None
     assert row.columns_version == 0
     assert row.columns == '["name", "mem"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 18
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 19
 
 
 def test_migrate_to_v16_is_idempotent() -> None:
@@ -1134,7 +1134,7 @@ def test_v16_db_gains_the_sort_columns() -> None:
     assert row is not None
     assert row.sort_field is None and row.sort_desc is False
     assert row.columns == '["name", "state"]' and row.columns_version == 1
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 18
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 19
 
 
 def test_migrate_to_v17_is_idempotent() -> None:
@@ -1167,7 +1167,7 @@ def test_v17_db_gains_show_system_defaulting_true() -> None:
     assert row is not None
     assert row.show_system is True
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 18
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 19
 
 
 def test_migrate_to_v18_is_idempotent() -> None:
@@ -1178,3 +1178,36 @@ def test_migrate_to_v18_is_idempotent() -> None:
     with engine.begin() as conn:
         _migrate_to_v18(conn)
         _migrate_to_v18(conn)
+
+
+def test_v18_db_gains_details_rows_unset() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, ViewPrefs
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=18))
+        session.add(ViewPrefs(frontend="tui", columns='["name"]', show_details=False))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE view_prefs DROP COLUMN details_rows")
+
+    _ensure_schema(engine)
+    with Session(engine) as session:
+        row = session.get(ViewPrefs, "tui")
+        meta = session.get(SchemaMeta, 1)
+    assert row is not None
+    assert row.details_rows is None
+    assert row.columns == '["name"]' and row.show_details is False
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 19
+
+
+def test_migrate_to_v19_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v19
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _migrate_to_v19(conn)
+        _migrate_to_v19(conn)

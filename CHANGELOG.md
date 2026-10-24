@@ -21,6 +21,13 @@ before editing `## Unreleased`.
 
 - `jailbee outbox` on a terminal opens the new full-screen outbox manager instead of the questionary browser, and the dashboard's Outbox entry opens the manager instead of its chain of pickers; `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo.
 - `jailbee review ls|show|drop` and `jailbee issue ls|show|drop` are deprecated in favour of `jailbee outbox ls|show|drop`; they still work and print a hint.
+- **Dashboard: the agent's last message is rendered as Markdown.** The details
+  panel keeps the message's line breaks and lays out its lists, headings,
+  emphasis, code and quotes, with the clock on the first line and the rest
+  hanging under it, instead of one quoted run of text. It is kept up to 3000
+  characters (was 1000). HTML is shown as written and terminal controls are
+  dropped, as in `jailbee outbox show`; history entries and the Qt tooltip stay
+  one line.
 
 ## 1.7.8 - 2026-10-23
 

@@ -28,6 +28,7 @@ def _layout(
     details_cap: int = 8,
     details_want: int | None = None,
     details_fit: bool = True,
+    details_pref: int | None = None,
     bottom_lines: Callable[[int, int | None], int] | None = None,
 ):
     from jailbee.dashboard.tui.layout import frame_layout
@@ -41,6 +42,7 @@ def _layout(
         details_cap=details_cap,
         details_want=details_cap if details_want is None else details_want,
         details_fit=details_fit,
+        details_pref=details_pref,
         bottom_lines=_bottom() if bottom_lines is None else bottom_lines,
     )
 
@@ -219,3 +221,31 @@ def test_details_left_out_do_not_grow():
         bottom_lines=_bottom(details=True, overlay_lines=6),
     )
     assert layout.details_rows is None and layout.bottom_rows == 6
+
+
+def _with_details(**kw):
+    return _layout(has_bottom=True, bottom_lines=_bottom(details=True), **kw)
+
+
+def test_a_preferred_height_replaces_the_default_rows():
+    assert _with_details(height=40, details_want=11, details_pref=4).details_rows == 4
+    assert _with_details(height=40, details_pref=14).details_rows == 14
+
+
+def test_a_preferred_height_below_two_rows_is_raised_to_two():
+    assert _with_details(height=40, details_pref=0).details_rows == 2
+
+
+def test_a_preferred_height_leaves_the_table_its_floor():
+    layout = _with_details(height=22, table_lines=40, details_pref=30)
+    assert layout.table_rows == 6  # five rows and the header
+    assert layout.details_rows == layout.details_room == 22 - 1 - 6 - 2
+
+
+def test_the_room_is_reported_without_a_preference():
+    assert _with_details(height=40).details_room == 40 - 1 - 6 - 2
+
+
+def test_a_cramped_screen_still_drops_a_preferred_panel():
+    layout = _with_details(height=9, table_lines=40, details_pref=6)
+    assert layout.details_rows is None

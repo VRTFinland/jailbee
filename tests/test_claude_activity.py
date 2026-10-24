@@ -80,7 +80,17 @@ def test_the_latest_tool_and_the_latest_message_win_even_from_different_records(
         _assistant(_tool("Edit", file_path="/b.py")),
     )
 
-    assert _pair(raw) == ("Edit  /b.py", "all green now")
+    assert _pair(raw) == ("Edit  /b.py", "all\n  green now")
+
+
+def test_the_last_message_keeps_its_markdown_layout() -> None:
+    text = "  Done:\r\n\n\n\n- one  \n\t- nested\n\n```\ncode\n```\n\n"
+    raw = _tail(_assistant(_text(text)))
+
+    tail = ca.parse_tail(raw)
+
+    assert tail.last_message == "Done:\n\n- one\n    - nested\n\n```\ncode\n```"
+    assert tail.recent[-1].text == "Done: - one - nested ``` code ```"  # history: one line
 
 
 def test_only_assistant_records_count() -> None:
@@ -121,7 +131,7 @@ def test_a_tool_without_a_known_argument_shows_its_name_only() -> None:
 def test_long_arguments_and_messages_are_cut_with_an_ellipsis() -> None:
     raw = _tail(
         _assistant(_tool("Bash", command="x" * 500)),
-        _assistant(_text("y" * 1500)),
+        _assistant(_text("y" * 3500)),
     )
 
     tail = ca.parse_tail(raw)
@@ -129,7 +139,7 @@ def test_long_arguments_and_messages_are_cut_with_an_ellipsis() -> None:
     assert tail.last_tool is not None and tail.last_message is not None
     assert tail.last_tool.split("  ", 1)[1] == "x" * (ca.ARG_CHARS - 1) + "…"
     assert tail.last_message == "y" * (ca.LAST_MESSAGE_CHARS - 1) + "…"
-    assert ca.LAST_MESSAGE_CHARS == 1000
+    assert ca.LAST_MESSAGE_CHARS == 3000
     # The history keeps the short cut.
     assert tail.recent[-1] == ActivityEvent("message", "y" * (ca.MESSAGE_CHARS - 1) + "…")
 
@@ -196,7 +206,8 @@ def test_control_characters_never_reach_recent_entries_or_the_last_message() -> 
     tail = ca.parse_tail(raw)
 
     assert tail.recent  # premise: both events were recorded
-    texts = [event.text for event in tail.recent] + [tail.last_message or ""]
+    # The last message keeps its line breaks, and nothing else below a space.
+    texts = [event.text for event in tail.recent] + (tail.last_message or "").split("\n")
     for text in texts:
         assert not any(ch < " " or ch == "\x7f" for ch in text), repr(text)
         assert "\x1b" not in text

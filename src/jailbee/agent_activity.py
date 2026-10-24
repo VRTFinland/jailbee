@@ -104,8 +104,8 @@ class ActivityReader:
 
 
 TOOLTIP_MESSAGE_CHARS = 200
-"""`lines()` cuts the message here: a tooltip does not wrap, and the details
-panel, which does, reads `message` itself."""
+"""`lines()` cuts the message here, on one line: a tooltip does not wrap, and the
+details panel, which renders it as Markdown, reads `message` itself."""
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ class ActivityText:
         if self.tool is not None:
             out.append(f"↳ {self.tool}")
         if self.message is not None:
-            message = self.message
+            message = " ".join(self.message.split())
             if len(message) > TOOLTIP_MESSAGE_CHARS:
                 message = message[: TOOLTIP_MESSAGE_CHARS - 1] + "…"
             out.append(f"“{message}”")
@@ -150,13 +150,14 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
         else (activity.state, activity.since)
     )
     stamp = activity.last_event_at
-    head = (
-        f"active {format_duration_short(now - stamp)} ago"
-        if stamp is not None and stamp <= now
-        else "activity age unknown"
-    )
+    age = format_duration_short(now - stamp) if stamp is not None and stamp <= now else None
+    head = f"active {age} ago" if age is not None else "activity age unknown"
     if since is not None and since <= now:
-        head += f" ({state} for {format_duration_short(now - since)})"
+        held = format_duration_short(now - since)
+        # An idle agent has done nothing since its last event, so the same
+        # duration twice is noise.
+        if not (state == "idle" and held == age):
+            head += f" ({state} for {held})"
     else:
         head += f" ({state})"
     if activity.subagents:

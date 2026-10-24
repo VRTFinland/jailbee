@@ -149,6 +149,7 @@ from jailbee.dashboard.sorting import (
     sort_notice,
 )
 from jailbee.dashboard.tui.frame import DashboardView
+from jailbee.dashboard.tui.layout import MIN_DETAILS_ROWS
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -360,6 +361,7 @@ class DashboardSession:
         self.show_empty_repos = view_state.show_empty_repos
         self.hidden_repos = view_state.hidden_repos
         self.show_details = view_state.show_details
+        self.details_rows = view_state.details_rows
         self.show_system = view_state.show_system
         self.sort = SortSpec(view_state.sort_field, view_state.sort_desc)
         self.column_widths: dict[str, int] | None = None
@@ -390,6 +392,9 @@ class DashboardSession:
         # how far it can go after each paint.
         self.details_scroll = 0
         self.details_furthest = 0
+        # What the frame last drew: the panel's rows (0: none) and the most it could have had.
+        self.details_shown = 0
+        self.details_room = 0
         self._details_row: Row | None = None
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
         self.all_groups: list[RepoGroup] = list(self.presented)
@@ -514,6 +519,7 @@ class DashboardSession:
             column_offset=self.column_offset,
             hidden_by_preferences=bool(self.all_groups) and not self.groups,
             show_details=self.show_details,
+            details_rows=self.details_rows,
             system=self.system,
             show_system=self.show_system,
             details_scroll=self.details_scroll,
@@ -542,6 +548,7 @@ class DashboardSession:
                 show_empty_repos=self.show_empty_repos,
                 hidden_repos=self.hidden_repos,
                 show_details=self.show_details,
+                details_rows=self.details_rows,
                 show_system=self.show_system,
                 sort_field=self.sort.field,
                 sort_desc=self.sort.desc,
@@ -2342,6 +2349,10 @@ class DashboardSession:
         elif key == "details":
             self.show_details = not self.show_details
             self.save_view()
+        elif key in ("details-grow", "details-shrink"):
+            self.resize_details(1 if key == "details-grow" else -1)
+        elif key == "details-reset":
+            self.set_details_rows(None)
         elif key == "mouse":
             return "toggle-mouse"
         elif key in ("sort-prev", "sort-next"):
@@ -2984,6 +2995,20 @@ class DashboardSession:
             return
         self._dismissed.add((prefix, key))  # hidden on the next tick, not the next snapshot
         self.client.refresh()  # the next snapshot drops the block for every client
+
+    def set_details_rows(self, rows: int | None) -> None:
+        """Choose the details panel's height (``None``: the built-in one), kept in range."""
+        if rows is not None:
+            rows = max(MIN_DETAILS_ROWS, min(rows, max(self.details_room, MIN_DETAILS_ROWS)))
+        if rows == self.details_rows:
+            return
+        self.details_rows = rows
+        self.save_view()
+
+    def resize_details(self, step: int) -> None:
+        """Make the panel ``step`` rows taller, from the rows it shows now; no panel, no change."""
+        if self.details_shown:
+            self.set_details_rows(self.details_shown + step)
 
     def scroll_details(self, step: int, *, absolute: bool = False) -> None:
         """Scroll the details panel ``step`` rows (``absolute``: to row ``step``), kept in range."""

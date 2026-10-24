@@ -230,6 +230,49 @@ def read_container_pids(
     return pids
 
 
+def read_container_cache(
+    init_pid: int,
+    container: str,
+    *,
+    proc_root: Path = PROC_ROOT,
+    cgroup_root: Path = CGROUP_ROOT,
+) -> int | None:
+    """Bytes of the container's memory the kernel frees before it OOM-kills.
+
+    Incus reports ``memory.current`` as the container's usage, and that
+    figure includes cache the kernel gives back under pressure. What is
+    freed first is ``inactive_file`` plus ``slab_reclaimable`` in the
+    container's ``memory.stat``; active file pages (running binaries and
+    libraries) are kept in the usage, so it nears the limit only when an OOM
+    kill is near. Shared memory (tmpfs) sits on the anon LRU, so it stays in
+    the usage as well.
+
+    None when the figure cannot be read; the caller then keeps what Incus said.
+    Same host-side cgroup-namespace assumption as ``read_container_pids``.
+    """
+    try:
+        raw = (proc_root / str(init_pid) / "cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    rel = _container_cgroup(raw, container)
+    if rel is None:
+        return None
+    try:
+        text = (cgroup_root / rel / "memory.stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fields: dict[str, int] = {}
+    for line in text.splitlines():
+        key, _, value = line.partition(" ")
+        try:
+            fields[key] = int(value)
+        except ValueError:
+            continue
+    if "inactive_file" not in fields:
+        return None
+    return fields["inactive_file"] + fields.get("slab_reclaimable", 0)
+
+
 @dataclass(frozen=True)
 class ProcessActivity:
     """One busy program inside a container, over the last sampling window."""
