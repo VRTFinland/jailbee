@@ -16,6 +16,8 @@ from jailbee.lifecycle import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from jailbee.lifecycle import ContainerInfo
     from jailbee.table_format import FieldSpec
 
@@ -118,20 +120,70 @@ def card_network(container: ContainerInfo, now: datetime) -> str:
     return _loose(container, now)
 
 
+_MOUNT_OFF = "dim"
+_MOUNT_FOREVER = "bold red"
+# Time left, coloured by how long the credential stays exposed: the first
+# bucket whose limit exceeds the remainder wins. Anything longer is orange.
+_MOUNT_BUCKETS = (
+    (timedelta(minutes=15), "bold cyan"),
+    (timedelta(hours=1), "bold green"),
+    (timedelta(hours=4), "bold yellow"),
+)
+_MOUNT_LONG = "bold dark_orange"
+
+
+def _mount_kinds(container: ContainerInfo) -> tuple[str, ...]:
+    """The repo's configured kinds in config order, then attached kinds it lacks."""
+    extra = tuple(k for k in container.optional_mounts if k not in container.configured_mounts)
+    return container.configured_mounts + extra
+
+
+def _mount_letters(kinds: Sequence[str]) -> list[str]:
+    """One upper-case letter per kind: its first letter not already taken by an earlier one."""
+    taken: set[str] = set()
+    letters: list[str] = []
+    for kind in kinds:
+        pool = [ch.upper() for ch in kind if ch.isalnum()] or ["?"]
+        letter = next((ch for ch in pool if ch not in taken), pool[0])
+        taken.add(letter)
+        letters.append(letter)
+    return letters
+
+
+def _mount_style(container: ContainerInfo, kind: str, now: datetime) -> str:
+    """Rich style of one kind: dim when off, else by the time it has left."""
+    if kind not in container.optional_mounts:
+        return _MOUNT_OFF
+    until = container.mount_until.get(kind)
+    if until is None:
+        return _MOUNT_FOREVER
+    left = until - now
+    return next((style for limit, style in _MOUNT_BUCKETS if left < limit), _MOUNT_LONG)
+
+
 def _mounts(container: ContainerInfo, now: datetime) -> str:
-    """One marker and the last exposure end; any permanent kind means infinity."""
-    if not container.optional_mounts:
-        return ""
-    ends = [container.mount_until.get(k) for k in container.optional_mounts]
-    if any(e is None for e in ends):
-        return f"{_ON_MARK} ∞"
-    latest = max(e for e in ends if e is not None)
-    return f"{_ON_MARK} {format_duration_short(latest - now).replace(' ', '')}"
+    """One letter per mount kind, dim when off, else coloured by the time left."""
+    kinds = _mount_kinds(container)
+    cells = []
+    for kind, letter in zip(kinds, _mount_letters(kinds), strict=True):
+        style = _mount_style(container, kind, now)
+        cells.append(f"[{style}]{letter}[/{style}]")
+    return "".join(cells)
 
 
-def card_mounts(container: ContainerInfo, now: datetime) -> str:
-    """Mount label for cards: the table's MOUNT cell."""
-    return _mounts(container, now)
+def mount_names_markup(container: ContainerInfo, now: datetime) -> str:
+    """Every mount kind by name in the MOUNT colours; attached ones carry their time left."""
+    parts = []
+    for kind in _mount_kinds(container):
+        style = _mount_style(container, kind, now)
+        if kind in container.optional_mounts:
+            until = container.mount_until.get(kind)
+            rest = "∞" if until is None else format_duration_short(until - now).replace(" ", "")
+            label = f"{escape(kind)} {rest}"
+        else:
+            label = escape(kind)
+        parts.append(f"[{style}]{label}[/{style}]")
+    return ", ".join(parts)
 
 
 def doing_cell(container: ContainerInfo) -> str:

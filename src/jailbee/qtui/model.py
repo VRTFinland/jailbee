@@ -129,8 +129,6 @@ def card_content(
         for index, field in enumerate(fields):
             if field.name == "network":
                 cells[index] = _strip_markup(dashboard_format.card_network(c, now))
-            elif field.name == "mounts":
-                cells[index] = _strip_markup(dashboard_format.card_mounts(c, now))
     name = ""
     state = ""
     card_fields: list[CardField] = []

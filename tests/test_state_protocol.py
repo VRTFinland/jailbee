@@ -131,6 +131,7 @@ def _full_snapshot() -> Snapshot:
             job_kind="create",
             job_error="boom",
             optional_mounts=("ssh",),
+            configured_mounts=("ssh", "gpg"),
             mount_until={"ssh": T0 + timedelta(minutes=15)},
             egress_extra=("api.example.com",),
             alias="login",

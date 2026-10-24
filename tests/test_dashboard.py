@@ -342,6 +342,7 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
     groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].optional_mounts == ("aws", "gcloud")
+    assert groups[0].containers[0].configured_mounts == ("aws", "gcloud")
 
 
 @pytest.mark.parametrize("after, expected", [(None, "15m"), ("malformed", None)])
@@ -6945,13 +6946,81 @@ def test_mounts_column_cells_defaults_and_sorting():
     assert spec.sort(two) == (3600.0,)
     assert spec.sort(forever) == (float("inf"),)
     assert dfmt.dashboard_cell(spec, empty, now) == ""
-    assert dfmt.dashboard_cell(spec, one, now) == "[red]●[/red] 5m"
-    assert dfmt.dashboard_cell(spec, two, now) == "[red]●[/red] 1h"
-    assert dfmt.dashboard_cell(spec, forever, now) == "[red]●[/red] ∞"
     assert dfmt.dashboard_header(spec) == "MOUNT"
     expired = dataclasses.replace(one, mount_until={"aws": now - timedelta(seconds=1)})
     assert spec.cell(expired) == "aws 0s"
-    assert dfmt.card_mounts(expired, now) == "[red]●[/red] 0s"
+
+
+def _mount_cell(now: datetime, **fields: object) -> str:
+    from jailbee.dashboard import format as dfmt
+    from jailbee.lifecycle import ls_field_specs
+
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
+    return dfmt.dashboard_cell(spec, dataclasses.replace(_ci("p-x", "p"), **fields), now)  # type: ignore[arg-type]  # test kwargs
+
+
+def test_mount_cell_is_one_letter_per_configured_kind_coloured_by_time_left():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    cell = _mount_cell(
+        now,
+        configured_mounts=("gh", "aws", "ssh", "kube", "docs", "npm"),
+        optional_mounts=("gh", "aws", "kube", "docs", "npm"),
+        mount_until={
+            "aws": now + timedelta(hours=2),
+            "kube": now + timedelta(minutes=30),
+            "docs": now + timedelta(minutes=5),
+            "npm": now + timedelta(hours=9),
+        },
+    )
+    assert cell == (
+        "[bold red]G[/bold red]"
+        "[bold yellow]A[/bold yellow]"
+        "[dim]S[/dim]"
+        "[bold green]K[/bold green]"
+        "[bold cyan]D[/bold cyan]"
+        "[bold dark_orange]N[/bold dark_orange]"
+    )
+
+
+def test_mount_cell_time_buckets_switch_at_15m_1h_and_4h():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def colour(delta: timedelta) -> str:
+        cell = _mount_cell(
+            now,
+            configured_mounts=("aws",),
+            optional_mounts=("aws",),
+            mount_until={"aws": now + delta},
+        )
+        return cell.split("]")[0].removeprefix("[bold ")
+
+    assert colour(timedelta(minutes=14, seconds=59)) == "cyan"
+    assert colour(timedelta(minutes=15)) == "green"
+    assert colour(timedelta(minutes=59)) == "green"
+    assert colour(timedelta(hours=1)) == "yellow"
+    assert colour(timedelta(hours=3, minutes=59)) == "yellow"
+    assert colour(timedelta(hours=4)) == "dark_orange"
+    assert colour(timedelta(seconds=-1)) == "cyan"
+
+
+def test_mount_cell_letters_stay_distinct_and_attached_kinds_outside_the_config_show():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    cell = _mount_cell(now, configured_mounts=("aws", "azure"), optional_mounts=("legacy",))
+    assert cell == "[dim]A[/dim][dim]Z[/dim][bold red]L[/bold red]"
+
+
+def test_mount_cell_is_empty_when_nothing_is_configured_or_attached():
+    assert _mount_cell(datetime(2026, 1, 1, tzinfo=UTC)) == ""
+
+
+def test_mount_column_shows_when_any_container_has_a_configured_kind():
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
+    bare = _ci("p-x", "p")
+    assert spec.show_if([bare]) is False
+    assert spec.show_if([dataclasses.replace(bare, configured_mounts=("aws",))]) is True
 
 
 def test_stored_view_gains_mounts_after_network_once():

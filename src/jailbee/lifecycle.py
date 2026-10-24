@@ -105,6 +105,11 @@ class ContainerInfo:
     # own `optional-<kind>` disk devices (`mounts.DEVICE_NAME_PREFIX`). The
     # dashboard's Mounts… panel offers from this.
     optional_mounts: tuple[str, ...] = ()
+    # Every kind the container's repo config offers, attached or not, in config
+    # order. Set by the dashboard gather (`list_containers` leaves it empty: with
+    # `all_repos` it holds only the base repo's config); the MOUNT column shows
+    # the kinds that are off next to the ones that are on.
+    configured_mounts: tuple[str, ...] = ()
     # Deadlines from mounts.mount_until; attached kinds without one never expire.
     mount_until: dict[str, datetime] = field(default_factory=dict)
     # Container-scope egress overrides from `user.jailbee.egress_extra`
@@ -3633,7 +3638,7 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=True,
             default_json=False,
-            show_if=lambda rows: any(c.optional_mounts for c in rows),
+            show_if=lambda rows: any(c.optional_mounts or c.configured_mounts for c in rows),
             dashboard_min_width=5,
         ),
         table_format.FieldSpec(

@@ -490,6 +490,8 @@ def _gather_rows(
             with_background=True,
             instances=instances,
         )
+        for c in containers:
+            c.configured_mounts = tuple(cfg.optional_mounts)
         covered.add(cfg.container_prefix)
         groups.append(
             RepoGroup(

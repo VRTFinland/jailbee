@@ -537,6 +537,19 @@ def test_exceptions_run_loose_mounts_egress_in_order() -> None:
     assert not any(part.startswith("mounts") for part in _panel_plain(panel.footer))
 
 
+def test_mounts_exception_lists_every_configured_kind_in_the_dashboard_colours() -> None:
+    c = _c(
+        configured_mounts=("gh", "aws", "ssh"),
+        optional_mounts=("gh", "aws"),
+        mount_until={"aws": NOW + timedelta(minutes=30)},
+    )
+    (part,) = dd.container_panel(c, NOW).exceptions
+    assert _panel_plain([part]) == ["● mounts gh ∞, aws 30m, ssh"]
+    assert "[bold red]gh ∞[/bold red]" in part
+    assert "[bold green]aws 30m[/bold green]" in part
+    assert part.endswith("[dim]ssh[/dim]")
+
+
 def test_job_and_its_first_error_line_follow_the_state() -> None:
     c = _c(job_phase="failed", job_kind="new", job_error="boom [red]\nsecond line")
     first = dd.container_panel(c, NOW).summary[0]

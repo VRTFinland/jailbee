@@ -167,10 +167,10 @@ def test_malformed_discovery_does_not_clear_replacement(live):
     assert incus.row["config"][until_key("aws")] == deadline.isoformat()
 
 
-def test_terminal_help_explains_mount_deadline():
+def test_terminal_help_explains_mount_letters_and_colours():
     from jailbee.dashboard.tui.frame import help_lines
 
     text = "\n".join(help_lines())
-    assert "MOUNT: ● attached" in text
-    assert "latest deadline" in text
-    assert "∞ no auto-unmount" in text
+    assert "MOUNT: a letter per repo mount kind" in text
+    assert "[bold red]∞[/bold red]" in text
+    assert "[bold cyan]<15m[/bold cyan]" in text

@@ -37,7 +37,6 @@ from jailbee.lifecycle import (
     _format_bytes,
     _parse_memory_limit,
     fork_source,
-    format_duration_short,
     ls_field_specs,
     submodule_sub_rows,
     tracking_warning,
@@ -444,12 +443,7 @@ def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
             loose += f" →{c.loose_until.astimezone():%H:%M}"
         parts.append(loose)
     if c.optional_mounts:
-        mounts = []
-        for m in c.optional_mounts:
-            until = c.mount_until.get(m)
-            rest = "∞" if until is None else format_duration_short(until - now).replace(" ", "")
-            mounts.append(f"{escape(m)} {rest}")
-        parts.append(f"[red]●[/red] mounts {', '.join(mounts)}")
+        parts.append(f"[red]●[/red] mounts {dashboard_format.mount_names_markup(c, now)}")
     if c.egress_extra:
         entries = ", ".join(escape(e) for e in c.egress_extra)
         parts.append(f"[red]●[/red] egress +{len(c.egress_extra)}: {entries}")
