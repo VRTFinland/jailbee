@@ -1554,7 +1554,8 @@ registered repo). The proposals form a tree beside a preview: `Space` marks,
 `d` deletes after one "No"-first question, `p` shows the publication plan and
 publishes on a choice, `c` creates the PR a staged description awaits, `X`
 clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
-refreshes, `q` quits. Off a terminal it prints the overview table. The
+refreshes, `q` quits. On a narrow terminal Enter on a leaf row (a description,
+a reply, a comment) shows the preview in the list's place; Esc goes back. Off a terminal it prints the overview table. The
 dashboard's container menu opens the same manager for its container, and the
 Qt dashboard has a native window for it. Over remote SSH the manager is
 read-only. The scriptable forms address a proposal as `pr/<manifest>.json` or

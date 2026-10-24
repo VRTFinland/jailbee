@@ -478,3 +478,18 @@ def test_delete_scope_lines_prefix_container_when_several():
         "alpha-x: pr/a.json action 1 (comment)",
         "beta-y: pr/b.json (whole)",
     )
+
+
+def test_has_children():
+    reviewed = _action(1, kind="review", comments=[{"index": 0, "label": "c", "text": "t"}])
+    state = _state(
+        _proposal("pr/a.json", actions=[_action(0), reviewed]),
+        _proposal("pr/empty.json", actions=[]),
+    )
+    assert dob.has_children(state, _key())
+    assert not dob.has_children(state, _key("pr/empty.json"))
+    assert not dob.has_children(state, _key(action=0))
+    assert dob.has_children(state, _key(action=1))
+    assert not dob.has_children(state, _key(action=1, comment=0))
+    assert not dob.has_children(state, _key("pr/gone.json"))
+    assert not dob.has_children(state, None)

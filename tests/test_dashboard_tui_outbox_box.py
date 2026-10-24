@@ -82,7 +82,8 @@ def test_keys_map_to_intents(key, char, name):
 
     got = run(state2(), scenario, standalone=True)
     assert isinstance(got, OutboxBox.Intent)
-    assert (got.name, got.row, got.value) == (name, _key(B), None)
+    value = "on" if name == "preview" else None  # a hidden preview is shown
+    assert (got.name, got.row, got.value) == (name, _key(B), value)
     assert got.key == ("outbox", "", None)
 
 
@@ -192,6 +193,61 @@ def test_repaint_with_unchanged_spec_cursor_keeps_arrow_moves():
         return (await press(box, "d", "d")).row
 
     assert run(start, scenario) == _key(B)
+
+
+def expanded_a(**over):
+    """A's actions shown: rows A, A action 0, A action 1, B; no action has comments."""
+    return state2(expanded=frozenset({_key(A)}), **over)
+
+
+def test_enter_on_a_childless_row_opens_a_hidden_preview():
+    async def scenario(app, box, pilot):
+        parent = await press(box, "enter")  # A has actions: expands
+        await press(box, "down")
+        enter = await press(box, "enter")
+        right = await press(box, "right")
+        return parent, enter, right
+
+    parent, enter, right = run(expanded_a(), scenario, size=(80, 30))
+    assert (parent.name, parent.value) == ("expand", None)
+    assert (enter.name, enter.row, enter.value) == ("preview", _key(A, 0), "on")
+    assert (right.name, right.value) == ("expand", None)  # → stays expand-only
+
+
+def test_enter_on_a_childless_row_expands_when_the_preview_shows():
+    async def scenario(app, box, pilot):
+        await press(box, "down")
+        return await press(box, "enter")
+
+    got = run(expanded_a(), scenario, size=(140, 30))
+    assert (got.name, got.value) == ("expand", None)
+
+
+@pytest.mark.parametrize(
+    ("preview", "size", "value"),
+    [
+        ("auto", (80, 30), "on"),  # hidden: show it
+        ("auto", (140, 30), "off"),  # beside the list: hide it
+        ("off", (140, 30), "on"),
+        ("on", (80, 30), "auto"),  # replacing the list: back to the list
+    ],
+)
+def test_v_toggles_what_is_on_screen(preview, size, value):
+    async def scenario(app, box, pilot):
+        return await press(box, "v", "v")
+
+    got = run(state2(preview=preview), scenario, size=size)
+    assert (got.name, got.value) == ("preview", value)
+
+
+@pytest.mark.parametrize("key", ["escape", "enter"])
+def test_escape_and_enter_leave_a_preview_that_replaced_the_list(key):
+    async def scenario(app, box, pilot):
+        return await press(box, key)
+
+    got = run(state2(preview="on"), scenario, size=(80, 30), standalone=True)
+    assert isinstance(got, OutboxBox.Intent)
+    assert (got.name, got.value) == ("preview", "auto")
 
 
 def test_side_by_side_threshold():

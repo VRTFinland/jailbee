@@ -1317,7 +1317,9 @@ delete the marked rows (or the highlighted one), `p` publish, `c` create PR,
 `X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
 in `jb outbox`, `a` switches between this repository and all registered ones
 and `q` or Esc quits, while in the dashboard Esc goes back to the container
-menu.
+menu. Below 110 columns the preview is not beside the list: Enter on a row
+with nothing to expand (a description, a reply, a comment) or `v` shows the
+preview in the list's place, and Esc, Enter or `v` goes back to the list.
 
 - **Delete** asks once, "No" first, naming exactly what goes — proposals,
   `action N (kind)` with any dependents, `comment N (path:line)` — and runs

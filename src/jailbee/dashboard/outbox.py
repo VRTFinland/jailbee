@@ -313,6 +313,17 @@ def find_proposal(
     return None
 
 
+def has_children(state: OutboxState, key: RowKey | None) -> bool:
+    """Whether ``key``'s row has rows under it to expand (actions or comments)."""
+    found = find_proposal(state, key)
+    if found is None or key is None or key[3] is not None:
+        return False
+    _, proposal = found
+    if key[2] is None:
+        return bool(proposal.actions)
+    return any(a.index == key[2] and a.comments for a in proposal.actions)
+
+
 def _clean(value: str) -> str:
     from jailbee.outbox.inspect import safe_text
 

@@ -28,6 +28,7 @@ from jailbee.dashboard.outbox import (
     OutboxState,
     Row,
     RowKey,
+    has_children,
     outbox_hint,
     preview_lines,
     visible_rows,
@@ -389,11 +390,17 @@ class OutboxBox(OverlayBox):
 
     # -- keys ---------------------------------------------------------------
 
-    def _intent(self, name: IntentName) -> Intent:
+    def _intent(self, name: IntentName, value: str | None = None) -> Intent:
         row = self._cursor_key()
         if row is not None:
             self._last_sent = row
-        return self.Intent(self.key, name, row)
+        return self.Intent(self.key, name, row, value)
+
+    def _preview_toggle(self) -> str:
+        """The preview mode `v` asks for: the opposite of what is on screen."""
+        if not self._preview_shown():
+            return "on"
+        return "auto" if not self._list_shown() else "off"
 
     def _allowed(self, name: IntentName) -> bool:
         ab = self.panel.abilities
@@ -422,10 +429,20 @@ class OutboxBox(OverlayBox):
         if self.panel.question is not None:
             return self._question_key(event)
         key = event.key
+        if key in ("escape", "enter") and not self._list_shown():
+            # The preview replaced the list (narrow): back to the list first.
+            return self._intent("preview", "auto")
         if key == "escape":
             return self.Cancelled(self.key)
         if key == "q":
             return self.Cancelled(self.key) if self.standalone else False
+        if key == "v":
+            return self._intent("preview", self._preview_toggle())
+        if key == "enter" and not self._preview_shown():
+            row = self._cursor_key()
+            if row is not None and not has_children(self.panel, row):
+                # Nothing to expand: "open" shows the row in the hidden preview.
+                return self._intent("preview", "on")
         name = _INTENT_KEYS.get(key)
         if name is not None:
             return self._intent(name) if self._allowed(name) else True
