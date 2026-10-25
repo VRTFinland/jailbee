@@ -380,6 +380,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "per-container limits are set with `jailbee mem`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image ships `jailbee-inbox`, the helper agents use to wait for "
+            "and send container-orchestration messages, with inotify-tools"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

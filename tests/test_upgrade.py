@@ -982,6 +982,16 @@ def test_memory_profile_upgrade_note() -> None:
     )
 
 
+def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES, Watermark, pending
+
+    owed = pending("1.8.0", {"base_build": Watermark((1, 7, 8), observed=True)})
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 0)]
+    assert [n.actions for n in notes] == [frozenset({"base_build"})]
+    assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
+    assert not pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
+
+
 def test_record_action_writes_the_watermark_through_the_state_db(mocker, tmp_path) -> None:
     from jailbee.db.models import RepoUpgradeState
     from jailbee.upgrade import record_action
