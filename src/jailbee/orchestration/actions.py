@@ -338,7 +338,28 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
     return Outcome("queued", f"queued at position {len(queued)}")
 
 
+def _child_head(ctx: ActionContext, child: Node) -> str | None:
+    """A running child's HEAD as the full OID, or None when it cannot be read."""
+    try:
+        return sync._container_head_oid(
+            ctx.incus,
+            child.full,
+            lifecycle.container_repo_dir(ctx.cfg, ctx.incus, child.full),
+            uid=ctx.cfg.container_user.uid,
+        )
+    except Exception:
+        return None
+
+
 def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
+    # Before the boot: a restarted child commits anew, so a HEAD recorded at
+    # its last stop (or its last `done`) no longer describes it. Clearing
+    # first means a running child never carries a stale value.
+    try:
+        for key in (labels.STOPPED_HEAD, labels.DONE_SHA):
+            ctx.incus.config_unset_checked(child.full, key)
+    except Exception as e:
+        return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
         lifecycle.boot_container(
             ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt
@@ -463,6 +484,16 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
     if isinstance(child, Outcome):
         return child
     if child.running:
+        # Record HEAD while it can still be read: the destroy guard of a
+        # stopped child compares it with LAST_IMPORT (spec 7.3).
+        head = _child_head(ctx, child)
+        try:
+            if head is not None:
+                ctx.incus.config_set(child.full, labels.STOPPED_HEAD, head)
+            else:
+                ctx.incus.config_unset_checked(child.full, labels.STOPPED_HEAD)
+        except Exception as e:
+            return refused(f"child `{child.short}` could not be stopped: {e}")
         try:
             stopping.stop_container(ctx.incus, child.full, show_progress=False)
         except Exception as e:
@@ -518,17 +549,13 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
         return reason
     head: str | None
     if child.running:
-        try:
-            head = sync._container_head_oid(
-                ctx.incus,
-                child.full,
-                lifecycle.container_repo_dir(ctx.cfg, ctx.incus, child.full),
-                uid=ctx.cfg.container_user.uid,
-            )
-        except Exception:
-            head = None
+        head = _child_head(ctx, child)
     else:
-        head = child.config.get(labels.DONE_SHA) or None
+        # HEAD cannot be read from a stopped child: the one `stop` recorded,
+        # else the `done` commit; neither -> refused.
+        head = (
+            child.config.get(labels.STOPPED_HEAD) or child.config.get(labels.DONE_SHA) or None
+        )
     if head is None or head != last:
         return reason
     return None

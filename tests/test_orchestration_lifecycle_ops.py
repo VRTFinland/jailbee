@@ -208,3 +208,93 @@ def test_destroy_stranger_refused(tmp_path: Path, seams: dict[str, MagicMock]) -
     out = actions.handle_destroy(rig.ctx(), _destroy(force=True, child="x"))
     assert out.state == "refused"
     seams["destroy"].assert_not_called()
+
+
+class Labels:
+    """A label store behind `incus.config_set` / `config_unset_checked`."""
+
+    def __init__(self, rig: Rig) -> None:
+        self.store: dict[str, str] = dict(rig.child.config)
+        rig.incus.config_set.side_effect = lambda _n, k, v: self.store.__setitem__(k, v)
+        rig.incus.config_unset_checked.side_effect = lambda _n, k: self.store.pop(k, None)
+
+    def node(self, rig: Rig, running: bool) -> Node:
+        return Node(rig.child.full, rig.child.short, running, dict(self.store))
+
+
+def _stop() -> StopManifest:
+    return StopManifest.model_validate({"version": 1, "id": "s1", "type": "stop", "child": "c1"})
+
+
+def test_stopped_child_commits_after_restart_are_not_lost(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """done at X, import at X, stop, restart, child commits Y, stop, destroy: refused."""
+    x, y = "a" * 40, "b" * 40
+    rig = Rig(tmp_path, running=True, limit=2, config={labels.DONE_SHA: x, labels.LAST_IMPORT: x})
+    store = Labels(rig)
+    seams["head"].return_value = x
+    assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
+    assert store.store[labels.STOPPED_HEAD] == x
+    rig.child = store.node(rig, running=False)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert labels.STOPPED_HEAD not in store.store
+    assert labels.DONE_SHA not in store.store
+    rig.child = store.node(rig, running=True)
+    seams["head"].return_value = y  # the child committed Y
+    assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
+    rig.child = store.node(rig, running=False)
+    out = actions.handle_destroy(rig.ctx(), _destroy())
+    assert out.state == "refused"
+    assert "never imported" in out.detail
+    seams["destroy"].assert_not_called()
+
+
+def test_stopped_child_prefers_stopped_head_over_done_sha(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    x, y = "a" * 40, "b" * 40
+    stale = Rig(
+        tmp_path, config={labels.LAST_IMPORT: x, labels.DONE_SHA: x, labels.STOPPED_HEAD: y}
+    )
+    assert actions.handle_destroy(stale.ctx(), _destroy()).state == "refused"
+    clean = Rig(
+        tmp_path, config={labels.LAST_IMPORT: y, labels.DONE_SHA: x, labels.STOPPED_HEAD: y}
+    )
+    assert actions.handle_destroy(clean.ctx(), _destroy()).state == "done"
+    seams["head"].assert_not_called()
+
+
+def test_stop_with_unreadable_head_clears_stopped_head(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, running=True, config={labels.STOPPED_HEAD: "a" * 40})
+    store = Labels(rig)
+    seams["head"].side_effect = RuntimeError("no repo")
+    assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
+    assert labels.STOPPED_HEAD not in store.store
+    seams["stop"].assert_called_once()
+
+
+def test_stop_refused_when_head_cannot_be_recorded(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    from jailbee.incus import IncusError
+
+    rig = Rig(tmp_path, running=True)
+    rig.incus.config_set.side_effect = IncusError("daemon gone")
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "refused"
+    seams["stop"].assert_not_called()
+
+
+def test_restart_clears_labels_before_booting(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    from jailbee.incus import IncusError
+
+    rig = Rig(tmp_path, limit=2, config={labels.STOPPED_HEAD: "a" * 40})
+    rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
+    out = actions.handle_restart(rig.ctx(), _restart())
+    assert out.state == "refused"
+    seams["boot"].assert_not_called()
