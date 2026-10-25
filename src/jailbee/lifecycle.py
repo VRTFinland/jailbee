@@ -1849,6 +1849,18 @@ def new_container(
         except Exception as e:
             warn(f"Container created, but failed to set fork label: {e}")
 
+    # Orchestration `default_profile`: grant the new container its profile.
+    # Plan D writes `SPAWNED_BY` before this point, so a spawned container's
+    # grants are already attributable. Best-effort, like the labels above;
+    # mount-mode containers are not orchestrated.
+    if not opts.mount:
+        from jailbee.orchestration import commands as orchestration_commands
+
+        try:
+            orchestration_commands.apply_default_profile(cfg, incus, name)
+        except Exception as e:
+            warn(f"Container created, but failed to apply the default orchestration profile: {e}")
+
     # Repo source bind (RO). Per-container rather than in the
     # `<prefix>-binds` profile so multiple clones of the same upstream
     # sharing a `container_prefix` each get their own clone source.
