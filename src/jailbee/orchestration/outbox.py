@@ -50,9 +50,7 @@ def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest
     return [RawManifest(file_name=n, text=files[n], files=files) for n in names]
 
 
-def delete_outbox_files(
-    incus: Incus, full: str, names: Sequence[str], *, uid: int | None
-) -> None:
+def delete_outbox_files(incus: Incus, full: str, names: Sequence[str], *, uid: int | None) -> None:
     """Delete plain-named files from the outbox in one exec (names are argv only)."""
     for name in names:
         _validate_outbox_name(name)
@@ -103,7 +101,9 @@ def deliver(
             pass
         else:
             return
-    atomic_write_text(pending_dir(root, recipient_full) / inbox_file_name(item, now), _item_json(item))
+    atomic_write_text(
+        pending_dir(root, recipient_full) / inbox_file_name(item, now), _item_json(item)
+    )
 
 
 def flush_pending(incus: Incus, root: Path, recipient_full: str, *, uid: int | None) -> int:
@@ -112,7 +112,9 @@ def flush_pending(incus: Incus, root: Path, recipient_full: str, *, uid: int | N
     if not directory.is_dir():
         return 0
     delivered = 0
-    for path in sorted(p for p in directory.iterdir() if p.is_file() and not p.name.startswith(".")):
+    for path in sorted(
+        p for p in directory.iterdir() if p.is_file() and not p.name.startswith(".")
+    ):
         try:
             _atomic_write(
                 incus,
