@@ -8,6 +8,7 @@ its contents to the agent; a restart finds no file and launches plain.
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING
 
 from jailbee.agents import primary_agent
@@ -54,11 +55,30 @@ def prompt_problem(cfg: Config) -> str | None:
     return None
 
 
-def prompted_run(command: str, prompt_args: str) -> str:
-    """Step `run` string: consume the prompt file once, else launch plain."""
+def prompted_run(
+    command: str, prompt_args: str, *, report_exit: bool = False, agent: str = ""
+) -> str:
+    """Step `run` string: consume the prompt file once, else launch plain.
+
+    With ``report_exit`` the prompted launch is not `exec`'d: on an exit status
+    of 1-127 the child tells its orchestrator through ``jailbee-inbox`` (status
+    above 128 is a signal, e.g. tmux or the container stopping, and stays
+    silent), then exits with the agent's own status. `agent` only names the
+    agent in that message.
+    """
+    if not report_exit:
+        return (
+            f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
+            f"exec {command} {prompt_args}; fi; exec {command}"
+        )
+    name = shlex.quote(agent)
+    text = f'"[jailbee] the agent \\`{name}\\` exited with status $rc"'
     return (
         f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
-        f"exec {command} {prompt_args}; fi; exec {command}"
+        f"{{ {command} {prompt_args}; rc=$?; "
+        f'if [ "$rc" -ge 1 ] && [ "$rc" -le 127 ]; then '
+        f"jailbee-inbox send message --kind blocked --text {text} >/dev/null 2>&1 || true; "
+        f'fi; exit "$rc"; }}; fi; exec {command}'
     )
 
 

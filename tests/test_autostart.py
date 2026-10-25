@@ -1107,6 +1107,20 @@ def test_prompt_launches_primary_even_without_autostart(tmp_path):
     assert [s.name for s in agent_autostart_steps(cfg)] == ["codex"]
 
 
+def test_agent_steps_report_exit_only_for_child(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+
+    cfg = _prompt_cfg(tmp_path, claude={"enabled": True, "autostart": True})
+    [child] = agent_autostart_steps(
+        cfg, initial_prompt=True, extra_env={"JAILBEE_ROLE": "child", "X": "1"}
+    )
+    assert "jailbee-inbox send" in child.run and "\\`claude\\`" in child.run
+    [plain] = agent_autostart_steps(cfg, initial_prompt=True, extra_env={"X": "1"})
+    assert "jailbee-inbox" not in plain.run
+    [none] = agent_autostart_steps(cfg, initial_prompt=True)
+    assert "jailbee-inbox" not in none.run
+
+
 def test_prompt_with_claude_jb(tmp_path):
     from jailbee.autostart import agent_autostart_steps
     from jailbee.initial_prompt import prompted_run

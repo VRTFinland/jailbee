@@ -358,7 +358,12 @@ def agent_autostart_steps(
         env = {**(extra_env or {}), **dict(spec.env)}
         prompt_args = cfg.agents[spec.name].prompt_args if is_primary else None
         if is_primary and prompt_args:
-            run = prompted_run(command, prompt_args)
+            run = prompted_run(
+                command,
+                prompt_args,
+                report_exit=(extra_env or {}).get("JAILBEE_ROLE") == "child",
+                agent=spec.name,
+            )
             env[PROMPT_ENV] = CONSUMED_PATH
         else:
             run = f"exec {command}"

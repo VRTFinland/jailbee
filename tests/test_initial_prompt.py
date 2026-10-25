@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+
 import pytest
 
 from jailbee.incus import IncusError
@@ -70,6 +73,82 @@ def test_prompted_run_renames_then_execs_with_flags() -> None:
         f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
         f'exec claude --model x "$(cat "$JAILBEE_INITIAL_PROMPT_FILE")"; fi; exec claude --model x'
     )
+
+
+def test_prompted_run_unchanged_without_report_exit() -> None:
+    expected = (
+        f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
+        f"exec claude P; fi; exec claude"
+    )
+    assert prompted_run("claude", "P") == expected
+    assert prompted_run("claude", "P", report_exit=False, agent="claude") == expected
+
+
+def _run_reporting(tmp_path, monkeypatch, rc: int, *, prompt: bool):
+    import jailbee.initial_prompt as ip
+
+    prompt_file = tmp_path / "prompt.md"
+    monkeypatch.setattr(ip, "PROMPT_PATH", str(prompt_file))
+    monkeypatch.setattr(ip, "CONSUMED_PATH", str(tmp_path / "consumed.md"))
+    if prompt:
+        prompt_file.write_text("hi")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "inbox.log"
+    inbox = bindir / "jailbee-inbox"
+    inbox.write_text(
+        f'#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done >> {log}\necho noise\n'
+    )
+    inbox.chmod(0o755)
+    agent = tmp_path / "agent"
+    agent.write_text("#!/bin/sh\nexit $STUB_RC\n")
+    agent.chmod(0o755)
+    run = ip.prompted_run(str(agent), "ARG", report_exit=True, agent="claude")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "STUB_RC": str(rc)}
+    proc = subprocess.run(
+        ["bash", "-c", run], env=env, cwd=tmp_path, capture_output=True, text=True
+    )
+    sent = log.read_text().splitlines() if log.exists() else []
+    return proc, sent
+
+
+@pytest.mark.parametrize(
+    ("rc", "reported"),
+    [(3, True), (127, True), (1, True), (0, False), (143, False), (129, False), (128, False)],
+)
+def test_prompted_run_report_exit_runs_bash(tmp_path, monkeypatch, rc, reported) -> None:
+    proc, sent = _run_reporting(tmp_path, monkeypatch, rc, prompt=True)
+    assert proc.returncode == rc
+    assert proc.stdout == ""
+    if reported:
+        assert sent == [
+            "send",
+            "message",
+            "--kind",
+            "blocked",
+            "--text",
+            f"[jailbee] the agent `claude` exited with status {rc}",
+        ]
+    else:
+        assert sent == []
+
+
+def test_prompted_run_report_exit_without_prompt_file_execs_plain(tmp_path, monkeypatch) -> None:
+    proc, sent = _run_reporting(tmp_path, monkeypatch, 3, prompt=False)
+    assert proc.returncode == 3
+    assert sent == []
+
+
+def test_prompted_run_report_exit_guards_rc_range_and_ignores_helper_failure() -> None:
+    run = prompted_run("c", "P", report_exit=True, agent="claude")
+    assert '[ "$rc" -ge 1 ] && [ "$rc" -le 127 ]' in run
+    assert ">/dev/null 2>&1 || true" in run
+    assert 'exit "$rc"' in run
+
+
+def test_prompted_run_report_exit_quotes_agent_name() -> None:
+    run = prompted_run("c", "P", report_exit=True, agent="we ird")
+    assert "'we ird'" in run
 
 
 def test_write_prompt_sends_text_on_stdin_and_sets_label(mocker) -> None:
