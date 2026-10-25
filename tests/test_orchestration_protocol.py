@@ -111,17 +111,13 @@ def test_base_only_for_new() -> None:
 
 
 def test_child_message_has_kind_and_no_to() -> None:
-    text = json.dumps(
-        {"version": 1, "id": "m1", "type": "message", "body": "hi", "kind": "done"}
-    )
+    text = json.dumps({"version": 1, "id": "m1", "type": "message", "body": "hi", "kind": "done"})
     m = parse_manifest("m1.json", text, {})
     assert isinstance(m, MessageManifest) and m.kind == "done" and m.to is None
 
 
 def test_message_body_file() -> None:
-    text = json.dumps(
-        {"version": 1, "id": "m1", "type": "message", "to": "x", "body_file": "b.md"}
-    )
+    text = json.dumps({"version": 1, "id": "m1", "type": "message", "to": "x", "body_file": "b.md"})
     m = parse_manifest("m1.json", text, {"b.md": "long"})
     assert isinstance(m, MessageManifest) and m.body == "long" and m.to == "x"
 
@@ -161,9 +157,7 @@ def test_inbox_file_name_format() -> None:
 
 
 def test_inbox_message_serialises_from_key() -> None:
-    m = InboxMessage(
-        version=1, id="h-0123abcd", type="message", from_="orch", body="hi"
-    )
+    m = InboxMessage(version=1, id="h-0123abcd", type="message", from_="orch", body="hi")
     assert m.model_dump(by_alias=True)["from"] == "orch"
     parsed = InboxMessage.model_validate(
         {"version": 1, "id": "x", "type": "message", "from": "orch", "body": "b"}
