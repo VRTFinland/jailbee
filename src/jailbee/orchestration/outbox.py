@@ -27,8 +27,15 @@ GRANT_FILE = f"{_BASE}/grant.json"
 
 MAX_MANIFESTS_PER_ROUND = 32
 MAX_FILE_BYTES = 128 * 1024
-# Files archived per read on the container side (manifests plus body files).
-MAX_OUTBOX_FILES = 2 * MAX_MANIFESTS_PER_ROUND
+# Body files archived per read, selected separately from the manifests so a
+# backlog of manifests can never crowd out the bodies of the ones read. A
+# round needs at most one body per manifest; the rest is headroom.
+MAX_BODY_FILES = 2 * MAX_MANIFESTS_PER_ROUND
+# Container-side selection: the first 32 manifests and up to 64 bodies by name.
+OUTBOX_SELECT: tuple[tuple[str, int], ...] = (
+    ("*.json", MAX_MANIFESTS_PER_ROUND),
+    ("*.md", MAX_BODY_FILES),
+)
 
 # Values reach the script only as positional parameters ($1 directory, $2 file
 # name, $3 mode), never as shell text.
@@ -53,7 +60,7 @@ def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest
         OUTBOX_DIR,
         uid=uid,
         max_file_bytes=MAX_FILE_BYTES,
-        max_files=MAX_OUTBOX_FILES,
+        select=OUTBOX_SELECT,
     )
     names = sorted(n for n in files if n.endswith(".json"))[:MAX_MANIFESTS_PER_ROUND]
     return [RawManifest(file_name=n, text=files[n], files=files) for n in names]

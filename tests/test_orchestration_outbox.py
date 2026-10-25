@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -42,7 +43,42 @@ def test_read_outbox_caps_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["directory"] == outbox.OUTBOX_DIR
     assert seen["max_file_bytes"] == outbox.MAX_FILE_BYTES
     assert seen["uid"] == 1000
-    assert seen["max_files"] == outbox.MAX_OUTBOX_FILES == 64
+    assert seen["select"] == (("*.json", 32), ("*.md", 64))
+
+
+def test_read_outbox_selects_manifests_and_bodies_separately() -> None:
+    """40 manifests plus 40 bodies sorting after every manifest: all 32 read
+    manifests still arrive with their bodies (one name-ordered cap of 64 would
+    have cut m25..m32's bodies)."""
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    outbox.read_outbox(incus, FULL, uid=1000)
+    argv = incus.exec.call_args.args[1]
+    assert argv[-4:] == ["*.json", "32", "*.md", "64"]
+    per_file = outbox.MAX_FILE_BYTES + 2048
+    assert argv[-5] == str((32 + 64) * per_file + 10240)  # no legit round is truncated
+
+
+def test_first_32_manifests_parse_with_their_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration.protocol import MessageManifest, parse_manifest
+
+    everything: dict[str, str] = {}
+    for i in range(1, 41):
+        everything[f"m{i:02d}.json"] = json.dumps(
+            {"version": 1, "id": f"m{i:02d}", "type": "message", "body_file": f"p{i:02d}.md"}
+        )
+        everything[f"p{i:02d}.md"] = f"body {i}"
+    # What the container-side selection yields: first 32 json + first 64 md.
+    jsons = sorted(n for n in everything if n.endswith(".json"))[:32]
+    mds = sorted(n for n in everything if n.endswith(".md"))[:64]
+    selected = {n: everything[n] for n in [*jsons, *mds]}
+    monkeypatch.setattr(outbox, "read_text_outbox", lambda *a, **k: selected)
+    raws = outbox.read_outbox(MagicMock(), FULL, uid=1000)
+    assert [r.file_name for r in raws] == jsons
+    for i, raw in enumerate(raws, start=1):
+        m = parse_manifest(raw.file_name, raw.text, raw.files)
+        assert isinstance(m, MessageManifest)
+        assert m.body == f"body {i}"
 
 
 def test_read_outbox_ignores_non_json(monkeypatch: pytest.MonkeyPatch) -> None:

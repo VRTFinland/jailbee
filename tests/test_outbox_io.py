@@ -90,19 +90,35 @@ def test_read_text_outbox_default_argv_is_unchanged(mocker):
 def test_read_text_outbox_bounded_filters_in_the_container(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = _archive({"001.json": b"{}"})
-    result = read_text_outbox(incus, "c", "/outbox", uid=1000, max_file_bytes=100, max_files=3)
+    result = read_text_outbox(
+        incus,
+        "c",
+        "/outbox",
+        uid=1000,
+        max_file_bytes=100,
+        select=[("*.json", 3), ("*.md", 5)],
+    )
     assert result == {"001.json": "{}"}
     argv = incus.exec.call_args.args[1]
     script = argv[2]
     assert argv[:2] == ["bash", "-c"]
-    assert argv[3:] == ["bash", "/outbox", "101", "3", str(3 * (100 + 2048) + 10240)]
-    # Only regular top-level files below the cap, the first N by name, a byte-capped archive.
-    assert 'find . -maxdepth 1 -type f -size "-$2c" -print0' in script
-    assert 'head -z -n "$3"' in script
+    total = (3 + 5) * (100 + 2048) + 10240
+    assert argv[3:] == ["bash", "/outbox", "101", str(total), "*.json", "3", "*.md", "5"]
+    # Per (glob, count) pair: regular top-level files below the cap, first N by name.
+    assert 'find . -maxdepth 1 -type f -name "$1" -size "-${size}c" -print0' in script
+    assert 'LC_ALL=C sort -z | head -z -n "$2"; shift 2; done' in script
     assert "tar --null --no-recursion -T - -cf -" in script
-    assert '| head -c "$4" |' in script
+    assert '| head -c "$total" |' in script
     # Values never reach the script text.
-    assert "/outbox" not in script and "101" not in script
+    assert "/outbox" not in script and "101" not in script and "*.json" not in script
+
+
+@pytest.mark.parametrize("select", [[("", 1)], [("a/*.md", 1)], [("*.md", 0)]])
+def test_read_text_outbox_rejects_bad_selection(mocker, select):
+    incus = mocker.MagicMock()
+    with pytest.raises(ValueError, match="invalid outbox selection"):
+        read_text_outbox(incus, "c", "/o", uid=1, max_file_bytes=1, select=select)
+    incus.exec.assert_not_called()
 
 
 def test_read_text_outbox_skips_hostile_members_once(mocker):

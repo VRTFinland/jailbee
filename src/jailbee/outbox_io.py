@@ -752,12 +752,16 @@ class JournalStore:
 
 
 _TAR_ALL = 'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0'
-# Values arrive as positional parameters only: $2 = per-file cap + 1 (find's
-# `-size -Nc` is "fewer than N bytes"), $3 = file count, $4 = archive byte cap.
+# Values arrive as positional parameters only: $1 directory, $2 per-file cap + 1
+# (find's `-size -Nc` is "fewer than N bytes"), $3 archive byte cap, then
+# (glob, count) pairs: the first `count` regular top-level files matching each
+# glob, by name.
 _TAR_BOUNDED = (
-    'cd "$1" 2>/dev/null || exit 0; '
-    'find . -maxdepth 1 -type f -size "-$2c" -print0 | LC_ALL=C sort -z | head -z -n "$3" '
-    '| tar --null --no-recursion -T - -cf - | head -c "$4" | base64 -w0'
+    'cd "$1" 2>/dev/null || exit 0; size="$2"; total="$3"; shift 3; '
+    '{ while [ "$#" -ge 2 ]; do '
+    'find . -maxdepth 1 -type f -name "$1" -size "-${size}c" -print0 '
+    '| LC_ALL=C sort -z | head -z -n "$2"; shift 2; done; } '
+    '| tar --null --no-recursion -T - -cf - | head -c "$total" | base64 -w0'
 )
 # Per member: header, a GNU long-name record for names up to 255 bytes, block
 # padding; then the end-of-archive record (one 10 KiB tar record).
@@ -774,20 +778,27 @@ def read_text_outbox(
     max_file_bytes: int,
     timeout: int = 15,
     warn_fn: Callable[[str], None] = warn,
-    max_files: int | None = None,
+    select: Sequence[tuple[str, int]] | None = None,
 ) -> dict[str, str]:
     """Read regular UTF-8 files from one container directory in one round trip.
 
-    With ``max_files`` the container side is bounded too: only regular
-    top-level files of at most ``max_file_bytes`` are archived, the first
-    ``max_files`` of them by name, and the archive itself is cut at a total
-    that those files can never exceed. Without it the whole directory is
-    archived and filtered on the host.
+    With ``select`` — ``(glob, count)`` pairs — the container side is bounded
+    too: per pair, the first ``count`` regular top-level files matching
+    ``glob`` (by name) of at most ``max_file_bytes`` are archived, and the
+    archive is cut at a total those files can never exceed. Without it the
+    whole directory is archived and filtered on the host.
     """
-    if max_files is None:
+    if select is None:
         argv = ["bash", "-c", _TAR_ALL, "bash", directory]
     else:
-        total = max_files * (max_file_bytes + _TAR_MEMBER_OVERHEAD) + _TAR_TRAILER
+        count = 0
+        pairs: list[str] = []
+        for glob, n in select:
+            if not glob or "/" in glob or n < 1:
+                raise ValueError(f"invalid outbox selection: {glob!r} x {n}")
+            count += n
+            pairs += [glob, str(n)]
+        total = count * (max_file_bytes + _TAR_MEMBER_OVERHEAD) + _TAR_TRAILER
         argv = [
             "bash",
             "-c",
@@ -795,8 +806,8 @@ def read_text_outbox(
             "bash",
             directory,
             str(max_file_bytes + 1),
-            str(max_files),
             str(total),
+            *pairs,
         ]
     try:
         raw = incus.exec(container, argv, uid=uid, timeout=timeout)
