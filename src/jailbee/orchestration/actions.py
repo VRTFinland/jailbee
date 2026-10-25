@@ -26,6 +26,7 @@ from jailbee.orchestration.protocol import (
     RestartManifest,
     SpawnManifest,
     StopManifest,
+    restart_sets_runner,
 )
 from jailbee.orchestration.runner import Runner, runner_problems
 from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
@@ -380,7 +381,15 @@ def _child_head(ctx: ActionContext, child: Node) -> str | None:
         return None
 
 
-def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
+def _boot(
+    ctx: ActionContext,
+    child: Node,
+    prompt: str,
+    *,
+    started: bool,
+    runner: Runner | None = None,
+    set_runner: bool = False,
+) -> Outcome:
     # Before the boot: a restarted child commits anew, so a HEAD recorded at
     # its last stop (or its last `done`) no longer describes it, and it is
     # `working` again (absent STATE = working). Clearing first means a running
@@ -388,6 +397,11 @@ def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Out
     try:
         for key in (labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE):
             ctx.incus.config_unset_checked(child.full, key)
+        if set_runner:
+            if runner is not None:
+                ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
+            else:
+                ctx.incus.config_unset_checked(child.full, labels.RUNNER)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
@@ -466,7 +480,12 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"child `{short}` is running; stop it first")
     if node.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{short}` is still being created")
-    return _boot(ctx, node, req.prompt, started=True)
+    runner = Runner.model_validate(req.runner) if req.runner is not None else None
+    if runner is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
+        if problems:
+            return refused("; ".join(problems))
+    return _boot(ctx, node, req.prompt, started=True, runner=runner, set_runner=req.runner_set)
 
 
 # Queue kind -> starter.
@@ -549,12 +568,17 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return refused(f"child `{child.short}` is running; stop it first")
     if child.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{child.short}` is still being created")
+    set_runner = restart_sets_runner(m)
+    if m.runner is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, m.runner)
+        if problems:
+            return refused("; ".join(problems))
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if not queued and running_children(ctx) < grant.max_running_children:
-        return _boot(ctx, child, prompt, started=False)
+        return _boot(ctx, child, prompt, started=False, runner=m.runner, set_runner=set_runner)
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -566,6 +590,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             base=None,
             prompt=prompt,
             rights={},
+            runner=m.runner.model_dump(mode="json") if m.runner else None,
+            runner_set=set_runner,
         )
     )
     _store(ctx, queued)
