@@ -5909,7 +5909,8 @@ with a running container `<c>`, and one optional mount `<m>` declared in the
 repo config. Container paths: manifests go in
 `/home/dev/.jailbee/orchestration/outbox/`, the broker answers in
 `/home/dev/.jailbee/orchestration/inbox/` (`<timestamp>-<id>.json`, type
-`status`), and the broker keeps a read-only copy of the effective grant in
+`status`; `<id>` is a broker-generated `h-<8 hex>` id, and the manifest it answers
+is named in the `ref` field), and the broker keeps a read-only copy of the effective grant in
 `/home/dev/.jailbee/orchestration/grant.json`.
 
 ```bash
@@ -5941,12 +5942,13 @@ echo "Create hello-b.txt and commit it." > spawn-b.md   # prompt_file: next to t
 ```
 
 Write `spawn-b.md` first, then the manifest, so the broker never sees a
-manifest whose file is missing. Within ~10 s:
+manifest whose file is missing. The broker polls every 5 s while any orchestrator or child is running and every
+60 s when idle, so the first status can take up to about a minute:
 
 ```bash
 ls ~/.jailbee/orchestration/inbox/
-cat ~/.jailbee/orchestration/inbox/*-spawn-a.json   # "state": "started", "detail": "child `child-a` created"
-cat ~/.jailbee/orchestration/inbox/*-spawn-b.json   # "state": "queued",  "detail": "queued at position 1"
+grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "started", "detail": "child `child-a` created"
+grep -l '"ref":\s*"spawn-b"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "queued",  "detail": "queued at position 1"
 ```
 
 expect: one child container for `child-a` (host: `jb ls` shows it, spawned by
@@ -5957,11 +5959,11 @@ Stop the first child; the queue drains and the second starts:
 ```bash
 echo '{"version": 1, "id": "stop-a", "type": "stop", "child": "child-a"}' \
   > ~/.jailbee/orchestration/outbox/stop-a.json
-cat ~/.jailbee/orchestration/inbox/*-stop-a.json    # "done", "child `child-a` stopped"
+grep -l '"ref":\s*"stop-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "done", "child `child-a` stopped"
 ```
 
 expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
-reads ``child `child-b` created``.
+(same `grep -l` on its `ref`) reads ``child `child-b` created``.
 
 Destroy guard. `child-a` has commits that were never imported:
 
