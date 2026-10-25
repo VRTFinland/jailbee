@@ -125,3 +125,37 @@ def test_pending_false_when_probe_fails(mocker) -> None:
     incus.exec.side_effect = IncusError("stopped")
     assert prompt_pending(incus, "c1", uid=1000) is False
     incus.config_set.assert_not_called()
+
+
+def test_prompt_problem_checks_claude_under_runner(tmp_path) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    cfg = make_cfg(
+        tmp_path,
+        primary_agent="codex",
+        agents={"codex": {"enabled": True}, "claude": {"enabled": True}},
+    )
+    runner = Runner(agent="claude")
+    assert prompt_problem(cfg, runner) is None
+    from tests.conftest import with_agent
+
+    no_args = with_agent(cfg, "claude", prompt_args="")
+    msg = prompt_problem(no_args, runner)
+    assert msg is not None and "claude" in msg and "prompt_args" in msg
+    no_codex_args = with_agent(cfg, "codex", prompt_args="")
+    assert prompt_problem(no_codex_args, runner) is None
+    assert prompt_problem(no_codex_args) is not None
+
+
+def test_read_runner_parses_label(mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner, read_runner
+
+    incus = MagicMock()
+    incus.config_get.return_value = Runner(agent="claude", model="haiku").to_label()
+    assert read_runner(incus, "c1") == Runner(agent="claude", model="haiku")
+    incus.config_get.assert_called_once_with("c1", labels.RUNNER)
+    incus.config_get.return_value = None
+    assert read_runner(incus, "c1") is None

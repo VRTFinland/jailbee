@@ -15,6 +15,7 @@ several steps at once.
 
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import signal
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
     from types import FrameType
 
     from jailbee.background import AutostartJob
+    from jailbee.orchestration.runner import Runner
+
+log = logging.getLogger(__name__)
 
 # How long the multi-chain driver waits between sentinel sweeps. One
 # `incus exec` covers every in-flight step, so this is the whole polling
@@ -299,6 +303,7 @@ def agent_autostart_steps(
     *,
     initial_prompt: bool = False,
     extra_env: Mapping[str, str] | None = None,
+    runner: Runner | None = None,
 ) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
 
@@ -344,17 +349,38 @@ def agent_autostart_steps(
 
     ``extra_env`` is put on every agent step beneath the agent's own `env`, so
     an `agents.<name>.env` key wins over the same key here.
+
+    With a ``runner`` (an orchestration child, see `orchestration.runner`) the
+    prompted agent is `claude` whatever the primary is, and its command is the
+    configured one rewritten by `runner_command` — the runner's flags are on
+    the window whether or not a prompt is pending, and the `litellm.autostart`
+    swap does not apply. A command `runner_command` refuses falls back to the
+    configured one with a warning (validation already refused it).
     """
     from jailbee.agents import enabled_agent_specs, primary_agent
     from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
 
-    primary = primary_agent(cfg).name if initial_prompt else None
+    primary: str | None = None
+    if initial_prompt:
+        primary = "claude" if runner is not None else primary_agent(cfg).name
     steps: list[AutostartStep] = []
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
         if not (spec.autostart or is_primary) or not spec.command.strip():
             continue
         command = _agent_command(cfg, spec.name, spec.command)
+        if runner is not None and spec.name == "claude":
+            from jailbee.orchestration.runner import runner_command
+
+            rewritten = runner_command(spec.command, runner)
+            if rewritten is None:
+                log.warning(
+                    "runner %s not applied: agents.claude.command %r is not a claude command",
+                    runner.describe(),
+                    spec.command,
+                )
+            else:
+                command = rewritten
         env = {**(extra_env or {}), **dict(spec.env)}
         prompt_args = cfg.agents[spec.name].prompt_args if is_primary else None
         if is_primary and prompt_args:
@@ -378,9 +404,13 @@ def _on_start_agent_steps(
 
     pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
     from jailbee.orchestration.labels import child_env
+    from jailbee.orchestration.runner import read_runner
 
     return agent_autostart_steps(
-        cfg, initial_prompt=pending, extra_env=child_env(cfg, incus, container)
+        cfg,
+        initial_prompt=pending,
+        extra_env=child_env(cfg, incus, container),
+        runner=read_runner(incus, container),
     )
 
 

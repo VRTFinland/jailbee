@@ -71,6 +71,13 @@ def parse_runner_label(raw: object) -> Runner | None:
         return None
 
 
+def read_runner(incus: Incus, container: str) -> Runner | None:
+    """The runner `container` was created with; None when it has none."""
+    from jailbee.orchestration.labels import RUNNER
+
+    return parse_runner_label(incus.config_get(container, RUNNER))
+
+
 def runner_command(command: str, runner: Runner) -> str | None:
     """The configured Claude command rewritten for `runner`; None when it is not Claude's.
 
