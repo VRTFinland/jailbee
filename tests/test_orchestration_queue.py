@@ -286,3 +286,82 @@ def test_live_jobs_skips_pid_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     _jobs(monkeypatch, {"proj-x": _job(0)})
     monkeypatch.setattr("jailbee.background.worker_alive", lambda _p: True)
     assert actions.live_create_jobs("proj") == set()
+
+
+def _granted(rig: Rig, **grant: object) -> None:
+    rig.sender = Node(
+        full="proj-orch",
+        short="orch",
+        running=True,
+        config={labels.GRANT: Grant.model_validate(grant).to_label()},
+    )
+
+
+def _queue_rights(rig: Rig, kind: str = "new", **rights: object) -> None:
+    req = QueuedRequest(
+        manifest_id="m0",
+        child_full=_full(rig, "fix/1"),
+        kind=kind,
+        commit=None,
+        queued_at="t",
+        branch="fix/1" if kind != "restart" else "",
+        base=None,
+        prompt="p",
+        rights=ChildRights.model_validate(rights).model_dump(mode="json") if kind != "restart" else {},
+    )
+    save_queue(rig.root, {"proj-orch": [req]})
+
+
+def test_queued_spawn_rechecked_when_grant_narrowed(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """Rights valid at queue time, mount removed from the grant before dequeue."""
+    rig = Rig(tmp_path)
+    rig.cfg = rig.cfg.model_copy(update={"optional_mounts": {"data": MagicMock()}})
+    _queue_rights(rig, mounts=["data"])
+    _granted(rig, max_running_children=1)  # grantable mounts now empty
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out == Outcome("refused", "mount 'data' is not grantable")
+    seams["start"].assert_not_called()
+
+
+def test_queued_spawn_rechecked_against_repo_cap(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.grant import RepoCap
+
+    rig = Rig(tmp_path)
+    _granted(rig, max_running_children=1, grantable={"loose": True})
+    _queue_rights(rig, loose=True)
+    monkeypatch.setattr(actions.profiles, "repo_cap", lambda cfg: RepoCap(loose=False))
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out == Outcome("refused", "loose network mode is not grantable")
+    seams["start"].assert_not_called()
+
+
+def test_queued_spawn_with_valid_rights_still_starts(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path)
+    rig.cfg = rig.cfg.model_copy(update={"optional_mounts": {"data": MagicMock()}})
+    _granted(rig, max_running_children=1, grantable={"mounts": ["data"]})
+    _queue_rights(rig, mounts=["data"])
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "started"
+
+
+def test_queued_restart_refused_when_restart_revoked(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig(tmp_path)
+    _granted(rig, max_running_children=1, operations=["spawn", "message", "stop"])
+    child = Node(
+        full=_full(rig, "fix/1"), short="fix-1", running=False, config={labels.SPAWNED_BY: "proj-orch"}
+    )
+    rig.children = [child]
+    _queue_rights(rig, kind="restart")
+    boot = MagicMock()
+    monkeypatch.setattr(actions.lifecycle, "boot_container", boot)
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out == Outcome("refused", "operation `restart` is not in this container's grant")
+    boot.assert_not_called()

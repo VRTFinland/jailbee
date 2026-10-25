@@ -344,8 +344,30 @@ def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Out
     return Outcome("started", detail) if started else done(detail)
 
 
+def _still_granted(ctx: ActionContext, op: str) -> Outcome | None:
+    """Refusal when `op` left the sender's effective grant while the request waited."""
+    grant = ctx.grant()
+    if grant is None:
+        return refused(_NOT_ALLOWED)
+    if op not in grant.operations:
+        return refused(f"operation `{op}` is not in this container's grant")
+    return None
+
+
 def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     short = lifecycle.short_name(ctx.cfg, req.child_full)
+    revoked = _still_granted(ctx, "spawn")
+    if revoked is not None:
+        return revoked
+    rights = ChildRights.model_validate(req.rights)
+    # Spec 5.2: the grant and the repo cap apply at every broker check, so
+    # rights accepted at queue time are checked again against today's.
+    raw = ctx.raw_grant()
+    if raw is None:
+        return refused(_NOT_ALLOWED)
+    problems = check_rights(raw, profiles.repo_cap(ctx.cfg), rights, ctx.cfg.optional_mounts.keys())
+    if problems:
+        return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
         return refused(f"container `{short}` already exists")
     plan = SpawnPlan(
@@ -354,7 +376,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         branch=req.branch,
         base=req.base,
         prompt=req.prompt,
-        rights=ChildRights.model_validate(req.rights),
+        rights=rights,
     )
     fork: ForkSource | None = None
     if req.kind == "fork":
@@ -372,6 +394,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
 
 def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     short = lifecycle.short_name(ctx.cfg, req.child_full)
+    revoked = _still_granted(ctx, "restart")
+    if revoked is not None:
+        return revoked
     node = ctx.nodes.get(req.child_full)
     if node is None or node.config.get(labels.SPAWNED_BY) != ctx.sender.full:
         return refused(f"`{short}` is not a child of this orchestrator")
