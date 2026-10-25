@@ -2158,6 +2158,17 @@ def new_cmd(
         ),
     ] = False,
     wait: WaitOption = False,
+    prompt: Annotated[
+        Path | None,
+        typer.Option(
+            "--prompt",
+            help=(
+                "Start the primary agent with this first message (file, or - for "
+                "stdin). See `primary_agent` and `agents.<name>.prompt_args`."
+            ),
+            metavar="FILE|-",
+        ),
+    ] = None,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
@@ -2312,6 +2323,27 @@ def new_cmd(
         # After the rule above this is the only path that drops an attach
         # silently — an explicitly requested one always wins or errors.
         attach_mode = "none"
+
+    initial_prompt: str | None = None
+    if prompt is not None:
+        if no_autostart:
+            error(
+                "--prompt starts the primary agent, which --no-autostart skips; "
+                "pass only one of them."
+            )
+            raise typer.Exit(2)
+        from jailbee.initial_prompt import PromptError, prompt_problem, validate_prompt_text
+
+        try:
+            raw_prompt = sys.stdin.read() if str(prompt) == "-" else prompt.read_text()
+            initial_prompt = validate_prompt_text(raw_prompt)
+        except (PromptError, OSError, UnicodeDecodeError) as e:
+            error(f"--prompt {prompt}: {e}")
+            raise typer.Exit(2) from e
+        prompt_issue = prompt_problem(cfg)
+        if prompt_issue is not None:
+            error(f"--prompt: {prompt_issue}")
+            raise typer.Exit(2)
 
     # `jailbee fork` lands here. The source container's HEAD is fetched to the
     # host and the clone is pinned to it, exactly like a PR head; everything
@@ -2610,6 +2642,7 @@ def new_cmd(
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
             storage_pool=storage_pool,
+            initial_prompt=initial_prompt,
         )
     else:
         opts = NewContainerOptions(
@@ -2644,6 +2677,7 @@ def new_cmd(
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
             storage_pool=storage_pool,
+            initial_prompt=initial_prompt,
         )
 
     from jailbee.golden import golden_exists
@@ -2861,6 +2895,17 @@ def fork_cmd(
         bool,
         typer.Option("--no-autostart", help="Skip the `autostart:` commands and GUI apps."),
     ] = False,
+    prompt: Annotated[
+        Path | None,
+        typer.Option(
+            "--prompt",
+            help=(
+                "Start the primary agent with this first message (file, or - for "
+                "stdin). See `primary_agent` and `agents.<name>.prompt_args`."
+            ),
+            metavar="FILE|-",
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Create a container from another container's committed state.
@@ -2928,6 +2973,7 @@ def fork_cmd(
         no_background=no_background,
         wait=False,
         no_wait=False,
+        prompt=prompt,
         config=config,
     )
 
