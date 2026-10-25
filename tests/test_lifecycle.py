@@ -11549,6 +11549,13 @@ def _child_incus(cfg):
         store[key] = value
         calls.append((name, key))
 
+    def _created(*args, config=None, **_kw):
+        # init(image, name) and copy(source, dest): the new name is the second argument.
+        for key, value in (config or {}).items():
+            _set(args[1], key, value)
+
+    incus.init.side_effect = _created
+    incus.copy.side_effect = _created
     incus.config_set.side_effect = _set
     incus.config_get.side_effect = lambda _n, key: store.get(key)
     return incus, store
@@ -11596,6 +11603,32 @@ def test_new_container_writes_child_labels_and_rights(make_cfg, tmp_path, mocker
     from jailbee import egress_scope
 
     egress_scope.apply_container_acl.assert_called_once_with(cfg, incus, name, mode="strict")
+
+
+def test_child_labels_are_set_when_the_instance_is_created(make_cfg, tmp_path, mocker):
+    """The broker counts a child by its label, and the clone and autostart that follow take
+    minutes: a child labelled later would escape its orchestrator's limit while being made."""
+    import json
+
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    rights = ChildRights(mounts=("data",))
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=rights)
+    config = incus.init.call_args.kwargs["config"]
+    assert config[labels.SPAWNED_BY] == "myrepo-orch"
+    assert json.loads(config[labels.RIGHTS]) == json.loads(rights.to_label())
+    set_keys = {c.args[1] for c in incus.config_set.call_args_list}
+    assert labels.SPAWNED_BY not in set_keys
+
+
+def test_ordinary_container_is_created_without_child_config(make_cfg, tmp_path, mocker):
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    _new_child(cfg, incus, mocker)
+    assert "config" not in incus.init.call_args.kwargs
 
 
 def test_child_gets_no_default_profile(make_cfg, tmp_path, mocker):

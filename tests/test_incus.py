@@ -87,6 +87,23 @@ def test_init_without_storage_pool_leaves_the_profile_to_decide(incus, mocker):
     assert "-s" not in run.call_args[0][0]
 
 
+def test_init_and_copy_pass_config_as_c_options(incus, mocker):
+    run = _mock_run(mocker)
+    incus.init("img", "c", config={"user.a": "1", "user.b": "x y"})
+    assert run.call_args[0][0] == [
+        "incus",
+        "init",
+        "img",
+        "c",
+        "-c",
+        "user.a=1",
+        "-c",
+        "user.b=x y",
+    ]
+    incus.copy("g", "c", config={"user.a": "1"})
+    assert run.call_args[0][0] == ["incus", "copy", "g", "c", "-c", "user.a=1"]
+
+
 def test_copy_calls_incus_copy(incus, mocker):
     run = _mock_run(mocker)
     incus.copy("source", "dest")

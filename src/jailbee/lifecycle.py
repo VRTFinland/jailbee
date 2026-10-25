@@ -1475,6 +1475,27 @@ def _autostart_approved(opts: NewContainerOptions, ref: str | None) -> bool:
     )
 
 
+def _child_instance_config(opts: NewContainerOptions) -> dict[str, str]:
+    """Orchestration child labels, set as the instance is created.
+
+    The broker counts a child against its orchestrator's limit by `SPAWNED_BY`;
+    the clone and autostart that follow take minutes, so a child that gained its
+    label only later would be invisible to the limit while it was being made.
+    Not best-effort — a child without its labels would be an unattributed
+    container. Written before the default profile below, so
+    `apply_default_profile` sees the child and skips it: a child never receives
+    the default grant.
+    """
+    if opts.spawned_by is None:
+        return {}
+    from jailbee.orchestration import labels as orchestration_labels
+
+    config = {orchestration_labels.SPAWNED_BY: opts.spawned_by}
+    if opts.rights is not None:
+        config[orchestration_labels.RIGHTS] = opts.rights.to_label()
+    return config
+
+
 def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name: str) -> None:
     """Create the instance: copy the golden instance, or init from an image.
 
@@ -1483,6 +1504,8 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
     """
     from jailbee.golden import golden_instance_name, golden_instance_pool
 
+    # Only a child passes `config`, so every other create is the call it always was.
+    extra = {"config": config} if (config := _child_instance_config(opts)) else {}
     golden = golden_instance_name(cfg.golden.alias)
     if opts.from_base == cfg.golden.alias and incus.exists(golden):
         golden_pool = golden_instance_pool(incus, golden)
@@ -1492,9 +1515,9 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
                 f"Copying the golden to pool '{opts.storage_pool}' "
                 f"(golden is on '{golden_pool}'): a full copy, not a snapshot"
             )
-        incus.copy(golden, name, storage_pool=target, instance_only=True)
+        incus.copy(golden, name, storage_pool=target, instance_only=True, **extra)
         return
-    incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
+    incus.init(opts.from_base, name, storage_pool=opts.storage_pool, **extra)
 
 
 @dataclass
@@ -1937,17 +1960,6 @@ def _new_container(
             incus.config_set(name, "user.jailbee.fork_of", opts.fork_of)
         except Exception as e:
             warn(f"Container created, but failed to set fork label: {e}")
-
-    # Orchestration child: provenance and rights labels. Written before the
-    # default profile below, so `apply_default_profile` sees the child and
-    # skips it: a child never receives the default grant. Not best-effort — a
-    # child without its labels would be an unattributed container.
-    if opts.spawned_by is not None:
-        from jailbee.orchestration import labels as orchestration_labels
-
-        incus.config_set(name, orchestration_labels.SPAWNED_BY, opts.spawned_by)
-        if opts.rights is not None:
-            incus.config_set(name, orchestration_labels.RIGHTS, opts.rights.to_label())
 
     # Orchestration `default_profile`: grant the new container its profile.
     # Plan D writes `SPAWNED_BY` before this point, so a spawned container's

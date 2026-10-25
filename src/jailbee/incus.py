@@ -14,7 +14,7 @@ import selectors
 import subprocess
 import tempfile
 import time
-from collections.abc import Collection, Generator
+from collections.abc import Collection, Generator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -374,16 +374,26 @@ class Incus:
 
     # ---- Container lifecycle ------------------------------------------------
 
-    def init(self, image: str, name: str, *, storage_pool: str | None = None) -> None:
+    def init(
+        self,
+        image: str,
+        name: str,
+        *,
+        storage_pool: str | None = None,
+        config: Mapping[str, str] | None = None,
+    ) -> None:
         """Create an instance from an image without starting it.
 
         `storage_pool` gives the instance its own root disk on that pool, which
         pins it there whatever the `default` profile's root disk says later. None
-        leaves the pool to the profile.
+        leaves the pool to the profile. `config` is set on the instance as it is
+        created, so it never exists without it.
         """
         args = ["init", image, name]
         if storage_pool:
             args += ["-s", storage_pool]
+        for key, value in (config or {}).items():
+            args += ["-c", f"{key}={value}"]
         self._run(args)
 
     def copy(
@@ -393,18 +403,22 @@ class Incus:
         *,
         storage_pool: str | None = None,
         instance_only: bool = False,
+        config: Mapping[str, str] | None = None,
     ) -> None:
         """Copy an instance (or snapshot-bearing instance) to ``dest``.
 
         ``instance_only`` matters because ``incus copy`` otherwise copies the
         source's snapshots too (verified 2026-10-16). ``storage_pool`` puts the
         copy's root disk on that pool; None leaves the pool to the profile.
+        ``config`` is set on the copy as it is created.
         """
         args = ["copy", source, dest]
         if instance_only:
             args.append("--instance-only")
         if storage_pool:
             args += ["-s", storage_pool]
+        for key, value in (config or {}).items():
+            args += ["-c", f"{key}={value}"]
         self._run(args)
 
     def rename(self, old: str, new: str) -> None:
