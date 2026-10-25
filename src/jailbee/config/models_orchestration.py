@@ -146,3 +146,23 @@ class OrchestrationView:
     profiles: Mapping[str, OrchestrationProfile] = field(default_factory=dict)
     default_profile: str | None = None
     repo: RepoOrchestration = field(default_factory=lambda: RepoOrchestration())
+
+
+def build_view(
+    host: OrchestrationHostConfig,
+    local: OrchestrationHostConfig | None,
+    repo: RepoOrchestration,
+) -> OrchestrationView:
+    """Merge global and host-local blocks; local profiles replace global ones by name.
+
+    Raises `ValueError` when the resulting default names no profile.
+    """
+    profiles = dict(host.profiles)
+    default = host.default_profile
+    if local is not None:
+        profiles.update(local.profiles)
+        if "default_profile" in local.model_fields_set:
+            default = local.default_profile
+    if default is not None and default not in profiles:
+        raise ValueError(f"default_profile {default!r} is not in `profiles`")
+    return OrchestrationView(profiles=profiles, default_profile=default, repo=repo)
