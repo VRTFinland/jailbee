@@ -164,7 +164,23 @@ def test_child_note_default_kind(tmp_path: Path, deliver: MagicMockT) -> None:
     assert deliver.call_args.args[3].kind == "note"
 
 
-def test_child_done_not_supported_yet(tmp_path: Path, deliver: MagicMockT) -> None:
-    out = messages.handle_message(_child_ctx(tmp_path), _msg(kind="done"))
-    assert out == refused("done is not supported yet")
+def test_child_done_goes_to_handle_done(
+    tmp_path: Path, deliver: MagicMockT, mocker: MagicMockT
+) -> None:
+    handler = mocker.patch(
+        "jailbee.orchestration.messages.handle_done", return_value=done("checked")
+    )
+    ctx = _child_ctx(tmp_path)
+    m = _msg(kind="done")
+    assert messages.handle_message(ctx, m) == done("checked")
+    handler.assert_called_once_with(ctx, m)
     deliver.assert_not_called()
+
+
+def test_child_done_naming_another_container_refused(
+    tmp_path: Path, deliver: MagicMockT, mocker: MagicMockT
+) -> None:
+    handler = mocker.patch("jailbee.orchestration.messages.handle_done")
+    out = messages.handle_message(_child_ctx(tmp_path), _msg(kind="done", to="other"))
+    assert out == refused("a child can only message its orchestrator")
+    handler.assert_not_called()

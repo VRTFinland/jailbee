@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
-from jailbee import lifecycle
+from jailbee import lifecycle, sync
+from jailbee.git import GitError
+from jailbee.incus import IncusError
 from jailbee.orchestration import labels
 from jailbee.orchestration.actions import ActionContext, Node, Outcome, done, refused
 from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.protocol import InboxMessage, MessageManifest, new_host_id
+from jailbee.sync import SyncError
 
 if TYPE_CHECKING:
     from jailbee.orchestration.protocol import Manifest
@@ -63,12 +67,57 @@ def _from_orchestrator(ctx: ActionContext, manifest: MessageManifest) -> Outcome
     return _relay(ctx, target, manifest)
 
 
+_FULL_OID = re.compile(r"[0-9a-f]{40}")
+
+
+def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
+    """Check a child's `done` report, record its commit, then relay it.
+
+    Nothing is recorded or relayed unless the work tree is clean, HEAD is on a
+    branch and that branch was fetched to the host.
+    """
+    uid = ctx.cfg.container_user.uid
+    full = ctx.sender.full
+    try:
+        repo_dir = lifecycle.container_repo_dir(ctx.cfg, ctx.incus, full)
+        if sync._container_status_dirty(ctx.incus, full, repo_dir, uid=uid):
+            return refused("uncommitted changes: commit everything before reporting done")
+        branch = sync._container_current_branch(ctx.incus, full, repo_dir, uid=uid)
+    except (SyncError, GitError, IncusError) as exc:
+        return refused(str(exc))
+    if branch is None:
+        return refused("detached HEAD: check out your branch before reporting done")
+    try:
+        fetched = sync.fetch_from_container(
+            ctx.cfg, ctx.incus, ctx.sender.short, branch=branch, tags="none"
+        )
+    except (SyncError, GitError) as exc:
+        return refused(f"could not fetch your branch to the host: {exc}")
+    oid = fetched.new_oid
+    if not _FULL_OID.fullmatch(oid or ""):
+        return refused(f"could not fetch your branch to the host: unexpected commit id `{oid}`")
+    try:
+        # STATE last: a crash in between never shows `done` without a commit.
+        ctx.incus.config_set(full, labels.DONE_SHA, oid)
+        ctx.incus.config_set(full, labels.STATE, labels.STATE_DONE)
+    except IncusError as exc:
+        return refused(f"could not record the done report: {exc}")
+    target = _orchestrator_of(ctx)
+    outcome = _relay(ctx, target, manifest)
+    if outcome.state == "done":
+        return done(f"done reported to {target.short} at {oid[:12]}")
+    return Outcome(
+        outcome.state,
+        f"{target.short} is not running; done at {oid[:12]} is delivered when it starts",
+    )
+
+
 def _from_child(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
-    if manifest.kind == "done":
-        return refused("done is not supported yet")
     target = _orchestrator_of(ctx)
     if manifest.to is not None and manifest.to != target.short:
         return refused("a child can only message its orchestrator")
+    if manifest.kind == "done":
+        return handle_done(ctx, manifest)
     return _relay(ctx, target, manifest)
 
 
