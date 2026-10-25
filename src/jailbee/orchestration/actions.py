@@ -212,7 +212,8 @@ def child_options(
     return NewContainerOptions(
         container_branch=plan.branch,
         name=plan.child_full,
-        network="loose" if plan.rights.loose else cfg.defaults.network,
+        # Never the repo default: a loose default is not one of the child's rights.
+        network="loose" if plan.rights.loose else "strict",
         memory=None,
         cpu=cfg.defaults.cpu,
         from_base=cfg.golden.alias,

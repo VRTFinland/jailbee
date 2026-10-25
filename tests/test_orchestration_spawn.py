@@ -204,7 +204,7 @@ def test_child_options_fork_is_untrusted_and_pinned(tmp_path: Path) -> None:
     assert o.spawned_by == "proj-orch"
     assert o.rights == plan.rights
     assert o.name == "proj-fix-1" and o.container_branch == "fix/1"
-    assert o.network == ctx.cfg.defaults.network
+    assert o.network == "strict"
     assert o.memory is None and o.clone is True and o.assume_yes is False
     assert o.initial_prompt == "p"
 
@@ -261,3 +261,13 @@ def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert inter.autofetch is False  # type: ignore[attr-defined]
     assert seen["gcfg"] is ctx.gcfg
     assert seen["config_path"] is None
+
+
+def test_child_options_never_inherit_loose_repo_default(tmp_path: Path) -> None:
+    """Spec §5.3: a child gets exactly its rights; a loose repo default is not one."""
+    ctx, plan = _plan(tmp_path, loose=False)
+    cfg = ctx.cfg.model_copy(
+        update={"defaults": ctx.cfg.defaults.model_copy(update={"network": "loose"})}
+    )
+    o = actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=None)
+    assert o.network == "strict"
