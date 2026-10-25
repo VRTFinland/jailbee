@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -366,3 +367,55 @@ def test_the_heading_warning_keeps_the_attention_colour(tmp_path, selected):  # 
 
     style = heading.get_style_at_offset(Console(), heading.plain.index("⚠"))
     assert style.color.name == "yellow"
+
+
+def _name_model(group, *, column_widths=None):  # type: ignore[no-untyped-def]
+    return fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=column_widths,
+        shown_columns=("name",),
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+
+
+def _fork_rows():  # type: ignore[no-untyped-def]
+    parent = ci("p-parent", "p")
+    fork = replace(ci("p-fork", "p"), fork_of="p-parent")
+    deep = replace(ci("p-deep", "p"), fork_of="p-fork")
+    orphan = replace(ci("p-orph", "p"), fork_of="p-gone")
+    return [parent, fork, deep, orphan]
+
+
+def test_fork_rows_carry_the_tree_prefix_after_the_status_indent(tmp_path):
+    group = dmodel.RepoGroup("p", str(tmp_path), None, _fork_rows())
+    model = _name_model(group)
+    names = [fleet.entry_cells(e, model.geometry)[0] for e in model.entries if e.container]
+    assert names == ["  parent", "  └ fork", "    └ deep", "  ⑂ orph"]
+
+
+def test_entry_equality_changes_when_the_parent_disappears(tmp_path):
+    fork = replace(ci("p-fork", "p"), fork_of="p-parent")
+    with_parent = dmodel.RepoGroup("p", str(tmp_path), None, [ci("p-parent", "p"), fork])
+    without_parent = dmodel.RepoGroup("p", str(tmp_path), None, [fork])
+    a = next(e for e in _name_model(with_parent).entries if e.container == fork)
+    b = next(e for e in _name_model(without_parent).entries if e.container == fork)
+    assert a.fork_prefix == "└ "
+    assert b.fork_prefix == "⑂ "
+    assert a != b
+
+
+def test_deep_fork_name_is_cut_with_an_ellipsis_not_wrapped(tmp_path):
+    rows = [ci("p-c0", "p")]
+    for i in range(1, 6):
+        rows.append(replace(ci(f"p-c{i}", "p"), fork_of=f"p-c{i - 1}"))
+    group = dmodel.RepoGroup("p", str(tmp_path), None, rows)
+    model = _name_model(group, column_widths={"name": 10})
+    entry = next(e for e in model.entries if e.container and e.container.name == "p-c5")
+    line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=80)
+    assert "\n" not in line.plain
+    assert line.plain.rstrip().endswith("…")

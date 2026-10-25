@@ -64,3 +64,18 @@ def test_each_header_cell_is_a_sort_target():
             if hit is not None:
                 targets.add((hit.kind, hit.args))
     assert {("sort", ("name",)), ("sort", ("state",))} <= targets
+
+
+def test_optimized_name_width_counts_the_fork_prefix():
+    from dataclasses import replace
+
+    parent = ci("alpha-aaaa", "alpha")
+    plain = RepoGroup("alpha", "/repos/alpha", None, [parent, ci("alpha-bbbb", "alpha")])
+    forked = RepoGroup(
+        "alpha",
+        "/repos/alpha",
+        None,
+        [parent, replace(ci("alpha-bbbb", "alpha"), fork_of="alpha-aaaa")],
+    )
+    base = optimize_column_widths([plain], now=NOW, enabled=("name",))["name"]
+    assert optimize_column_widths([forked], now=NOW, enabled=("name",))["name"] == base + 2
