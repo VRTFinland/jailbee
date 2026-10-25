@@ -1018,8 +1018,8 @@ exist so far: they are stored, capped by the repo and inspectable.
   egress). Flags: `--profile P`, `--children N`, `--allow OP`/`--deny OP`
   (`spawn`, `message`, `import`, `restart`, `stop`, `destroy`),
   `--mount M`/`--clear-mounts`, `--loose`/`--no-loose`,
-  `--egress HOST`/`--clear-egress`. Fields not given keep their current
-  value, then the profile's, then the defaults.
+  `--egress HOST`/`--clear-egress`. Fields not given come from `--profile`
+  if named, else the container's current grant, else the defaults.
 - `spawn` and `message` are always part of a grant: `--deny spawn|message` is
   refused. To take everything away use `jailbee orchestrate revoke [NAME]`.
 - Refused: mount-mode containers, children (a container that was spawned by
@@ -1031,7 +1031,7 @@ exist so far: they are stored, capped by the repo and inspectable.
   it, and the running children. `jailbee orchestrate ls [--json]` — every
   grant in the repo.
 - `jailbee new` applies `orchestration.default_profile` to the new container
-  when one is configured (not for mount-mode containers or children).
+  when one is configured (not for mount-mode containers or children, nor when the repo's caps would refuse the grant).
 - Profiles (`orchestration.profiles`, `default_profile`) live only in
   `~/.config/jailbee/global.yaml` or the host-local config file. A repo's
   `.jailbee/config.yaml` may only narrow: `allowed`, `max_running_children`,

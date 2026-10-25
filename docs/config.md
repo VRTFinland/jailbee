@@ -2662,7 +2662,8 @@ Profile names are lowercase letters, digits and dashes, starting with a letter
 (max 32 characters). `operations` may be `spawn`, `message`, `import`,
 `restart`, `stop` and `destroy`, and must include `spawn` and `message`.
 `default_profile` is applied by `jailbee new` to the new container, except for
-mount-mode containers and children.
+mount-mode containers, children, and when the repo's caps (`allowed` or an
+excess) would refuse the grant.
 
 **Per repo** (`.jailbee/config.yaml`): a repo may only narrow.
 
