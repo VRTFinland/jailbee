@@ -141,6 +141,68 @@ def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
     assert info.shown_name == "login (feat-x)"
 
 
+def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-orch",
+            user_config={
+                labels.GRANT: (
+                    '{"version":1,"max_running_children":4,"operations":["message","spawn"]}'
+                )
+            },
+        ),
+        _container(
+            name="myrepo-k1",
+            user_config={
+                labels.SPAWNED_BY: "myrepo-orch",
+                labels.STATE: "done",
+                labels.RIGHTS: '{"version":1,"mounts":["data"]}',
+            },
+        ),
+    ]
+    infos = {c.name: c for c in list_containers(cfg, incus)}
+    assert infos["myrepo-orch"].grant.limit == 4
+    assert infos["myrepo-k1"].child.orchestrator == "myrepo-orch"
+    assert infos["myrepo-k1"].child.state == "done"
+    assert infos["myrepo-k1"].child.mounts == ("data",)
+    assert infos["myrepo-orch"].running_children == 1
+    assert infos["myrepo-k1"].orchestrator_running is True
+
+
+def test_list_containers_reads_queue_file(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={"myrepo-orch": 2})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-orch", user_config={labels.GRANT: '{"version":1}'})
+    ]
+    [info] = list_containers(cfg, incus)
+    assert info.queued_children == 2
+
+
+def test_list_containers_ordinary_container_has_no_orchestration(make_cfg, tmp_path, mocker):
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-plain")]
+    [c] = list_containers(cfg, incus)
+    assert (c.grant, c.child, c.orchestrator_running) == (None, None, None)
+    assert (c.running_children, c.queued_children) == (0, 0)
+
+
 def test_list_containers_parses_container_egress_extras(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()
@@ -10862,11 +10924,12 @@ def test_ls_default_table_and_json_sets_are_pinned():
     specs = ls_field_specs(now=_LS_NOW)
     assert [f.name for f in specs if f.default_table] == [
         "name", "mode", "base", "state", "created", "job", "network", "ttl", "wt",
-        "target_diff", "ahead_count", "behind_count", "conflict", "pr", "issues", "group",
+        "target_diff", "ahead_count", "behind_count", "conflict", "pr", "issues",
+        "role", "children", "inbox", "group",
     ]  # fmt: skip
     assert [f.name for f in specs if f.default_json] == [
         "name", "alias", "mode", "base", "state", "created", "network", "ip", "memory_limit",
-        "git_status", "pr", "issues", "group",
+        "git_status", "pr", "issues", "role", "children", "inbox", "group",
     ]  # fmt: skip
 
 
@@ -11603,3 +11666,93 @@ def _new_child_raw(cfg, incus, mocker, **extra):
         **extra,
     )
     new_container(cfg, incus, opts)
+
+
+def _orch_ci(name="myrepo-a", **kw):
+    from dataclasses import replace
+
+    from jailbee.git_status import GitStatus
+    from jailbee.orchestration.view import ChildView, GrantView
+    from tests.dashboard_fixtures import ci
+
+    c = ci(name, "myrepo")
+    unread = kw.pop("unread", None)
+    outbox = kw.pop("outbox", None)
+    if unread is not None or outbox is not None:
+        kw["git_status"] = GitStatus(
+            "clean", "clean", "0", "ok", unread_inbox=unread, pending_orch_outbox=outbox
+        )
+    if kw.pop("as_orch", False):
+        limit = kw.pop("limit", 2)
+        kw["grant"] = GrantView(limit, ("spawn",), ("/m",), True, ("x.io",))
+    if kw.pop("as_child", False):
+        kw["child"] = ChildView("myrepo-alpha-orch", "working", ("/m",), False, ())
+    return replace(c, **kw)
+
+
+@pytest.mark.parametrize(
+    ("kw", "expected"),
+    [
+        ({"as_orch": True, "limit": 4, "running_children": 2, "queued_children": 1}, "2/4 +1"),
+        ({"as_orch": True, "limit": 2}, "0/2"),
+        ({}, ""),
+        ({"as_child": True}, ""),
+    ],
+)
+def test_children_cell(kw, expected):
+    assert _ls_spec("children").cell(_orch_ci(**kw)) == expected
+
+
+@pytest.mark.parametrize(
+    ("kw", "expected"),
+    [
+        ({"as_orch": True}, "orch"),
+        ({"as_child": True, "orchestrator_running": True}, "child"),
+        ({"as_child": True, "orchestrator_running": False}, "child!"),
+        ({"as_child": True, "orchestrator_running": None}, "child"),  # unknown reads as running
+        ({}, ""),
+    ],
+)
+def test_role_cell(kw, expected):
+    assert _ls_spec("role").cell(_orch_ci(**kw)) == expected
+
+
+def test_role_json_child_uses_short_orchestrator_name():
+    j = _ls_spec("role").json(_orch_ci(as_child=True, orchestrator_running=False))
+    assert j["kind"] == "child"
+    assert j["orchestrator"] == "alpha-orch"
+    assert j["orchestrator_running"] is False
+    assert j["state"] == "working"
+    assert j["rights"] == {"mounts": ["/m"], "loose": False, "egress": []}
+
+
+def test_role_json_orchestrator_and_plain():
+    j = _ls_spec("role").json(_orch_ci(as_orch=True, limit=3))
+    assert j["kind"] == "orchestrator"
+    assert j["grant"]["limit"] == 3
+    assert _ls_spec("role").json(_orch_ci()) is None
+
+
+def test_children_json():
+    c = _orch_ci(as_orch=True, limit=4, running_children=1, queued_children=2)
+    assert _ls_spec("children").json(c) == {"running": 1, "limit": 4, "queued": 2}
+    assert _ls_spec("children").json(_orch_ci()) is None
+
+
+def test_inbox_cell_and_json():
+    c = _orch_ci(as_child=True, unread=3, outbox=1)
+    assert _ls_spec("inbox").cell(c) == "✉3"
+    assert _ls_spec("inbox").json(c) == {"unread": 3, "outbox_pending": 1}
+    assert _ls_spec("inbox").cell(_orch_ci(as_child=True, unread=0)) == ""
+    assert _ls_spec("inbox").json(_orch_ci()) is None
+
+
+def test_orchestration_columns_hidden_without_orchestration():
+    rows = [_orch_ci(), _orch_ci(unread=5)]
+    assert not any(_ls_spec(n).show_if(rows) for n in ("role", "children", "inbox"))
+
+
+def test_orchestration_columns_shown_with_orchestration():
+    rows = [_orch_ci(as_orch=True, unread=2), _orch_ci(as_child=True)]
+    assert all(_ls_spec(n).show_if(rows) for n in ("role", "children", "inbox"))
+    assert not _ls_spec("inbox").show_if([_orch_ci(as_orch=True, unread=0)])

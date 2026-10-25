@@ -167,7 +167,8 @@ AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"
 MOUNTS = "mounts"
-CONTAINER_VERBS = frozenset({AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS})
+ORCHESTRATION = "orchestration"
+CONTAINER_VERBS = frozenset({AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, ORCHESTRATION})
 
 SNAPSHOT_FIELDS = "name,created"
 
@@ -216,6 +217,56 @@ def mount_argv(kind: str, name: str, ttl: str | None = None) -> list[str]:
 
 def unmount_argv(kind: str, name: str) -> list[str]:
     return ["unmount", "--", kind, name]
+
+
+def orchestrate_grant_argv(
+    name: str,
+    *,
+    profile: str | None = None,
+    children: int | None = None,
+    allow: Sequence[str] = (),
+    deny: Sequence[str] = (),
+    mounts: Sequence[str] | None = None,
+    loose: bool | None = None,
+    egress: Sequence[str] | None = None,
+) -> list[str]:
+    """`jailbee orchestrate grant`: options before the separator, in signature order.
+
+    ``None`` leaves a field as it is. An empty ``mounts`` / ``egress`` clears
+    the list (``--clear-mounts`` / ``--clear-egress``).
+    """
+    options: list[str] = []
+    if profile is not None:
+        options += ["--profile", profile]
+    if children is not None:
+        options += ["--children", str(children)]
+    for op in allow:
+        options += ["--allow", op]
+    for op in deny:
+        options += ["--deny", op]
+    if mounts is not None:
+        options += [item for m in mounts for item in ("--mount", m)] or ["--clear-mounts"]
+    if loose is not None:
+        options.append("--loose" if loose else "--no-loose")
+    if egress is not None:
+        options += [item for h in egress for item in ("--egress", h)] or ["--clear-egress"]
+    return ["orchestrate", "grant", *options, "--", name]
+
+
+def orchestrate_revoke_argv(name: str) -> list[str]:
+    return ["orchestrate", "revoke", "--", name]
+
+
+def orchestration_offered(
+    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
+) -> bool:
+    """Whether ``Orchestration…`` is offered: an existing, non-child, non-mount container."""
+    return (
+        container.state in _EXISTING_STATES
+        and container.child is None
+        and container.mode != "mount"
+        and permitted(orchestrate_grant_argv(container.name), ssh_policy, over_ssh=over_ssh)
+    )
 
 
 def autostart_worker_live(container: ContainerInfo) -> bool:
@@ -275,6 +326,8 @@ def container_extras(
             container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
         ):
             before.append(("Mounts…", MOUNTS))
+    if orchestration_offered(container, ssh_policy, over_ssh=over_ssh):
+        before.append(("Orchestration…", ORCHESTRATION))
     return ContainerExtras(tuple(after_job), tuple(before))
 
 

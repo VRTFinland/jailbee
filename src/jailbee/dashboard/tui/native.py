@@ -847,6 +847,10 @@ class PickerBox(OverlayBox):
         # border 2 + padding 2 + scrollbar 1; the title needs its own room in the border
         return max(widest + 5, detail + 4, cell_len(self.picker.title) + 6)
 
+    def _ready(self) -> None:
+        last = max(0, len(self.picker.entries) - 1)
+        self.query_one(OverlayList).highlighted = min(self.picker.start_index, last)
+
     def state(self) -> NativeState:
         return NativeState("picker", self.query_one(OverlayList).highlighted)
 

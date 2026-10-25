@@ -132,6 +132,41 @@ def test_outbox_zero_is_none_so_empty_cells_sort_last():
     )
 
 
+def _orch_c(**over: object) -> ContainerInfo:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    kind = over.pop("kind", None)
+    unread = over.pop("unread", None)
+    if kind == "orch":
+        over["grant"] = GrantView(4, (), (), False, ())
+    elif kind == "child":
+        over["child"] = ChildView("p-orch", "working", (), False, ())
+    if unread is not None:
+        over["git_status"] = _git(unread_inbox=unread)
+    return _c(**over)
+
+
+def test_role_ranks_orchestrator_then_child_then_none():
+    orch, child, plain = (_key("role", _orch_c(kind=k)) for k in ("orch", "child", None))
+    assert orch is not None and child is not None
+    assert orch < child
+    assert plain is None
+
+
+def test_children_sorts_by_running_count_and_is_none_for_non_orchestrators():
+    assert _key("children", _orch_c(kind="orch", running_children=3)) == (3,)
+    assert _key("children", _orch_c(kind="orch", running_children=0)) is None
+    assert _key("children", _orch_c(kind="child", running_children=3)) is None
+    assert _key("children", _orch_c(running_children=3)) is None
+
+
+def test_inbox_sorts_by_unread_zero_is_none_and_needs_orchestration():
+    assert _key("inbox", _orch_c(kind="child", unread=4)) == (4,)
+    assert _key("inbox", _orch_c(kind="orch", unread=0)) is None
+    assert _key("inbox", _orch_c(kind="child")) is None
+    assert _key("inbox", _orch_c(unread=4)) is None
+
+
 def test_agent_ranks_by_urgency():
     def agent(state: str) -> ContainerInfo:
         return _c(agent_status=(AgentSummary("claude", state, NOW, None, 1),))
@@ -148,6 +183,9 @@ def test_agent_ranks_by_urgency():
         ("created", True),
         ("cpu", True),
         ("outbox", True),
+        ("children", True),
+        ("inbox", True),
+        ("role", False),
         ("name", False),
         ("state", False),
         ("network", False),

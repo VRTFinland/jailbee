@@ -1247,3 +1247,106 @@ def test_hostile_markdown_shows_html_and_drops_terminal_controls() -> None:
     shown = " ".join(line.plain for line in lines)
     assert "<b>x</b>" in shown and "[bold]y[/bold]" in shown
     assert "\x1b" not in shown and "\u202e" not in shown
+
+
+def _gs(**kw: Any) -> GitStatus:
+    return GitStatus(wt="", ahead_diff="", ahead_count="0", conflict="ok", **kw)
+
+
+def _orch(**kw: Any) -> ContainerInfo:
+    from jailbee.orchestration.view import GrantView
+
+    grant = GrantView(
+        limit=kw.pop("limit", 4),
+        operations=kw.pop("ops", ("spawn", "stop")),
+        mounts=kw.pop("mounts", ("data",)),
+        loose=kw.pop("loose", False),
+        egress=kw.pop("egress", ()),
+    )
+    unread = kw.pop("unread", 0)
+    gs = _gs(unread_inbox=unread) if unread else None
+    return _c(grant=grant, git_status=gs, **kw)
+
+
+def _child(**kw: Any) -> ContainerInfo:
+    from jailbee.orchestration.view import ChildView
+
+    view = ChildView(
+        orchestrator=kw.pop("orchestrator", "alpha-orch"),
+        state=kw.pop("state", "running"),
+        mounts=kw.pop("mounts", ()),
+        loose=kw.pop("loose", False),
+        egress=kw.pop("egress", ()),
+    )
+    unread, outbox = kw.pop("unread", 0), kw.pop("outbox", 0)
+    gs = _gs(unread_inbox=unread, pending_orch_outbox=outbox) if unread or outbox else None
+    return _c(child=view, git_status=gs, **kw)
+
+
+def test_orchestrator_card_lines() -> None:
+    p = dd.container_panel(_orch(running_children=2, queued_children=1), NOW)
+    assert p.orchestration == (
+        "orchestrator · children 2/4 · 1 queued",
+        "[dim]may:[/dim] spawn, stop",
+        "[dim]may grant:[/dim] mounts data · loose no · egress —",
+    )
+
+
+def test_orchestrator_card_shows_unread_inbox_and_escapes_values() -> None:
+    p = dd.container_panel(_orch(unread=3, egress=("[x]",), loose=True), NOW)
+    assert p.orchestration[0].endswith(" · inbox 3 unread")
+    assert p.orchestration[2].endswith(r"loose yes · egress \[x]")
+
+
+def test_child_card_marks_stopped_orchestrator() -> None:
+    p = dd.container_panel(_child(orchestrator_running=False, state="done", unread=2), NOW)
+    assert p.orchestration[0] == "child of orch [red](not running)[/red] · done · inbox 2 unread"
+    assert p.orchestration[1] == "[dim]rights:[/dim] mounts — · loose no · egress —"
+
+
+def test_child_card_shows_outbox_pending() -> None:
+    p = dd.container_panel(_child(orchestrator_running=True, outbox=1), NOW)
+    assert p.orchestration[0] == "child of orch · running · outbox 1 pending"
+
+
+def test_plain_container_has_no_orchestration_lines() -> None:
+    assert dd.container_panel(_c(), NOW).orchestration == ()
+
+
+def test_panel_lines_draw_orchestration_after_exceptions() -> None:
+    c = replace(_orch(), network="loose")
+    panel = replace(dd.container_panel(c, NOW), warnings=("[yellow]⚠ behind[/yellow]",))
+    view = dd.DetailsView(c.display_name, (), panel=panel)
+    body = _panel_body(view, None, 100)
+    row = next(i for i, line in enumerate(body) if "loose" in line and "●" in line)
+    assert body[row + 1].startswith("orchestrator ·")
+    assert "may:" in body[row + 2]
+    assert "may grant:" in body[row + 3]
+    assert body[row + 4] == "⚠ behind"
+
+
+def test_child_of_unknown_orchestrator_state_is_not_marked_stopped() -> None:
+    c = _child()
+    assert c.orchestrator_running is None
+    assert "not running" not in dd.container_panel(c, NOW).orchestration[0]
+
+
+def test_orchestration_values_are_escaped() -> None:
+    p = dd.container_panel(_orch(ops=("[red]x",), mounts=("[red]m",)), NOW)
+    assert p.orchestration[1] == r"[dim]may:[/dim] \[red]x"
+    assert r"mounts \[red]m" in p.orchestration[2]
+    q = dd.container_panel(_child(orchestrator="alpha-[red]o", state="[b]s"), NOW)
+    assert q.orchestration[0] == r"child of \[red]o · \[b]s"
+
+
+def test_child_short_name_keeps_an_unprefixed_orchestrator_whole() -> None:
+    p = dd.container_panel(_child(orchestrator="beta-orch"), NOW)
+    assert p.orchestration[0].startswith("child of beta-orch")
+
+
+def test_unknown_inbox_and_outbox_counts_draw_nothing() -> None:
+    gs = _gs(unread_inbox=None, pending_orch_outbox=None)
+    child = dd.container_panel(replace(_child(), git_status=gs), NOW)
+    assert child.orchestration[0] == "child of orch · running"
+    orch = dd.container_panel(replace(_orch(), git_status=gs), NOW)
+    assert "inbox" not in orch.orchestration[0]

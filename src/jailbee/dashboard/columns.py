@@ -46,8 +46,9 @@ _COLUMN_SET_MIGRATIONS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
     (1, "issues", ("outbox",)),
     (1, "doing", ()),
     (2, "network", ("network", "mounts")),
+    (3, "outbox", ("outbox", "role", "children", "inbox")),
 )
-COLUMNS_VERSION = 2
+COLUMNS_VERSION = 3
 """The newest version in `_COLUMN_SET_MIGRATIONS`; a seeded view starts here."""
 
 
@@ -347,7 +348,16 @@ def _select_visible_fields(
             or by_name[name].show_if(all_containers)  # type: ignore[misc]  # narrowed by the None test
         )
     ]
-    widths = {"state": 2, "mem": 15, "mem_used": 6, "mem_pct": 4, "outbox": 3}
+    widths = {
+        "state": 2,
+        "mem": 15,
+        "mem_used": 6,
+        "mem_pct": 4,
+        "outbox": 3,
+        "role": 5,
+        "children": 6,
+        "inbox": 3,
+    }
     return [
         replace(
             field_spec,
@@ -431,6 +441,9 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "pr": 6,
     "issues": 3,
     "outbox": 3,
+    "role": 6,
+    "children": 8,
+    "inbox": 3,
     "full_name": 28,
     "repo": 16,
     "base": 20,

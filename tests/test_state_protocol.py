@@ -13,6 +13,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
+from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.state_service import protocol
 from jailbee.state_service.protocol import (
@@ -64,6 +65,8 @@ def _full_snapshot() -> Snapshot:
             unmerged=2,
             pending_pr_actions=1,
             pending_issue_actions=3,
+            unread_inbox=3,
+            pending_orch_outbox=1,
             target_diff="+1 -1",
             behind_count="0",
             base_sha="def456",
@@ -136,6 +139,11 @@ def _full_snapshot() -> Snapshot:
             egress_extra=("api.example.com",),
             alias="login",
             fork_of="alpha-y",
+            grant=GrantView(4, ("message", "spawn"), ("data",), True, ("pypi.org",)),
+            child=ChildView("alpha-orch", "done", ("data",), True, ("pypi.org",)),
+            running_children=2,
+            queued_children=3,
+            orchestrator_running=True,
         )
     )
     group = RepoGroup(
@@ -148,6 +156,7 @@ def _full_snapshot() -> Snapshot:
             apps=[AppMenuEntry("ide", "VS Code")],
             loose_ttl_default="30m",
             memory_default="8GiB",
+            orchestration_profiles=("bugfixer",),
             push_action_default="merge",
             push_source_default="branch",
             column_notice="note",
@@ -252,7 +261,7 @@ def test_garbage_is_a_protocol_error(line):
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
-    assert PROTOCOL == 10
+    assert PROTOCOL == 11
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.

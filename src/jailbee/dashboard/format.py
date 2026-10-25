@@ -211,6 +211,12 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return _loose(container, now)
     if field.name == "mounts":
         return _mounts(container, now)
+    if field.name == "role":
+        if value == "child!":
+            return "[red]child![/red]"
+        if value == "orch":
+            return "[bold]orch[/bold]"
+        return value
     if field.name == "pr":
         # The outbox count lives in OUTBOX; `jailbee ls` keeps it in PR.
         if container.pr_number is None:

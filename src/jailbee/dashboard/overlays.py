@@ -80,8 +80,14 @@ def filter_suggestions(suggestions: Sequence[str], text: str) -> list[str]:
 def validate_answer(prompt: TextPrompt, text: str) -> str | None:
     """Why ``text`` cannot answer ``prompt``, or None when it can."""
     answer = text.strip()
-    if not answer and prompt.purpose != "container-rename":  # empty clears the alias
+    # an empty answer clears the alias, or the children's egress list
+    clears = ("container-rename", "container-orchestration-egress")
+    if not answer and prompt.purpose not in clears:
         return f"{prompt.label} cannot be empty"
+    if prompt.purpose == "container-orchestration-limit" and not (
+        answer.isascii() and answer.isdecimal() and 1 <= int(answer) <= 64
+    ):
+        return "Children limit must be a whole number from 1 to 64"
     if prompt.purpose == "container-memory-other":
         from jailbee.memory_limit import validate_size
 
@@ -115,6 +121,7 @@ class Picker:
     carry: tuple[str, ...] = ()
     back: EgressState | AccountsState | None = None
     detail: tuple[str, ...] = ()
+    start_index: int = 0  # the entry the cursor starts on (not part of the picker's identity)
 
 
 # A list never shrinks below this many rows.

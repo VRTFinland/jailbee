@@ -19,6 +19,8 @@ from jailbee.config import CONTAINER_USERNAME
 from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
+from jailbee.orchestration.outbox import INBOX_DIR as ORCH_INBOX_DIR
+from jailbee.orchestration.outbox import OUTBOX_DIR as ORCH_OUTBOX_DIR
 from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
 
@@ -121,6 +123,11 @@ class GitStatus:
     # separate outbox directory. None means the probe could not say (older
     # output, or an unreadable value).
     pending_issue_actions: int | None = None
+    # Orchestration messaging: unread messages in the container's inbox and
+    # pending messages in its orchestration outbox. Counted like the outboxes
+    # above (root-level manifests only); None means the probe could not say.
+    unread_inbox: int | None = None
+    pending_orch_outbox: int | None = None
     target_diff: str = "?"
     behind_count: str = "?"
     base_sha: str | None = None
@@ -557,10 +564,15 @@ count_outbox_manifests() {
 PENDING=$(count_outbox_manifests "$OUTBOX_DIR")
 PENDING_ISSUES=$(count_outbox_manifests "$ISSUE_OUTBOX_DIR")
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- fields 16-17: orchestration inbox and outbox manifest counts ---
+ORCH_INBOX=$(count_outbox_manifests "$ORCH_INBOX_DIR")
+ORCH_OUTBOX=$(count_outbox_manifests "$ORCH_OUTBOX_DIR")
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED" "$PENDING" "$PENDING_ISSUES" "$BEHIND_COUNT"
+  "$IN_PROGRESS" "$UNMERGED" "$PENDING" "$PENDING_ISSUES" "$BEHIND_COUNT" \
+  "$ORCH_INBOX" "$ORCH_OUTBOX"
 """
 
 
@@ -617,6 +629,8 @@ def probe_container_git(
                 "HOST_SOURCE": HOST_SOURCE,
                 "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 "ISSUE_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}",
+                "ORCH_INBOX_DIR": ORCH_INBOX_DIR,
+                "ORCH_OUTBOX_DIR": ORCH_OUTBOX_DIR,
                 # The probe only reads, but `git status`/`git diff --cached`
                 # refresh the index and write it back — which takes
                 # `.git/index.lock`. (Worktree `git diff` ignores this
@@ -707,6 +721,10 @@ def probe_container_git(
 
     raw_behind = parts[14].strip() if len(parts) >= 15 else "?"
     behind_count = raw_behind if raw_behind.isdigit() else "?"
+    raw_inbox = parts[15].strip() if len(parts) >= 17 else ""
+    unread_inbox = int(raw_inbox) if raw_inbox.isdigit() else None
+    raw_orch_out = parts[16].strip() if len(parts) >= 17 else ""
+    pending_orch_outbox = int(raw_orch_out) if raw_orch_out.isdigit() else None
     target_diff = ahead_diff
 
     return GitStatus(
@@ -723,6 +741,8 @@ def probe_container_git(
         unmerged=unmerged,
         pending_pr_actions=pending_pr_actions,
         pending_issue_actions=pending_issue_actions,
+        unread_inbox=unread_inbox,
+        pending_orch_outbox=pending_orch_outbox,
         target_diff=target_diff,
         behind_count=behind_count if target is not None else "?",
         base_sha=target.sha if target is not None else None,

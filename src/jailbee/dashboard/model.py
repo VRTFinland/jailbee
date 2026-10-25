@@ -183,7 +183,10 @@ class RepoGroup:
     branch name, or ``@<sha>`` on a detached HEAD — shown beside the heading;
     None for orphan groups and when git cannot say.
     ``advisories`` are the repo's owed upgrade actions and deprecation notices
-    (`RepoAdvisory`); orphan groups keep ``()``."""
+    (`RepoAdvisory`); orphan groups keep ``()``.
+    ``orchestration_profiles`` are the sorted names of the orchestration
+    profiles the repo can grant (host and host-local; the repo layer adds
+    none); orphan groups keep ``()``."""
 
     prefix: str
     repo_root: str | None
@@ -202,6 +205,7 @@ class RepoGroup:
     checkout: str | None = None
     advisories: tuple[RepoAdvisory, ...] = ()
     memory_default: str = "16GiB"
+    orchestration_profiles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -518,6 +522,7 @@ def _gather_rows(
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
                 memory_default=cfg.defaults.memory,
+                orchestration_profiles=tuple(sorted(cfg.orchestration_view().profiles)),
             )
         )
 

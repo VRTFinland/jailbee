@@ -23,6 +23,7 @@ from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
+from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.sysstat import DiskStatus, MemoryStatus
 from jailbee.update_check import UpdateNotice
@@ -31,7 +32,9 @@ from jailbee.update_check import UpdateNotice
 # RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
 # and root_pool. 9 added Refresh.settle. 10 added RepoGroup.memory_default
 # and ContainerInfo.memory_override, needed for safe memory-limit editing.
-PROTOCOL = 10
+# 11 added the orchestration fields: ContainerInfo grant/child/children counts,
+# GitStatus inbox/outbox counts, RepoGroup.orchestration_profiles.
+PROTOCOL = 11
 
 
 class ProtocolError(ValueError):
@@ -114,9 +117,11 @@ _NAMESPACE: dict[str, Any] = {
         AgentActivity,
         AgentSummary,
         AppMenuEntry,
+        ChildView,
         ContainerInfo,
         DiskStatus,
         GitStatus,
+        GrantView,
         MemoryStatus,
         Path,
         PoolStatus,

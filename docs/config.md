@@ -2449,7 +2449,7 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
 **AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
-limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a red **●** — the same flag as LOOSE — and the time remaining until the last attached mount detaches, e.g. `● 12m`, or `● ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
+limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a red **●** — the same flag as LOOSE — and the time remaining until the last attached mount detaches, e.g. `● 12m`, or `● ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`), orchestration role **ROLE** (`orch`, `child`, or a red `child!` when the orchestrator is not running), **CHILDREN** and **INBOX**. **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
@@ -2457,15 +2457,19 @@ for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
-the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
+the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed, and ROLE, CHILDREN and INBOX added after OUTBOX in stored views that still show OUTBOX — with one notice; turning any of them back on afterwards sticks.
 
-Eight columns are dynamic and appear only when they have
+Eleven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
 in loose mode), `mounts` (optional mounts are attached), `pr` (a container tracks a PR), `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant),
 `issues` (a container has pending issue-outbox actions), `outbox` (a
 container has staged PR or issue manifests) and `group` (a
-container resolves to a credential group).
+container resolves to a credential group). Three more belong to
+container orchestration and appear only when it is in use: `role` (`orch` for
+an orchestrator, `child` for a spawned child, `child!` when its orchestrator is
+stopped), `children` (running/limit and queued children of an orchestrator) and
+`inbox` (`✉N` unread orchestration messages).
 
 **Table output only.** `jailbee ls --format json` always emits its own built-in
 field set (`FieldSpec.default_json`), regardless of `ls.fields`/`ls.hide` —
@@ -2477,7 +2481,7 @@ Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, 
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
-`issues`, `outbox`, `group`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
+`issues`, `outbox`, `group`, `role`, `children`, `inbox`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
 are accepted aliases for `group`.
 
 `ahead_diff` was retired: configured uses produce a migration warning and
