@@ -11709,6 +11709,7 @@ def test_children_cell(kw, expected):
         ({"as_orch": True}, "orch"),
         ({"as_child": True, "orchestrator_running": True}, "child"),
         ({"as_child": True, "orchestrator_running": False}, "child!"),
+        ({"as_child": True, "orchestrator_running": None}, "child"),  # unknown reads as running
         ({}, ""),
     ],
 )
