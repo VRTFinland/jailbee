@@ -116,6 +116,25 @@ def test_child_message_has_kind_and_no_to() -> None:
     assert isinstance(m, MessageManifest) and m.kind == "done" and m.to is None
 
 
+@pytest.mark.parametrize("reply", ["h-0000abcd", "m1"])
+def test_message_in_reply_to_accepts_ids(reply: str) -> None:
+    text = json.dumps(
+        {"version": 1, "id": "m1", "type": "message", "body": "hi", "in_reply_to": reply}
+    )
+    m = parse_manifest("m1.json", text, {})
+    assert isinstance(m, MessageManifest) and m.in_reply_to == reply
+
+
+@pytest.mark.parametrize("reply", ["", "UPPER", "x\u001b]52;c;Zm9v\u0007", "a" * 65, "-x"])
+def test_message_in_reply_to_must_be_an_id(reply: str) -> None:
+    """It is relayed verbatim into the other container's inbox."""
+    text = json.dumps(
+        {"version": 1, "id": "m1", "type": "message", "body": "hi", "in_reply_to": reply}
+    )
+    with pytest.raises(ManifestError, match="in_reply_to"):
+        parse_manifest("m1.json", text, {})
+
+
 def test_message_body_file() -> None:
     text = json.dumps({"version": 1, "id": "m1", "type": "message", "to": "x", "body_file": "b.md"})
     m = parse_manifest("m1.json", text, {"b.md": "long"})

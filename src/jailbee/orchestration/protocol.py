@@ -134,6 +134,12 @@ class MessageManifest(_Manifest):
     def _body(cls, v: str) -> str:
         return _checked_text(v)
 
+    @field_validator("in_reply_to")
+    @classmethod
+    def _reply_to(cls, v: str | None) -> str | None:
+        # Relayed verbatim into the other container's inbox: an id, nothing else.
+        return None if v is None else _checked_id(v)
+
 
 class ImportManifest(_Manifest):
     type: Literal["import"]
