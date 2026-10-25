@@ -99,7 +99,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential libssl-dev pkg-config \
     ripgrep fd-find jq htop \
     openssh-server kitty-terminfo \
-    apparmor
+    apparmor \
+    inotify-tools
 
 # tzdata installs /etc/localtime as a symlink (-> /usr/share/zoneinfo/Etc/UTC).
 # The <repo>-binds profile bind-mounts the host's /etc/localtime onto this
@@ -358,6 +359,179 @@ fi
 exec claude "${args[@]}"
 EOF
 chmod 0755 /usr/local/bin/claude-jb
+
+# jailbee-inbox: wait for, list and read the messages the orchestrator (or
+# the host broker) delivers to this container's inbox
+# (${JAILBEE_ORCHESTRATION_DIR:-~/.jailbee/orchestration}/inbox/*.json).
+# Unread = a regular, non-hidden inbox/*.json; read ones move to inbox/read/.
+# inotify-tools makes `wait` event-driven; without it `wait` polls.
+cat > /usr/local/bin/jailbee-inbox <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+
+die() { printf 'jailbee-inbox: %s\n' "$1" >&2; exit 2; }
+
+usage() {
+    cat <<'USAGE'
+Usage: jailbee-inbox wait [--timeout DUR]
+       jailbee-inbox ls
+       jailbee-inbox read <id> [--keep]
+
+  wait   Print the path of the oldest unread message (exit 0), waiting up to
+         DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1
+         on timeout. --timeout 0 checks once.
+  ls     One line per unread message, oldest first:
+         <id> <type> <from or ref> <kind or state> <first 60 chars of text>
+  read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
+         it in place); exit 1 if no unread message has that id.
+
+Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration),
+JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5).
+USAGE
+}
+
+base="${JAILBEE_ORCHESTRATION_DIR:-$HOME/.jailbee/orchestration}"
+inbox="$base/inbox"
+poll="${JAILBEE_INBOX_POLL:-5}"
+[[ "$poll" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] \
+    && [[ "$poll" =~ [1-9] ]] \
+    || die "JAILBEE_INBOX_POLL must be a positive number of seconds, got '$poll'"
+
+# Unread message files, oldest (lexicographically first) first.
+unread_files() {
+    local f
+    shopt -s nullglob
+    for f in "$inbox"/*.json; do
+        if [[ -f "$f" && ! -L "$f" ]]; then printf '%s\n' "$f"; fi
+    done
+    return 0
+}
+
+oldest() {
+    unread_files | head -n 1
+}
+
+parse_duration() {
+    local d="$1" n unit=s
+    if [[ "$d" =~ ^([0-9]+)([smh]?)$ ]]; then
+        n="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[2]:-s}"
+    else
+        die "invalid duration '$d' (use seconds or <n>s|m|h)"
+    fi
+    case "$unit" in
+        s) echo "$n" ;;
+        m) echo $((n * 60)) ;;
+        h) echo $((n * 3600)) ;;
+    esac
+}
+
+# Milliseconds since the epoch (EPOCHREALTIME is "<sec>.<microsec>").
+now_ms() {
+    local t="${EPOCHREALTIME/./}"
+    echo $((t / 1000))
+}
+
+cmd_wait() {
+    local timeout=1800 first
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --timeout)
+                [ $# -ge 2 ] || die "--timeout needs a value"
+                timeout="$(parse_duration "$2")"
+                shift 2 ;;
+            *) die "unknown argument '$1' (see --help)" ;;
+        esac
+    done
+    mkdir -p "$inbox"
+    local deadline_ms remaining_ms remaining rc
+    deadline_ms=$(( $(now_ms) + timeout * 1000 ))
+    while :; do
+        first="$(oldest)"
+        if [ -n "$first" ]; then
+            printf '%s\n' "$first"
+            return 0
+        fi
+        remaining_ms=$((deadline_ms - $(now_ms)))
+        [ "$remaining_ms" -gt 0 ] || return 1
+        remaining=$(( (remaining_ms + 999) / 1000 ))
+        if command -v inotifywait >/dev/null 2>&1; then
+            # The watcher starts only after the check above; the loop checks
+            # again when it returns, so a message that landed in between is
+            # not missed.
+            rc=0
+            inotifywait -q -t "$remaining" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
+            # Exit 0 = event, 2 = timeout; anything else = the watch failed.
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then sleep "$poll"; fi
+        else
+            sleep "$poll"
+        fi
+    done
+}
+
+# Prints the message's id; fails (silently) on unreadable JSON.
+message_id() {
+    jq -er '.id | select(type == "string")' "$1" 2>/dev/null
+}
+
+cmd_ls() {
+    [ $# -eq 0 ] || die "ls takes no arguments"
+    local f line
+    while IFS= read -r f; do
+        if ! line="$(jq -er '[
+                .id,
+                .type,
+                (if .type == "status" then .ref else .from end),
+                (if .type == "status" then .state else (.kind // "") end),
+                ((.body // .detail // "") | tostring | .[0:60])
+            ] | map(tostring) | @tsv' "$f" 2>/dev/null)"; then
+            printf 'jailbee-inbox: skipping unreadable message %s\n' "$f" >&2
+            continue
+        fi
+        printf '%s\n' "$line"
+    done < <(unread_files)
+}
+
+cmd_read() {
+    local id="" keep=0 f fid
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --keep) keep=1; shift ;;
+            -*) die "unknown option '$1' (see --help)" ;;
+            *) [ -z "$id" ] || die "read takes one id"; id="$1"; shift ;;
+        esac
+    done
+    [ -n "$id" ] || die "read needs a message id"
+    while IFS= read -r f; do
+        if ! fid="$(message_id "$f")"; then
+            printf 'jailbee-inbox: skipping unreadable message %s\n' "$f" >&2
+            continue
+        fi
+        if [ "$fid" = "$id" ]; then
+            jq . "$f"
+            if [ "$keep" -eq 0 ]; then
+                mkdir -p "$inbox/read"
+                mv -- "$f" "$inbox/read/"
+            fi
+            return 0
+        fi
+    done < <(unread_files)
+    printf 'jailbee-inbox: no unread message with id %s\n' "$id" >&2
+    return 1
+}
+
+[ $# -ge 1 ] || { usage >&2; exit 2; }
+sub="$1"; shift
+case "$sub" in
+    wait) cmd_wait "$@" ;;
+    ls) cmd_ls "$@" ;;
+    read) cmd_read "$@" ;;
+    -h|--help|help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac
+EOF
+chmod 0755 /usr/local/bin/jailbee-inbox
 
 # Passwordless sudo for the dev user.
 echo "${CONTAINER_USER} ALL=(ALL) NOPASSWD:ALL" \
