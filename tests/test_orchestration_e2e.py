@@ -1,8 +1,9 @@
 """End to end through the real broker, handlers, queue, outbox and inbox code.
 
-Only `Incus` (a small in-memory fake), `start_create`, `live_create_jobs`
-and config loading are replaced; everything between an outbox file and an
-inbox file is the production code path.
+Only `Incus` (a small in-memory fake), `start_create`, `live_create_jobs`,
+config loading and the `sync.*` git calls of `done`/`import` are replaced;
+everything between an outbox file and an inbox file is the production code
+path.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
 from jailbee.orchestration.outbox import INBOX_DIR, OUTBOX_DIR
 from jailbee.orchestration.state import load_queue, pending_dir
+from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config
 
 if TYPE_CHECKING:
@@ -95,6 +97,10 @@ class FakeIncus:
         if argv[-2:] == ["rev-parse", "HEAD"]:
             return HEAD + "\n"
         raise AssertionError(f"unexpected exec {argv}")
+
+    def with_exec_timeout(self, seconds: int) -> FakeIncus:
+        self.events.append(("bound", seconds))
+        return self
 
     def exec_with_input(self, name: str, argv: list[str], text: str, **kw: object) -> str:
         directory, file_name = argv[-3], argv[-2]
@@ -207,3 +213,155 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     lines = (root / JOURNAL_FILE).read_text().splitlines()
     assert [json.loads(line)["manifest_id"] for line in lines] == ["a-spawn", "b-stop"]
     assert {json.loads(line)["container_key"] for line in lines} == {"uuid-proj-orch"}
+
+
+DONE_SHA = "d" * 40
+IMPORT_SHA = "e" * 40
+IMPORT_REF = "refs/jailbee/from/c1/c1-branch"
+
+
+def _tick(world: dict[str, Any], memory: broker.BrokerMemory, seconds: int = 0) -> None:
+    broker.tick(
+        world["incus"],
+        root=world["root"],
+        journal=Journal(world["root"]),
+        now=T0 + timedelta(seconds=seconds),
+        memory=memory,
+    )
+
+
+def _statuses(incus: FakeIncus, name: str) -> list[tuple[str, str, str]]:
+    return [
+        (m["ref"], m["state"], m["detail"]) for _, m in incus.inbox(name) if m["type"] == "status"
+    ]
+
+
+def _messages(incus: FakeIncus, name: str) -> list[dict[str, Any]]:
+    return [m for _, m in incus.inbox(name) if m["type"] == "message"]
+
+
+def test_orchestrator_message_reaches_a_running_child(world: dict[str, Any]) -> None:
+    incus: FakeIncus = world["incus"]
+    _manifest(
+        incus,
+        "proj-orch",
+        {"version": 1, "id": "m-1", "type": "message", "to": "c1", "body": "look at X"},
+    )
+    _tick(world, broker.BrokerMemory())
+    [msg] = _messages(incus, "proj-c1")
+    assert (msg["from"], msg["body"], msg["kind"]) == ("orch", "look at X", "note")
+    assert _statuses(incus, "proj-orch") == [("m-1", "done", "delivered to c1")]
+
+
+def test_orchestrator_message_to_a_stopped_child_parks_then_flushes_on_start(
+    world: dict[str, Any],
+) -> None:
+    root: Path = world["root"]
+    incus: FakeIncus = world["incus"]
+    memory = broker.BrokerMemory()
+    incus.set_running("proj-c1", False)
+    _manifest(
+        incus,
+        "proj-orch",
+        {"version": 1, "id": "m-1", "type": "message", "to": "c1", "body": "later"},
+    )
+    _tick(world, memory)
+    assert _messages(incus, "proj-c1") == []
+    assert len(list(pending_dir(root, "proj-c1").iterdir())) == 1
+    assert _statuses(incus, "proj-orch")[0][1] == "queued"
+
+    incus.set_running("proj-c1", True)
+    _tick(world, memory, 5)
+    [msg] = _messages(incus, "proj-c1")
+    assert msg["body"] == "later"
+    assert not any(pending_dir(root, "proj-c1").iterdir())
+
+
+@pytest.fixture
+def git_done(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """The git side of a child's `done`: clean tree on branch c1-branch at DONE_SHA."""
+    from jailbee import lifecycle, sync
+
+    monkeypatch.setattr(lifecycle, "container_repo_dir", lambda cfg, incus, full: "/repo")
+    monkeypatch.setattr(sync, "_container_status_dirty", lambda *a, **k: False)
+    monkeypatch.setattr(sync, "_container_current_branch", lambda *a, **k: "c1-branch")
+    fetch = MagicMock(
+        return_value=FetchResult(
+            branch="c1-branch", old_oid=None, new_oid=DONE_SHA, base_oid=None, commits_added=1
+        )
+    )
+    monkeypatch.setattr(sync, "fetch_from_container", fetch)
+    return fetch
+
+
+def _done_manifest(incus: FakeIncus) -> None:
+    _manifest(
+        incus,
+        "proj-c1",
+        {"version": 1, "id": "d-1", "type": "message", "kind": "done", "body": "finished"},
+    )
+
+
+def test_child_done_while_orchestrator_runs(world: dict[str, Any], git_done: MagicMock) -> None:
+    incus: FakeIncus = world["incus"]
+    _done_manifest(incus)
+    _tick(world, broker.BrokerMemory())
+    config = incus.containers["proj-c1"]["config"]
+    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_DONE)
+    [msg] = _messages(incus, "proj-orch")
+    assert (msg["from"], msg["kind"], msg["body"]) == ("c1", "done", "finished")
+    assert _statuses(incus, "proj-c1") == [
+        ("d-1", "done", f"done reported to orch at {DONE_SHA[:12]}")
+    ]
+    assert ("bound", actions.CHILD_EXEC_TIMEOUT_S) in incus.events
+    assert git_done.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S
+
+
+def test_child_done_while_orchestrator_is_stopped(
+    world: dict[str, Any], git_done: MagicMock
+) -> None:
+    root: Path = world["root"]
+    incus: FakeIncus = world["incus"]
+    incus.set_running("proj-orch", False)
+    _done_manifest(incus)
+    _tick(world, broker.BrokerMemory())
+    config = incus.containers["proj-c1"]["config"]
+    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_DONE)
+    assert _messages(incus, "proj-orch") == []
+    assert len(list(pending_dir(root, "proj-orch").iterdir())) == 1
+    [(ref, state, detail)] = _statuses(incus, "proj-c1")
+    assert (ref, state) == ("d-1", "queued")
+    assert DONE_SHA[:12] in detail
+
+
+def test_orchestrator_import_records_and_reports_the_ref(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee import sync
+
+    incus: FakeIncus = world["incus"]
+    push = PushResult(
+        source="c1-branch",
+        source_ref="refs/jailbee/c1/c1-branch",
+        container_ref=IMPORT_REF,
+        old_oid=None,
+        new_oid=IMPORT_SHA,
+    )
+    merge = MagicMock(
+        return_value=MergeInContainerResult(
+            push=push, container_branch="main", fast_forward_only=False, head_oid="f" * 40
+        )
+    )
+    monkeypatch.setattr(sync, "merge_container_into_container", merge)
+    _manifest(incus, "proj-orch", {"version": 1, "id": "i-1", "type": "import", "child": "c1"})
+    _tick(world, broker.BrokerMemory())
+    config = incus.containers["proj-c1"]["config"]
+    assert (config[labels.LAST_IMPORT], config[labels.STATE]) == (
+        IMPORT_SHA,
+        labels.STATE_IMPORTED,
+    )
+    [(ref, state, detail)] = _statuses(incus, "proj-orch")
+    assert (ref, state) == ("i-1", "done")
+    assert IMPORT_REF in detail
+    assert merge.call_args.kwargs["plain"] is True
+    assert merge.call_args.kwargs["ff_local_branch"] is False
