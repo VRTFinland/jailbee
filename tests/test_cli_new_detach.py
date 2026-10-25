@@ -53,7 +53,7 @@ def _setup_new(tmp_path: Path, mocker):
     mocker.patch("jailbee.db.get_engine", return_value=memory_engine())
     mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
     mocker.patch("jailbee.setup_command.consume_hint", return_value=[])
-    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
     mocker.patch("jailbee.cli._finalize_new")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
     return cfg
@@ -135,7 +135,7 @@ def test_new_hands_the_supervisor_the_endpoint_the_blocking_stages_ran_with(tmp_
     # No `ca/ca.crt` under it, which is the whole point.
     object.__setattr__(gcfg.docker_registry_mirror, "data_dir", tmp_path / "registry")
     mocker.patch("jailbee.cli._load_global", return_value=gcfg)
-    mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
+    mocker.patch("jailbee.create_flow.mirror_wanted", return_value=True)
     mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.5", 3128))
     # What the real helper would return here: it never looks at the CA.
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=("10.0.0.5", 3128))
@@ -220,7 +220,7 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat-a"))
     mocker.patch("jailbee.cli._resolve_config_path_or_none", return_value=None)
-    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
     mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.cli._clear_superseded_boot_job")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)

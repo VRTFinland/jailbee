@@ -2184,9 +2184,8 @@ def new_cmd(
     """
     from jailbee import prompting
     from jailbee.autostart import AutostartStepError
-    from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
-    from jailbee.incus import Incus, IncusError
+    from jailbee.incus import Incus
     from jailbee.lifecycle import (
         NewContainerOptions,
         derive_container_name,
@@ -2567,49 +2566,18 @@ def new_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
-    mirror_endpoint: tuple[str, int] | None = None
-    mirror_ca_path: Path | None = None
-    if mirror_wanted(cfg, gcfg):
-        from jailbee.docker_daemon import compute_mirror_endpoint
-
-        problem: str | None = None
-        try:
-            mirror_endpoint = compute_mirror_endpoint(incus, gcfg)
-        except ValueError as e:
-            problem = str(e)
-        else:
-            ca = gcfg.docker_registry_mirror.data_dir / "ca" / "ca.crt"
-            if ca.is_file():
-                mirror_ca_path = ca
-            else:
-                problem = (
-                    f"Mirror CA cert not found at {ca}. "
-                    f"Run 'jailbee registry up' and wait for the proxy to start."
-                )
-        if problem is not None:
-            # Half a mirror is not a mirror: without the CA the container
-            # cannot trust the proxy, so drop the endpoint too and treat both
-            # failures identically.
-            mirror_endpoint = None
-            if net_mode == "strict":
-                error(problem)
-                raise typer.Exit(1)
-            warn(
-                f"{problem} Continuing without it — in loose mode the mirror is "
-                f"only a pull cache. Enable it later with "
-                f"'jailbee registry up && jailbee apply'."
-            )
-
-    from jailbee import litellm
+    from jailbee import create_flow
 
     try:
-        litellm_payload = litellm.container_sync_payload(incus, gcfg, view=cfg.litellm_view())
-    except IncusError as e:
-        warn(f"Could not resolve LiteLLM settings: {e}; run `jailbee apply` to retry.")
-        litellm_payload = None
-    unserved = litellm.unserved_warning(litellm_payload)
-    if unserved is not None:
-        warn(unserved)
+        extras = create_flow.host_extras(cfg, incus, gcfg, network=net_mode)
+    except create_flow.CreateError as e:
+        error(str(e))
+        raise typer.Exit(e.exit_code) from e
+    for message in extras.warnings:
+        warn(message)
+    mirror_endpoint = extras.mirror_endpoint
+    mirror_ca_path = extras.mirror_ca_path
+    litellm_payload = extras.litellm_payload
 
     if credential_group is not None and claude_group is not None:
         error(
@@ -2733,32 +2701,11 @@ def new_cmd(
             raise typer.Exit(1) from e
         _record_upgrade_action(cfg, "base_build")
 
-    # A scratch directory has run neither `jb init` nor `jb apply`, so its
-    # profile set does not exist yet and `new_container`'s `profile_assign`
-    # would fail. `run_apply` and not `init_command`: the latter refuses when
-    # profiles already exist, and a second definition of what a profile set
-    # contains is exactly what must not exist. Unattended and unprompted —
-    # unlike the image build this is seconds and needs no network.
-    if cfg.is_synthetic():
-        from jailbee.apply import run_apply
-        from jailbee.profiles import profile_names
-
-        names = profile_names(cfg)
-        wanted = (names.base, names.binds, names.net_strict, names.net_loose)
-        if any(not incus.profile_exists(p) for p in wanted):
-            info(f"→ First container in {cfg.repo_root}: creating its profiles...")
-            # no_restart: this repo has no containers yet, so there is nothing
-            # a restart could apply to. `run_apply` re-registers the repo and
-            # refreshes the egress pool itself (apply.py:165-173); the
-            # `register_repo`/`refresh_pool` call further below runs again
-            # regardless — both are idempotent, and skipping it here would
-            # change behaviour for configured repos, which this block must not.
-            run_apply(cfg, incus, gcfg, assume_yes=True, no_restart=True)
-            # Same reasoning as `init`'s call: this writes what `apply`
-            # writes, so it satisfies an `apply` upgrade note just as `apply`
-            # does. Without it the directory is told, for the rest of its
-            # life, to run the `apply` that just ran.
-            _record_upgrade_action(cfg, "apply")
+    # A scratch directory's first container creates its profile set; see
+    # `create_flow.ensure_profiles`.
+    create_flow.ensure_profiles(
+        cfg, incus, gcfg, record_apply=lambda c: _record_upgrade_action(c, "apply")
+    )
 
     # Deferred to here (see `_advise_setup` above): everything the advice can
     # ask for — a rebuilt base image, an applied profile set — has now had its
@@ -2767,35 +2714,16 @@ def new_cmd(
     _advise_ssh_restart()
     _advise_update()
 
-    # Register this repo with the refresh timer and resolve the pool
-    # *before* creating the container so that the new container's
-    # first /etc/hosts pin (done inside new_container) sees fresh IPs.
-    from datetime import UTC, datetime
-
-    from sqlmodel import Session
-
-    from jailbee import egress_pool
-    from jailbee.db import get_engine
-
-    with Session(get_engine()) as session:
-        egress_pool.register_repo(session, cfg)
-        refresh_result = egress_pool.refresh_pool(
-            cfg,
-            gcfg,
-            incus,
-            session,
-            now=datetime.now(UTC),
+    # Register the repo, resolve its egress pool and preflight the cache
+    # pools before either path creates anything; see
+    # `create_flow.register_and_preflight`.
+    try:
+        create_flow.register_and_preflight(
+            cfg, incus, gcfg, interaction=create_flow.Interaction.terminal()
         )
-    if refresh_result.status == "dns_error":
-        error(f"Initial egress pool resolution failed: {refresh_result.error}")
-        raise typer.Exit(1)
-    if refresh_result.status == "partial":
-        warn(f"Some egress hostnames failed to resolve: {refresh_result.error}")
-
-    # Before either path creates anything: a polluted cache pool root would
-    # otherwise stop `new_container` half-way, with the container already
-    # created and its GUI sockets and port forwards attached.
-    _preflight_cache_pools(cfg)
+    except create_flow.CreateError as e:
+        error(str(e))
+        raise typer.Exit(e.exit_code) from e
 
     if run_in_background:
         from datetime import datetime as _dt
@@ -3088,20 +3016,13 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     also why this runs in the *foreground* command, before the background
     fork — same reasoning as `_preflight_background_new`.
     """
-    from jailbee import prompting
-    from jailbee.pool import preflight_pools
-    from jailbee.tui import default_confirm
+    from jailbee import create_flow
 
-    confirm = default_confirm if prompting.is_interactive() else None
-    unresolved = preflight_pools(cfg, confirm=confirm)
-    if not unresolved:
-        return
-    error(
-        f"Cache pool {', '.join(unresolved)} cannot be used until its root holds "
-        "only the pool layout. Re-run in a terminal to be offered a move, or "
-        "move the loose entries out of the pool root yourself. Nothing was created."
-    )
-    raise typer.Exit(2)
+    try:
+        create_flow.preflight_cache_pools(cfg, confirm=create_flow.Interaction.terminal().confirm)
+    except create_flow.CreateError as e:
+        error(str(e))
+        raise typer.Exit(e.exit_code) from e
 
 
 def _preflight_background_new(
