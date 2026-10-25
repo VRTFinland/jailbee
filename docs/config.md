@@ -2449,7 +2449,7 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
 **AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
-limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a red **●** — the same flag as LOOSE — and the time remaining until the last attached mount detaches, e.g. `● 12m`, or `● ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
+limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a red **●** — the same flag as LOOSE — and the time remaining until the last attached mount detaches, e.g. `● 12m`, or `● ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`), orchestration role **ROLE** (`orch`, `child`, or a red `child!` when the orchestrator is not running), **CHILDREN** and **INBOX**. **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
@@ -2457,7 +2457,7 @@ for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
-the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
+the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed, and ROLE, CHILDREN and INBOX added after OUTBOX — with one notice; turning any of them back on afterwards sticks.
 
 Eleven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is

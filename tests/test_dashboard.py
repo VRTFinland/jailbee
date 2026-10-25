@@ -6784,14 +6784,33 @@ def test_seed_view_state_migrates_a_pre_version_set_once_with_one_notice(fronten
     first: list[str] = []
     state = dcolumns.seed_view_state(engine, frontend, on_migration=first.append)
 
-    assert state.columns == ("name", "mem_used", "mem_pct", "outbox", "pr")
+    assert state.columns == (
+        "name",
+        "mem_used",
+        "mem_pct",
+        "outbox",
+        "role",
+        "children",
+        "inbox",
+        "pr",
+    )
     assert len(first) == 1
     assert "mem → mem_used + mem_pct" in first[0]
     assert "issues → outbox" in first[0]
     assert "doing removed" in first[0]
+    assert "outbox → outbox + role + children + inbox" in first[0]
     row = load_view_state(engine, frontend)
-    assert row.columns == ("name", "mem_used", "mem_pct", "outbox", "pr")
-    assert row.columns_version == dcolumns.COLUMNS_VERSION == 2
+    assert row.columns == (
+        "name",
+        "mem_used",
+        "mem_pct",
+        "outbox",
+        "role",
+        "children",
+        "inbox",
+        "pr",
+    )
+    assert row.columns_version == dcolumns.COLUMNS_VERSION == 3
     assert row.folded == frozenset({"p"})
 
     second: list[str] = []
@@ -6838,7 +6857,7 @@ def test_seed_view_state_bumps_a_set_without_retired_names_silently():
 
     assert state.columns == ("name", "state")
     assert shown == []
-    assert load_view_state(engine, FRONTEND_TUI).columns_version == 2
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == 3
 
 
 def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
@@ -6857,7 +6876,7 @@ def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
 
     assert shown == []
     assert state.columns == ("name", "mem_used", "mem_pct", "mem")
-    assert load_view_state(engine, FRONTEND_QT).columns_version == 2
+    assert load_view_state(engine, FRONTEND_QT).columns_version == 3
 
 
 def test_seed_view_state_first_launch_seed_starts_at_the_current_version(mocker):
@@ -6896,7 +6915,13 @@ def test_seed_view_state_does_not_duplicate_an_existing_replacement():
     engine = _view_engine()
     save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "outbox", "issues")))
 
-    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("name", "outbox")
+    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == (
+        "name",
+        "outbox",
+        "role",
+        "children",
+        "inbox",
+    )
 
 
 def test_seed_view_state_keeps_a_non_canonical_stored_order():
@@ -7318,3 +7343,40 @@ def test_gather_rows_memory_default(tmp_path, mocker, make_cfg):
     mocker.patch.object(dmodel, "list_containers", return_value=[])
     groups = dmodel.gather_rows(mocker.MagicMock(), [tmp_path / "alpha"], with_git=False)
     assert groups[0].memory_default == "8GiB"
+
+
+def test_v2_view_gains_orchestration_columns_once():
+    cols, applied = dcolumns.migrate_column_set(("name", "state", "outbox", "group"), 2)
+    assert cols == ("name", "state", "outbox", "role", "children", "inbox", "group")
+    assert applied
+    assert dcolumns.migrate_column_set(cols, 3) == (cols, [])
+
+
+def test_v2_view_that_hid_outbox_stays_without_orchestration_columns():
+    cols, applied = dcolumns.migrate_column_set(("name", "state", "group"), 2)
+    assert cols == ("name", "state", "group") and applied == []
+
+
+def test_user_who_hid_orchestration_columns_keeps_them_hidden():
+    cols, applied = dcolumns.migrate_column_set(("name", "outbox"), dcolumns.COLUMNS_VERSION)
+    assert cols == ("name", "outbox") and applied == []
+
+
+def test_default_columns_include_orchestration():
+    assert {"role", "children", "inbox"} <= set(dcolumns.default_columns())
+
+
+def test_role_cell_styling():
+    from jailbee.dashboard import format as dfmt
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "role")
+    from tests.test_lifecycle import _orch_ci
+
+    child = _orch_ci(as_child=True, orchestrator_running=False)
+    assert dfmt.dashboard_cell(spec, child, now) == "[red]child![/red]"
+    ok = _orch_ci(as_child=True, orchestrator_running=True)
+    assert dfmt.dashboard_cell(spec, ok, now) == "child"
+    assert dfmt.dashboard_cell(spec, _orch_ci(as_orch=True), now) == "[bold]orch[/bold]"
+    assert dfmt.dashboard_cell(spec, _orch_ci(), now) == ""

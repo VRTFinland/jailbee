@@ -126,6 +126,8 @@ def help_lines() -> list[str]:
         " [bold cyan]<15m[/bold cyan]; names and times in the details panel.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle;",
         "  age: latest event; bright ○: activity <30 min ago). OUTBOX ✉N: staged PR/issue actions.",
+        "ROLE: orch orchestrator, child (child! orchestrator not running);"
+        " CHILDREN running/limit +queued; INBOX ✉N unread.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
