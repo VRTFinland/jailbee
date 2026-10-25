@@ -35,7 +35,7 @@ from jailbee.tmux import TmuxStepError
 from jailbee.tui import info, success, warn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
     from types import FrameType
 
     from jailbee.background import AutostartJob
@@ -294,7 +294,12 @@ def _agent_command(cfg: Config, name: str, command: str) -> str:
     return claude_jb_command(command) or command
 
 
-def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
+def agent_autostart_steps(
+    cfg: Config,
+    *,
+    initial_prompt: bool = False,
+    extra_env: Mapping[str, str] | None = None,
+) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
 
     Appended (not prepended) to on_start so user steps finish first, and
@@ -328,20 +333,51 @@ def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
 
     With `litellm.autostart` on, the Claude step runs `claude-jb` — see
     `_agent_command`.
-    """
-    from jailbee.agents import enabled_agent_specs
 
-    return [
-        AutostartStep(
-            name=spec.name,
-            run=f"exec {_agent_command(cfg, spec.name, spec.command)}",
-            background=True,
-            continue_on_error=True,
-            env=dict(spec.env),
+    With ``initial_prompt=True`` (a prompt file is waiting in the container, see
+    `initial_prompt`), the primary agent (`agents.primary_agent`) is launched
+    even when its own `autostart` is off, through `initial_prompt.prompted_run`:
+    the step consumes the prompt file once and appends the agent's `prompt_args`.
+    The step's `run` never carries the prompt text, and the command keeps its
+    configured flags. Other agents launch as usual. A primary without
+    `prompt_args` gets its plain command.
+
+    ``extra_env`` is put on every agent step beneath the agent's own `env`, so
+    an `agents.<name>.env` key wins over the same key here.
+    """
+    from jailbee.agents import enabled_agent_specs, primary_agent
+    from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
+
+    primary = primary_agent(cfg).name if initial_prompt else None
+    steps: list[AutostartStep] = []
+    for spec in enabled_agent_specs(cfg):
+        is_primary = spec.name == primary
+        if not (spec.autostart or is_primary) or not spec.command.strip():
+            continue
+        command = _agent_command(cfg, spec.name, spec.command)
+        env = {**(extra_env or {}), **dict(spec.env)}
+        prompt_args = cfg.agents[spec.name].prompt_args if is_primary else None
+        if is_primary and prompt_args:
+            run = prompted_run(command, prompt_args)
+            env[PROMPT_ENV] = CONSUMED_PATH
+        else:
+            run = f"exec {command}"
+        steps.append(
+            AutostartStep(name=spec.name, run=run, background=True, continue_on_error=True, env=env)
         )
-        for spec in enabled_agent_specs(cfg)
-        if spec.autostart and spec.command.strip()
-    ]
+    return steps
+
+
+def _on_start_agent_steps(
+    cfg: Config, incus: Incus, container: str, trigger: AutostartTrigger
+) -> list[AutostartStep]:
+    """The synthetic agent steps for `trigger` (only on_start has any)."""
+    if trigger != AutostartTrigger.ON_START:
+        return []
+    from jailbee.initial_prompt import prompt_pending
+
+    pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
+    return agent_autostart_steps(cfg, initial_prompt=pending)
 
 
 def run_autostart(
@@ -375,7 +411,7 @@ def run_autostart(
     # it's infrastructure, not a
     # user autostart command, so it's written by ``inject_github_token``
     # independently of --no-autostart.
-    agent_steps = agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
+    agent_steps = _on_start_agent_steps(cfg, incus, container, trigger)
     plan = plan_autostart(
         cfg.autostart,
         trigger,
@@ -475,9 +511,7 @@ def run_detached(
             # whole remaining list rather than re-splitting it.
             start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
             for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
-                agent_steps = (
-                    agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []
-                )
+                agent_steps = _on_start_agent_steps(cfg, incus, spec.container_name, trigger)
                 plan = plan_autostart(
                     cfg.autostart,
                     trigger,

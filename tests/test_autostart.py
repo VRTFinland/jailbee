@@ -1052,3 +1052,127 @@ def test_litellm_autostart_keeps_the_install_check_on_claude(tmp_path):
     cfg = _with_litellm(_claude_cfg(tmp_path))
     (spec,) = [s for s in enabled_agent_specs(cfg) if s.name == "claude"]
     assert spec.install_check == "command -v claude"
+
+
+# ---------- prompted primary-agent step (`initial_prompt=True`)
+
+
+def _prompt_cfg(tmp_path, **agents):
+    from tests.conftest import make_cfg
+
+    return make_cfg(tmp_path, agents=agents)
+
+
+def test_prompted_step_for_primary_agent_keeps_flags(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
+
+    cfg = _prompt_cfg(
+        tmp_path, claude={"enabled": True, "autostart": True, "command": "claude --model x"}
+    )
+    [step] = agent_autostart_steps(cfg, initial_prompt=True)
+    assert step.run == prompted_run("claude --model x", cfg.agents["claude"].prompt_args)
+    assert "--model x" in step.run
+    assert step.env[PROMPT_ENV] == CONSUMED_PATH
+
+
+def test_unprompted_steps_unchanged(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import PROMPT_ENV
+
+    cfg = _prompt_cfg(
+        tmp_path, claude={"enabled": True, "autostart": True, "command": "claude --model x"}
+    )
+    [step] = agent_autostart_steps(cfg)
+    assert step.run == "exec claude --model x"
+    assert PROMPT_ENV not in step.env
+
+
+def test_prompt_launches_primary_even_without_autostart(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import PROMPT_ENV
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": {"enabled": True}, "codex": {"enabled": True, "autostart": True}},
+        primary_agent="claude",
+    )
+    steps = agent_autostart_steps(cfg, initial_prompt=True)
+    assert [s.name for s in steps] == ["codex", "claude"]
+    assert steps[0].run == "exec codex" and PROMPT_ENV not in steps[0].env
+    assert PROMPT_ENV in steps[1].env
+    assert [s.name for s in agent_autostart_steps(cfg)] == ["codex"]
+
+
+def test_prompt_with_claude_jb(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import prompted_run
+
+    cfg = _with_litellm(_claude_cfg(tmp_path, "claude --model x"))
+    [step] = agent_autostart_steps(cfg, initial_prompt=True)
+    assert step.run == prompted_run("claude-jb --model x", cfg.agents["claude"].prompt_args)
+
+
+def test_prompted_step_run_never_contains_prompt_text(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import PROMPT_ENV
+
+    cfg = _claude_cfg(tmp_path)
+    [step] = agent_autostart_steps(cfg, initial_prompt=True)
+    assert "initial-prompt" in step.run  # only the file path is referenced
+    assert PROMPT_ENV in step.run  # the text is read from the file at launch
+
+
+def test_extra_env_reaches_every_agent_step(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+
+    cfg = _prompt_cfg(
+        tmp_path,
+        claude={"enabled": True, "autostart": True},
+        codex={"enabled": True, "autostart": True},
+    )
+    steps = agent_autostart_steps(cfg, extra_env={"JAILBEE_ROLE": "child"})
+    assert len(steps) == 2
+    assert all(s.env["JAILBEE_ROLE"] == "child" for s in steps)
+
+
+def test_extra_env_loses_to_agent_env(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+
+    cfg = _prompt_cfg(
+        tmp_path, codex={"enabled": True, "autostart": True, "env": {"JAILBEE_ROLE": "own"}}
+    )
+    [step] = agent_autostart_steps(cfg, extra_env={"JAILBEE_ROLE": "child", "OTHER": "1"})
+    assert step.env["JAILBEE_ROLE"] == "own"
+    assert step.env["OTHER"] == "1"
+
+
+def test_primary_without_prompt_args_gets_plain_command(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import PROMPT_ENV
+
+    cfg = _prompt_cfg(
+        tmp_path,
+        aider={"enabled": True, "autostart": True, "command": "aider"},
+    )
+    [step] = agent_autostart_steps(cfg, initial_prompt=True)
+    assert step.run == "exec aider"
+    assert PROMPT_ENV not in step.env
+
+
+def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
+    from jailbee.autostart import AutostartTrigger, run_autostart
+
+    cfg = _claude_cfg(tmp_path)
+    incus = MagicMock()
+    pending = mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    steps.assert_called_once_with(cfg, initial_prompt=True)
+    pending.assert_called_once()
+    pending.reset_mock()
+    steps.reset_mock()
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_CREATE, "/repo")
+    pending.assert_not_called()
+    steps.assert_not_called()

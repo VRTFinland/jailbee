@@ -1232,3 +1232,18 @@ def test_new_worker_writes_progress_beside_its_own_log(tmp_path, mocker, make_cf
     assert result.exit_code == 0, result.output
     entries = autostart_progress.read(log_path.with_suffix(".progress.json"))
     assert [(e.stage, e.state) for e in entries] == [("deps", "start"), ("deps", "ok")]
+
+
+def test_run_detached_passes_prompt_pending_for_on_start(tmp_path, mocker, make_cfg):
+    from jailbee import autostart as autostart_mod
+
+    mocker.patch("jailbee.autostart.run_stages")
+    pending = mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+
+    autostart_mod.run_detached(cfg, mocker.MagicMock(), _spec(tmp_path, block))
+
+    steps.assert_called_once_with(cfg, initial_prompt=True)
+    pending.assert_called_once()
