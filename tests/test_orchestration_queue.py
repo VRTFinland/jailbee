@@ -365,3 +365,66 @@ def test_queued_restart_refused_when_restart_revoked(
     ((_, out),) = actions.drain_queue(rig.ctx())
     assert out == Outcome("refused", "operation `restart` is not in this container's grant")
     boot.assert_not_called()
+
+
+def test_spawn_refused_while_same_child_is_being_created(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """A second spawn for the branch before the worker's `incus init` must not start twice."""
+    rig = Rig(tmp_path, limit=3)
+    seams["jobs"].return_value = {_full(rig, "fix/1")}
+    out = actions.handle_spawn(rig.ctx(), _m("fix/1", mid="a2"))
+    assert out == Outcome("refused", "container `fix-1` is already being created")
+    seams["start"].assert_not_called()
+
+
+def test_queued_spawn_refused_while_same_child_is_being_created(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, limit=3)
+    _queue(rig, ["fix/1"], kind="new")
+    seams["jobs"].return_value = {_full(rig, "fix/1")}
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out == Outcome("refused", "container `fix-1` is already being created")
+    seams["start"].assert_not_called()
+
+
+def test_restart_refused_while_child_is_being_created(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.protocol import RestartManifest
+
+    rig = Rig(tmp_path, limit=3)
+    full = _full(rig, "fix/1")
+    rig.children = [
+        Node(full=full, short="fix-1", running=False, config={labels.SPAWNED_BY: "proj-orch"})
+    ]
+    seams["jobs"].return_value = {full}
+    boot = MagicMock()
+    monkeypatch.setattr(actions.lifecycle, "boot_container", boot)
+    m = RestartManifest(version=1, id="r1", type="restart", child="fix-1", prompt="again")
+    out = actions.handle_restart(rig.ctx(), m)
+    assert out == Outcome("refused", "child `fix-1` is still being created")
+    _queue_rights(rig, kind="restart")
+    ((_, queued_out),) = actions.drain_queue(rig.ctx())
+    assert queued_out == Outcome("refused", "child `fix-1` is still being created")
+    boot.assert_not_called()
+
+
+def test_drain_persists_each_pop_before_starting(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """At most once: a crash inside the starter must not start the request again."""
+    rig = Rig(tmp_path, limit=3)
+    _queue(rig, ["fix/1", "fix/2"])
+    seen: list[list[str]] = []
+
+    def start(ctx: object, plan: object, *, fork: object) -> Outcome:
+        seen.append([r.manifest_id for r in load_queue(tmp_path).get("proj-orch", [])])
+        raise RuntimeError("broker crashed mid-start")
+
+    seams["start"].side_effect = start
+    with pytest.raises(RuntimeError):
+        actions.drain_queue(rig.ctx())
+    assert seen == [["m1"]]
+    assert [r.manifest_id for r in load_queue(tmp_path)["proj-orch"]] == ["m1"]

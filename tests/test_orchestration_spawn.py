@@ -18,6 +18,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _no_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+
+
 def _ctx(
     tmp_path: Path,
     grant: dict[str, object] | None = None,
@@ -271,3 +276,14 @@ def test_child_options_never_inherit_loose_repo_default(tmp_path: Path) -> None:
     )
     o = actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=None)
     assert o.network == "strict"
+
+
+def test_plan_spawn_refuses_a_child_being_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _ctx(tmp_path)
+    full = lifecycle.derive_container_name(ctx.cfg, "fix/1")
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: {full})
+    out = plan_spawn(ctx, _m("fix/1"), queued_names=())
+    assert isinstance(out, Outcome)
+    assert out.detail == "container `fix-1` is already being created"

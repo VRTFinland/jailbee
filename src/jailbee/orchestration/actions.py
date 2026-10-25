@@ -187,6 +187,8 @@ def plan_spawn(
     short = lifecycle.short_name(ctx.cfg, full)
     if full in ctx.nodes or ctx.incus.exists(full):
         return refused(f"container `{short}` already exists")
+    if full in live_create_jobs(ctx.cfg.container_prefix):
+        return refused(f"container `{short}` is already being created")
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
@@ -370,6 +372,8 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
         return refused(f"container `{short}` already exists")
+    if req.child_full in live_create_jobs(ctx.cfg.container_prefix):
+        return refused(f"container `{short}` is already being created")
     plan = SpawnPlan(
         child_full=req.child_full,
         kind="fork" if req.kind == "fork" else "new",
@@ -402,6 +406,8 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"`{short}` is not a child of this orchestrator")
     if node.running:
         return refused(f"child `{short}` is running; stop it first")
+    if node.full in live_create_jobs(ctx.cfg.container_prefix):
+        return refused(f"child `{short}` is still being created")
     return _boot(ctx, node, req.prompt, started=True)
 
 
@@ -423,6 +429,9 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     results: list[tuple[QueuedRequest, Outcome]] = []
     while queued and free > 0:
         req = queued.pop(0)
+        # At most once: the pop is on disk before anything starts, so a crash
+        # inside the starter never starts the same request again.
+        _store(ctx, queued)
         starter = STARTERS.get(req.kind)
         outcome = (
             starter(ctx, req) if starter else refused(f"unknown queued request kind `{req.kind}`")
@@ -430,8 +439,6 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
         if outcome.state == "started":
             free -= 1
         results.append((req, outcome))
-    if results:
-        _store(ctx, queued)
     return results
 
 
@@ -472,6 +479,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return child
     if child.running:
         return refused(f"child `{child.short}` is running; stop it first")
+    if child.full in live_create_jobs(ctx.cfg.container_prefix):
+        return refused(f"child `{child.short}` is still being created")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
