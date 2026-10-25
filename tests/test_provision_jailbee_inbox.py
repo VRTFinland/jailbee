@@ -700,3 +700,189 @@ def test_read_neutralises_terminal_control_characters(script, base, tmp_path):
     shown = json.loads(r.stdout)
     assert shown["id"] == "h-0000aaaa"
     assert "ä" in shown["body"]
+
+
+# --- runners and runner options ------------------------------------------
+
+
+def _litellm_config(tmp_path: Path, profiles: dict[str, dict[str, str]] | None = None) -> Path:
+    profiles = profiles or {
+        "default": {"sonnet": "jb.default.standard"},
+        "grok": {"haiku": "jb.grok.cheap", "sonnet": "jb.grok.standard"},
+    }
+    path = tmp_path / "litellm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "default_profile": "grok",
+                "profiles": {n: {"tiers": t} for n, t in profiles.items()},
+            }
+        )
+    )
+    return path
+
+
+def _runners_env(
+    base: Path, tmp_path: Path, *, claude: bool = True, config: Path | None = None
+) -> dict[str, str]:
+    env = env_for(base, tmp_path)
+    if claude:
+        fake = tmp_path / "nobin" / "claude"
+        fake.write_text("#!/bin/bash\nexit 0\n")
+        fake.chmod(0o755)
+    env["JAILBEE_DEFAULT_AGENT"] = "claude-jb"
+    env["JAILBEE_LITELLM_CONFIG"] = str(config or tmp_path / "absent.json")
+    return env
+
+
+def test_runners_lists_default_claude_and_profiles(script, base, tmp_path):
+    env = _runners_env(base, tmp_path, config=_litellm_config(tmp_path))
+    r = run(script, "runners", env=env)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert lines[0] == "default: omit runner (claude-jb)"
+    assert "default: omit runner (claude-jb)" in r.stdout
+    assert "claude                    " in r.stdout
+    assert any(x.startswith("claude  ") and "models: fable opus sonnet haiku" in x for x in lines)
+    assert any(
+        x.startswith("claude-jb -P grok (default)")
+        and "haiku=jb.grok.cheap sonnet=jb.grok.standard" in x
+        for x in lines
+    )
+    assert "claude-jb -P default " in r.stdout
+    assert "sonnet=jb.grok.standard" in r.stdout
+    # one aligned models column
+    assert len({x.index("models:") for x in lines[1:]}) == 1
+
+
+def test_runners_json_shape(script, base, tmp_path):
+    env = _runners_env(base, tmp_path, config=_litellm_config(tmp_path))
+    r = run(script, "runners", "--json", env=env)
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data[0] == {"runner": None, "default": True, "agent": "claude-jb"}
+    assert data[1] == {
+        "runner": {"agent": "claude"},
+        "models": ["fable", "opus", "sonnet", "haiku"],
+    }
+    grok = next(e for e in data if (e["runner"] or {}).get("profile") == "grok")
+    assert grok == {
+        "runner": {"agent": "claude-jb", "profile": "grok"},
+        "models": ["haiku", "sonnet"],
+        "aliases": {"haiku": "jb.grok.cheap", "sonnet": "jb.grok.standard"},
+        "default_profile": True,
+    }
+    other = next(e for e in data if (e["runner"] or {}).get("profile") == "default")
+    assert other["default_profile"] is False
+
+
+def test_runners_without_litellm_file_lists_only_claude(script, base, tmp_path):
+    env = _runners_env(base, tmp_path)
+    r = run(script, "runners", env=env)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert len(lines) == 2 and lines[1].startswith("claude ")
+    assert "claude-jb" not in lines[1:][0] and "claude-jb" in lines[0]
+    assert len(json.loads(run(script, "runners", "--json", env=env).stdout)) == 2
+
+
+def test_runners_without_claude_binary_lists_only_default(script, base, tmp_path):
+    env = _runners_env(base, tmp_path, claude=False, config=_litellm_config(tmp_path))
+    r = run(script, "runners", env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "default: omit runner (claude-jb)\n"
+    assert json.loads(run(script, "runners", "--json", env=env).stdout) == [
+        {"runner": None, "default": True, "agent": "claude-jb"}
+    ]
+
+
+def test_runners_neutralises_control_characters_in_profile_names(script, base, tmp_path):
+    cfg = _litellm_config(tmp_path, {"p\x1b]0;x\x07\u009bq": {"sonnet": "a"}})
+    r = run(script, "runners", env=_runners_env(base, tmp_path, config=cfg))
+    assert r.returncode == 0, r.stderr
+    assert _raw_controls(r.stdout.replace("\n", "")) == []
+
+
+def test_runners_rejects_arguments(script, base, tmp_path):
+    assert run(script, "runners", "--bogus", env=_runners_env(base, tmp_path)).returncode == 2
+
+
+def test_send_spawn_with_runner_writes_runner(script, base, tmp_path):
+    from jailbee.orchestration.protocol import parse_manifest
+
+    r = send(
+        script,
+        base,
+        tmp_path,
+        "spawn",
+        "--branch",
+        "b",
+        "--agent",
+        "claude-jb",
+        "--profile",
+        "grok",
+        "--model",
+        "sonnet",
+        "--text",
+        "go",
+    )
+    mid, m = manifest_of(base, r)
+    assert m["runner"] == {"agent": "claude-jb", "profile": "grok", "model": "sonnet"}
+    files = {p.name: p.read_text() for p in (base / "outbox").glob("*.md")}
+    parsed = parse_manifest(f"{mid}.json", (base / "outbox" / f"{mid}.json").read_text(), files)
+    assert parsed.runner is not None and parsed.runner.profile == "grok"  # type: ignore[union-attr]
+    _, m = manifest_of(
+        base,
+        send(script, base, tmp_path, "spawn", "--branch", "b", "--agent", "claude", "--text", "g"),
+    )
+    assert m["runner"] == {"agent": "claude"}
+    _, m = manifest_of(base, send(script, base, tmp_path, "spawn", "--branch", "b", "--text", "g"))
+    assert "runner" not in m
+
+
+def test_send_restart_runner_and_default_runner(script, base, tmp_path):
+    _, m = manifest_of(
+        base,
+        send(
+            script, base, tmp_path, "restart", "--child", "c", "--agent", "claude",
+            "--model", "haiku", "--text", "again",
+        ),
+    )  # fmt: skip
+    assert m["runner"] == {"agent": "claude", "model": "haiku"}
+    _, m = manifest_of(
+        base,
+        send(script, base, tmp_path, "restart", "--child", "c", "--text", "again"),
+    )
+    assert "runner" not in m
+
+
+def test_send_restart_default_runner_writes_null(script, base, tmp_path):
+    from jailbee.orchestration.protocol import parse_manifest, restart_sets_runner
+
+    r = send(script, base, tmp_path, "restart", "--child", "c", "--default-runner", "--text", "x")
+    mid, m = manifest_of(base, r)
+    assert "runner" in m and m["runner"] is None
+    files = {p.name: p.read_text() for p in (base / "outbox").glob("*.md")}
+    parsed = parse_manifest(f"{mid}.json", (base / "outbox" / f"{mid}.json").read_text(), files)
+    assert restart_sets_runner(parsed)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["spawn", "--branch", "b", "--agent", "claude", "--profile", "grok", "--text", "p"],
+        ["spawn", "--branch", "b", "--model", "opus", "--text", "p"],
+        ["spawn", "--branch", "b", "--profile", "grok", "--text", "p"],
+        ["restart", "--child", "c", "--default-runner", "--agent", "claude", "--text", "p"],
+        ["spawn", "--branch", "b", "--default-runner", "--text", "p"],
+        ["spawn", "--branch", "b", "--agent", "codex", "--text", "p"],
+        ["spawn", "--branch", "b", "--agent", "claude", "--model", "gpt", "--text", "p"],
+        ["stop", "--child", "c", "--agent", "claude"],
+        ["message", "--text", "p", "--default-runner"],
+    ],
+)
+def test_send_runner_option_errors(script, base, tmp_path, args):
+    r = send(script, base, tmp_path, *args)
+    assert r.returncode == 2, r.stderr
+    assert r.stderr.startswith("jailbee-inbox: ")
+    assert not (base / "outbox").exists() or not list((base / "outbox").glob("*"))
