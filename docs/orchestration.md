@@ -51,7 +51,7 @@ grantable:
 ```
 
 `spawn` and `message` are implied by any grant. Defaults for fields you omit:
-2 running children, operations `spawn message import restart stop`, nothing
+4 running children, operations `spawn message import restart stop`, nothing
 grantable. `destroy` must be allowed explicitly.
 
 ```bash

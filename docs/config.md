@@ -2672,7 +2672,7 @@ orchestration:
   default_profile: worker        # applied by `jailbee new`; must name a profile
   profiles:
     worker:
-      max_running_children: 2    # 1-64, default 2
+      max_running_children: 4    # 1-64, default 4
       operations: [spawn, message, import, restart, stop]   # default; add destroy
       grantable:                 # what the holder may hand on to its children
         mounts: []               # optional_mounts names

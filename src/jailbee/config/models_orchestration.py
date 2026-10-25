@@ -10,7 +10,12 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from jailbee.egress import validate_allow_entry
-from jailbee.orchestration.grant import DEFAULT_OPERATIONS, IMPLIED_OPERATIONS, OPERATIONS
+from jailbee.orchestration.grant import (
+    DEFAULT_MAX_RUNNING_CHILDREN,
+    DEFAULT_OPERATIONS,
+    IMPLIED_OPERATIONS,
+    OPERATIONS,
+)
 
 PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
@@ -52,7 +57,10 @@ class OrchestrationProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_running_children: int = Field(
-        default=2, ge=1, le=64, description="Most children the holder may have running at once."
+        default=DEFAULT_MAX_RUNNING_CHILDREN,
+        ge=1,
+        le=64,
+        description="Most children the holder may have running at once.",
     )
     operations: list[str] = Field(
         default_factory=lambda: [str(op) for op in DEFAULT_OPERATIONS],

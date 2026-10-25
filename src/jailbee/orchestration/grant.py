@@ -16,7 +16,7 @@ Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy"]
 OPERATIONS: tuple[Operation, ...] = ("spawn", "message", "import", "restart", "stop", "destroy")
 IMPLIED_OPERATIONS = frozenset({"spawn", "message"})
 DEFAULT_OPERATIONS: tuple[Operation, ...] = ("import", "message", "restart", "spawn", "stop")
-DEFAULT_MAX_RUNNING_CHILDREN = 2
+DEFAULT_MAX_RUNNING_CHILDREN = 4
 MAX_RUNNING_CHILDREN_CEILING = 64
 
 

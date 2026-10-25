@@ -34,7 +34,7 @@ def test_label_keys_match_spec() -> None:
 def test_default_grant_label_is_the_spec_shape() -> None:
     assert json.loads(Grant().to_label()) == {
         "version": 1,
-        "max_running_children": 2,
+        "max_running_children": 4,
         "operations": ["import", "message", "restart", "spawn", "stop"],
         "grantable": {"mounts": [], "loose": False, "egress": []},
     }

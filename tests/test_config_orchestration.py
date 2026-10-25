@@ -20,7 +20,7 @@ from tests.conftest import make_cfg
 def test_profile_defaults_match_grant_defaults():
     p = OrchestrationProfile()
     assert (p.max_running_children, p.operations, p.grantable.mounts) == (
-        2,
+        4,
         ["import", "message", "restart", "spawn", "stop"],
         [],
     )
