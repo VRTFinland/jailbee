@@ -39,6 +39,7 @@ from jailbee.orchestration.protocol import (
     parse_manifest,
 )
 from jailbee.orchestration.state import load_queue, save_queue, state_root
+from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -52,6 +53,7 @@ log = logging.getLogger(__name__)
 
 ACTIVE_INTERVAL = 5.0
 IDLE_INTERVAL = 60.0
+SLEEP_SLICE = 1.0
 
 
 @dataclass
@@ -60,44 +62,80 @@ class BrokerMemory:
 
     # Orchestrator full name -> grant.json text last written into it.
     grant_written: dict[str, str] = field(default_factory=dict)
-    # Containers already reported as belonging to no registered repo.
-    unregistered_logged: set[str] = field(default_factory=set)
+    # Keys of warnings already logged, so a standing problem is logged once.
+    warned: set[str] = field(default_factory=set)
+
+    def warn_once(self, key: str, msg: str, *args: object) -> None:
+        if key not in self.warned:
+            self.warned.add(key)
+            log.warning(msg, *args)
 
 
-class StopBroker(BaseException):
-    """Raised by the SIGTERM handler to leave the loop cleanly (not caught as an error)."""
+class StopFlag:
+    """SIGTERM/SIGINT handler that only records the request; the loop polls it."""
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def __call__(self, signum: int, frame: FrameType | None) -> None:
+        self.requested = True
 
 
-def repo_configs() -> dict[str, Config]:
-    """Container prefix -> loaded `Config`, for every registered repo that loads."""
+def repo_configs(memory: BrokerMemory | None = None) -> dict[str, Config | None]:
+    """Registered container prefix -> loaded `Config`, or None when it does not load.
+
+    A failed repo keeps its prefix (as None) so its containers are never
+    attributed to a shorter registered prefix.
+    """
     from sqlmodel import Session, select
 
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
 
+    memory = memory if memory is not None else BrokerMemory()
     with Session(get_engine()) as session:
         rows = [(r.container_prefix, r.repo_root) for r in session.exec(select(RegisteredRepo))]
-    out: dict[str, Config] = {}
+    out: dict[str, Config | None] = {}
     for prefix, repo_root in rows:
         root = Path(repo_root)
+        cfg: Config | None = None
         if not root.is_dir():
-            continue
-        try:
-            cfg = load_repo_config(root)
-        except Exception as e:
-            log.warning("broker: skipping repo %s: config load failed: %s", prefix, e)
-            continue
-        out[cfg.container_prefix] = cfg
+            memory.warn_once(f"repo-gone:{prefix}", "broker: repo %s: %s is gone", prefix, root)
+        else:
+            try:
+                cfg = load_repo_config(root)
+            except Exception as e:
+                memory.warn_once(
+                    f"repo-load:{prefix}", "broker: repo %s: config load failed: %s", prefix, e
+                )
+            else:
+                if cfg.container_prefix != prefix:
+                    memory.warn_once(
+                        f"repo-prefix:{prefix}",
+                        "broker: repo %s: prefix changed to %s; run `jailbee apply`",
+                        prefix,
+                        cfg.container_prefix,
+                    )
+                    cfg = None
+        out[prefix] = cfg
     return out
 
 
-def config_for(full: str, configs: Mapping[str, Config]) -> Config | None:
-    """The config whose prefix is the longest one `full` starts with (plus `-`)."""
+def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None:
+    """The config of the longest prefix `full` starts with (plus `-`); None if it failed."""
     best: str | None = None
     for prefix in configs:
         if full.startswith(prefix + "-") and (best is None or len(prefix) > len(best)):
             best = prefix
     return None if best is None else configs[best]
+
+
+def owner_config(
+    full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
+) -> Config | None:
+    """A child resolves through its orchestrator's repo; anything else by its own name."""
+    parent = config.get(labels.SPAWNED_BY)
+    return config_for(parent or full, configs)
 
 
 def _labelled(config: Mapping[str, str]) -> bool:
@@ -132,6 +170,7 @@ def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Write the effective grant into an orchestrator when it changed since the last write."""
     grant = ctx.grant()
     if grant is None:
+        memory.grant_written.pop(ctx.sender.full, None)
         return
     text = grant.to_label() + "\n"
     if memory.grant_written.get(ctx.sender.full) == text:
@@ -140,8 +179,20 @@ def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
     memory.grant_written[ctx.sender.full] = text
 
 
-def _handle_raw(ctx: ActionContext, raw: RawManifest, journal: Journal) -> None:
+def _handle_raw(
+    ctx: ActionContext, raw: RawManifest, journal: Journal, memory: BrokerMemory
+) -> None:
     uid = ctx.cfg.container_user.uid
+    try:
+        _validate_outbox_name(raw.file_name)
+    except ValueError:
+        memory.warn_once(
+            f"bad-name:{ctx.sender.full}:{raw.file_name}",
+            "broker: %s: ignoring outbox file with an invalid name %r",
+            ctx.sender.full,
+            raw.file_name,
+        )
+        return
     body = body_file_of(raw.file_name, raw.text)
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
@@ -159,9 +210,10 @@ def _handle_raw(ctx: ActionContext, raw: RawManifest, journal: Journal) -> None:
         ref = manifest.id
         try:
             outcome = dispatch(ctx, manifest)
-        except Exception as e:
+        except Exception:
+            # The detail goes to the container; the exception text stays in the log.
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
-            outcome = refused(f"broker error: {e}")
+            outcome = refused("broker error")
     # Journal before anything else: a crash after acting must never act again.
     journal.record(ctx.sender.full, digest, ref, outcome.state if outcome else "ignored", ctx.now)
     if outcome is not None:
@@ -177,7 +229,7 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     if ctx.role() == "orchestrator":
         _sync_grant_json(ctx, memory)
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
-        _handle_raw(ctx, raw, journal)
+        _handle_raw(ctx, raw, journal, memory)
 
 
 def _settle_queue(ctx: ActionContext) -> None:
@@ -190,7 +242,9 @@ def _settle_queue(ctx: ActionContext) -> None:
         _reply(ctx, req.manifest_id, outcome)
 
 
-def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config]) -> dict[str, Node]:
+def _nodes(
+    raw: list[dict[str, object]], configs: Mapping[str, Config | None]
+) -> dict[str, Node]:
     from jailbee.lifecycle import short_name
 
     nodes: dict[str, Node] = {}
@@ -200,7 +254,7 @@ def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config]) -> dict[
             continue
         conf = entry.get("config")
         config = {str(k): str(v) for k, v in conf.items()} if isinstance(conf, dict) else {}
-        cfg = config_for(name, configs)
+        cfg = owner_config(name, config, configs)
         short = short_name(cfg, name) if cfg is not None else name
         nodes[name] = Node(
             full=name, short=short, running=entry.get("status") == "Running", config=config
@@ -227,6 +281,10 @@ def tick(
         and _labelled(e["config"])
     ]
     active = any(e.get("status") == "Running" for e in candidates)
+    # A container that is gone (or recreated later) gets grant.json written afresh.
+    present = {e.get("name") for e in raw}
+    for full in [f for f in memory.grant_written if f not in present]:
+        del memory.grant_written[full]
     queues = load_queue(root)
     if not candidates and not queues:
         return False
@@ -236,15 +294,17 @@ def tick(
     except Exception:
         log.exception("broker: global config failed to load; skipping this round")
         return True
-    configs = repo_configs()
+    configs = repo_configs(memory)
     nodes = _nodes(raw, configs)
 
     def context(node: Node) -> ActionContext | None:
-        cfg = config_for(node.full, configs)
+        cfg = owner_config(node.full, node.config, configs)
         if cfg is None:
-            if node.full not in memory.unregistered_logged:
-                log.warning("broker: %s belongs to no registered repo; skipped", node.full)
-                memory.unregistered_logged.add(node.full)
+            memory.warn_once(
+                f"no-config:{node.full}",
+                "broker: %s has no loadable registered repo config; skipped",
+                node.full,
+            )
             return None
         return ActionContext(
             cfg=cfg, gcfg=gcfg, incus=incus, root=root, sender=node, nodes=nodes, now=now
@@ -256,7 +316,14 @@ def tick(
             continue
         try:
             ctx = context(node)
-            if ctx is None or ctx.role() == "none":
+            if ctx is None:
+                continue
+            if ctx.role() == "none":
+                memory.warn_once(
+                    f"bad-grant:{node.full}",
+                    "broker: %s has an unparseable orchestration grant label; ignored",
+                    node.full,
+                )
                 continue
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
@@ -291,22 +358,33 @@ def tick(
     return active
 
 
-def _on_sigterm(signum: int, frame: FrameType | None) -> None:
-    raise StopBroker
+def _pause(seconds: float, stop: StopFlag) -> None:
+    """Sleep `seconds` in short slices, returning early once a stop is requested."""
+    deadline = time.monotonic() + seconds
+    while not stop.requested:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(SLEEP_SLICE, left))
 
 
 def run_broker(incus: Incus) -> int:
-    """Body of `jailbee _broker`: loop until SIGTERM."""
+    """Body of `jailbee _broker`: loop until SIGTERM (or SIGINT), then exit 0.
+
+    The signal handler only sets a flag, checked between rounds, so a round is
+    never interrupted between acting on a manifest and journalling it.
+    """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    previous = signal.signal(signal.SIGTERM, _on_sigterm)
+    stop = StopFlag()
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = BrokerMemory()
     try:
         root = state_root()
         journal = Journal(root)
         log.info("orchestration broker starting")
-        while True:
+        while not stop.requested:
             try:
                 active = tick(
                     incus, root=root, journal=journal, now=datetime.now(UTC), memory=memory
@@ -314,9 +392,9 @@ def run_broker(incus: Incus) -> int:
             except Exception:
                 log.exception("broker: round failed")
                 active = False
-            time.sleep(ACTIVE_INTERVAL if active else IDLE_INTERVAL)
-    except (StopBroker, KeyboardInterrupt):
+            _pause(ACTIVE_INTERVAL if active else IDLE_INTERVAL, stop)
         log.info("orchestration broker stopping")
         return 0
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)

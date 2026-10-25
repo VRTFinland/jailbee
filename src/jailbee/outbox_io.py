@@ -751,6 +751,20 @@ class JournalStore:
             return destination
 
 
+_TAR_ALL = 'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0'
+# Values arrive as positional parameters only: $2 = per-file cap + 1 (find's
+# `-size -Nc` is "fewer than N bytes"), $3 = file count, $4 = archive byte cap.
+_TAR_BOUNDED = (
+    'cd "$1" 2>/dev/null || exit 0; '
+    'find . -maxdepth 1 -type f -size "-$2c" -print0 | LC_ALL=C sort -z | head -z -n "$3" '
+    '| tar --null --no-recursion -T - -cf - | head -c "$4" | base64 -w0'
+)
+# Per member: header, a GNU long-name record for names up to 255 bytes, block
+# padding; then the end-of-archive record (one 10 KiB tar record).
+_TAR_MEMBER_OVERHEAD = 2048
+_TAR_TRAILER = 10240
+
+
 def read_text_outbox(
     incus: Incus,
     container: str,
@@ -760,21 +774,32 @@ def read_text_outbox(
     max_file_bytes: int,
     timeout: int = 15,
     warn_fn: Callable[[str], None] = warn,
+    max_files: int | None = None,
 ) -> dict[str, str]:
-    """Read regular UTF-8 files from one container directory in one round trip."""
+    """Read regular UTF-8 files from one container directory in one round trip.
+
+    With ``max_files`` the container side is bounded too: only regular
+    top-level files of at most ``max_file_bytes`` are archived, the first
+    ``max_files`` of them by name, and the archive itself is cut at a total
+    that those files can never exceed. Without it the whole directory is
+    archived and filtered on the host.
+    """
+    if max_files is None:
+        argv = ["bash", "-c", _TAR_ALL, "bash", directory]
+    else:
+        total = max_files * (max_file_bytes + _TAR_MEMBER_OVERHEAD) + _TAR_TRAILER
+        argv = [
+            "bash",
+            "-c",
+            _TAR_BOUNDED,
+            "bash",
+            directory,
+            str(max_file_bytes + 1),
+            str(max_files),
+            str(total),
+        ]
     try:
-        raw = incus.exec(
-            container,
-            [
-                "bash",
-                "-c",
-                'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0',
-                "bash",
-                directory,
-            ],
-            uid=uid,
-            timeout=timeout,
-        )
+        raw = incus.exec(container, argv, uid=uid, timeout=timeout)
     except IncusError as e:
         raise OutboxReadError(f"could not read the outbox in {container}: {e}") from e
     if not raw.strip():

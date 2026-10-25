@@ -42,6 +42,7 @@ def test_read_outbox_caps_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["directory"] == outbox.OUTBOX_DIR
     assert seen["max_file_bytes"] == outbox.MAX_FILE_BYTES
     assert seen["uid"] == 1000
+    assert seen["max_files"] == outbox.MAX_OUTBOX_FILES == 64
 
 
 def test_read_outbox_ignores_non_json(monkeypatch: pytest.MonkeyPatch) -> None:

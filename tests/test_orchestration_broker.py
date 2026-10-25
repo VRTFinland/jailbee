@@ -131,6 +131,128 @@ def test_config_for_picks_longest_prefix(tmp_path: Path) -> None:
     assert broker.config_for("other-feat", configs) is None
 
 
+def test_failed_longer_prefix_is_not_attributed_to_a_shorter_one(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.configs.return_value = {"proj": rig.cfg, "proj-x": None}
+    rig.incus.list_containers.return_value = [_orch("proj-x-orch")]
+    rig.outboxes["proj-x-orch"] = [_spawn_raw("s1")]
+    memory = broker.BrokerMemory()
+    with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
+        rig.tick(memory)
+        rig.tick(memory)
+    rig.read_outbox.assert_not_called()
+    rig.flush_pending.assert_not_called()
+    rig.write_grant.assert_not_called()
+    rig.incus.exec.assert_not_called()
+    rig.incus.exec_with_input.assert_not_called()
+    assert len([r for r in caplog.records if "proj-x-orch" in r.getMessage()]) == 1
+
+
+def test_child_resolves_through_its_orchestrators_config(rig: Rig, tmp_path: Path) -> None:
+    other = make_config(tmp_path).model_copy(update={"container_prefix": "proj-x"})
+    rig.configs.return_value = {"proj": rig.cfg, "proj-x": other}
+    rig.incus.list_containers.return_value = [_orch(), _child("proj-x-feat", of="proj-orch")]
+    msg = json.dumps({"version": 1, "id": "m1", "type": "message", "body": "hi"})
+    rig.outboxes["proj-x-feat"] = [RawManifest("m1.json", msg, {"m1.json": msg})]
+    rig.dispatch.return_value = Outcome("done", "delivered")
+    rig.tick()
+    ctx = rig.dispatch.call_args.args[0]
+    assert ctx.sender.full == "proj-x-feat"
+    assert ctx.sender.short == "x-feat"
+    assert ctx.cfg is rig.cfg
+    assert ctx.nodes["proj-x-feat"].short == "x-feat"
+
+
+def test_repo_configs_keeps_failed_prefixes_as_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from jailbee.db.models import RegisteredRepo
+
+    good, bad = tmp_path / "good", tmp_path / "bad"
+    good.mkdir()
+    bad.mkdir()
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        for prefix, root in [("proj", good), ("proj-x", bad), ("gone", tmp_path / "nope")]:
+            session.add(
+                RegisteredRepo(container_prefix=prefix, repo_root=str(root), registered_at=NOW)
+            )
+        session.commit()
+    monkeypatch.setattr("jailbee.db.get_engine", lambda: engine)
+    cfg = make_config(good).model_copy(update={"container_prefix": "proj"})
+
+    def load(root: Path) -> object:
+        if root == bad:
+            raise ValueError("broken yaml")
+        return cfg
+
+    monkeypatch.setattr(broker, "load_repo_config", load)
+    out = broker.repo_configs()
+    assert out == {"proj": cfg, "proj-x": None, "gone": None}
+    assert broker.config_for("proj-x-orch", out) is None
+    assert broker.config_for("proj-orch", out) is cfg
+    engine.dispose()
+
+
+def test_invalid_manifest_name_is_skipped_and_logged_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.incus.list_containers.return_value = [_orch()]
+    text = json.dumps({"version": 1, "id": "a", "type": "stop", "child": "kid"})
+    rig.outboxes["proj-orch"] = [RawManifest("a\\b.json", text, {"a\\b.json": text})]
+    memory = broker.BrokerMemory()
+    with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
+        rig.tick(memory)
+        rig.tick(memory)
+    rig.dispatch.assert_not_called()
+    rig.delete.assert_not_called()
+    rig.deliver.assert_not_called()
+    assert len([r for r in caplog.records if "invalid name" in r.getMessage()]) == 1
+
+
+def test_unparseable_grant_label_is_logged_once(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "{nope"})]
+    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    memory = broker.BrokerMemory()
+    with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
+        rig.tick(memory)
+        rig.tick(memory)
+    rig.read_outbox.assert_not_called()
+    hits = [r for r in caplog.records if "unparseable" in r.getMessage()]
+    assert len(hits) == 1 and "proj-orch" in hits[0].getMessage()
+
+
+def test_grant_json_rewritten_after_container_vanishes(rig: Rig) -> None:
+    memory = broker.BrokerMemory()
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    rig.incus.list_containers.return_value = []
+    rig.tick(memory)
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    assert rig.write_grant.call_count == 2
+
+
+def test_grant_json_rewritten_after_grant_becomes_ineffective(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    memory = broker.BrokerMemory()
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    with monkeypatch.context() as m:
+        m.setattr(actions.profiles, "repo_cap", lambda cfg: RepoCap(allowed=False))
+        rig.tick(memory)
+    assert "proj-orch" not in memory.grant_written
+    rig.tick(memory)
+    assert rig.write_grant.call_count == 2
+
+
 def test_tick_ignores_ordinary_containers(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_c("proj-plain"), _c("proj-other", running=False)]
     assert rig.tick() is False
@@ -235,10 +357,11 @@ def test_queued_outcome_is_sent_as_queued_status(rig: Rig) -> None:
 def test_handler_crash_is_refused_not_retried(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
-    rig.dispatch.side_effect = RuntimeError("boom")
+    rig.dispatch.side_effect = RuntimeError("secret /host/path boom")
     rig.tick()
     [(_, status)] = rig.statuses()
-    assert status.state == "refused" and "boom" in status.detail
+    # Generic detail for the container; the exception text stays in the host log.
+    assert (status.state, status.detail) == ("refused", "broker error")
     rig.delete.assert_called_once()
 
 
@@ -440,33 +563,73 @@ def test_vanished_orchestrator_queue_is_discarded(rig: Rig) -> None:
     rig.deliver.assert_not_called()
 
 
+def _sigterm() -> None:
+    handler = signal.getsignal(signal.SIGTERM)
+    assert callable(handler)
+    handler(signal.SIGTERM, None)
+
+
 def test_run_broker_backoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
     monkeypatch.setattr(broker, "tick", MagicMock(side_effect=[False, True, False]))
-    sleeps: list[float] = []
+    pauses: list[float] = []
+
+    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+        pauses.append(seconds)
+        if len(pauses) == 2:
+            _sigterm()
+
+    monkeypatch.setattr(broker, "_pause", fake_pause)
+    assert broker.run_broker(MagicMock()) == 0
+    assert pauses == [60.0, 5.0]
+
+
+def test_pause_sleeps_in_short_slices_and_stops_early(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    slept: list[float] = []
+    stop = broker.StopFlag()
 
     def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
-            raise broker.StopBroker
+        slept.append(seconds)
+        clock[0] += seconds
+        if clock[0] >= 3.0:
+            stop(signal.SIGTERM, None)
 
+    monkeypatch.setattr(broker.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(broker.time, "sleep", fake_sleep)
-    assert broker.run_broker(MagicMock()) == 0
-    assert sleeps == [60.0, 5.0]
+    broker._pause(60.0, stop)
+    assert slept == [1.0, 1.0, 1.0]  # interrupted after 3 s, not 60
+
+    slept.clear()
+    clock[0] = 0.0
+    broker._pause(2.5, broker.StopFlag())
+    assert slept == [1.0, 1.0, 0.5]
 
 
-def test_run_broker_exits_zero_on_sigterm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
-    monkeypatch.setattr(broker, "tick", MagicMock(return_value=True))
+def test_sigterm_during_dispatch_finishes_the_round_then_exits(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(broker, "state_root", lambda: rig.root)
+    pause = MagicMock()
+    monkeypatch.setattr(broker, "_pause", pause)
+    rig.incus.list_containers.return_value = [_orch()]
+    raw = _spawn_raw("s1")
+    rig.outboxes["proj-orch"] = [raw]
+
+    def act(ctx: object, manifest: object) -> Outcome:
+        _sigterm()  # arrives mid-handler
+        return Outcome("started", "ok")
+
+    rig.dispatch.side_effect = act
     before = signal.getsignal(signal.SIGTERM)
-
-    def deliver_sigterm(seconds: float) -> None:
-        handler = signal.getsignal(signal.SIGTERM)
-        assert callable(handler)
-        handler(signal.SIGTERM, None)
-
-    monkeypatch.setattr(broker.time, "sleep", deliver_sigterm)
-    assert broker.run_broker(MagicMock()) == 0
+    assert broker.run_broker(rig.incus) == 0
+    digest = manifest_digest("s1.json", raw.text, {"s1.md": "do the thing"})
+    assert Journal(rig.root).seen("proj-orch", digest)
+    rig.delete.assert_called_once()
+    [(_, status)] = rig.statuses()
+    assert status.state == "started"
+    rig.incus.list_containers.assert_called_once()  # exactly one round
+    pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
 
@@ -476,16 +639,16 @@ def test_run_broker_survives_a_failed_round(
     monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
     tick = MagicMock(side_effect=[RuntimeError("incus down"), True])
     monkeypatch.setattr(broker, "tick", tick)
-    sleeps: list[float] = []
+    pauses: list[float] = []
 
-    def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
-            raise broker.StopBroker
+    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+        pauses.append(seconds)
+        if len(pauses) == 2:
+            _sigterm()
 
-    monkeypatch.setattr(broker.time, "sleep", fake_sleep)
+    monkeypatch.setattr(broker, "_pause", fake_pause)
     assert broker.run_broker(MagicMock()) == 0
-    assert sleeps == [60.0, 5.0]
+    assert pauses == [60.0, 5.0]
     assert tick.call_count == 2
 
 

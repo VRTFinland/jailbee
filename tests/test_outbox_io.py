@@ -73,6 +73,38 @@ def test_read_text_outbox_returns_plain_utf8_files_in_one_exec(mocker):
     assert incus.exec.call_args.args[1][-1] == "/home/dev/.jailbee/issue-outbox"
 
 
+def test_read_text_outbox_default_argv_is_unchanged(mocker):
+    """The issue/PR outbox callers keep the plain whole-directory archive."""
+    incus = mocker.MagicMock()
+    incus.exec.return_value = ""
+    read_text_outbox(incus, "c", "/outbox", uid=1000, max_file_bytes=10)
+    assert incus.exec.call_args.args[1] == [
+        "bash",
+        "-c",
+        'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0',
+        "bash",
+        "/outbox",
+    ]
+
+
+def test_read_text_outbox_bounded_filters_in_the_container(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _archive({"001.json": b"{}"})
+    result = read_text_outbox(incus, "c", "/outbox", uid=1000, max_file_bytes=100, max_files=3)
+    assert result == {"001.json": "{}"}
+    argv = incus.exec.call_args.args[1]
+    script = argv[2]
+    assert argv[:2] == ["bash", "-c"]
+    assert argv[3:] == ["bash", "/outbox", "101", "3", str(3 * (100 + 2048) + 10240)]
+    # Only regular top-level files below the cap, the first N by name, a byte-capped archive.
+    assert 'find . -maxdepth 1 -type f -size "-$2c" -print0' in script
+    assert 'head -z -n "$3"' in script
+    assert "tar --null --no-recursion -T - -cf -" in script
+    assert '| head -c "$4" |' in script
+    # Values never reach the script text.
+    assert "/outbox" not in script and "101" not in script
+
+
 def test_read_text_outbox_skips_hostile_members_once(mocker):
     warn = mocker.Mock()
     incus = mocker.MagicMock(return_value=None)
