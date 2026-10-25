@@ -28,7 +28,7 @@ from jailbee.orchestration.protocol import (
     StopManifest,
     restart_sets_runner,
 )
-from jailbee.orchestration.runner import Runner, runner_problems
+from jailbee.orchestration.runner import Runner, parse_runner_label, runner_problems
 from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
 
 if TYPE_CHECKING:
@@ -481,8 +481,9 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     if node.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{short}` is still being created")
     runner = Runner.model_validate(req.runner) if req.runner is not None else None
-    if runner is not None:
-        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
+    effective = runner if req.runner_set else parse_runner_label(node.config.get(labels.RUNNER))
+    if effective is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
             return refused("; ".join(problems))
     return _boot(ctx, node, req.prompt, started=True, runner=runner, set_runner=req.runner_set)
@@ -569,8 +570,11 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     if child.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{child.short}` is still being created")
     set_runner = restart_sets_runner(m)
-    if m.runner is not None:
-        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, m.runner)
+    # A restart that names no runner keeps the child's label; that kept runner
+    # must still be launchable, so it is checked like a named one.
+    effective = m.runner if set_runner else parse_runner_label(child.config.get(labels.RUNNER))
+    if effective is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
             return refused("; ".join(problems))
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"

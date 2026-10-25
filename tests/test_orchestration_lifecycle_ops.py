@@ -388,7 +388,10 @@ def _runner_calls(rig: Rig) -> list[object]:
     ]
 
 
-def test_restart_without_runner_keeps_label(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+def test_restart_without_runner_keeps_label(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
     assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
     assert _runner_calls(rig) == []
@@ -450,3 +453,64 @@ def test_restart_runner_label_failure_is_a_refusal(
     out = actions.handle_restart(rig.ctx(), _restart_with(runner={"agent": "claude"}))
     assert out.state == "refused"
     seams["boot"].assert_not_called()
+
+
+_KEPT = '{"agent":"claude-jb","profile":"grok"}'
+
+
+def test_restart_rechecks_kept_runner_at_handle(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[object] = []
+
+    def problems(cfg: object, incus: object, gcfg: object, runner: object) -> list[str]:
+        seen.append(runner)
+        return ["profile `grok` is not served"]
+
+    monkeypatch.setattr(actions, "runner_problems", problems)
+    rig = Rig(tmp_path, limit=1, config={labels.RUNNER: _KEPT})
+    seams["jobs"].return_value = {"proj-other"}  # would queue if it passed
+    out = actions.handle_restart(rig.ctx(), _restart())
+    assert out.state == "refused"
+    assert "grok" in out.detail
+    assert [getattr(r, "profile", None) for r in seen] == ["grok"]
+    assert load_queue(tmp_path).get("proj-orch", []) == []
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+
+
+def test_restart_rechecks_kept_runner_at_dequeue(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, limit=1, config={labels.RUNNER: _KEPT})
+    seams["jobs"].return_value = {"proj-other"}
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "queued"
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: ["grok gone"])
+    seams["jobs"].return_value = set()
+    results = actions.drain_queue(rig.ctx())
+    assert [(o.state, "grok gone" in o.detail) for _, o in results] == [("refused", True)]
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+
+
+def test_restart_without_label_or_runner_is_not_checked(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    check = MagicMock(return_value=["boom"])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    rig = Rig(tmp_path, limit=2)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    check.assert_not_called()
+
+
+def test_restart_with_null_runner_does_not_check_the_old_label(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    check = MagicMock(return_value=["boom"])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    rig = Rig(tmp_path, limit=2, config={labels.RUNNER: _KEPT})
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    check.assert_not_called()
