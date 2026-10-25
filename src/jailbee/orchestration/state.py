@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 QUEUE_FILE = "queue.json"
+WATCH_FILE = "watch.json"
 _QUEUE_VERSION = 1
 
 
