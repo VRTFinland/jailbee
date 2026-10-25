@@ -206,6 +206,7 @@ append/reset behavior, still apply.
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist; `private` (dir only) names subpaths inside the mount that stay per container — see §5. |
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
 | `env` | map[string, string] | `{}` | Literal values passed to the install/update step and autostart launch, not to ordinary shells or the PR headless invocation. No `~` or `$HOME` expansion; values are not masked by `config show`. |
+| `prompt_args` | string \| null | preset | Arguments appended to `command` (one space) to start the agent with an initial prompt from `jailbee new --prompt`. The prompt text is in the file `$JAILBEE_INITIAL_PROMPT_FILE`; read it from the environment, never interpolate it. Presets set it for `claude`, `codex` and `opencode`; unset means the agent cannot take an initial prompt. See [Primary agent and initial prompt](#primary-agent-and-initial-prompt). |
 | `headless` | string \| null | preset | One-shot command line that runs the agent once and prints its answer — what [`jailbee pr`](config.md#pr) uses to write PR text. Run in a `bash -lc` login shell in the repo directory; the prompt is in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL` — read both from the environment, never interpolate them. `$JAILBEE_PR_SESSION` holds a fresh UUID the agent may take as its session id, so a timed-out run's transcript can be found. Presets set it for `claude`, `codex`, `gemini` and `opencode`; leave unset for an agent with no one-shot mode, and `pr.agent: auto` skips it. |
 | `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the [bundled skills](#10-the-bundled-jailbee-skills) into the shared copy of it. Leave unset for an agent with no skills mechanism. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads host-wide instructions; `dir` is mounted read-only and must not overlap a `shared` mount in either direction, nor be `/`, `/etc`, `/usr`, `/home` or the home directory. `dir` is absolute or `~`-relative without `.`/`..` segments; `file` is a bare file name. Neither may contain a NUL byte. Only Claude's preset sets it today. |
@@ -247,6 +248,28 @@ itself:
   cover it.)
 - Two agents may share the exact same subpath only if they mount it to the
   same `path`/`type` — a conflicting reuse is rejected.
+
+### Primary agent and initial prompt
+
+The top-level [`primary_agent`](config.md#primary_agent) names the agent that
+gets `jailbee new --prompt FILE|-` / `jailbee fork --prompt FILE|-`. With `auto`
+it is the first enabled agent: `autostart` ones first, then the rest; `claude`
+first, then by name. An explicit name must be an enabled agent, else the problem
+is reported and nothing falls back. An explicit name also steers `pr.agent: auto`.
+
+The agent's `prompt_args` are appended to its `command` with one space; the
+prompt is read from `$JAILBEE_INITIAL_PROMPT_FILE`, never interpolated. Without
+`prompt_args` the agent cannot take a prompt and `--prompt` exits 2.
+
+- The prompt must be non-empty and at most 65536 bytes. `--prompt -` reads all
+  of stdin, so for an existing-branch `jailbee new` also pass `-y` (the confirm
+  prompt would hit EOF).
+- It is stored in the container as `/home/dev/.jailbee/initial-prompt.md`, label
+  `user.jailbee.initial_prompt` = `pending`. When the agent launches the file is
+  renamed `initial-prompt.consumed.md` and the label becomes `consumed`.
+- A pending prompt launches the primary agent's window even if its `autostart`
+  is off. `--prompt` conflicts with `--no-autostart` (exit 2).
+- A restart after consumption relaunches the plain `command`.
 
 ## 5. Which paths to share
 
@@ -505,7 +528,7 @@ spellings; pick one, and prefer `agents.claude`.
 Claude carries every generic field from the table in
 [Writing your own agent](#4-writing-your-own-agent) — `enabled`,
 `autostart`, `command`, `install`/`update`, `auto_update`, `install_network`,
-`shared`, `egress_allow`, `env`, `headless`, `skills_dir`,
+`shared`, `egress_allow`, `env`, `headless`, `prompt_args`, `skills_dir`,
 `install_jailbee_skills`, `global_instructions` — plus Claude-only fields for its deeper integration (plugin marketplace
 egress, agent view, onboarding seeding):
 

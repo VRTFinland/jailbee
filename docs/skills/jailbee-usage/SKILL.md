@@ -219,6 +219,13 @@ to tmux / a shell once it's up; forces foreground), `--wait`/`--no-wait`
 (override an `autostart` stage's `detach: true` for this run — see
 [Background operations](#background-operations) below).
 
+`--prompt FILE|-` starts the container's primary agent with an initial prompt
+(`-` reads all of stdin, so add `-y` for an existing branch). The primary agent
+is top-level `primary_agent` (`auto`: autostart agents first, `claude` first,
+then by name; or an enabled agent name); its `agents.<name>.prompt_args` (preset
+for claude, codex, opencode) say how the prompt is passed, else exit 2. Non-empty,
+max 65536 bytes; conflicts with `--no-autostart`.
+
 Submodules come along automatically (offline) and round-trip through pull/push;
 the host repo's submodules must be initialised first or `jailbee new` hard-fails with
 the fix.
@@ -1019,7 +1026,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   names what needs a restart). By default a repo runs only what the release's
   upgrade notes owe it; `--force` runs both everywhere; `--dry-run` lists what
   would run. Exit 1 if any repo failed.
-- **Fork:** `jailbee fork <source> <name> [--branch <b>]` creates a container at `<source>`'s HEAD commit (same branch unless `--branch`); `<source>` must be running with no uncommitted changes. The fork remembers its source: BASE still shows the base branch, the dashboards name `<source>` in the container's details (`⑂ forked from <source>`), and `jailbee merge` offers `<source>` first.
+- **Fork:** `jailbee fork <source> <name> [--branch <b>]` creates a container at `<source>`'s HEAD commit (same branch unless `--branch`); `<source>` must be running with no uncommitted changes. The fork remembers its source: BASE still shows the base branch, the dashboards name `<source>` in the container's details (`⑂ forked from <source>`), and `jailbee merge` offers `<source>` first. `--prompt FILE|-` starts the primary agent in the fork with an initial prompt (see `jailbee new`).
 - **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it. When `<alias>` is omitted, the prompt starts with the current alias or the container's short name. Ctrl-R clears an existing alias immediately in that CLI prompt; the shortcut hint appears only when an alias exists. Empty text submitted with Enter is not a clear request in the CLI. The dashboard's **Rename…** uses the same default and stays a single menu action; the terminal dashboard's rename prompt also supports Ctrl-R and an empty Enter response to clear. **Clear name** is offered in the multi-selection menu, skipping containers without aliases; **Merge into…** leads that menu and Destroy stays last.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
   autostart, and both take `--background`/`-b` to detach that run and
