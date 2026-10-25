@@ -141,6 +141,68 @@ def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
     assert info.shown_name == "login (feat-x)"
 
 
+def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-orch",
+            user_config={
+                labels.GRANT: (
+                    '{"version":1,"max_running_children":4,"operations":["message","spawn"]}'
+                )
+            },
+        ),
+        _container(
+            name="myrepo-k1",
+            user_config={
+                labels.SPAWNED_BY: "myrepo-orch",
+                labels.STATE: "done",
+                labels.RIGHTS: '{"version":1,"mounts":["data"]}',
+            },
+        ),
+    ]
+    infos = {c.name: c for c in list_containers(cfg, incus)}
+    assert infos["myrepo-orch"].grant.limit == 4
+    assert infos["myrepo-k1"].child.orchestrator == "myrepo-orch"
+    assert infos["myrepo-k1"].child.state == "done"
+    assert infos["myrepo-k1"].child.mounts == ("data",)
+    assert infos["myrepo-orch"].running_children == 1
+    assert infos["myrepo-k1"].orchestrator_running is True
+
+
+def test_list_containers_reads_queue_file(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={"myrepo-orch": 2})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-orch", user_config={labels.GRANT: '{"version":1}'})
+    ]
+    [info] = list_containers(cfg, incus)
+    assert info.queued_children == 2
+
+
+def test_list_containers_ordinary_container_has_no_orchestration(make_cfg, tmp_path, mocker):
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-plain")]
+    [c] = list_containers(cfg, incus)
+    assert (c.grant, c.child, c.orchestrator_running) == (None, None, None)
+    assert (c.running_children, c.queued_children) == (0, 0)
+
+
 def test_list_containers_parses_container_egress_extras(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

@@ -35,6 +35,8 @@ from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_ma
 from jailbee.host_target import TargetSnapshot, resolve_target
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
+from jailbee.orchestration import labels as orch_labels
+from jailbee.orchestration import view
 from jailbee.procstat import ActivitySampler, SampleInput, read_container_cache
 from jailbee.profiles import (
     _device_name_from_path,
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
     from jailbee.orchestration.grant import ChildRights
+    from jailbee.orchestration.view import ChildView, GrantView
     from jailbee.procstat import ProcessActivity, ProcessMemory
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -126,6 +129,15 @@ class ContainerInfo:
     # `pool` of the instance's root disk device (path "/"), read for the
     # dashboard's storage pool status; None when it has none.
     root_pool: str | None = None
+    # Orchestration (`jailbee.orchestration.view`): `grant` from the grant
+    # label, `child` from the spawned-by/state/rights labels; the counts and
+    # `orchestrator_running` are derived across the whole list by
+    # `view.annotate` (None for a container that is not a child).
+    grant: GrantView | None = None
+    child: ChildView | None = None
+    running_children: int = 0
+    queued_children: int = 0
+    orchestrator_running: bool | None = None
 
     @property
     def display_name(self) -> str:
@@ -556,6 +568,13 @@ def list_containers(
         fork_of_raw = config.get("user.jailbee.fork_of")
         fork_of = fork_of_raw if isinstance(fork_of_raw, str) and fork_of_raw else None
 
+        grant_view = view.parse_grant_view(config.get(orch_labels.GRANT))
+        child_view = view.parse_child_view(
+            config.get(orch_labels.SPAWNED_BY),
+            config.get(orch_labels.STATE),
+            config.get(orch_labels.RIGHTS),
+        )
+
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
 
@@ -616,6 +635,8 @@ def list_containers(
                 alias=alias,
                 fork_of=fork_of,
                 root_pool=_root_pool(raw),
+                grant=grant_view,
+                child=child_view,
             )
         )
 
@@ -708,6 +729,8 @@ def list_containers(
                     job_error=row.error_msg,
                 )
             )
+
+    view.annotate(out, view.queued_counts())
 
     # Newest first. Containers with no known creation time (mid-creation
     # background rows, legacy containers) sort ahead of dated ones.
