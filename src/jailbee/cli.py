@@ -601,18 +601,11 @@ def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]
 
     Bookkeeping for `jailbee.upgrade`'s advice, and a courtesy like the advice
     itself: a state-DB problem must not turn a successful `base build` into a
-    failed command, hence the broad except.
+    failed command, hence the broad except (in `upgrade.record_action`).
     """
-    from sqlmodel import Session
+    from jailbee.upgrade import record_action
 
-    from jailbee.db import get_engine
-    from jailbee.upgrade import record
-
-    try:
-        with Session(get_engine()) as session:
-            record(session, cfg.container_prefix, action, __version__, now=_now())
-    except Exception:  # bookkeeping only; must never fail a successful command
-        return
+    record_action(cfg, action, __version__, now=_now())
 
 
 def _advise_upgrade(cfg: "Config") -> None:

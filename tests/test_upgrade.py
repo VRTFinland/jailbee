@@ -980,3 +980,29 @@ def test_memory_profile_upgrade_note() -> None:
         note.version == (1, 7, 8) and note.actions == {"apply"} and note.reason == reason
         for note in UPGRADE_NOTES
     )
+
+
+def test_record_action_writes_the_watermark_through_the_state_db(mocker, tmp_path) -> None:
+    from jailbee.db.models import RepoUpgradeState
+    from jailbee.upgrade import record_action
+    from tests.conftest import make_cfg, memory_engine
+
+    cfg = make_cfg(tmp_path)
+    engine = memory_engine()
+    mocker.patch("jailbee.db.get_engine", return_value=engine)
+
+    record_action(cfg, "base_build", "1.7.3", now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    with Session(engine) as session:
+        row = session.get(RepoUpgradeState, cfg.container_prefix)
+    assert row is not None
+    assert (row.base_build_version, row.base_build_observed) == ("1.7.3", True)
+
+
+def test_record_action_swallows_a_state_db_failure(mocker, tmp_path) -> None:
+    from jailbee.upgrade import record_action
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.db.get_engine", side_effect=RuntimeError("db locked"))
+
+    record_action(make_cfg(tmp_path), "apply", "1.7.3", now=datetime(2026, 1, 1, tzinfo=UTC))

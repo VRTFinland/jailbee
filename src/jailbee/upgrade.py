@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
+    from jailbee.config import Config
     from jailbee.db.models import RepoUpgradeState
     from jailbee.notices import Dismissal
 
@@ -702,6 +703,25 @@ def record(
     row.updated_at = now
     session.add(row)
     session.commit()
+
+
+def record_action(cfg: Config, action: Action, version: str, *, now: datetime) -> None:
+    """Record that `action` just ran successfully in this repo, in the state DB.
+
+    Opens its own session around `record`. Bookkeeping for the advice, and a
+    courtesy like the advice itself: a state-DB problem must not turn a
+    successful `base build` / `apply` / create into a failed command, hence
+    the broad except.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+
+    try:
+        with Session(get_engine()) as session:
+            record(session, cfg.container_prefix, action, version, now=now)
+    except Exception:  # bookkeeping only; must never fail a successful command
+        return
 
 
 def load_dismissals(session: Session, prefix: str) -> dict[Action, Dismissal]:

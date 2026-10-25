@@ -193,21 +193,14 @@ def _record_apply(cfg: Config) -> None:
 
     The same bookkeeping `cli._record_upgrade_action(cfg, "apply")` does, for
     callers that are not the CLI. A courtesy: a state-DB problem must never
-    fail a create, hence the broad except.
+    fail a create, which `upgrade.record_action` guarantees.
     """
     from datetime import UTC, datetime
 
-    from sqlmodel import Session
-
     from jailbee import __version__
-    from jailbee.db import get_engine
-    from jailbee.upgrade import record
+    from jailbee.upgrade import record_action
 
-    try:
-        with Session(get_engine()) as session:
-            record(session, cfg.container_prefix, "apply", __version__, now=datetime.now(UTC))
-    except Exception:  # bookkeeping only; must never fail a successful create
-        return
+    record_action(cfg, "apply", __version__, now=datetime.now(UTC))
 
 
 def ensure_profiles(
