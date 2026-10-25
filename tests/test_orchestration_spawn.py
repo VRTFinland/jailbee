@@ -159,7 +159,7 @@ def test_already_queued_refused(tmp_path: Path) -> None:
 
 
 def test_invalid_branch_refused(tmp_path: Path) -> None:
-    out = plan_spawn(_ctx(tmp_path), _m("---"), queued_names=())
+    out = plan_spawn(_ctx(tmp_path), _m("___"), queued_names=())
     assert isinstance(out, Outcome)
     assert out.state == "refused"
     assert "invalid container name" in out.detail

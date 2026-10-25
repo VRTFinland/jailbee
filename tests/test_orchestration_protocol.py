@@ -183,3 +183,50 @@ def test_new_host_id_shape() -> None:
     import re
 
     assert re.fullmatch(r"h-[0-9a-f]{8}", new_host_id())
+
+
+BAD_REFS = [
+    "",
+    "-rf",
+    "--upload-pack=x",
+    "fix 1",
+    "fix\t1",
+    "fix\n1",
+    "fix\x7f",
+    "a..b",
+    "fix.lock",
+    "fix/a.lock",
+    "fix/",
+    "/fix",
+    "fix//1",
+    "fix/.hidden",
+    "a@{1}",
+    "@",
+    "a~1",
+    "a^",
+    "a:b",
+    "a?",
+    "a*",
+    "a[b",
+    "a\\b",
+    "fix.",
+]
+
+
+@pytest.mark.parametrize("ref", BAD_REFS)
+def test_spawn_branch_rejects_unsafe_refs(ref: str) -> None:
+    with pytest.raises(ManifestError, match="branch"):
+        parse_manifest("a.json", _spawn(branch=ref), {})
+
+
+@pytest.mark.parametrize("ref", BAD_REFS)
+def test_spawn_base_rejects_unsafe_refs(ref: str) -> None:
+    with pytest.raises(ManifestError, match="base"):
+        parse_manifest("a.json", _spawn(kind="new", base=ref), {})
+
+
+@pytest.mark.parametrize("ref", ["fix/1", "feat/a-b_c.d", "main", "release/1.2", "x@y"])
+def test_spawn_accepts_ordinary_refs(ref: str) -> None:
+    m = parse_manifest("a.json", _spawn(kind="new", branch=ref, base=ref), {})
+    assert isinstance(m, SpawnManifest)
+    assert (m.branch, m.base) == (ref, ref)

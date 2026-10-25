@@ -48,6 +48,36 @@ def _checked_id(v: str) -> str:
     return v
 
 
+_REF_FORBIDDEN = frozenset("~^:?*[\\")
+MAX_REF_BYTES = 255
+
+
+def _checked_ref(v: str) -> str:
+    """A branch name safe to hand to git and the host: `git check-ref-format`-like.
+
+    Refuses what git refuses in a branch name, plus a leading ``-`` (it
+    would read as an option on a command line).
+    """
+    if not v or len(v.encode("utf-8")) > MAX_REF_BYTES:
+        raise ValueError(f"must be 1..{MAX_REF_BYTES} bytes")
+    if v.startswith("-"):
+        raise ValueError(f"{v!r} must not start with '-'")
+    if any(ord(c) < 0x20 or c == "\x7f" or c.isspace() for c in v):
+        raise ValueError(f"{v!r} must not contain whitespace or control characters")
+    if bad := sorted(set(v) & _REF_FORBIDDEN):
+        raise ValueError(f"{v!r} must not contain {''.join(bad)!r}")
+    if ".." in v or "@{" in v or v == "@":
+        raise ValueError(f"{v!r} must not contain '..' or '@{{' or be '@'")
+    if v.endswith(("/", ".")):
+        raise ValueError(f"{v!r} must not end with '/' or '.'")
+    for part in v.split("/"):
+        if not part:
+            raise ValueError(f"{v!r} must not have an empty path component")
+        if part.startswith(".") or part.endswith(".lock"):
+            raise ValueError(f"{v!r}: a component must not start with '.' or end with '.lock'")
+    return v
+
+
 def _checked_text(v: str) -> str:
     if len(v.encode("utf-8")) > MAX_PROMPT_BYTES:
         raise ValueError(f"text exceeds {MAX_PROMPT_BYTES} bytes")
@@ -79,6 +109,11 @@ class SpawnManifest(_Manifest):
     @classmethod
     def _prompt(cls, v: str) -> str:
         return _checked_text(v)
+
+    @field_validator("branch", "base")
+    @classmethod
+    def _ref(cls, v: str | None) -> str | None:
+        return None if v is None else _checked_ref(v)
 
     @model_validator(mode="after")
     def _base_only_for_new(self) -> Self:
