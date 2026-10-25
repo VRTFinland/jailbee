@@ -260,6 +260,8 @@ def command_path(argv: Sequence[str]) -> str:
 #   - widening a container's network: `net loose` and `net egress add`
 #     can open the host's own and its LAN's addresses to it, so both are
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
+#   - widening what a container may do: `orchestrate grant` lets it start
+#     and manage child containers, so it is a host command like `net loose`;
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry) unless `remote.ssh.mount_roots` or
@@ -291,6 +293,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net egress proxy up",
         "net egress proxy down",
         "net loose",
+        "orchestrate grant",
         "registry up",
         "registry down",
         "display up",
@@ -407,6 +410,9 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
     {
         "account ls",
         "account group ls",
+        "orchestrate ls",
+        "orchestrate revoke",
+        "orchestrate show",
         "apps ls",
         "autostart cancel",
         "autostart status",

@@ -30,6 +30,7 @@ from jailbee.config.legacy_pr import fold_legacy_pr_keys
 from jailbee.config.local_layer import (
     local_config_path,
     local_litellm_overlay,
+    local_orchestration_overlay,
     repo_litellm_view,
     split_local_raw,
     token_perms_warning,
@@ -49,6 +50,12 @@ from jailbee.config.models_host import (
 )
 from jailbee.config.models_litellm import LiteLLMConfig, input_free_lines
 from jailbee.config.models_net import Credentials
+from jailbee.config.models_orchestration import (
+    OrchestrationHostConfig,
+    OrchestrationView,
+    RepoOrchestration,
+    build_view,
+)
 from jailbee.config.retired import (
     _check_agents_spelling,
     _check_pull_migration,
@@ -111,6 +118,47 @@ def _litellm_from_host_raw(host_raw: dict[str, object], origin: str) -> LiteLLMC
     except ValidationError as e:
         raise ConfigError(
             f"Invalid `litellm` in {origin}:\n{input_free_lines(e, ('litellm',))}"
+        ) from None
+
+
+def _repo_orchestration(block: object, origin: str) -> RepoOrchestration:
+    """Validate a repo's `orchestration:` block; it may only narrow."""
+    if block is None:
+        return RepoOrchestration()
+    if isinstance(block, dict):
+        for key in ("profiles", "default_profile"):
+            if key in block:
+                raise ConfigError(
+                    f"`orchestration.{key}` is not allowed in repo .jailbee/config.yaml: "
+                    "profiles grant rights and are host-local. Set them in "
+                    "~/.config/jailbee/global.yaml or "
+                    f"{local_config_path('<container_prefix>')}."
+                )
+    try:
+        return RepoOrchestration.model_validate(block)
+    except ValidationError as e:
+        raise ConfigError(f"Invalid `orchestration` in {origin}:\n{e}") from e
+
+
+def _orchestration_view(
+    host_raw: dict[str, object],
+    local: OrchestrationHostConfig | None,
+    repo: RepoOrchestration,
+    global_from: str,
+    local_from: str,
+) -> OrchestrationView:
+    try:
+        host = OrchestrationHostConfig.model_validate(
+            host_raw.get("orchestration") or {}, context={"partial": True}
+        )
+    except ValidationError as e:
+        raise ConfigError(f"Invalid `orchestration` in {global_from}:\n{e}") from e
+    try:
+        return build_view(host, local, repo)
+    except ValueError as e:
+        raise ConfigError(
+            f"Invalid `orchestration`: {e} (profiles come from {global_from} and "
+            f"{local_from}; the default may be set in either)."
         ) from None
 
 
@@ -821,6 +869,10 @@ def load_config_from_layers(
             f"{local_config_path('<container_prefix>')}."
         )
 
+    repo_raw = dict(repo_raw)
+    repo_orch_raw = repo_raw.pop("orchestration", None)
+    repo_orch = _repo_orchestration(repo_orch_raw, origin)
+
     merged = deep_merge(global_for_merge, repo_raw)
     # `apps:` needs one rule `deep_merge` cannot express: `AppEntry.command`
     # must be replaced by the repo layer, not appended to (see
@@ -838,6 +890,7 @@ def load_config_from_layers(
     _check_retired_keys(local_raw)
     local_overlay, local_creds = split_local_raw(local_raw, local_from)
     local_litellm = local_litellm_overlay(local_raw, local_from)
+    local_orch = local_orchestration_overlay(local_raw, local_from)
     if emit_hint:
         _warn_legacy_chrome_layers([(local_from, local_overlay)])
     (local_overlay,) = _fold_legacy_pr_layers([(local_from, local_overlay)], emit_hint=emit_hint)
@@ -860,6 +913,9 @@ def load_config_from_layers(
         cfg.container_prefix,
         local_litellm,
         local_from,
+    )
+    cfg._orchestration_view = _orchestration_view(
+        host_raw, local_orch, repo_orch, global_from, local_from
     )
 
     _validate_pooled_caches(cfg)

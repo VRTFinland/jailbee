@@ -290,12 +290,13 @@ def test_build_specs_covers_every_config_leaf():
     The `git` block (`identity`, `user.name`, `user.email`) adds three repo
     leaves: 105 + 3 = 108. `defaults.cpu_share` (host CPU weight for containers)
     adds one more: 108 + 1 = 109. `container.tmpfs` (`enabled`, `size`) adds two:
-    109 + 2 = 111.
+    109 + 2 = 111. The host-level `orchestration` block (`profiles`,
+    `default_profile`) brings the global model to 54 leaves.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 112
-    assert len(build_specs(GlobalConfig)) == 52
+    assert len(build_specs(GlobalConfig)) == 54
 
 
 def test_a_default_factory_field_reports_its_real_default():
@@ -823,3 +824,16 @@ def test_no_root_field_is_multiline():
     from jailbee.global_config import GlobalConfig
 
     assert not any(s.multiline for s in (*build_specs(Config), *build_specs(GlobalConfig)))
+
+
+def test_orchestration_trees_per_layer():
+    from jailbee.config_edit.schema import global_specs, local_specs, repo_specs
+
+    repo = {s.path for s in repo_specs()}
+    glob = {s.path for s in global_specs()}
+    local = {s.path for s in local_specs()}
+    assert ("orchestration", "allowed") in repo
+    assert not any(p[:2] == ("orchestration", "profiles") for p in repo)
+    assert any(p[:2] == ("orchestration", "profiles") for p in glob)
+    assert any(p[:2] == ("orchestration", "profiles") for p in local)
+    assert ("orchestration", "allowed") not in local

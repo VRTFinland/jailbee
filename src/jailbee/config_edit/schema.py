@@ -580,8 +580,17 @@ The host-local layer takes `github` and `credentials` instead; see
 
 
 def repo_specs() -> tuple[FieldSpec, ...]:
-    """Editable leaves of a repo's `.jailbee/config.yaml`."""
-    return build_specs(Config)
+    """Editable leaves of a repo's `.jailbee/config.yaml`.
+
+    `Config`'s tree, plus the repo's `orchestration:` block — only the
+    narrowing keys of `RepoOrchestration`; profiles are host-level.
+    """
+    from jailbee.config.models_orchestration import RepoOrchestration
+
+    return (
+        *build_specs(Config),
+        *rebase(build_specs(RepoOrchestration), ("orchestration",)),
+    )
 
 
 def global_specs() -> tuple[FieldSpec, ...]:
@@ -605,13 +614,16 @@ def local_specs() -> tuple[FieldSpec, ...]:
 
     `Config`'s tree, plus the two blocks the local layer peels off before the
     overlay: `credentials` and the repo's `litellm:` override (only the four
-    keys a repo may set — `LiteLLMRepoOverlay`).
+    keys a repo may set — `LiteLLMRepoOverlay`) and the host-level
+    `orchestration:` block (`OrchestrationHostConfig`).
     """
     from jailbee.config.models_litellm import LiteLLMRepoOverlay
     from jailbee.config.models_net import LocalCredentials
+    from jailbee.config.models_orchestration import OrchestrationHostConfig
 
     return (
         *build_specs(Config),
         *rebase(build_specs(LiteLLMRepoOverlay), ("litellm",)),
+        *rebase(build_specs(OrchestrationHostConfig), ("orchestration",)),
         *rebase(build_specs(LocalCredentials), ("credentials",)),
     )

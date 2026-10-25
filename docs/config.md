@@ -195,11 +195,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Twelve top-level keys are read from `~/.config/jailbee/global.yaml` into
+Thirteen top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
 `credentials`, `scratch`, `config_edit`, `update_check`,
-`default_command`, `install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
+`default_command`, `install_host_skills`, `agent_instructions`, `remote`, `litellm` and `orchestration`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -2642,6 +2642,51 @@ dashboard:
 
 With the mouse on, most terminals still select text with Shift-drag. `M` in
 the dashboard turns the mouse off or on for that session only.
+
+### `orchestration`
+
+Rights a container may be granted to start and manage child containers (see
+`jailbee orchestrate`, [commands](commands.md)). Nothing is granted unless
+you run `jailbee orchestrate grant` or set a `default_profile`.
+
+**Host level** (`~/.config/jailbee/global.yaml` or the repo's host-local file;
+a local profile replaces a global one of the same name):
+
+```yaml
+orchestration:
+  default_profile: worker        # applied by `jailbee new`; must name a profile
+  profiles:
+    worker:
+      max_running_children: 2    # 1-64, default 2
+      operations: [spawn, message, import, restart, stop]   # default; add destroy
+      grantable:                 # what the holder may hand on to its children
+        mounts: []               # optional_mounts names
+        loose: false
+        egress: []               # egress allow entries
+```
+
+Profile names are lowercase letters, digits and dashes, starting with a letter
+(max 32 characters). `operations` may be `spawn`, `message`, `import`,
+`restart`, `stop` and `destroy`, and must include `spawn` and `message`.
+`default_profile` is applied by `jailbee new` to the new container, except for
+mount-mode containers, children, and when the repo's caps (`allowed` or an
+excess) would refuse the grant.
+
+**Per repo** (`.jailbee/config.yaml`): a repo may only narrow.
+
+| Key | Default | Effect |
+|---|---|---|
+| `allowed` | `true` | `false`: containers of this repo cannot be granted and existing grants have no effect |
+| `max_running_children` | none | Lowers the grant's limit |
+| `mounts` | none | Mounts children may be given; others are dropped |
+| `egress` | none | Egress entries children may be given |
+| `loose` | none | `false` forbids handing loose network to children |
+
+`profiles` and `default_profile` are refused in a repo's config. A profile
+grants rights, and a repo file arrives with the repo (a clone, a pull
+request): if it could grant, a cloned repo could widen what its own containers
+may do. A grant above the repo's caps is refused by `jailbee orchestrate grant`
+with each excess named; `jailbee orchestrate show` prints the effective grant.
 
 ## Computed attributes
 

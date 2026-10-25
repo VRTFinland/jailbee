@@ -1013,6 +1013,39 @@ an attached `chrome` returns at once if Chrome already runs in that container;
 add `-o ControlMaster=no` if your ssh config shares connections. See
 `docs/remote-gui.md`.
 
+## Orchestration grants — `jailbee orchestrate`
+
+A grant is the right of one container to start and manage child containers.
+It is stored on the container; nothing is granted by default. Only grants
+exist so far: they are stored, capped by the repo and inspectable.
+
+- `jailbee orchestrate grant [NAME]` — store a grant. Without flags it is the
+  default grant: 2 running children; operations `import`, `message`,
+  `restart`, `spawn`, `stop`; nothing grantable (no mounts, no loose, no
+  egress). Flags: `--profile P`, `--children N`, `--allow OP`/`--deny OP`
+  (`spawn`, `message`, `import`, `restart`, `stop`, `destroy`),
+  `--mount M`/`--clear-mounts`, `--loose`/`--no-loose`,
+  `--egress HOST`/`--clear-egress`. Fields not given come from `--profile`
+  if named, else the container's current grant, else the defaults.
+- `spawn` and `message` are always part of a grant: `--deny spawn|message` is
+  refused. To take everything away use `jailbee orchestrate revoke [NAME]`.
+- Refused: mount-mode containers, children (a container that was spawned by
+  another never orchestrates), repos not registered on this host (run
+  `jailbee apply`), and repos with `orchestration.allowed: false`. A grant
+  above the repo's caps (`max_running_children`, `mounts`, `egress`,
+  `loose`) is refused and each excess is named.
+- `jailbee orchestrate show [NAME]` — the grant, what the repo's caps leave of
+  it, and the running children. `jailbee orchestrate ls [--json]` — every
+  grant in the repo.
+- `jailbee new` applies `orchestration.default_profile` to the new container
+  when one is configured (not for mount-mode containers or children, nor when the repo's caps would refuse the grant).
+- Profiles (`orchestration.profiles`, `default_profile`) live only in
+  `~/.config/jailbee/global.yaml` or the host-local config file. A repo's
+  `.jailbee/config.yaml` may only narrow: `allowed`, `max_running_children`,
+  `mounts`, `egress`, `loose`. Details: [config](../../config.md#orchestration).
+- `grant` runs on the host only; over remote SSH `revoke`, `show` and `ls` work
+  but `grant` is refused, since it widens what a container may do.
+
 ## Other day-to-day commands
 
 - **Shell / run:** `jailbee shell [<name>]` (interactive, lands in the clone),

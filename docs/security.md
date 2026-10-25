@@ -135,7 +135,7 @@ refused in every mode, `full` and an allowlist naming them included:
 `config edit`/`init`/`migrate`, every `remote ...` command, `setup`, `init`,
 `apply`, `base build`/`prune`, `net install`/`migrate`/`refresh`/`unregister`,
 `net loose` and `net egress add` (either can open the host's own and its
-LAN's addresses to the container), `registry up`/`down`, `display up`/`down`,
+LAN's addresses to the container), `orchestrate grant`, `registry up`/`down`, `display up`/`down`,
 `litellm
 up`/`down`/`login`/`logout`/`logs`, the `account` commands that write,
 `port to-container`, and the GUI launchers (`gui`, `ide`, the browsers, `apps

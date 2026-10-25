@@ -24,6 +24,7 @@ from jailbee.config.models_litellm import (
     input_free_lines,
 )
 from jailbee.config.models_net import LocalCredentials
+from jailbee.config.models_orchestration import OrchestrationHostConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,6 +62,7 @@ def _refused_keys() -> frozenset[str]:
             "credentials",
             "claude_credentials",
             "litellm",
+            "orchestration",
         }
     )
     return frozenset({"container_prefix", *_COMPUTED_KEYS, *host_only})
@@ -89,7 +91,7 @@ def split_local_raw(
             f"`github.api_tokens` is not allowed in {origin} — this file is already "
             "per-repo; set `github.token` instead."
         )
-    overlay = {k: v for k, v in raw.items() if k not in ("credentials", "litellm")}
+    overlay = {k: v for k, v in raw.items() if k not in ("credentials", "litellm", "orchestration")}
     if "credentials" not in raw:
         return overlay, None
     try:
@@ -106,6 +108,7 @@ def validate_local_raw(raw: dict[str, object], origin: str) -> None:
 
     overlay, _ = split_local_raw(raw, origin)
     local_litellm_overlay(raw, origin)
+    local_orchestration_overlay(raw, origin)
     try:
         Config.model_validate(resolve_browsers_raw(resolve_agents_raw(overlay)))
     except (ValidationError, ConfigError) as e:
@@ -135,6 +138,23 @@ def local_litellm_overlay(raw: dict[str, object], origin: str) -> LiteLLMRepoOve
         raise ConfigError(
             f"Invalid `litellm` in {origin}:\n{input_free_lines(e, ('litellm',))}"
         ) from None
+
+
+def local_orchestration_overlay(
+    raw: dict[str, object], origin: str
+) -> OrchestrationHostConfig | None:
+    """The layer's validated `orchestration:` block; None when it has none.
+
+    Validated as a partial block: a `default_profile` may name a profile that
+    only global.yaml defines, so `build_view` makes the cross-file check.
+    """
+    block = raw.get("orchestration")
+    if block is None:
+        return None
+    try:
+        return OrchestrationHostConfig.model_validate(block, context={"partial": True})
+    except ValidationError as e:
+        raise ConfigError(f"Invalid `orchestration` in {origin}:\n{e}") from e
 
 
 def repo_litellm_view(

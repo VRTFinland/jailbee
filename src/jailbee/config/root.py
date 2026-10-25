@@ -67,6 +67,7 @@ from jailbee.config.models_net import (
     format_ttl,
     parse_ttl,
 )
+from jailbee.config.models_orchestration import OrchestrationView
 from jailbee.config.models_tools import (
     BrowserConfig,
     BrowsersConfig,
@@ -498,6 +499,10 @@ class Config(BaseModel):
     # field. A `Config` built any other way sees the disabled built-in
     # config. `model_copy` carries it, which the autostart supervisor needs.
     _litellm_view: LiteLLMRepoView = PrivateAttr(default_factory=LiteLLMRepoView)
+    # Set by `load_config_from_layers`: host-level `orchestration:` profiles
+    # (global + host-local) and this repo's narrowing block. Private for the
+    # reason `_litellm_view` is. A `Config` built any other way sees an empty view.
+    _orchestration_view: OrchestrationView = PrivateAttr(default_factory=OrchestrationView)
     # Set by `load_config_from_layers` from the host-level `agent_instructions`
     # key. Private for the reason `_synthetic` is: no YAML key on the repo
     # layer, no `config show` entry. `model_copy` carries it.
@@ -533,6 +538,10 @@ class Config(BaseModel):
     def litellm_view(self) -> LiteLLMRepoView:
         """This repo's LiteLLM settings: what `claude-jb` uses in its containers."""
         return self._litellm_view
+
+    def orchestration_view(self) -> OrchestrationView:
+        """This repo's orchestration inputs: profiles and the repo's narrowing."""
+        return self._orchestration_view
 
     def agent_instructions_enabled(self) -> bool:
         """Whether host-wide agent instructions are mounted (see agent_instructions.py)."""

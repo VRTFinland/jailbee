@@ -94,6 +94,7 @@ _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
         "default_command",
         "remote",
         "litellm",
+        "orchestration",
         "install_host_skills",
         "agent_instructions",
     }

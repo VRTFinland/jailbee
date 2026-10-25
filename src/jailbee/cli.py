@@ -12611,6 +12611,204 @@ def snap_delete_cmd(
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
 
+# ---- Orchestration grants ----
+
+orchestrate_app = typer.Typer(
+    name="orchestrate",
+    help="Give containers the right to start and manage child containers.",
+    no_args_is_help=True,
+)
+app.add_typer(orchestrate_app)
+
+
+def _grant_summary(grant: Any) -> str:
+    """One line describing a grant: limit, operations, mounts, loose, egress."""
+    g = grant.grantable
+    return (
+        f"{grant.max_running_children} running children, "
+        f"operations {', '.join(grant.operations)}; "
+        f"mounts {', '.join(g.mounts) or 'none'}; "
+        f"loose {'yes' if g.loose else 'no'}; "
+        f"egress {', '.join(g.egress) or 'none'}"
+    )
+
+
+_ORCH_NOT_ALLOWED = "orchestration is not allowed in this repo"
+
+
+@orchestrate_app.command("grant")
+def orchestrate_grant_cmd(
+    name: ContainerArg = None,
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", help="Start from this configured orchestration profile."),
+    ] = None,
+    children: Annotated[
+        int | None,
+        typer.Option("--children", help="Most child containers running at once."),
+    ] = None,
+    allow: Annotated[
+        list[str] | None,
+        typer.Option("--allow", help="Operation to allow. Repeatable."),
+    ] = None,
+    deny: Annotated[
+        list[str] | None,
+        typer.Option("--deny", help="Operation to deny. Repeatable."),
+    ] = None,
+    mount: Annotated[
+        list[str] | None,
+        typer.Option("--mount", help="Optional mount children may receive. Repeatable."),
+    ] = None,
+    clear_mounts: Annotated[
+        bool,
+        typer.Option("--clear-mounts", help="Remove every mount children may receive."),
+    ] = False,
+    loose: Annotated[
+        bool | None,
+        typer.Option(
+            "--loose/--no-loose",
+            help="Whether children may be put in loose network mode.",
+        ),
+    ] = None,
+    egress: Annotated[
+        list[str] | None,
+        typer.Option("--egress", help="Egress host children may be allowed. Repeatable."),
+    ] = None,
+    clear_egress: Annotated[
+        bool,
+        typer.Option("--clear-egress", help="Remove every egress host children may be allowed."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Grant a container the right to start and manage child containers.
+
+    Fields not given keep their current value (or the profile's, or the
+    defaults for a container with no grant).
+    """
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import commands
+    from jailbee.orchestration.grant import GrantError
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    flags = commands.GrantFlags(
+        profile=profile,
+        children=children,
+        allow=tuple(allow or ()),
+        deny=tuple(deny or ()),
+        mounts=tuple(mount) if mount else None,
+        clear_mounts=clear_mounts,
+        loose=loose,
+        egress=tuple(egress) if egress else None,
+        clear_egress=clear_egress,
+    )
+    try:
+        granted = commands.grant(cfg, incus, full, flags)
+    except GrantError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(f"Granted '{short_name(cfg, full)}': {_grant_summary(granted)}")
+
+
+@orchestrate_app.command("revoke")
+def orchestrate_revoke_cmd(
+    name: ContainerArg = None,
+    config: ConfigOption = None,
+) -> None:
+    """Remove a container's orchestration grant."""
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import commands
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name, always_prompt=True)
+    short = short_name(cfg, full)
+    if commands.revoke(incus, full):
+        success(f"Revoked '{short}'.")
+    else:
+        info(f"'{short}' had no grant.")
+
+
+@orchestrate_app.command("show")
+def orchestrate_show_cmd(
+    name: ContainerArg = None,
+    config: ConfigOption = None,
+) -> None:
+    """Show a container's grant, what the repo leaves of it, and its running children."""
+    from jailbee.orchestration import commands
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    row = commands.show(cfg, incus, full)
+    if row.problem is not None:
+        error_plain(f"Grant on '{row.short}' is malformed: {row.problem}")
+        raise typer.Exit(1)
+    if row.grant is None:
+        info(f"No grant on '{row.short}'.")
+        return
+    info_plain(f"Grant on '{row.short}': {_grant_summary(row.grant)}")
+    if row.effective is None:
+        warn_plain(f"{_ORCH_NOT_ALLOWED}; the grant has no effect.")
+    elif row.effective != row.grant:
+        info_plain(f"Effective in this repo: {_grant_summary(row.effective)}")
+    info_plain(f"Running children: {row.running_children}")
+
+
+@orchestrate_app.command("ls")
+def orchestrate_ls_cmd(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the grants as a JSON list."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """List the containers of this repo that hold an orchestration grant."""
+    from rich.table import Table
+
+    from jailbee.incus import Incus
+    from jailbee.orchestration import commands
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    rows = commands.list_grants(cfg, Incus())
+    if as_json:
+        payload = [
+            {
+                "name": r.short,
+                "grant": json.loads(r.grant.to_label()) if r.grant is not None else None,
+                "problem": r.problem,
+                "running_children": r.running_children,
+            }
+            for r in rows
+        ]
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    if not rows:
+        info("No orchestration grants in this repo.")
+        return
+    table = Table(show_edge=False, pad_edge=False)
+    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS"):
+        table.add_column(header)
+    for r in rows:
+        if r.problem is not None:
+            table.add_row(
+                r.short, "-", str(r.running_children), f"invalid: {r.problem}", "", "", ""
+            )
+        elif r.grant is not None and r.effective is None:
+            table.add_row(r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "")
+        elif r.grant is not None:
+            g = r.grant.grantable
+            table.add_row(
+                r.short,
+                str(r.grant.max_running_children),
+                str(r.running_children),
+                ", ".join(r.grant.operations),
+                ", ".join(g.mounts) or "-",
+                "yes" if g.loose else "no",
+                ", ".join(g.egress) or "-",
+            )
+    console.print(table)
+
+
 # ---- Port forwarding commands ----
 
 port_app = typer.Typer(

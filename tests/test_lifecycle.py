@@ -1381,6 +1381,56 @@ def test_new_container_without_fork_of_writes_no_label(make_cfg, tmp_path, mocke
     assert _fork_label_calls(make_cfg, tmp_path, mocker) == []
 
 
+def _new_container_with(make_cfg, tmp_path, mocker, **opts_extra):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    fields: dict = {
+        "container_branch": "feat/foo",
+        "name": None,
+        "network": "strict",
+        "memory": "4GB",
+        "cpu": 4,
+        "from_base": "gie-golden",
+        "clone": True,
+        "autostart": False,
+    }
+    if opts_extra.get("mount"):
+        fields["container_branch"] = ""
+        fields["name"] = f"{cfg.container_prefix}-mountsmoke"
+    fields.update(opts_extra)
+    new_container(cfg, incus, NewContainerOptions(**fields))
+    return incus
+
+
+def test_new_container_applies_default_profile(make_cfg, tmp_path, mocker):
+    apply = mocker.patch("jailbee.orchestration.commands.apply_default_profile")
+    _new_container_with(make_cfg, tmp_path, mocker)
+    apply.assert_called_once()
+    assert apply.call_args.args[2].startswith("myrepo-")
+
+
+def test_mount_mode_new_container_skips_default_profile(make_cfg, tmp_path, mocker):
+    apply = mocker.patch("jailbee.orchestration.commands.apply_default_profile")
+    _new_container_with(make_cfg, tmp_path, mocker, mount=True, clone=False)
+    apply.assert_not_called()
+
+
+def test_default_profile_failure_only_warns(make_cfg, tmp_path, mocker):
+    mocker.patch(
+        "jailbee.orchestration.commands.apply_default_profile",
+        side_effect=RuntimeError("boom"),
+    )
+    warn = mocker.patch("jailbee.lifecycle.warn")
+    _new_container_with(make_cfg, tmp_path, mocker)
+    assert any("boom" in str(c.args[0]) for c in warn.call_args_list)
+
+
 def test_resolve_container_for_interactive_uses_with_git_status(make_cfg, tmp_path, mocker):
     """The interactive picker path fetches git status for richer labels."""
     repo = tmp_path / "myrepo"

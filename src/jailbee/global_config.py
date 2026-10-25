@@ -42,6 +42,7 @@ from jailbee.config.common import (
     service_storage_pool_from_raw,
 )
 from jailbee.config.models_litellm import LiteLLMConfig
+from jailbee.config.models_orchestration import OrchestrationHostConfig
 from jailbee.config.models_remote import RemoteConfig
 from jailbee.paths import expand_path, xdg_data_home
 
@@ -370,6 +371,13 @@ class GlobalConfig(BaseModel):
             "Claude Code on non-Anthropic models through a jailbee-managed LiteLLM "
             "proxy: routes, profiles and `claude-jb`'s default. Host-level only: "
             "routes name this host's proxy and subscription login."
+        ),
+    )
+    orchestration: OrchestrationHostConfig = Field(
+        default_factory=lambda: OrchestrationHostConfig(),
+        description=(
+            "Orchestration profiles: which containers may spawn and manage child "
+            "containers, and what they may hand on. Host-level only."
         ),
     )
     # Not a field: `defaults:` is a repo-layer key and is discarded from the
