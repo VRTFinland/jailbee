@@ -370,7 +370,8 @@ def test_read_of_a_file_that_vanishes_exits_1(script, base, tmp_path):
     real_jq = shutil.which("jq")
     shim = shim_dir / "jq"
     shim.write_text(
-        f'#!/bin/bash\nif [ "$1" = "." ]; then rm -f "{path}"; exit 2; fi\nexec {real_jq} "$@"\n'
+        f'#!/bin/bash\ncase "$1" in "def clean"*) rm -f "{path}"; exit 2 ;; esac\n'
+        f'exec {real_jq} "$@"\n'
     )
     shim.chmod(0o755)
     env["PATH"] = f"{shim_dir}:{env['PATH']}"
@@ -655,3 +656,47 @@ def test_wait_with_many_unread_messages_does_not_die_of_sigpipe(script, base, tm
         r = run(script, "wait", "--timeout", "0", env=env)
         assert r.returncode == 0, (r.returncode, r.stderr)
         assert r.stdout.strip().endswith("20261025T100000Z-00000000-h-0000aaaa.json")
+
+
+HOSTILE = "a\x1b[2Jb\x1b]52;c;Zm9v\x07c\u009bd\x7fe\x00fä"
+
+
+def _raw_controls(text: str) -> list[str]:
+    return [c for c in text if (ord(c) < 0x20 and c not in "\n\t") or 0x7F <= ord(c) <= 0x9F]
+
+
+def test_ls_neutralises_terminal_control_characters(script, base, tmp_path):
+    payload = message("h-0000aaaa", body=HOSTILE)
+    payload["from"] = "x\x1b]0;title\x07y"
+    payload["kind"] = "k\u009bz"
+    write_inbox(base, FIRST, payload)
+    r = run(script, "ls", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert _raw_controls(r.stdout) == []
+    cells = r.stdout.rstrip("\n").split("\t")
+    assert cells[2] == "x?]0;title?y"
+    assert cells[3] == "k?z"
+    assert "ä" in cells[4]  # ordinary non-ASCII text survives
+
+
+def test_ls_prints_dash_for_missing_cells(script, base, tmp_path):
+    write_inbox(base, FIRST, {"version": 1, "id": "h-0000aaaa", "body": "hi"})
+    write_inbox(base, SECOND, {"version": 1, "id": "h-0000bbbb", "type": "status"})
+    r = run(script, "ls", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "null" not in r.stdout
+    first, second = r.stdout.splitlines()
+    assert first.split("\t")[:3] == ["h-0000aaaa", "-", "-"]
+    assert second.split("\t")[:3] == ["h-0000bbbb", "status", "-"]
+
+
+def test_read_neutralises_terminal_control_characters(script, base, tmp_path):
+    payload = message("h-0000aaaa", body=HOSTILE)
+    payload["k\u009bey"] = "v"
+    write_inbox(base, FIRST, payload)
+    r = run(script, "read", "h-0000aaaa", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert _raw_controls(r.stdout) == []
+    shown = json.loads(r.stdout)
+    assert shown["id"] == "h-0000aaaa"
+    assert "ä" in shown["body"]

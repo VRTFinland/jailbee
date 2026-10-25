@@ -502,13 +502,16 @@ cmd_ls() {
     [ $# -eq 0 ] || die "ls takes no arguments"
     local f line
     while IFS= read -r f; do
+        # Every cell has C0, DEL and C1 characters replaced by "?" so a
+        # child-written message cannot drive the reader's terminal.
         if ! line="$(jq -er '[
                 .id,
                 .type,
                 (if .type == "status" then .ref else .from end),
                 (if .type == "status" then .state else (.kind // "") end),
                 ((.body // .detail // "") | tostring | .[0:60])
-            ] | map(tostring) | @tsv' "$f" 2>/dev/null)"; then
+            ] | map(if . == null then "-" else tostring end
+                    | gsub("[\\x{00}-\\x{1f}\\x{7f}-\\x{9f}]"; "?")) | @tsv' "$f" 2>/dev/null)"; then
             printf 'jailbee-inbox: skipping unreadable message %s\n' "$f" >&2
             continue
         fi
@@ -534,7 +537,13 @@ cmd_read() {
         if [ "$fid" = "$id" ]; then
             # A file that vanished since the scan (read by a concurrent
             # reader) counts as "no unread message with that id".
-            pretty="$(jq . "$f" 2>/dev/null)" || continue
+            # jq escapes C0 and DEL itself; C1 characters (e.g. U+009B, a
+            # one-character CSI) would reach the terminal raw, so strings
+            # and keys get them replaced by "?".
+            pretty="$(jq 'def clean: gsub("[\\x{80}-\\x{9f}]"; "?");
+                walk(if type == "string" then clean
+                     elif type == "object" then with_entries(.key |= clean)
+                     else . end)' "$f" 2>/dev/null)" || continue
             if [ "$keep" -eq 0 ]; then
                 mkdir -p "$inbox/read"
                 mv -- "$f" "$inbox/read/" 2>/dev/null || continue
