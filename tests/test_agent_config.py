@@ -519,3 +519,31 @@ def test_opencode_update_fails_loudly_when_the_download_fails(tmp_path):
 
     assert calls == 1
     assert result.returncode != 0
+
+
+PROMPT = '"$(cat "$JAILBEE_INITIAL_PROMPT_FILE")"'
+
+
+def test_claude_preset_has_prompt_args(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    assert cfg.agents["claude"].prompt_args == PROMPT
+
+
+def test_codex_preset_has_prompt_args(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    assert cfg.agents["codex"].prompt_args == PROMPT
+
+
+def test_opencode_preset_has_prompt_args(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"opencode": {"enabled": True}})
+    assert cfg.agents["opencode"].prompt_args == f"--prompt {PROMPT}"
+
+
+def test_aider_preset_has_no_prompt_args(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"aider": {"enabled": True}})
+    assert cfg.agents["aider"].prompt_args is None
+
+
+def test_repo_can_override_prompt_args(tmp_path):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "prompt_args": "-- x"}})
+    assert cfg.agents["claude"].prompt_args == "-- x"

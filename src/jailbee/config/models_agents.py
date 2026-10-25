@@ -500,6 +500,15 @@ class AgentConfig(BaseModel):
             "one-shot mode; leave unset for agents without one."
         ),
     )
+    prompt_args: str | None = Field(
+        default=None,
+        description=(
+            "Shell words appended to `command` (one space) for a launch that carries an "
+            "initial prompt. Read the prompt from `$JAILBEE_INITIAL_PROMPT_FILE` through "
+            "the shell, never interpolate it. Unset means this agent cannot take an "
+            "initial prompt."
+        ),
+    )
     skills_dir: str | None = Field(
         default=None,
         description=(

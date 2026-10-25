@@ -47,9 +47,13 @@ _OPENCODE_LINK = (
     '[ -x "$HOME/.local/bin/opencode" ]'
 )
 
+# Initial prompt read from a file by the shell at launch; never interpolated.
+_INITIAL_PROMPT = '"$(cat "$JAILBEE_INITIAL_PROMPT_FILE")"'
+
 AGENT_PRESETS: dict[str, dict[str, object]] = {
     "codex": {
         "command": "codex",
+        "prompt_args": _INITIAL_PROMPT,
         # The vendor's own installer, not `npm i -g @openai/codex`. npm exists
         # in the golden image only when `golden.stacks.node` is on, so the npm
         # line made enabling this preset a silent no-op on every image without
@@ -190,6 +194,7 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
     },
     "opencode": {
         "command": "opencode",
+        "prompt_args": f"--prompt {_INITIAL_PROMPT}",
         # The vendor's own installer, not `npm i -g opencode-ai@latest`. Same
         # reasoning as `codex` above: npm exists in the golden image only when
         # `golden.stacks.node` is on, so the npm line made enabling this preset
@@ -290,6 +295,7 @@ def claude_preset() -> dict[str, object]:
     bundled installer script path and the shared host tuple from config."""
     return {
         "command": "claude",
+        "prompt_args": _INITIAL_PROMPT,
         "install": "__bundled__:ensure-claude.sh",
         "update": "__bundled__:ensure-claude.sh",
         # One-shot mode for `jailbee pr`.
