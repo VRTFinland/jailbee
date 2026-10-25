@@ -104,23 +104,27 @@ jailbee-inbox runners          # or --json
 jailbee-inbox send spawn --branch fix/issue-12 --agent claude-jb --profile grok --model sonnet - <<'EOF'
 ...
 EOF
-jailbee-inbox send restart --child fix-issue-12 --model opus - <<'EOF'
+jailbee-inbox send restart --child fix-issue-12 --agent claude --model opus - <<'EOF'
 ...
 EOF
 jailbee-inbox send restart --child fix-issue-12 --default-runner --text "Try again."
 ```
 
-`--profile` needs `--agent claude-jb`; `--default-runner` is for `restart`
+`--profile` and `--model` need `--agent`, and `--profile` needs `--agent
+claude-jb`; `--default-runner` is for `restart`
 only and excludes `--agent`.
 
 A runner that cannot be honoured is `refused`, never replaced by the default.
-The detail is one of: `agent `claude` is not enabled in this repo`; `agent
-`claude` has no prompt_args, so it cannot take a prompt`;
-`agents.claude.command must start with `claude` or `claude-jb` to take a
-runner (it is `...`)`; `claude-jb needs LiteLLM enabled in this repo`;
-``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm
-up`)``; ``LiteLLM profile `P` has no `M` tier``. Fix the request or tell the
-human; do not retry with another model.
+The detail is one of:
+
+- ``agent `claude` is not enabled in this repo``
+- ``agent `claude` has no prompt_args, so it cannot take a prompt``
+- ``agents.claude.command must start with `claude` or `claude-jb` to take a runner (it is `...`)``
+- ``claude-jb needs LiteLLM enabled in this repo``
+- ``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm up`)``
+- ``LiteLLM profile `P` has no `M` tier``
+
+Fix the request or tell the human; do not retry with another model.
 
 ## The inbox loop
 

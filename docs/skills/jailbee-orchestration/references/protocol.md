@@ -80,18 +80,20 @@ instructions name one); omitting starts the repo's default agent.
 ```
 
 A spawn the broker cannot run with that runner is `refused` (never run with
-the default). Details: `agent `claude` is not enabled in this repo`; `agent
-`claude` has no prompt_args, so it cannot take a prompt`;
-`agents.claude.command must start with `claude` or `claude-jb` to take a
-runner (it is `...`)`; `claude-jb needs LiteLLM enabled in this repo`;
-`LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm
-up`)`; `LiteLLM profile `P` has no `M` tier`.
+the default). Details:
+
+- ``agent `claude` is not enabled in this repo``
+- ``agent `claude` has no prompt_args, so it cannot take a prompt``
+- ``agents.claude.command must start with `claude` or `claude-jb` to take a runner (it is `...`)``
+- ``claude-jb needs LiteLLM enabled in this repo``
+- ``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm up`)``
+- ``LiteLLM profile `P` has no `M` tier``
 
 CLI: `jailbee-inbox send spawn --branch fix/issue-12 [--new [--base main]]
-[--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P]]
-[--model M] -` with the prompt on
+[--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P] [--model M]] -` with the prompt on
 stdin (or `--text T`; `--file` only with an absolute path outside the repo).
-`jailbee-inbox runners [--json]` lists the runners you may name and what
+`--profile` and `--model` need `--agent`, and `--profile` needs
+`--agent claude-jb`. `jailbee-inbox runners [--json]` lists the runners you may name and what
 omitting one starts: `default: omit runner (<agent>)`, then one line per
 `claude` and per `claude-jb -P <profile>` with its models.
 Never leave prompt files in the repo work tree: untracked files make a
@@ -151,8 +153,7 @@ The refusals are the spawn ones above.
  "child": "fix-issue-12", "prompt": "Try again.", "runner": null}
 ```
 
-CLI: `jailbee-inbox send restart --child C [--agent A [--profile P]]
-[--model M] | --default-runner` with the prompt on stdin or `--text`.
+CLI: `jailbee-inbox send restart --child C [--agent A [--profile P] [--model M] | --default-runner]` with the prompt on stdin or `--text`.
 
 ### `stop`
 
