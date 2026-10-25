@@ -259,14 +259,18 @@ is reported and nothing falls back. An explicit name also steers `pr.agent: auto
 
 The agent's `prompt_args` are appended to its `command` with one space; the
 prompt is read from `$JAILBEE_INITIAL_PROMPT_FILE`, never interpolated. Without
-`prompt_args` the agent cannot take a prompt and `--prompt` exits 2.
+`prompt_args` the agent cannot take a prompt and `--prompt` exits 2. The preset
+values pass the prompt as a bare argument, so a prompt whose first character is
+`-` may be parsed as an option by the agent CLI and then lost: start prompts with
+text, not `-` or `---`.
 
 - The prompt must be non-empty and at most 65536 bytes. `--prompt -` reads all
   of stdin, so for an existing-branch `jailbee new` also pass `-y` (the confirm
   prompt would hit EOF).
 - It is stored in the container as `/home/dev/.jailbee/initial-prompt.md`, label
-  `user.jailbee.initial_prompt` = `pending`. When the agent launches the file is
-  renamed `initial-prompt.consumed.md` and the label becomes `consumed`.
+  `user.jailbee.initial_prompt` = `pending`. When the agent launches, the launch step
+  renames the file to `initial-prompt.consumed.md`; the label flips to `consumed`
+  lazily, on the next autostart run that finds the file gone.
 - A pending prompt launches the primary agent's window even if its `autostart`
   is off. `--prompt` conflicts with `--no-autostart` (exit 2).
 - A restart after consumption relaunches the plain `command`.
