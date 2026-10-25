@@ -82,6 +82,7 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         repo_dir = lifecycle.container_repo_dir(ctx.cfg, ctx.incus, full)
         if sync._container_status_dirty(ctx.incus, full, repo_dir, uid=uid):
             return refused("uncommitted changes: commit everything before reporting done")
+        # None also covers a failed exec, which cannot be told from a detached HEAD.
         branch = sync._container_current_branch(ctx.incus, full, repo_dir, uid=uid)
     except (SyncError, GitError, IncusError) as exc:
         return refused(str(exc))
@@ -91,7 +92,7 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         fetched = sync.fetch_from_container(
             ctx.cfg, ctx.incus, ctx.sender.short, branch=branch, tags="none"
         )
-    except (SyncError, GitError) as exc:
+    except (SyncError, GitError, IncusError) as exc:
         return refused(f"could not fetch your branch to the host: {exc}")
     oid = fetched.new_oid
     if not _FULL_OID.fullmatch(oid or ""):

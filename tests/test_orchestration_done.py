@@ -142,7 +142,7 @@ def test_done_while_orchestrator_stopped_still_records_and_queues(
     )
 
 
-@pytest.mark.parametrize("exc", [SyncError("boom"), GitError("boom")])
+@pytest.mark.parametrize("exc", [SyncError("boom"), GitError("boom"), IncusError("boom")])
 def test_done_fetch_failure_refused_without_labels(
     tmp_path: Path, mocker: MockerFixture, exc: Exception
 ) -> None:
