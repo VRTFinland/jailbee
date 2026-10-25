@@ -84,6 +84,8 @@ Fetch a child's committed work into your repo as
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
+Status: `done` ("child `x` restarted") when it runs at once; `queued` when
+no slot is free, then `started` when it is later started.
 
 ```json
 {"version": 1, "id": "restart-fix-12-b", "type": "restart",
@@ -172,7 +174,7 @@ is one of four values.
  "state": "refused", "detail": "child `fix-issue-12` is running; stop it first"}
 ```
 
-Other `done` details: `delivered to <child>`, `child \`<child>\` stopped`,
+A `queued` status applies to `restart` as well as `spawn`. Other `done` details: `delivered to <child>`, `child \`<child>\` stopped`,
 `child \`<child>\` destroyed`. `refused` is final.
 
 ## `grant.json`

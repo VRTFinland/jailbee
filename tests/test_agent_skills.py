@@ -135,6 +135,8 @@ def test_orchestration_skill_covers_review_focus() -> None:
     assert "new id" in text
     assert "refused" in text and "queued" in text and "--timeout" in text
     assert "destroy" in text and "stop" in text and "slot" in text
+    assert "`stop`\n   it first" in text or "stop it first" in text
+    assert "restart` alike" in text
 
 
 def test_orchestration_protocol_examples_use_short_names() -> None:
@@ -142,6 +144,7 @@ def test_orchestration_protocol_examples_use_short_names() -> None:
     for t in ("spawn", "message", "import", "restart", "stop", "destroy"):
         assert f'"type": "{t}"' in proto, t
     assert "<repo>-" not in proto
+    assert "<repo>-" not in _skill_text(ORCH)
 
 
 def _github_permission_recipes() -> list[tuple[Path, str]]:

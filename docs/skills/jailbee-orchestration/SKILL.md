@@ -16,7 +16,7 @@ children, and there are no partial grants: a request is accepted or
 [`references/protocol.md`](references/protocol.md).
 
 Always refer to containers by their **short name** (the branch-level name,
-for example `fix-issue-12`), never `<repo>-<name>`.
+for example `fix-issue-12`), never one prefixed with the repo name.
 
 ## Read your grant first
 
@@ -81,8 +81,9 @@ prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 
 Every manifest you send gets a `status` reply whose `ref` is its id:
 
-- `queued`: accepted, waiting for a running slot to free up.
-- `started`: the child is being created or restarted.
+- `queued`: accepted, waiting for a running slot to free up. Applies to
+  `spawn` and `restart` alike.
+- `started`: the child is being created, or a queued restart has now begun.
 - `done`: the action completed (the detail says what).
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
@@ -103,14 +104,18 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 1. Send `import` for the child. Wait for a `done` status whose detail names
    `refs/jailbee/from/<child>/<branch>`.
 2. `git merge` (or cherry-pick) from that ref and resolve conflicts yourself.
-3. Free the slot: `destroy` the child if your grant has it, otherwise `stop`
-   it, so queued spawns can start. `destroy` is refused if the child has
-   commits you have not imported, unless `force` is true. Use `force` only
-   when you mean to discard them.
+3. Free the slot: a finished child is normally still running, so `stop`
+   it first (`destroy` is refused while it runs: "stop it first"). Stopping
+   alone frees the slot, so queued spawns and restarts can start. Then
+   `destroy` it if your grant has that operation. `destroy` is refused if
+   the child has commits you have not imported, unless `force` is true. Use
+   `force` only when you mean to discard them.
 
 ## Rework
 
-To redo a child's work, `restart` a stopped child with a new prompt. Never
+To redo a child's work, `restart` a stopped child with a new prompt. A
+restart that runs at once is answered `done` ("child `x` restarted"); with
+no free slot it is `queued`, then `started` when it later begins. Never
 try to merge your own work into a child. If you need newer base work in a
 child, spawn a fresh fork instead.
 
