@@ -57,9 +57,43 @@ branch. `rights` must be within `grantable` (see below). `note` is optional.
  "rights": {"mounts": [], "loose": false, "egress": []}}
 ```
 
+Optional `runner` (spawn and restart): `{"agent": "claude" | "claude-jb",
+"profile": <LiteLLM profile, claude-jb only>, "model": "fable" | "opus" |
+"sonnet" | "haiku"}`; only `agent` is required, unknown keys are refused.
+Omit it unless the user asked for a specific agent, profile or model (or their
+instructions name one); omitting starts the repo's default agent.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "spawn-fix-13", "type": "spawn", "kind": "fork",
+ "branch": "fix/issue-13", "prompt": "Fix issue 13.",
+ "rights": {"mounts": [], "loose": false, "egress": []},
+ "runner": {"agent": "claude-jb", "profile": "grok", "model": "sonnet"}}
+```
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "spawn-fix-14", "type": "spawn", "kind": "fork",
+ "branch": "fix/issue-14", "prompt": "Fix issue 14.",
+ "rights": {"mounts": [], "loose": false, "egress": []},
+ "runner": {"agent": "claude", "model": "sonnet"}}
+```
+
+A spawn the broker cannot run with that runner is `refused` (never run with
+the default). Details: `agent `claude` is not enabled in this repo`; `agent
+`claude` has no prompt_args, so it cannot take a prompt`;
+`agents.claude.command must start with `claude` or `claude-jb` to take a
+runner (it is `...`)`; `claude-jb needs LiteLLM enabled in this repo`;
+`LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm
+up`)`; `LiteLLM profile `P` has no `M` tier`.
+
 CLI: `jailbee-inbox send spawn --branch fix/issue-12 [--new [--base main]]
-[--mount M]... [--loose] [--egress H]... [--note T] -` with the prompt on
+[--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P]]
+[--model M] -` with the prompt on
 stdin (or `--text T`; `--file` only with an absolute path outside the repo).
+`jailbee-inbox runners [--json]` lists the runners you may name and what
+omitting one starts: `default: omit runner (<agent>)`, then one line per
+`claude` and per `claude-jb -P <profile>` with its models.
 Never leave prompt files in the repo work tree: untracked files make a
 `fork` spawn and an `import` refused.
 
@@ -101,11 +135,24 @@ Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
 Status: `done` ("child `x` restarted") when it runs at once; `queued` when
 no slot is free, then `started` when it is later started.
 
+`runner` is optional. Absent keeps the child's previous runner; an explicit
+`"runner": null` clears it (the default agent again); an object replaces it.
+The refusals are the spawn ones above.
+
 <!-- kind: outbox -->
 ```json
 {"version": 1, "id": "restart-fix-12-b", "type": "restart",
  "child": "fix-issue-12", "prompt_file": "restart-fix-12-b.md"}
 ```
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "restart-fix-12-c", "type": "restart",
+ "child": "fix-issue-12", "prompt": "Try again.", "runner": null}
+```
+
+CLI: `jailbee-inbox send restart --child C [--agent A [--profile P]]
+[--model M] | --default-runner` with the prompt on stdin or `--text`.
 
 ### `stop`
 

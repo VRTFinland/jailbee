@@ -151,6 +151,23 @@ prepends a short fixed preamble naming its orchestrator and the child skill,
 and sets `JAILBEE_ROLE=child` and `JAILBEE_ORCHESTRATOR=<name>` in the
 agent's environment.
 
+## Runner: which agent a child runs
+
+A `spawn` or `restart` manifest may carry an optional `runner`: `agent`
+(`claude` or `claude-jb`), `profile` (a LiteLLM profile, `claude-jb` only) and
+`model` (`fable`, `opus`, `sonnet` or `haiku`). It rewrites the Claude
+command of the repo's `agents.claude.command` for that child. Omitted, the
+child runs the repo's primary agent as configured. On `restart`, an absent
+`runner` keeps the child's previous one and `"runner": null` clears it. The
+runner is stored on the child as a label and shown on its dashboard card.
+
+A runner that cannot be honoured (Claude not enabled, no `prompt_args`, a
+command that is not `claude`/`claude-jb`, LiteLLM disabled, an unserved
+profile or a tier the profile lacks) is refused with the reason; it never falls
+back to the default. Orchestrators discover the options with
+`jailbee-inbox runners`, and are told to omit `runner` unless the user (or
+the user's own instructions) asked for a specific agent, profile or model.
+
 ## The broker
 
 The broker is a systemd user service, `jailbee-broker.service`. `jb init` /
@@ -174,7 +191,7 @@ queue and are delivered when it runs again, also across broker restarts.
 Inside each orchestrator and child, `/home/dev/.jailbee/orchestration/` holds
 `outbox/` (container to host), `inbox/` (host to container) and, for an
 orchestrator, `grant.json`, a read-only copy of its limits. The golden image
-ships `jailbee-inbox` (`wait`, `ls`, `read`, `send`) so agents need not write
+ships `jailbee-inbox` (`wait`, `ls`, `read`, `runners`, `send`) so agents need not write
 JSON by hand; rebuild with `jb base build` to get it.
 
 ## Lifecycle
