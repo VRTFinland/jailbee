@@ -1099,25 +1099,40 @@ class DashboardSession:
         from jailbee.dashboard.details import _orchestration_lines
 
         entries: list[PickerEntry] = []
-        if info.grant is not None:
+        revoke_ok = permitted(
+            dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
+        )
+        if not dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh):
+            # offered only for its revoke entry (see orchestration_offered)
+            if info.grant is not None and revoke_ok:
+                entries.append(PickerEntry("Revoke…", "revoke"))
+        elif info.grant is not None:
             grant = info.grant
+            kinds = info.configured_mounts or group.optional_mounts
+            bound = None
+            if self.over_ssh and self.ssh_policy is not None:
+                from jailbee.remote_ssh.orchestration_policy import grant_bound, rights_from_info
+
+                bound = grant_bound(self.ssh_policy, kinds, rights_from_info(info))
             entries.append(PickerEntry(f"Children limit: {grant.limit}…", "limit"))
             for op in _TOGGLE_OPERATIONS:
                 state = "on" if op in grant.operations else "off"
                 entries.append(PickerEntry(f"Allow {op}: {state}", f"op:{op}"))
-            entries.append(
-                PickerEntry(f"Children may be loose: {'yes' if grant.loose else 'no'}", "loose")
-            )
-            for kind in info.configured_mounts or group.optional_mounts:
+            # a toggle that turns a field off narrows the grant, so it is always offered
+            if grant.loose or bound is None or bound.loose:
+                entries.append(
+                    PickerEntry(f"Children may be loose: {'yes' if grant.loose else 'no'}", "loose")
+                )
+            for kind in kinds:
+                if kind not in grant.mounts and bound is not None and kind not in bound.mounts:
+                    continue
                 state = "on" if kind in grant.mounts else "off"
                 entries.append(PickerEntry(f"Grant mount {kind}: {state}", f"mount:{kind}"))
             listed = ", ".join(grant.egress) or "—"
             entries.append(PickerEntry(f"Egress for children: {listed}…", "egress"))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
-            if permitted(
-                dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
-            ):
+            if revoke_ok:
                 entries.append(PickerEntry("Revoke…", "revoke"))
         else:
             for p in group.orchestration_profiles:
@@ -1161,9 +1176,7 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         found = self._listed_container(container)
-        if found is None or not dact.orchestration_offered(
-            found[1], self.ssh_policy, over_ssh=self.over_ssh
-        ):
+        if found is None or not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
         if entry.value in ("limit", "egress"):
@@ -1178,6 +1191,12 @@ class DashboardSession:
         self._grant_patches.pop(container, None)
         self.run_quiet_cli(repo, argv)
         return None
+
+    def _orchestration_editable(self, info: ContainerInfo) -> bool:
+        """Whether the menu applies to ``info`` and `orchestrate grant` may run for it."""
+        return dact.orchestration_offered(
+            info, self.ssh_policy, over_ssh=self.over_ssh
+        ) and dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh)
 
     def _orchestration_prompt(
         self, container: str, info: ContainerInfo, value: str
@@ -1260,9 +1279,7 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         grant = found[1].grant
-        if grant is None or not dact.orchestration_offered(
-            found[1], self.ssh_policy, over_ssh=self.over_ssh
-        ):
+        if grant is None or not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
         if prompt.purpose == "container-orchestration-limit":

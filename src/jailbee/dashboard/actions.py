@@ -257,15 +257,30 @@ def orchestrate_revoke_argv(name: str) -> list[str]:
     return ["orchestrate", "revoke", "--", name]
 
 
+def orchestration_grant_permitted(
+    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
+) -> bool:
+    """Whether ``orchestrate grant`` (every edit but revoke) may run for this container."""
+    return permitted(orchestrate_grant_argv(container.name), ssh_policy, over_ssh=over_ssh)
+
+
 def orchestration_offered(
     container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
 ) -> bool:
-    """Whether ``Orchestration…`` is offered: an existing, non-child, non-mount container."""
-    return (
+    """Whether ``Orchestration…`` is offered: an existing, non-child, non-mount container.
+
+    It needs `grant`, or an existing grant that `revoke` can take away.
+    """
+    if not (
         container.state in _EXISTING_STATES
         and container.child is None
         and container.mode != "mount"
-        and permitted(orchestrate_grant_argv(container.name), ssh_policy, over_ssh=over_ssh)
+    ):
+        return False
+    if orchestration_grant_permitted(container, ssh_policy, over_ssh=over_ssh):
+        return True
+    return container.grant is not None and permitted(
+        orchestrate_revoke_argv(container.name), ssh_policy, over_ssh=over_ssh
     )
 
 

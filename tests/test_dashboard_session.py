@@ -1090,3 +1090,55 @@ def test_text_edit_rechecks_grant_and_eligibility(mocker, tmp_path):
     assert session.submit_prompt(prompt, "3") is None
     quiet.assert_not_called()
     assert "not available" in session.notice
+
+
+def _ssh_orchestration_session(mocker, tmp_path, *, level, grant_kw=None, kinds=("data",)):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True, kinds=kinds)
+    group = session.groups[0]
+    info = group.containers[0]
+    if grant_kw:
+        info = dataclasses.replace(info, grant=dataclasses.replace(info.grant, **grant_kw))
+        group.containers[0] = info
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig(orchestration=level)
+    return session
+
+
+def test_menu_over_ssh_setting_off_shows_only_revoke(mocker, tmp_path):
+    session = _ssh_orchestration_session(mocker, tmp_path, level="off")
+    assert [e.value for e in session.open_orchestration("alpha-one").entries] == ["revoke"]
+
+
+def test_menu_over_ssh_ssh_level_hides_widening_toggles(mocker, tmp_path):
+    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert "loose" not in values
+    assert "mount:data" not in values
+    assert {"limit", "op:destroy", "egress"} <= set(values)
+
+
+def test_menu_over_ssh_offers_turning_a_wide_field_off(mocker, tmp_path):
+    session = _ssh_orchestration_session(
+        mocker, tmp_path, level="ssh", grant_kw={"loose": True, "mounts": ("data",)}
+    )
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert "loose" in values
+    assert "mount:data" in values
+
+
+def test_menu_locally_unchanged(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True, kinds=("data",))
+    assert [e.value for e in session.open_orchestration("alpha-one").entries] == [
+        "limit",
+        "op:import",
+        "op:restart",
+        "op:stop",
+        "op:destroy",
+        "loose",
+        "mount:data",
+        "egress",
+        "profile:bugfixer",
+        "revoke",
+    ]

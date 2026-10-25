@@ -541,3 +541,26 @@ def test_orchestration_entry_hidden(fields, case):
 def test_orchestration_entry_offered_for_a_plain_clone():
     for state in ("Running", "Stopped"):
         assert "orchestration" in _container_verbs(_LOCAL, _container(state))
+
+
+def _granted_container() -> ContainerInfo:
+    from jailbee.orchestration.view import GrantView
+
+    return _container(
+        grant=GrantView(limit=2, operations=("spawn",), mounts=(), loose=False, egress=())
+    )
+
+
+def test_orchestration_offered_over_ssh_with_revoke_only_when_setting_off():
+    policy = RemoteSSHConfig()
+    assert dact.orchestration_offered(_granted_container(), policy, over_ssh=True)
+    assert not dact.orchestration_offered(_container(), policy, over_ssh=True)
+
+
+def test_orchestration_grant_permitted_needs_the_setting_over_ssh():
+    info = _granted_container()
+    off = RemoteSSHConfig(orchestration="off")
+    ssh = RemoteSSHConfig(orchestration="ssh")
+    assert not dact.orchestration_grant_permitted(info, off, over_ssh=True)
+    assert dact.orchestration_grant_permitted(info, ssh, over_ssh=True)
+    assert dact.orchestration_grant_permitted(info, off, over_ssh=False)

@@ -23,6 +23,7 @@ from jailbee.orchestration.grant import Grant, egress_covered
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.lifecycle import ContainerInfo
 
 
 @dataclass(frozen=True)
@@ -117,3 +118,16 @@ def read_orchestrator_rights(cfg: Config, incus: Incus, full: str) -> Orchestrat
     )
     egress = (*cfg.effective_egress_allow(), *egress_scope.container_extras(incus, full))
     return OrchestratorRights(mounts=tuple(kinds), loose=loose, egress=egress)
+
+
+def rights_from_info(info: ContainerInfo) -> OrchestratorRights:
+    """The rights a dashboard row shows `info` holding permanently.
+
+    An approximation of `read_orchestrator_rights` from the row's own fields
+    (no host-path, read-only or autostart check); the CLI decides.
+    """
+    return OrchestratorRights(
+        mounts=tuple(k for k in info.optional_mounts if k not in info.mount_until),
+        loose=info.network == "loose" and info.loose_until is None,
+        egress=info.egress_extra,
+    )
