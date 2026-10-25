@@ -188,6 +188,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_TOGGLE_OPERATIONS = ("import", "restart", "stop", "destroy")  # spawn/message are the baseline
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
 STARTUP_NOTICE_SECONDS = 10.0  # a config-migration notice shown at launch
@@ -1055,11 +1056,26 @@ class DashboardSession:
         from jailbee.dashboard.details import _orchestration_lines
 
         entries: list[PickerEntry] = []
-        # Task 9's edit entries for an existing grant go here, above the re-apply rows.
         if info.grant is not None:
+            grant = info.grant
+            entries.append(PickerEntry(f"Children limit: {grant.limit}…", "limit"))
+            for op in _TOGGLE_OPERATIONS:
+                state = "on" if op in grant.operations else "off"
+                entries.append(PickerEntry(f"Allow {op}: {state}", f"op:{op}"))
+            entries.append(
+                PickerEntry(f"Children may be loose: {'yes' if grant.loose else 'no'}", "loose")
+            )
+            for kind in info.configured_mounts or group.optional_mounts:
+                state = "on" if kind in grant.mounts else "off"
+                entries.append(PickerEntry(f"Grant mount {kind}: {state}", f"mount:{kind}"))
+            listed = ", ".join(grant.egress) or "—"
+            entries.append(PickerEntry(f"Egress for children: {listed}…", "egress"))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
-            entries.append(PickerEntry("Revoke…", "revoke"))
+            if permitted(
+                dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
+            ):
+                entries.append(PickerEntry("Revoke…", "revoke"))
         else:
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Grant profile '{p}'", f"profile:{p}"))
@@ -1072,7 +1088,9 @@ class DashboardSession:
             detail=tuple(Text.from_markup(line).plain for line in _orchestration_lines(info)),
         )
 
-    def submit_orchestration(self, picker: Picker, entry: PickerEntry) -> Picker | None:
+    def submit_orchestration(
+        self, picker: Picker, entry: PickerEntry
+    ) -> Picker | TextPrompt | None:
         """Run the chosen grant, or ask before a revoke."""
         container = picker.target
         if picker.purpose == "container-orchestration-revoke":
@@ -1097,12 +1115,91 @@ class DashboardSession:
         if repo is None:
             self.set_notice(f"'{container}' is gone")
             return None
+        found = self._listed_container(container)
+        if found is None or not dact.orchestration_offered(
+            found[1], self.ssh_policy, over_ssh=self.over_ssh
+        ):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        if entry.value in ("limit", "egress"):
+            return self._orchestration_prompt(container, found[1], entry.value)
+        if entry.value.startswith(("op:", "mount:")) or entry.value == "loose":
+            return self._orchestration_choice(container, entry.value)
         if entry.value.startswith("profile:"):
             argv = dact.orchestrate_grant_argv(container, profile=entry.value[len("profile:") :])
         else:
             argv = dact.orchestrate_grant_argv(container)
         self.run_quiet_cli(repo, argv)
         return None
+
+    def _orchestration_prompt(
+        self, container: str, info: ContainerInfo, value: str
+    ) -> TextPrompt | None:
+        grant = info.grant
+        if grant is None:
+            self.set_notice("Orchestration is not granted for this container")
+            return None
+        if value == "limit":
+            return TextPrompt(
+                "container-orchestration-limit",
+                f"Orchestration for '{info.display_name}'",
+                "Children limit (1-64)",
+                initial=str(grant.limit),
+                target=container,
+            )
+        return TextPrompt(
+            "container-orchestration-egress",
+            f"Orchestration for '{info.display_name}'",
+            "Egress hosts for children (comma or space separated; empty clears)",
+            initial=", ".join(grant.egress),
+            target=container,
+        )
+
+    def _orchestration_choice(self, container: str, value: str) -> Picker | None:
+        """Run one grant edit chosen in the picker, then reopen the picker."""
+        found = self._listed_container(container)
+        repo = self.repo_for(container, "container")
+        if found is None or repo is None or found[1].grant is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        info = found[1]
+        grant = info.grant
+        assert grant is not None
+        argv: list[str] | None = None
+        if value.startswith("op:"):
+            op = value[len("op:") :]
+            argv = (
+                dact.orchestrate_grant_argv(container, deny=(op,))
+                if op in grant.operations
+                else dact.orchestrate_grant_argv(container, allow=(op,))
+            )
+        elif value == "loose":
+            argv = dact.orchestrate_grant_argv(container, loose=not grant.loose)
+        elif value.startswith("mount:"):
+            kind = value[len("mount:") :]
+            current = list(grant.mounts)
+            new = [m for m in current if m != kind] if kind in current else [*current, kind]
+            argv = dact.orchestrate_grant_argv(container, mounts=tuple(new))
+        if argv is not None:
+            self.run_quiet_cli(repo, argv)
+        self.overlay = self.open_orchestration(container)
+        return self.overlay if isinstance(self.overlay, Picker) else None
+
+    def _submit_orchestration_text(self, prompt: TextPrompt, answer: str) -> Picker | None:
+        container = prompt.target
+        repo = self.repo_for(container, "container")
+        if repo is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        if prompt.purpose == "container-orchestration-limit":
+            argv = dact.orchestrate_grant_argv(container, children=int(answer))
+        else:
+            argv = dact.orchestrate_grant_argv(
+                container, egress=tuple(answer.replace(",", " ").split())
+            )
+        self.run_quiet_cli(repo, argv)
+        self.overlay = self.open_orchestration(container)
+        return self.overlay if isinstance(self.overlay, Picker) else None
 
     def open_memory_picker(self, container: str) -> Picker | None:
         """Offer the same memory choices as the CLI, using the current host snapshot."""
@@ -1719,6 +1816,8 @@ class DashboardSession:
             return None
         if prompt.purpose == "container-memory-other":
             return self.change_memory(prompt.target, answer)
+        if prompt.purpose in ("container-orchestration-limit", "container-orchestration-egress"):
+            return self._submit_orchestration_text(prompt, answer)
         if prompt.purpose == "container-retarget":
             self.run_dashboard_command(
                 prompt.target, "container", dact.retarget_argv(prompt.target, answer)

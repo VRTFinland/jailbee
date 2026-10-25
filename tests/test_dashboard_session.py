@@ -573,13 +573,26 @@ def test_old_outbox_pickers_are_gone():
         assert not hasattr(dob, name), name
 
 
-def _orchestration_session(mocker, tmp_path, *, grant=False, profiles=("bugfixer",)):
+def _orchestration_session(
+    mocker,
+    tmp_path,
+    *,
+    grant=False,
+    profiles=("bugfixer",),
+    ops=("spawn",),
+    mounts=(),
+    kinds=(),
+    egress=(),
+    loose=False,
+):
     from jailbee.orchestration.view import GrantView
 
     info = ci("alpha-one", "alpha")
     if grant:
         info = dataclasses.replace(
-            info, grant=GrantView(limit=2, operations=("spawn",), mounts=(), loose=False, egress=())
+            info,
+            configured_mounts=tuple(kinds),
+            grant=GrantView(limit=2, operations=ops, mounts=mounts, loose=loose, egress=egress),
         )
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [info], orchestration_profiles=tuple(profiles)
@@ -603,8 +616,8 @@ def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):
 def test_orchestration_picker_with_grant_reapplies_and_revokes(mocker, tmp_path):
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
     picker = session.open_orchestration("alpha-one")
-    assert [e.value for e in picker.entries] == ["profile:bugfixer", "revoke"]
-    assert picker.entries[0].label == "Re-apply profile 'bugfixer'"
+    assert [e.value for e in picker.entries][-2:] == ["profile:bugfixer", "revoke"]
+    assert picker.entries[-2].label == "Re-apply profile 'bugfixer'"
     # card lines, markup stripped (the picker draws plain text)
     assert picker.detail[0].startswith("orchestrator · children 0/2")
     assert all("[dim]" not in line for line in picker.detail)
@@ -647,3 +660,186 @@ def test_orchestration_picker_refused_for_a_child(mocker, tmp_path):
     )
     assert session.open_orchestration("alpha-one") is None
     assert "not available" in session.notice
+
+
+def _edit(session, quiet, value):
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", value))
+    return quiet.call_args.args[1]
+
+
+def test_orchestration_edit_entries_labels(mocker, tmp_path):
+    session, _ = _orchestration_session(
+        mocker,
+        tmp_path,
+        grant=True,
+        ops=("spawn", "restart"),
+        mounts=("data",),
+        kinds=("data", "docs"),
+        egress=("pypi.org",),
+    )
+    picker = session.open_orchestration("alpha-one")
+    assert [(e.label, e.value) for e in picker.entries] == [
+        ("Children limit: 2…", "limit"),
+        ("Allow import: off", "op:import"),
+        ("Allow restart: on", "op:restart"),
+        ("Allow stop: off", "op:stop"),
+        ("Allow destroy: off", "op:destroy"),
+        ("Children may be loose: no", "loose"),
+        ("Grant mount data: on", "mount:data"),
+        ("Grant mount docs: off", "mount:docs"),
+        ("Egress for children: pypi.org…", "egress"),
+        ("Re-apply profile 'bugfixer'", "profile:bugfixer"),
+        ("Revoke…", "revoke"),
+    ]
+
+
+def test_orchestration_mount_kinds_fall_back_to_repo(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.groups[0].optional_mounts = ("docs",)
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert "mount:docs" in values
+
+
+def test_toggle_destroy_on(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    assert _edit(session, quiet, "op:destroy") == [
+        "orchestrate",
+        "grant",
+        "--allow",
+        "destroy",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_toggle_restart_off(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, ops=("spawn", "restart"))
+    assert _edit(session, quiet, "op:restart") == [
+        "orchestrate",
+        "grant",
+        "--deny",
+        "restart",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_loose_toggle(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    assert _edit(session, quiet, "loose") == ["orchestrate", "grant", "--loose", "--", "alpha-one"]
+
+
+def test_mount_toggle_sends_full_list(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, mounts=("data",), kinds=("data", "docs")
+    )
+    assert _edit(session, quiet, "mount:docs") == [
+        "orchestrate",
+        "grant",
+        "--mount",
+        "data",
+        "--mount",
+        "docs",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_turning_off_last_mount_clears(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, mounts=("data",), kinds=("data",)
+    )
+    assert _edit(session, quiet, "mount:data") == [
+        "orchestrate",
+        "grant",
+        "--clear-mounts",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_limit_prompt_validates_and_runs(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "limit")
+    )
+    assert prompt.purpose == "container-orchestration-limit"
+    assert prompt.initial == "2"
+    for bad in ("0", "65", "x", "", "-1"):
+        assert validate_answer(prompt, bad)
+    assert validate_answer(prompt, "5") is None
+    assert validate_answer(prompt, " 64 ") is None
+    session.submit_prompt(prompt, " 5 ")
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--children", "5", "--", "alpha-one"]
+
+
+def test_egress_prompt_parses_list_and_prefills(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, egress=("a.org", "b.org"))
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "egress")
+    )
+    assert prompt.purpose == "container-orchestration-egress"
+    assert prompt.initial == "a.org, b.org"
+    session.submit_prompt(prompt, "pypi.org, *.npmjs.org")
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--egress",
+        "pypi.org",
+        "--egress",
+        "*.npmjs.org",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_empty_egress_answer_clears(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "egress")
+    )
+    assert validate_answer(prompt, "  ") is None
+    session.submit_prompt(prompt, "  ")
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--clear-egress", "--", "alpha-one"]
+
+
+def test_edit_reopens_picker(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    shown = session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    assert session.overlay.purpose == "container-orchestration"
+    assert shown is session.overlay
+
+
+def test_prompt_edit_reopens_picker(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "limit")
+    )
+    shown = session.submit_prompt(prompt, "3")
+    assert shown.purpose == "container-orchestration"
+
+
+def test_stale_picker_does_not_run_after_row_loses_eligibility(mocker, tmp_path):
+    from jailbee.orchestration.view import ChildView
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    picker = session.open_orchestration("alpha-one")
+    group = session.groups[0]
+    group.containers[0] = dataclasses.replace(
+        group.containers[0], child=ChildView("alpha-o", "running", (), False, ())
+    )
+    assert session.submit_picker(picker, PickerEntry("", "loose")) is None
+    quiet.assert_not_called()
+    assert "not available" in session.notice
+
+
+def test_revoke_hidden_when_policy_forbids(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    mocker.patch("jailbee.dashboard.tui.session.permitted", return_value=False)
+    # offered() uses actions' own permitted import, so only the revoke entry is gated here
+    picker = session.open_orchestration("alpha-one")
+    assert "revoke" not in [e.value for e in picker.entries]
