@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import MagicMock
+
+import pytest
 
 from jailbee import lifecycle
 from jailbee.global_config import GlobalConfig
@@ -14,8 +16,6 @@ from tests.conftest import make_config
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _ctx(
@@ -158,3 +158,106 @@ def test_invalid_branch_refused(tmp_path: Path) -> None:
     assert isinstance(out, Outcome)
     assert out.state == "refused"
     assert "invalid container name" in out.detail
+
+
+def _plan(tmp_path: Path, kind: Literal["fork", "new"] = "fork", **rights: object):
+    ctx = _ctx(tmp_path)
+    r = ChildRights.model_validate(rights)
+    plan = actions.SpawnPlan("proj-fix-1", kind, "fix/1", "main" if kind == "new" else None, "p", r)
+    return ctx, plan
+
+
+def _verdict(mounts: tuple[str, ...] = (), widening: tuple[str, ...] = ()):
+    from jailbee.branch_config import EscalationVerdict
+
+    return EscalationVerdict(
+        widening_steps=widening, attached_mounts=mounts, baseline_source="", untrusted=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("rights", "verdict", "expected"),
+    [
+        ({}, _verdict(), True),
+        ({"mounts": ["data"]}, _verdict(mounts=("data",)), True),
+        ({}, _verdict(mounts=("data",)), False),
+        ({"loose": False}, _verdict(widening=("npm",)), False),
+        ({"loose": True}, _verdict(widening=("npm",)), True),
+    ],
+)
+def test_escalation_policy(rights: dict[str, object], verdict: object, expected: bool) -> None:
+    policy = actions.escalation_policy(ChildRights.model_validate(rights))
+    assert policy(verdict) is expected  # type: ignore[arg-type]  # test verdict
+
+
+def test_child_options_fork_is_untrusted_and_pinned(tmp_path: Path) -> None:
+    from jailbee.forking import ForkSource
+
+    ctx, plan = _plan(tmp_path, mounts=["data"])
+    fork = ForkSource("proj-src", "src-br", "deadbeef", "dev", False)
+    o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=fork)
+    assert o.clone_commit == "deadbeef"
+    assert o.fork_of == "proj-src"
+    assert o.base_branch_label == "dev"
+    assert o.untrusted_head is True
+    assert o.base is None
+    assert o.spawned_by == "proj-orch"
+    assert o.rights == plan.rights
+    assert o.name == "proj-fix-1" and o.container_branch == "fix/1"
+    assert o.network == ctx.cfg.defaults.network
+    assert o.memory is None and o.clone is True and o.assume_yes is False
+    assert o.initial_prompt == "p"
+
+
+def test_child_options_new_loose_uses_base(tmp_path: Path) -> None:
+    ctx, plan = _plan(tmp_path, "new", loose=True)
+    o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None)
+    assert o.network == "loose"
+    assert o.base == "main"
+    assert o.clone_commit is None and o.fork_of is None
+    assert o.untrusted_head is True
+
+
+def test_start_child_needs_operator_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.create_flow import NeedsOperator
+
+    def boom(*a: object, **k: object) -> None:
+        raise NeedsOperator("x", reason="autofetch needs a key touch")
+
+    monkeypatch.setattr(actions, "start_create", boom)
+    ctx, plan = _plan(tmp_path)
+    assert actions.start_child(ctx, plan, fork=None) == Outcome(
+        "refused", "autofetch needs a key touch"
+    )
+
+
+def test_start_child_create_error_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.create_flow import CreateError
+
+    def boom(*a: object, **k: object) -> None:
+        raise CreateError("name taken")
+
+    monkeypatch.setattr(actions, "start_create", boom)
+    ctx, plan = _plan(tmp_path)
+    assert actions.start_child(ctx, plan, fork=None) == Outcome("refused", "name taken")
+
+
+def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(cfg: object, incus: object, gcfg: object, opts: object, **kw: object) -> None:
+        seen.update(gcfg=gcfg, opts=opts, **kw)
+
+    monkeypatch.setattr(actions, "start_create", fake)
+    ctx, plan = _plan(tmp_path)
+    out = actions.start_child(ctx, plan, fork=None)
+    assert out.state == "started"
+    assert out.detail == "child `fix-1` created"
+    inter = seen["interaction"]
+    assert inter.accept_escalation is not None  # type: ignore[attr-defined]
+    assert inter.confirm is None  # type: ignore[attr-defined]
+    assert inter.autofetch is False  # type: ignore[attr-defined]
+    assert seen["gcfg"] is ctx.gcfg
+    assert seen["config_path"] is None

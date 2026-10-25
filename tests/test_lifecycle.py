@@ -11446,3 +11446,103 @@ def test_list_containers_memory_usage_excludes_page_cache(make_cfg, tmp_path, mo
     mocker.patch("jailbee.lifecycle.read_container_cache", return_value=1_500_000_000)
     result = list_containers(cfg, incus)
     assert result[0].memory_usage == 2_500_000_000
+
+
+def _child_cfg(make_cfg, tmp_path, *, default_profile: str | None = None):
+    from jailbee.config.models_host import OptionalMount
+    from jailbee.config.models_orchestration import (
+        GrantableConfig,
+        OrchestrationProfile,
+        OrchestrationView,
+        RepoOrchestration,
+    )
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main").model_copy(
+        update={"optional_mounts": {"data": OptionalMount(host=tmp_path, container="/data")}}
+    )
+    cfg._orchestration_view = OrchestrationView(
+        profiles={
+            "p": OrchestrationProfile(max_running_children=5, grantable=GrantableConfig(mounts=[]))
+        },
+        default_profile=default_profile,
+        repo=RepoOrchestration(),
+    )
+    return cfg
+
+
+def _child_incus(cfg):
+    """A MagicMock Incus whose config labels are a real, ordered store."""
+    store: dict[str, str] = {}
+    calls: list[tuple[str, str]] = []
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.side_effect = lambda: [
+        {"name": n, "profiles": [f"{cfg.container_prefix}-base"]} for n in {c[0] for c in calls}
+    ]
+
+    def _set(name, key, value):
+        store[key] = value
+        calls.append((name, key))
+
+    incus.config_set.side_effect = _set
+    incus.config_get.side_effect = lambda _n, key: store.get(key)
+    return incus, store
+
+
+def _new_child(cfg, incus, mocker, **extra):
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    mocker.patch("jailbee.orchestration.service.ensure_running")
+    mocker.patch("jailbee.orchestration.commands.repo_registered", return_value=True)
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
+    mocker.patch("jailbee.mounts.attach")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        **extra,
+    )
+    new_container(cfg, incus, opts)
+
+
+def test_new_container_writes_child_labels_and_rights(make_cfg, tmp_path, mocker):
+    import json
+
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, store = _child_incus(cfg)
+    rights = ChildRights(mounts=("data",), egress=("example.com",))
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=rights)
+    assert store[labels.SPAWNED_BY] == "myrepo-orch"
+    assert json.loads(store[labels.RIGHTS]) == json.loads(rights.to_label())
+    from jailbee import mounts
+
+    name = incus.start.call_args.args[0]
+    mounts.attach.assert_called_once_with(cfg, incus, name, "data", until=None)
+    assert json.loads(store["user.jailbee.egress_extra"]) == ["example.com"]
+    from jailbee import egress_scope
+
+    egress_scope.apply_container_acl.assert_called_once_with(cfg, incus, name, mode="strict")
+
+
+def test_child_gets_no_default_profile(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    cfg = _child_cfg(make_cfg, tmp_path, default_profile="p")
+    incus, store = _child_incus(cfg)
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch")
+    assert labels.GRANT not in store
+    # Control: without spawned_by the same rig does grant the default profile.
+    incus2, store2 = _child_incus(cfg)
+    _new_child(cfg, incus2, mocker)
+    assert labels.GRANT in store2

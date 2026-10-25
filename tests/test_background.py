@@ -897,3 +897,26 @@ def test_job_engine_returns_none_and_warns_when_get_engine_raises(mocker, capsys
     out = capsys.readouterr()
     assert "Job tracking unavailable" in out.out + out.err
     assert "no state dir" in out.out + out.err
+
+
+def test_codec_roundtrips_spawned_by_and_rights():
+    import json
+
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.orchestration.grant import ChildRights
+
+    rights = ChildRights(mounts=("data",), loose=True, egress=("example.com",))
+    opts = _prompt_opts(spawned_by="myrepo-orch", rights=rights)
+    job = json.loads(json.dumps(op_to_job(opts, container_name="c", log_path="/l")))
+    back, _, _ = job_to_opts(job)
+    assert back.spawned_by == "myrepo-orch"
+    assert back.rights == rights
+
+
+def test_job_without_child_keys_reads_none():
+    from jailbee.background import job_to_opts, op_to_job
+
+    job = op_to_job(_prompt_opts(), container_name="c", log_path="/l")
+    del job["opts"]["spawned_by"], job["opts"]["rights"]
+    back, _, _ = job_to_opts(job)
+    assert back.spawned_by is None and back.rights is None

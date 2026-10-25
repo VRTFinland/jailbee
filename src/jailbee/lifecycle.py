@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
+    from jailbee.orchestration.grant import ChildRights
     from jailbee.procstat import ProcessActivity, ProcessMemory
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -1143,6 +1144,12 @@ class NewContainerOptions:
     # the `default` profile. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     storage_pool: str | None = None
+    # Orchestration children (plan D): the orchestrator's full name, written to
+    # `SPAWNED_BY`, and the exact rights the child is created with, written to
+    # `RIGHTS` and applied before start. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    spawned_by: str | None = None
+    rights: ChildRights | None = None
 
 
 def check_storage_pool(incus: Incus, pool: str | None) -> None:
@@ -1853,6 +1860,17 @@ def new_container(
         except Exception as e:
             warn(f"Container created, but failed to set fork label: {e}")
 
+    # Orchestration child: provenance and rights labels. Written before the
+    # default profile below, so `apply_default_profile` sees the child and
+    # skips it: a child never receives the default grant. Not best-effort — a
+    # child without its labels would be an unattributed container.
+    if opts.spawned_by is not None:
+        from jailbee.orchestration import labels as orchestration_labels
+
+        incus.config_set(name, orchestration_labels.SPAWNED_BY, opts.spawned_by)
+        if opts.rights is not None:
+            incus.config_set(name, orchestration_labels.RIGHTS, opts.rights.to_label())
+
     # Orchestration `default_profile`: grant the new container its profile.
     # Plan D writes `SPAWNED_BY` before this point, so a spawned container's
     # grants are already attributable. Best-effort, like the labels above;
@@ -1864,6 +1882,15 @@ def new_container(
             orchestration_commands.apply_default_profile(cfg, incus, name)
         except Exception as e:
             warn(f"Container created, but failed to apply the default orchestration profile: {e}")
+
+    if opts.rights is not None:
+        from jailbee import egress_scope, mounts
+
+        for kind in opts.rights.mounts:
+            mounts.attach(cfg, incus, name, kind, until=None)
+        if opts.rights.egress:
+            egress_scope.set_container_extras(incus, name, list(opts.rights.egress))
+            egress_scope.apply_container_acl(cfg, incus, name, mode=opts.network)
 
     # Repo source bind (RO). Per-container rather than in the
     # `<prefix>-binds` profile so multiple clones of the same upstream

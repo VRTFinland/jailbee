@@ -425,6 +425,8 @@ def op_to_job(
             "autostart_override": opts.autostart_override,
             "storage_pool": opts.storage_pool,
             "initial_prompt": opts.initial_prompt,
+            "spawned_by": opts.spawned_by,
+            "rights": (opts.rights.model_dump(mode="json") if opts.rights is not None else None),
         },
     }
 
@@ -434,6 +436,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
     from pathlib import Path
 
     from jailbee.lifecycle import NewContainerOptions
+    from jailbee.orchestration.grant import ChildRights
 
     o = job["opts"]
     endpoint = o["mirror_endpoint"]
@@ -478,6 +481,10 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # Dropped here (or in `op_to_job`) a background prompted create would
         # start the agent with no task.
         initial_prompt=o.get("initial_prompt"),
+        # Dropped here (or in `op_to_job`) a background child would be created
+        # unattributed and without its mounts and egress.
+        spawned_by=o.get("spawned_by"),
+        rights=(ChildRights.model_validate(o["rights"]) if o.get("rights") else None),
     )
     return opts, job["container_name"], job["log_path"]
 

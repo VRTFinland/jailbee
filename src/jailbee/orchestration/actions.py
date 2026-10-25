@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 from jailbee import lifecycle
+from jailbee.create_flow import CreateError, Interaction, NeedsOperator, start_create
+from jailbee.forking import ForkError
+from jailbee.lifecycle import NewContainerOptions
 from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.grant import (
     Grant,
@@ -21,7 +24,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Config
+    from jailbee.forking import ForkSource
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
     from jailbee.orchestration.grant import ChildRights
@@ -179,3 +184,55 @@ def plan_spawn(
         return refused(f"a request for `{short}` is already queued")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights)
+
+
+def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
+    """Accept an autostart escalation only when the child's rights already cover it."""
+    granted = set(rights.mounts)
+
+    def accept(verdict: EscalationVerdict) -> bool:
+        if not set(verdict.attached_mounts) <= granted:
+            return False
+        return not verdict.widening_steps or rights.loose
+
+    return accept
+
+
+def child_options(
+    cfg: Config, plan: SpawnPlan, *, orchestrator_full: str, fork: ForkSource | None
+) -> NewContainerOptions:
+    """The create options for a child: always an untrusted head, rights exactly as planned."""
+    return NewContainerOptions(
+        container_branch=plan.branch,
+        name=plan.child_full,
+        network="loose" if plan.rights.loose else cfg.defaults.network,
+        memory=None,
+        cpu=cfg.defaults.cpu,
+        from_base=cfg.golden.alias,
+        clone=True,
+        base=None if fork is not None else plan.base,
+        clone_commit=fork.commit if fork is not None else None,
+        fork_of=fork.full_name if fork is not None else None,
+        base_branch_label=fork.base_branch if fork is not None else None,
+        untrusted_head=True,
+        initial_prompt=plan.prompt,
+        spawned_by=orchestrator_full,
+        rights=plan.rights,
+        assume_yes=False,
+    )
+
+
+def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None) -> Outcome:
+    """Start the background create of a planned child; refusals become outcomes."""
+    opts = child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork)
+    interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
+    try:
+        # config_path=None: the worker reloads the repo config from `cfg.repo_root`.
+        start_create(ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None)
+    except NeedsOperator as e:
+        return refused(e.reason)
+    except CreateError as e:
+        return refused(e.message)
+    except (ForkError, ValueError) as e:
+        return refused(str(e))
+    return Outcome("started", f"child `{lifecycle.short_name(ctx.cfg, plan.child_full)}` created")
