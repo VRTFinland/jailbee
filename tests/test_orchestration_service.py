@@ -55,9 +55,7 @@ def test_ensure_running_never_raises_on_systemctl_failure(
     assert "jb setup" in warn.call_args.args[0]
 
 
-def test_ensure_running_never_raises_on_oserror(
-    private_home: Path, mocker: MockerFixture
-) -> None:
+def test_ensure_running_never_raises_on_oserror(private_home: Path, mocker: MockerFixture) -> None:
     from jailbee.orchestration import service
 
     _ = private_home

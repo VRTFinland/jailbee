@@ -33,7 +33,7 @@ def ensure_running() -> None:
     """Make sure the orchestration broker is running. Never raises."""
     jailbee_bin = shutil.which("jailbee")
     if jailbee_bin is None:
-        warn("jailbee not on PATH — orchestration broker not started; run `jb setup` after installing.")
+        warn("jailbee not on PATH — broker not started; run `jb setup` after installing.")
         return
     try:
         enable_now(jailbee_bin)
