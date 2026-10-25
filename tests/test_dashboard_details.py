@@ -1315,7 +1315,38 @@ def test_plain_container_has_no_orchestration_lines() -> None:
 
 def test_panel_lines_draw_orchestration_after_exceptions() -> None:
     c = replace(_orch(), network="loose")
-    body = _panel_body(_panel_view(c), None, 100)
+    panel = replace(dd.container_panel(c, NOW), warnings=("[yellow]⚠ behind[/yellow]",))
+    view = dd.DetailsView(c.display_name, (), panel=panel)
+    body = _panel_body(view, None, 100)
     row = next(i for i, line in enumerate(body) if "loose" in line and "●" in line)
     assert body[row + 1].startswith("orchestrator ·")
     assert "may:" in body[row + 2]
+    assert "may grant:" in body[row + 3]
+    assert body[row + 4] == "⚠ behind"
+
+
+def test_child_of_unknown_orchestrator_state_is_not_marked_stopped() -> None:
+    c = _child()
+    assert c.orchestrator_running is None
+    assert "not running" not in dd.container_panel(c, NOW).orchestration[0]
+
+
+def test_orchestration_values_are_escaped() -> None:
+    p = dd.container_panel(_orch(ops=("[red]x",), mounts=("[red]m",)), NOW)
+    assert p.orchestration[1] == r"[dim]may:[/dim] \[red]x"
+    assert r"mounts \[red]m" in p.orchestration[2]
+    q = dd.container_panel(_child(orchestrator="alpha-[red]o", state="[b]s"), NOW)
+    assert q.orchestration[0] == r"child of \[red]o · \[b]s"
+
+
+def test_child_short_name_keeps_an_unprefixed_orchestrator_whole() -> None:
+    p = dd.container_panel(_child(orchestrator="beta-orch"), NOW)
+    assert p.orchestration[0].startswith("child of beta-orch")
+
+
+def test_unknown_inbox_and_outbox_counts_draw_nothing() -> None:
+    gs = _gs(unread_inbox=None, pending_orch_outbox=None)
+    child = dd.container_panel(replace(_child(), git_status=gs), NOW)
+    assert child.orchestration[0] == "child of orch · running"
+    orch = dd.container_panel(replace(_orch(), git_status=gs), NOW)
+    assert "inbox" not in orch.orchestration[0]
