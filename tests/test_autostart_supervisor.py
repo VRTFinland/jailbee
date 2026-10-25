@@ -17,6 +17,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session
 
 from jailbee import background as bg
@@ -1250,3 +1251,58 @@ def test_run_detached_passes_prompt_pending_for_on_start(tmp_path, mocker, make_
 
     steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None)
     pending.assert_called_once()
+
+
+def test_run_detached_with_pending_prompt_runs_the_agent_after_every_stage(
+    tmp_path, mocker, make_cfg
+):
+    """on_create detached: on_start runs in the supervisor, agent last."""
+    from jailbee import autostart as autostart_mod
+    from jailbee.config import AutostartStep
+
+    ran = mocker.patch("jailbee.autostart.run_stages")
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[agent])
+    block = Autostart.model_validate(
+        {
+            "on_create": [_stage("deps", detach=True)],
+            "on_start": [_stage("db"), _stage("seed")],
+        }
+    )
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+
+    autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block, from_trigger="on_create"))
+
+    assert [c.args[3][0].stage for c in ran.call_args_list] == ["deps", "db", "seed", "agents"]
+
+
+def test_run_detached_with_pending_prompt_never_launches_the_agent_after_a_failed_stage(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee import autostart as autostart_mod
+    from jailbee.config import AutostartStep
+
+    def run_stages(_cfg, _incus, _name, stages, *_a, **_kw):
+        if stages[0].stage == "seed":
+            raise RuntimeError("seed failed")
+
+    ran = mocker.patch("jailbee.autostart.run_stages", side_effect=run_stages)
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[agent])
+    # on_create detaches, so the whole of on_start is in this run: without
+    # `agents_last` the agents stage would come first and launch before `seed`.
+    block = Autostart.model_validate(
+        {"on_create": [_stage("deps", detach=True)], "on_start": [_stage("seed")]}
+    )
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+
+    with pytest.raises(RuntimeError, match="seed failed"):
+        autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block, from_trigger="on_create"))
+
+    assert [c.args[3][0].stage for c in ran.call_args_list] == ["deps", "seed"]

@@ -136,6 +136,7 @@ def plan_autostart(
     agent_steps: list[AutostartStep] | tuple[AutostartStep, ...] = (),
     override: Literal["wait", "no_wait"] | None = None,
     already_detached: bool = False,
+    agents_last: bool = False,
 ) -> AutostartPlan:
     """Plan one trigger's run.
 
@@ -155,6 +156,13 @@ def plan_autostart(
     ``override`` is the CLI's ``--wait`` / ``--no-wait``.
     ``already_detached`` is how ``ON_START`` learns that ``ON_CREATE``
     already crossed the boundary: once detached, everything after it is.
+
+    ``agents_last`` is a pending initial prompt: the prompted agent starts on
+    its task at once, so the agents stage runs after every other stage of the
+    trigger — last of the blocking ones when nothing detaches, else last of
+    the detached run — instead of at the attach boundary. An explicit
+    ``stage: agents`` is moved there too, keeping its network and mounts; its
+    ``detach`` flag stays where the user drew it, on the stage that followed.
     """
     entries = getattr(autostart, trigger.value)
     stages = normalize_stages(entries)
@@ -162,7 +170,25 @@ def plan_autostart(
     is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
 
     explicit = [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE] if is_stage_form else []
-    if explicit:
+    if agents_last and steps:
+        agents = _agents_stage(steps)
+        if explicit:
+            i = explicit[0]
+            moved = stages.pop(i)
+            if moved.detach and i < len(stages):
+                stages[i] = stages[i].model_copy(update={"detach": True})
+            agents = moved.model_copy(
+                update={
+                    "chains": [AutostartChain(name="main", steps=steps)],
+                    "steps": [],
+                    "detach": False,
+                }
+            )
+        boundary = _boundary(stages, override=override, already_detached=already_detached)
+        if boundary == len(stages) and not already_detached:
+            boundary += 1  # nothing detaches: the agents stage is the last blocking one
+        stages.append(agents)
+    elif explicit:
         i = explicit[0]
         if steps:
             # `model_copy` (not `_agents_stage`) so the repo's own stage —

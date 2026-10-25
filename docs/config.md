@@ -1953,6 +1953,17 @@ agent at all), but also under `on_start` when no agent currently has
 moves to whichever stage takes its place, so the split point you drew
 doesn't silently vanish.
 
+**A pending initial prompt moves the agents stage to the end.** With a
+`jailbee new --prompt` (or an orchestration child's task) waiting, the
+prompted agent starts working the moment it launches, so the agents stage
+runs after *every* other stage instead of at the attach boundary: last of
+the blocking stages when nothing detaches, otherwise last of the deferred
+run, after the stages that `detach: true` (in `on_create` or `on_start`)
+or `--no-wait` deferred. An explicit `stage: agents` moves there too,
+keeping its `network` and `mounts`; a `detach: true` on it passes to the
+stage that followed it, as above. When the agents stage ends up deferred,
+its tmux window appears after you attach.
+
 Which window `jailbee tmux` (or `--attach tmux`) lands on is chosen **by
 name** on the first attach, not by tmux's own "most recently created"
 default — so the agent stage's position only decides *when* its window is

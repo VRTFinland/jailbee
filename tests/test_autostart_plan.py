@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jailbee.autostart_plan import AutostartTrigger, normalize_stages, plan_autostart
+from jailbee.autostart_plan import AutostartPlan, AutostartTrigger, normalize_stages, plan_autostart
 from jailbee.config import Autostart, AutostartStep
 
 
@@ -213,3 +213,81 @@ def test_explicit_agents_stage_with_already_detached_goes_entirely_to_detached()
     assert plan.blocking == []
     assert [s.stage for s in plan.detached] == ["agents", "deps"]
     assert [st.name for st in plan.detached[0].all_chains()[0].steps] == ["claude"]
+
+
+# `agents_last=True` is a pending initial prompt: the prompted agent starts
+# working on its task, so it must not run before any stage of the trigger.
+
+_AGENT = AutostartStep(name="claude", run="exec claude", background=True)
+
+
+def _stage(name: str, *, detach: bool = False) -> dict[str, object]:
+    return {"stage": name, "detach": detach, "steps": [{"name": name, "run": "true"}]}
+
+
+def _order(plan: AutostartPlan) -> tuple[list[str], list[str]]:
+    return [s.stage for s in plan.blocking], [s.stage for s in plan.detached]
+
+
+def test_agents_last_without_detach_is_the_final_blocking_stage():
+    block = Autostart.model_validate({"on_start": [_stage("db"), _stage("seed")]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[_AGENT], agents_last=True)
+    assert _order(plan) == (["db", "seed", "agents"], [])
+
+
+def test_agents_last_runs_after_detached_stages():
+    block = Autostart.model_validate({"on_start": [_stage("db"), _stage("seed", detach=True)]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[_AGENT], agents_last=True)
+    assert _order(plan) == (["db"], ["seed", "agents"])
+
+
+def test_agents_last_moves_an_explicit_agents_stage_to_the_end():
+    block = Autostart.model_validate(
+        {"on_start": [{"stage": "agents", "network": "loose"}, _stage("db")]}
+    )
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[_AGENT], agents_last=True)
+    assert _order(plan) == (["db", "agents"], [])
+    assert plan.blocking[1].network == "loose"
+    assert [st.name for st in plan.blocking[1].all_chains()[0].steps] == ["claude"]
+
+
+def test_agents_last_keeps_an_explicit_agents_stages_detach_boundary():
+    """`detach: true` on the agents stage marks where detachment begins; with
+    the stage moved to the end, the stages that followed it still detach."""
+    block = Autostart.model_validate(
+        {"on_start": [_stage("db"), {"stage": "agents", "detach": True}, _stage("seed")]}
+    )
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[_AGENT], agents_last=True)
+    assert _order(plan) == (["db"], ["seed", "agents"])
+    assert plan.detached[1].detach is False
+
+
+def test_agents_last_with_already_detached_is_last_of_the_detached_run():
+    block = Autostart.model_validate({"on_start": [_stage("db")]})
+    plan = plan_autostart(
+        block,
+        AutostartTrigger.ON_START,
+        agent_steps=[_AGENT],
+        agents_last=True,
+        already_detached=True,
+    )
+    assert _order(plan) == ([], ["db", "agents"])
+
+
+def test_agents_last_with_no_stages_is_blocking():
+    plan = plan_autostart(
+        Autostart(), AutostartTrigger.ON_START, agent_steps=[_AGENT], agents_last=True
+    )
+    assert _order(plan) == (["agents"], [])
+
+
+def test_agents_last_with_no_wait_detaches_everything_before_the_agent():
+    block = Autostart.model_validate({"on_start": [_stage("db"), _stage("seed")]})
+    plan = plan_autostart(
+        block,
+        AutostartTrigger.ON_START,
+        agent_steps=[_AGENT],
+        agents_last=True,
+        override="no_wait",
+    )
+    assert _order(plan) == (["db"], ["seed", "agents"])

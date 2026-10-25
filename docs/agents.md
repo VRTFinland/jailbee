@@ -273,6 +273,10 @@ text, not `-` or `---`.
   lazily, on the next autostart run that finds the file gone.
 - A pending prompt launches the primary agent's window even if its `autostart`
   is off. `--prompt` conflicts with `--no-autostart` (exit 2).
+- The prompted agent launches only after every autostart stage has run,
+  deferred (`detach: true`) ones included, so it never starts its task in a
+  half-prepared container. See [the reserved `agents`
+  stage](config.md#the-reserved-agents-stage).
 - A restart after consumption relaunches the plain `command`.
 
 ## 5. Which paths to share

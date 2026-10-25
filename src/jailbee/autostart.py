@@ -401,17 +401,18 @@ def agent_autostart_steps(
 
 def _on_start_agent_steps(
     cfg: Config, incus: Incus, container: str, trigger: AutostartTrigger
-) -> list[AutostartStep]:
-    """The synthetic agent steps for `trigger` (only on_start has any)."""
+) -> tuple[list[AutostartStep], bool]:
+    """The synthetic agent steps for `trigger` (only on_start has any), and
+    whether an initial prompt is pending — the planner's ``agents_last``."""
     if trigger != AutostartTrigger.ON_START:
-        return []
+        return [], False
     from jailbee.initial_prompt import prompt_pending
 
     pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
     from jailbee.orchestration.labels import child_env, orchestrator_env
     from jailbee.orchestration.runner import read_runner
 
-    return agent_autostart_steps(
+    steps = agent_autostart_steps(
         cfg,
         initial_prompt=pending,
         extra_env={
@@ -420,6 +421,7 @@ def _on_start_agent_steps(
         },
         runner=read_runner(incus, container),
     )
+    return steps, pending
 
 
 def run_autostart(
@@ -453,13 +455,17 @@ def run_autostart(
     # it's infrastructure, not a
     # user autostart command, so it's written by ``inject_github_token``
     # independently of --no-autostart.
-    agent_steps = _on_start_agent_steps(cfg, incus, container, trigger)
+    # A pending initial prompt puts the agents after every stage, detached
+    # ones included: the prompted agent starts working at once, and must not
+    # do so in a container whose autostart has not finished.
+    agent_steps, prompted = _on_start_agent_steps(cfg, incus, container, trigger)
     plan = plan_autostart(
         cfg.autostart,
         trigger,
         agent_steps=agent_steps,
         override=override,
         already_detached=already_detached,
+        agents_last=prompted,
     )
     if not plan.blocking:
         return plan
@@ -553,11 +559,14 @@ def run_detached(
             # whole remaining list rather than re-splitting it.
             start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
             for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
-                agent_steps = _on_start_agent_steps(cfg, incus, spec.container_name, trigger)
+                agent_steps, prompted = _on_start_agent_steps(
+                    cfg, incus, spec.container_name, trigger
+                )
                 plan = plan_autostart(
                     cfg.autostart,
                     trigger,
                     agent_steps=agent_steps,
+                    agents_last=prompted,
                     # The override the foreground split on: `_boundary` branches
                     # on it, so recomputing without it can disagree with what was
                     # actually deferred. Inert for a later trigger, where

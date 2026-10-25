@@ -1338,3 +1338,34 @@ def test_on_start_steps_carry_default_agent(mocker, tmp_path):
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
     assert steps.call_args.kwargs["extra_env"] == {"JAILBEE_DEFAULT_AGENT": "claude"}
+
+
+def test_run_autostart_with_pending_prompt_puts_the_agent_after_detached_stages(mocker, tmp_path):
+    """A prompted agent starts on its task, so it waits for every stage."""
+    from jailbee.autostart import AutostartTrigger, run_autostart
+    from jailbee.config import Autostart, AutostartStep
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "db", "steps": [{"name": "db", "run": "true"}]},
+                {"stage": "seed", "detach": True, "steps": [{"name": "s", "run": "true"}]},
+            ]
+        }
+    )
+    cfg = _claude_cfg(tmp_path).model_copy(update={"autostart": block})
+    incus = MagicMock()
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.autostart.run_stages")
+    agent = AutostartStep(name="claude", run="exec claude", background=True)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[agent])
+
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    plan = run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    assert [s.stage for s in plan.blocking] == ["db"]
+    assert [s.stage for s in plan.detached] == ["seed", "agents"]
+
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    plan = run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    assert [s.stage for s in plan.blocking] == ["db", "agents"]
+    assert [s.stage for s in plan.detached] == ["seed"]

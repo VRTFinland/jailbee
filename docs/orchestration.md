@@ -149,6 +149,10 @@ restart never repeats a task.
   presets for `claude`, `codex` and `opencode` set it.
 - `jb new <branch> --prompt FILE|-` and `jb fork <source> <branch> --prompt
   FILE|-` use the same mechanism by hand.
+- The prompted agent launches only after every autostart stage, deferred
+  ones included, has run, so a child never starts its task before its
+  container is ready. A failed stage stops the run before the agent
+  launches, and the spawn is reported `failed`.
 
 An agent without `prompt_args` cannot take a prompt; the request is refused
 up front. See [Primary agent and initial
