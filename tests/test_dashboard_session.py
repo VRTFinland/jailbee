@@ -874,8 +874,11 @@ def test_consecutive_op_and_loose_toggles_flip_direction(mocker, tmp_path):
 def test_failed_edit_does_not_patch_the_grant(mocker, tmp_path):
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
     quiet.return_value = False
-    argvs = _run_edits(session, quiet, "op:destroy", "op:destroy")
-    assert [a[2] for a in argvs] == ["--allow", "--allow"]
+    for _ in range(2):  # the picker is closed after a failure, so open it afresh each time
+        session.submit_picker(
+            session.open_orchestration("alpha-one"), PickerEntry("", "op:destroy")
+        )
+        assert quiet.call_args.args[1][2] == "--allow"
 
 
 def test_tick_rebuilds_the_orchestration_picker_and_keeps_cursor(mocker, tmp_path):
@@ -892,18 +895,64 @@ def test_tick_rebuilds_the_orchestration_picker_and_keeps_cursor(mocker, tmp_pat
     assert session.overlay.start_index == reopened.start_index > 0
 
 
-def test_snapshot_with_a_changed_grant_drops_the_patch(mocker, tmp_path):
-    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+def test_snapshot_that_is_neither_base_nor_patch_keeps_the_patch(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
     session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
-    assert "alpha-one" in session._grant_patches
     info = session.client.groups[0].containers[0]
-    # the real state differs from both the base and the patch (another writer): it wins
+    # a gather racing a later edit: it matches neither the old grant nor the patch
     session.client.groups[0].containers[0] = dataclasses.replace(
         info, grant=dataclasses.replace(info.grant, limit=7)
     )
     session.tick()
+    assert "alpha-one" in session._grant_patches
+    assert session.groups[0].containers[0].grant.loose is True
+    # the next edit still computes from the patched grant
+    session.submit_picker(session.overlay, PickerEntry("", "loose"))
+    assert quiet.call_args.args[1][2] == "--no-loose"
+
+
+def test_snapshot_equal_to_the_patch_drops_it(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    info = session.client.groups[0].containers[0]
+    session.client.groups[0].containers[0] = dataclasses.replace(
+        info, grant=dataclasses.replace(info.grant, loose=True)
+    )
+    session.tick()
     assert session._grant_patches == {}
-    assert session.groups[0].containers[0].grant.limit == 7
+    assert session.groups[0].containers[0].grant.loose is True
+
+
+def test_failed_edit_closes_the_picker_so_the_notice_shows(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    session.overlay = session.open_orchestration("alpha-one")
+    assert session.submit_picker(session.overlay, PickerEntry("", "loose")) is None
+    assert session.overlay is None
+    assert session._grant_patches == {}
+
+
+def test_failed_text_edit_closes_the_picker(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "limit")
+    )
+    session.overlay = prompt
+    assert session.submit_prompt(prompt, "3") is None
+    assert session.overlay is None
+    assert session._grant_patches == {}
+
+
+def test_failed_revoke_does_not_patch(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    confirm = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("Revoke…", "revoke")
+    )
+    session.submit_picker(confirm, PickerEntry("Yes, revoke", "yes"))
+    assert session._grant_patches == {}
+    assert session.groups[0].containers[0].grant is not None
 
 
 def test_stale_snapshot_keeps_the_patch_for_the_next_edit(mocker, tmp_path):
@@ -937,6 +986,8 @@ def test_patch_survives_a_filtered_out_container(mocker, tmp_path):
     session.hidden_repos = frozenset({"alpha"})  # filtered out of session.groups
     session.tick()
     assert session.groups == []
+    assert "alpha-one" in session._grant_patches
+    session.tick()  # a second tick must not prune it either
     assert "alpha-one" in session._grant_patches
 
 

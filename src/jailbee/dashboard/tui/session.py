@@ -222,7 +222,6 @@ class _GrantPatch:
 
     grant: GrantView | None
     expires: float
-    base: GrantView | None  # the snapshot's grant when the first edit was made
 
 
 log = logging.getLogger(__name__)
@@ -1239,8 +1238,9 @@ class DashboardSession:
             patched = replace(grant, loose=not grant.loose)
         elif value.startswith("mount:"):
             patched = replace(grant, mounts=new_mounts)
-        if argv is not None and self.run_quiet_cli(repo, argv):
-            self._patch_grant(container, patched)
+        if argv is None or not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        self._patch_grant(container, patched)
         return self._reopen_orchestration(container, value)
 
     def _reopen_orchestration(self, container: str, value: str) -> Picker | None:
@@ -1275,9 +1275,15 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(container, egress=hosts)
             patched = replace(grant, egress=hosts)
             value = "egress"
-        if self.run_quiet_cli(repo, argv):
-            self._patch_grant(container, patched)
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        self._patch_grant(container, patched)
         return self._reopen_orchestration(container, value)
+
+    def _close_after_failure(self) -> Picker | None:
+        """Close the overlay so the failure notice is readable (a reopened picker would hide it)."""
+        self.overlay = None
+        return None
 
     def _patch_grant(self, container: str, grant: GrantView | None) -> None:
         """Show ``grant`` (None: revoked) for ``container`` until the snapshot has caught up.
@@ -1285,14 +1291,12 @@ class DashboardSession:
         ``run_quiet_cli`` only asks for a refresh; the snapshot that answers it
         arrives later, so without this the reopened picker (and the next edit,
         which computes from the grant) would use the pre-edit grant. The patch
-        is dropped once the snapshot's grant differs from the one the edit
-        started from (the real state has arrived), or after a timeout.
+        is dropped once the snapshot's grant equals the patched one (the real
+        state has arrived), or after a timeout. A snapshot that is neither the
+        old grant nor the patch (a gather racing a later edit) keeps it.
         """
-        held = self._grant_patches.get(container)
-        found = self._listed_container(container)
-        base = held.base if held is not None else (found[1].grant if found else None)
         self._grant_patches[container] = _GrantPatch(
-            _normalised(grant), time.monotonic() + GRANT_PATCH_SECONDS, base
+            _normalised(grant), time.monotonic() + GRANT_PATCH_SECONDS
         )
         # the lists already hold earlier patches, so no snapshot comparison here; every
         # list a rebuild starts from changes too (_recompute_shown re-sorts `presented`)
@@ -1309,7 +1313,9 @@ class DashboardSession:
         for group in self.presented:
             for info in group.containers:
                 held = self._grant_patches.get(info.name)
-                if held is not None and (info.grant != held.base or now >= held.expires):
+                if held is not None and (
+                    _normalised(info.grant) == held.grant or now >= held.expires
+                ):
                     del self._grant_patches[info.name]
         # prune against the unfiltered list: a filtered-out container keeps its patch
         listed = {c.name for g in self.presented for c in g.containers}
