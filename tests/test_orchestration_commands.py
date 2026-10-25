@@ -74,10 +74,15 @@ def cfg_with_cap_limit_1(make_cfg, tmp_path):
     return _cfg_cap(make_cfg, tmp_path, max_running_children=1)
 
 
+def _own(name: str, prefix: str = "myrepo", **extra) -> dict:
+    return {"name": name, "profiles": ["default", f"{prefix}-base"], "config": {}, **extra}
+
+
 @pytest.fixture
 def make_incus():
     def _make(config: dict[str, str]) -> MagicMock:
         m = MagicMock()
+        m.list_containers.return_value = [_own("myrepo-a")]
         m.config_get.side_effect = lambda _name, key: config.get(key)
         return m
 
@@ -183,7 +188,7 @@ def test_clear_egress_and_list_flags_replace_whole_list(cfg_with_mount_data):
 
 
 def test_mounts_with_clear_mounts_is_an_error(cfg_with_mount_data):
-    with pytest.raises(GrantError, match="clear-mounts"):
+    with pytest.raises(GrantError, match="--mount and --clear-mounts"):
         commands.build_grant(
             cfg_with_mount_data, None, GrantFlags(mounts=("data",), clear_mounts=True)
         )
@@ -258,20 +263,41 @@ def test_revoke(make_incus):
 
 def test_list_grants_counts_running_children(cfg, incus):
     incus.list_containers.return_value = [
-        {"name": "myrepo-orch", "status": "Running", "config": {labels.GRANT: Grant().to_label()}},
-        {"name": "myrepo-c1", "status": "Running", "config": {labels.SPAWNED_BY: "myrepo-orch"}},
-        {"name": "myrepo-c2", "status": "Stopped", "config": {labels.SPAWNED_BY: "myrepo-orch"}},
-        {"name": "other-x", "status": "Running", "config": {labels.GRANT: Grant().to_label()}},
+        _own("myrepo-orch", status="Running", config={labels.GRANT: Grant().to_label()}),
+        _own("myrepo-c1", status="Running", config={labels.SPAWNED_BY: "myrepo-orch"}),
+        _own("myrepo-c2", status="Stopped", config={labels.SPAWNED_BY: "myrepo-orch"}),
+        _own("other-x", "other", status="Running", config={labels.GRANT: Grant().to_label()}),
     ]
     rows = commands.list_grants(cfg, incus)
     assert [(r.short, r.running_children) for r in rows] == [("orch", 1)]
     incus.list_containers.assert_called_once()
 
 
+def test_list_grants_ignores_a_repo_whose_prefix_extends_ours(make_cfg, tmp_path, incus):
+    cfg = _cfg(make_cfg, tmp_path, mounts=True).model_copy(update={"container_prefix": "app"})
+    label = Grant().to_label()
+    incus.list_containers.return_value = [
+        _own("app-a", "app", config={labels.GRANT: label}),
+        _own("app-web-x", "app-web", config={labels.GRANT: label}),
+    ]
+    assert [r.full for r in commands.list_grants(cfg, incus)] == ["app-a"]
+
+
+def test_grant_refuses_a_container_of_another_repo(make_cfg, tmp_path, make_incus, ensure):
+    cfg = _cfg(make_cfg, tmp_path, mounts=True).model_copy(update={"container_prefix": "app"})
+    incus = make_incus({})
+    incus.list_containers.return_value = [_own("app-web-x", "app-web"), _own("app-a", "app")]
+    for name in ("app-web-x", "nonexistent"):
+        with pytest.raises(GrantError, match=f"'{name}' is not a container of this repo"):
+            commands.grant(cfg, incus, name, GrantFlags())
+        assert commands.apply_default_profile(cfg, incus, name) is None
+    incus.config_set.assert_not_called()
+
+
 def test_list_grants_reports_malformed_and_sorts(cfg, incus):
     incus.list_containers.return_value = [
-        {"name": "myrepo-z", "status": "Running", "config": {labels.GRANT: Grant().to_label()}},
-        {"name": "myrepo-b", "status": "Running", "config": {labels.GRANT: "{"}},
+        _own("myrepo-z", status="Running", config={labels.GRANT: Grant().to_label()}),
+        _own("myrepo-b", status="Running", config={labels.GRANT: "{"}),
     ]
     rows = commands.list_grants(cfg, incus)
     assert [r.short for r in rows] == ["b", "z"]

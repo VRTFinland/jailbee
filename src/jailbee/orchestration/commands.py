@@ -14,6 +14,7 @@ from jailbee.lifecycle import short_name
 from jailbee.orchestration import labels, service
 from jailbee.orchestration.grant import (
     DEFAULT_MAX_RUNNING_CHILDREN,
+    IMPLIED_OPERATIONS,
     OPERATIONS,
     Grant,
     Grantable,
@@ -72,9 +73,21 @@ def repo_registered(cfg: Config) -> bool:
         return session.get(RegisteredRepo, cfg.container_prefix) is not None
 
 
+def _is_own(cfg: Config, raw: dict[str, object]) -> bool:
+    """True when the container carries this repo's `<prefix>-base` profile.
+
+    Prefixes may contain dashes (`app` / `app-web`), so a name prefix cannot
+    tell repos apart; the base profile is the codebase's membership rule.
+    """
+    profiles = raw.get("profiles")
+    return isinstance(profiles, list) and f"{cfg.container_prefix}-base" in profiles
+
+
 def grant_refusal(cfg: Config, incus: Incus, full: str) -> str | None:
     """Why `full` cannot hold a grant at all, or None."""
     short = short_name(cfg, full)
+    if not any(c.get("name") == full and _is_own(cfg, c) for c in incus.list_containers()):
+        return f"'{full}' is not a container of this repo"
     if incus.config_get(full, _MODE_LABEL) == "mount":
         return f"'{short}' is a mount-mode container: it can neither fork nor import"
     parent = incus.config_get(full, labels.SPAWNED_BY)
@@ -114,12 +127,12 @@ def _check_mounts(cfg: Config, names: tuple[str, ...]) -> None:
 def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
     """Apply `flags` onto the profile, the current grant or a default grant."""
     if flags.mounts is not None and flags.clear_mounts:
-        raise GrantError("--mounts and --clear-mounts are mutually exclusive; give only one")
+        raise GrantError("--mount and --clear-mounts are mutually exclusive; give only one")
     if flags.egress is not None and flags.clear_egress:
         raise GrantError("--egress and --clear-egress are mutually exclusive; give only one")
     _check_ops(flags.allow)
     _check_ops(flags.deny)
-    if any(op in ("spawn", "message") for op in flags.deny):
+    if any(op in IMPLIED_OPERATIONS for op in flags.deny):
         raise GrantError(_IMPLIED_DENY)
     if flags.mounts is not None:
         _check_mounts(cfg, flags.mounts)
@@ -224,12 +237,11 @@ def show(cfg: Config, incus: Incus, full: str) -> GrantRow:
 def list_grants(cfg: Config, incus: Incus) -> list[GrantRow]:
     """Rows for this repo's containers holding a grant label, by short name."""
     containers = incus.list_containers()
-    prefix = f"{cfg.container_prefix}-"
     rows: list[GrantRow] = []
     for c in containers:
         name = c.get("name")
         config = c.get("config")
-        if not isinstance(name, str) or not name.startswith(prefix) or not isinstance(config, dict):
+        if not isinstance(name, str) or not isinstance(config, dict) or not _is_own(cfg, c):
             continue
         raw = config.get(labels.GRANT)
         if raw is None:
