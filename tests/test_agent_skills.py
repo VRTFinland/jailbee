@@ -104,6 +104,46 @@ def test_issue_management_skill_routes_writes_through_host() -> None:
     assert "jb issue apply" in text
 
 
+ORCH = "jailbee-orchestration"
+
+
+def _skill_text(name: str, rel: str = "SKILL.md") -> str:
+    return (Path(agent_skills._skills_root()) / name / rel).read_text()
+
+
+def test_bundled_skills_include_orchestration() -> None:
+    assert ORCH in agent_skills.bundled_skill_names()
+
+
+def test_orchestration_skill_names_the_protocol_paths() -> None:
+    text = _skill_text(ORCH)
+    for needle in (
+        "~/.jailbee/orchestration/outbox",
+        "~/.jailbee/orchestration/inbox",
+        "grant.json",
+        "jailbee-inbox wait",
+        "refs/jailbee/from/",
+        "jailbee-pr-review",
+        "5 min",
+    ):
+        assert needle in text, needle
+
+
+def test_orchestration_skill_covers_review_focus() -> None:
+    text = _skill_text(ORCH)
+    assert "short name" in text
+    assert "new id" in text
+    assert "refused" in text and "queued" in text and "--timeout" in text
+    assert "destroy" in text and "stop" in text and "slot" in text
+
+
+def test_orchestration_protocol_examples_use_short_names() -> None:
+    proto = _skill_text(ORCH, "references/protocol.md")
+    for t in ("spawn", "message", "import", "restart", "stop", "destroy"):
+        assert f'"type": "{t}"' in proto, t
+    assert "<repo>-" not in proto
+
+
 def _github_permission_recipes() -> list[tuple[Path, str]]:
     """Every doc/skill file that spells out a GitHub PAT permission recipe."""
     root = Path(__file__).resolve().parents[1]
