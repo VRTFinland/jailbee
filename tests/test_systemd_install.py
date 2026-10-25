@@ -157,3 +157,28 @@ def test_install_systemd_units_installs_broker(
     assert "ExecStart=/usr/local/bin/jailbee _broker" in unit.read_text()
     cmds = [list(c.args[0]) for c in run_mock.call_args_list]
     assert ["systemctl", "--user", "enable", "--now", "jailbee-broker.service"] in cmds
+
+
+def test_install_systemd_units_survives_broker_failure(
+    private_home: Path,
+    mocker: MockerFixture,
+) -> None:
+    import subprocess
+
+    from jailbee.init_command import install_systemd_units
+
+    _ = private_home
+    mocker.patch("shutil.which", return_value="/usr/local/bin/jailbee")
+
+    def fake_run(cmd: list[str], *a: object, **k: object) -> None:
+        if "jailbee-broker.service" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+
+    run_mock = mocker.patch("subprocess.run", side_effect=fake_run)
+    warn = mocker.patch("jailbee.init_command.warn")
+
+    install_systemd_units()
+
+    cmds = [list(c.args[0]) for c in run_mock.call_args_list]
+    assert ["systemctl", "--user", "enable", "--now", "jailbee-net-refresh.timer"] in cmds
+    assert "jb setup" in warn.call_args.args[0]

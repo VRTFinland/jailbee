@@ -630,7 +630,8 @@ NET_REFRESH_SERVICE = "jailbee-net-refresh.service"
 
 
 def install_systemd_units() -> None:
-    """Install the singleton jailbee-net-refresh timer + service.
+    """Install the singleton jailbee-net-refresh timer + service and the
+    orchestration broker service (the broker step never aborts: it only warns).
 
     Idempotent: only rewrites units when contents change, daemon-reloads
     only on change; ``enable --now`` is cheap and is always called.
@@ -666,9 +667,15 @@ def install_systemd_units() -> None:
         ["systemctl", "--user", "enable", "--now", NET_REFRESH_TIMER],
         check=True,
     )
+
     info(f"Enabled refresh timer: {NET_REFRESH_TIMER}")
 
     from jailbee.orchestration import service as broker_service
 
-    broker_service.enable_now(jailbee_bin)
-    info(f"Enabled orchestration broker: {broker_service.BROKER_SERVICE}")
+    # The broker is optional: a failure here must not abort init/setup.
+    try:
+        broker_service.enable_now(jailbee_bin)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        warn(f"Could not enable the orchestration broker ({exc}); re-run `jb setup`.")
+    else:
+        info(f"Enabled orchestration broker: {broker_service.BROKER_SERVICE}")
