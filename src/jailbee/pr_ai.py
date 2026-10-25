@@ -219,9 +219,11 @@ def _pinned(cfg: Config, name: str) -> PrAgentChoice:
 def resolve_pr_agent(cfg: Config) -> PrAgentChoice:
     """Pick the agent that writes this repo's PR text.
 
-    `pr.agent: auto` looks for the repo's own agent: among the enabled agents the
-    ones that `autostart` first, then all enabled ones; within a pool Claude
-    first, then by name; the first with a `headless` command wins. A repo whose
+    `pr.agent: auto` starts from the repo's primary agent (`agents.primary_agent`,
+    which an explicit `primary_agent` steers) and uses it when it has a `headless`
+    command. Otherwise it searches the enabled agents: the ones that `autostart`
+    first, then all enabled ones; within a pool Claude first, then by name; the
+    first with a `headless` command wins. A repo whose
     only agents autostart something with no one-shot mode (aider) therefore
     still gets Claude, if Claude is enabled. With `litellm.autostart` on, Claude
     is run as `claude-jb`, as it is in the autostart window.
@@ -234,6 +236,16 @@ def resolve_pr_agent(cfg: Config) -> PrAgentChoice:
     wanted = cfg.pr.agent
     if wanted != "auto":
         return _pinned(cfg, wanted)
+
+    from jailbee.agents import primary_agent
+
+    primary = primary_agent(cfg)
+    if primary.name is not None:
+        agent = _usable(cfg, primary.name)
+        if agent is not None:
+            if primary.name == "claude" and litellm_autostart_on(cfg):
+                return PrAgentChoice(_through_claude_jb(agent) or agent)
+            return PrAgentChoice(agent)
 
     enabled = sorted(
         (n for n, a in cfg.agents.items() if a.enabled), key=lambda n: (n != "claude", n)

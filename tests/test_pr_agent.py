@@ -222,3 +222,78 @@ def test_a_pinned_but_unusable_agent_keeps_ai_on_so_generation_can_explain(tmp_p
     cfg = _cfg(tmp_path, {"claude": ON}, pr={"agent": "codex"})
     assert ai_description_on(cfg, no_ai=False) is True
     assert ai_branch_on(cfg, no_ai=False) is True
+
+
+# --- auto builds on primary_agent ------------------------------------------------
+
+
+def _legacy_auto(cfg):
+    """Verbatim copy of the pre-primary_agent `auto` branch, frozen for comparison."""
+    from jailbee.autostart import litellm_autostart_on
+    from jailbee.pr_ai import PrAgentChoice, _through_claude_jb, _usable
+
+    enabled = sorted(
+        (n for n, a in cfg.agents.items() if a.enabled), key=lambda n: (n != "claude", n)
+    )
+    pools = (
+        [n for n in enabled if cfg.agents[n].autostart],
+        enabled,
+    )
+    for pool in pools:
+        for name in pool:
+            agent = _usable(cfg, name)
+            if agent is None:
+                continue
+            if name == "claude" and litellm_autostart_on(cfg):
+                return PrAgentChoice(_through_claude_jb(agent) or agent)
+            return PrAgentChoice(agent)
+    return PrAgentChoice(None)
+
+
+def test_auto_unchanged_for_every_preset_combination(tmp_path):
+    import itertools
+
+    names = ["claude", "codex", "gemini", "aider", "opencode", "grok"]
+    base = _cfg(tmp_path, {n: ON for n in names})
+    states = [
+        {"enabled": False, "autostart": False},
+        {"enabled": True, "autostart": False},
+        {"enabled": True, "autostart": True},
+    ]
+    for combo in itertools.product(states, repeat=len(names)):
+        agents = {n: base.agents[n].model_copy(update=s) for n, s in zip(names, combo, strict=True)}
+        cfg = base.model_copy(update={"agents": agents})
+        new, old = resolve_pr_agent(cfg), _legacy_auto(cfg)
+        assert (new.agent and new.agent.name, new.problem) == (
+            old.agent and old.agent.name,
+            old.problem,
+        ), combo
+
+
+def test_explicit_primary_agent_steers_pr_auto(tmp_path):
+    cfg = _cfg(tmp_path, {"claude": AUTO, "codex": ON}).model_copy(
+        update={"primary_agent": "codex"}
+    )
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert choice.agent.name == "codex"
+
+
+def test_explicit_primary_without_headless_falls_back_to_search(tmp_path):
+    cfg = _cfg(tmp_path, {"aider": AUTO, "claude": ON}).model_copy(
+        update={"primary_agent": "aider"}
+    )
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert choice.agent.name == "claude"
+
+
+def test_explicit_primary_claude_is_rerouted_through_claude_jb(tmp_path):
+    cfg = _cfg(
+        tmp_path,
+        {"claude": ON, "codex": AUTO},
+        litellm={"enabled": True, "autostart": True},
+    ).model_copy(update={"primary_agent": "claude"})
+    choice = resolve_pr_agent(cfg)
+    assert choice.agent is not None
+    assert choice.agent.name == "claude-jb"
