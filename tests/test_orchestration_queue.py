@@ -307,7 +307,9 @@ def _queue_rights(rig: Rig, kind: str = "new", **rights: object) -> None:
         branch="fix/1" if kind != "restart" else "",
         base=None,
         prompt="p",
-        rights=ChildRights.model_validate(rights).model_dump(mode="json") if kind != "restart" else {},
+        rights=ChildRights.model_validate(rights).model_dump(mode="json")
+        if kind != "restart"
+        else {},
     )
     save_queue(rig.root, {"proj-orch": [req]})
 
@@ -356,7 +358,10 @@ def test_queued_restart_refused_when_restart_revoked(
     rig = Rig(tmp_path)
     _granted(rig, max_running_children=1, operations=["spawn", "message", "stop"])
     child = Node(
-        full=_full(rig, "fix/1"), short="fix-1", running=False, config={labels.SPAWNED_BY: "proj-orch"}
+        full=_full(rig, "fix/1"),
+        short="fix-1",
+        running=False,
+        config={labels.SPAWNED_BY: "proj-orch"},
     )
     rig.children = [child]
     _queue_rights(rig, kind="restart")

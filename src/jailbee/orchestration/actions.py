@@ -562,9 +562,7 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
     else:
         # HEAD cannot be read from a stopped child: the one `stop` recorded,
         # else the `done` commit; neither -> refused.
-        head = (
-            child.config.get(labels.STOPPED_HEAD) or child.config.get(labels.DONE_SHA) or None
-        )
+        head = child.config.get(labels.STOPPED_HEAD) or child.config.get(labels.DONE_SHA) or None
     if head is None or head != last:
         return reason
     return None

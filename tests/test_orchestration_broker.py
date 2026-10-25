@@ -78,7 +78,9 @@ class Rig:
         self.flush_pending = MagicMock(return_value=0)
         self.delete = MagicMock()
         self.write_grant = MagicMock()
-        self.dispatch = MagicMock(return_value=Outcome("started", "creation of child `fix-1` started"))
+        self.dispatch = MagicMock(
+            return_value=Outcome("started", "creation of child `fix-1` started")
+        )
         self.drain = MagicMock(return_value=[])
         self.drop = MagicMock(return_value=[])
         self.configs = MagicMock(return_value={"proj": self.cfg})
@@ -275,7 +277,11 @@ def test_tick_dispatches_and_replies_and_deletes(rig: Rig) -> None:
 
     [(to, status)] = rig.statuses()
     assert to == "proj-orch"
-    assert (status.ref, status.state, status.detail) == ("s1", "started", "creation of child `fix-1` started")
+    assert (status.ref, status.state, status.detail) == (
+        "s1",
+        "started",
+        "creation of child `fix-1` started",
+    )
     assert status.id.startswith("h-")
     assert rig.deliver.call_args.kwargs["running"] is True
 
@@ -518,9 +524,7 @@ def test_stopped_orchestrator_queue_still_drains_and_parks_replies(rig: Rig) -> 
     assert rig.deliver.call_args.kwargs["running"] is False
 
 
-def test_disallowed_repo_drops_queue_saying_so(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_disallowed_repo_drops_queue_saying_so(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(actions.profiles, "repo_cap", lambda cfg: RepoCap(allowed=False))
     rig.incus.list_containers.return_value = [_orch()]
     save_queue(rig.root, {"proj-orch": [_req("q1"), _req("q2", "proj-fix-3")]})

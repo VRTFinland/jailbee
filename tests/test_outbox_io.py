@@ -106,7 +106,9 @@ def test_read_text_outbox_bounded_filters_in_the_container(mocker):
     total = (3 + 5) * (100 + 2048) + 10240
     assert argv[3:] == ["bash", "/outbox", "101", str(total), "*.json", "3", "*.md", "5"]
     # Per (glob, count) pair: regular top-level files below the cap, first N by name.
-    assert """find . -maxdepth 1 -type f -name "$1" ! -name '.*' -size "-${size}c" -print0""" in script
+    assert (
+        """find . -maxdepth 1 -type f -name "$1" ! -name '.*' -size "-${size}c" -print0""" in script
+    )
     assert 'LC_ALL=C sort -z | head -z -n "$2"; shift 2; done' in script
     assert "tar --null --no-recursion -T - -cf -" in script
     assert '| head -c "$total" |' in script

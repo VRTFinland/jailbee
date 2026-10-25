@@ -820,9 +820,7 @@ def read_text_outbox(
         if max_stdout is None:
             raw = incus.exec(container, argv, uid=uid, timeout=timeout)
         else:
-            raw = incus.exec_capped(
-                container, argv, uid=uid, timeout=timeout, max_bytes=max_stdout
-            )
+            raw = incus.exec_capped(container, argv, uid=uid, timeout=timeout, max_bytes=max_stdout)
     except IncusError as e:
         raise OutboxReadError(f"could not read the outbox in {container}: {e}") from e
     if not raw.strip():

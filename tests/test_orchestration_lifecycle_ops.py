@@ -288,9 +288,7 @@ def test_stop_refused_when_head_cannot_be_recorded(
     seams["stop"].assert_not_called()
 
 
-def test_restart_clears_labels_before_booting(
-    tmp_path: Path, seams: dict[str, MagicMock]
-) -> None:
+def test_restart_clears_labels_before_booting(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     from jailbee.incus import IncusError
 
     rig = Rig(tmp_path, limit=2, config={labels.STOPPED_HEAD: "a" * 40})
