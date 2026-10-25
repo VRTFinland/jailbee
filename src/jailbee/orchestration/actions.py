@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+import itertools
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from jailbee import forking, lifecycle, stopping, sync
@@ -29,7 +30,7 @@ from jailbee.orchestration.protocol import (
 from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection, Iterator, Mapping
     from datetime import datetime
     from pathlib import Path
 
@@ -86,6 +87,8 @@ class ActionContext:
     sender: Node
     nodes: Mapping[str, Node]
     now: datetime
+    # Shared with the broker's memory so handlers keep one emission order.
+    seq: Iterator[int] = field(default_factory=itertools.count)
 
     def role(self) -> Role:
         if self.sender.config.get(labels.SPAWNED_BY):

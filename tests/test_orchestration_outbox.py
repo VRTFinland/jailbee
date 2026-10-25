@@ -210,3 +210,40 @@ def test_bounded_selection_excludes_dot_files_in_the_container() -> None:
     outbox.read_outbox(incus, FULL, uid=1000)
     script = incus.exec_capped.call_args.args[1][2]
     assert "! -name '.*'" in script
+
+
+def test_deliver_returns_delivered_when_written(tmp_path: Path) -> None:
+    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
+    assert result == "delivered"
+
+
+def test_deliver_returns_parked_when_not_running(tmp_path: Path) -> None:
+    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=False, uid=None, now=AT)
+    assert result == "parked"
+
+
+def test_deliver_returns_parked_on_incus_error(tmp_path: Path) -> None:
+    incus = _incus()
+    incus.exec_with_input.side_effect = IncusError("boom")
+    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
+    assert result == "parked"
+
+
+def test_deliver_parks_behind_existing_pending(tmp_path: Path) -> None:
+    incus = _incus()
+    outbox.deliver(incus, tmp_path, FULL, _item("a"), running=False, uid=None, now=AT)
+    later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
+    item = _item("b")
+    result = outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=later)
+    assert result == "parked"
+    incus.exec_with_input.assert_not_called()
+    assert (pending_dir(tmp_path, FULL) / inbox_file_name(item, later)).is_file()
+
+
+def test_deliver_ignores_dot_files_in_pending(tmp_path: Path) -> None:
+    incus = _incus()
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / ".x.tmp").write_text("{}")
+    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
+    assert result == "delivered"

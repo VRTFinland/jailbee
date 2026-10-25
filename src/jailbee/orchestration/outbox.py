@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.common import CONTAINER_USERNAME
 from jailbee.incus import IncusError
@@ -110,21 +110,31 @@ def deliver(
     uid: int | None,
     now: datetime,
     seq: int = 0,
-) -> None:
+) -> Literal["delivered", "parked"]:
     """Write directly when the recipient runs; otherwise (or on failure) park it.
 
+    An item is also parked behind any already-parked one, so order is kept.
     `seq` orders items emitted within one second (see `inbox_file_name`).
     """
-    if running:
+    if running and not has_pending(root, recipient_full):
         try:
             write_inbox(incus, recipient_full, item, uid=uid, now=now, seq=seq)
         except IncusError:
             pass
         else:
-            return
+            return "delivered"
     atomic_write_text(
         pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq), _item_json(item)
     )
+    return "parked"
+
+
+def has_pending(root: Path, recipient_full: str) -> bool:
+    """Whether any parked (non-dot) file waits for `recipient_full`."""
+    directory = pending_dir(root, recipient_full)
+    if not directory.is_dir():
+        return False
+    return any(p.is_file() and not p.name.startswith(".") for p in directory.iterdir())
 
 
 def flush_pending(incus: Incus, root: Path, recipient_full: str, *, uid: int | None) -> int:

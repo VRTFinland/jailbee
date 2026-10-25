@@ -761,3 +761,35 @@ def test_broker_holds_the_lock_while_running(
     monkeypatch.setattr(broker, "_pause", lambda seconds, stop: None)
     assert broker.run_broker(MagicMock()) == 0
     assert held == [True]
+
+
+def test_tick_flushes_pending_for_revoked_orchestrator(rig: Rig) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    d = pending_dir(rig.root, "proj-orch")
+    d.mkdir(parents=True)
+    (d / "x.json").write_text("{}")
+    # A grant label that no longer parses: role "none", yet still labelled.
+    rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "garbage"})]
+    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.tick()
+    rig.flush_pending.assert_called_once_with(
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+    )
+    rig.read_outbox.assert_not_called()
+    rig.dispatch.assert_not_called()
+
+
+def test_tick_does_not_flush_role_none_without_pending(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "garbage"})]
+    rig.tick()
+    rig.flush_pending.assert_not_called()
+
+
+def test_tick_context_shares_the_memory_sequence(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    memory = broker.BrokerMemory()
+    rig.tick(memory)
+    ctx = rig.dispatch.call_args.args[0]
+    assert ctx.seq is memory.seq

@@ -31,6 +31,7 @@ from jailbee.orchestration.outbox import (
     delete_outbox_files,
     deliver,
     flush_pending,
+    has_pending,
     read_outbox,
     write_grant_json,
 )
@@ -329,7 +330,14 @@ def tick(
             )
             return None
         return ActionContext(
-            cfg=cfg, gcfg=gcfg, incus=incus, root=root, sender=node, nodes=nodes, now=now
+            cfg=cfg,
+            gcfg=gcfg,
+            incus=incus,
+            root=root,
+            sender=node,
+            nodes=nodes,
+            now=now,
+            seq=memory.seq,
         )
 
     orchestrators: list[ActionContext] = []
@@ -346,6 +354,9 @@ def tick(
                     "broker: %s has an unparseable orchestration grant label; ignored",
                     node.full,
                 )
+                # Messages parked while it was an orchestrator still get delivered.
+                if node.running and has_pending(root, node.full):
+                    flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
                 continue
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
