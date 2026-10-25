@@ -860,3 +860,40 @@ def test_job_without_initial_prompt_key_reads_none():
     del job["opts"]["initial_prompt"]
     back, _, _ = job_to_opts(job)
     assert back.initial_prompt is None
+
+
+def test_track_job_with_no_engine_is_a_no_op() -> None:
+    from jailbee.background import track_job
+
+    calls: list[object] = []
+
+    def work(session: Session) -> None:
+        calls.append(session)
+
+    track_job(None, work, "record the thing")
+    assert calls == []
+
+
+def test_track_job_swallows_a_raising_work_and_warns_with_what(capsys) -> None:
+    from jailbee.background import track_job
+
+    def work(session: Session) -> None:
+        raise RuntimeError("boom")
+
+    track_job(_engine(), work, "record the frobnicated row")  # must not raise
+
+    out = capsys.readouterr()
+    assert "record the frobnicated row" in out.out + out.err
+    assert "boom" in out.out + out.err
+
+
+def test_job_engine_returns_none_and_warns_when_get_engine_raises(mocker, capsys) -> None:
+    from jailbee.background import job_engine
+
+    mocker.patch("jailbee.db.get_engine", side_effect=RuntimeError("no state dir"))
+
+    assert job_engine() is None
+
+    out = capsys.readouterr()
+    assert "Job tracking unavailable" in out.out + out.err
+    assert "no state dir" in out.out + out.err

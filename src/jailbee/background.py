@@ -30,6 +30,10 @@ from jailbee.db.models import JOB_STOP as JOB_STOP
 from jailbee.db.models import BackgroundJob
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.engine import Engine
+
     from jailbee.config import Autostart
     from jailbee.lifecycle import NewContainerOptions
 
@@ -548,3 +552,60 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
         log_path=raw["log_path"],
         progress_path=raw["progress_path"],
     )
+
+
+def job_engine() -> Engine | None:
+    """The state-DB engine used for background-job tracking, or None.
+
+    Same contract as the advice helpers above, one step earlier: a job row is
+    bookkeeping for `jailbee ls` / `jailbee job`, not part of the container, so
+    an unwritable state dir or a database that refuses to open must cost the
+    user the tracking — not the create/destroy the worker exists to run.
+    """
+    from jailbee.db import get_engine
+    from jailbee.tui import warn_plain
+
+    try:
+        return get_engine()
+    except Exception as e:  # bookkeeping only; never abort the operation
+        # `warn_plain`: a DBAPI error body carries `[SQL: ...]` /
+        # `[parameters: ...]`, which Rich markup would silently eat.
+        warn_plain(f"Job tracking unavailable ({e}) — the operation itself continues")
+        return None
+
+
+def track_job(
+    engine: Engine | None,
+    work: Callable[[Session], None],
+    what: str,
+) -> None:
+    """Run one job-row write, warning instead of raising when the DB says no.
+
+    Every phase update, failure record and cleanup of a detached worker goes
+    through here, because the write is bookkeeping and the operation around it
+    is not: a locked database, a read-only state dir or a vanished table must
+    not abort a container create halfway.
+
+    Not hypothetical. A *concurrently running older* jailbee is enough: older
+    `db._ensure_schema` versions dropped and recreated every table they knew
+    about whenever they met a database newer than their own
+    `CURRENT_SCHEMA_VERSION`, and re-checked on every connection. A long-lived
+    process from such a build (a dashboard left open across an upgrade) reset
+    the schema under a live worker, whose next phase update then died on
+    `no such table: background_op` and, unguarded, took the whole
+    `jailbee new` with it. That reset is gone — a newer database is now used
+    as-is — but the worker must survive one regardless, because the process
+    doing it is the *old* build, which no fix here can reach.
+    """
+    if engine is None:
+        return
+
+    from sqlmodel import Session
+
+    from jailbee.tui import warn_plain
+
+    try:
+        with Session(engine) as session:
+            work(session)
+    except Exception as e:  # bookkeeping only; never abort the operation
+        warn_plain(f"Job tracking: could not {what} ({e})")  # see `job_engine`
