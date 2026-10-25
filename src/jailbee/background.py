@@ -420,6 +420,7 @@ def op_to_job(
             "credential_group": opts.credential_group,
             "autostart_override": opts.autostart_override,
             "storage_pool": opts.storage_pool,
+            "initial_prompt": opts.initial_prompt,
         },
     }
 
@@ -470,6 +471,9 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # Dropped here (or in `op_to_job`) the worker would create the container
         # on the profile's pool, not the one the operator chose.
         storage_pool=o.get("storage_pool"),
+        # Dropped here (or in `op_to_job`) a background prompted create would
+        # start the agent with no task.
+        initial_prompt=o.get("initial_prompt"),
     )
     return opts, job["container_name"], job["log_path"]
 

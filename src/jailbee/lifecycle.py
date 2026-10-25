@@ -1134,6 +1134,10 @@ class NewContainerOptions:
     # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
+    # Task text for the primary agent's first launch (`jailbee new --prompt`),
+    # written into the container after start and before autostart. MUST be
+    # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    initial_prompt: str | None = None
     # Incus storage pool the container's root disk is created on
     # (`jailbee new --storage`, else `defaults.storage_pool`). None leaves it to
     # the `default` profile. MUST be mirrored in
@@ -2077,6 +2081,20 @@ def new_container(
 
     inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
+    # The container is running by now and autostart has not run. Written even
+    # with --no-autostart (a later start consumes it). Not best-effort: a
+    # prompted create that lost its prompt must fail visibly.
+    if opts.initial_prompt is not None:
+        from jailbee import initial_prompt
+
+        initial_prompt.write_prompt(
+            incus,
+            name,
+            opts.initial_prompt,
+            uid=cfg.container_user.uid,
+            gid=cfg.container_user.gid,
+        )
+
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
     # claude-install, provides its persistent store) and after the network
@@ -2498,7 +2516,14 @@ def _wire_origin_and_tracking(
     )
 
 
-def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> None:
+def boot_container(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    restart: bool,
+    initial_prompt: str | None = None,
+) -> None:
     """Bring a container up, re-attaching GUI sockets in the right order.
 
     The single boot path behind `jailbee start` (``restart=False``) and
@@ -2578,6 +2603,17 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     from jailbee import git_identity
 
     git_identity.sync(cfg, incus, name)
+
+    if initial_prompt is not None:
+        from jailbee import initial_prompt as prompt_file
+
+        prompt_file.write_prompt(
+            incus,
+            name,
+            initial_prompt,
+            uid=cfg.container_user.uid,
+            gid=cfg.container_user.gid,
+        )
 
     # Catch the AHEAD base anchor up with the host branch. Forward-only: nothing
     # moved `refs/heads/<base>` here, and for a base never checked out on the

@@ -825,3 +825,38 @@ def test_claim_job_replaces_a_killed_stop(mocker) -> None:
         assert _claim(s, 4242)
         row = s.get(BackgroundJob, "c")
         assert row is not None and row.pid == 4242
+
+
+def _prompt_opts(**kw):
+    from jailbee.lifecycle import NewContainerOptions
+
+    return NewContainerOptions(
+        container_branch="b",
+        name=None,
+        network="strict",
+        memory=None,
+        cpu=2,
+        from_base="img",
+        clone=True,
+        **kw,
+    )
+
+
+def test_job_codec_round_trips_initial_prompt():
+    import json
+
+    from jailbee.background import job_to_opts, op_to_job
+
+    opts = _prompt_opts(initial_prompt='do "x"\n')
+    job = json.loads(json.dumps(op_to_job(opts, container_name="c", log_path="/l")))
+    back, _, _ = job_to_opts(job)
+    assert back.initial_prompt == 'do "x"\n'
+
+
+def test_job_without_initial_prompt_key_reads_none():
+    from jailbee.background import job_to_opts, op_to_job
+
+    job = op_to_job(_prompt_opts(initial_prompt="x"), container_name="c", log_path="/l")
+    del job["opts"]["initial_prompt"]
+    back, _, _ = job_to_opts(job)
+    assert back.initial_prompt is None
