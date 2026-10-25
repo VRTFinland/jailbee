@@ -262,6 +262,7 @@ The full, searchable documentation is at
 | [Storage](https://jailbee.gisgro.io/docs/storage/) | Copy-on-write pools, btrfs and the cost of the `dir` backend |
 | [Getting started](https://jailbee.gisgro.io/docs/getting-started/) | Configure a repo and walk through a typical day |
 | [Commands](https://jailbee.gisgro.io/docs/commands/) | CLI commands and flags |
+| [Container orchestration](https://jailbee.gisgro.io/docs/orchestration/) | Let an agent start, message and merge child containers |
 | [Configuration](https://jailbee.gisgro.io/docs/config/) | Repo config, personal defaults and local overrides |
 | [FAQ](https://jailbee.gisgro.io/docs/faq/) | Common questions and troubleshooting pointers |
 | [News](https://jailbee.gisgro.io/news/) | Release announcements and the [RSS feed](https://jailbee.gisgro.io/news/feed.xml) |
