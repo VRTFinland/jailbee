@@ -2457,7 +2457,7 @@ for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
-the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed, and ROLE, CHILDREN and INBOX added after OUTBOX — with one notice; turning any of them back on afterwards sticks.
+the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed, and ROLE, CHILDREN and INBOX added after OUTBOX in stored views that still show OUTBOX — with one notice; turning any of them back on afterwards sticks.
 
 Eleven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
