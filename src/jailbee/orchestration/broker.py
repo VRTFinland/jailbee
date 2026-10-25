@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import itertools
 import logging
 import signal
@@ -60,6 +61,7 @@ log = logging.getLogger(__name__)
 ACTIVE_INTERVAL = 5.0
 IDLE_INTERVAL = 60.0
 SLEEP_SLICE = 1.0
+LOCK_FILE = "broker.lock"
 
 
 @dataclass
@@ -394,11 +396,20 @@ def run_broker(incus: Incus) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    root = state_root()
+    # One broker per host: two would act on the same manifests and queues.
+    # The lock dies with the process, so a crash never leaves it held.
+    lock = (root / LOCK_FILE).open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        log.info("another orchestration broker is running; exiting")
+        return 0
     stop = StopFlag()
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = BrokerMemory()
     try:
-        root = state_root()
         journal = Journal(root)
         log.info("orchestration broker starting")
         while not stop.requested:
@@ -415,3 +426,4 @@ def run_broker(incus: Incus) -> int:
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+        lock.close()

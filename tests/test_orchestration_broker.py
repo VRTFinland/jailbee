@@ -715,3 +715,45 @@ def test_replies_carry_an_increasing_sequence(rig: Rig) -> None:
     assert seqs == sorted(seqs) and len(set(seqs)) == 3
     rig.tick(memory)  # the counter lives in memory and keeps rising
     assert rig.deliver.call_args_list[-1].kwargs["seq"] > seqs[-1]
+
+
+def test_second_broker_instance_exits_while_the_lock_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import fcntl
+
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    tick = MagicMock(return_value=False)
+    monkeypatch.setattr(broker, "tick", tick)
+    monkeypatch.setattr(broker, "_pause", lambda seconds, stop: _sigterm())
+    with (tmp_path / "broker.lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with caplog.at_level(logging.INFO, logger="jailbee.orchestration.broker"):
+            assert broker.run_broker(MagicMock()) == 0
+    tick.assert_not_called()
+    assert "another orchestration broker is running" in caplog.text
+
+
+def test_broker_holds_the_lock_while_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    held: list[bool] = []
+
+    def tick(*a: object, **k: object) -> bool:
+        with (tmp_path / "broker.lock").open("w") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held.append(True)
+            else:
+                held.append(False)
+        _sigterm()
+        return False
+
+    monkeypatch.setattr(broker, "tick", tick)
+    monkeypatch.setattr(broker, "_pause", lambda seconds, stop: None)
+    assert broker.run_broker(MagicMock()) == 0
+    assert held == [True]
