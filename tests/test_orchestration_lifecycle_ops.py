@@ -349,3 +349,26 @@ def test_failed_destroy_keeps_pending(tmp_path: Path, seams: dict[str, MagicMock
     seams["destroy"].side_effect = RuntimeError("busy")
     assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "refused"
     assert parked.exists()
+
+
+def test_restart_clears_state_stopped_head_and_done_sha(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """A restarted child is `working` again (absent STATE = working)."""
+    x = "a" * 40
+    rig = Rig(
+        tmp_path,
+        limit=2,
+        config={
+            labels.STATE: labels.STATE_IMPORTED,
+            labels.DONE_SHA: x,
+            labels.STOPPED_HEAD: x,
+            labels.LAST_IMPORT: x,
+        },
+    )
+    store = Labels(rig)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    for key in (labels.STATE, labels.DONE_SHA, labels.STOPPED_HEAD):
+        assert key not in store.store
+    assert store.store[labels.LAST_IMPORT] == x
+    seams["boot"].assert_called_once()

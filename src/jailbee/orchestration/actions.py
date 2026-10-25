@@ -375,10 +375,11 @@ def _child_head(ctx: ActionContext, child: Node) -> str | None:
 
 def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
     # Before the boot: a restarted child commits anew, so a HEAD recorded at
-    # its last stop (or its last `done`) no longer describes it. Clearing
-    # first means a running child never carries a stale value.
+    # its last stop (or its last `done`) no longer describes it, and it is
+    # `working` again (absent STATE = working). Clearing first means a running
+    # child never carries a stale value.
     try:
-        for key in (labels.STOPPED_HEAD, labels.DONE_SHA):
+        for key in (labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE):
             ctx.incus.config_unset_checked(child.full, key)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
