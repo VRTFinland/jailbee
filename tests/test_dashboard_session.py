@@ -843,3 +843,109 @@ def test_revoke_hidden_when_policy_forbids(mocker, tmp_path):
     # offered() uses actions' own permitted import, so only the revoke entry is gated here
     picker = session.open_orchestration("alpha-one")
     assert "revoke" not in [e.value for e in picker.entries]
+
+
+def _run_edits(session, quiet, *values):
+    """Choose each value in turn from the picker the session itself reopened."""
+    argvs = []
+    picker = session.open_orchestration("alpha-one")
+    for value in values:
+        picker = session.submit_picker(picker, PickerEntry("", value))
+        argvs.append(quiet.call_args.args[1])
+    return argvs
+
+
+def test_consecutive_mount_toggles_use_the_updated_grant(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, mounts=("data",), kinds=("data", "docs")
+    )
+    first, second = _run_edits(session, quiet, "mount:docs", "mount:data")
+    assert first[2:6] == ["--mount", "data", "--mount", "docs"]
+    # docs stays: the second edit must not be computed from the stale (data,)
+    assert second == ["orchestrate", "grant", "--mount", "docs", "--", "alpha-one"]
+
+
+def test_consecutive_op_and_loose_toggles_flip_direction(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    argvs = _run_edits(session, quiet, "op:destroy", "op:destroy", "loose", "loose")
+    assert [a[2] for a in argvs] == ["--allow", "--deny", "--loose", "--no-loose"]
+
+
+def test_failed_edit_does_not_patch_the_grant(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    argvs = _run_edits(session, quiet, "op:destroy", "op:destroy")
+    assert [a[2] for a in argvs] == ["--allow", "--allow"]
+
+
+def test_tick_rebuilds_the_orchestration_picker_and_keeps_cursor(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    reopened = session.overlay
+    labels = {e.value: e.label for e in reopened.entries}
+    assert labels["loose"] == "Children may be loose: yes"  # the local patch
+    # the snapshot (loose still off) wins once the patch is gone; the picker follows it
+    session._grant_patches.clear()
+    session.tick()
+    labels = {e.value: e.label for e in session.overlay.entries}
+    assert labels["loose"] == "Children may be loose: no"
+    assert session.overlay.start_index == reopened.start_index > 0
+
+
+def test_snapshot_confirming_the_edit_drops_the_patch(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    assert "alpha-one" in session._grant_patches
+    patched = session._grant_patches["alpha-one"][0]
+    session.client.groups[0].containers[0] = dataclasses.replace(
+        session.client.groups[0].containers[0], grant=patched
+    )
+    session.tick()
+    assert session._grant_patches == {}
+
+
+def test_limit_one_is_valid(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "limit")
+    )
+    assert validate_answer(prompt, "1") is None
+
+
+def test_loose_on_toggles_to_no_loose(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, loose=True)
+    assert _edit(session, quiet, "loose") == [
+        "orchestrate",
+        "grant",
+        "--no-loose",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_mount_off_keeps_the_others(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, mounts=("data", "docs"), kinds=("data", "docs")
+    )
+    assert _edit(session, quiet, "mount:docs") == [
+        "orchestrate",
+        "grant",
+        "--mount",
+        "data",
+        "--",
+        "alpha-one",
+    ]
+
+
+def test_text_edit_rechecks_grant_and_eligibility(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "limit")
+    )
+    group = session.groups[0]
+    group.containers[0] = dataclasses.replace(group.containers[0], grant=None)
+    assert session.submit_prompt(prompt, "3") is None
+    quiet.assert_not_called()
+    assert "not available" in session.notice

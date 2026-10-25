@@ -183,12 +183,14 @@ if TYPE_CHECKING:
 
     from jailbee.egress_scope import EntryRow
     from jailbee.incus import Incus
+    from jailbee.orchestration.view import GrantView
     from jailbee.state_service.client import StateClient
 
 
 log = logging.getLogger(__name__)
 
 _TOGGLE_OPERATIONS = ("import", "restart", "stop", "destroy")  # spawn/message are the baseline
+GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
 STARTUP_NOTICE_SECONDS = 10.0  # a config-migration notice shown at launch
@@ -378,6 +380,8 @@ class DashboardSession:
         self.merge_pick: MergePick | None = None
         self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
+        # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
+        self._grant_patches: dict[str, tuple[GrantView, float]] = {}
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
@@ -435,6 +439,7 @@ class DashboardSession:
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
+        self._apply_grant_patches()
         self.rows = selectable_rows(self.groups, self.folded)
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
@@ -443,6 +448,7 @@ class DashboardSession:
         self.marked &= listed
         self._prune_merge_pick(listed)
         self._close_vanished_overlay()
+        self._refresh_orchestration_picker()
         self._pin_selection()
         self._snap_merge_cursor()
         if self.selected != self._details_row:
@@ -1041,7 +1047,7 @@ class DashboardSession:
             return self.open_orchestration(container)
         return None
 
-    def open_orchestration(self, container: str) -> Picker | None:
+    def open_orchestration(self, container: str, start_index: int = 0) -> Picker | None:
         """Grant (by profile or defaults), re-apply a profile, or revoke; None with a notice."""
         found = self._listed_container(container)
         if found is None or self.repo_for(container, "container") is None:
@@ -1086,6 +1092,7 @@ class DashboardSession:
             tuple(entries),
             target=container,
             detail=tuple(Text.from_markup(line).plain for line in _orchestration_lines(info)),
+            start_index=start_index,
         )
 
     def submit_orchestration(
@@ -1166,6 +1173,7 @@ class DashboardSession:
         grant = info.grant
         assert grant is not None
         argv: list[str] | None = None
+        new_mounts: tuple[str, ...] = ()
         if value.startswith("op:"):
             op = value[len("op:") :]
             argv = (
@@ -1179,27 +1187,94 @@ class DashboardSession:
             kind = value[len("mount:") :]
             current = list(grant.mounts)
             new = [m for m in current if m != kind] if kind in current else [*current, kind]
-            argv = dact.orchestrate_grant_argv(container, mounts=tuple(new))
-        if argv is not None:
-            self.run_quiet_cli(repo, argv)
-        self.overlay = self.open_orchestration(container)
+            new_mounts = tuple(new)
+            argv = dact.orchestrate_grant_argv(container, mounts=new_mounts)
+        patched = replace(grant)
+        if value.startswith("op:"):
+            op = value[len("op:") :]
+            ops = tuple(o for o in grant.operations if o != op)
+            patched = replace(grant, operations=ops if op in grant.operations else (*ops, op))
+        elif value == "loose":
+            patched = replace(grant, loose=not grant.loose)
+        elif value.startswith("mount:"):
+            patched = replace(grant, mounts=new_mounts)
+        if argv is not None and self.run_quiet_cli(repo, argv):
+            self._patch_grant(container, patched)
+        return self._reopen_orchestration(container, value)
+
+    def _reopen_orchestration(self, container: str, value: str) -> Picker | None:
+        """Show the picker again with the cursor on the entry just edited."""
+        before = self.open_orchestration(container)
+        index = (
+            next((i for i, e in enumerate(before.entries) if e.value == value), 0) if before else 0
+        )
+        self.overlay = self.open_orchestration(container, start_index=index)
         return self.overlay if isinstance(self.overlay, Picker) else None
 
     def _submit_orchestration_text(self, prompt: TextPrompt, answer: str) -> Picker | None:
         container = prompt.target
         repo = self.repo_for(container, "container")
-        if repo is None:
+        found = self._listed_container(container)
+        if repo is None or found is None:
             self.set_notice(f"'{container}' is gone")
             return None
+        grant = found[1].grant
+        if grant is None or not dact.orchestration_offered(
+            found[1], self.ssh_policy, over_ssh=self.over_ssh
+        ):
+            self.set_notice("Orchestration is not available for this container")
+            return None
         if prompt.purpose == "container-orchestration-limit":
-            argv = dact.orchestrate_grant_argv(container, children=int(answer))
+            limit = int(answer)
+            argv = dact.orchestrate_grant_argv(container, children=limit)
+            patched = replace(grant, limit=limit)
+            value = "limit"
         else:
-            argv = dact.orchestrate_grant_argv(
-                container, egress=tuple(answer.replace(",", " ").split())
-            )
-        self.run_quiet_cli(repo, argv)
-        self.overlay = self.open_orchestration(container)
-        return self.overlay if isinstance(self.overlay, Picker) else None
+            hosts = tuple(answer.replace(",", " ").split())
+            argv = dact.orchestrate_grant_argv(container, egress=hosts)
+            patched = replace(grant, egress=hosts)
+            value = "egress"
+        if self.run_quiet_cli(repo, argv):
+            self._patch_grant(container, patched)
+        return self._reopen_orchestration(container, value)
+
+    def _patch_grant(self, container: str, grant: GrantView) -> None:
+        """Show ``grant`` for ``container`` until the gathered snapshot has it too.
+
+        ``run_quiet_cli`` only asks for a refresh; the snapshot that answers it
+        arrives later, so without this the reopened picker (and the next edit,
+        which computes from the grant) would use the pre-edit grant. The patch
+        is dropped once the snapshot agrees, or after a timeout.
+        """
+        self._grant_patches[container] = (grant, time.monotonic() + GRANT_PATCH_SECONDS)
+        self._apply_grant_patches()
+
+    def _apply_grant_patches(self) -> None:
+        if not self._grant_patches:
+            return
+        now = time.monotonic()
+        groups: list[RepoGroup] = []
+        for group in self.groups:
+            containers = list(group.containers)
+            for i, info in enumerate(containers):
+                held = self._grant_patches.get(info.name)
+                if held is None:
+                    continue
+                if info.grant == held[0] or now >= held[1]:
+                    del self._grant_patches[info.name]
+                else:
+                    containers[i] = replace(info, grant=held[0])
+            groups.append(replace(group, containers=containers))
+        self._grant_patches = {
+            n: h for n, h in self._grant_patches.items() if self._listed_container(n) is not None
+        }
+        self.groups = groups
+
+    def _refresh_orchestration_picker(self) -> None:
+        """Rebuild an open Orchestration picker from the new snapshot, keeping its cursor."""
+        overlay = self.overlay
+        if isinstance(overlay, Picker) and overlay.purpose == "container-orchestration":
+            self.overlay = self.open_orchestration(overlay.target, start_index=overlay.start_index)
 
     def open_memory_picker(self, container: str) -> Picker | None:
         """Offer the same memory choices as the CLI, using the current host snapshot."""

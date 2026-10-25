@@ -121,6 +121,7 @@ class Picker:
     carry: tuple[str, ...] = ()
     back: EgressState | AccountsState | None = None
     detail: tuple[str, ...] = ()
+    start_index: int = 0  # the entry the cursor starts on (not part of the picker's identity)
 
 
 # A list never shrinks below this many rows.
