@@ -26,7 +26,9 @@ from jailbee.orchestration.protocol import (
     RestartManifest,
     SpawnManifest,
     StopManifest,
+    restart_sets_runner,
 )
+from jailbee.orchestration.runner import Runner, parse_runner_label, runner_problems
 from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
 
 if TYPE_CHECKING:
@@ -192,6 +194,7 @@ class SpawnPlan:
     base: str | None
     prompt: str
     rights: ChildRights
+    runner: Runner | None = None
 
 
 def plan_spawn(
@@ -204,6 +207,8 @@ def plan_spawn(
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
+    if m.runner is not None:
+        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, m.runner)
     if problems:
         return refused("; ".join(problems))
     try:
@@ -218,7 +223,7 @@ def plan_spawn(
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights)
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, m.runner)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -254,6 +259,7 @@ def child_options(
         initial_prompt=plan.prompt,
         spawned_by=orchestrator_full,
         rights=plan.rights,
+        runner=plan.runner,
         assume_yes=False,
     )
 
@@ -378,6 +384,8 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             base=plan.base,
             prompt=plan.prompt,
             rights=plan.rights.model_dump(mode="json"),
+            runner=plan.runner.model_dump(mode="json") if plan.runner else None,
+            runner_set=plan.runner is not None,
         )
     )
     _store(ctx, queued)
@@ -397,7 +405,15 @@ def _child_head(ctx: ActionContext, child: Node) -> str | None:
         return None
 
 
-def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
+def _boot(
+    ctx: ActionContext,
+    child: Node,
+    prompt: str,
+    *,
+    started: bool,
+    runner: Runner | None = None,
+    set_runner: bool = False,
+) -> Outcome:
     # Before the boot: a restarted child commits anew, so a HEAD recorded at
     # its last stop (or its last `done`) no longer describes it, and it is
     # `working` again (absent STATE = working). Clearing first means a running
@@ -405,6 +421,11 @@ def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Out
     try:
         for key in (labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE):
             ctx.incus.config_unset_checked(child.full, key)
+        if set_runner:
+            if runner is not None:
+                ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
+            else:
+                ctx.incus.config_unset_checked(child.full, labels.RUNNER)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
@@ -439,6 +460,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     if raw is None:
         return refused(NOT_ALLOWED)
     problems = check_rights(raw, profiles.repo_cap(ctx.cfg), rights, ctx.cfg.optional_mounts.keys())
+    runner = Runner.model_validate(req.runner) if req.runner is not None else None
+    if runner is not None:
+        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
     if problems:
         return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
@@ -452,6 +476,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         base=req.base,
         prompt=req.prompt,
         rights=rights,
+        runner=runner,
     )
     fork: ForkSource | None = None
     if req.kind == "fork":
@@ -479,7 +504,13 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"child `{short}` is running; stop it first")
     if node.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{short}` is still being created")
-    return _boot(ctx, node, req.prompt, started=True)
+    runner = Runner.model_validate(req.runner) if req.runner is not None else None
+    effective = runner if req.runner_set else parse_runner_label(node.config.get(labels.RUNNER))
+    if effective is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
+        if problems:
+            return refused("; ".join(problems))
+    return _boot(ctx, node, req.prompt, started=True, runner=runner, set_runner=req.runner_set)
 
 
 # Queue kind -> starter.
@@ -562,12 +593,20 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return refused(f"child `{child.short}` is running; stop it first")
     if child.full in live_create_jobs(ctx.cfg.container_prefix):
         return refused(f"child `{child.short}` is still being created")
+    set_runner = restart_sets_runner(m)
+    # A restart that names no runner keeps the child's label; that kept runner
+    # must still be launchable, so it is checked like a named one.
+    effective = m.runner if set_runner else parse_runner_label(child.config.get(labels.RUNNER))
+    if effective is not None:
+        problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
+        if problems:
+            return refused("; ".join(problems))
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if not queued and running_children(ctx) < grant.max_running_children:
-        return _boot(ctx, child, prompt, started=False)
+        return _boot(ctx, child, prompt, started=False, runner=m.runner, set_runner=set_runner)
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -579,6 +618,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             base=None,
             prompt=prompt,
             rights={},
+            runner=m.runner.model_dump(mode="json") if m.runner else None,
+            runner_set=set_runner,
         )
     )
     _store(ctx, queued)

@@ -18,6 +18,7 @@ from jailbee.incus import IncusError
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.orchestration.runner import Runner
 
 INITIAL_PROMPT_LABEL = "user.jailbee.initial_prompt"
 PENDING = "pending"
@@ -44,8 +45,18 @@ def validate_prompt_text(text: str) -> str:
     return text
 
 
-def prompt_problem(cfg: Config) -> str | None:
-    """Why an initial prompt cannot be delivered for `cfg`, or None."""
+def prompt_problem(cfg: Config, runner: Runner | None = None) -> str | None:
+    """Why an initial prompt cannot be delivered for `cfg`, or None.
+
+    Under a `runner` the prompted agent is `claude`, not the primary.
+    """
+    if runner is not None:
+        claude = cfg.agents.get("claude")
+        if claude is None or not claude.enabled:
+            return "agent `claude` is not enabled, so it cannot take an initial prompt"
+        if not claude.prompt_args:
+            return "agent `claude` has no prompt_args, so it cannot take an initial prompt"
+        return None
     primary = primary_agent(cfg)
     if primary.name is None:
         return primary.problem or "no agent is enabled to receive an initial prompt"

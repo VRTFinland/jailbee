@@ -102,3 +102,18 @@ def test_annotate_stopped_orchestrator_marks_children():
     kid = replace(ci("alpha-k1", "alpha"), child=ChildView("alpha-orch", "working", (), False, ()))
     annotate([orch, kid], {})
     assert kid.orchestrator_running is False
+
+
+def test_child_view_parses_runner():
+    v = parse_child_view(
+        "alpha-orch", "done", None, '{"agent":"claude-jb","model":"opus","profile":"p1"}'
+    )
+    assert v is not None
+    assert v.runner == "claude-jb p1 opus"
+
+
+@pytest.mark.parametrize("raw", [None, "", "{", '{"agent":"nope"}', 42])
+def test_child_view_corrupt_runner_is_none(raw):
+    v = parse_child_view("alpha-orch", "done", None, raw)
+    assert v is not None
+    assert v.runner is None

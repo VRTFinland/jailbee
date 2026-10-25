@@ -21,6 +21,7 @@ from pydantic import (
 )
 
 from jailbee.orchestration.grant import ChildRights
+from jailbee.orchestration.runner import Runner
 
 MAX_PROMPT_BYTES = 64 * 1024
 
@@ -103,6 +104,7 @@ class SpawnManifest(_Manifest):
     base: str | None = None
     prompt: str
     rights: ChildRights
+    runner: Runner | None = None
     note: str | None = None
 
     @field_validator("prompt")
@@ -150,11 +152,19 @@ class RestartManifest(_Manifest):
     type: Literal["restart"]
     child: str
     prompt: str
+    # Absent keeps the child's runner; an explicit null clears it
+    # (see `restart_sets_runner`).
+    runner: Runner | None = None
 
     @field_validator("prompt")
     @classmethod
     def _prompt(cls, v: str) -> str:
         return _checked_text(v)
+
+
+def restart_sets_runner(m: RestartManifest) -> bool:
+    """True when the manifest names a runner, even ``null`` (which clears it)."""
+    return "runner" in m.model_fields_set
 
 
 class StopManifest(_Manifest):

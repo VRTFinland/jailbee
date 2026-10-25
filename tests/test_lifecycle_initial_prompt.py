@@ -175,3 +175,22 @@ def test_boot_container_rejects_unusable_prompt_before_touching_anything(tmp_pat
     incus.start.assert_not_called()
     write.assert_not_called()
     incus.config_set.assert_not_called()
+
+
+def test_boot_container_checks_prompt_against_the_runner(tmp_path, mocker):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    incus.config_get.side_effect = lambda _n, key: (
+        Runner(agent="claude").to_label() if key == labels.RUNNER else None
+    )
+    _boot_events(mocker, incus)
+    mocker.patch("jailbee.initial_prompt.write_prompt")
+    check = mocker.patch("jailbee.initial_prompt.prompt_problem", return_value=None)
+
+    boot_container(cfg, incus, "feat-x", restart=False, initial_prompt="go")
+
+    check.assert_called_once_with(cfg, Runner(agent="claude"))

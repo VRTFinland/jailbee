@@ -143,6 +143,7 @@ def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
 
 def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker):
     from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
 
     mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
     repo = tmp_path / "myrepo"
@@ -164,6 +165,7 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
                 labels.SPAWNED_BY: "myrepo-orch",
                 labels.STATE: "done",
                 labels.RIGHTS: '{"version":1,"mounts":["data"]}',
+                labels.RUNNER: Runner(agent="claude-jb", model="opus").to_label(),
             },
         ),
     ]
@@ -172,6 +174,7 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
     assert infos["myrepo-k1"].child.orchestrator == "myrepo-orch"
     assert infos["myrepo-k1"].child.state == "done"
     assert infos["myrepo-k1"].child.mounts == ("data",)
+    assert infos["myrepo-k1"].child.runner == "claude-jb opus"
     assert infos["myrepo-orch"].running_children == 1
     assert infos["myrepo-k1"].orchestrator_running is True
 
@@ -11622,6 +11625,29 @@ def test_child_labels_are_set_when_the_instance_is_created(make_cfg, tmp_path, m
     assert json.loads(config[labels.RIGHTS]) == json.loads(rights.to_label())
     set_keys = {c.args[1] for c in incus.config_set.call_args_list}
     assert labels.SPAWNED_BY not in set_keys
+
+
+def test_child_runner_label_is_set_when_the_instance_is_created(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    runner = Runner(agent="claude-jb", profile="grok")
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=ChildRights(), runner=runner)
+    config = incus.init.call_args.kwargs["config"]
+    assert config[labels.RUNNER] == runner.to_label()
+
+
+def test_child_without_runner_has_no_runner_label(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=ChildRights())
+    assert labels.RUNNER not in incus.init.call_args.kwargs["config"]
 
 
 def test_ordinary_container_is_created_without_child_config(make_cfg, tmp_path, mocker):

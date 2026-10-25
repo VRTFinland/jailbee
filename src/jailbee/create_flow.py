@@ -572,7 +572,7 @@ def start_create(
             initial_prompt.validate_prompt_text(opts.initial_prompt)
         except initial_prompt.PromptError as e:
             raise CreateError(str(e), 2) from e
-        problem = initial_prompt.prompt_problem(cfg)
+        problem = initial_prompt.prompt_problem(cfg, opts.runner)
         if problem is not None:
             raise CreateError(problem, 2)
 

@@ -433,3 +433,129 @@ def test_drain_persists_each_pop_before_starting(
         actions.drain_queue(rig.ctx())
     assert seen == [["m1"]]
     assert [r.manifest_id for r in load_queue(tmp_path)["proj-orch"]] == ["m1"]
+
+
+def test_handle_spawn_queues_the_runner(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, running=1)
+    runner = Runner(agent="claude-jb", profile="grok")
+    m = _m().model_copy(update={"runner": runner})
+    assert actions.handle_spawn(rig.ctx(), m).state == "queued"
+    (req,) = load_queue(rig.root)["proj-orch"]
+    assert req.runner == {"agent": "claude-jb", "profile": "grok", "model": None}
+    assert req.runner_set is True
+
+
+def _queue_runner(rig: Rig, runner: dict[str, object] | None) -> None:
+    req = QueuedRequest(
+        manifest_id="m0",
+        child_full=_full(rig, "fix/1"),
+        kind="new",
+        commit=None,
+        queued_at="t",
+        branch="fix/1",
+        base=None,
+        prompt="p",
+        rights=ChildRights().model_dump(mode="json"),
+        runner=runner,
+        runner_set=runner is not None,
+    )
+    save_queue(rig.root, {"proj-orch": [req]})
+
+
+def test_queued_spawn_rechecks_runner(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    """The runner was fine at queue time; its LiteLLM profile is gone at dequeue."""
+    rig = Rig(tmp_path)
+    _queue_runner(rig, {"agent": "claude-jb", "profile": "gone", "model": None})
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "refused"
+    assert "agent `claude` is not enabled in this repo" in out.detail
+    seams["start"].assert_not_called()
+
+
+def test_queued_spawn_with_valid_runner_carries_it(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path)
+    _queue_runner(rig, {"agent": "claude-jb", "profile": "grok", "model": None})
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "started"
+    plan = seams["start"].call_args.args[1]
+    assert plan.runner == Runner(agent="claude-jb", profile="grok")
+
+
+def test_old_queue_entries_load_without_runner(tmp_path: Path) -> None:
+    import json
+
+    entry = {
+        "manifest_id": "m0",
+        "child_full": "proj-fix-1",
+        "kind": "new",
+        "commit": None,
+        "queued_at": "t",
+        "branch": "fix/1",
+        "base": None,
+        "prompt": "p",
+        "rights": {},
+    }
+    (tmp_path / "queue.json").write_text(
+        json.dumps({"version": 1, "queues": {"proj-orch": [entry]}})
+    )
+    (req,) = load_queue(tmp_path)["proj-orch"]
+    assert req.runner is None and req.runner_set is False
+
+
+def test_queued_restart_carries_runner_and_rechecks_it(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Queued with a runner whose LiteLLM profile is served; gone at dequeue."""
+    from jailbee.config.models_litellm import LiteLLMConfig, LiteLLMRepoView
+    from jailbee.orchestration.protocol import RestartManifest
+    from tests.conftest import with_agent
+
+    rig = Rig(tmp_path, running=1)
+    cfg = make_config(tmp_path, agents={"claude": {"enabled": True}})
+    cfg = with_agent(cfg, "claude", prompt_args="-p")
+    cfg._litellm_view = LiteLLMRepoView(config=LiteLLMConfig(enabled=True))
+    rig.cfg = cfg.model_copy(update={"container_prefix": "proj"})
+    served = {"json": {"default_profile": "grok", "profiles": {"grok": {}}}}
+    payload = MagicMock(return_value=served)
+    monkeypatch.setattr("jailbee.orchestration.runner.litellm.container_sync_payload", payload)
+    child = Node("proj-c1", "c1", False, {labels.SPAWNED_BY: "proj-orch"})
+    rig.children.append(child)
+    m = RestartManifest.model_validate(
+        {
+            "version": 1,
+            "id": "r1",
+            "type": "restart",
+            "child": "c1",
+            "prompt": "go",
+            "runner": {"agent": "claude-jb", "profile": "grok"},
+        }
+    )
+    assert actions.handle_restart(rig.ctx(), m).state == "queued"
+    (req,) = load_queue(rig.root)["proj-orch"]
+    assert req.runner == {"agent": "claude-jb", "profile": "grok", "model": None}
+    assert req.runner_set is True
+    # A null runner is queued as "set to nothing", distinct from absent.
+    save_queue(rig.root, {})
+    null = RestartManifest.model_validate({**m.model_dump(exclude={"runner"}), "runner": None})
+    assert actions.handle_restart(rig.ctx(), null).state == "queued"
+    (req2,) = load_queue(rig.root)["proj-orch"]
+    assert req2.runner is None and req2.runner_set is True
+    save_queue(rig.root, {"proj-orch": [req]})
+    # At dequeue the profile is gone: refused, labels untouched, no boot.
+    payload.return_value = {"json": {"default_profile": None, "profiles": {}}}
+    rig.children[0] = Node("proj-c0", "c0", False, {labels.SPAWNED_BY: "proj-orch"})
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "refused"
+    assert "LiteLLM profile `grok` is not served" in out.detail
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()

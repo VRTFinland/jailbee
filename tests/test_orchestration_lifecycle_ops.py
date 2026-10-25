@@ -372,3 +372,145 @@ def test_restart_clears_state_stopped_head_and_done_sha(
         assert key not in store.store
     assert store.store[labels.LAST_IMPORT] == x
     seams["boot"].assert_called_once()
+
+
+def _restart_with(**extra: object) -> RestartManifest:
+    return RestartManifest.model_validate(
+        {"version": 1, "id": "r1", "type": "restart", "child": "c1", "prompt": "go on", **extra}
+    )
+
+
+def _runner_calls(rig: Rig) -> list[object]:
+    return [
+        c
+        for c in rig.incus.mock_calls
+        if c[0] in ("config_set", "config_unset_checked") and c.args[1] == labels.RUNNER
+    ]
+
+
+def test_restart_without_runner_keeps_label(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert _runner_calls(rig) == []
+    seams["boot"].assert_called_once()
+
+
+def test_restart_with_runner_replaces_label(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, limit=2)
+    order: list[str] = []
+    rig.incus.config_set.side_effect = lambda *a, **k: order.append("set")
+    rig.incus.config_unset_checked.side_effect = lambda *a, **k: order.append("unset")
+    seams["boot"].side_effect = lambda *a, **k: order.append("boot")
+    m = _restart_with(runner={"agent": "claude-jb", "profile": "grok"})
+    assert actions.handle_restart(rig.ctx(), m).state == "done"
+    rig.incus.config_set.assert_called_once_with(
+        "proj-c1", labels.RUNNER, '{"agent":"claude-jb","profile":"grok"}'
+    )
+    assert order == ["unset", "unset", "unset", "set", "boot"]
+
+
+def test_restart_with_null_runner_clears_label(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
+    order: list[str] = []
+    seams["boot"].side_effect = lambda *a, **k: order.append("boot")
+    rig.incus.config_unset_checked.side_effect = lambda c, k: order.append(k)
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    assert order[-2:] == [labels.RUNNER, "boot"]
+    rig.incus.config_set.assert_not_called()
+
+
+def test_restart_refused_for_bad_runner_leaves_label(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
+    out = actions.handle_restart(rig.ctx(), _restart_with(runner={"agent": "claude"}))
+    assert out.state == "refused"
+    assert "agent `claude` is not enabled in this repo" in out.detail
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+    # Refused before the slot check: nothing was queued either.
+    seams["jobs"].return_value = {"proj-other"}
+    out = actions.handle_restart(rig.ctx(), _restart_with(runner={"agent": "claude"}))
+    assert out.state == "refused"
+    assert load_queue(tmp_path).get("proj-orch", []) == []
+
+
+def test_restart_runner_label_failure_is_a_refusal(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.incus import IncusError
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, limit=2)
+    rig.incus.config_set.side_effect = IncusError("daemon gone")
+    out = actions.handle_restart(rig.ctx(), _restart_with(runner={"agent": "claude"}))
+    assert out.state == "refused"
+    seams["boot"].assert_not_called()
+
+
+_KEPT = '{"agent":"claude-jb","profile":"grok"}'
+
+
+def test_restart_rechecks_kept_runner_at_handle(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[object] = []
+
+    def problems(cfg: object, incus: object, gcfg: object, runner: object) -> list[str]:
+        seen.append(runner)
+        return ["profile `grok` is not served"]
+
+    monkeypatch.setattr(actions, "runner_problems", problems)
+    rig = Rig(tmp_path, limit=1, config={labels.RUNNER: _KEPT})
+    seams["jobs"].return_value = {"proj-other"}  # would queue if it passed
+    out = actions.handle_restart(rig.ctx(), _restart())
+    assert out.state == "refused"
+    assert "grok" in out.detail
+    assert [getattr(r, "profile", None) for r in seen] == ["grok"]
+    assert load_queue(tmp_path).get("proj-orch", []) == []
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+
+
+def test_restart_rechecks_kept_runner_at_dequeue(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, limit=1, config={labels.RUNNER: _KEPT})
+    seams["jobs"].return_value = {"proj-other"}
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "queued"
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: ["grok gone"])
+    seams["jobs"].return_value = set()
+    results = actions.drain_queue(rig.ctx())
+    assert [(o.state, "grok gone" in o.detail) for _, o in results] == [("refused", True)]
+    rig.incus.config_set.assert_not_called()
+    rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+
+
+def test_restart_without_label_or_runner_is_not_checked(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    check = MagicMock(return_value=["boom"])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    rig = Rig(tmp_path, limit=2)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    check.assert_not_called()
+
+
+def test_restart_with_null_runner_does_not_check_the_old_label(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    check = MagicMock(return_value=["boom"])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    rig = Rig(tmp_path, limit=2, config={labels.RUNNER: _KEPT})
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    check.assert_not_called()

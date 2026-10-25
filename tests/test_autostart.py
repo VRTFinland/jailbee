@@ -1189,7 +1189,7 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={})
+    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None)
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()
@@ -1203,7 +1203,9 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
 
     cfg = _claude_cfg(tmp_path)
     incus = MagicMock()
-    incus.config_get.return_value = f"{cfg.container_prefix}-orch"
+    incus.config_get.side_effect = lambda _n, key: (
+        f"{cfg.container_prefix}-orch" if key == "user.jailbee.spawned_by" else None
+    )
     mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
@@ -1211,4 +1213,128 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
         cfg,
         initial_prompt=False,
         extra_env={"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": "orch"},
+        runner=None,
     )
+
+
+# ---------- runner (orchestration child)
+
+from jailbee.autostart import agent_autostart_steps  # noqa: E402
+
+
+def _runner_cfg(tmp_path, *, claude_autostart=False, **extra):
+    from tests.conftest import make_cfg
+
+    return make_cfg(
+        tmp_path,
+        primary_agent="codex",
+        agents={
+            "codex": {"enabled": True, "autostart": False},
+            "claude": {"enabled": True, "autostart": claude_autostart},
+        },
+        **extra,
+    )
+
+
+def test_runner_prompts_claude_when_primary_is_codex(tmp_path):
+    from jailbee.initial_prompt import prompted_run
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path)
+    steps = agent_autostart_steps(
+        cfg, initial_prompt=True, runner=Runner(agent="claude", model="opus")
+    )
+    assert [s.name for s in steps] == ["claude"]
+    assert steps[0].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
+
+
+def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path):
+    from jailbee.initial_prompt import PROMPT_ENV, prompted_run
+    from jailbee.orchestration.runner import Runner
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        primary_agent="codex",
+        agents={
+            "codex": {"enabled": True, "autostart": True},
+            "claude": {"enabled": True, "autostart": False},
+        },
+    )
+    steps = agent_autostart_steps(
+        cfg, initial_prompt=True, runner=Runner(agent="claude", model="opus")
+    )
+    assert [s.name for s in steps] == ["codex", "claude"]
+    assert steps[0].run == "exec codex" and PROMPT_ENV not in steps[0].env
+    assert PROMPT_ENV in steps[1].env
+    assert steps[1].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
+
+
+def test_native_runner_overrides_litellm_autostart(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_litellm(_claude_cfg(tmp_path))
+    [step] = agent_autostart_steps(cfg, initial_prompt=True, runner=Runner(agent="claude"))
+    assert step.run.startswith("if [ -f")
+    assert "exec claude " in step.run
+    assert "claude-jb" not in step.run
+
+
+def test_runner_applies_without_pending_prompt(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _claude_cfg(tmp_path)
+    runner = Runner(agent="claude-jb", profile="grok", model="haiku")
+    [step] = agent_autostart_steps(cfg, initial_prompt=False, runner=runner)
+    assert step.run == "exec claude-jb -P grok --model haiku"
+
+
+def test_runner_falls_back_and_warns_when_command_is_not_claude(tmp_path, caplog):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _claude_cfg(tmp_path, "env X=1 claude")
+    with caplog.at_level("WARNING"):
+        [step] = agent_autostart_steps(cfg, runner=Runner(agent="claude"))
+    assert step.run == "exec env X=1 claude"
+    assert "runner" in caplog.text
+
+
+@pytest.mark.parametrize("prompt", [False, True])
+def test_no_runner_unchanged(tmp_path, prompt):
+    from jailbee.initial_prompt import prompted_run
+
+    cfg = _claude_cfg(tmp_path, "claude --model x")
+    [step] = agent_autostart_steps(cfg, initial_prompt=prompt)
+    if prompt:
+        assert step.run == prompted_run("claude --model x", cfg.agents["claude"].prompt_args)
+    else:
+        assert step.run == "exec claude --model x"
+
+
+def test_on_start_reads_runner_label(mocker, tmp_path):
+    from jailbee.autostart import AutostartTrigger, run_autostart
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _claude_cfg(tmp_path)
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda _n, key: (
+        Runner(agent="claude", model="opus").to_label() if key == labels.RUNNER else None
+    )
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    assert steps.call_args.kwargs["runner"] == Runner(agent="claude", model="opus")
+
+
+def test_on_start_steps_carry_default_agent(mocker, tmp_path):
+    from jailbee.autostart import AutostartTrigger, run_autostart
+    from jailbee.orchestration import labels
+
+    cfg = _claude_cfg(tmp_path)
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda _n, key: "g1" if key == labels.GRANT else None
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    assert steps.call_args.kwargs["extra_env"] == {"JAILBEE_DEFAULT_AGENT": "claude"}

@@ -703,3 +703,26 @@ def test_start_create_accepts_a_valid_prompt(mocker, tmp_path):
 
     assert out is started
     assert launch.call_args.args[1].initial_prompt == "do it"
+
+
+def test_start_create_passes_the_runner_to_prompt_problem(mocker, tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    _cfg, incus, gcfg, _prep, _pre, _launch, _started = _start_env(mocker, tmp_path)
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+    object.__setattr__(cfg, "container_prefix", "p")
+    runner = Runner(agent="claude")
+    check = mocker.patch("jailbee.initial_prompt.prompt_problem", return_value="no way")
+
+    with pytest.raises(CreateError) as e:
+        start_create(
+            cfg,
+            incus,
+            gcfg,
+            _opts(initial_prompt="do it", runner=runner),
+            interaction=Interaction.none(),
+            config_path=None,
+        )
+
+    check.assert_called_once_with(cfg, runner)
+    assert e.value.exit_code == 2 and "no way" in str(e.value)

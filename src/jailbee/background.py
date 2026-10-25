@@ -427,6 +427,7 @@ def op_to_job(
             "initial_prompt": opts.initial_prompt,
             "spawned_by": opts.spawned_by,
             "rights": (opts.rights.model_dump(mode="json") if opts.rights is not None else None),
+            "runner": (opts.runner.model_dump(mode="json") if opts.runner is not None else None),
         },
     }
 
@@ -437,6 +438,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
 
     from jailbee.lifecycle import NewContainerOptions
     from jailbee.orchestration.grant import ChildRights
+    from jailbee.orchestration.runner import Runner
 
     o = job["opts"]
     endpoint = o["mirror_endpoint"]
@@ -485,6 +487,9 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # unattributed and without its mounts and egress.
         spawned_by=o.get("spawned_by"),
         rights=(ChildRights.model_validate(o["rights"]) if o.get("rights") else None),
+        # Dropped here (or in `op_to_job`) a background child would run the
+        # repo's default agent instead of the runner its orchestrator chose.
+        runner=(Runner.model_validate(o["runner"]) if o.get("runner") else None),
     )
     return opts, job["container_name"], job["log_path"]
 

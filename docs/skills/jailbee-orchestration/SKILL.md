@@ -82,6 +82,51 @@ EOF
 - Use a new id every time and keep a scheme (`spawn-fix-12`, `import-fix-12`).
   Ids are never reused, not even after a refusal.
 
+## Choosing the child's agent (`runner`)
+
+By default a child runs the repo's usual agent with its usual model. A spawn
+may name a different one in its optional `runner` field: `agent` (`claude` or
+`claude-jb`), `profile` (LiteLLM profile, `claude-jb` only) and `model` (tier
+`fable`, `opus`, `sonnet` or `haiku`). The child's own agent is not yours to
+tune, so the rule is **default first**:
+
+- Omit `runner` unless the user asked for a specific agent, profile or model,
+  or the user's own instructions (CLAUDE.md, the task prompt) name one.
+- Never pick a cheaper or stronger model on your own initiative, whatever the
+  task looks like.
+- A `restart` without `runner` keeps the child's previous runner; `"runner":
+  null` clears it, so the child runs the default again.
+
+List what you may name, and what omitting it starts (the default agent shows
+as `unknown` when it is not known; then just omit `runner`):
+
+```bash
+jailbee-inbox runners          # or --json
+jailbee-inbox send spawn --branch fix/issue-12 --agent claude-jb --profile grok --model sonnet - <<'EOF'
+...
+EOF
+jailbee-inbox send restart --child fix-issue-12 --agent claude --model opus - <<'EOF'
+...
+EOF
+jailbee-inbox send restart --child fix-issue-12 --default-runner --text "Try again."
+```
+
+`--profile` and `--model` need `--agent`, and `--profile` needs `--agent
+claude-jb`; `--default-runner` is for `restart`
+only and excludes `--agent`.
+
+A runner that cannot be honoured is `refused`, never replaced by the default.
+The detail is one of:
+
+- ``agent `claude` is not enabled in this repo``
+- ``agent `claude` has no prompt_args, so it cannot take a prompt``
+- ``agents.claude.command must start with `claude` or `claude-jb` to take a runner (it is `...`)``
+- ``claude-jb needs LiteLLM enabled in this repo``
+- ``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm up`)``
+- ``LiteLLM profile `P` has no `M` tier``
+
+Fix the request or tell the human; do not retry with another model.
+
 ## The inbox loop
 
 ```bash

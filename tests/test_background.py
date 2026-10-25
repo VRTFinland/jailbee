@@ -920,3 +920,26 @@ def test_job_without_child_keys_reads_none():
     del job["opts"]["spawned_by"], job["opts"]["rights"]
     back, _, _ = job_to_opts(job)
     assert back.spawned_by is None and back.rights is None
+
+
+def test_codec_roundtrips_runner():
+    import json
+
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.orchestration.runner import Runner
+
+    runner = Runner(agent="claude-jb", profile="grok", model="opus")
+    job = json.loads(
+        json.dumps(op_to_job(_prompt_opts(runner=runner), container_name="c", log_path="/l"))
+    )
+    back, _, _ = job_to_opts(job)
+    assert back.runner == runner
+
+
+def test_job_without_runner_key_reads_none():
+    from jailbee.background import job_to_opts, op_to_job
+
+    job = op_to_job(_prompt_opts(), container_name="c", log_path="/l")
+    del job["opts"]["runner"]
+    back, _, _ = job_to_opts(job)
+    assert back.runner is None

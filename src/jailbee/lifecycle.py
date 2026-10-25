@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
     from jailbee.orchestration.grant import ChildRights
+    from jailbee.orchestration.runner import Runner
     from jailbee.orchestration.view import ChildView, GrantView
     from jailbee.procstat import ProcessActivity, ProcessMemory
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -573,6 +574,7 @@ def list_containers(
             config.get(orch_labels.SPAWNED_BY),
             config.get(orch_labels.STATE),
             config.get(orch_labels.RIGHTS),
+            config.get(orch_labels.RUNNER),
         )
 
         repo_dir_raw = config.get("user.jailbee.repo_dir")
@@ -1173,6 +1175,9 @@ class NewContainerOptions:
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     spawned_by: str | None = None
     rights: ChildRights | None = None
+    # The agent a spawned child runs (orchestration child runner); None keeps
+    # the configured launch.
+    runner: Runner | None = None
 
 
 def check_storage_pool(incus: Incus, pool: str | None) -> None:
@@ -1493,6 +1498,8 @@ def _child_instance_config(opts: NewContainerOptions) -> dict[str, str]:
     config = {orchestration_labels.SPAWNED_BY: opts.spawned_by}
     if opts.rights is not None:
         config[orchestration_labels.RIGHTS] = opts.rights.to_label()
+    if opts.runner is not None:
+        config[orchestration_labels.RUNNER] = opts.runner.to_label()
     return config
 
 
@@ -2686,7 +2693,9 @@ def boot_container(
         # Before anything is touched: a prompt the primary agent cannot take
         # would be written and left `pending`, reopening its window forever.
         prompt_file.validate_prompt_text(initial_prompt)  # PromptError is a ValueError
-        problem = prompt_file.prompt_problem(cfg)
+        from jailbee.orchestration.runner import read_runner
+
+        problem = prompt_file.prompt_problem(cfg, read_runner(incus, name))
         if problem is not None:
             raise ValueError(problem)
 

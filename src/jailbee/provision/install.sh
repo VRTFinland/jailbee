@@ -377,6 +377,7 @@ usage() {
 Usage: jailbee-inbox wait [--timeout DUR]
        jailbee-inbox ls
        jailbee-inbox read <id> [--keep]
+       jailbee-inbox runners [--json]
        jailbee-inbox send <type> [options]
 
   wait   Print the path of the oldest unread message (exit 0), waiting up to
@@ -387,18 +388,26 @@ Usage: jailbee-inbox wait [--timeout DUR]
   read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
          it in place); exit 1 if no unread message has that id.
 
+  runners  List the runners a spawn or restart may name (--agent/--profile/
+         --model of send), and what omitting the runner starts. --json prints
+         one array.
+
   send   Write a manifest for the orchestrator's host into outbox/ and print
          its id. Text (body or prompt) comes from --text T, --file PATH or -
          (stdin); at most 65536 bytes, not empty.
            message  [--to C] [--kind note|question|done|blocked]
                     [--reply-to ID] + text
            spawn    --branch B [--new [--base B]] [--mount M]... [--loose]
-                    [--egress H]... [--note T] + text (the prompt)
-           restart  --child C + text (the prompt)
+                    [--egress H]... [--note T] [runner] + text (the prompt)
+           restart  --child C [runner | --default-runner] + text (the prompt)
            import | stop   --child C
            destroy  --child C [--force]
+         runner = --agent claude|claude-jb [--profile P (claude-jb only)]
+                  [--model fable|opus|sonnet|haiku]; see `runners`.
+                  --default-runner (restart only) clears the child's runner.
 
 Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration),
+JAILBEE_LITELLM_CONFIG (default /etc/jailbee/litellm.json), JAILBEE_DEFAULT_AGENT,
 JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5).
 USAGE
 }
@@ -519,6 +528,68 @@ cmd_ls() {
     done < <(unread_files)
 }
 
+# The runners a spawn/restart may name, as one JSON array: the "omit runner"
+# entry first, then claude and one claude-jb per profile. Without `claude` on
+# PATH only the first is listed. Names are cleaned like `ls` cells (C1 only:
+# jq escapes C0 itself in JSON output, and the text form cleans C0 as well).
+runners_json() {
+    local config="${JAILBEE_LITELLM_CONFIG:-/etc/jailbee/litellm.json}"
+    local cfg=null have_claude=0
+    if [ -r "$config" ]; then
+        cfg="$(jq -c . "$config" 2>/dev/null)" || {
+            printf 'jailbee-inbox: cannot read %s (not valid JSON); no claude-jb runners listed\n' "$config" >&2
+            cfg=null
+        }
+    fi
+    command -v claude >/dev/null 2>&1 && have_claude=1
+    jq -n --argjson cfg "$cfg" --argjson have "$have_claude" \
+        --arg agent "${JAILBEE_DEFAULT_AGENT:-unknown}" '
+        def clean: gsub("[\\x{80}-\\x{9f}]"; "?");
+        def tiers: ["fable", "opus", "sonnet", "haiku"];
+        [{runner: null, default: true, agent: ($agent | clean)}]
+        + (if $have == 1 then
+            [{runner: {agent: "claude"}, models: tiers}]
+            + [ ($cfg.profiles // {}) | to_entries | sort_by(.key)[]
+                | .key as $name
+                | ((.value.tiers // {}) | with_entries(select(.key as $k | tiers | index($k)))) as $al
+                | {runner: {agent: "claude-jb", profile: ($name | clean)},
+                   models: ($al | keys),
+                   aliases: ($al | map_values(tostring | clean)),
+                   default_profile: ($name == $cfg.default_profile)} ]
+           else [] end)'
+}
+
+cmd_runners() {
+    local json=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --json) json=1; shift ;;
+            *) die "unknown argument '$1' (see --help)" ;;
+        esac
+    done
+    if [ "$json" -eq 1 ]; then
+        runners_json
+        return
+    fi
+    runners_json | jq -r '
+        def clean: gsub("[\\x{00}-\\x{1f}\\x{7f}-\\x{9f}]"; "?");
+        def pad($n): . + ([range($n - length) | " "] | join(""));
+        (.[0].agent | clean) as $default
+        | .[1:] as $rest
+        | ($rest | map(
+              (if .runner.agent == "claude" then "claude"
+               else "claude-jb -P \(.runner.profile | clean)" + (if .default_profile then " (default)" else "" end)
+               end)) ) as $labels
+        | ([$labels[] | length] | max // 0) as $w
+        | "default: omit runner (\($default))",
+          ([range($rest | length)] | map(
+              . as $i | $rest[$i] as $r
+              | ($labels[$i] | pad($w)) + "  models: "
+                + (if $r.runner.agent == "claude" then ($r.models | join(" "))
+                   else ($r.models | map(. as $m | "\($m)=\($r.aliases[$m] | clean)") | join(" ")) end)
+          )[])'
+}
+
 cmd_read() {
     local id="" keep=0 f fid pretty
     while [ $# -gt 0 ]; do
@@ -581,6 +652,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
+    local agent="" profile="" model="" default_runner=0
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=()
     local opt_val
@@ -590,8 +662,9 @@ cmd_send() {
             --new) new=1; shift; continue ;;
             --loose) loose=1; shift; continue ;;
             --force) force=1; shift; continue ;;
+            --default-runner) default_runner=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child|--agent|--profile|--model)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -612,6 +685,9 @@ cmd_send() {
             --egress) egress+=("$opt_val") ;;
             --note) note="$opt_val" ;;
             --child) child="$opt_val" ;;
+            --agent) agent="$opt_val" ;;
+            --profile) profile="$opt_val" ;;
+            --model) model="$opt_val" ;;
         esac
         shift 2
     done
@@ -635,6 +711,41 @@ cmd_send() {
     fi
     if [ "$type" != "destroy" ] && [ "$force" -eq 1 ]; then
         bad_usage "--force only applies to destroy"
+    fi
+    if [ "$type" != "spawn" ] && [ "$type" != "restart" ] && {
+        [ -n "$agent" ] || [ -n "$profile" ] || [ -n "$model" ] || [ "$default_runner" -eq 1 ]; }; then
+        bad_usage "--agent, --profile, --model and --default-runner only apply to spawn and restart"
+    fi
+    if [ "$default_runner" -eq 1 ]; then
+        [ "$type" = "restart" ] || bad_usage "--default-runner only applies to restart"
+        [ -z "$agent" ] || bad_usage "--default-runner cannot be combined with --agent"
+    fi
+    if [ -n "$agent" ]; then
+        case "$agent" in
+            claude|claude-jb) ;;
+            *) bad_usage "--agent must be claude or claude-jb" ;;
+        esac
+    elif [ -n "$profile" ] || [ -n "$model" ]; then
+        bad_usage "--profile and --model need --agent"
+    fi
+    if [ -n "$profile" ] && [ "$agent" != "claude-jb" ]; then
+        bad_usage "--profile needs --agent claude-jb"
+    fi
+    if [ -n "$model" ]; then
+        case "$model" in
+            fable|opus|sonnet|haiku) ;;
+            *) bad_usage "--model must be fable, opus, sonnet or haiku" ;;
+        esac
+    fi
+    # The manifest's runner member: absent, a runner, or (restart) null.
+    local runner_json="{}"
+    if [ -n "$agent" ]; then
+        runner_json="$(jq -nc --arg a "$agent" --arg p "$profile" --arg m "$model" \
+            '{runner: ({agent: $a}
+                + (if $p != "" then {profile: $p} else {} end)
+                + (if $m != "" then {model: $m} else {} end))}')"
+    elif [ "$default_runner" -eq 1 ]; then
+        runner_json='{"runner": null}'
     fi
     case "$type" in
         import|stop|destroy|restart)
@@ -700,15 +811,16 @@ cmd_send() {
             jq -n --arg id "$id" --arg pf "$body_name" --arg branch "$branch" \
                 --arg base "$base_branch" --arg note "$note" --argjson new "$new" \
                 --argjson loose "$loose" --argjson mounts "$mounts_json" \
-                --argjson egress "$egress_json" \
+                --argjson egress "$egress_json" --argjson runner "$runner_json" \
                 '{version: 1, id: $id, type: "spawn", kind: (if $new == 1 then "new" else "fork" end),
                   branch: $branch, prompt_file: $pf,
                   rights: {version: 1, mounts: $mounts, loose: ($loose == 1), egress: $egress}}
                  + (if $base != "" then {base: $base} else {} end)
-                 + (if $note != "" then {note: $note} else {} end)' > "$json_tmp" ;;
+                 + (if $note != "" then {note: $note} else {} end) + $runner' > "$json_tmp" ;;
         restart)
             jq -n --arg id "$id" --arg pf "$body_name" --arg child "$child" \
-                '{version: 1, id: $id, type: "restart", child: $child, prompt_file: $pf}' > "$json_tmp" ;;
+                --argjson runner "$runner_json" \
+                '{version: 1, id: $id, type: "restart", child: $child, prompt_file: $pf} + $runner' > "$json_tmp" ;;
         destroy)
             jq -n --arg id "$id" --arg child "$child" --argjson force "$force" \
                 '{version: 1, id: $id, type: "destroy", child: $child}
@@ -737,6 +849,7 @@ case "$sub" in
     wait) cmd_wait "$@" ;;
     ls) cmd_ls "$@" ;;
     read) cmd_read "$@" ;;
+    runners) cmd_runners "$@" ;;
     send) cmd_send "$@" ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
