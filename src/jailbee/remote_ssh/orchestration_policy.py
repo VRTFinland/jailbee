@@ -15,10 +15,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.orchestration.grant import Grant, egress_covered
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
+    from jailbee.incus import Incus
 
 
 @dataclass(frozen=True)
@@ -74,3 +78,36 @@ def grant_excess(new: Grant, current: Grant | None, bound: GrantBound) -> list[s
             continue
         out.append(f"egress `{entry}` is beyond what this remote session may grant {suffix}")
     return out
+
+
+def read_orchestrator_rights(cfg: Config, incus: Incus, full: str) -> OrchestratorRights:
+    """The rights `full` holds permanently, read from its Incus row and labels.
+
+    A mount kind counts when it is attached without a `mount_until` deadline,
+    from the host path the config defines, with the config's own read-only
+    setting. Loose counts only when it is neither timed nor held by autostart.
+    """
+    from jailbee import egress_scope, lifecycle, loose_revert, mounts
+
+    row = next((r for r in incus.list_containers() if r.get("name") == full), {})
+    devices = row.get("devices") or {}
+    labels = row.get("config") or {}
+    timed = mounts.mount_until(labels)
+    kinds: list[str] = []
+    for kind in mounts.attached_kinds(devices):
+        spec = cfg.optional_mounts.get(kind)
+        if spec is None or kind in timed:
+            continue
+        props = devices[mounts.DEVICE_NAME_PREFIX + kind]
+        if props.get("source") != str(spec.host):
+            continue
+        if (props.get("readonly") == "true") != spec.readonly:
+            continue
+        kinds.append(kind)
+    loose = (
+        lifecycle.current_network_mode(cfg, incus, full) == "loose"
+        and not labels.get("user.jailbee.loose_until")
+        and not loose_revert.autostart_holds(incus, full)
+    )
+    egress = (*cfg.effective_egress_allow(), *egress_scope.container_extras(incus, full))
+    return OrchestratorRights(mounts=tuple(kinds), loose=loose, egress=egress)

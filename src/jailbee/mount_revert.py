@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from jailbee.loose_revert import _autostart_holds
+from jailbee.loose_revert import autostart_holds
 from jailbee.mounts import DEVICE_NAME_PREFIX, MOUNT_UNTIL_PREFIX, mount_lock
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ def check_and_revert_mounts(cfg: Config, incus: Incus, *, now: datetime) -> list
             continue
         try:
             with mount_lock():
-                if _autostart_holds(incus, name):
+                if autostart_holds(incus, name):
                     continue
                 # The listing only discovers candidates. Writers share this lock;
                 # reread both labels and devices before any destructive action.

@@ -93,3 +93,98 @@ def test_orchestrator_egress_bound_uses_coverage():
     b = GrantBound("orchestrator", frozenset(), False, ("*.example.com",))
     assert grant_excess(_grant(egress=("api.example.com",)), None, b) == []
     assert len(grant_excess(_grant(egress=("evil.org",)), None, b)) == 1
+
+
+# --- read_orchestrator_rights -------------------------------------------------
+
+from unittest.mock import MagicMock  # noqa: E402
+
+from jailbee.remote_ssh.orchestration_policy import read_orchestrator_rights  # noqa: E402
+from tests.conftest import make_cfg  # noqa: E402
+
+NAME = "proj-feat"
+
+
+def _rights_cfg(tmp_path, readonly=False):
+    host = tmp_path / "data"
+    host.mkdir(exist_ok=True)
+    cfg = make_cfg(
+        tmp_path,
+        optional_mounts={"data": {"host": str(host), "container": "/data", "readonly": readonly}},
+    )
+    return cfg, host
+
+
+def _incus(devices=None, config=None, extras=()):
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": NAME, "devices": devices or {}, "config": config or {}},
+        {"name": "other", "devices": {"optional-zzz": {"source": "/x"}}, "config": {}},
+    ]
+    return incus
+
+
+def _dev(source, readonly=None):
+    props = {"type": "disk", "source": str(source), "path": "/data"}
+    if readonly is not None:
+        props["readonly"] = readonly
+    return {"optional-data": props}
+
+
+@pytest.fixture
+def quiet(mocker):
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.loose_revert.autostart_holds", return_value=False)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=[])
+
+
+def test_rights_count_a_permanent_as_defined_mount(tmp_path, quiet):
+    cfg, host = _rights_cfg(tmp_path)
+    assert read_orchestrator_rights(cfg, _incus(_dev(host)), NAME).mounts == ("data",)
+
+
+def test_rights_count_a_readonly_mount_and_skip_an_unforced_one(tmp_path, quiet):
+    cfg, host = _rights_cfg(tmp_path, readonly=True)
+    assert read_orchestrator_rights(cfg, _incus(_dev(host, "true")), NAME).mounts == ("data",)
+    # An absent `readonly` means writable in Incus, which exceeds a read-only config.
+    assert read_orchestrator_rights(cfg, _incus(_dev(host)), NAME).mounts == ()
+
+
+def test_rights_skip_a_mount_with_a_deadline(tmp_path, quiet):
+    cfg, host = _rights_cfg(tmp_path)
+    config = {"user.jailbee.mount_until.data": "2999-01-01T00:00:00+00:00"}
+    assert read_orchestrator_rights(cfg, _incus(_dev(host), config), NAME).mounts == ()
+
+
+def test_rights_skip_a_forced_readonly_mount(tmp_path, quiet):
+    cfg, host = _rights_cfg(tmp_path, readonly=False)
+    assert read_orchestrator_rights(cfg, _incus(_dev(host, "true")), NAME).mounts == ()
+
+
+def test_rights_skip_a_mount_from_another_source(tmp_path, quiet):
+    cfg, _ = _rights_cfg(tmp_path)
+    assert read_orchestrator_rights(cfg, _incus(_dev(tmp_path / "elsewhere")), NAME).mounts == ()
+
+
+def test_rights_loose_only_when_permanent(tmp_path, mocker):
+    cfg, _ = _rights_cfg(tmp_path)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=[])
+    mode = mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    held = mocker.patch("jailbee.loose_revert.autostart_holds", return_value=False)
+    assert read_orchestrator_rights(cfg, _incus(), NAME).loose is True
+    with_ttl = _incus(config={"user.jailbee.loose_until": "2999-01-01T00:00:00+00:00"})
+    assert read_orchestrator_rights(cfg, with_ttl, NAME).loose is False
+    held.return_value = True
+    assert read_orchestrator_rights(cfg, _incus(), NAME).loose is False
+    held.return_value = False
+    mode.return_value = "strict"
+    assert read_orchestrator_rights(cfg, _incus(), NAME).loose is False
+
+
+def test_rights_egress_is_repo_plus_container_extras(tmp_path, mocker):
+    cfg, _ = _rights_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.loose_revert.autostart_holds", return_value=False)
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["extra.example.com"])
+    expected = (*cfg.effective_egress_allow(), "extra.example.com")
+    assert read_orchestrator_rights(cfg, _incus(), NAME).egress == expected

@@ -92,7 +92,7 @@ def test_a_failing_blocking_stage_clears_the_flag_even_with_stages_pending(
     caller's `on_detach` (`lifecycle.new_container`,
     `cli._post_start_actions`) and no supervisor is ever spawned — so
     nobody re-stamps the flag with a pid, and nobody clears it. The
-    literal "1" left behind is read by `loose_revert._autostart_holds` as
+    literal "1" left behind is read by `loose_revert.autostart_holds` as
     "held" unconditionally, exempting the container from TTL auto-revert
     for good.
     """

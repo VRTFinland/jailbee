@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _autostart_holds(incus: Incus, name: str) -> bool:
+def autostart_holds(incus: Incus, name: str) -> bool:
     """True while an autostart run still owns this container's network.
 
     The flag carries the owning process's pid, so a supervisor that died
@@ -93,7 +93,7 @@ def check_and_revert_loose(
             continue
 
         try:
-            if _autostart_holds(incus, name):
+            if autostart_holds(incus, name):
                 continue
 
             loose_until = incus.config_get(name, "user.jailbee.loose_until")

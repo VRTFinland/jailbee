@@ -37,7 +37,7 @@ def _incus(mocker, rows, *, held=False):
     incus.config_show.side_effect = lambda name: yaml.safe_dump(
         next(r for r in rows if r["name"] == name)
     )
-    mocker.patch("jailbee.mount_revert._autostart_holds", return_value=held)
+    mocker.patch("jailbee.mount_revert.autostart_holds", return_value=held)
     return incus
 
 
@@ -138,7 +138,7 @@ def test_one_failing_container_does_not_stop_the_next(cfg, mocker):
     bad = _raw(cfg, "a", labels={"aws": PAST}, devices=("aws",))
     good = _raw(cfg, "b", labels={"aws": PAST}, devices=("aws",))
     incus = _incus(mocker, [bad, good])
-    mocker.patch("jailbee.mount_revert._autostart_holds", side_effect=[RuntimeError("boom"), False])
+    mocker.patch("jailbee.mount_revert.autostart_holds", side_effect=[RuntimeError("boom"), False])
     out = check_and_revert_mounts(cfg, incus, now=NOW)
     assert any(r.container == bad["name"] and r.error == "boom" for r in out)
     assert any(r.container == good["name"] and r.removed for r in out)

@@ -64,7 +64,7 @@ class LiveIncus:
 @pytest.fixture
 def live(tmp_path, mocker):
     cfg = make_cfg(tmp_path, optional_mounts={"aws": {"host": "/aws", "container": "/aws"}})
-    mocker.patch("jailbee.mount_revert._autostart_holds", return_value=False)
+    mocker.patch("jailbee.mount_revert.autostart_holds", return_value=False)
     return cfg, LiveIncus(cfg)
 
 
