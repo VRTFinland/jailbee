@@ -163,8 +163,8 @@ unit is active. Container-creation workers it starts outlive a broker restart.
 For each manifest the broker validates it, acts on it at most once, deletes
 it, and answers with a `status` message in the sender's inbox: `queued`,
 `started`, `done`, `failed` or `refused`, with a detail. A spawn ends with
-`done` (``child `<short>` is ready``) or `failed`; a restart that begins
-later and fails is `failed`. A child whose prompted agent exits 1 to 127
+`done` (``child `<short>` is ready``) or `failed`; a restart reports `done`
+or `started` and no final status. A child whose prompted agent exits 1 to 127
 sends its orchestrator a `blocked` message ``[jailbee] the agent `<name>`
 exited with status <rc>``. At most 32 manifests per
 container are read per round.

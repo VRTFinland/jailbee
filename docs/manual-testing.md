@@ -5967,7 +5967,8 @@ expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
 
 Failure report. The limit is 1, so first stop `child-b` (a `stop` manifest
 as above) to leave a free slot, then spawn on a nonexistent base and expect a
-final `failed`.
+`refused`: a nonexistent base is
+caught synchronously by the create preflight, before any worker starts.
 
 ```bash
 cat > ~/.jailbee/orchestration/outbox/spawn-bad.json <<'JSON'
@@ -5978,9 +5979,9 @@ JSON
 grep -l '"ref":\s*"spawn-bad"' ~/.jailbee/orchestration/inbox/*.json | xargs cat
 ```
 
-expect: `started`, then `failed` with ``creation of child `child-bad` failed: ...``
-(plus ` — the child was removed`), within about a minute; host: `jb ls` shows no
-`child-bad` container.
+expect: a `refused` status at once, naming the missing base; host: `jb ls`
+shows no `child-bad` container. A `failed` status needs a failure inside the
+worker itself (after preflight), which this recipe cannot provoke on demand.
 
 Destroy guard. `child-a` has commits that were never imported:
 

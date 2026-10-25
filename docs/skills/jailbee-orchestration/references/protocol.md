@@ -208,12 +208,12 @@ A spawn's final status is `done` or `failed`:
 ```json
 {"version": 1, "id": "h-0a1b2c41", "type": "status", "ref": "spawn-fix-12",
  "state": "failed",
- "detail": "creation of child `fix-issue-12` failed: base not found — the child was removed"}
+ "detail": "creation of child `fix-issue-12` failed: the worker stopped during deps — the child was removed"}
 ```
 
-`failed` is final. Other details: ``restart of child `<child>` failed:
-<error>``, ``creation of child `<child>` stopped unexpectedly during
-<phase>`` (restart variant likewise), ``creation of child `<child>` ended
+`failed` is final and belongs to spawns; a restart reports `done` or
+`started` and no final status. Other details: ``creation of child `<child>`
+stopped unexpectedly during <phase>``, ``creation of child `<child>` ended
 without a container``; a missing error reads `see the worker log`.
 
 A `queued` status applies to `restart` as well as `spawn`, and to a

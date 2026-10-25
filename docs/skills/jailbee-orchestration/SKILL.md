@@ -107,17 +107,16 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
 - `failed`: final. The action was accepted but did not complete. The detail
   says why, for example ``creation of child `<short>` failed: <error>``
   (followed by ` — the child was removed` when the child no longer exists),
-  ``restart of child `<short>` failed: <error>``, ``creation of child
-  `<short>` stopped unexpectedly during <phase>`` (a restart says
-  `restart of child`) or ``creation of child `<short>` ended without a
-  container``. `see the worker log` stands in for a missing error.
+  ``creation of child `<short>` stopped unexpectedly during <phase>`` or
+  ``creation of child `<short>` ended without a container``. `see the worker log` stands in for a missing error.
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
 
 The broker is not instant; expect seconds, not milliseconds.
 
 A spawn gets `queued` or `started`, then a final `done` (``child `<short>` is
-ready``) or `failed`; a restart that begins later gets `failed` if it fails.
+ready``) or `failed`. A restart gets `done` or `started` and no later final
+status.
 On `failed`, read the detail and tell the human; respawn under a new id only
 when the cause is fixed. Still do not wait forever: if a `wait` times out
 and a started child has not reported, send it a `message`. A `message` to a
@@ -125,7 +124,7 @@ stopped child is answered `queued` and delivered when it runs again.
 
 A child whose prompted agent exits with status 1 to 127 sends you a
 `blocked` message ``[jailbee] the agent `<agent name>` exited with status
-<rc>``. The agent crashed or was killed; it did not report. Read the
+<rc>``. The agent exited with an error status; it did not report. (A kill, status above 128, is deliberately not reported.) Read the
 child's output, then `restart` it with a new prompt or tell the human.
 
 ## Answering children
