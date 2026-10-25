@@ -12118,8 +12118,10 @@ def _pick_mount_kind(
     )
 
 
-def _remote_mount_policy() -> "RemoteSSHConfig | None":
-    """The `remote.ssh` policy `mount` answers to in a restricted session; None locally.
+def _remote_session_policy() -> "RemoteSSHConfig | None":
+    """The `remote.ssh` policy a command answers to in a remote SSH session; None locally.
+
+    Used by `mount` and `orchestrate grant`.
 
     Read from `global.yaml` on every call, so a root removed there stops the
     next `mount` even inside an SSH session that opened before the edit.
@@ -12186,7 +12188,7 @@ def mount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
-    policy = _remote_mount_policy()
+    policy = _remote_session_policy()
     if kind is None:
         kind = _pick_mount_kind(cfg, incus, name, attached=False, policy=policy)
     if kind not in cfg.optional_mounts:
@@ -12712,7 +12714,7 @@ def orchestrate_grant_cmd(
         clear_egress=clear_egress,
     )
     try:
-        granted = commands.grant(cfg, incus, full, flags)
+        granted = commands.grant(cfg, incus, full, flags, remote=_remote_session_policy())
     except GrantError as e:
         error(str(e))
         raise typer.Exit(1) from e

@@ -371,3 +371,133 @@ def test_repo_registered_queries_by_prefix(cfg, mocker):
         )
         session.commit()
     assert commands.repo_registered(cfg) is True
+
+
+# --- remote grant bound (remote.ssh.orchestration) ---
+
+
+def _remote(**kw):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    kw.setdefault("orchestration", "ssh")
+    return RemoteSSHConfig(**kw)
+
+
+def _stored(g: Grant) -> dict[str, str]:
+    return {labels.GRANT: g.to_label()}
+
+
+def _wide_cfg(make_cfg, tmp_path, *, profile_loose=False):
+    profiles = {
+        "wide": OrchestrationProfile(
+            max_running_children=5,
+            grantable=GrantableConfig(mounts=["data"], loose=profile_loose),
+        )
+    }
+    view = OrchestrationView(profiles=profiles, repo=RepoOrchestration())
+    return _cfg(make_cfg, tmp_path, view=view, mounts=True)
+
+
+def test_remote_grant_refused_when_setting_off(cfg, incus, ensure):
+    with pytest.raises(GrantError, match=r"remote\.ssh\.orchestration is off"):
+        commands.grant(cfg, incus, "myrepo-a", GrantFlags(), remote=_remote(orchestration="off"))
+    incus.config_set.assert_not_called()
+
+
+def test_remote_grant_limit_and_operations_pass_under_ssh(cfg, incus, ensure):
+    g = commands.grant(
+        cfg,
+        incus,
+        "myrepo-a",
+        GrantFlags(children=8, allow=("destroy",)),
+        remote=_remote(),
+    )
+    assert g.max_running_children == 8 and "destroy" in g.operations
+    incus.config_set.assert_called_once()
+
+
+def test_remote_profile_with_loose_refused_under_ssh(make_cfg, tmp_path, incus, ensure):
+    cfg = _wide_cfg(make_cfg, tmp_path, profile_loose=True)
+    with pytest.raises(GrantError, match="loose for children"):
+        commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"), remote=_remote())
+    incus.config_set.assert_not_called()
+
+
+def test_remote_profile_with_mount_refused_under_ssh(make_cfg, tmp_path, incus, ensure):
+    cfg = _wide_cfg(make_cfg, tmp_path)
+    with pytest.raises(GrantError, match="mount `data`"):
+        commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"), remote=_remote())
+    incus.config_set.assert_not_called()
+
+
+def test_remote_profile_with_mount_passes_when_mounts_unlocked(make_cfg, tmp_path, incus, ensure):
+    cfg = _wide_cfg(make_cfg, tmp_path)
+    g = commands.grant(
+        cfg, incus, "myrepo-a", GrantFlags(profile="wide"), remote=_remote(mounts=True)
+    )
+    assert g.grantable.mounts == ("data",)
+
+
+def test_remote_narrowing_passes(cfg, make_incus, ensure):
+    stored = Grant(grantable=Grantable(loose=True, mounts=("data",)))
+    incus = make_incus(_stored(stored))
+    g = commands.grant(
+        cfg, incus, "myrepo-a", GrantFlags(loose=False, clear_mounts=True), remote=_remote()
+    )
+    assert g.grantable.loose is False and g.grantable.mounts == ()
+    incus.config_set.assert_called_once()
+
+
+def test_remote_edit_keeps_host_widened_fields(cfg, make_incus, ensure):
+    stored = Grant(grantable=Grantable(loose=True))
+    incus = make_incus(_stored(stored))
+    g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(children=8), remote=_remote())
+    assert g.grantable.loose is True and g.max_running_children == 8
+
+
+def test_remote_egress_coverage(cfg, make_incus, ensure):
+    stored = Grant(grantable=Grantable(egress=("*.example.com",)))
+    incus = make_incus(_stored(stored))
+    g = commands.grant(
+        cfg,
+        incus,
+        "myrepo-a",
+        GrantFlags(egress=("api.example.com", "*.example.com")),
+        remote=_remote(),
+    )
+    assert "api.example.com" in g.grantable.egress
+    incus2 = make_incus(_stored(stored))
+    with pytest.raises(GrantError, match=r"evil\.org"):
+        commands.grant(
+            cfg, incus2, "myrepo-a", GrantFlags(egress=("evil.org",)), remote=_remote()
+        )
+    incus2.config_set.assert_not_called()
+
+
+def test_remote_orchestrator_level_reads_rights(cfg, incus, ensure, mocker):
+    from jailbee.remote_ssh.orchestration_policy import OrchestratorRights
+
+    mocker.patch(
+        "jailbee.remote_ssh.orchestration_policy.read_orchestrator_rights",
+        return_value=OrchestratorRights(mounts=("data",), loose=False, egress=()),
+    )
+    remote = _remote(orchestration="orchestrator")
+    g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(mounts=("data",)), remote=remote)
+    assert g.grantable.mounts == ("data",)
+    cfg2 = cfg.model_copy(
+        update={
+            "optional_mounts": {
+                **cfg.optional_mounts,
+                "aws": OptionalMount(host=cfg.optional_mounts["data"].host, container="/aws"),
+            }
+        }
+    )
+    cfg2._orchestration_view = cfg._orchestration_view
+    with pytest.raises(GrantError, match="mount `aws`"):
+        commands.grant(cfg2, incus, "myrepo-a", GrantFlags(mounts=("aws",)), remote=remote)
+
+
+def test_local_grant_is_unbounded(make_cfg, tmp_path, incus, ensure):
+    cfg = _wide_cfg(make_cfg, tmp_path, profile_loose=True)
+    g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"))
+    assert g.grantable.loose is True and g.grantable.mounts == ("data",)

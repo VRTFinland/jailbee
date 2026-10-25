@@ -163,3 +163,24 @@ def test_ls_json(patched):
             "running_children": 1,
         }
     ]
+
+
+@pytest.mark.parametrize("remote_session", [True, False])
+def test_grant_passes_the_remote_policy_in_a_remote_session(patched, mocker, remote_session):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    policy = RemoteSSHConfig(orchestration="ssh")
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=remote_session)
+    mocker.patch(
+        "jailbee.remote_ssh.repo_scope.scope_for_session",
+        return_value=RemoteRepoScope(frozenset()),
+    )
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=SimpleNamespace(remote=SimpleNamespace(ssh=policy)),
+    )
+    res = runner.invoke(app, ["orchestrate", "grant", "a"])
+    assert res.exit_code == 0, res.output
+    assert patched.grant.call_args.kwargs["remote"] is (policy if remote_session else None)

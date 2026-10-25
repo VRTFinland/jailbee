@@ -27,6 +27,7 @@ from jailbee.orchestration.profiles import default_grant, profile_grant, repo_ca
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.incus import Incus
 
 _MODE_LABEL = "user.jailbee.mode"
@@ -170,8 +171,20 @@ def _write(incus: Incus, full: str, grant: Grant) -> None:
     service.ensure_running()
 
 
-def grant(cfg: Config, incus: Incus, full: str, flags: GrantFlags) -> Grant:
-    """Validate and store a grant on `full`; nothing is written on refusal."""
+def grant(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    flags: GrantFlags,
+    *,
+    remote: RemoteSSHConfig | None = None,
+) -> Grant:
+    """Validate and store a grant on `full`; nothing is written on refusal.
+
+    With `remote` (a restricted SSH session's policy) the resulting grant is
+    also bounded by `remote.ssh.orchestration`; elements the stored grant
+    already holds stay, so narrowing and unrelated edits always pass.
+    """
     refusal = grant_refusal(cfg, incus, full)
     if refusal is not None:
         raise GrantError(refusal)
@@ -180,11 +193,40 @@ def grant(cfg: Config, incus: Incus, full: str, flags: GrantFlags) -> Grant:
     except GrantError:
         current = None  # a malformed label is overwritten
     new = build_grant(cfg, current, flags)
+    if remote is not None:
+        _check_remote_bound(cfg, incus, full, new, current, remote)
     excess = cap_excess(new, repo_cap(cfg))
     if excess:
         raise GrantError("; ".join(excess))
     _write(incus, full, new)
     return new
+
+
+def _check_remote_bound(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    new: Grant,
+    current: Grant | None,
+    remote: RemoteSSHConfig,
+) -> None:
+    from jailbee.remote_ssh import orchestration_policy as policy
+
+    if remote.orchestration == "off":
+        raise GrantError(
+            "orchestrate grant is a host command here: remote.ssh.orchestration is off"
+        )
+    rights = (
+        policy.read_orchestrator_rights(cfg, incus, full)
+        if remote.orchestration == "orchestrator"
+        else None
+    )
+    bound = policy.grant_bound(remote, cfg.optional_mounts, rights)
+    if bound is None:  # unreachable: "off" is refused above
+        raise GrantError("remote.ssh.orchestration is off")
+    excess = policy.grant_excess(new, current, bound)
+    if excess:
+        raise GrantError("; ".join(excess))
 
 
 def revoke(incus: Incus, full: str) -> bool:
