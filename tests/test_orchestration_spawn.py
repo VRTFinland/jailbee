@@ -259,7 +259,7 @@ def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     ctx, plan = _plan(tmp_path)
     out = actions.start_child(ctx, plan, fork=None)
     assert out.state == "started"
-    assert out.detail == "child `fix-1` created"
+    assert out.detail == "creation of child `fix-1` started"
     inter = seen["interaction"]
     assert inter.accept_escalation is not None  # type: ignore[attr-defined]
     assert inter.confirm is None  # type: ignore[attr-defined]

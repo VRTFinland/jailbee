@@ -245,7 +245,10 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
         return refused(e.message)
     except (ForkError, ValueError) as e:
         return refused(str(e))
-    return Outcome("started", f"child `{lifecycle.short_name(ctx.cfg, plan.child_full)}` created")
+    # Only the worker is launched here; a later create failure is not reported
+    # (plan F), so the status must not claim the child exists.
+    short = lifecycle.short_name(ctx.cfg, plan.child_full)
+    return Outcome("started", f"creation of child `{short}` started")
 
 
 GRANT_REVOKED = "orchestration grant revoked"

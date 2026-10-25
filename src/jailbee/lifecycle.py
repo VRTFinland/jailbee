@@ -1474,11 +1474,62 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
     incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
 
 
+@dataclass
+class _CreateProgress:
+    """How far `_new_container` got: the instance it created, and whether
+    provisioning reached autostart."""
+
+    instance: str | None = None
+    provisioned: bool = False
+
+
 def new_container(
     cfg: Config,
     incus: Incus,
     opts: NewContainerOptions,
     *,
+    on_phase: Callable[[str], None] | None = None,
+    confirm_fn: ConfirmFn | None = None,
+    on_detach: Callable[[Autostart, str, str], None] | None = None,
+) -> str:
+    """Create a new container from the golden. Returns container name.
+
+    See `_new_container` for the steps. An orchestration child
+    (``opts.spawned_by``) whose create fails after its instance exists, and
+    before autostart, is deleted again (best effort): nobody watches a
+    child's create, and a half-built child would keep its name blocked
+    while the default grant cannot destroy it. Ordinary containers are left
+    as they were for the user to inspect.
+    """
+    progress = _CreateProgress()
+    try:
+        return _new_container(
+            cfg,
+            incus,
+            opts,
+            progress=progress,
+            on_phase=on_phase,
+            confirm_fn=confirm_fn,
+            on_detach=on_detach,
+        )
+    except BaseException:
+        if opts.spawned_by is not None and progress.instance and not progress.provisioned:
+            try:
+                incus.delete(progress.instance, force=True)
+            except Exception as e:
+                # Best effort: never replace the real cause of the failure.
+                warn(f"Could not delete the failed child '{progress.instance}': {e}")
+            else:
+                warn(f"Deleted the failed child '{progress.instance}' so its name is free again.")
+        raise
+
+
+def _new_container(
+    cfg: Config,
+    incus: Incus,
+    opts: NewContainerOptions,
+    *,
+    progress: _CreateProgress,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str], None] | None = None,
@@ -1754,6 +1805,7 @@ def new_container(
                 ip = reserve_work_ipv4(incus, name)
                 _create_instance(cfg, incus, opts, name)
                 fresh = True
+                progress.instance = name
                 incus.profile_assign(
                     name,
                     [
@@ -1771,6 +1823,7 @@ def new_container(
                     grant_work_loose(cfg, incus, name)
             except Exception:
                 if fresh:
+                    progress.instance = None  # rolled back here already
                     try:
                         incus.delete(name, force=True)
                     except Exception:
@@ -1778,6 +1831,7 @@ def new_container(
                 raise
     else:
         _create_instance(cfg, incus, opts, name)
+        progress.instance = name
     try:
         if generation == "legacy":
             incus.profile_assign(
@@ -1796,6 +1850,7 @@ def new_container(
         # nothing, while leaving it behind produces a container with only
         # `default`, which `jailbee ls` cannot show and which blocks the next
         # `jailbee new` with "already exists".
+        progress.instance = None  # rolled back here already
         try:
             incus.delete(name, force=True)
         except IncusError:
@@ -2154,6 +2209,9 @@ def new_container(
     except Exception as e:  # non-fatal
         warn(f"jailbee-skills sync failed (continuing): {e}")
 
+    # From here on the container is complete; an autostart failure leaves it
+    # in place (and running) for debugging, child or not.
+    progress.provisioned = True
     if opts.autostart:
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart

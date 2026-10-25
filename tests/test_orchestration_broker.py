@@ -78,7 +78,7 @@ class Rig:
         self.flush_pending = MagicMock(return_value=0)
         self.delete = MagicMock()
         self.write_grant = MagicMock()
-        self.dispatch = MagicMock(return_value=Outcome("started", "child `fix-1` created"))
+        self.dispatch = MagicMock(return_value=Outcome("started", "creation of child `fix-1` started"))
         self.drain = MagicMock(return_value=[])
         self.drop = MagicMock(return_value=[])
         self.configs = MagicMock(return_value={"proj": self.cfg})
@@ -275,7 +275,7 @@ def test_tick_dispatches_and_replies_and_deletes(rig: Rig) -> None:
 
     [(to, status)] = rig.statuses()
     assert to == "proj-orch"
-    assert (status.ref, status.state, status.detail) == ("s1", "started", "child `fix-1` created")
+    assert (status.ref, status.state, status.detail) == ("s1", "started", "creation of child `fix-1` started")
     assert status.id.startswith("h-")
     assert rig.deliver.call_args.kwargs["running"] is True
 
@@ -492,7 +492,7 @@ def test_drain_after_a_stop_only_round_reports_each_outcome(rig: Rig) -> None:
     rig.outboxes["proj-orch"] = [RawManifest("st1.json", stop, {"st1.json": stop})]
     rig.dispatch.return_value = Outcome("done", "child `kid` stopped")
     rig.drain.return_value = [
-        (_req("q1"), Outcome("started", "child `fix-2` created")),
+        (_req("q1"), Outcome("started", "creation of child `fix-2` started")),
         (_req("q2", "proj-fix-3"), Outcome("refused", "container `fix-3` already exists")),
     ]
     rig.tick()
@@ -501,7 +501,7 @@ def test_drain_after_a_stop_only_round_reports_each_outcome(rig: Rig) -> None:
     got = [(to, s.ref, s.state, s.detail) for to, s in rig.statuses()]
     assert got == [
         ("proj-orch", "st1", "done", "child `kid` stopped"),
-        ("proj-orch", "q1", "started", "child `fix-2` created"),
+        ("proj-orch", "q1", "started", "creation of child `fix-2` started"),
         ("proj-orch", "q2", "refused", "container `fix-3` already exists"),
     ]
     # Drain comes after the round's manifests.

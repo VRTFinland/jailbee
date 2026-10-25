@@ -5947,7 +5947,7 @@ manifest whose file is missing. The broker polls every 5 s while any orchestrato
 
 ```bash
 ls ~/.jailbee/orchestration/inbox/
-grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "started", "detail": "child `child-a` created"
+grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "started", "detail": "creation of child `child-a` started"
 grep -l '"ref":\s*"spawn-b"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "queued",  "detail": "queued at position 1"
 ```
 
@@ -5963,7 +5963,7 @@ grep -l '"ref":\s*"stop-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   
 ```
 
 expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
-(same `grep -l` on its `ref`) reads ``child `child-b` created``.
+(same `grep -l` on its `ref`) reads ``creation of child `child-b` started``.
 
 Destroy guard. `child-a` has commits that were never imported:
 

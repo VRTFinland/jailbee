@@ -11546,3 +11546,60 @@ def test_child_gets_no_default_profile(make_cfg, tmp_path, mocker):
     incus2, store2 = _child_incus(cfg)
     _new_child(cfg, incus2, mocker)
     assert labels.GRANT in store2
+
+
+def test_failed_child_create_deletes_the_instance(make_cfg, tmp_path, mocker):
+    """A child whose create fails after `incus init` must not keep its name blocked."""
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    mocker.patch("jailbee.mounts.attach", side_effect=RuntimeError("attach failed"))
+    with pytest.raises(RuntimeError, match="attach failed"):
+        _new_child_raw(
+            cfg, incus, mocker, spawned_by="myrepo-orch", rights=ChildRights(mounts=("data",))
+        )
+    name = derive_container_name(cfg, "feat/foo")
+    incus.delete.assert_called_once_with(name, force=True)
+    incus.start.assert_not_called()
+
+
+def test_failed_child_create_cleanup_failure_keeps_the_real_error(make_cfg, tmp_path, mocker):
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    incus.config_device_add.side_effect = IncusError("device add failed")
+    incus.delete.side_effect = IncusError("delete failed")
+    with pytest.raises(IncusError, match="device add failed"):
+        _new_child_raw(cfg, incus, mocker, spawned_by="myrepo-orch")
+
+
+def test_failed_ordinary_create_keeps_the_instance(make_cfg, tmp_path, mocker):
+    """Unchanged for containers that are not orchestration children."""
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    incus.config_device_add.side_effect = IncusError("device add failed")
+    with pytest.raises(IncusError, match="device add failed"):
+        _new_child_raw(cfg, incus, mocker)
+    incus.delete.assert_not_called()
+
+
+def _new_child_raw(cfg, incus, mocker, **extra):
+    """`_new_child` without patching `mounts.attach` (the caller decides)."""
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    mocker.patch("jailbee.orchestration.service.ensure_running")
+    mocker.patch("jailbee.orchestration.commands.repo_registered", return_value=True)
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        **extra,
+    )
+    new_container(cfg, incus, opts)
