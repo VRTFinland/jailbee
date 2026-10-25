@@ -24,9 +24,9 @@ _T = TypeVar("_T")
 
 # What `jailbee new` says when it needed an answer a detached run cannot give:
 # the branch-reuse confirmation (`typer.confirm` on EOF aborts) and the
-# privilege-widening gate (`_preflight_background_new`). Pinned against
-# `cli.py` by a test, because the fallback below is only as good as this
-# wording.
+# privilege-widening gate (`create_flow.preflight_background`). Pinned against
+# `cli.py` / `create_flow.py` by a test, because the fallback below is only as
+# good as this wording.
 NEEDS_TERMINAL_MARKERS: tuple[str, ...] = (
     "no terminal to ask on",
     "already exists in source repo",

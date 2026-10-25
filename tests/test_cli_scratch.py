@@ -235,7 +235,9 @@ def test_new_background_in_a_scratch_directory_omits_the_config_flag(tmp_path, m
     )
     # Orthogonal to the argv under test: the host-side asking a detached
     # worker cannot do.
-    mocker.patch("jailbee.cli._preflight_background_new", side_effect=lambda _cfg, opts: opts)
+    mocker.patch(
+        "jailbee.create_flow.preflight_background", side_effect=lambda _cfg, opts, **_kw: opts
+    )
     mocker.patch("jailbee.egress_pool.register_repo")
     refresh = mocker.MagicMock()
     refresh.status = "ok"

@@ -141,6 +141,8 @@ def test_needs_terminal_matches_the_questions_jb_new_asks() -> None:
 
 def test_markers_still_exist_in_the_cli_source() -> None:
     """The fallback leans on `jb new`'s wording; renaming it must fail here."""
-    cli = (Path(__file__).parent.parent / "src" / "jailbee" / "cli.py").read_text()
+    src = Path(__file__).parent.parent / "src" / "jailbee"
+    # The privilege-widening gate's wording moved to `create_flow.py`.
+    cli = (src / "cli.py").read_text() + (src / "create_flow.py").read_text()
     for marker in NEEDS_TERMINAL_MARKERS:
         assert marker in cli, marker

@@ -8759,7 +8759,7 @@ _PREFLIGHT_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _stub_preflight(mocker, cfg, *, branch_autostart=None, deviation=None):
-    """Let `_preflight_background_new` resolve a clone ref without a real repo.
+    """Let `create_flow.preflight_background` resolve a clone ref without a real repo.
 
     The branch resolves through origin mode to `_PREFLIGHT_SHA` (fetch and
     rev-parse stubbed). `branch_autostart` is what the target branch commits;
@@ -10732,9 +10732,7 @@ def test_background_new_preflight_refuses_a_widening_over_remote_ssh(
     from dataclasses import replace
     from types import SimpleNamespace
 
-    import typer
-
-    from jailbee import cli
+    from jailbee import create_flow
     from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions
 
     monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
@@ -10757,8 +10755,10 @@ def test_background_new_preflight_refuses_a_widening_over_remote_ssh(
     )
 
     for candidate in (opts, replace(opts, assume_yes=True)):
-        with pytest.raises(typer.Exit) as exit_info:
-            cli._preflight_background_new(cfg, candidate)
+        with pytest.raises(create_flow.CreateError) as exit_info:
+            create_flow.preflight_background(
+                cfg, candidate, interaction=create_flow.Interaction.terminal()
+            )
         assert exit_info.value.exit_code == 2
     confirm.assert_not_called()
 

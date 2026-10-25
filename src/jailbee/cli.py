@@ -2340,32 +2340,15 @@ def new_cmd(
             error("--fork-of requires --name (the new container's name).")
             raise typer.Exit(2)
 
-        from jailbee import forking
-        from jailbee import git as git_helpers
+        from jailbee import create_flow
 
-        fork_incus = Incus()
+        # Fetches the source's HEAD and pins it under the fork's own name;
+        # see `create_flow.prepare_fork_source`.
         try:
-            fork_source = forking.prepare_fork(cfg, fork_incus, fork_of)
-        except forking.ForkError as e:
-            # `sync`'s detached-HEAD message suggests `--branch`, which on
-            # `jailbee fork` names the *new* branch, not the source's.
-            error(str(e).removesuffix(" Use --branch <name> to specify."))
-            raise typer.Exit(2) from e
-        except git_helpers.GitError as e:
+            fork_source = create_flow.prepare_fork_source(cfg, Incus(), fork_of, name)
+        except create_flow.CreateError as e:
             error(str(e))
-            raise typer.Exit(1) from e
-        # Pin the commit under the fork's own name before anything else can
-        # go wrong: the source's ref dies with the source, and the fork's
-        # `--shared` clone needs the objects for as long as the fork lives.
-        # Checked free first, or an existing fork's pin would be moved.
-        if fork_incus.exists(name):
-            error(f"Container '{short_name(cfg, name)}' already exists")
-            raise typer.Exit(2)
-        try:
-            forking.pin_fork_commit(cfg, name, fork_source.commit)
-        except git_helpers.GitError as e:
-            error(str(e))
-            raise typer.Exit(1) from e
+            raise typer.Exit(e.exit_code) from e
         container_branch = container_branch or fork_source.branch
 
     if no_fetch and pr is None:
@@ -2712,81 +2695,37 @@ def new_cmd(
     # `create_flow.register_and_preflight`.
     try:
         create_flow.register_and_preflight(
-            cfg, incus, gcfg, interaction=create_flow.Interaction.terminal()
+            cfg, incus, gcfg, interaction=create_flow.Interaction.terminal(), on_warning=warn
         )
     except create_flow.CreateError as e:
         error(str(e))
         raise typer.Exit(e.exit_code) from e
 
     if run_in_background:
-        from datetime import datetime as _dt
-
         container_name = opts.name or derive_container_name(cfg, opts.container_branch)
         if incus.exists(container_name):
             error(f"Container '{short_name(cfg, container_name)}' already exists")
             raise typer.Exit(2)
 
-        opts = _preflight_background_new(cfg, opts)
-
-        from jailbee import background as bg
-        from jailbee.db import get_engine, state_dir
-
-        log_dir = state_dir() / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
-        log_path = log_dir / f"{container_name}-{stamp}.log"
-
-        job = bg.op_to_job(opts, container_name=container_name, log_path=str(log_path))
-        job_file = log_dir / f"{container_name}-{stamp}.job.json"
-        job_file.write_text(json.dumps(job))
-
-        # `--config` only when there is a file: a scratch directory has none,
-        # and the worker re-synthesizes the same config from the `cwd` below.
-        # Same shape as `jailbee.dashboard.model.RepoTarget.flags()`.
-        worker_config_path = _resolve_config_path_or_none(config)
-        worker_argv = [
-            sys.executable,
-            "-m",
-            "jailbee",
-            "_new-worker",
-            "--job",
-            str(job_file),
-            *(["--config", str(worker_config_path)] if worker_config_path is not None else []),
-        ]
-        # Deliberately not closed here: the handle is inherited by the
-        # detached child as its stdout/stderr; the parent returns immediately
-        # and the fd is released on exit.
-        log_fh = open(log_path, "w")
-        proc = subprocess.Popen(
-            worker_argv,
-            stdin=subprocess.DEVNULL,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            cwd=str(cfg.repo_root),
-        )
-
-        # Guarded like the worker's own writes, and for the same reason with
-        # one twist: the worker is already running by now, so a failed insert
-        # must cost the user only `jailbee ls`'s JOB column — never the
-        # container that is being built behind it.
-        _track_job(
-            _job_engine(),
-            lambda s: bg.start_job(
-                s,
-                container_name=container_name,
-                container_prefix=cfg.container_prefix,
-                branch=None if opts.mount else opts.container_branch,
-                pid=proc.pid,
-                log_path=str(log_path),
-                now=_dt.now().astimezone(),
-            ),
-            "record the new job row",
+        # Host preparation already ran above, shared with the foreground
+        # path; only the tail of `create_flow.start_create` is left.
+        try:
+            opts = create_flow.preflight_background(
+                cfg, opts, interaction=create_flow.Interaction.terminal()
+            )
+        except create_flow.CreateError as e:
+            error(str(e))
+            raise typer.Exit(e.exit_code) from e
+        started = create_flow.launch_background(
+            cfg,
+            opts,
+            container_name=container_name,
+            config_path=_resolve_config_path_or_none(config),
         )
 
         success(
             f"🌱 '{short_name(cfg, container_name)}' is being created in the background "
-            f"(pid {proc.pid}). Track with: jailbee ls — log: {log_path}"
+            f"(pid {started.pid}). Track with: jailbee ls — log: {started.log_path}"
         )
         return
 
@@ -3007,7 +2946,7 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     `_new-worker` / `_boot-worker`) it reports and changes nothing rather
     than relocating a user's cache content on an answer nobody gave. That is
     also why this runs in the *foreground* command, before the background
-    fork — same reasoning as `_preflight_background_new`.
+    fork — same reasoning as `create_flow.preflight_background`.
     """
     from jailbee import create_flow
 
@@ -3016,69 +2955,6 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     except create_flow.CreateError as e:
         error(str(e))
         raise typer.Exit(e.exit_code) from e
-
-
-def _preflight_background_new(
-    cfg: "Config",
-    opts: "NewContainerOptions",
-) -> "NewContainerOptions":
-    """Do the asking a detached worker cannot, before there is one.
-
-    A background `jailbee new` hands provisioning to a worker with no stdin. Any
-    confirmation left for that worker can only ever be answered "no", and the
-    user finds out from a log file after the job has already failed — which is
-    how a checkout lagging `origin/<default_branch>` used to break `jailbee new`
-    outright. So the host-side work that can raise a question happens here, in
-    the terminal the user is still sitting at: resolve the clone ref (fetching
-    if configured), read the target branch's autostart, report both
-    comparisons, and ask about a genuine privilege widening.
-
-    Returns `opts` carrying what was settled: the accepted ref (so the worker
-    does not ask again — nor treat the answer as covering a commit that landed
-    in the meantime) and `autofetch_done`, so the fetch is not repeated.
-    Exits 2 on decline, having created nothing and recorded no job.
-    """
-    from dataclasses import replace
-
-    from jailbee import prompting
-    from jailbee.lifecycle import (
-        assess_branch_autostart,
-        resolve_clone_ref,
-    )
-    from jailbee.tui import default_confirm
-
-    try:
-        clone_ref = resolve_clone_ref(cfg, opts, autofetch=cfg.new.autofetch)
-        assessment = assess_branch_autostart(cfg, opts, clone_ref)
-    except ValueError as e:
-        # Same failures `new_container` raises for a bad ref or a failed
-        # fetch — better here, in the terminal, than in a worker log.
-        error(str(e))
-        raise typer.Exit(2) from e
-
-    verdict = assessment.verdict
-    approved_ref: str | None = None
-    if verdict is not None and verdict.prompts:
-        from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
-
-        if is_remote_session():
-            error(escalation_refusal(verdict.baseline_source))
-            raise typer.Exit(2)
-    if verdict is not None and verdict.prompts and not opts.assume_yes:
-        if not prompting.is_interactive():
-            error(
-                "The target branch's autostart config widens privileges beyond "
-                f"{verdict.baseline_source}, which needs confirmation — and there is "
-                "no terminal to ask on. Re-run with --yes to accept it, or edit the "
-                "branch's .jailbee/config.yaml."
-            )
-            raise typer.Exit(2)
-        if not default_confirm("Provision with the branch's widened privileges?"):
-            error("Aborted: declined the target branch's autostart config. Nothing was created.")
-            raise typer.Exit(2)
-        approved_ref = assessment.ref
-
-    return replace(opts, approved_autostart_ref=approved_ref, autofetch_done=True)
 
 
 def _post_create_gui_launches(cfg: "Config", incus: "IncusType", container: str) -> None:
@@ -3162,7 +3038,7 @@ def _new_worker(
             on_phase=_on_phase,
             # Detached worker: there is no stdin to prompt on, so decline
             # rather than block. A backstop, not the mechanism — anything
-            # answerable was already answered by `_preflight_background_new`
+            # answerable was already answered by `create_flow.preflight_background`
             # and carried here in `assume_yes` / `approved_autostart_ref`.
             # Reaching it means the branch moved between the two, and the
             # failure names that.
@@ -4071,7 +3947,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus as IncusType
     from jailbee.issue_manifest import IssueManifest
     from jailbee.issue_outbox import ApplyReport, OutboxSnapshot, PreparedBatch
-    from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.lifecycle import ContainerInfo, ResolvedContainer
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox_io import IssueJournal
     from jailbee.pool import Pool

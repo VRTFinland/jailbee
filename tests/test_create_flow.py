@@ -9,20 +9,29 @@ from __future__ import annotations
 
 import pytest
 
+from jailbee.branch_config import EscalationVerdict
 from jailbee.config import Config
 from jailbee.create_flow import (
     CreateError,
+    CreateStarted,
     HostExtras,
     Interaction,
     NeedsOperator,
     ensure_profiles,
     host_extras,
+    launch_background,
+    preflight_background,
+    prepare_fork_source,
     prepare_host,
     register_and_preflight,
+    start_create,
 )
 from jailbee.egress_pool import RefreshResult
+from jailbee.forking import ForkError, ForkSource
+from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
+from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions
 from tests.conftest import make_cfg, memory_engine
 
 
@@ -203,9 +212,9 @@ def test_prepare_host_dns_error_raises_exit_1(mocker, tmp_path):
 def test_prepare_host_partial_resolution_only_warns(mocker, tmp_path):
     cfg, incus, gcfg = _env(tmp_path, mocker)
     _host_prep(mocker, status="partial", error="some.host")
-    warn = mocker.patch("jailbee.create_flow.warn")
+    warn = mocker.MagicMock()
 
-    prepare_host(cfg, incus, gcfg, interaction=Interaction.none())
+    prepare_host(cfg, incus, gcfg, interaction=Interaction.none(), on_warning=warn)
 
     assert warn.call_count == 1
     assert "some.host" in warn.call_args.args[0]
@@ -316,3 +325,324 @@ def test_register_and_preflight_does_not_apply(mocker, tmp_path):
 
     run_apply.assert_not_called()
     register.assert_called_once()
+
+
+def test_register_and_preflight_partial_warning_defaults_to_the_log(mocker, tmp_path, caplog):
+    cfg, incus, gcfg = _env(tmp_path, mocker)
+    _host_prep(mocker, status="partial", error="some.host")
+    printed = mocker.patch("jailbee.tui.warn")
+
+    with caplog.at_level("WARNING", logger="jailbee.create_flow"):
+        register_and_preflight(cfg, incus, gcfg, interaction=Interaction.none())
+
+    printed.assert_not_called()
+    assert any("some.host" in r.getMessage() for r in caplog.records)
+
+
+def test_register_and_preflight_partial_warning_goes_before_the_pool_preflight(mocker, tmp_path):
+    # A pool refusal must not swallow the warning: it is surfaced as it
+    # happens, not returned after the step that may raise.
+    cfg, incus, gcfg = _env(tmp_path, mocker)
+    _host_prep(mocker, status="partial", error="some.host", unresolved=["cache-a"])
+    seen: list[str] = []
+
+    with pytest.raises(CreateError):
+        register_and_preflight(
+            cfg, incus, gcfg, interaction=Interaction.none(), on_warning=seen.append
+        )
+
+    assert len(seen) == 1 and "some.host" in seen[0]
+
+
+# ---- fork source
+
+
+SRC = ForkSource("p-src", "feat/a", "abc123", "main")
+
+
+def test_prepare_fork_source_pins_under_the_new_name(mocker, tmp_path):
+    cfg, incus, _gcfg = _env(tmp_path, mocker)
+    incus.exists.return_value = False
+    prep = mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    pin = mocker.patch("jailbee.forking.pin_fork_commit")
+
+    assert prepare_fork_source(cfg, incus, "src", "p-b") is SRC
+
+    assert prep.call_args.args[1:] == (incus, "src")
+    pin.assert_called_once_with(cfg, "p-b", "abc123")
+
+
+def test_prepare_fork_source_existing_name_does_not_pin(mocker, tmp_path):
+    cfg, incus, _gcfg = _env(tmp_path, mocker)
+    incus.exists.return_value = True
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    pin = mocker.patch("jailbee.forking.pin_fork_commit")
+
+    with pytest.raises(CreateError) as e:
+        prepare_fork_source(cfg, incus, "src", "p-b")
+
+    assert e.value.exit_code == 2
+    assert "Container 'b' already exists" in str(e.value)
+    pin.assert_not_called()
+
+
+def test_prepare_fork_source_fork_error_is_exit_2_without_the_branch_hint(mocker, tmp_path):
+    cfg, incus, _gcfg = _env(tmp_path, mocker)
+    mocker.patch(
+        "jailbee.forking.prepare_fork",
+        side_effect=ForkError("HEAD is detached. Use --branch <name> to specify."),
+    )
+
+    with pytest.raises(CreateError) as e:
+        prepare_fork_source(cfg, incus, "src", "p-b")
+
+    assert (str(e.value), e.value.exit_code) == ("HEAD is detached.", 2)
+
+
+def test_prepare_fork_source_git_errors_are_exit_1(mocker, tmp_path):
+    cfg, incus, _gcfg = _env(tmp_path, mocker)
+    incus.exists.return_value = False
+    mocker.patch("jailbee.forking.prepare_fork", side_effect=GitError("fetch failed: boom"))
+    with pytest.raises(CreateError) as e:
+        prepare_fork_source(cfg, incus, "src", "p-b")
+    assert (str(e.value), e.value.exit_code) == ("fetch failed: boom", 1)
+
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    mocker.patch("jailbee.forking.pin_fork_commit", side_effect=GitError("could not pin"))
+    with pytest.raises(CreateError) as e:
+        prepare_fork_source(cfg, incus, "src", "p-b")
+    assert (str(e.value), e.value.exit_code) == ("could not pin", 1)
+
+
+# ---- background preflight
+
+
+def _opts(**kw):
+    base = dict(
+        container_branch="feat",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="golden",
+        clone=True,
+    )
+    base.update(kw)
+    return NewContainerOptions(**base)
+
+
+def _assessment_with_prompting_verdict(mocker, cfg):
+    verdict = EscalationVerdict(
+        widening_steps=("seed",),
+        attached_mounts=(),
+        baseline_source="origin/main",
+        untrusted=True,
+    )
+    assert verdict.prompts
+    rc = mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=mocker.MagicMock())
+    assessment = BranchAutostartAssessment(ref="abc", effective_cfg=cfg, verdict=verdict)
+    mocker.patch("jailbee.lifecycle.assess_branch_autostart", return_value=assessment)
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+    return rc, assessment
+
+
+def test_preflight_none_interaction_raises_needs_operator_on_widening(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _assessment_with_prompting_verdict(mocker, cfg)
+
+    with pytest.raises(NeedsOperator) as e:
+        preflight_background(cfg, _opts(), interaction=Interaction.none())
+
+    assert e.value.exit_code == 2
+    assert "no terminal to ask on" in str(e.value)
+    assert "origin/main" in str(e.value)
+
+
+def test_preflight_accept_escalation_policy_accepts(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _rc, assessment = _assessment_with_prompting_verdict(mocker, cfg)
+    asked: list[object] = []
+
+    def policy(v):
+        asked.append(v)
+        return True
+
+    out = preflight_background(
+        cfg, _opts(), interaction=Interaction(confirm=None, accept_escalation=policy)
+    )
+
+    assert out.approved_autostart_ref == assessment.ref == "abc"
+    assert out.autofetch_done is True
+    assert asked == [assessment.verdict]
+
+
+def test_preflight_accept_escalation_policy_rejects_with_reasons(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _assessment_with_prompting_verdict(mocker, cfg)
+    confirm = mocker.MagicMock(return_value=True)
+
+    with pytest.raises(CreateError) as e:
+        preflight_background(
+            cfg,
+            _opts(),
+            interaction=Interaction(confirm=confirm, accept_escalation=lambda v: False),
+        )
+
+    assert e.value.exit_code == 2 and "loose" in str(e.value)
+    assert not isinstance(e.value, NeedsOperator)
+    confirm.assert_not_called()
+
+
+def test_preflight_confirm_decline_is_exit_2(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _assessment_with_prompting_verdict(mocker, cfg)
+
+    with pytest.raises(CreateError) as e:
+        preflight_background(cfg, _opts(), interaction=Interaction(confirm=lambda _m: False))
+
+    assert e.value.exit_code == 2
+    assert "declined the target branch's autostart config" in str(e.value)
+
+
+def test_preflight_assume_yes_skips_every_question(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _assessment_with_prompting_verdict(mocker, cfg)
+
+    out = preflight_background(cfg, _opts(assume_yes=True), interaction=Interaction.none())
+
+    assert out.approved_autostart_ref is None and out.autofetch_done is True
+
+
+def test_preflight_remote_session_refuses_even_with_a_policy(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    _assessment_with_prompting_verdict(mocker, cfg)
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=True)
+
+    with pytest.raises(CreateError) as e:
+        preflight_background(
+            cfg, _opts(), interaction=Interaction(confirm=None, accept_escalation=lambda v: True)
+        )
+
+    assert e.value.exit_code == 2
+
+
+def test_preflight_bad_ref_is_exit_2(mocker, tmp_path):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    mocker.patch("jailbee.lifecycle.resolve_clone_ref", side_effect=ValueError("no such ref"))
+
+    with pytest.raises(CreateError) as e:
+        preflight_background(cfg, _opts(), interaction=Interaction.none())
+
+    assert (str(e.value), e.value.exit_code) == ("no such ref", 2)
+
+
+@pytest.mark.parametrize(("override", "expected"), [(False, False), (True, True), (None, "cfg")])
+def test_preflight_autofetch_override(mocker, tmp_path, override, expected):
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    rc = mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=mocker.MagicMock())
+    mocker.patch(
+        "jailbee.lifecycle.assess_branch_autostart",
+        return_value=BranchAutostartAssessment(ref=None, effective_cfg=cfg, verdict=None),
+    )
+
+    preflight_background(cfg, _opts(), interaction=Interaction(confirm=None, autofetch=override))
+
+    want = cfg.new.autofetch if expected == "cfg" else expected
+    assert rc.call_args.kwargs["autofetch"] is want
+
+
+# ---- launch
+
+
+def test_launch_background_spawns_worker_and_tracks(mocker, tmp_path, monkeypatch):
+    import json
+
+    from jailbee import background
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    popen = mocker.patch("jailbee.create_flow.subprocess.Popen")
+    popen.return_value.pid = 4242
+    engine = object()
+    mocker.patch("jailbee.background.job_engine", return_value=engine)
+    track = mocker.patch("jailbee.background.track_job")
+    opts = _opts(name="p-x")
+
+    started = launch_background(cfg, opts, container_name="p-x", config_path=None)
+
+    argv = popen.call_args.args[0]
+    assert argv[1:4] == ["-m", "jailbee", "_new-worker"] and "--config" not in argv
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert popen.call_args.kwargs["cwd"] == str(cfg.repo_root)
+    assert started == CreateStarted(container_name="p-x", pid=4242, log_path=started.log_path)
+    assert started.log_path.name.startswith("p-x-") and started.log_path.is_file()
+    job_file = argv[argv.index("--job") + 1]
+    decoded, name, log_path = background.job_to_opts(json.loads(open(job_file).read()))
+    assert (decoded, name, log_path) == (opts, "p-x", str(started.log_path))
+    assert track.call_args.args[0] is engine
+    assert track.call_args.args[2] == "record the new job row"
+
+
+def test_launch_background_passes_a_config_file(mocker, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    popen = mocker.patch("jailbee.create_flow.subprocess.Popen")
+    popen.return_value.pid = 1
+    mocker.patch("jailbee.background.track_job")
+
+    launch_background(cfg, _opts(), container_name="p-x", config_path=tmp_path / "c.yaml")
+
+    argv = popen.call_args.args[0]
+    assert argv[-2:] == ["--config", str(tmp_path / "c.yaml")]
+
+
+# ---- start_create
+
+
+def _start_env(mocker, tmp_path):
+    cfg, incus, gcfg = _env(tmp_path, mocker)
+    incus.exists.return_value = False
+    prep = mocker.patch("jailbee.create_flow.prepare_host")
+    mocker.patch(
+        "jailbee.create_flow.host_extras",
+        return_value=HostExtras(("10.0.0.1", 5000), None, {"k": "v"}, ("mirror is odd",)),
+    )
+    pre = mocker.patch(
+        "jailbee.create_flow.preflight_background", side_effect=lambda _c, o, **_k: o
+    )
+    started = CreateStarted(container_name="p-feat", pid=7, log_path=tmp_path / "l")
+    launch = mocker.patch("jailbee.create_flow.launch_background", return_value=started)
+    return cfg, incus, gcfg, prep, pre, launch, started
+
+
+def test_start_create_existing_container_raises_before_launch(mocker, tmp_path):
+    cfg, incus, gcfg, _prep, pre, launch, _started = _start_env(mocker, tmp_path)
+    incus.exists.return_value = True
+
+    with pytest.raises(CreateError) as e:
+        start_create(cfg, incus, gcfg, _opts(), interaction=Interaction.none(), config_path=None)
+
+    assert e.value.exit_code == 2
+    assert "already exists" in str(e.value)
+    incus.exists.assert_called_once_with("p-feat")
+    pre.assert_not_called()
+    launch.assert_not_called()
+
+
+def test_start_create_fills_host_extras_into_job(mocker, tmp_path, caplog):
+    cfg, incus, gcfg, prep, pre, launch, started = _start_env(mocker, tmp_path)
+    interaction = Interaction.none()
+
+    with caplog.at_level("WARNING", logger="jailbee.create_flow"):
+        out = start_create(
+            cfg, incus, gcfg, _opts(), interaction=interaction, config_path=tmp_path / "c"
+        )
+
+    assert out is started
+    assert prep.call_args.kwargs["interaction"] is interaction
+    assert pre.call_args.kwargs["interaction"] is interaction
+    launched = launch.call_args.args[1]
+    assert launched.mirror_endpoint == ("10.0.0.1", 5000)
+    assert launched.litellm_payload == {"k": "v"}
+    assert launch.call_args.kwargs == {"container_name": "p-feat", "config_path": tmp_path / "c"}
+    assert any("mirror is odd" in r.getMessage() for r in caplog.records)

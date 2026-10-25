@@ -57,7 +57,9 @@ isolated per-branch development environments using Incus system containers. See
   for the PTY case and `asyncio.create_subprocess_exec` for the non-PTY case.
   `state_service/client.py` is a third: `spawn_server` starts
   `python -m jailbee _state-service` detached (`subprocess.Popen`), the shared
-  dashboard state service.
+  dashboard state service. `create_flow.py` is a fourth: `launch_background`
+  starts the detached `python -m jailbee _new-worker` (`subprocess.Popen`)
+  for a background `jailbee new`.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec` (`launch_detached`), so a GUI app outlives
   the CLI, or — for a `waypipe ssh` session's own command — `launch_attached`,
