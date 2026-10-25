@@ -98,7 +98,7 @@ def read_jobs() -> dict[str, JobSnapshot] | None:
                 for name, r in background.list_all_jobs(session).items()
             }
     except Exception as exc:  # best effort: unreadable means "wait"
-        log.warning("orchestration watch: job database unreadable: %s", exc)
+        log.debug("orchestration watch: job database unreadable: %s", exc)
         return None
 
 

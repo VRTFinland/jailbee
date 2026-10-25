@@ -9,8 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee import background
+from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
-from jailbee.orchestration import actions, broker, labels
+from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal, manifest_digest
@@ -858,3 +860,152 @@ def test_failed_stopped_head_clear_does_not_stop_the_round(
     rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
     rig.tick()
     assert rig.read_outbox.call_count == 2
+
+
+# -- watch list: started children ------------------------------------------------
+
+
+def _restart_raw(mid: str = "r1", child: str = "kid") -> RawManifest:
+    text = json.dumps(
+        {"version": 1, "id": mid, "type": "restart", "child": child, "prompt": "again"}
+    )
+    return RawManifest(f"{mid}.json", text, {f"{mid}.json": text})
+
+
+def _watches(rig: Rig) -> list[watch.WatchEntry]:
+    return watch.load_watch(rig.root).get("proj-orch", [])
+
+
+def _job(
+    phase: str = "failed", *, started_at: datetime = NOW, error_msg: str | None = "boom"
+) -> Any:
+    return watch.JobSnapshot(phase, 7, JOB_CREATE, error_msg, started_at)
+
+
+def _spawn_round(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.outboxes["proj-orch"] = [_spawn_raw()]
+    rig.tick()
+
+
+def test_started_spawn_is_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job("clone")})
+    monkeypatch.setattr(background, "worker_alive", lambda pid: True)
+    _spawn_round(rig)
+    assert _watches(rig) == [watch.WatchEntry("s1", "proj-fix-1", "spawn", NOW.isoformat())]
+
+
+def test_watch_since_is_not_after_a_row_created_during_dispatch(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The job row is created inside dispatch, so `since` (the round's start) must not follow it."""
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job(started_at=NOW)})
+    _spawn_round(rig)
+    [(_, status)] = [x for x in rig.statuses() if x[1].state == "failed"]
+    assert status.detail == "creation of child `fix-1` failed: boom — the child was removed"
+    assert _watches(rig) == []
+
+
+def test_refused_spawn_is_not_watched(rig: Rig) -> None:
+    rig.dispatch.return_value = Outcome("refused", "nope")
+    _spawn_round(rig)
+    assert _watches(rig) == []
+
+
+def test_inline_restart_not_watched_when_no_live_job(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(broker, "live_job_kind", lambda name: None)
+    rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
+    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.dispatch.return_value = Outcome("done", "child `kid` restarted")
+    rig.tick()
+    assert _watches(rig) == []
+
+
+def test_detached_restart_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(broker, "live_job_kind", lambda name: "boot")
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
+    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.dispatch.return_value = Outcome("started", "child `kid` restarting")
+    rig.tick()
+    assert _watches(rig) == [watch.WatchEntry("r1", "proj-kid", "restart", NOW.isoformat())]
+
+
+def test_drained_spawn_is_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    rig.incus.list_containers.return_value = [_orch()]
+    save_queue(rig.root, {"proj-orch": [_req("q1")]})
+    rig.drain.return_value = [(_req("q1"), Outcome("started", "ok"))]
+    rig.tick()
+    assert _watches(rig) == [watch.WatchEntry("q1", "proj-fix-2", "spawn", NOW.isoformat())]
+
+
+def _seed(rig: Rig, orchestrator: str = "proj-orch") -> None:
+    watch.save_watch(
+        rig.root,
+        {orchestrator: [watch.WatchEntry("s1", "proj-fix-1", "spawn", NOW.isoformat())]},
+    )
+
+
+def test_failed_create_reported_to_running_orchestrator(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(rig)
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job()})
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick()
+    [(to, s)] = rig.statuses()
+    assert (to, s.ref, s.state, s.detail) == (
+        "proj-orch",
+        "s1",
+        "failed",
+        "creation of child `fix-1` failed: boom — the child was removed",
+    )
+    assert rig.deliver.call_args.kwargs["running"] is True
+    assert _watches(rig) == []
+
+
+def test_failed_create_parked_for_stopped_orchestrator(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(rig)
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job()})
+    rig.incus.list_containers.return_value = [_orch(running=False)]
+    rig.tick()
+    assert rig.deliver.call_args.kwargs["running"] is False
+    assert _watches(rig) == []
+
+
+def test_unreadable_job_db_reports_nothing(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _seed(rig)
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    rig.incus.list_containers.return_value = [_orch()]
+    memory = broker.BrokerMemory()
+    with caplog.at_level(logging.WARNING):
+        rig.tick(memory)
+        rig.tick(memory)
+    rig.deliver.assert_not_called()
+    assert len(_watches(rig)) == 1
+    assert sum("job database" in r.message for r in caplog.records) == 1
+
+
+def test_reply_before_save(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed(rig)
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job()})
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.deliver.side_effect = RuntimeError("inbox down")
+    rig.tick()
+    assert len(_watches(rig)) == 1
+
+
+def test_vanished_orchestrator_watches_dropped(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed(rig, "proj-gone")
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick()
+    assert watch.load_watch(rig.root) == {}
+    rig.deliver.assert_not_called()

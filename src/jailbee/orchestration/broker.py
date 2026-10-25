@@ -10,11 +10,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
-from jailbee.orchestration import labels
+from jailbee.lifecycle import derive_container_name
+from jailbee.orchestration import labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -24,6 +25,7 @@ from jailbee.orchestration.actions import (
     dispatch,
     drain_queue,
     drop_queue,
+    live_job_kind,
     refused,
 )
 from jailbee.orchestration.journal import Journal, manifest_digest
@@ -38,6 +40,8 @@ from jailbee.orchestration.outbox import (
 from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
+    RestartManifest,
+    SpawnManifest,
     body_file_of,
     new_host_id,
     parse_manifest,
@@ -57,6 +61,9 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.outbox import RawManifest
+    from jailbee.orchestration.protocol import Manifest
+    from jailbee.orchestration.state import QueuedRequest
+    from jailbee.orchestration.watch import JobSnapshot
 
 log = logging.getLogger(__name__)
 
@@ -179,6 +186,75 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory)
     )
 
 
+def _track(
+    ctx: ActionContext, ref: str, child_full: str, kind: Literal["spawn", "restart"]
+) -> None:
+    """Remember a started child so a later round can report how it came up.
+
+    `since` is `ctx.now`, the round's start: the job row a spawn creates exists
+    only after that, so a genuine failure is never mistaken for a stale row.
+    """
+    watches = watch.load_watch(ctx.root)
+    mine = [e for e in watches.get(ctx.sender.full, []) if e.child_full != child_full]
+    mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat()))
+    watches[ctx.sender.full] = mine
+    watch.save_watch(ctx.root, watches)
+
+
+def _track_restart(ctx: ActionContext, ref: str, child_full: str, outcome: Outcome) -> None:
+    """Watch a restart only when detached work (a boot or autostart job) is still running."""
+    if outcome.state not in ("done", "started"):
+        return
+    if live_job_kind(child_full) is not None:
+        _track(ctx, ref, child_full, "restart")
+
+
+def _watch_manifest(
+    ctx: ActionContext, manifest: Manifest | None, ref: str, outcome: Outcome
+) -> None:
+    """Start watching what a handled spawn or restart left running; never raises."""
+    try:
+        if isinstance(manifest, SpawnManifest) and outcome.state == "started":
+            _track(ctx, ref, derive_container_name(ctx.cfg, manifest.branch), "spawn")
+        elif isinstance(manifest, RestartManifest):
+            child = ctx.child(manifest.child)
+            if isinstance(child, Node):
+                _track_restart(ctx, ref, child.full, outcome)
+    except Exception:
+        log.exception("broker: %s: could not watch %s", ctx.sender.full, ref)
+
+
+def _settle_watches(
+    ctx: ActionContext, memory: BrokerMemory, jobs: dict[str, JobSnapshot] | None
+) -> None:
+    """Report the final status of this orchestrator's watched children.
+
+    Deliver first, then save the shortened list: a crash in between repeats a
+    status rather than losing one.
+    """
+    if jobs is None:
+        return
+    from jailbee.lifecycle import short_name
+
+    watches = watch.load_watch(ctx.root)
+    entries = watches.get(ctx.sender.full, [])
+    for entry in list(entries):
+        outcome = watch.verdict(
+            entry,
+            jobs.get(entry.child_full),
+            ctx.nodes.get(entry.child_full),
+            orchestrator_full=ctx.sender.full,
+            short=short_name(ctx.cfg, entry.child_full),
+            now=ctx.now,
+        )
+        if outcome is None:
+            continue
+        if outcome is not watch.DROP:
+            _reply(ctx, entry.ref, outcome, memory)
+        entries.remove(entry)
+        watch.save_watch(ctx.root, watches)
+
+
 def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Write the effective grant into an orchestrator when it changed since the last write."""
     grant = ctx.grant()
@@ -215,6 +291,7 @@ def _handle_raw(
         return
     ref = PurePosixPath(raw.file_name).stem
     outcome: Outcome | None
+    manifest: Manifest | None = None
     try:
         manifest = parse_manifest(raw.file_name, raw.text, raw.files)
     except ManifestError as e:
@@ -237,8 +314,19 @@ def _handle_raw(
         container_full=ctx.sender.full,
     )
     if outcome is not None:
+        _watch_manifest(ctx, manifest, ref, outcome)
         _reply(ctx, ref, outcome, memory)
     delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+
+
+def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> None:
+    try:
+        if req.kind == "restart":
+            _track_restart(ctx, req.manifest_id, req.child_full, outcome)
+        elif outcome.state == "started":
+            _track(ctx, req.manifest_id, req.child_full, "spawn")
+    except Exception:
+        log.exception("broker: %s: could not watch %s", ctx.sender.full, req.manifest_id)
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
@@ -261,6 +349,7 @@ def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
             _reply(ctx, req.manifest_id, refused(reason), memory)
         return
     for req, outcome in drain_queue(ctx):
+        _watch_drained(ctx, req, outcome)
         _reply(ctx, req.manifest_id, outcome, memory)
 
 
@@ -405,7 +494,32 @@ def tick(
                 save_queue(root, current)
         except Exception:
             log.exception("broker: queue of %s failed", full)
+    _settle_all_watches(root, orchestrators, present, memory)
     return active
+
+
+def _settle_all_watches(
+    root: Path, orchestrators: list[ActionContext], present: set[object], memory: BrokerMemory
+) -> None:
+    """Settle each orchestrator's watches, then forget those of vanished orchestrators."""
+    jobs = watch.read_jobs()
+    if jobs is None:
+        memory.warn_once(
+            "watch-db", "broker: job database unreadable; started children are not reported"
+        )
+        return
+    for ctx in orchestrators:
+        try:
+            _settle_watches(ctx, memory, jobs)
+        except Exception:
+            log.exception("broker: watches of %s failed", ctx.sender.full)
+    watches = watch.load_watch(root)
+    gone = [full for full in watches if full not in present]
+    if gone:
+        for full in gone:
+            log.warning("broker: dropping the watches of vanished %s", full)
+            del watches[full]
+        watch.save_watch(root, watches)
 
 
 def _clear_stale_stopped_head(incus: Incus, node: Node) -> None:

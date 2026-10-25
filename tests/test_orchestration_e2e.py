@@ -18,8 +18,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee import background
+from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
-from jailbee.orchestration import actions, broker, labels
+from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
 from jailbee.orchestration.outbox import INBOX_DIR, OUTBOX_DIR
@@ -365,3 +367,39 @@ def test_orchestrator_import_records_and_reports_the_ref(
     assert IMPORT_REF in detail
     assert merge.call_args.kwargs["plain"] is True
     assert merge.call_args.kwargs["ff_local_branch"] is False
+
+
+def test_spawn_reports_ready_after_worker_finishes(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    incus: FakeIncus = world["incus"]
+    incus.set_running("proj-c1", False)  # frees the only slot
+    memory = broker.BrokerMemory()
+    jobs: dict[str, watch.JobSnapshot] = {
+        "proj-k1": watch.JobSnapshot("clone", 4242, JOB_CREATE, None, T0 + timedelta(seconds=1))
+    }
+    monkeypatch.setattr(watch, "read_jobs", lambda: jobs)
+    monkeypatch.setattr(background, "worker_alive", lambda pid: True)
+    _manifest(
+        incus,
+        "proj-orch",
+        {
+            "version": 1,
+            "id": "sp1",
+            "type": "spawn",
+            "kind": "new",
+            "branch": "k1",
+            "prompt": "go",
+            "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+        },
+    )
+
+    _tick(world, memory)  # round 1: started, worker still running
+    assert _statuses(incus, "proj-orch") == [("sp1", "started", "creation of child `k1` started")]
+
+    jobs.clear()  # the worker finished and removed its row
+    incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})
+    _tick(world, memory, 5)  # round 2
+    assert _statuses(incus, "proj-orch")[-1] == ("sp1", "done", "child `k1` is ready")
+    _tick(world, memory, 10)  # settled: nothing more is said
+    assert len(_statuses(incus, "proj-orch")) == 2
