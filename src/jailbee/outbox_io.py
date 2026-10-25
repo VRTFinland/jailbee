@@ -755,11 +755,11 @@ _TAR_ALL = 'cd "$1" 2>/dev/null || exit 0; tar -cf - . | base64 -w0'
 # Values arrive as positional parameters only: $1 directory, $2 per-file cap + 1
 # (find's `-size -Nc` is "fewer than N bytes"), $3 archive byte cap, then
 # (glob, count) pairs: the first `count` regular top-level files matching each
-# glob, by name.
+# glob, by name. Dot files (a writer's temp files) never count.
 _TAR_BOUNDED = (
     'cd "$1" 2>/dev/null || exit 0; size="$2"; total="$3"; shift 3; '
     '{ while [ "$#" -ge 2 ]; do '
-    'find . -maxdepth 1 -type f -name "$1" -size "-${size}c" -print0 '
+    'find . -maxdepth 1 -type f -name "$1" ! -name \'.*\' -size "-${size}c" -print0 '
     '| LC_ALL=C sort -z | head -z -n "$2"; shift 2; done; } '
     '| tar --null --no-recursion -T - -cf - | head -c "$total" | base64 -w0'
 )

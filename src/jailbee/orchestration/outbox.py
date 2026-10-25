@@ -62,6 +62,8 @@ def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest
         max_file_bytes=MAX_FILE_BYTES,
         select=OUTBOX_SELECT,
     )
+    # Dot names are a writer's temp files (`.name.tmp` before the rename).
+    files = {n: t for n, t in files.items() if not n.startswith(".")}
     names = sorted(n for n in files if n.endswith(".json"))[:MAX_MANIFESTS_PER_ROUND]
     return [RawManifest(file_name=n, text=files[n], files=files) for n in names]
 

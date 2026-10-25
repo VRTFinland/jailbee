@@ -192,3 +192,21 @@ def test_write_inbox_uses_the_sequence(tmp_path: Path) -> None:
     item = _item("1")
     outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=AT, seq=3)
     assert incus.exec_with_input.call_args.args[1][-2] == inbox_file_name(item, AT, seq=3)
+
+
+def test_read_outbox_skips_dot_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`.name.tmp`-style temp files are half-written; never manifests."""
+    files = {".m1.json": "{}", "m2.json": "{}", ".p.md": "x"}
+    monkeypatch.setattr(outbox, "read_text_outbox", lambda *a, **k: files)
+    out = outbox.read_outbox(_incus(), FULL, uid=None)
+    assert [m.file_name for m in out] == ["m2.json"]
+    assert ".p.md" not in out[0].files
+
+
+def test_bounded_selection_excludes_dot_files_in_the_container() -> None:
+    """Temp files must not use up the per-round selection count either."""
+    incus = MagicMock()
+    incus.exec_capped.return_value = ""
+    outbox.read_outbox(incus, FULL, uid=1000)
+    script = incus.exec_capped.call_args.args[1][2]
+    assert "! -name '.*'" in script
