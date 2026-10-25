@@ -986,10 +986,13 @@ def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
     from jailbee.upgrade import UPGRADE_NOTES, Watermark, pending
 
     owed = pending("1.8.0", {"base_build": Watermark((1, 7, 8), observed=True)})
-    notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 0)]
+    notes = [n for n in UPGRADE_NOTES if "jailbee-inbox" in n.reason]
     assert [n.actions for n in notes] == [frozenset({"base_build"})]
     assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
-    assert not pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
+    apply_owed = pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
+    assert not any(
+        "jailbee-inbox" in reason for item in apply_owed.actions for reason in item.reasons
+    )
 
 
 def test_record_action_writes_the_watermark_through_the_state_db(mocker, tmp_path) -> None:
@@ -1016,3 +1019,11 @@ def test_record_action_swallows_a_state_db_failure(mocker, tmp_path) -> None:
     mocker.patch("jailbee.db.get_engine", side_effect=RuntimeError("db locked"))
 
     record_action(make_cfg(tmp_path), "apply", "1.7.3", now=datetime(2026, 1, 1, tzinfo=UTC))
+
+
+def test_upgrade_note_announces_orchestration_skills() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if "jailbee-orchestration" in n.reason]
+    assert len(notes) == 1
+    assert notes[0].actions == frozenset({"apply"})

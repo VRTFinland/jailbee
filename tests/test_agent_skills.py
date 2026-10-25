@@ -848,3 +848,11 @@ def test_install_host_skills_leaves_unrelated_skills_alone(tmp_path: Path) -> No
     agent_skills.install_host_skills([tmp_path / "skills"])
 
     assert mine.read_text() == "mine"
+
+
+def test_skill_list_description_names_every_bundled_skill() -> None:
+    from jailbee.config.models_agents import AgentConfig
+
+    desc = AgentConfig.model_fields["install_jailbee_skills"].description or ""
+    for name in agent_skills.bundled_skill_names():
+        assert f"`{name}`" in desc, name

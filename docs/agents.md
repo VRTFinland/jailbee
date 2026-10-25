@@ -667,11 +667,14 @@ documented by Anthropic:
 
 ## 10. The bundled jailbee skills
 
-jailbee ships five skills — `jailbee-usage` (day-to-day commands),
+jailbee ships seven skills — `jailbee-usage` (day-to-day commands),
 `jailbee-repo-setup` (first-time repo configuration), `jailbee-pr-review`
-(staging PR review comments, replies and description rewrites) and
-`jailbee-issue-management` (staging GitHub issue actions) and
-`jailbee-bug-report` (staging a bug report against jailbee itself) — and installs
+(staging PR review comments, replies and description rewrites),
+`jailbee-issue-management` (staging GitHub issue actions),
+`jailbee-bug-report` (staging a bug report against jailbee itself),
+`jailbee-orchestration` (an orchestrator agent starting and managing child
+containers) and `jailbee-orchestration-child` (a child agent working under an
+orchestrator; see [orchestration](orchestration.md#skills)) — and installs
 them for every enabled agent that has a skills mechanism, not just Claude:
 
 | Agent | Skills directory (in-container) | Shared subpath it lands under |

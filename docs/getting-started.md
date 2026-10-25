@@ -236,8 +236,8 @@ What turning it on gets you:
   list them by hand. The npm registry is not among them: a plugin that
   installs from npm needs `registry.npmjs.org:443` in `egress_allow`.
 - **The agents know JailBee.** JailBee's own `jailbee-usage`,
-  `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management` and
-  `jailbee-bug-report` skills are copied into the shared skills directory of every enabled agent
+  `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`,
+  `jailbee-bug-report`, `jailbee-orchestration` and `jailbee-orchestration-child` skills are copied into the shared skills directory of every enabled agent
   that has one (claude, codex,
   gemini, opencode), so the in-container agents can drive `jailbee` commands
   for you.

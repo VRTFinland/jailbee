@@ -524,7 +524,8 @@ class AgentConfig(BaseModel):
         description=(
             "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
             "skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, "
-            "`jailbee-issue-management`, `jailbee-bug-report`) into "
+            "`jailbee-issue-management`, `jailbee-bug-report`, `jailbee-orchestration`, "
+            "`jailbee-orchestration-child`) into "
             "this agent's shared `skills_dir` so the in-container agent understands "
             "jailbee. Host-side file copy only, no network. Does nothing when "
             "`skills_dir` is unset or no `shared` mount covers it."

@@ -183,7 +183,7 @@ def test_skills_status_flips_after_install(home: Path, mocker: MockerFixture) ->
     status = skills_status()
     assert status.installed is True
     assert str(home / ".claude" / "skills") in status.detail
-    assert len(bundled_skill_names()) == 5  # detail says "5 skills", keep it honest
+    assert f"{len(bundled_skill_names())} skills" in status.detail
 
 
 def test_skills_status_no_agents_found_when_flag_on(home: Path, mocker: MockerFixture) -> None:

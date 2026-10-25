@@ -1045,6 +1045,10 @@ exist so far: they are stored, capped by the repo and inspectable.
   `mounts`, `egress`, `loose`. Details: [config](../../config.md#orchestration).
 - `grant` runs on the host only; over remote SSH `revoke`, `show` and `ls` work
   but `grant` is refused, since it widens what a container may do.
+- What an agent does with a grant is covered by two separate skills: an
+  orchestrator agent uses `jailbee-orchestration`, a child agent uses
+  `jailbee-orchestration-child`. Guide:
+  [orchestration](../../orchestration.md).
 
 ## Other day-to-day commands
 
