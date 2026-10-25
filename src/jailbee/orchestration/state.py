@@ -1,0 +1,94 @@
+"""Broker state files: the request queue and per-recipient pending directories."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import tempfile
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Literal
+
+from jailbee.db import state_dir
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+QUEUE_FILE = "queue.json"
+_QUEUE_VERSION = 1
+
+
+@dataclass(frozen=True)
+class QueuedRequest:
+    """A spawn request waiting for a free slot; `rights` is `ChildRights` as JSON."""
+
+    manifest_id: str
+    child_full: str
+    kind: Literal["fork", "new", "restart"]
+    commit: str | None
+    queued_at: str
+    branch: str
+    base: str | None
+    prompt: str
+    rights: dict[str, object]
+
+
+def state_root() -> Path:
+    """Return the orchestration state directory, creating it on demand."""
+    root = state_dir() / "orchestration"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def pending_dir(root: Path, recipient_full: str) -> Path:
+    """Return the directory holding messages not yet delivered to `recipient_full`."""
+    return root / "pending" / recipient_full
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` via a temp file in the same directory and `os.replace`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def load_queue(root: Path) -> dict[str, list[QueuedRequest]]:
+    """Load the queue; a missing or corrupt file yields an empty queue."""
+    path = root / QUEUE_FILE
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring unreadable orchestration queue %s: %s", path, exc)
+        return {}
+    try:
+        return {
+            recipient: [QueuedRequest(**item) for item in items]
+            for recipient, items in raw["queues"].items()
+            if items
+        }
+    except (KeyError, TypeError, AttributeError) as exc:
+        log.warning("ignoring corrupt orchestration queue %s: %s", path, exc)
+        return {}
+
+
+def save_queue(root: Path, queues: dict[str, list[QueuedRequest]]) -> None:
+    """Atomically persist the queue, omitting empty lists."""
+    payload = {
+        "version": _QUEUE_VERSION,
+        "queues": {k: [asdict(r) for r in v] for k, v in queues.items() if v},
+    }
+    atomic_write_text(root / QUEUE_FILE, json.dumps(payload, indent=2) + "\n")
