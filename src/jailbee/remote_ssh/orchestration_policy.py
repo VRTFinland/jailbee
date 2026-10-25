@@ -108,7 +108,14 @@ def read_orchestrator_rights(cfg: Config, incus: Incus, full: str) -> Orchestrat
         props = devices[mounts.DEVICE_NAME_PREFIX + kind]
         if props.get("source") != str(spec.host):
             continue
-        if (props.get("readonly") == "true") != spec.readonly:
+        # Incus reads every boolean spelling, not only "true".
+        device_readonly = str(props.get("readonly", "")).strip().lower() in {
+            "true",
+            "1",
+            "yes",
+            "on",
+        }
+        if device_readonly != spec.readonly:
             continue
         kinds.append(kind)
     loose = (

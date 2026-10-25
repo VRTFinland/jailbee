@@ -203,3 +203,14 @@ def test_rights_are_empty_when_the_container_row_is_missing(tmp_path, quiet):
     cfg, _ = _rights_cfg(tmp_path)
     rights = read_orchestrator_rights(cfg, _incus(), "no-such")
     assert rights.mounts == () and rights.loose is False
+
+
+@pytest.mark.parametrize("spelling", ["1", "yes", "on", "TRUE"])
+def test_rights_forced_readonly_in_any_incus_spelling_is_not_counted(tmp_path, quiet, spelling):
+    cfg, host = _rights_cfg(tmp_path, readonly=False)
+    assert read_orchestrator_rights(cfg, _incus(_dev(host, spelling)), NAME).mounts == ()
+
+
+def test_rights_readonly_config_matches_a_numeric_readonly_device(tmp_path, quiet):
+    cfg, host = _rights_cfg(tmp_path, readonly=True)
+    assert read_orchestrator_rights(cfg, _incus(_dev(host, "1")), NAME).mounts == ("data",)
