@@ -518,7 +518,7 @@ def test_stopped_orchestrator_queue_still_drains_and_parks_replies(rig: Rig) -> 
     assert rig.deliver.call_args.kwargs["running"] is False
 
 
-def test_disallowed_repo_drops_queue_with_revoked_statuses(
+def test_disallowed_repo_drops_queue_saying_so(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(actions.profiles, "repo_cap", lambda cfg: RepoCap(allowed=False))
@@ -531,8 +531,8 @@ def test_disallowed_repo_drops_queue_with_revoked_statuses(
     rig.write_grant.assert_not_called()
     got = [(s.ref, s.state, s.detail) for _, s in rig.statuses()]
     assert got == [
-        ("q1", "refused", "orchestration grant revoked"),
-        ("q2", "refused", "orchestration grant revoked"),
+        ("q1", "refused", "orchestration is not allowed in this repo"),
+        ("q2", "refused", "orchestration is not allowed in this repo"),
     ]
 
 

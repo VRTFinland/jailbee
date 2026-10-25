@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 Role = Literal["orchestrator", "child", "none"]
 
 _SHORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_NOT_ALLOWED = "orchestration is not allowed in this repo"
+NOT_ALLOWED = "orchestration is not allowed in this repo"
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     else:
         grant = ctx.grant()
         if grant is None:
-            return refused(_NOT_ALLOWED)
+            return refused(NOT_ALLOWED)
         op = OPERATION_OF[manifest.type]
         if op not in grant.operations:
             return refused(f"operation `{op}` is not in this container's grant")
@@ -183,7 +183,7 @@ def plan_spawn(
     """Validate a spawn request; `queued_names` are full names of queued spawns."""
     grant = ctx.raw_grant()
     if grant is None:
-        return refused(_NOT_ALLOWED)
+        return refused(NOT_ALLOWED)
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
@@ -315,7 +315,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
         return refused("not a spawn manifest")
     grant = ctx.grant()
     if grant is None:
-        return refused(_NOT_ALLOWED)
+        return refused(NOT_ALLOWED)
     queued = _queued(ctx)
     plan = plan_spawn(ctx, m, queued_names={q.child_full for q in queued})
     if isinstance(plan, Outcome):
@@ -383,7 +383,7 @@ def _still_granted(ctx: ActionContext, op: str) -> Outcome | None:
     """Refusal when `op` left the sender's effective grant while the request waited."""
     grant = ctx.grant()
     if grant is None:
-        return refused(_NOT_ALLOWED)
+        return refused(NOT_ALLOWED)
     if op not in grant.operations:
         return refused(f"operation `{op}` is not in this container's grant")
     return None
@@ -399,7 +399,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     # rights accepted at queue time are checked again against today's.
     raw = ctx.raw_grant()
     if raw is None:
-        return refused(_NOT_ALLOWED)
+        return refused(NOT_ALLOWED)
     problems = check_rights(raw, profiles.repo_cap(ctx.cfg), rights, ctx.cfg.optional_mounts.keys())
     if problems:
         return refused("; ".join(problems))
@@ -516,7 +516,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return refused("not a restart manifest")
     grant = ctx.grant()
     if grant is None:
-        return refused(_NOT_ALLOWED)
+        return refused(NOT_ALLOWED)
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child

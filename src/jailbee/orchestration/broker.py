@@ -17,6 +17,7 @@ from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.orchestration import labels
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
+    NOT_ALLOWED,
     ActionContext,
     Node,
     Outcome,
@@ -253,8 +254,10 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
 def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Start what the queue can start, or drop it when the grant is gone; report each."""
     if ctx.grant() is None:
-        for req in drop_queue(ctx, GRANT_REVOKED):
-            _reply(ctx, req.manifest_id, refused(GRANT_REVOKED), memory)
+        # A grant label still there means the repo cap forbids orchestration.
+        reason = GRANT_REVOKED if ctx.raw_grant() is None else NOT_ALLOWED
+        for req in drop_queue(ctx, reason):
+            _reply(ctx, req.manifest_id, refused(reason), memory)
         return
     for req, outcome in drain_queue(ctx):
         _reply(ctx, req.manifest_id, outcome, memory)
