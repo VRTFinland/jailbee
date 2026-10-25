@@ -19,6 +19,7 @@ from jailbee.config import (
     ColumnConfig,
 )
 from jailbee.dashboard import format as dfmt
+from jailbee.dashboard.fork_tree import fork_layout, name_prefix
 from jailbee.dashboard.model import RepoGroup, global_config_or_defaults
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec, active_sort, sort_mark
 from jailbee.dashboard.viewport import column_viewport
@@ -482,12 +483,14 @@ def optimize_column_widths(
         apply_conditions=False,
     )
     widths: dict[str, int] = {}
+    layouts = {g.prefix: fork_layout(g.containers) for g in expanded}
     for spec in fields:
         cells = max(
             (
                 Text.from_markup(
                     c.name if spec.name == "name" and g.repo_root is None else spec.cell(c)
                 ).cell_len
+                + (len(name_prefix(layouts[g.prefix], c.name)) if spec.name == "name" else 0)
                 for g in expanded
                 for c in g.containers
             ),

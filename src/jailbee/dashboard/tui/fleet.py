@@ -22,6 +22,7 @@ from rich.text import Text
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
+from jailbee.dashboard.fork_tree import fork_layout, name_prefix
 from jailbee.dashboard.format import autostart_failed
 from jailbee.dashboard.model import RepoGroup, Row, group_warnings, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
@@ -72,6 +73,8 @@ class Entry:
     """A merge source while the dashboard picks merge targets: drawn with ``◆``."""
     dim: bool = False
     """Not a merge target while the dashboard picks them: drawn dim."""
+    fork_prefix: str = ""
+    """The NAME cell's fork-tree indent, ``fork_tree.name_prefix``."""
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,7 @@ def table_model(
             )
         )
         if group.prefix not in folded:
+            layout = fork_layout(group.containers)
             entries.extend(
                 Entry(
                     Row("container", container.name),
@@ -170,6 +174,7 @@ def table_model(
                     running=container.name in running,
                     source=container.name in sources,
                     dim=container.name in ineligible,
+                    fork_prefix=name_prefix(layout, container.name),
                 )
                 for container in group.containers
             )
@@ -258,6 +263,8 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
             if spec.name == "name" and entry.group.repo_root is None
             else spec.cell(entry.container)
         )
+        if spec.name == "name":
+            value = entry.fork_prefix + value
         if index == 0 and spec.name == "name" and autostart_failed(entry.container):
             value += f" {WARN_MARK}"
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "

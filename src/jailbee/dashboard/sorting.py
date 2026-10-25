@@ -10,6 +10,9 @@ The default order — undated containers first, then newest first, as
 ``lifecycle.list_containers`` returns them — is applied explicitly as every
 sort's tie-breaker, so returning to the default after a sort restores it
 exactly instead of keeping the previous sort's order.
+
+Forks are then moved under their parent (``fork_tree.tree_order``), so every
+sort sorts roots and siblings, never splitting a fork from its parent.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from jailbee import table_format
+from jailbee.dashboard.fork_tree import tree_order
 from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
 
@@ -71,7 +75,7 @@ def sort_groups(
             # Python's sort is stable under reverse=True too: ties keep the default order.
             present.sort(key=lambda kc: kc[0], reverse=sort.desc)
             rows = [c for _, c in present] + [c for k, c in keyed if k is None]
-        out.append(replace(group, containers=rows))
+        out.append(replace(group, containers=tree_order(rows)))
     return out
 
 
