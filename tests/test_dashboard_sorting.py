@@ -86,6 +86,35 @@ def test_input_groups_are_not_mutated():
     assert [c.name for c in containers] == ["p-a", "p-b"]
 
 
+def test_default_order_puts_a_fork_under_its_parent():
+    parent = _c("p-parent", age_h=5)
+    mid = _c("p-mid", age_h=3)
+    fork = _c("p-fork", age_h=1, fork_of="p-parent")  # newest, would sort first
+    group = RepoGroup("p", "/r", None, [parent, mid, fork])
+    out = ds.sort_groups([group], ds.DEFAULT_SORT, ENABLED, now=NOW)
+    assert _names(out) == [["p-mid", "p-parent", "p-fork"]]
+
+
+def test_a_column_sort_orders_roots_and_siblings_but_keeps_forks_under_parents():
+    a = _c("p-a", cpu_percent=10)
+    b = _c("p-b", cpu_percent=50)
+    a1 = _c("p-a1", cpu_percent=5, fork_of="p-a")
+    a2 = _c("p-a2", cpu_percent=90, fork_of="p-a")  # flat cpu desc: a2, b, a, a1
+    group = RepoGroup("p", "/r", None, [a, b, a1, a2])
+    out = ds.sort_groups([group], ds.SortSpec("cpu", True), ENABLED, now=NOW)
+    assert _names(out) == [["p-b", "p-a", "p-a2", "p-a1"]]
+
+
+def test_a_fork_with_no_sort_key_stays_under_its_parent():
+    parent = _c("p-parent", cpu_percent=10)
+    other = _c("p-other", cpu_percent=50)
+    fork = _c("p-fork", cpu_percent=None, state="Stopped", fork_of="p-parent")
+    group = RepoGroup("p", "/r", None, [parent, other, fork])
+    out = ds.sort_groups([group], ds.SortSpec("cpu", False), ENABLED, now=NOW)
+    names = _names(out)[0]
+    assert names == ["p-parent", "p-fork", "p-other"]
+
+
 def test_click_a_new_column_uses_its_first_direction_and_a_second_click_flips():
     first = ds.click_sort(ds.DEFAULT_SORT, "created", now=NOW)
     assert first == ds.SortSpec("created", True)
