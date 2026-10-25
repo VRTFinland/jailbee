@@ -604,3 +604,13 @@ def _handle_message(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 HANDLERS["message"] = _handle_message
+
+
+def _handle_import(ctx: ActionContext, m: Manifest) -> Outcome:
+    # Late import, as for `message`: `importing` imports this module.
+    from jailbee.orchestration import importing
+
+    return importing.handle_import(ctx, m)
+
+
+HANDLERS["import"] = _handle_import
