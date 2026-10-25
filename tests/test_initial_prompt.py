@@ -75,12 +75,18 @@ def test_prompted_run_renames_then_execs_with_flags() -> None:
 def test_write_prompt_sends_text_on_stdin_and_sets_label(mocker) -> None:
     incus = mocker.MagicMock()
     text = 'say "hi" $(rm -rf /) `x`\nline2'
-    write_prompt(incus, "c1", text, uid=1000, gid=1000)
+    write_prompt(incus, "c1", text, uid=1000, gid=1001)
     args, kwargs = incus.exec_with_input.call_args
-    assert text not in " ".join(args[1])
+    assert args[0] == "c1"
+    argv = args[1]
+    assert text not in " ".join(argv)
+    assert "umask 077" in argv[2] and "mv -f" in argv[2]
+    assert argv[-1] == PROMPT_PATH
     assert args[2] == text
-    assert kwargs["uid"] == 1000 and kwargs["gid"] == 1000
+    assert kwargs == {"uid": 1000, "gid": 1001, "timeout": 30}
     incus.config_set.assert_called_once_with("c1", INITIAL_PROMPT_LABEL, PENDING)
+    names = [c[0] for c in incus.mock_calls]
+    assert names.index("exec_with_input") < names.index("config_set")
 
 
 def test_pending_false_without_label_and_no_exec(mocker) -> None:

@@ -646,3 +646,60 @@ def test_start_create_fills_host_extras_into_job(mocker, tmp_path, caplog):
     assert launched.litellm_payload == {"k": "v"}
     assert launch.call_args.kwargs == {"container_name": "p-feat", "config_path": tmp_path / "c"}
     assert any("mirror is odd" in r.getMessage() for r in caplog.records)
+
+
+def test_start_create_refuses_prompt_for_agent_without_prompt_args(mocker, tmp_path):
+    _cfg, incus, gcfg, prep, _pre, launch, _started = _start_env(mocker, tmp_path)
+    cfg = make_cfg(tmp_path, agents={"aider": {"enabled": True, "autostart": True}})
+
+    with pytest.raises(CreateError) as e:
+        start_create(
+            cfg,
+            incus,
+            gcfg,
+            _opts(initial_prompt="do it"),
+            interaction=Interaction.none(),
+            config_path=None,
+        )
+
+    assert e.value.exit_code == 2
+    assert "aider" in str(e.value) and "prompt_args" in str(e.value)
+    prep.assert_not_called()
+    launch.assert_not_called()
+
+
+def test_start_create_refuses_blank_prompt(mocker, tmp_path):
+    _cfg, incus, gcfg, prep, _pre, launch, _started = _start_env(mocker, tmp_path)
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+
+    with pytest.raises(CreateError) as e:
+        start_create(
+            cfg,
+            incus,
+            gcfg,
+            _opts(initial_prompt=" \n"),
+            interaction=Interaction.none(),
+            config_path=None,
+        )
+
+    assert e.value.exit_code == 2 and "empty" in str(e.value)
+    prep.assert_not_called()
+    launch.assert_not_called()
+
+
+def test_start_create_accepts_a_valid_prompt(mocker, tmp_path):
+    _cfg, incus, gcfg, _prep, _pre, launch, started = _start_env(mocker, tmp_path)
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True}})
+    object.__setattr__(cfg, "container_prefix", "p")
+
+    out = start_create(
+        cfg,
+        incus,
+        gcfg,
+        _opts(initial_prompt="do it"),
+        interaction=Interaction.none(),
+        config_path=None,
+    )
+
+    assert out is started
+    assert launch.call_args.args[1].initial_prompt == "do it"

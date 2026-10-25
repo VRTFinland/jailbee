@@ -2548,6 +2548,16 @@ def boot_container(
         detach_runtime_devices,
     )
 
+    if initial_prompt is not None:
+        from jailbee import initial_prompt as prompt_file
+
+        # Before anything is touched: a prompt the primary agent cannot take
+        # would be written and left `pending`, reopening its window forever.
+        prompt_file.validate_prompt_text(initial_prompt)  # PromptError is a ValueError
+        problem = prompt_file.prompt_problem(cfg)
+        if problem is not None:
+            raise ValueError(problem)
+
     state = "Stopped"
     labels: dict[str, Any] = {}
     for raw in incus.list_containers():
@@ -2605,8 +2615,6 @@ def boot_container(
     git_identity.sync(cfg, incus, name)
 
     if initial_prompt is not None:
-        from jailbee import initial_prompt as prompt_file
-
         prompt_file.write_prompt(
             incus,
             name,

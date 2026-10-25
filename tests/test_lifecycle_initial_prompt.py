@@ -21,7 +21,7 @@ def _opts(**kw):
     )
 
 
-def _drive_new(make_cfg, tmp_path, mocker, opts):
+def _drive_new(make_cfg, tmp_path, mocker, opts, *, real_write=False):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo, default_branch="main")
@@ -30,10 +30,13 @@ def _drive_new(make_cfg, tmp_path, mocker, opts):
     _patch_new_container_deps(mocker)
     events: list[str] = []
     incus.start.side_effect = lambda _n: events.append("start")
-    write = mocker.patch(
-        "jailbee.initial_prompt.write_prompt",
-        side_effect=lambda *a, **kw: events.append("write"),
-    )
+    if real_write:
+        write = None
+    else:
+        write = mocker.patch(
+            "jailbee.initial_prompt.write_prompt",
+            side_effect=lambda *a, **kw: events.append("write"),
+        )
     mocker.patch(
         "jailbee.autostart.run_autostart",
         side_effect=lambda *a, **kw: events.append("autostart") or MagicMock(detached=[]),
@@ -101,3 +104,74 @@ def test_boot_container_without_prompt_never_writes(tmp_path, mocker):
     boot_container(cfg, incus, "feat-x", restart=False)
 
     write.assert_not_called()
+
+
+def _flatten(value):
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _flatten(v)
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _flatten(v)
+    else:
+        yield str(value)
+
+
+def test_prompt_text_reaches_the_container_only_as_stdin(make_cfg, tmp_path, mocker):
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.initial_prompt import PROMPT_PATH
+
+    text = 'say "hi" $(rm -rf /) `x`\nline2'
+    _cfg, incus, _, _ = _drive_new(
+        make_cfg,
+        tmp_path,
+        mocker,
+        _opts(autostart=False, initial_prompt=text),
+        real_write=True,
+    )
+
+    # The prompt did go through exec_with_input's stdin argument ...
+    stdin_calls = [c for c in incus.exec_with_input.call_args_list if c.args[2] == text]
+    assert len(stdin_calls) == 1
+    assert stdin_calls[0].args[1][-1] == PROMPT_PATH
+
+    # ... and appears in no other argument of any incus call.
+    leaks = []
+    for call in incus.mock_calls:
+        _, args, kwargs = call
+        if call[0] == "exec_with_input":
+            args = (args[0], args[1], *args[3:])
+        for piece in _flatten([args, kwargs]):
+            if "rm -rf" in piece or "line2" in piece or text in piece:
+                leaks.append((call[0], piece))
+    assert leaks == []
+
+    # The launch step references the file, never the text.
+    [step] = agent_autostart_steps(
+        make_cfg(tmp_path / "myrepo", agents={"claude": {"enabled": True, "autostart": True}}),
+        initial_prompt=True,
+    )
+    for piece in [step.run, *step.env.values()]:
+        assert "rm -rf" not in piece and "line2" not in piece and "$(rm" not in piece
+
+
+def test_boot_container_rejects_unusable_prompt_before_touching_anything(tmp_path, mocker):
+    import pytest
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    _boot_events(mocker, incus)
+    write = mocker.patch("jailbee.initial_prompt.write_prompt")
+
+    with pytest.raises(ValueError, match="empty"):
+        boot_container(cfg, incus, "feat-x", restart=False, initial_prompt="  \n")
+    mocker.patch(
+        "jailbee.initial_prompt.prompt_problem", return_value="agent `aider` has no prompt_args"
+    )
+    with pytest.raises(ValueError, match="aider"):
+        boot_container(cfg, incus, "feat-x", restart=False, initial_prompt="go")
+
+    incus.start.assert_not_called()
+    write.assert_not_called()
+    incus.config_set.assert_not_called()

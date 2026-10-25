@@ -557,10 +557,24 @@ def start_create(
 
     `host_extras` (its warnings logged) fills the mirror and LiteLLM fields
     of `opts`; `prepare_host`; the name is checked free (`CreateError`
-    exit 2); `preflight_background`; `launch_background`. Every refusal is a
+    exit 2); `preflight_background`; `launch_background`. An unusable
+    `opts.initial_prompt` is refused first (exit 2). Every refusal is a
     `CreateError`, raised before anything is created.
     """
     from jailbee.lifecycle import derive_container_name, short_name
+
+    if opts.initial_prompt is not None:
+        from jailbee import initial_prompt
+
+        # Before any host work: a prompt the primary agent cannot take would be
+        # written and left `pending`, reopening its window on every start.
+        try:
+            initial_prompt.validate_prompt_text(opts.initial_prompt)
+        except initial_prompt.PromptError as e:
+            raise CreateError(str(e), 2) from e
+        problem = initial_prompt.prompt_problem(cfg)
+        if problem is not None:
+            raise CreateError(problem, 2)
 
     extras = host_extras(cfg, incus, gcfg, network=opts.network)
     for message in extras.warnings:

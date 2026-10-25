@@ -1122,6 +1122,9 @@ def test_prompted_step_run_never_contains_prompt_text(tmp_path):
     [step] = agent_autostart_steps(cfg, initial_prompt=True)
     assert "initial-prompt" in step.run  # only the file path is referenced
     assert PROMPT_ENV in step.run  # the text is read from the file at launch
+    # Negative sentinel check; the end-to-end one is in test_lifecycle_initial_prompt.
+    for piece in [step.run, *step.env.values()]:
+        assert "rm -rf" not in piece and "line2" not in piece and "$(rm" not in piece
 
 
 def test_extra_env_reaches_every_agent_step(tmp_path):
