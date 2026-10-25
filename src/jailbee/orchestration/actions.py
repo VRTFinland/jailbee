@@ -334,8 +334,10 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
 
 def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
     try:
-        lifecycle.boot_container(ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt)
-    except Exception as e:  # noqa: BLE001 - any boot failure is reported to the sender
+        lifecycle.boot_container(
+            ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt
+        )
+    except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     detail = f"child `{child.short}` restarted"
     return Outcome("started", detail) if started else done(detail)
@@ -427,7 +429,7 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
     if child.running:
         try:
             stopping.stop_container(ctx.incus, child.full, show_progress=False)
-        except Exception as e:  # noqa: BLE001 - reported to the sender
+        except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
     return done(f"child `{child.short}` stopped")
 
@@ -485,7 +487,7 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
                 lifecycle.container_repo_dir(ctx.cfg, ctx.incus, child.full),
                 uid=ctx.cfg.container_user.uid,
             )
-        except Exception:  # noqa: BLE001 - an unreadable HEAD is not provably imported
+        except Exception:
             head = None
     else:
         head = child.config.get(labels.DONE_SHA) or None
@@ -507,7 +509,7 @@ def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
             return refused(reason)
     try:
         lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
-    except Exception as e:  # noqa: BLE001 - reported to the sender
+    except Exception as e:
         return refused(f"child `{child.short}` could not be destroyed: {e}")
     return done(f"child `{child.short}` destroyed")
 

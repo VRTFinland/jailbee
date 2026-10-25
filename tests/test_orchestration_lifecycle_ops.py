@@ -11,7 +11,7 @@ from jailbee.orchestration import actions, labels
 from jailbee.orchestration.actions import ActionContext, Node, Outcome
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.protocol import DestroyManifest, RestartManifest, StopManifest
-from jailbee.orchestration.state import load_queue, save_queue
+from jailbee.orchestration.state import load_queue
 from tests.conftest import make_config
 
 if TYPE_CHECKING:
