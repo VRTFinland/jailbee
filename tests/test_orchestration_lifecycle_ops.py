@@ -193,14 +193,43 @@ def test_destroy_force_skips_guard(tmp_path: Path, seams: dict[str, MagicMock]) 
     seams["destroy"].assert_called_once()
 
 
-def test_destroy_stopped_child_uses_done_sha(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
-    ok = Rig(tmp_path, config={labels.LAST_IMPORT: "bbb", labels.DONE_SHA: "bbb"})
-    assert actions.handle_destroy(ok.ctx(), _destroy()).state == "done"
+def test_destroy_stopped_child_without_stopped_head_asks_for_a_restart(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """Spec 7.3 as amended: a stopped child is judged by STOPPED_HEAD only.
+    DONE_SHA is no fallback — the child may have committed after its `done`."""
+    for config in (
+        {labels.LAST_IMPORT: "bbb", labels.DONE_SHA: "bbb"},
+        {labels.LAST_IMPORT: "bbb", labels.DONE_SHA: "ccc"},
+        {labels.LAST_IMPORT: "bbb"},
+    ):
+        rig = Rig(tmp_path, config=config)
+        out = actions.handle_destroy(rig.ctx(), _destroy())
+        assert out.state == "refused"
+        assert "restart" in out.detail
+        assert "force: true" in out.detail
     seams["head"].assert_not_called()
-    bad = Rig(tmp_path, config={labels.LAST_IMPORT: "bbb", labels.DONE_SHA: "ccc"})
-    assert actions.handle_destroy(bad.ctx(), _destroy()).state == "refused"
-    none = Rig(tmp_path, config={labels.LAST_IMPORT: "bbb"})
-    assert actions.handle_destroy(none.ctx(), _destroy()).state == "refused"
+    seams["destroy"].assert_not_called()
+
+
+def test_destroy_force_still_skips_the_guard_for_a_stopped_child(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, config={labels.LAST_IMPORT: "bbb", labels.DONE_SHA: "bbb"})
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
+    seams["destroy"].assert_called_once()
+
+
+def test_commits_after_import_survive_a_stop_outside_the_broker(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    """done at X, import at X, child commits Y, child stops outside the broker
+    (reboot, `jb stop`, OOM: no STOPPED_HEAD), destroy: refused."""
+    x = "a" * 40
+    rig = Rig(tmp_path, config={labels.DONE_SHA: x, labels.LAST_IMPORT: x})
+    out = actions.handle_destroy(rig.ctx(), _destroy())
+    assert out.state == "refused"
+    seams["destroy"].assert_not_called()
 
 
 def test_destroy_stranger_refused(tmp_path: Path, seams: dict[str, MagicMock]) -> None:

@@ -573,9 +573,17 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
     if child.running:
         head = _child_head(ctx, child)
     else:
-        # HEAD cannot be read from a stopped child: the one `stop` recorded,
-        # else the `done` commit; neither -> refused.
-        head = child.config.get(labels.STOPPED_HEAD) or child.config.get(labels.DONE_SHA) or None
+        # HEAD cannot be read from a stopped child, so only the one the
+        # broker's `stop` recorded counts (spec 7.3 as amended). No DONE_SHA
+        # fallback: a child stopped outside the broker (reboot, `jb stop`,
+        # OOM) may have committed after its `done`.
+        head = child.config.get(labels.STOPPED_HEAD) or None
+        if head is None:
+            return (
+                f"child `{child.short}` is stopped and its HEAD was not recorded by a "
+                "broker stop; restart it so its HEAD can be checked "
+                "(or use force: true to destroy anyway)"
+            )
     if head is None or head != last:
         return reason
     return None

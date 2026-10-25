@@ -348,6 +348,12 @@ def tick(
             seq=memory.seq,
         )
 
+    # Before anything is served, so a `stop` handled later in this round keeps
+    # the STOPPED_HEAD it records (the snapshot above predates it).
+    for node in nodes.values():
+        if node.running and node.config.get(labels.STOPPED_HEAD):
+            _clear_stale_stopped_head(incus, node)
+
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
@@ -400,6 +406,15 @@ def tick(
         except Exception:
             log.exception("broker: queue of %s failed", full)
     return active
+
+
+def _clear_stale_stopped_head(incus: Incus, node: Node) -> None:
+    """Unset STOPPED_HEAD of a running container: it was started outside the
+    broker (whose own restart clears it), so the recorded HEAD is stale."""
+    try:
+        incus.config_unset_checked(node.full, labels.STOPPED_HEAD)
+    except Exception:
+        log.exception("broker: clearing the stale stopped HEAD of %s failed", node.full)
 
 
 def _flush_unlabelled(

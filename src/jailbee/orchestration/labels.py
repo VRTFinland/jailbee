@@ -19,6 +19,9 @@ STATE = "user.jailbee.orchestration.state"
 DONE_SHA = "user.jailbee.orchestration.done_sha"
 LAST_IMPORT = "user.jailbee.orchestration.last_import"
 # The child's HEAD as the broker's `stop` recorded it, while still running.
+# The destroy guard of a stopped child trusts this label alone (DONE_SHA is
+# no fallback, spec 7.3 as amended); the broker unsets it whenever it sees
+# the child running, so a start outside the broker leaves no stale value.
 STOPPED_HEAD = "user.jailbee.orchestration.stopped_head"
 
 STATE_WORKING = "working"

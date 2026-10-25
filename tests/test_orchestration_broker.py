@@ -821,3 +821,40 @@ def test_tick_skips_unlabelled_pending_without_repo_config(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_c("other-box")]
     rig.tick()
     rig.flush_pending.assert_not_called()
+
+
+def test_tick_clears_stopped_head_of_a_running_child(rig: Rig) -> None:
+    """A child started outside the broker (manual `jb start`) must not keep a
+    STOPPED_HEAD that no longer describes it (spec 7.3 as amended)."""
+    kid = _child()
+    kid["config"][labels.STOPPED_HEAD] = "a" * 40
+    stopped = _child("proj-kid2", running=False)
+    stopped["config"][labels.STOPPED_HEAD] = "b" * 40
+    rig.incus.list_containers.return_value = [_orch(), kid, stopped]
+    rig.tick()
+    rig.incus.config_unset_checked.assert_called_once_with("proj-kid", labels.STOPPED_HEAD)
+
+
+def test_stale_stopped_head_is_cleared_before_anything_is_served(rig: Rig) -> None:
+    """Cleared up front, so a `stop` served later in the same round keeps the
+    STOPPED_HEAD it records."""
+    kid = _child()
+    kid["config"][labels.STOPPED_HEAD] = "a" * 40
+    rig.incus.list_containers.return_value = [_orch(), kid]
+    rig.seq.attach_mock(rig.incus.config_unset_checked, "unset")
+    rig.tick()
+    names = [c[0] for c in rig.seq.mock_calls]
+    assert names.index("unset") < names.index("read_outbox")
+
+
+def test_failed_stopped_head_clear_does_not_stop_the_round(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jailbee.incus import IncusError
+
+    kid = _child()
+    kid["config"][labels.STOPPED_HEAD] = "a" * 40
+    rig.incus.list_containers.return_value = [_orch(), kid]
+    rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
+    rig.tick()
+    assert rig.read_outbox.call_count == 2
