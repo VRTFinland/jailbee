@@ -574,6 +574,7 @@ def list_containers(
             config.get(orch_labels.SPAWNED_BY),
             config.get(orch_labels.STATE),
             config.get(orch_labels.RIGHTS),
+            config.get(orch_labels.RUNNER),
         )
 
         repo_dir_raw = config.get("user.jailbee.repo_dir")

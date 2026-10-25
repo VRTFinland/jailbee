@@ -439,7 +439,12 @@ def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
         outbox = (gs.pending_orch_outbox or 0) if gs else 0
         if outbox:
             head += f" · outbox {outbox} pending"
-        return (head, rights("rights:", ch.mounts, ch.loose, ch.egress))
+        runner = escape(ch.runner) if ch.runner is not None else "default"
+        return (
+            head,
+            rights("rights:", ch.mounts, ch.loose, ch.egress),
+            f"[dim]runner:[/dim] {runner}",
+        )
     return ()
 
 

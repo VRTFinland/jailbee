@@ -1277,6 +1277,7 @@ def _child(**kw: Any) -> ContainerInfo:
         mounts=kw.pop("mounts", ()),
         loose=kw.pop("loose", False),
         egress=kw.pop("egress", ()),
+        runner=kw.pop("runner", None),
     )
     unread, outbox = kw.pop("unread", 0), kw.pop("outbox", 0)
     gs = _gs(unread_inbox=unread, pending_orch_outbox=outbox) if unread or outbox else None
@@ -1302,6 +1303,16 @@ def test_child_card_marks_stopped_orchestrator() -> None:
     p = dd.container_panel(_child(orchestrator_running=False, state="done", unread=2), NOW)
     assert p.orchestration[0] == "child of orch [red](not running)[/red] · done · inbox 2 unread"
     assert p.orchestration[1] == "[dim]rights:[/dim] mounts — · loose no · egress —"
+
+
+def test_child_card_shows_runner() -> None:
+    p = dd.container_panel(_child(runner="claude-jb [x] opus"), NOW)
+    assert p.orchestration[2] == r"[dim]runner:[/dim] claude-jb \[x] opus"
+
+
+def test_child_card_shows_runner_default() -> None:
+    p = dd.container_panel(_child(), NOW)
+    assert p.orchestration[2] == "[dim]runner:[/dim] default"
 
 
 def test_child_card_shows_outbox_pending() -> None:

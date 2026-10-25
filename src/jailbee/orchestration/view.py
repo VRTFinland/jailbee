@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from jailbee.db import state_dir
 from jailbee.orchestration import labels
 from jailbee.orchestration.grant import ChildRights, Grant, GrantError
+from jailbee.orchestration.runner import parse_runner_label
 from jailbee.orchestration.state import QUEUE_FILE
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ class ChildView:
     mounts: tuple[str, ...]
     loose: bool
     egress: tuple[str, ...]
+    runner: str | None = None  # `Runner.describe()`; None means the default
 
 
 def parse_grant_view(raw: object) -> GrantView | None:
@@ -63,7 +65,9 @@ def parse_grant_view(raw: object) -> GrantView | None:
     )
 
 
-def parse_child_view(spawned_by: object, state: object, rights_raw: object) -> ChildView | None:
+def parse_child_view(
+    spawned_by: object, state: object, rights_raw: object, runner_raw: object = None
+) -> ChildView | None:
     """Return the child view from its labels; None when it has no spawner.
 
     Corrupt rights keep the child with no rights; a missing or unknown state
@@ -82,7 +86,10 @@ def parse_child_view(spawned_by: object, state: object, rights_raw: object) -> C
             pass
         else:
             mounts, loose, egress = r.mounts, r.loose, r.egress
-    return ChildView(spawned_by, st, mounts, loose, egress)
+    runner = parse_runner_label(runner_raw)
+    return ChildView(
+        spawned_by, st, mounts, loose, egress, runner.describe() if runner is not None else None
+    )
 
 
 def queued_counts(path: Path | None = None) -> dict[str, int]:
