@@ -122,3 +122,49 @@ def test_orchestrator_message_without_to_refused(tmp_path: Path, deliver: MagicM
     out = messages.handle_message(_orch(tmp_path, []), _msg())
     assert out == refused("`to` is required for a message from an orchestrator")
     deliver.assert_not_called()
+
+
+def _child_ctx(tmp_path: Path, orch_listed: bool = True) -> ActionContext:
+    orch = _node("orch", **{labels.GRANT: Grant().to_label()})
+    return _ctx(tmp_path, _child_of_orch(), [orch] if orch_listed else [])
+
+
+def test_child_question_relayed_to_orchestrator(tmp_path: Path, deliver: MagicMockT) -> None:
+    out = messages.handle_message(
+        _child_ctx(tmp_path), _msg(kind="question", body="which db?", id="q1")
+    )
+    assert deliver.call_args.args[2] == "myrepo-orch"
+    msg = deliver.call_args.args[3]
+    assert (msg.from_, msg.kind, msg.body) == ("fix-1", "question", "which db?")
+    assert deliver.call_args.kwargs["seq"] == 0
+    assert out == done("delivered to orch")
+
+
+def test_child_message_queued_when_orchestrator_gone(tmp_path: Path, deliver: MagicMockT) -> None:
+    deliver.return_value = "parked"
+    out = messages.handle_message(_child_ctx(tmp_path, orch_listed=False), _msg())
+    assert deliver.call_args.args[2] == "myrepo-orch"
+    assert deliver.call_args.kwargs["running"] is False
+    assert out == Outcome("queued", "orch is not running; the message is delivered when it starts")
+
+
+def test_child_may_name_its_orchestrator_in_to(tmp_path: Path, deliver: MagicMockT) -> None:
+    out = messages.handle_message(_child_ctx(tmp_path), _msg(to="orch"))
+    assert out == done("delivered to orch")
+
+
+def test_child_naming_another_container_refused(tmp_path: Path, deliver: MagicMockT) -> None:
+    out = messages.handle_message(_child_ctx(tmp_path), _msg(to="other"))
+    assert out == refused("a child can only message its orchestrator")
+    deliver.assert_not_called()
+
+
+def test_child_note_default_kind(tmp_path: Path, deliver: MagicMockT) -> None:
+    messages.handle_message(_child_ctx(tmp_path), _msg())
+    assert deliver.call_args.args[3].kind == "note"
+
+
+def test_child_done_not_supported_yet(tmp_path: Path, deliver: MagicMockT) -> None:
+    out = messages.handle_message(_child_ctx(tmp_path), _msg(kind="done"))
+    assert out == refused("done is not supported yet")
+    deliver.assert_not_called()
