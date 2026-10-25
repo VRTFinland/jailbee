@@ -13,7 +13,6 @@ from jailbee.remote_ssh.orchestration_policy import (
     grant_excess,
 )
 
-
 ssh = "(remote.ssh.orchestration: ssh)"
 
 
@@ -39,9 +38,7 @@ def test_ssh_bound_ignores_mount_roots(tmp_path):
 
 
 def test_ssh_bound_with_unlocks():
-    b = grant_bound(
-        RemoteSSHConfig(orchestration="ssh", network=True, mounts=True), ["data"], None
-    )
+    b = grant_bound(RemoteSSHConfig(orchestration="ssh", network=True, mounts=True), ["data"], None)
     assert b == GrantBound("ssh", frozenset({"data"}), True, None)
 
 
@@ -62,9 +59,7 @@ def test_orchestrator_bound_requires_rights():
 
 def test_excess_names_every_widening_element():
     b = GrantBound("ssh", frozenset(), False, ())
-    assert grant_excess(
-        _grant(mounts=("data",), loose=True, egress=("evil.org",)), None, b
-    ) == [
+    assert grant_excess(_grant(mounts=("data",), loose=True, egress=("evil.org",)), None, b) == [
         f"mount `data` is beyond what this remote session may grant {ssh}",
         f"loose for children is beyond what this remote session may grant {ssh}",
         f"egress `evil.org` is beyond what this remote session may grant {ssh}",
