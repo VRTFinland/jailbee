@@ -92,7 +92,13 @@ def read_orchestrator_rights(cfg: Config, incus: Incus, full: str) -> Orchestrat
     row = next((r for r in incus.list_containers() if r.get("name") == full), {})
     devices = row.get("devices") or {}
     labels = row.get("config") or {}
-    timed = mounts.mount_until(labels)
+    # Any deadline label makes a mount temporary, even a garbled one that
+    # `mount_until` would drop (mount_revert treats it the same way).
+    timed = {
+        key.removeprefix(mounts.MOUNT_UNTIL_PREFIX)
+        for key in labels
+        if key.startswith(mounts.MOUNT_UNTIL_PREFIX)
+    }
     kinds: list[str] = []
     for kind in mounts.attached_kinds(devices):
         spec = cfg.optional_mounts.get(kind)

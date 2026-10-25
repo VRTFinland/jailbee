@@ -115,7 +115,7 @@ def _rights_cfg(tmp_path, readonly=False):
     return cfg, host
 
 
-def _incus(devices=None, config=None, extras=()):
+def _incus(devices=None, config=None):
     incus = MagicMock()
     incus.list_containers.return_value = [
         {"name": NAME, "devices": devices or {}, "config": config or {}},
@@ -188,3 +188,18 @@ def test_rights_egress_is_repo_plus_container_extras(tmp_path, mocker):
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["extra.example.com"])
     expected = (*cfg.effective_egress_allow(), "extra.example.com")
     assert read_orchestrator_rights(cfg, _incus(), NAME).egress == expected
+
+
+@pytest.mark.parametrize(
+    "label", ["garbage", "", "2999-01-01T00:00:00", "2000-01-01T00:00:00+00:00"]
+)
+def test_rights_any_mount_until_label_makes_a_mount_temporary(tmp_path, quiet, label):
+    cfg, host = _rights_cfg(tmp_path)
+    config = {"user.jailbee.mount_until.data": label}
+    assert read_orchestrator_rights(cfg, _incus(_dev(host), config), NAME).mounts == ()
+
+
+def test_rights_are_empty_when_the_container_row_is_missing(tmp_path, quiet):
+    cfg, _ = _rights_cfg(tmp_path)
+    rights = read_orchestrator_rights(cfg, _incus(), "no-such")
+    assert rights.mounts == () and rights.loose is False
