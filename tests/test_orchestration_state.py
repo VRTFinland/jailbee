@@ -45,9 +45,7 @@ def test_missing_queue_is_empty(tmp_path: Path) -> None:
     assert load_queue(tmp_path) == {}
 
 
-def test_corrupt_queue_is_empty_and_warns(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_corrupt_queue_is_empty_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     (tmp_path / "queue.json").write_text("{not json")
     with caplog.at_level(logging.WARNING):
         assert load_queue(tmp_path) == {}
