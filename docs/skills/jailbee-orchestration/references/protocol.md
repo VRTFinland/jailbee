@@ -175,7 +175,7 @@ A `message` from a child:
 ```
 
 A `status` reply answers one manifest; `ref` is the manifest id and `state`
-is one of four values.
+is one of five values: `queued`, `started`, `done`, `failed`, `refused`.
 
 <!-- kind: inbox -->
 ```json
@@ -195,6 +195,26 @@ is one of four values.
  "state": "done",
  "detail": "imported as refs/jailbee/from/fix-issue-12/fix/issue-12 at 1a2b3c4d5e6f"}
 ```
+
+A spawn's final status is `done` or `failed`:
+
+<!-- kind: inbox -->
+```json
+{"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "spawn-fix-12",
+ "state": "done", "detail": "child `fix-issue-12` is ready"}
+```
+
+<!-- kind: inbox -->
+```json
+{"version": 1, "id": "h-0a1b2c41", "type": "status", "ref": "spawn-fix-12",
+ "state": "failed",
+ "detail": "creation of child `fix-issue-12` failed: base not found — the child was removed"}
+```
+
+`failed` is final. Other details: ``restart of child `<child>` failed:
+<error>``, ``creation of child `<child>` stopped unexpectedly during
+<phase>`` (restart variant likewise), ``creation of child `<child>` ended
+without a container``; a missing error reads `see the worker log`.
 
 A `queued` status applies to `restart` as well as `spawn`, and to a
 `message` for a stopped child. Other `done` details: `delivered to <child>`,

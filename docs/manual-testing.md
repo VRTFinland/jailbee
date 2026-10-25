@@ -5951,6 +5951,20 @@ grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat  
 grep -l '"ref":\s*"spawn-b"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "queued",  "detail": "queued at position 1"
 ```
 
+Failure report: spawn on a nonexistent base and expect a final `failed`.
+
+```bash
+cat > ~/.jailbee/orchestration/outbox/spawn-bad.json <<'JSON'
+{"version": 1, "id": "spawn-bad", "type": "spawn", "kind": "new",
+ "branch": "child-bad", "base": "no-such-branch", "prompt": "x",
+ "rights": {"version": 1}}
+JSON
+grep -l '"ref":\s*"spawn-bad"' ~/.jailbee/orchestration/inbox/*.json | xargs cat
+```
+
+expect: `started`, then `failed` with ``creation of child `child-bad` failed: ...``
+(plus ` — the child was removed`), within about a minute.
+
 expect: one child container for `child-a` (host: `jb ls` shows it, spawned by
 `<c>`), none for `child-b`, and the processed manifests gone from the outbox.
 

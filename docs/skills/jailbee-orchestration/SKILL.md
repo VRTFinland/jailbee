@@ -102,18 +102,31 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
 - `queued`: accepted, waiting for a running slot to free up. Applies to
   `spawn` and `restart` alike.
 - `started`: the child is being created, or a queued restart has now begun.
-- `done`: the action completed (the detail says what).
+- `done`: the action completed (the detail says what). A spawn's final
+  `done` reads ``child `<short>` is ready``.
+- `failed`: final. The action was accepted but did not complete. The detail
+  says why, for example ``creation of child `<short>` failed: <error>``
+  (followed by ` — the child was removed` when the child no longer exists),
+  ``restart of child `<short>` failed: <error>``, ``creation of child
+  `<short>` stopped unexpectedly during <phase>`` (a restart says
+  `restart of child`) or ``creation of child `<short>` ended without a
+  container``. `see the worker log` stands in for a missing error.
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
 
 The broker is not instant; expect seconds, not milliseconds.
 
-`started` is the last status a spawn gets: if the background creation later
-fails, nothing more is reported. So never wait forever for a child. When a
-`wait` times out and a started child has not reported, send it a `message`.
-A refusal such as "`x` is not a child of this orchestrator" means the
-creation failed; tell the human. A `message` to a stopped child is answered
-`queued` and delivered when it runs again.
+A spawn gets `queued` or `started`, then a final `done` (``child `<short>` is
+ready``) or `failed`; a restart that begins later gets `failed` if it fails.
+On `failed`, read the detail and tell the human; respawn under a new id only
+when the cause is fixed. Still do not wait forever: if a `wait` times out
+and a started child has not reported, send it a `message`. A `message` to a
+stopped child is answered `queued` and delivered when it runs again.
+
+A child whose prompted agent exits with status 1 to 127 sends you a
+`blocked` message ``[jailbee] the agent `<agent name>` exited with status
+<rc>``. The agent crashed or was killed; it did not report. Read the
+child's output, then `restart` it with a new prompt or tell the human.
 
 ## Answering children
 

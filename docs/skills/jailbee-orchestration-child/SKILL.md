@@ -63,6 +63,9 @@ body: what changed, tests run, open points:
  "in_reply_to": null}
 ```
 
+If your prompted agent exits non-zero (1 to 127), Jailbee reports it to the
+orchestrator as a `blocked` message for you; do not send your own duplicate.
+
 After `done`, stop working and wait. The orchestrator may message you or
 restart you later with a new prompt.
 
