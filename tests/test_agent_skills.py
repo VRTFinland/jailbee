@@ -147,6 +147,37 @@ def test_orchestration_protocol_examples_use_short_names() -> None:
     assert "<repo>-" not in _skill_text(ORCH)
 
 
+CHILD = "jailbee-orchestration-child"
+
+
+def test_bundled_skills_include_orchestration_child() -> None:
+    assert CHILD in agent_skills.bundled_skill_names()
+
+
+def test_child_skill_limits_the_child() -> None:
+    text = _skill_text(CHILD)
+    for needle in (
+        "~/.jailbee/orchestration/outbox",
+        "jailbee-inbox wait",
+        '"kind": "done"',
+        "question",
+        "blocked",
+        "in_reply_to",
+        "commit",
+        "new id",
+        "JAILBEE_ROLE",
+    ):
+        assert needle in text, needle
+    assert "Never" in text
+    for forbidden_act in ("merge", "push", "spawn", "destroy"):
+        assert forbidden_act in text, forbidden_act
+
+
+def test_child_skill_covers_done_bounce() -> None:
+    text = _skill_text(CHILD)
+    assert "uncommitted" in text and "detached" in text
+
+
 def _github_permission_recipes() -> list[tuple[Path, str]]:
     """Every doc/skill file that spells out a GitHub PAT permission recipe."""
     root = Path(__file__).resolve().parents[1]

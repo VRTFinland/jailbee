@@ -1,0 +1,82 @@
+---
+name: jailbee-orchestration-child
+description: Use when `JAILBEE_ROLE=child` is set or your first prompt says you are a child container of a JailBee orchestrator. Covers reporting back, asking questions and finishing cleanly. Trigger on "you are a child container", "report done to the orchestrator", "ask the orchestrator", "olet lapsikontti", "ilmoita valmis orkestraattorille".
+---
+
+# Working as a child container
+
+## You are a worker
+
+An orchestrator (`$JAILBEE_ORCHESTRATOR`, with `JAILBEE_ROLE=child` set) gave
+you one task in your first prompt. Do it on your branch. Toward the host you
+can do exactly one thing: message your orchestrator, by writing manifests
+into `~/.jailbee/orchestration/outbox/`. Never merge into other branches,
+push, open PRs, spawn, stop or destroy containers. Those manifests are
+refused, and that work belongs to the orchestrator. Schemas are in
+[`references/protocol.md`](references/protocol.md).
+
+General development practice (style, tests, commits) comes from the project's
+own instructions.
+
+## Sending a message
+
+Four kinds: `note` (information), `question` (you need an answer), `blocked`
+(you cannot continue) and `done` (finished). Use a new id every time; ids are
+never reused. Prefer the helper, which writes the manifest atomically and
+prints the id:
+
+```bash
+jailbee-inbox send message --kind question --text "Which parser do you mean?"
+jailbee-inbox send message --kind blocked --text "Tests need network access I do not have."
+jailbee-inbox send message --kind done --file summary.md
+```
+
+Without the helper, write `.<id>.json.tmp` and `mv` it to `<id>.json`:
+
+```json
+{"version": 1, "id": "msg-0003", "type": "message", "kind": "question",
+ "body": "Which parser do you mean?", "in_reply_to": null}
+```
+
+## Done means committed
+
+Before `done`, everything is committed on a branch (not a detached HEAD) and
+`git status` is clean. Otherwise the broker replies `status refused`:
+
+- `uncommitted changes: commit everything before reporting done`
+- `detached HEAD: check out your branch before reporting done`
+
+Fix it and send a new `done` under a new id. Put a summary in the `done`
+body: what changed, tests run, open points:
+
+```json
+{"version": 1, "id": "msg-0004", "type": "message", "kind": "done",
+ "body": "Fixed the parser; tests pass. Everything is committed.",
+ "in_reply_to": null}
+```
+
+After `done`, stop working and wait. The orchestrator may message you or
+restart you later with a new prompt.
+
+## Waiting for a reply
+
+After a `question` or `blocked`, run:
+
+```bash
+jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
+```
+
+On timeout, wait again. Never poll tighter than every 5 min. Match the answer
+by `in_reply_to`: it equals the id of your message.
+
+## Checking the inbox while working
+
+At natural checkpoints (a finished step), run `jailbee-inbox ls`. The
+orchestrator may refine the task. `jailbee-inbox read <id>` prints a message
+and moves it to `inbox/read/`; or `mv` the file there yourself.
+
+## Status messages for you
+
+You only get `status` messages as bounces of your own messages: `refused`
+with a `detail` saying why. A refusal is final; fix the cause and send a new
+message under a new id.
