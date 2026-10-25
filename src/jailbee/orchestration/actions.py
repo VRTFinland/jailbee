@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
-from jailbee import forking, lifecycle
+from jailbee import forking, lifecycle, stopping, sync
 from jailbee.create_flow import CreateError, Interaction, NeedsOperator, start_create
 from jailbee.forking import ForkError, ForkSource
 from jailbee.lifecycle import NewContainerOptions
@@ -18,7 +18,14 @@ from jailbee.orchestration.grant import (
     check_rights,
     effective_grant,
 )
-from jailbee.orchestration.protocol import CHILD_TYPES, Manifest, SpawnManifest
+from jailbee.orchestration.protocol import (
+    CHILD_TYPES,
+    DestroyManifest,
+    Manifest,
+    RestartManifest,
+    SpawnManifest,
+    StopManifest,
+)
 from jailbee.orchestration.state import QueuedRequest, load_queue, save_queue
 
 if TYPE_CHECKING:
@@ -325,6 +332,15 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
     return Outcome("queued", f"queued at position {len(queued)}")
 
 
+def _boot(ctx: ActionContext, child: Node, prompt: str, *, started: bool) -> Outcome:
+    try:
+        lifecycle.boot_container(ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt)
+    except Exception as e:  # noqa: BLE001 - any boot failure is reported to the sender
+        return refused(f"child `{child.short}` could not be restarted: {e}")
+    detail = f"child `{child.short}` restarted"
+    return Outcome("started", detail) if started else done(detail)
+
+
 def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     short = lifecycle.short_name(ctx.cfg, req.child_full)
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
@@ -351,10 +367,21 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     return start_child(ctx, plan, fork=fork)
 
 
-# Queue kind -> starter. Task 10 registers "restart" here.
+def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
+    short = lifecycle.short_name(ctx.cfg, req.child_full)
+    node = ctx.nodes.get(req.child_full)
+    if node is None or node.config.get(labels.SPAWNED_BY) != ctx.sender.full:
+        return refused(f"`{short}` is not a child of this orchestrator")
+    if node.running:
+        return refused(f"child `{short}` is running; stop it first")
+    return _boot(ctx, node, req.prompt, started=True)
+
+
+# Queue kind -> starter.
 STARTERS: dict[str, Callable[[ActionContext, QueuedRequest], Outcome]] = {
     "fork": _start_spawn,
     "new": _start_spawn,
+    "restart": _start_restart,
 }
 
 
@@ -389,3 +416,102 @@ def drop_queue(ctx: ActionContext, reason: str) -> list[QueuedRequest]:
 
 
 HANDLERS["spawn"] = handle_spawn
+
+
+def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
+    if not isinstance(m, StopManifest):
+        return refused("not a stop manifest")
+    child = ctx.child(m.child)
+    if isinstance(child, Outcome):
+        return child
+    if child.running:
+        try:
+            stopping.stop_container(ctx.incus, child.full, show_progress=False)
+        except Exception as e:  # noqa: BLE001 - reported to the sender
+            return refused(f"child `{child.short}` could not be stopped: {e}")
+    return done(f"child `{child.short}` stopped")
+
+
+def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
+    """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
+    if not isinstance(m, RestartManifest):
+        return refused("not a restart manifest")
+    grant = ctx.grant()
+    if grant is None:
+        return refused(_NOT_ALLOWED)
+    child = ctx.child(m.child)
+    if isinstance(child, Outcome):
+        return child
+    if child.running:
+        return refused(f"child `{child.short}` is running; stop it first")
+    prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
+    queued = _queued(ctx)
+    if any(q.child_full == child.full for q in queued):
+        return refused(f"a request for `{child.short}` is already queued")
+    if not queued and running_children(ctx) < grant.max_running_children:
+        return _boot(ctx, child, prompt, started=False)
+    queued.append(
+        QueuedRequest(
+            manifest_id=m.id,
+            child_full=child.full,
+            kind="restart",
+            commit=None,
+            queued_at=ctx.now.isoformat(),
+            branch="",
+            base=None,
+            prompt=prompt,
+            rights={},
+        )
+    )
+    _store(ctx, queued)
+    return Outcome("queued", f"queued at position {len(queued)}")
+
+
+def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
+    """Reason a child must not be destroyed (unimported commits), or None."""
+    reason = (
+        f"child `{child.short}` has commits that were never imported "
+        "(use force: true to destroy anyway)"
+    )
+    last = child.config.get(labels.LAST_IMPORT)
+    if not last:
+        return reason
+    head: str | None
+    if child.running:
+        try:
+            head = sync._container_head_oid(
+                ctx.incus,
+                child.full,
+                lifecycle.container_repo_dir(ctx.cfg, ctx.incus, child.full),
+                uid=ctx.cfg.container_user.uid,
+            )
+        except Exception:  # noqa: BLE001 - an unreadable HEAD is not provably imported
+            head = None
+    else:
+        head = child.config.get(labels.DONE_SHA) or None
+    if head is None or head != last:
+        return reason
+    return None
+
+
+def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
+    # No drain here: the broker drains after every round and reports each outcome.
+    if not isinstance(m, DestroyManifest):
+        return refused("not a destroy manifest")
+    child = ctx.child(m.child)
+    if isinstance(child, Outcome):
+        return child
+    if not m.force:
+        reason = destroy_guard(ctx, child)
+        if reason is not None:
+            return refused(reason)
+    try:
+        lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
+    except Exception as e:  # noqa: BLE001 - reported to the sender
+        return refused(f"child `{child.short}` could not be destroyed: {e}")
+    return done(f"child `{child.short}` destroyed")
+
+
+HANDLERS["stop"] = handle_stop
+HANDLERS["restart"] = handle_restart
+HANDLERS["destroy"] = handle_destroy
