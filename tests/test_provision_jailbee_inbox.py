@@ -42,11 +42,25 @@ def base(tmp_path: Path) -> Path:
 
 
 def message(mid: str, body: str = "hello there") -> dict[str, object]:
-    return {"version": 1, "id": mid, "type": "message", "from": "orchestrator", "kind": "info", "body": body}
+    return {
+        "version": 1,
+        "id": mid,
+        "type": "message",
+        "from": "orchestrator",
+        "kind": "info",
+        "body": body,
+    }
 
 
 def status(mid: str, ref: str = "m-1") -> dict[str, object]:
-    return {"version": 1, "id": mid, "type": "status", "ref": ref, "state": "done", "detail": "all good"}
+    return {
+        "version": 1,
+        "id": mid,
+        "type": "status",
+        "ref": ref,
+        "state": "done",
+        "detail": "all good",
+    }
 
 
 def write_inbox(base: Path, name: str, payload: dict[str, object]) -> Path:
@@ -176,7 +190,7 @@ def test_wait_uses_inotifywait_when_present(script, base, tmp_path):
         "#!/bin/bash\n"
         f'printf "%s\\n" "$*" >> {log}\n'
         f'echo "{{}}" > "{base}/inbox/.probe.tmp"\n'
-        f'echo \'{json.dumps(message("h-0000aaaa"))}\' > "{base}/inbox/{FIRST}"\n'
+        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
         "exit 0\n"
     )
     stub.chmod(0o755)
@@ -198,9 +212,9 @@ def test_wait_rechecks_after_inotifywait_returns_empty(script, base, tmp_path):
     stub = stubs / "inotifywait"
     stub.write_text(
         "#!/bin/bash\n"
-        f'n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n'
+        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
         'if [ "$n" -ge 1 ]; then\n'
-        f'  echo \'{json.dumps(message("h-0000aaaa"))}\' > "{base}/inbox/{FIRST}"\n'
+        f"  echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
         "fi\n"
         "sleep 0.2\nexit 2\n"
     )
@@ -280,4 +294,3 @@ def test_install_sh_installs_inotify_tools():
 
 def test_script_is_chmodded_in_install_sh():
     assert "chmod 0755 /usr/local/bin/jailbee-inbox" in install_sh_text()
-
