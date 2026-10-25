@@ -3595,6 +3595,81 @@ def ls_field_specs(
     def _outbox_json(c: ContainerInfo) -> dict[str, int]:
         return {"pr": _pending_pr_actions(c), "issues": _pending_issue_actions(c)}
 
+    def _role_cell(c: ContainerInfo) -> str:
+        if c.grant is not None:
+            return "orch"
+        if c.child is not None:
+            return "child" if c.orchestrator_running is not False else "child!"
+        return ""
+
+    def _role_json(c: ContainerInfo) -> dict[str, object] | None:
+        if c.grant is not None:
+            return {
+                "kind": "orchestrator",
+                "grant": {
+                    "limit": c.grant.limit,
+                    "operations": list(c.grant.operations),
+                    "mounts": list(c.grant.mounts),
+                    "loose": c.grant.loose,
+                    "egress": list(c.grant.egress),
+                },
+            }
+        if c.child is not None:
+            parent = c.child.orchestrator
+            if c.repo and parent.startswith(f"{c.repo}-"):
+                parent = parent[len(c.repo) + 1 :]
+            return {
+                "kind": "child",
+                "orchestrator": parent,
+                "orchestrator_running": c.orchestrator_running is not False,
+                "state": c.child.state,
+                "rights": {
+                    "mounts": list(c.child.mounts),
+                    "loose": c.child.loose,
+                    "egress": list(c.child.egress),
+                },
+            }
+        return None
+
+    def _role_key(c: ContainerInfo) -> table_format.SortKey | None:
+        if c.grant is not None:
+            return (0,)
+        return (1,) if c.child is not None else None
+
+    def _children_cell(c: ContainerInfo) -> str:
+        if c.grant is None:
+            return ""
+        cell = f"{c.running_children}/{c.grant.limit}"
+        return f"{cell} +{c.queued_children}" if c.queued_children else cell
+
+    def _children_json(c: ContainerInfo) -> dict[str, int] | None:
+        if c.grant is None:
+            return None
+        return {
+            "running": c.running_children,
+            "limit": c.grant.limit,
+            "queued": c.queued_children,
+        }
+
+    def _unread_inbox(c: ContainerInfo) -> int:
+        return (c.git_status.unread_inbox or 0) if c.git_status else 0
+
+    def _is_orchestration(c: ContainerInfo) -> bool:
+        return c.grant is not None or c.child is not None
+
+    def _inbox_cell(c: ContainerInfo) -> str:
+        unread = _unread_inbox(c)
+        return f"✉{unread}" if unread > 0 else ""
+
+    def _inbox_json(c: ContainerInfo) -> dict[str, int | None] | None:
+        if not _is_orchestration(c):
+            return None
+        gs = c.git_status
+        return {
+            "unread": gs.unread_inbox if gs else None,
+            "outbox_pending": gs.pending_orch_outbox if gs else None,
+        }
+
     def _git_key(
         attr: str, key: Callable[[str | None], table_format.SortKey | None]
     ) -> Callable[[ContainerInfo], table_format.SortKey | None]:
@@ -4062,6 +4137,32 @@ def ls_field_specs(
             show_if=lambda rows: any(
                 _pending_pr_actions(c) + _pending_issue_actions(c) for c in rows
             ),
+        ),
+        table_format.FieldSpec(
+            name="role",
+            sort=_role_key,
+            header="ROLE",
+            cell=_role_cell,
+            json=_role_json,
+            show_if=lambda rows: any(_is_orchestration(c) for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="children",
+            sort=lambda c: _count(c.running_children) if c.grant is not None else None,
+            sort_desc_first=True,
+            header="CHILDREN",
+            cell=_children_cell,
+            json=_children_json,
+            show_if=lambda rows: any(c.grant is not None for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="inbox",
+            sort=lambda c: _count(_unread_inbox(c)) if _is_orchestration(c) else None,
+            sort_desc_first=True,
+            header="INBOX",
+            cell=_inbox_cell,
+            json=_inbox_json,
+            show_if=lambda rows: any(_is_orchestration(c) and _unread_inbox(c) > 0 for c in rows),
         ),
         table_format.FieldSpec(
             name="group",

@@ -4783,7 +4783,19 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
     assert dcolumns.dynamic_column_names() == frozenset(
-        {"job", "ttl", "pr", "issues", "outbox", "mode", "group", "mounts"}
+        {
+            "job",
+            "ttl",
+            "pr",
+            "issues",
+            "outbox",
+            "mode",
+            "group",
+            "mounts",
+            "role",
+            "children",
+            "inbox",
+        }
     )
 
 

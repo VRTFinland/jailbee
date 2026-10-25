@@ -1765,7 +1765,7 @@ def list_cmd(
                 "cpu, doing, agent, agent_compact, "
                 "wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, "
                 "git_status, "
-                "group, pr, issues, outbox."
+                "group, pr, issues, outbox, role, children, inbox."
             ),
         ),
     ] = None,
