@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from jailbee import memory_limit
@@ -569,3 +571,79 @@ def test_old_outbox_pickers_are_gone():
         "outbox_show_argv",
     ):
         assert not hasattr(dob, name), name
+
+
+def _orchestration_session(mocker, tmp_path, *, grant=False, profiles=("bugfixer",)):
+    from jailbee.orchestration.view import GrantView
+
+    info = ci("alpha-one", "alpha")
+    if grant:
+        info = dataclasses.replace(
+            info, grant=GrantView(limit=2, operations=("spawn",), mounts=(), loose=False, egress=())
+        )
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [info], orchestration_profiles=tuple(profiles)
+    )
+    session, _ = bare_session(mocker, [group])
+    return session, mocker.patch.object(session, "run_quiet_cli", return_value=True)
+
+
+def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path)
+    picker = session.open_orchestration("alpha-one")
+    assert picker.purpose == "container-orchestration"
+    assert [e.value for e in picker.entries] == ["profile:bugfixer", "defaults"]
+    assert [e.label for e in picker.entries] == [
+        "Grant profile 'bugfixer'",
+        "Grant with defaults",
+    ]
+    assert picker.detail == ()
+
+
+def test_orchestration_picker_with_grant_reapplies_and_revokes(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    picker = session.open_orchestration("alpha-one")
+    assert [e.value for e in picker.entries] == ["profile:bugfixer", "revoke"]
+    assert picker.entries[0].label == "Re-apply profile 'bugfixer'"
+    # card lines, markup stripped (the picker draws plain text)
+    assert picker.detail[0].startswith("orchestrator · children 0/2")
+    assert all("[dim]" not in line for line in picker.detail)
+
+
+@pytest.mark.parametrize(
+    ("value", "argv"),
+    [
+        ("profile:bugfixer", ["orchestrate", "grant", "--profile", "bugfixer", "--", "alpha-one"]),
+        ("defaults", ["orchestrate", "grant", "--", "alpha-one"]),
+    ],
+)
+def test_orchestration_grant_runs_cli(mocker, tmp_path, value, argv):
+    session, quiet = _orchestration_session(mocker, tmp_path)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", value))
+    assert quiet.call_args.args[1] == argv
+
+
+def test_orchestration_revoke_asks_first(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    confirm = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("Revoke…", "revoke")
+    )
+    assert confirm.purpose == "container-orchestration-revoke"
+    assert [e.label for e in confirm.entries] == ["No", "Yes, revoke"]
+    quiet.assert_not_called()
+    session.submit_picker(confirm, PickerEntry("No", "no"))
+    quiet.assert_not_called()
+    session.submit_picker(confirm, PickerEntry("Yes, revoke", "yes"))
+    assert quiet.call_args.args[1] == ["orchestrate", "revoke", "--", "alpha-one"]
+
+
+def test_orchestration_picker_refused_for_a_child(mocker, tmp_path):
+    from jailbee.orchestration.view import ChildView
+
+    session, _ = _orchestration_session(mocker, tmp_path)
+    group = session.groups[0]
+    group.containers[0] = dataclasses.replace(
+        group.containers[0], child=ChildView("alpha-o", "running", (), False, ())
+    )
+    assert session.open_orchestration("alpha-one") is None
+    assert "not available" in session.notice

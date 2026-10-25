@@ -151,7 +151,7 @@ def _container(state: str = "Running", **fields: Any) -> ContainerInfo:
 _AUTOSTART_LIVE = {"job_phase": "autostart", "job_pid": os.getpid(), "job_kind": "autostart"}
 _AUTOSTART_DONE = {"job_phase": "failed", "job_pid": os.getpid(), "job_kind": "autostart"}
 
-_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts"}
+_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts", "orchestration"}
 
 
 def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -> set[str]:
@@ -167,7 +167,9 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         (_LOCAL, _ALL_CONTAINER),
         (_LOCAL_DISABLED, _ALL_CONTAINER),
         # `mount` brings a host path into a container: a host command
-        (_SSH_DEFAULT, _ALL_CONTAINER),
+        # `orchestrate grant` widens what a container may do: not in the SSH default
+        (_SSH_DEFAULT, _ALL_CONTAINER - {"orchestration"}),
+        (_allow("orchestrate grant", restrict_host=False), {"orchestration"}),
         (_allow("mount", "unmount"), {"mounts"}),
         (_allow("mount", restrict_host=False), {"mounts"}),
         (_allow("unmount"), {"mounts"}),
@@ -182,6 +184,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         "local",
         "local-ignores-policy",
         "ssh-default",
+        "ssh-allowlist-orchestrate-grant",
         "ssh-allowlist-mount-restricted",
         "ssh-allowlist-mount-unrestricted",
         "ssh-allowlist-unmount",
@@ -211,6 +214,7 @@ def test_container_extras_order_and_labels():
     assert extras.before_network == (
         ("Snapshots…", "snapshots"),
         ("Mounts…", "mounts"),
+        ("Orchestration…", "orchestration"),
     )
 
 
@@ -485,3 +489,55 @@ def test_mem_argv(force):
         "alpha-x",
         "8GiB",
     ]
+
+
+def test_grant_argv_order():
+    assert dact.orchestrate_grant_argv(
+        "alpha-o",
+        profile="bf",
+        children=3,
+        allow=("destroy",),
+        deny=("restart",),
+        mounts=("data",),
+        loose=False,
+        egress=("pypi.org",),
+    ) == [
+        "orchestrate", "grant", "--profile", "bf", "--children", "3", "--allow", "destroy",
+        "--deny", "restart", "--mount", "data", "--no-loose", "--egress", "pypi.org",
+        "--", "alpha-o",
+    ]  # fmt: skip
+
+
+def test_grant_argv_empty_lists_clear():
+    assert dact.orchestrate_grant_argv("alpha-o", mounts=(), egress=()) == [
+        "orchestrate", "grant", "--clear-mounts", "--clear-egress", "--", "alpha-o",
+    ]  # fmt: skip
+    assert dact.orchestrate_grant_argv("alpha-o") == ["orchestrate", "grant", "--", "alpha-o"]
+    assert dact.orchestrate_grant_argv("alpha-o", loose=True)[2] == "--loose"
+
+
+def test_revoke_argv():
+    assert dact.orchestrate_revoke_argv("alpha-o") == ["orchestrate", "revoke", "--", "alpha-o"]
+
+
+@pytest.mark.parametrize(
+    ("fields", "case"),
+    [
+        ({"child": "child"}, _LOCAL),
+        ({"mode": "mount"}, _LOCAL),
+        ({"state": "—"}, _LOCAL),
+        ({}, _SSH_DEFAULT),
+    ],
+    ids=["child", "mount-mode", "mid-creation", "ssh-denied"],
+)
+def test_orchestration_entry_hidden(fields, case):
+    from jailbee.orchestration.view import ChildView
+
+    if fields.get("child") == "child":
+        fields = {"child": ChildView("alpha-o", "running", (), False, ())}
+    assert "orchestration" not in _container_verbs(case, _container(**fields))
+
+
+def test_orchestration_entry_offered_for_a_plain_clone():
+    for state in ("Running", "Stopped"):
+        assert "orchestration" in _container_verbs(_LOCAL, _container(state))

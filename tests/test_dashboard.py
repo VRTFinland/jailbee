@@ -5689,7 +5689,9 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     verbs = [verb for _label, verb in menu.actions]
     at = verbs.index("job log --follow")
     assert verbs[at + 1 : at + 3] == ["autostart-status", "autostart-cancel"]
-    assert verbs[verbs.index("snapshots") + 1] == "credential-group"
+    assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
+        "orchestration"
+    ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")
 

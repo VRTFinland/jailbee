@@ -1036,6 +1036,72 @@ class DashboardSession:
             return self.open_snapshots(container)
         if verb == dact.MOUNTS:
             return self.open_mount_picker(container)
+        if verb == dact.ORCHESTRATION:
+            return self.open_orchestration(container)
+        return None
+
+    def open_orchestration(self, container: str) -> Picker | None:
+        """Grant (by profile or defaults), re-apply a profile, or revoke; None with a notice."""
+        found = self._listed_container(container)
+        if found is None or self.repo_for(container, "container") is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        group, info = found
+        if not dact.orchestration_offered(info, self.ssh_policy, over_ssh=self.over_ssh):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        from rich.text import Text
+
+        from jailbee.dashboard.details import _orchestration_lines
+
+        entries: list[PickerEntry] = []
+        # Task 9's edit entries for an existing grant go here, above the re-apply rows.
+        if info.grant is not None:
+            for p in group.orchestration_profiles:
+                entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
+            entries.append(PickerEntry("Revoke…", "revoke"))
+        else:
+            for p in group.orchestration_profiles:
+                entries.append(PickerEntry(f"Grant profile '{p}'", f"profile:{p}"))
+            entries.append(PickerEntry("Grant with defaults", "defaults"))
+        return Picker(
+            "container-orchestration",
+            f"Orchestration for '{info.display_name}'",
+            tuple(entries),
+            target=container,
+            detail=tuple(Text.from_markup(line).plain for line in _orchestration_lines(info)),
+        )
+
+    def submit_orchestration(self, picker: Picker, entry: PickerEntry) -> Picker | None:
+        """Run the chosen grant, or ask before a revoke."""
+        container = picker.target
+        if picker.purpose == "container-orchestration-revoke":
+            if entry.value != "yes":
+                self.set_notice("Cancelled")
+                return None
+            # Not `dispatchable`: that resolves a shared-menu verb, and this entry is terminal-only.
+            repo = self.repo_for(container, "container")
+            if repo is not None:
+                self.run_quiet_cli(repo, dact.orchestrate_revoke_argv(container))
+            else:
+                self.set_notice(f"'{container}' is gone")
+            return None
+        if entry.value == "revoke":
+            return Picker(
+                "container-orchestration-revoke",
+                f"Revoke orchestration for '{container}'?",
+                (PickerEntry("No", "no", "n"), PickerEntry("Yes, revoke", "yes", "y")),
+                target=container,
+            )
+        repo = self.repo_for(container, "container")
+        if repo is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        if entry.value.startswith("profile:"):
+            argv = dact.orchestrate_grant_argv(container, profile=entry.value[len("profile:") :])
+        else:
+            argv = dact.orchestrate_grant_argv(container)
+        self.run_quiet_cli(repo, argv)
         return None
 
     def open_memory_picker(self, container: str) -> Picker | None:
@@ -1781,6 +1847,8 @@ class DashboardSession:
         if picker.purpose == "outbox-clear-preparing":
             self.set_notice("Cancelled")
             return None
+        if picker.purpose in ("container-orchestration", "container-orchestration-revoke"):
+            return self.submit_orchestration(picker, entry)
         if picker.purpose == "container-mounts":
             repo = self.repo_for(picker.target, "container")
             if repo is None:
