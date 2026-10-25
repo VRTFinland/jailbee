@@ -594,3 +594,13 @@ def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
 HANDLERS["stop"] = handle_stop
 HANDLERS["restart"] = handle_restart
 HANDLERS["destroy"] = handle_destroy
+
+
+def _handle_message(ctx: ActionContext, m: Manifest) -> Outcome:
+    # Late import: `messages` imports this module, whichever of the two loads first.
+    from jailbee.orchestration import messages
+
+    return messages.handle_message(ctx, m)
+
+
+HANDLERS["message"] = _handle_message
