@@ -140,3 +140,20 @@ def test_install_systemd_units_writes_jailbee_units(
     assert (units / "jailbee-net-refresh.timer").is_file()
     assert "/usr/bin/jailbee" in (units / "jailbee-net-refresh.service").read_text()
     assert any("jailbee-net-refresh.timer" in str(c.args) for c in run.call_args_list)
+
+
+def test_install_systemd_units_installs_broker(
+    private_home: Path,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.init_command import install_systemd_units
+
+    mocker.patch("shutil.which", return_value="/usr/local/bin/jailbee")
+    run_mock = mocker.patch("subprocess.run")
+
+    install_systemd_units()
+
+    unit = private_home / ".config" / "systemd" / "user" / "jailbee-broker.service"
+    assert "ExecStart=/usr/local/bin/jailbee _broker" in unit.read_text()
+    cmds = [list(c.args[0]) for c in run_mock.call_args_list]
+    assert ["systemctl", "--user", "enable", "--now", "jailbee-broker.service"] in cmds

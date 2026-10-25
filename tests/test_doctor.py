@@ -4418,3 +4418,26 @@ def test_kernel_features_accept_a_kernel_without_apparmor(tmp_path: Path) -> Non
     rows = _kernel_rows(_check_kernel_features(**_kernel_rig(tmp_path, config=None, apparmor=None)))
     assert rows["apparmor"].ok is True
     assert "not enabled" in rows["apparmor"].detail
+
+
+def test_doctor_reports_broker_inactive(mocker) -> None:
+    from jailbee.doctor import _check_broker
+
+    mocker.patch("jailbee.orchestration.service.status", return_value="inactive")
+
+    check = _check_broker()
+
+    assert check.name == "orchestration broker"
+    assert check.ok is False
+    assert "jb setup" in check.detail
+
+
+def test_doctor_reports_broker_active(mocker) -> None:
+    from jailbee.doctor import _check_broker
+
+    mocker.patch("jailbee.orchestration.service.status", return_value="active")
+
+    check = _check_broker()
+
+    assert check.ok is True
+    assert check.detail == "active"

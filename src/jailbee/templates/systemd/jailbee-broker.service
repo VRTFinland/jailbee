@@ -1,0 +1,14 @@
+[Unit]
+Description=Jailbee orchestration broker
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={jailbee_bin} _broker
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+KillMode=process
+
+[Install]
+WantedBy=default.target

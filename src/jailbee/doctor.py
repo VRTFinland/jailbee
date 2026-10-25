@@ -1340,6 +1340,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     # 10. Egress pool auto-refresh subsystem
     results.extend(_check_egress_pool(cfg))
+    results.append(_check_broker())
 
     # 10b. Post-install steps `jailbee setup` owns. Plain file checks, so they
     # sit outside the `incus_available` gate — and a missing one is silent
@@ -2008,6 +2009,18 @@ def _check_pool_roots(cfg: Config) -> list[CheckResult]:
             f"{len(pools)} pooled: {', '.join(p.name for p in pools)}",
         )
     ]
+
+
+def _check_broker() -> CheckResult:
+    """Doctor check for the orchestration broker's systemd user unit."""
+    from jailbee.orchestration import service as broker_service
+
+    state = broker_service.status()
+    return CheckResult(
+        name="orchestration broker",
+        ok=state == "active",
+        detail=state if state == "active" else f"{state} — run `jb setup` to install/enable",
+    )
 
 
 def _check_egress_pool(cfg: Config) -> list[CheckResult]:

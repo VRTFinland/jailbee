@@ -6,6 +6,7 @@ import json
 
 import pytest
 from pydantic import ValidationError
+from pytest_mock import MockerFixture
 
 from jailbee.orchestration import labels
 from jailbee.orchestration.grant import (
@@ -89,10 +90,17 @@ def test_child_rights_round_trip() -> None:
     assert ChildRights.from_label(r.to_label()) == r
 
 
-def test_ensure_running_is_a_safe_noop() -> None:
+def test_ensure_running_is_safe_and_never_calls_real_systemctl(
+    mocker: MockerFixture,
+) -> None:
     from jailbee.orchestration import service
 
+    mocker.patch("shutil.which", return_value=None)
+    run = mocker.patch("subprocess.run")
+    mocker.patch("jailbee.orchestration.service.warn")
+
     assert service.ensure_running() is None
+    run.assert_not_called()
 
 
 @pytest.mark.parametrize(

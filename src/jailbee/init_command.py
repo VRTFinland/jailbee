@@ -667,3 +667,8 @@ def install_systemd_units() -> None:
         check=True,
     )
     info(f"Enabled refresh timer: {NET_REFRESH_TIMER}")
+
+    from jailbee.orchestration import service as broker_service
+
+    broker_service.enable_now(jailbee_bin)
+    info(f"Enabled orchestration broker: {broker_service.BROKER_SERVICE}")
