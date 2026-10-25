@@ -1886,6 +1886,7 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
     before = (
         ("Snapshots…", tsession.dact.SNAPSHOTS),
         ("Mounts…", tsession.dact.MOUNTS),
+        ("Orchestration…", tsession.dact.ORCHESTRATION),
     )
     for pr_number, pr_author, job, network, extras, pending in itertools.product(
         (None, 7),
