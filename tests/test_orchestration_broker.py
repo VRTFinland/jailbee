@@ -214,9 +214,7 @@ def test_invalid_manifest_name_is_skipped_and_logged_once(
     assert len([r for r in caplog.records if "invalid name" in r.getMessage()]) == 1
 
 
-def test_unparseable_grant_label_is_logged_once(
-    rig: Rig, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_unparseable_grant_label_is_logged_once(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "{nope"})]
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
     memory = broker.BrokerMemory()

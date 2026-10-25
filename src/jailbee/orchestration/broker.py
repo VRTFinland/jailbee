@@ -242,9 +242,7 @@ def _settle_queue(ctx: ActionContext) -> None:
         _reply(ctx, req.manifest_id, outcome)
 
 
-def _nodes(
-    raw: list[dict[str, object]], configs: Mapping[str, Config | None]
-) -> dict[str, Node]:
+def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -> dict[str, Node]:
     from jailbee.lifecycle import short_name
 
     nodes: dict[str, Node] = {}
