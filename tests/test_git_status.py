@@ -210,6 +210,8 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "HOST_SOURCE": "/mnt/host-source",
         "OUTBOX_DIR": "/home/dev/.jailbee/pr-outbox",
         "ISSUE_OUTBOX_DIR": "/home/dev/.jailbee/issue-outbox",
+        "ORCH_INBOX_DIR": "/home/dev/.jailbee/orchestration/inbox",
+        "ORCH_OUTBOX_DIR": "/home/dev/.jailbee/orchestration/outbox",
         "GIT_OPTIONAL_LOCKS": "0",
     }
     assert kwargs.get("timeout") == 5
@@ -899,6 +901,91 @@ def test_non_numeric_pending_issue_count_is_unknown(mocker):
     status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
 
     assert status.pending_issue_actions is None
+
+
+_FIFTEEN = (*_TWELVE, "0", "0", "2")
+
+
+def test_parse_reads_orchestration_counts(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_FIFTEEN, "3", "1")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert (status.unread_inbox, status.pending_orch_outbox) == (3, 1)
+
+
+def test_parse_old_output_leaves_orchestration_counts_unknown(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_FIFTEEN)
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert (status.unread_inbox, status.pending_orch_outbox) == (None, None)
+
+
+def test_parse_question_mark_is_unknown(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_FIFTEEN, "?", "?")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert (status.unread_inbox, status.pending_orch_outbox) == (None, None)
+
+
+def test_probe_passes_orchestration_dirs(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_FIFTEEN, "0", "0")
+
+    probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    env = incus.exec.call_args.kwargs["env"]
+    assert env["ORCH_INBOX_DIR"] == "/home/dev/.jailbee/orchestration/inbox"
+    assert env["ORCH_OUTBOX_DIR"] == "/home/dev/.jailbee/orchestration/outbox"
+
+
+def test_probe_snippet_counts_orchestration_manifests(tmp_path):
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    inbox = tmp_path / "inbox"
+    (inbox / "read").mkdir(parents=True)
+    (inbox / "a.json").write_text("{}")
+    (inbox / "b.json").write_text("{}")
+    (inbox / "read" / "c.json").write_text("{}")
+    (inbox / "d.json").symlink_to(inbox / "a.json")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git_bin = bin_dir / "git"
+    git_bin.write_text(
+        '#!/bin/sh\ncase "$*" in\n'
+        '  "rev-parse HEAD") printf "headsha\\n" ;;\n'
+        '  "rev-parse --git-dir") printf ".git\\n" ;;\n'
+        '  *"--verify"*) exit 1 ;;\n'
+        "esac\n"
+    )
+    git_bin.chmod(0o755)
+
+    completed = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "REPO_DIR": str(repo),
+            "OUTBOX_DIR": str(tmp_path / "pr"),
+            "ISSUE_OUTBOX_DIR": str(tmp_path / "issue"),
+            "ORCH_INBOX_DIR": str(inbox),
+            "ORCH_OUTBOX_DIR": str(tmp_path / "absent-outbox"),
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    fields = completed.stdout.split("\0")
+    assert fields[15] == "2"
+    assert fields[16] == "0"
+    assert fields[17] == ""  # exactly 17 NUL-terminated fields
 
 
 def test_live_target_probe_uses_direct_tree_and_symmetric_commit_comparison(mocker):
