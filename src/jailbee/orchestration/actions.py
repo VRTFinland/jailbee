@@ -6,18 +6,25 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from jailbee import lifecycle
 from jailbee.orchestration import labels, profiles
-from jailbee.orchestration.grant import Grant, GrantError, effective_grant
-from jailbee.orchestration.protocol import CHILD_TYPES, Manifest
+from jailbee.orchestration.grant import (
+    Grant,
+    GrantError,
+    check_rights,
+    effective_grant,
+)
+from jailbee.orchestration.protocol import CHILD_TYPES, Manifest, SpawnManifest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Collection, Mapping
     from datetime import datetime
     from pathlib import Path
 
     from jailbee.config import Config
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
+    from jailbee.orchestration.grant import ChildRights
 
 Role = Literal["orchestrator", "child", "none"]
 
@@ -130,3 +137,45 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     if handler is None:
         return refused(f"`{manifest.type}` is not supported by this broker version")
     return handler(ctx, manifest)
+
+
+def child_preamble(orchestrator_short: str) -> str:
+    return (
+        f"You are a child container of orchestrator `{orchestrator_short}`. "
+        "Use the `jailbee-orchestration-child` skill."
+    )
+
+
+@dataclass(frozen=True)
+class SpawnPlan:
+    child_full: str
+    kind: Literal["fork", "new"]
+    branch: str
+    base: str | None
+    prompt: str
+    rights: ChildRights
+
+
+def plan_spawn(
+    ctx: ActionContext, m: SpawnManifest, *, queued_names: Collection[str]
+) -> SpawnPlan | Outcome:
+    """Validate a spawn request; `queued_names` are full names of queued spawns."""
+    grant = ctx.raw_grant()
+    if grant is None:
+        return refused(_NOT_ALLOWED)
+    problems = check_rights(
+        grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
+    )
+    if problems:
+        return refused("; ".join(problems))
+    try:
+        full = lifecycle.derive_container_name(ctx.cfg, m.branch)
+    except ValueError as exc:
+        return refused(str(exc))
+    short = lifecycle.short_name(ctx.cfg, full)
+    if full in ctx.nodes or ctx.incus.exists(full):
+        return refused(f"container `{short}` already exists")
+    if full in queued_names:
+        return refused(f"a request for `{short}` is already queued")
+    prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights)
