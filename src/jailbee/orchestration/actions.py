@@ -6,18 +6,20 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
-from jailbee import lifecycle
+from jailbee import forking, lifecycle
 from jailbee.create_flow import CreateError, Interaction, NeedsOperator, start_create
-from jailbee.forking import ForkError
+from jailbee.forking import ForkError, ForkSource
 from jailbee.lifecycle import NewContainerOptions
 from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.grant import (
+    ChildRights,
     Grant,
     GrantError,
     check_rights,
     effective_grant,
 )
 from jailbee.orchestration.protocol import CHILD_TYPES, Manifest, SpawnManifest
+from jailbee.orchestration.state import QueuedRequest, load_queue, save_queue
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping
@@ -26,10 +28,8 @@ if TYPE_CHECKING:
 
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Config
-    from jailbee.forking import ForkSource
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
-    from jailbee.orchestration.grant import ChildRights
 
 Role = Literal["orchestrator", "child", "none"]
 
@@ -236,3 +236,154 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     except (ForkError, ValueError) as e:
         return refused(str(e))
     return Outcome("started", f"child `{lifecycle.short_name(ctx.cfg, plan.child_full)}` created")
+
+
+GRANT_REVOKED = "orchestration grant revoked"
+
+
+def live_create_jobs(prefix: str) -> set[str]:
+    """Container names of this repo's create jobs whose worker is still alive."""
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_CREATE
+
+    with Session(get_engine()) as session:
+        rows = background.list_all_jobs(session)
+    return {
+        name
+        for name, job in rows.items()
+        if job.op_kind == JOB_CREATE
+        and job.container_prefix == prefix
+        and background.worker_alive(job.pid)
+    }
+
+
+def running_children(ctx: ActionContext) -> int:
+    """Children running plus children still being created, counted once each.
+
+    A job row does not record its orchestrator, so a live create job counts
+    when its container does not exist yet or is one of this sender's children.
+    """
+    mine = {n.full for n in ctx.children()}
+    names = {n.full for n in ctx.children() if n.running}
+    for name in live_create_jobs(ctx.cfg.container_prefix):
+        if name in mine or name not in ctx.nodes:
+            names.add(name)
+    return len(names)
+
+
+def _queued(ctx: ActionContext) -> list[QueuedRequest]:
+    return load_queue(ctx.root).get(ctx.sender.full, [])
+
+
+def _store(ctx: ActionContext, entries: list[QueuedRequest]) -> None:
+    queues = load_queue(ctx.root)
+    queues[ctx.sender.full] = entries
+    save_queue(ctx.root, queues)
+
+
+def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
+    """Plan a spawn; start it when a slot is free, else queue it FIFO."""
+    from jailbee import git
+
+    if not isinstance(m, SpawnManifest):
+        return refused("not a spawn manifest")
+    grant = ctx.grant()
+    if grant is None:
+        return refused(_NOT_ALLOWED)
+    queued = _queued(ctx)
+    plan = plan_spawn(ctx, m, queued_names={q.child_full for q in queued})
+    if isinstance(plan, Outcome):
+        return plan
+    fork: ForkSource | None = None
+    if plan.kind == "fork":
+        try:
+            fork = forking.prepare_fork(ctx.cfg, ctx.incus, ctx.sender.short)
+            forking.pin_fork_commit(ctx.cfg, plan.child_full, fork.commit)
+        except (ForkError, git.GitError) as e:
+            return refused(str(e))
+    if running_children(ctx) < grant.max_running_children:
+        return start_child(ctx, plan, fork=fork)
+    queued.append(
+        QueuedRequest(
+            manifest_id=m.id,
+            child_full=plan.child_full,
+            kind=plan.kind,
+            commit=fork.commit if fork is not None else None,
+            queued_at=ctx.now.isoformat(),
+            branch=plan.branch,
+            base=plan.base,
+            prompt=plan.prompt,
+            rights=plan.rights.model_dump(mode="json"),
+        )
+    )
+    _store(ctx, queued)
+    return Outcome("queued", f"queued at position {len(queued)}")
+
+
+def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
+    short = lifecycle.short_name(ctx.cfg, req.child_full)
+    if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
+        return refused(f"container `{short}` already exists")
+    plan = SpawnPlan(
+        child_full=req.child_full,
+        kind="fork" if req.kind == "fork" else "new",
+        branch=req.branch,
+        base=req.base,
+        prompt=req.prompt,
+        rights=ChildRights.model_validate(req.rights),
+    )
+    fork: ForkSource | None = None
+    if req.kind == "fork":
+        if req.commit is None:
+            return refused("queued fork has no pinned commit")
+        fork = ForkSource(
+            full_name=ctx.sender.full,
+            branch=req.branch,
+            commit=req.commit,
+            base_branch=ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None,
+            untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
+        )
+    return start_child(ctx, plan, fork=fork)
+
+
+# Queue kind -> starter. Task 10 registers "restart" here.
+STARTERS: dict[str, Callable[[ActionContext, QueuedRequest], Outcome]] = {
+    "fork": _start_spawn,
+    "new": _start_spawn,
+}
+
+
+def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
+    """Start queued requests FIFO while slots are free; a lowered limit starts nothing."""
+    grant = ctx.grant()
+    queued = _queued(ctx)
+    if grant is None or not queued:
+        return []
+    free = grant.max_running_children - running_children(ctx)
+    results: list[tuple[QueuedRequest, Outcome]] = []
+    while queued and free > 0:
+        req = queued.pop(0)
+        starter = STARTERS.get(req.kind)
+        outcome = (
+            starter(ctx, req) if starter else refused(f"unknown queued request kind `{req.kind}`")
+        )
+        if outcome.state == "started":
+            free -= 1
+        results.append((req, outcome))
+    if results:
+        _store(ctx, queued)
+    return results
+
+
+def drop_queue(ctx: ActionContext, reason: str) -> list[QueuedRequest]:
+    """Remove and return the sender's queued requests; the caller reports `reason` per entry."""
+    queued = _queued(ctx)
+    if queued:
+        _store(ctx, [])
+    return queued
+
+
+HANDLERS["spawn"] = handle_spawn
