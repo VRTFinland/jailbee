@@ -51,7 +51,7 @@ from jailbee.orchestration.state import (
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
     from types import FrameType
 
     from jailbee.config import Config
@@ -309,7 +309,15 @@ def tick(
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
-    if not candidates and not queues:
+    parked = [
+        e["name"]
+        for e in raw
+        if isinstance(e.get("name"), str)
+        and e.get("status") == "Running"
+        and not (isinstance(e.get("config"), dict) and _labelled(e["config"]))
+        and has_pending(root, e["name"])
+    ]
+    if not candidates and not queues and not parked:
         return False
 
     try:
@@ -343,6 +351,9 @@ def tick(
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
+            # A revoked grant leaves no label; parked messages still get delivered.
+            if node.running and has_pending(root, node.full):
+                _flush_unlabelled(node, context, root, incus)
             continue
         try:
             ctx = context(node)
@@ -389,6 +400,18 @@ def tick(
         except Exception:
             log.exception("broker: queue of %s failed", full)
     return active
+
+
+def _flush_unlabelled(
+    node: Node, context: Callable[[Node], ActionContext | None], root: Path, incus: Incus
+) -> None:
+    """Flush parked messages of a running container without orchestration labels."""
+    try:
+        ctx = context(node)
+        if ctx is not None:
+            flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
+    except Exception:
+        log.exception("broker: flushing %s failed", node.full)
 
 
 def _pause(seconds: float, stop: StopFlag) -> None:
