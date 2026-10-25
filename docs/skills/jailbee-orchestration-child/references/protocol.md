@@ -38,6 +38,7 @@ No `to`: the message goes to your orchestrator. `kind` is optional (`note`,
 `question`, `done`, `blocked`); `in_reply_to` is the id of the message you
 answer, or `null`.
 
+<!-- kind: child-outbox -->
 ```json
 {"version": 1, "id": "msg-0003", "type": "message", "kind": "done",
  "body": "Fixed the parser; tests pass. Everything is committed.",
@@ -63,6 +64,7 @@ message to `inbox/read/` (or use `jailbee-inbox read <id>`).
 
 A `message` from your orchestrator (`from` is its short name):
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "main-orch",
  "kind": "note", "body": "Use the existing parser.", "in_reply_to": "msg-0002"}
@@ -76,6 +78,7 @@ needs action. The two `done`-check refusals above are joined by
 `could not record the done report: ...`, which are not your manifest's fault:
 retry `done` once under a new id, and send `blocked` if it repeats.
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "msg-0003",
  "state": "refused",

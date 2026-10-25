@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
+import sys
 from pathlib import Path
+
+import pytest
 
 from jailbee import agent_skills
 from jailbee.config import CONTAINER_USERNAME
@@ -868,3 +873,55 @@ def test_docs_name_every_bundled_skill() -> None:
         text = page.read_text()
         for name in agent_skills.bundled_skill_names():
             assert f"`{name}`" in text, f"{page.name} misses {name}"
+
+
+# --------------------------------------------------------------------------
+# protocol examples against the broker's own models
+# --------------------------------------------------------------------------
+
+_JSON_BLOCK = re.compile(r"(?:<!-- kind: (?P<kind>[\w-]+) -->\n)?```json\n(?P<body>.*?)```", re.S)
+_KINDS = {"outbox", "child-outbox", "inbox", "grant"}
+
+
+def _tagged_blocks(skill: str) -> list[tuple[str, str]]:
+    text = _skill_text(skill, "references/protocol.md")
+    blocks = []
+    for m in _JSON_BLOCK.finditer(text):
+        kind = m.group("kind")
+        assert kind in _KINDS, f"{skill}: json block without a valid kind tag:\n{m.group('body')}"
+        blocks.append((kind, m.group("body")))
+    assert blocks, skill
+    return blocks
+
+
+@pytest.mark.parametrize("skill", [ORCH, CHILD])
+def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
+    from jailbee.orchestration.grant import Grant
+    from jailbee.orchestration.protocol import (
+        InboxMessage,
+        InboxStatus,
+        MessageManifest,
+        parse_manifest,
+    )
+
+    # Any body_file / prompt_file the examples name is "next to the manifest".
+    files = {"spawn-fix-12.md": "Fix issue 12.", "restart-fix-12-b.md": "Try again."}
+    for kind, body in _tagged_blocks(skill):
+        data = json.loads(body)
+        if kind in ("outbox", "child-outbox"):
+            manifest = parse_manifest(f"{data['id']}.json", body, files)
+            if kind == "child-outbox":
+                assert isinstance(manifest, MessageManifest), "a child only sends messages"
+        elif kind == "inbox":
+            model = InboxStatus if data["type"] == "status" else InboxMessage
+            model.model_validate(data)
+        else:
+            Grant.model_validate(data)
+
+
+def test_protocol_block_tag_check_rejects_an_untagged_block(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys.modules[__name__], "_skill_text", lambda *_a, **_k: '```json\n{"version": 1}\n```\n'
+    )
+    with pytest.raises(AssertionError, match="without a valid kind tag"):
+        _tagged_blocks(ORCH)

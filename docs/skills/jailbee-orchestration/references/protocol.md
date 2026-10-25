@@ -43,12 +43,14 @@ committed HEAD; a dirty tree is refused) or `new` (a fresh checkout from
 `base`, which is only valid with `kind: "new"`). `branch` is the child's
 branch. `rights` must be within `grantable` (see below). `note` is optional.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "spawn-fix-12", "type": "spawn", "kind": "fork",
  "branch": "fix/issue-12", "prompt_file": "spawn-fix-12.md",
  "rights": {"mounts": [], "loose": false, "egress": []}, "note": "GitHub #12"}
 ```
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "spawn-docs-1", "type": "spawn", "kind": "new",
  "base": "main", "branch": "docs/intro", "prompt": "Write the intro page.",
@@ -64,6 +66,7 @@ Send a message to a child. `to` is the child's short name; `body` or
 `body_file`; `kind` is optional (`note`, `question`, `done`, `blocked`);
 `in_reply_to` is the id of the message you answer.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "reply-0004", "type": "message", "to": "fix-issue-12",
  "body": "Use the existing parser, do not add a new one.", "kind": "note",
@@ -77,6 +80,7 @@ CLI: `jailbee-inbox send message --to C [--kind K] [--reply-to ID] --text T`.
 Fetch a child's committed work into your repo as
 `refs/jailbee/from/<child>/<branch>`. Nothing is merged.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "import-fix-12", "type": "import", "child": "fix-issue-12"}
 ```
@@ -87,6 +91,7 @@ Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
 Status: `done` ("child `x` restarted") when it runs at once; `queued` when
 no slot is free, then `started` when it is later started.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "restart-fix-12-b", "type": "restart",
  "child": "fix-issue-12", "prompt_file": "restart-fix-12-b.md"}
@@ -96,6 +101,7 @@ no slot is free, then `started` when it is later started.
 
 Stop a running child, freeing its slot.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "stop-fix-12", "type": "stop", "child": "fix-issue-12"}
 ```
@@ -105,6 +111,7 @@ Stop a running child, freeing its slot.
 Delete a stopped child. Refused while it is running, and refused if it has
 commits you have not imported, unless `force` is true.
 
+<!-- kind: outbox -->
 ```json
 {"version": 1, "id": "destroy-fix-12", "type": "destroy",
  "child": "fix-issue-12", "force": false}
@@ -128,6 +135,7 @@ A type whose operation is missing from `grant.json` is refused.
 A child may write only `message` manifests, with no `to` (they go to its
 orchestrator).
 
+<!-- kind: child-outbox -->
 ```json
 {"version": 1, "id": "msg-0003", "type": "message", "kind": "done",
  "body": "Fixed the parser; tests pass. Everything is committed.",
@@ -145,6 +153,7 @@ message to `inbox/read/` (or use `jailbee-inbox read <id>`).
 
 A `message` from a child:
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "fix-issue-12",
  "kind": "question", "body": "Which parser do you mean?", "in_reply_to": null}
@@ -153,22 +162,26 @@ A `message` from a child:
 A `status` reply answers one manifest; `ref` is the manifest id and `state`
 is one of four values.
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-0a1b2c3d", "type": "status", "ref": "spawn-fix-12",
  "state": "queued", "detail": "queued at position 1"}
 ```
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-0a1b2c3e", "type": "status", "ref": "spawn-fix-12",
  "state": "started", "detail": "creation of child `fix-issue-12` started"}
 ```
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-0a1b2c3f", "type": "status", "ref": "import-fix-12",
  "state": "done",
  "detail": "imported as refs/jailbee/from/fix-issue-12/fix/issue-12 at 1a2b3c4d5e6f"}
 ```
 
+<!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "destroy-fix-12",
  "state": "refused", "detail": "child `fix-issue-12` is running; stop it first"}
@@ -179,6 +192,7 @@ A `queued` status applies to `restart` as well as `spawn`. Other `done` details:
 
 ## `grant.json`
 
+<!-- kind: grant -->
 ```json
 {"version": 1, "max_running_children": 2,
  "operations": ["import", "message", "restart", "spawn", "stop"],
