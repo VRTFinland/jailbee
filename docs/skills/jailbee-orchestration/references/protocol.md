@@ -58,19 +58,29 @@ branch. `rights` must be within `grantable` (see below). `note` is optional.
 ```
 
 CLI: `jailbee-inbox send spawn --branch fix/issue-12 [--new [--base main]]
-[--mount M]... [--loose] [--egress H]... [--note T] --file prompt.md`.
+[--mount M]... [--loose] [--egress H]... [--note T] -` with the prompt on
+stdin (or `--text T`; `--file` only with an absolute path outside the repo).
+Never leave prompt files in the repo work tree: untracked files make a
+`fork` spawn and an `import` refused.
+
+The short name is derived from the branch: lowercased, characters outside
+`[a-z0-9-]` become `-`, runs of `-` collapse. A taken name is refused
+("already exists").
 
 ### `message`
 
 Send a message to a child. `to` is the child's short name; `body` or
 `body_file`; `kind` is optional (`note`, `question`, `done`, `blocked`);
-`in_reply_to` is the id of the message you answer.
+`in_reply_to` is the `h-<hex>` id of the inbox message you answer (the
+host re-ids every relayed message, so use the id you read in the inbox).
+A message to a stopped child is answered `queued` and delivered when it
+runs again.
 
 <!-- kind: outbox -->
 ```json
 {"version": 1, "id": "reply-0004", "type": "message", "to": "fix-issue-12",
  "body": "Use the existing parser, do not add a new one.", "kind": "note",
- "in_reply_to": "msg-0003"}
+ "in_reply_to": "h-3fa9c012"}
 ```
 
 CLI: `jailbee-inbox send message --to C [--kind K] [--reply-to ID] --text T`.
@@ -108,8 +118,11 @@ Stop a running child, freeing its slot.
 
 ### `destroy`
 
-Delete a stopped child. Refused while it is running, and refused if it has
-commits you have not imported, unless `force` is true.
+Delete a child (stopping it first is the recommended order). Refused if it
+has commits you have not imported, unless `force` is true: its current HEAD
+must equal the last import. For a stopped child the HEAD recorded when the
+broker stopped it counts; one stopped any other way is refused until
+restarted.
 
 <!-- kind: outbox -->
 ```json
@@ -128,7 +141,9 @@ commits you have not imported, unless `force` is true.
 | `stop` | `stop` |
 | `destroy` | `destroy` |
 
-A type whose operation is missing from `grant.json` is refused.
+A type whose operation is missing from `grant.json` is refused. The broker
+writes `grant.json` after its first round and the file may remain after a
+revoke.
 
 ## Child manifests
 
@@ -181,14 +196,13 @@ is one of four values.
  "detail": "imported as refs/jailbee/from/fix-issue-12/fix/issue-12 at 1a2b3c4d5e6f"}
 ```
 
-<!-- kind: inbox -->
-```json
-{"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "destroy-fix-12",
- "state": "refused", "detail": "child `fix-issue-12` is running; stop it first"}
-```
-
-A `queued` status applies to `restart` as well as `spawn`. Other `done` details: `delivered to <child>`, `child \`<child>\` stopped`,
-`child \`<child>\` destroyed`. `refused` is final.
+A `queued` status applies to `restart` as well as `spawn`, and to a
+`message` for a stopped child. Other `done` details: `delivered to <child>`,
+`child \`<child>\` stopped`, `child \`<child>\` destroyed`. `refused` is
+final. The `ref` of a status is the id of your manifest; note the id a
+helper prints (`<type>-<UTC time>-<hex>`). Asking about an unknown child is
+refused ("`x` is not a child of this orchestrator"); after a revoked grant,
+"orchestration grant revoked".
 
 ## `grant.json`
 

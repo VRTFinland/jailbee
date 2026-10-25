@@ -31,7 +31,11 @@ cat ~/.jailbee/orchestration/grant.json
 - `grantable` is the most you may give a child: mounts by name, whether
   `loose` networking is allowed, and egress hosts.
 
-If the file is missing you are not an orchestrator: stop and tell the human.
+If the file is missing, tell the human. The broker writes `grant.json` only
+after its first round over your container (a few seconds after the grant),
+so look again once before concluding anything. The file can also outlive a
+revoked grant; a request made after revocation is `refused` with
+"orchestration grant revoked".
 
 ## Writing a child prompt
 
@@ -54,11 +58,24 @@ Commit everything before you send `done`.
 - `new` starts a fresh checkout from a base (`--new [--base main]`).
 - Grant the least rights the child needs, and only within `grantable`.
 - Prefer the helper; it writes the manifest and body atomically and prints
-  the id:
+  the id. Give the prompt on stdin (`-`) or with `--text`:
 
 ```bash
-jailbee-inbox send spawn --branch fix/issue-12 --file prompt.md --note "GitHub #12"
+jailbee-inbox send spawn --branch fix/issue-12 --note "GitHub #12" - <<'EOF'
+Task: fix issue 12 ...
+EOF
 ```
+
+  Never write prompt, summary or any scratch file inside the repo work tree
+  (and so never pass a relative `--file`): an untracked file makes the tree
+  dirty, and a dirty tree makes a `fork` spawn and an `import` refused. If
+  you need a file, use an absolute path under `/tmp`.
+- Note the id the helper prints (`<type>-<UTC time>-<hex>`, for example
+  `spawn-20261025101500-a1b2`): it is the `ref` of the status reply.
+- The child's short name comes from the branch: lowercased, every character
+  outside `[a-z0-9-]` becomes `-`, runs of `-` collapse (`fix/Issue_12`
+  becomes `fix-issue-12`). A name that is already taken is refused ("already
+  exists"), so pick a distinct branch.
 
   Without the helper, write the JSON yourself (see `references/protocol.md`):
   write `.<id>.json.tmp`, then `mv` it to `<id>.json`.
@@ -71,8 +88,9 @@ jailbee-inbox send spawn --branch fix/issue-12 --file prompt.md --note "GitHub #
 jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
 ```
 
-Run it in the background if your agent supports it (for example Claude's
-background Bash), or use a /loop-style cycle. If you must poll, never poll
+It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
+error. Run it in the background if your agent supports it (for example
+Claude's background Bash), or use a /loop-style cycle. If you must poll, never poll
 more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 `jailbee-inbox ls` lists what is unread.
@@ -90,10 +108,19 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
 
 The broker is not instant; expect seconds, not milliseconds.
 
+`started` is the last status a spawn gets: if the background creation later
+fails, nothing more is reported. So never wait forever for a child. When a
+`wait` times out and a started child has not reported, send it a `message`.
+A refusal such as "`x` is not a child of this orchestrator" means the
+creation failed; tell the human. A `message` to a stopped child is answered
+`queued` and delivered when it runs again.
+
 ## Answering children
 
-A `question` from a child arrives as a `message` with its `from`. Answer with
-a `message` to that child, setting `in_reply_to` to the question's id:
+A `question` from a child arrives as a `message` with its `from`. The host
+gives every relayed message a fresh id (`h-<hex>`), so the id you read in the
+inbox is the one to use. Answer with a `message` to that child, setting
+`in_reply_to` to it:
 
 ```bash
 jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use the existing parser."
@@ -105,11 +132,11 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
    `refs/jailbee/from/<child>/<branch>`.
 2. `git merge` (or cherry-pick) from that ref and resolve conflicts yourself.
 3. Free the slot: a finished child is normally still running, so `stop`
-   it first (`destroy` is refused while it runs: "stop it first"). Stopping
-   alone frees the slot, so queued spawns and restarts can start. Then
-   `destroy` it if your grant has that operation. `destroy` is refused if
-   the child has commits you have not imported, unless `force` is true. Use
-   `force` only when you mean to discard them.
+   it, then `destroy` it if your grant has that operation (stop first is
+   the recommended order). Stopping alone frees the slot, so queued spawns
+   and restarts can start. `destroy` is refused if the child has commits
+   you have not imported, unless `force` is true. Use `force` only when you
+   mean to discard them.
 
 ## Rework
 

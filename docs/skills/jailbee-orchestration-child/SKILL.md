@@ -28,8 +28,16 @@ prints the id:
 ```bash
 jailbee-inbox send message --kind question --text "Which parser do you mean?"
 jailbee-inbox send message --kind blocked --text "Tests need network access I do not have."
-jailbee-inbox send message --kind done --file summary.md
+jailbee-inbox send message --kind done - <<'EOF'
+Fixed the parser; tests pass. Everything is committed.
+EOF
 ```
+
+Pass long text on stdin (`-`) or with `--text`. Never write a summary or
+any other scratch file inside the repo work tree: an untracked file makes
+the tree dirty and your `done` is refused. Use an absolute path under
+`/tmp` if you need a file. Note the id the helper prints
+(`<type>-<UTC time>-<hex>`): it is the `ref` of the status reply.
 
 Without the helper, write `.<id>.json.tmp` and `mv` it to `<id>.json`:
 
@@ -66,8 +74,11 @@ After a `question` or `blocked`, run:
 jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
 ```
 
-On timeout, wait again. Never poll tighter than every 5 min. Match the answer
-by `in_reply_to`: it equals the id of your message.
+It exits 0 with a path, 1 on timeout and 2 on a usage error. On timeout,
+wait again. Never poll tighter than every 5 min. Treat the next message from
+your orchestrator as the answer. Its `in_reply_to` is informational only: the
+host gives relayed messages new ids, so it need not equal the id of your
+message.
 
 ## Checking the inbox while working
 
@@ -86,4 +97,6 @@ is delivered when it starts. Do not resend it.
 Two `refused` details for `done` are not a fault in your manifest or your
 tree: `could not fetch your branch to the host: ...` and
 `could not record the done report: ...`. Retry `done` once under a new id; if
-it repeats, send a `blocked` message describing the detail.
+it repeats, send a `blocked` message describing the detail. For any other
+unknown `refused` detail do the same: retry once under a new id, then send
+`blocked`.

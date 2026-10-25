@@ -35,8 +35,9 @@ messages").
 ## Child `message`
 
 No `to`: the message goes to your orchestrator. `kind` is optional (`note`,
-`question`, `done`, `blocked`); `in_reply_to` is the id of the message you
-answer, or `null`.
+`question`, `done`, `blocked`); `in_reply_to` is `null` for
+a message you originate. The host re-ids relayed messages, so never rely on
+it to match replies.
 
 <!-- kind: child-outbox -->
 ```json
@@ -46,7 +47,9 @@ answer, or `null`.
 ```
 
 CLI: `jailbee-inbox send message [--kind K] [--reply-to ID] --text T`
-(or `--file PATH`, or `-` for stdin).
+(or `-` for stdin; `--file` only with an absolute path outside the repo).
+Never leave summary files in the repo work tree: they make your `done`
+refused. Note the id the helper prints (`<type>-<UTC time>-<hex>`).
 
 A `kind: "done"` message is checked on the host before it is relayed. It is
 answered `refused` unless the work tree is clean and HEAD is on a branch:
@@ -67,7 +70,7 @@ A `message` from your orchestrator (`from` is its short name):
 <!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "main-orch",
- "kind": "note", "body": "Use the existing parser.", "in_reply_to": "msg-0002"}
+ "kind": "note", "body": "Use the existing parser.", "in_reply_to": "h-77aa01bc"}
 ```
 
 A `status` reply answers one of your manifests; `ref` is the manifest id and

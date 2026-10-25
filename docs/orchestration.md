@@ -197,10 +197,11 @@ JSON by hand; rebuild with `jb base build` to get it.
 - **Stop** a child; **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is
   refused ("stop it first").
-- **Destroy** (needs `destroy` in the grant) works on a stopped child and is
-  refused while the child has commits never imported: its HEAD must equal the
-  last import. A stopped child's HEAD is the one recorded when the broker
-  stopped it; a child stopped any other way is refused until restarted.
+- **Destroy** (needs `destroy` in the grant) works on a running or stopped
+  child (stopping first is the recommended order) and is refused while the
+  child has commits never imported: its HEAD must equal the last import. A
+  stopped child's HEAD is the one recorded when the broker stopped it; a
+  child stopped any other way is refused until restarted.
   `force: true` overrides the guard.
 - **Messages** go both ways with replies (`note`, `question`, `blocked`,
   `done`). A child can only message its orchestrator, and an orchestrator only

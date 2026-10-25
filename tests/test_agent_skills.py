@@ -140,7 +140,9 @@ def test_orchestration_skill_covers_review_focus() -> None:
     assert "new id" in text
     assert "refused" in text and "queued" in text and "--timeout" in text
     assert "destroy" in text and "stop" in text and "slot" in text
-    assert "`stop`\n   it first" in text or "stop it first" in text
+    step = text[text.index("Free the slot") :]
+    assert step.index("`stop`") < step.index("`destroy`"), "stop must come before destroy"
+    assert "is refused while it runs" not in text
     assert "restart` alike" in text
 
 
@@ -912,6 +914,7 @@ def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
             manifest = parse_manifest(f"{data['id']}.json", body, files)
             if kind == "child-outbox":
                 assert isinstance(manifest, MessageManifest), "a child only sends messages"
+                assert manifest.to is None, "a child message has no `to`"
         elif kind == "inbox":
             model = InboxStatus if data["type"] == "status" else InboxMessage
             model.model_validate(data)

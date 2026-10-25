@@ -1016,8 +1016,9 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
 ## Orchestration grants — `jailbee orchestrate`
 
 A grant is the right of one container to start and manage child containers.
-It is stored on the container; nothing is granted by default. Only grants
-exist so far: they are stored, capped by the repo and inspectable.
+It is stored on the container; nothing is granted by default. The host
+broker acts on it: the container's agent writes manifests to spawn, message,
+import, stop and destroy children, within the grant and the repo's caps.
 
 - `jailbee orchestrate grant [NAME]` — store a grant. Without flags it is the
   default grant: 2 running children; operations `import`, `message`,
@@ -1785,6 +1786,9 @@ Configuring a new agent, not just inspecting one already on, is the
   read-path recipes → **jailbee-pr-review** skill.
 - Staging GitHub issue creates, edits, comments, labels, closes or reopens
   from *inside* a container → **jailbee-issue-management** skill.
+- An agent inside a granted container managing child containers →
+  **jailbee-orchestration** skill; an agent running as such a child →
+  **jailbee-orchestration-child** skill.
 - JailBee itself misbehaving (a traceback, a command contradicting these docs)
   and the user wants it reported → **jailbee-bug-report** skill.
 - Changing what a container installs, its autostart steps, egress allowlist,
