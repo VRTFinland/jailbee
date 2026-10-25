@@ -47,6 +47,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 - [Unified outbox (`outbox`, `outbox ls|show|drop|clear|apply`)](#unified-outbox)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
+- [Orchestration grants (`orchestrate grant|revoke|show|ls`)](#orchestration-grants)
 - [Network (`net strict|loose|refresh|status|unregister|install|migrate`, `net egress ls|add|rm|export`)](#network)
 - [Accounts (`account ls|use|park|rm`, `account group …`)](#accounts)
 - [GUI (`ide`, `chrome`, `firefox`, `browser`, `apps ls`, `apps run`, `exec --detach`)](#gui)
@@ -1673,6 +1674,23 @@ failure, `--open` with no PR recorded, `--force` onto a foreign/adopted PR
 head with no TTY to confirm on, first-run adoption of an existing PR with no
 TTY to confirm on); 0 for success and for "no submodule has commits ahead of
 its base."
+
+## Orchestration grants
+
+A grant lets a container start and manage child containers. This change adds
+the grants only: storing, limiting and inspecting them.
+
+| Command | Notes |
+|---|---|
+| `jailbee orchestrate grant [NAME] [--profile P] [--children N] [--allow OP]... [--deny OP]... [--mount M]... [--clear-mounts] [--loose\|--no-loose] [--egress HOST]... [--clear-egress]` | Store a grant on the container. Fields not given keep the current value, else the profile's, else the defaults: 2 running children, operations `import`, `message`, `restart`, `spawn`, `stop`; nothing grantable. `OP` is `spawn`, `message`, `import`, `restart`, `stop` or `destroy`. `--deny spawn\|message` is refused: both are part of every grant (use `revoke`). `--mount` and `--clear-mounts`, `--egress` and `--clear-egress` are mutually exclusive; a `--mount` must be a configured `optional_mounts` name. Refused (exit 1) for a mount-mode container, a child, an unregistered repo (run `jailbee apply`), a repo with `orchestration.allowed: false`, and for a grant above the repo's caps (every excess is named). Host-only: refused over remote SSH. |
+| `jailbee orchestrate revoke [NAME]` | Remove the grant. Always asks which container (exit 2 off a terminal). |
+| `jailbee orchestrate show [NAME]` | The grant, the effective grant when the repo's caps narrow it, and the running-children count. A malformed stored grant exits 1. |
+| `jailbee orchestrate ls [--json]` | Every container of the repo holding a grant. `--json` prints name, grant, problem and running_children. |
+
+`jailbee new` applies the configured `default_profile` to the new container
+(not for mount-mode containers or children). Profiles are defined in
+`~/.config/jailbee/global.yaml` or the host-local config file only; see
+[config](../../../config.md#orchestration) in the project docs for the keys.
 
 ## Network
 
