@@ -642,3 +642,16 @@ def test_send_output_parses_with_protocol(script, base, tmp_path):
         files = {p.name: p.read_text() for p in (base / "outbox").glob("*.md")}
         parsed = parse_manifest(f"{mid}.json", (base / "outbox" / f"{mid}.json").read_text(), files)
         assert parsed.id == mid
+
+
+def test_wait_with_many_unread_messages_does_not_die_of_sigpipe(script, base, tmp_path):
+    # `unread_files | head -n 1` under pipefail killed the producer with
+    # SIGPIPE (exit 141) once the listing outgrew the pipe buffer.
+    inbox = base / "inbox"
+    for i in range(2000):
+        (inbox / f"20261025T100000Z-{i:08d}-h-0000aaaa.json").write_text("{}")
+    env = env_for(base, tmp_path)
+    for _ in range(3):
+        r = run(script, "wait", "--timeout", "0", env=env)
+        assert r.returncode == 0, (r.returncode, r.stderr)
+        assert r.stdout.strip().endswith("20261025T100000Z-00000000-h-0000aaaa.json")

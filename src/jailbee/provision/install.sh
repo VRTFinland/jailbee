@@ -412,18 +412,24 @@ WATCH_SLICE=10  # seconds; longest single inotifywait (see cmd_wait)
     && [[ "$poll" =~ [1-9] ]] \
     || die "JAILBEE_INBOX_POLL must be a positive number of seconds, got '$poll'"
 
-# Unread message files, oldest (lexicographically first) first.
+# Unread message files, oldest (lexicographically first) first. With
+# --first, only the oldest: a `| head -n 1` would SIGPIPE the producer under
+# pipefail once the listing outgrows the pipe buffer.
 unread_files() {
-    local f
+    local f first=0
+    [ "${1:-}" = "--first" ] && first=1
     shopt -s nullglob
     for f in "$inbox"/*.json; do
-        if [[ -f "$f" && ! -L "$f" ]]; then printf '%s\n' "$f"; fi
+        if [[ -f "$f" && ! -L "$f" ]]; then
+            printf '%s\n' "$f"
+            [ "$first" -eq 0 ] || return 0
+        fi
     done
     return 0
 }
 
 oldest() {
-    unread_files | head -n 1
+    unread_files --first
 }
 
 parse_duration() {
