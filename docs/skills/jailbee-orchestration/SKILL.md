@@ -1,6 +1,6 @@
 ---
 name: jailbee-orchestration
-description: Use when this container holds a JailBee orchestration grant (`~/.jailbee/orchestration/grant.json` exists) and you want to split work across child containers — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. Trigger on "orchestrate", "spawn a child container", "fan out these issues", "dispatch to containers", "merge the children", "orkestroi", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
+description: Use only when the user explicitly asks for JailBee child containers and this container holds an orchestration grant (`~/.jailbee/orchestration/grant.json`) — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. Child containers are not subagents; the grant alone is no reason to use them, and ordinary delegation (subagents, parallel agents, plan execution) stays on the agent's own subagent tool. Trigger on "orchestrate child containers", "spawn a child container", "dispatch to containers", "merge the children", "orkestroi kontteja", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
 ---
 
 # Orchestrating child containers
@@ -14,6 +14,25 @@ reaches GitHub, and there is no `jb` in here. Children cannot spawn further
 children, and there are no partial grants: a request is accepted or
 `refused` as a whole. The exact schemas are in
 [`references/protocol.md`](references/protocol.md).
+
+## Containers are not subagents
+
+A grant is a permission, not a prompt to use it. Child containers never
+replace your agent's own subagents:
+
+- **Subagents** (your agent's Agent/Task tool, parallel agents, plan
+  execution workflows) are the default for all ordinary delegation:
+  research, review, implementing plan tasks, parallel independent fixes.
+  They share this container and work tree, are cheap, and return their
+  result straight to you.
+- **Child containers** are heavy: each is a new container with its own
+  checkout, branch, environment and long-running agent session, and its
+  work comes back only through `import` and a merge. Use them only when
+  the user asks for child containers (or names this workflow), for example
+  to work a backlog of separate issues each on its own branch.
+
+When a skill or plan tells you to dispatch subagents, use subagents, even
+with a grant. If it is unclear which the user means, ask before spawning.
 
 Always refer to containers by their **short name** (the branch-level name,
 for example `fix-issue-12`), never one prefixed with the repo name.

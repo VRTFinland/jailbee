@@ -28,6 +28,13 @@ Roles:
   send messages to that orchestrator. A child never orchestrates.
 - **Ordinary container**: neither. Nothing changes for it.
 
+Child containers are not a substitute for an agent's own subagents. The
+bundled `jailbee-orchestration` skill tells the orchestrator to keep ordinary
+delegation (research, review, plan tasks) on its subagent tool and to spawn
+children only when the user asks for them: a grant permits orchestration, it
+does not request it. This matters most when `default_profile` grants every
+new container.
+
 ## Grants
 
 A grant is stored in the orchestrator's Incus config
