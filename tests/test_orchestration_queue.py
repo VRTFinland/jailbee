@@ -433,3 +433,80 @@ def test_drain_persists_each_pop_before_starting(
         actions.drain_queue(rig.ctx())
     assert seen == [["m1"]]
     assert [r.manifest_id for r in load_queue(tmp_path)["proj-orch"]] == ["m1"]
+
+
+def test_handle_spawn_queues_the_runner(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path, running=1)
+    runner = Runner(agent="claude-jb", profile="grok")
+    m = _m().model_copy(update={"runner": runner})
+    assert actions.handle_spawn(rig.ctx(), m).state == "queued"
+    (req,) = load_queue(rig.root)["proj-orch"]
+    assert req.runner == {"agent": "claude-jb", "profile": "grok", "model": None}
+    assert req.runner_set is True
+
+
+def _queue_runner(rig: Rig, runner: dict[str, object] | None) -> None:
+    req = QueuedRequest(
+        manifest_id="m0",
+        child_full=_full(rig, "fix/1"),
+        kind="new",
+        commit=None,
+        queued_at="t",
+        branch="fix/1",
+        base=None,
+        prompt="p",
+        rights=ChildRights().model_dump(mode="json"),
+        runner=runner,
+        runner_set=runner is not None,
+    )
+    save_queue(rig.root, {"proj-orch": [req]})
+
+
+def test_queued_spawn_rechecks_runner(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    """The runner was fine at queue time; its LiteLLM profile is gone at dequeue."""
+    rig = Rig(tmp_path)
+    _queue_runner(rig, {"agent": "claude-jb", "profile": "gone", "model": None})
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "refused"
+    assert "agent `claude` is not enabled in this repo" in out.detail
+    seams["start"].assert_not_called()
+
+
+def test_queued_spawn_with_valid_runner_carries_it(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    rig = Rig(tmp_path)
+    _queue_runner(rig, {"agent": "claude-jb", "profile": "grok", "model": None})
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "started"
+    plan = seams["start"].call_args.args[1]
+    assert plan.runner == Runner(agent="claude-jb", profile="grok")
+
+
+def test_old_queue_entries_load_without_runner(tmp_path: Path) -> None:
+    import json
+
+    entry = {
+        "manifest_id": "m0",
+        "child_full": "proj-fix-1",
+        "kind": "new",
+        "commit": None,
+        "queued_at": "t",
+        "branch": "fix/1",
+        "base": None,
+        "prompt": "p",
+        "rights": {},
+    }
+    (tmp_path / "queue.json").write_text(
+        json.dumps({"version": 1, "queues": {"proj-orch": [entry]}})
+    )
+    (req,) = load_queue(tmp_path)["proj-orch"]
+    assert req.runner is None and req.runner_set is False

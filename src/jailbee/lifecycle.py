@@ -1497,6 +1497,8 @@ def _child_instance_config(opts: NewContainerOptions) -> dict[str, str]:
     config = {orchestration_labels.SPAWNED_BY: opts.spawned_by}
     if opts.rights is not None:
         config[orchestration_labels.RIGHTS] = opts.rights.to_label()
+    if opts.runner is not None:
+        config[orchestration_labels.RUNNER] = opts.runner.to_label()
     return config
 
 

@@ -27,6 +27,7 @@ from jailbee.orchestration.protocol import (
     SpawnManifest,
     StopManifest,
 )
+from jailbee.orchestration.runner import Runner, runner_problems
 from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
 
 if TYPE_CHECKING:
@@ -188,6 +189,7 @@ class SpawnPlan:
     base: str | None
     prompt: str
     rights: ChildRights
+    runner: Runner | None = None
 
 
 def plan_spawn(
@@ -200,6 +202,8 @@ def plan_spawn(
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
+    if m.runner is not None:
+        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, m.runner)
     if problems:
         return refused("; ".join(problems))
     try:
@@ -214,7 +218,7 @@ def plan_spawn(
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights)
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, m.runner)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -250,6 +254,7 @@ def child_options(
         initial_prompt=plan.prompt,
         spawned_by=orchestrator_full,
         rights=plan.rights,
+        runner=plan.runner,
         assume_yes=False,
     )
 
@@ -354,6 +359,8 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             base=plan.base,
             prompt=plan.prompt,
             rights=plan.rights.model_dump(mode="json"),
+            runner=plan.runner.model_dump(mode="json") if plan.runner else None,
+            runner_set=plan.runner is not None,
         )
     )
     _store(ctx, queued)
@@ -415,6 +422,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     if raw is None:
         return refused(NOT_ALLOWED)
     problems = check_rights(raw, profiles.repo_cap(ctx.cfg), rights, ctx.cfg.optional_mounts.keys())
+    runner = Runner.model_validate(req.runner) if req.runner is not None else None
+    if runner is not None:
+        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
     if problems:
         return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
@@ -428,6 +438,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         base=req.base,
         prompt=req.prompt,
         rights=rights,
+        runner=runner,
     )
     fork: ForkSource | None = None
     if req.kind == "fork":

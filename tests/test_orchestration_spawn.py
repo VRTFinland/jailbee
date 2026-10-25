@@ -287,3 +287,49 @@ def test_plan_spawn_refuses_a_child_being_created(
     out = plan_spawn(ctx, _m("fix/1"), queued_names=())
     assert isinstance(out, Outcome)
     assert out.detail == "container `fix-1` is already being created"
+
+
+def _runner_m(runner: object) -> SpawnManifest:
+    m = _m()
+    return m.model_copy(update={"runner": runner})
+
+
+def test_spawn_with_runner_sets_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
+    ctx = _ctx(tmp_path)
+    runner = Runner(agent="claude-jb", profile="grok", model="opus")
+    plan = plan_spawn(ctx, _runner_m(runner), queued_names=())
+    assert not isinstance(plan, Outcome)
+    assert plan.runner == runner
+    o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None)
+    assert o.runner == runner
+    assert lifecycle._child_instance_config(o)[labels.RUNNER] == runner.to_label()
+
+
+def test_spawn_without_runner_has_no_label(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    plan = plan_spawn(ctx, _m(), queued_names=())
+    assert not isinstance(plan, Outcome)
+    assert plan.runner is None
+    o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None)
+    assert o.runner is None
+    assert labels.RUNNER not in lifecycle._child_instance_config(o)
+
+
+def test_spawn_refused_for_bad_runner(tmp_path: Path) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    out = plan_spawn(_ctx(tmp_path), _runner_m(Runner(agent="claude-jb")), queued_names=())
+    assert isinstance(out, Outcome) and out.state == "refused"
+    assert "agent `claude` is not enabled in this repo" in out.detail
+
+
+def test_spawn_refusal_joins_rights_and_runner_problems(tmp_path: Path) -> None:
+    from jailbee.orchestration.runner import Runner
+
+    m = _m(loose=True).model_copy(update={"runner": Runner(agent="claude-jb")})
+    out = plan_spawn(_ctx(tmp_path), m, queued_names=())
+    assert isinstance(out, Outcome) and out.state == "refused"
+    assert "loose network mode is not grantable; agent `claude` is not enabled" in out.detail
