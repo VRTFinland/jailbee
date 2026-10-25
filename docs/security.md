@@ -156,7 +156,7 @@ are not affected. With `ssh`, a grant may give children only what the session
 could do itself: loose network and egress hosts need `remote.ssh.network`,
 optional-mount kinds need `remote.ssh.mounts`, and `mount_roots` never
 qualifies. With `orchestrator`, it may give only what the orchestrator
-container permanently holds, as defined. The number of children and the
+container permanently holds, as defined. `orchestrator` is a ceiling on what a grant may carry, not on what a session can first give the orchestrator itself: with `remote.ssh.network` or `mounts` on, a session could first make such rights permanent on the orchestrator (for example `mount --no-revert`, loose without a TTL, `net egress add`) and grant them on, which is within what the session could do itself. The number of children and the
 operations are never bounded. A remote grant can always narrow, and elements
 the stored grant already holds, including wider host-set ones, are kept. The
 bound is checked when the grant is made: turning `network` or `mounts` off
