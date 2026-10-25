@@ -374,6 +374,19 @@ Frontend-independent models, columns, menus and dispatch live in the shared
 `dashboard/` package; the state service and Qt frontend do not depend on the
 terminal UI. This split keeps status collection separate from rendering.
 
+## Orchestration broker
+
+Container orchestration (a container starting and managing child containers)
+is carried out on the host by a separate long-lived user service,
+`jailbee-broker.service`, which polls the containers' outboxes and answers in
+their inboxes. It is neither the dashboard state service nor the net-refresh
+timer, for three reasons. The state service exits after its last dashboard
+disconnects and is scoped to gather-and-render, while orchestration must run
+unattended. The net-refresh timer is a one-minute `Type=oneshot`, so every
+relay hop would wait up to a minute and systemd would kill the
+container-creation workers left in its cgroup. And one long-lived process
+serialises all orchestration actions without cross-process locking.
+
 ## Security model
 
 Containers share the host kernel (the Linux VM's kernel on macOS). Bind mounts,

@@ -5895,3 +5895,96 @@ pgrep -a tmux                                          # no stray -L outbox-rig 
 ```
 
 Never `tmux kill-server`. The private socket vanishes with its last session.
+
+## Orchestration broker (plan D)
+
+> **Status: not yet run — needs a real Incus rig.** Derived from the code
+> (`orchestration/broker.py`, `actions.py`, `protocol.py`, `outbox.py`).
+> Only `spawn`, `restart`, `stop` and `destroy` are handled; `message`,
+> `import` and the child's `done` arrive with the next phase and are answered
+> with a `refused` status ("not supported by this broker version").
+
+Needs a disposable nested rig (see the sections above), a registered repo
+with a running container `<c>`, and one optional mount `<m>` declared in the
+repo config. Container paths: manifests go in
+`/home/dev/.jailbee/orchestration/outbox/`, the broker answers in
+`/home/dev/.jailbee/orchestration/inbox/` (`<timestamp>-<id>.json`, type
+`status`), and the broker keeps a read-only copy of the effective grant in
+`/home/dev/.jailbee/orchestration/grant.json`.
+
+```bash
+# Host: grant <c> the right to run one child at a time
+jb orchestrate grant <c> --children 1 --mount <m>
+jb orchestrate show <c>                  # limit 1, mounts <m>, Running children: 0
+systemctl --user status jailbee-broker   # active (running)
+```
+
+Inside `<c>` (`jb shell <c>`), write two spawn manifests. The file stem must
+equal `id`. Use `kind: "fork"` to start from `<c>`'s committed state or
+`"new"` (optionally with `base`) for a fresh branch; `rights` must stay
+within the grant.
+
+```bash
+mkdir -p ~/.jailbee/orchestration/outbox
+cd ~/.jailbee/orchestration/outbox
+cat > spawn-a.json <<'JSON'
+{"version": 1, "id": "spawn-a", "type": "spawn", "kind": "fork",
+ "branch": "child-a", "prompt": "Create a file hello-a.txt and commit it.",
+ "rights": {"version": 1, "mounts": ["<m>"], "loose": false, "egress": []}}
+JSON
+cat > spawn-b.json <<'JSON'
+{"version": 1, "id": "spawn-b", "type": "spawn", "kind": "new",
+ "branch": "child-b", "prompt_file": "spawn-b.md",
+ "rights": {"version": 1}}
+JSON
+echo "Create hello-b.txt and commit it." > spawn-b.md   # prompt_file: next to the manifest
+```
+
+Write `spawn-b.md` first, then the manifest, so the broker never sees a
+manifest whose file is missing. Within ~10 s:
+
+```bash
+ls ~/.jailbee/orchestration/inbox/
+cat ~/.jailbee/orchestration/inbox/*-spawn-a.json   # "state": "started", "detail": "child `child-a` created"
+cat ~/.jailbee/orchestration/inbox/*-spawn-b.json   # "state": "queued",  "detail": "queued at position 1"
+```
+
+expect: one child container for `child-a` (host: `jb ls` shows it, spawned by
+`<c>`), none for `child-b`, and the processed manifests gone from the outbox.
+
+Stop the first child; the queue drains and the second starts:
+
+```bash
+echo '{"version": 1, "id": "stop-a", "type": "stop", "child": "child-a"}' \
+  > ~/.jailbee/orchestration/outbox/stop-a.json
+cat ~/.jailbee/orchestration/inbox/*-stop-a.json    # "done", "child `child-a` stopped"
+```
+
+expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
+reads ``child `child-b` created``.
+
+Destroy guard. `child-a` has commits that were never imported:
+
+```bash
+echo '{"version": 1, "id": "destroy-a", "type": "destroy", "child": "child-a"}' \
+  > ~/.jailbee/orchestration/outbox/destroy-a.json
+# inbox: "refused", "child `child-a` has commits that were never imported (use force: true to destroy anyway)"
+echo '{"version": 1, "id": "destroy-a2", "type": "destroy", "child": "child-a", "force": true}' \
+  > ~/.jailbee/orchestration/outbox/destroy-a2.json
+# inbox: "done", "child `child-a` destroyed"
+```
+
+Refusals worth one probe each (all `refused` statuses): a `rights.mounts`
+entry the grant does not list; a second spawn of an existing branch
+(``container `<short>` already exists``); a `stop` naming a container that
+is not a child (```x` is not a child of this orchestrator``); a `restart` of
+a running child (``child `<short>` is running; stop it first``); a manifest
+from a container with no grant (`orchestration is not allowed in this repo`).
+
+Finally, on the host:
+
+```bash
+journalctl --user -u jailbee-broker --since "-15 min"   # expect: no tracebacks
+jb orchestrate revoke <c>
+jb destroy <c>   # and any remaining children; then stop the rig
+```
