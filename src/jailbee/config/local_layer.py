@@ -61,6 +61,7 @@ def _refused_keys() -> frozenset[str]:
             "credentials",
             "claude_credentials",
             "litellm",
+            "orchestration",
         }
     )
     return frozenset({"container_prefix", *_COMPUTED_KEYS, *host_only})
@@ -89,7 +90,7 @@ def split_local_raw(
             f"`github.api_tokens` is not allowed in {origin} — this file is already "
             "per-repo; set `github.token` instead."
         )
-    overlay = {k: v for k, v in raw.items() if k not in ("credentials", "litellm")}
+    overlay = {k: v for k, v in raw.items() if k not in ("credentials", "litellm", "orchestration")}
     if "credentials" not in raw:
         return overlay, None
     try:

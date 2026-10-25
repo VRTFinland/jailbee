@@ -195,11 +195,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Twelve top-level keys are read from `~/.config/jailbee/global.yaml` into
+Thirteen top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
 `credentials`, `scratch`, `config_edit`, `update_check`,
-`default_command`, `install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
+`default_command`, `install_host_skills`, `agent_instructions`, `remote`, `litellm` and `orchestration`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
