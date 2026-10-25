@@ -468,9 +468,7 @@ def test_remote_egress_coverage(cfg, make_incus, ensure):
     assert "api.example.com" in g.grantable.egress
     incus2 = make_incus(_stored(stored))
     with pytest.raises(GrantError, match=r"evil\.org"):
-        commands.grant(
-            cfg, incus2, "myrepo-a", GrantFlags(egress=("evil.org",)), remote=_remote()
-        )
+        commands.grant(cfg, incus2, "myrepo-a", GrantFlags(egress=("evil.org",)), remote=_remote())
     incus2.config_set.assert_not_called()
 
 
