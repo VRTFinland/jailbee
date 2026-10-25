@@ -701,3 +701,17 @@ def test_vanished_container_pending_is_purged(rig: Rig) -> None:
     rig.tick()
     assert not pending_dir(rig.root, "proj-gone").exists()
     assert (pending_dir(rig.root, "proj-orch") / "x.json").exists()
+
+
+def test_replies_carry_an_increasing_sequence(rig: Rig) -> None:
+    """Statuses emitted in one round keep their order whatever their random ids."""
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.outboxes["proj-orch"] = [_spawn_raw("s1"), _spawn_raw("s2")]
+    rig.drain.return_value = [(_req("q1"), Outcome("started", "x"))]
+    memory = broker.BrokerMemory()
+    rig.tick(memory)
+    seqs = [c.kwargs["seq"] for c in rig.deliver.call_args_list]
+    assert len(seqs) == 3
+    assert seqs == sorted(seqs) and len(set(seqs)) == 3
+    rig.tick(memory)  # the counter lives in memory and keeps rising
+    assert rig.deliver.call_args_list[-1].kwargs["seq"] > seqs[-1]

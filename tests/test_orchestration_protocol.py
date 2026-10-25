@@ -153,7 +153,21 @@ def test_inbox_file_name_format() -> None:
         detail="queued at position 1",
     )
     now = datetime(2026, 10, 25, 8, 0, 0, tzinfo=UTC)
-    assert inbox_file_name(s, now) == "20261025T080000Z-h-0123abcd.json"
+    assert inbox_file_name(s, now) == "20261025T080000Z-00000000-h-0123abcd.json"
+    assert inbox_file_name(s, now, seq=42) == "20261025T080000Z-00000042-h-0123abcd.json"
+
+
+def test_inbox_names_sort_in_emission_order_within_a_second() -> None:
+    """Random ids must not reorder two items written in the same second."""
+    now = datetime(2026, 10, 25, 8, 0, 0, tzinfo=UTC)
+    first = InboxStatus(
+        version=1, id="h-ffffffff", type="status", ref="r", state="queued", detail="q"
+    )
+    second = InboxStatus(
+        version=1, id="h-00000000", type="status", ref="r", state="started", detail="s"
+    )
+    names = [inbox_file_name(first, now, seq=1), inbox_file_name(second, now, seq=2)]
+    assert sorted(names) == names
 
 
 def test_inbox_message_serialises_from_key() -> None:

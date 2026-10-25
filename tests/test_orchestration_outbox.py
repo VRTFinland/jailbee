@@ -175,3 +175,20 @@ def test_write_grant_json_is_read_only_atomic() -> None:
     assert args[1][3:] == ["sh", outbox.GRANT_FILE.rsplit("/", 1)[0], "grant.json", "0444"]
     assert args[2] == '{"version": 1}'
     assert outbox.GRANT_FILE.endswith("/.jailbee/orchestration/grant.json")
+
+
+def test_flush_pending_follows_emission_order_within_a_second(tmp_path: Path) -> None:
+    incus = _incus()
+    first, second = _item("ffff"), _item("0000")
+    outbox.deliver(incus, tmp_path, FULL, first, running=False, uid=None, now=AT, seq=7)
+    outbox.deliver(incus, tmp_path, FULL, second, running=False, uid=None, now=AT, seq=8)
+    outbox.flush_pending(incus, tmp_path, FULL, uid=None)
+    written = [c.args[1][-2] for c in incus.exec_with_input.call_args_list]
+    assert written == [inbox_file_name(first, AT, seq=7), inbox_file_name(second, AT, seq=8)]
+
+
+def test_write_inbox_uses_the_sequence(tmp_path: Path) -> None:
+    incus = _incus()
+    item = _item("1")
+    outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=AT, seq=3)
+    assert incus.exec_with_input.call_args.args[1][-2] == inbox_file_name(item, AT, seq=3)

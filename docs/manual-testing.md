@@ -5908,7 +5908,7 @@ Needs a disposable nested rig (see the sections above), a registered repo
 with a running container `<c>`, and one optional mount `<m>` declared in the
 repo config. Container paths: manifests go in
 `/home/dev/.jailbee/orchestration/outbox/`, the broker answers in
-`/home/dev/.jailbee/orchestration/inbox/` (`<timestamp>-<id>.json`, type
+`/home/dev/.jailbee/orchestration/inbox/` (`<timestamp>-<seq>-<id>.json`, type
 `status`; `<id>` is a broker-generated `h-<8 hex>` id, and the manifest it answers
 is named in the `ref` field), and the broker keeps a read-only copy of the effective grant in
 `/home/dev/.jailbee/orchestration/grant.json`.

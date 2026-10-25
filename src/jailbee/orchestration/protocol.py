@@ -171,9 +171,16 @@ def new_host_id() -> str:
     return "h-" + secrets.token_hex(4)
 
 
-def inbox_file_name(item: InboxItem, now: datetime) -> str:
+def inbox_file_name(item: InboxItem, now: datetime, *, seq: int = 0) -> str:
+    """``<stamp>-<seq:08d>-<id>.json``: names sort in emission order.
+
+    The stamp has one-second resolution and ids are random, so `seq` — a
+    per-process counter the broker owns (`BrokerMemory.seq`) — orders the
+    items written within one second. The stamp leads, so a counter reset
+    by a broker restart cannot reorder anything across seconds.
+    """
     stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{item.id}.json"
+    return f"{stamp}-{seq:08d}-{item.id}.json"
 
 
 def _load_object(text: str) -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import signal
 import time
@@ -47,7 +48,7 @@ from jailbee.orchestration.state import (
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
     from types import FrameType
 
     from jailbee.config import Config
@@ -69,6 +70,8 @@ class BrokerMemory:
     grant_written: dict[str, str] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
+    # Inbox file sequence: orders the items emitted within one second.
+    seq: Iterator[int] = field(default_factory=itertools.count)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -159,7 +162,7 @@ def _status(ref: str, outcome: Outcome) -> InboxStatus:
     )
 
 
-def _reply(ctx: ActionContext, ref: str, outcome: Outcome) -> None:
+def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory) -> None:
     deliver(
         ctx.incus,
         ctx.root,
@@ -168,6 +171,7 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome) -> None:
         running=ctx.sender.running,
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
+        seq=next(memory.seq),
     )
 
 
@@ -229,7 +233,7 @@ def _handle_raw(
         container_full=ctx.sender.full,
     )
     if outcome is not None:
-        _reply(ctx, ref, outcome)
+        _reply(ctx, ref, outcome, memory)
     delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
 
 
@@ -244,14 +248,14 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
         _handle_raw(ctx, raw, journal, memory)
 
 
-def _settle_queue(ctx: ActionContext) -> None:
+def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Start what the queue can start, or drop it when the grant is gone; report each."""
     if ctx.grant() is None:
         for req in drop_queue(ctx, GRANT_REVOKED):
-            _reply(ctx, req.manifest_id, refused(GRANT_REVOKED))
+            _reply(ctx, req.manifest_id, refused(GRANT_REVOKED), memory)
         return
     for req, outcome in drain_queue(ctx):
-        _reply(ctx, req.manifest_id, outcome)
+        _reply(ctx, req.manifest_id, outcome, memory)
 
 
 def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -> dict[str, Node]:
@@ -349,7 +353,7 @@ def tick(
     seen = {ctx.sender.full for ctx in orchestrators}
     for ctx in orchestrators:
         try:
-            _settle_queue(ctx)
+            _settle_queue(ctx, memory)
         except Exception:
             log.exception("broker: queue of %s failed", ctx.sender.full)
     for full in queues:
@@ -360,7 +364,7 @@ def tick(
             ctx = context(queued_node) if queued_node is not None else None
             if ctx is not None:
                 # No longer an orchestrator (grant label removed): grant() is None.
-                _settle_queue(ctx)
+                _settle_queue(ctx, memory)
             elif queued_node is None:
                 log.warning("broker: dropping the queue of vanished %s", full)
                 current = load_queue(root)

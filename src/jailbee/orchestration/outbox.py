@@ -91,12 +91,11 @@ def _item_json(item: InboxItem) -> str:
 
 
 def write_inbox(
-    incus: Incus, full: str, item: InboxItem, *, uid: int | None, now: datetime
+    incus: Incus, full: str, item: InboxItem, *, uid: int | None, now: datetime, seq: int = 0
 ) -> None:
     """Atomically write `item` into `full`'s inbox (temp file, then rename)."""
-    _atomic_write(
-        incus, full, INBOX_DIR, inbox_file_name(item, now), _item_json(item), "0644", uid=uid
-    )
+    name = inbox_file_name(item, now, seq=seq)
+    _atomic_write(incus, full, INBOX_DIR, name, _item_json(item), "0644", uid=uid)
 
 
 def deliver(
@@ -108,17 +107,21 @@ def deliver(
     running: bool,
     uid: int | None,
     now: datetime,
+    seq: int = 0,
 ) -> None:
-    """Write directly when the recipient runs; otherwise (or on failure) park it."""
+    """Write directly when the recipient runs; otherwise (or on failure) park it.
+
+    `seq` orders items emitted within one second (see `inbox_file_name`).
+    """
     if running:
         try:
-            write_inbox(incus, recipient_full, item, uid=uid, now=now)
+            write_inbox(incus, recipient_full, item, uid=uid, now=now, seq=seq)
         except IncusError:
             pass
         else:
             return
     atomic_write_text(
-        pending_dir(root, recipient_full) / inbox_file_name(item, now), _item_json(item)
+        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq), _item_json(item)
     )
 
 
