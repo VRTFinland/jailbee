@@ -38,3 +38,21 @@ def child_env(cfg: Config, incus: Incus, full: str) -> dict[str, str]:
     if not orchestrator:
         return {}
     return {"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": short_name(cfg, orchestrator)}
+
+
+def orchestrator_env(cfg: Config, incus: Incus, full: str) -> dict[str, str]:
+    """Default-agent env for an orchestrator's agent steps; ``{}`` without a grant.
+
+    The value is the repo's primary agent, as `claude-jb` when Claude runs
+    through the LiteLLM proxy, or ``none`` when no agent is enabled. Children
+    never hold grants, so this and `child_env` never both apply.
+    """
+    if not incus.config_get(full, GRANT):
+        return {}
+    from jailbee.agents import primary_agent
+    from jailbee.autostart import litellm_autostart_on
+
+    name = primary_agent(cfg).name or "none"
+    if name == "claude" and litellm_autostart_on(cfg):
+        name = "claude-jb"
+    return {"JAILBEE_DEFAULT_AGENT": name}

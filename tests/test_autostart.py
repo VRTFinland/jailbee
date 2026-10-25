@@ -1189,7 +1189,9 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
 
     cfg = _claude_cfg(tmp_path)
     incus = MagicMock()
-    incus.config_get.return_value = f"{cfg.container_prefix}-orch"
+    incus.config_get.side_effect = lambda _n, key: (
+        f"{cfg.container_prefix}-orch" if key == "user.jailbee.spawned_by" else None
+    )
     mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
@@ -1287,3 +1289,16 @@ def test_on_start_reads_runner_label(mocker, tmp_path):
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
     assert steps.call_args.kwargs["runner"] == Runner(agent="claude", model="opus")
+
+
+def test_on_start_steps_carry_default_agent(mocker, tmp_path):
+    from jailbee.autostart import AutostartTrigger, run_autostart
+    from jailbee.orchestration import labels
+
+    cfg = _claude_cfg(tmp_path)
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda _n, key: "g1" if key == labels.GRANT else None
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    assert steps.call_args.kwargs["extra_env"] == {"JAILBEE_DEFAULT_AGENT": "claude"}

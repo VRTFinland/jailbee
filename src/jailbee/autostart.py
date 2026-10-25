@@ -403,13 +403,16 @@ def _on_start_agent_steps(
     from jailbee.initial_prompt import prompt_pending
 
     pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
-    from jailbee.orchestration.labels import child_env
+    from jailbee.orchestration.labels import child_env, orchestrator_env
     from jailbee.orchestration.runner import read_runner
 
     return agent_autostart_steps(
         cfg,
         initial_prompt=pending,
-        extra_env=child_env(cfg, incus, container),
+        extra_env={
+            **child_env(cfg, incus, container),
+            **orchestrator_env(cfg, incus, container),
+        },
         runner=read_runner(incus, container),
     )
 
