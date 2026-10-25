@@ -824,3 +824,16 @@ def test_no_root_field_is_multiline():
     from jailbee.global_config import GlobalConfig
 
     assert not any(s.multiline for s in (*build_specs(Config), *build_specs(GlobalConfig)))
+
+
+def test_orchestration_trees_per_layer():
+    from jailbee.config_edit.schema import global_specs, local_specs, repo_specs
+
+    repo = {s.path for s in repo_specs()}
+    glob = {s.path for s in global_specs()}
+    local = {s.path for s in local_specs()}
+    assert ("orchestration", "allowed") in repo
+    assert not any(p[:2] == ("orchestration", "profiles") for p in repo)
+    assert any(p[:2] == ("orchestration", "profiles") for p in glob)
+    assert any(p[:2] == ("orchestration", "profiles") for p in local)
+    assert ("orchestration", "allowed") not in local
