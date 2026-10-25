@@ -296,6 +296,16 @@ class Config(BaseModel):
             "field spelled out. Applies to every repo unless a repo overrides it."
         ),
     )
+    primary_agent: str = Field(
+        default="auto",
+        description=(
+            "The agent that fronts this repo: `auto` (default) or an agent name from "
+            "`agents`. `auto` picks among the enabled agents the ones that `autostart` "
+            "first, then the rest; within each group `claude` first, then by name; the "
+            "first wins. An explicit name must be enabled — otherwise it is reported as "
+            "a problem, never silently replaced. It also steers `pr.agent: auto`."
+        ),
+    )
     pr: PrConfig = Field(
         default=PrConfig(),
         description=(

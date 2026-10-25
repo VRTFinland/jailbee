@@ -124,6 +124,48 @@ def enabled_agent_specs(cfg: Config) -> list[AgentSpec]:
     return [_spec(n, cfg.agents[n]) for n in names if cfg.agents[n].enabled]
 
 
+@dataclass(frozen=True)
+class PrimaryAgent:
+    """The repo's primary agent: a `name`, or why there is none (`problem`)."""
+
+    name: str | None
+    problem: str | None = None
+
+
+def primary_agent(cfg: Config) -> PrimaryAgent:
+    """Resolve `cfg.primary_agent` to an enabled agent name.
+
+    An explicit name is honoured exactly or reported as a `problem`; it never
+    falls back to another agent. `auto` looks among the enabled agents: those
+    that `autostart` first, then the rest; within a pool `claude` first, then
+    by name. No enabled agent is `name=None` with no problem.
+    """
+    wanted = cfg.primary_agent
+    if wanted != "auto":
+        agent = cfg.agents.get(wanted)
+        if agent is None:
+            return PrimaryAgent(
+                None,
+                f"primary_agent is `{wanted}`, but no agent of that name is configured — "
+                f"set agents.{wanted}.enabled.",
+            )
+        if not agent.enabled:
+            return PrimaryAgent(
+                None,
+                f"primary_agent is `{wanted}`, but it is not enabled — "
+                f"set agents.{wanted}.enabled.",
+            )
+        return PrimaryAgent(wanted)
+
+    enabled = sorted(
+        (n for n, a in cfg.agents.items() if a.enabled), key=lambda n: (n != "claude", n)
+    )
+    for pool in ([n for n in enabled if cfg.agents[n].autostart], enabled):
+        if pool:
+            return PrimaryAgent(pool[0])
+    return PrimaryAgent(None)
+
+
 _BUNDLED_PREFIX = "__bundled__:"
 
 
