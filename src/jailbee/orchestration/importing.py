@@ -19,7 +19,10 @@ def handle_import(ctx: ActionContext, manifest: Manifest) -> Outcome:
     """Transport the child's branch into the orchestrator, then record the import.
 
     Transport only (`plain=True`): the orchestrator merges from the ref named in
-    the outcome. Labels are written only after the transport succeeded.
+    the outcome. `ff_local_branch=False` keeps the branch name the child chose
+    from touching the orchestrator's own `refs/heads/*` (spec 7.2: the branch
+    lands at `refs/jailbee/from/<child>/<branch>` without merging). Labels are
+    written only after the transport succeeded.
     """
     if not isinstance(manifest, ImportManifest):
         return refused("not an import manifest")
@@ -30,7 +33,7 @@ def handle_import(ctx: ActionContext, manifest: Manifest) -> Outcome:
         return refused(f"{child.short} is not running; restart it first")
     try:
         result = sync.merge_container_into_container(
-            ctx.cfg, ctx.incus, child.short, ctx.sender.short, plain=True
+            ctx.cfg, ctx.incus, child.short, ctx.sender.short, plain=True, ff_local_branch=False
         )
     except (SyncError, GitError, IncusError) as exc:
         return refused(str(exc))

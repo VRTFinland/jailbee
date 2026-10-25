@@ -2971,6 +2971,65 @@ def test_push_to_container_uses_the_from_namespace(mocker, make_cfg, tmp_path):
     assert push.call_args[0][2] == "+refs/jailbee/c1/feat/a:refs/jailbee/from/c1/feat/a"
 
 
+def _relay_push_wiring(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-target"
+    _mock_container_running(incus, full)
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="newsha")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    upd = sync.LocalBranchUpdate(branch="dev", status="created", old_oid=None, new_oid="newsha")
+    ff = mocker.patch("jailbee.sync.ff_container_branch", return_value=upd)
+    mocker.patch("jailbee.sync.git.push_url")
+    return cfg, incus, ff, upd
+
+
+def test_push_to_container_can_skip_the_local_branch_fast_forward(mocker, make_cfg, tmp_path):
+    """The orchestration import relays a child-chosen branch name: it must land
+    only at refs/jailbee/from/<child>/<branch>, never move the target's own
+    refs/heads/<branch> (spec 7.2)."""
+    from jailbee import sync
+
+    cfg, incus, ff, _upd = _relay_push_wiring(mocker, make_cfg, tmp_path)
+
+    result = sync.push_to_container(
+        cfg,
+        incus,
+        "target",
+        source="dev",
+        source_ref="refs/jailbee/c1/dev",
+        namespace="from/c1",
+        ff_local_branch=False,
+    )
+
+    ff.assert_not_called()
+    assert result.local_branch is None
+    assert result.container_ref == "refs/jailbee/from/c1/dev"
+
+
+def test_push_to_container_fast_forwards_the_local_branch_by_default(mocker, make_cfg, tmp_path):
+    """jb push / jb merge keep fast-forwarding the container's same-named branch."""
+    from jailbee import sync
+
+    cfg, incus, ff, upd = _relay_push_wiring(mocker, make_cfg, tmp_path)
+
+    host = sync.push_to_container(cfg, incus, "target", source="dev", source_ref="refs/heads/dev")
+    relay = sync.push_to_container(
+        cfg, incus, "target", source="dev", source_ref="refs/jailbee/c1/dev", namespace="from/c1"
+    )
+
+    assert ff.call_count == 2
+    assert ff.call_args.kwargs["branch"] == "dev"
+    assert host.local_branch == upd
+    assert relay.local_branch == upd
+
+
 def test_push_to_container_does_not_advance_base_across_containers(mocker, make_cfg, tmp_path):
     """A relayed branch that happens to share the target's base name must not
     re-anchor `refs/jailbee/base/<base>` — that would silently change what
@@ -8513,6 +8572,54 @@ def test_merge_container_into_container_plain_skips_the_merge(mocker, make_cfg, 
     to_container.assert_not_called()
     assert result.head_oid == "targethead"
     assert result.fast_forward_only is False
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [({}, True), ({"plain": True}, True), ({"plain": True, "ff_local_branch": False}, False)],
+)
+def test_merge_container_into_container_forwards_ff_local_branch(
+    mocker, make_cfg, tmp_path, kwargs, expected
+):
+    """Only an explicit ff_local_branch=False (the orchestration import) stops
+    the target's same-named branch from being fast-forwarded; jb merge, plain
+    or not, keeps the old behaviour."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=1
+        ),
+    )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    mocker.patch("jailbee.sync._container_head_oid", return_value="targethead")
+    mocker.patch("jailbee.sync._decide_fast_forward_only", return_value=False)
+    mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+    mocker.patch("jailbee.sync._submodule_moves_between", return_value=[])
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2", **kwargs)
+
+    assert push.call_args.kwargs["ff_local_branch"] is expected
 
 
 def test_merge_container_into_container_mount_mode_raises(mocker, make_cfg, tmp_path):

@@ -2352,6 +2352,7 @@ def push_to_container(
     source_ref: str | None = None,
     namespace: str = "host",
     tags: TagPolicy = "none",
+    ff_local_branch: bool = True,
 ) -> PushResult:
     """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
@@ -2390,6 +2391,12 @@ def push_to_container(
     caller's flag). ``reachable`` resolves the set with `git.tags_reachable_from`
     rather than `git push --follow-tags`, which would drop lightweight tags. No
     tag refspec is ever forced.
+
+    ``ff_local_branch=False`` skips `ff_container_branch`, so nothing outside
+    the `refs/jailbee/*` destination moves and `PushResult.local_branch` is
+    None. The orchestration import passes it: a child chooses its own branch
+    name, and a child on (say) `dev` must not fast-forward the orchestrator's
+    own `dev` to unreviewed commits.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -2501,13 +2508,17 @@ def push_to_container(
         local_only_commits=local_only,
         # After the transport, so the objects `new_oid` names are already in
         # the container. Best-effort by contract — it never raises.
-        local_branch=ff_container_branch(
-            incus,
-            full_name,
-            repo_dir,
-            branch=resolved_source,
-            new_oid=new_oid,
-            uid=cfg.container_user.uid,
+        local_branch=(
+            ff_container_branch(
+                incus,
+                full_name,
+                repo_dir,
+                branch=resolved_source,
+                new_oid=new_oid,
+                uid=cfg.container_user.uid,
+            )
+            if ff_local_branch
+            else None
         ),
     )
 
@@ -2998,6 +3009,7 @@ def merge_container_into_container(
     plain: bool = False,
     no_ff: bool | None = None,
     confirm: ConfirmFn | None = None,
+    ff_local_branch: bool = True,
 ) -> MergeInContainerResult:
     """Merge container `source_short`'s branch into container `target_short`.
 
@@ -3037,6 +3049,10 @@ def merge_container_into_container(
     (unchanged by this call) and `fast_forward_only` is `False` as a sentinel
     for "no merge was attempted" — it is not meaningful, and a caller must not
     render fast-forward semantics from it.
+
+    `ff_local_branch` is forwarded to `push_to_container`: False keeps the
+    target's own same-named `refs/heads/<branch>` where it is (the
+    orchestration import, which must land only in `refs/jailbee/from/...`).
 
     `no_ff` / `confirm` pick the merge mode exactly as for `push_and_merge`
     (see `_decide_fast_forward_only`). The automatic case matters more here
@@ -3103,6 +3119,7 @@ def merge_container_into_container(
         source_ref=f"refs/jailbee/{source_short}/{fetch_result.branch}",
         namespace=f"from/{source_short}",
         tags="none",
+        ff_local_branch=ff_local_branch,
     )
 
     if plain:

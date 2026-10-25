@@ -67,7 +67,9 @@ def merge(mocker: MockerFixture) -> MagicMock:
 def test_import_transports_and_labels(tmp_path: Path, merge: MagicMock) -> None:
     ctx = _ctx(tmp_path)
     out = importing.handle_import(ctx, _manifest())
-    merge.assert_called_once_with(ctx.cfg, ctx.incus, "fix-1", "orch", plain=True)
+    merge.assert_called_once_with(
+        ctx.cfg, ctx.incus, "fix-1", "orch", plain=True, ff_local_branch=False
+    )
     calls = [c.args for c in ctx.incus.config_set.call_args_list]  # type: ignore[attr-defined]
     assert calls == [
         (CHILD, labels.LAST_IMPORT, SHA),
