@@ -288,6 +288,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net refresh",
         "net unregister",
         "net egress add",
+        "orchestrate grant",
         "net egress proxy up",
         "net egress proxy down",
         "net loose",
@@ -407,6 +408,9 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
     {
         "account ls",
         "account group ls",
+        "orchestrate ls",
+        "orchestrate revoke",
+        "orchestrate show",
         "apps ls",
         "autostart cancel",
         "autostart status",
