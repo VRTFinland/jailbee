@@ -242,6 +242,37 @@ If the orchestrator is stopped or destroyed, nothing happens to its children.
 They keep running, and their messages wait until it returns. This is an
 error state for a human to resolve.
 
+## Typical workflows
+
+In both, one child takes one whole unit of work: a ticket or a plan. Inside
+its own container the child is free to use its own subagents for the steps
+of that unit; the orchestrator never splits a plan's tasks across children.
+
+**A bug backlog.** The user asks the orchestrator to work through clear bug
+tickets on GitHub. The orchestrator reads them with the read-only `gh`,
+spawns one child per ticket (`fix/issue-<n>`) whose prompt carries the
+ticket text and the acceptance tests, and lets each child investigate, fix
+and test. As each reports `done` it imports and merges the branch, then
+stops (or destroys) the child so the next queued ticket starts. Forking
+each new child from the orchestrator's latest merged HEAD keeps later
+fixes from conflicting with earlier ones.
+
+**A series of plans.** The user hands over a higher-level plan that orders
+several implementation plans (for example written with the superpowers
+`writing-plans` skill), some independent and some depending on others. The
+orchestrator spawns a child per plan whose dependencies are met, one per
+free slot. When a child is done it imports and merges the result, resolves
+any conflicts itself, commits, and only then forks the plans that depended
+on it, so they start from the merged work. It continues step by step until
+the higher-level plan is complete.
+
+A child inherits only git commits, so a plan must reach it either committed
+in the repo or in a directory every container sees through a host mount
+(`host_mounts`), such as a shared `.local/`. A plan in a gitignored
+directory without such a mount is not there in the child; it would have to
+travel in the prompt, which is capped at 64 KiB. When children share such a
+directory, each should write only its own files in it.
+
 ## Skills
 
 Two skills teach the agents the protocol, so they cooperate without help:

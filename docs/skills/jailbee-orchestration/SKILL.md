@@ -32,7 +32,13 @@ replace your agent's own subagents:
   to work a backlog of separate issues each on its own branch.
 
 When a skill or plan tells you to dispatch subagents, use subagents, even
-with a grant. If it is unclear which the user means, ask before spawning.
+with a grant.
+
+One child takes one whole unit of work: a ticket, or a whole plan. Never
+split a plan's tasks across children; the child runs them itself, with its
+own subagents. When plans depend on each other, spawn a dependent plan only
+after its prerequisites are imported, merged and committed, as a `fork`, so
+it starts from the merged work. If it is unclear which the user means, ask before spawning.
 
 Always refer to containers by their **short name** (the branch-level name,
 for example `fix-issue-12`), never one prefixed with the repo name.
