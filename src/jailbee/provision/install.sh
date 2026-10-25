@@ -394,6 +394,7 @@ USAGE
 base="${JAILBEE_ORCHESTRATION_DIR:-$HOME/.jailbee/orchestration}"
 inbox="$base/inbox"
 poll="${JAILBEE_INBOX_POLL:-5}"
+WATCH_SLICE=10  # seconds; longest single inotifywait (see cmd_wait)
 [[ "$poll" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] \
     && [[ "$poll" =~ [1-9] ]] \
     || die "JAILBEE_INBOX_POLL must be a positive number of seconds, got '$poll'"
@@ -445,7 +446,7 @@ cmd_wait() {
         esac
     done
     mkdir -p "$inbox"
-    local deadline_ms remaining_ms remaining rc
+    local deadline_ms remaining_ms remaining rc slice
     deadline_ms=$(( $(now_ms) + timeout * 1000 ))
     while :; do
         first="$(oldest)"
@@ -457,11 +458,14 @@ cmd_wait() {
         [ "$remaining_ms" -gt 0 ] || return 1
         remaining=$(( (remaining_ms + 999) / 1000 ))
         if command -v inotifywait >/dev/null 2>&1; then
-            # The watcher starts only after the check above; the loop checks
-            # again when it returns, so a message that landed in between is
-            # not missed.
+            # inotifywait only sees events after it has set its watch, so a
+            # message that lands between the check above and the watch gives
+            # no event. Each watch is therefore capped to WATCH_SLICE seconds
+            # and followed by a re-check: the slice bounds the worst-case
+            # latency of such a lost wakeup.
+            slice=$(( remaining < WATCH_SLICE ? remaining : WATCH_SLICE ))
             rc=0
-            inotifywait -q -t "$remaining" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
+            inotifywait -q -t "$slice" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
             # Exit 0 = event, 2 = timeout; anything else = the watch failed.
             if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then sleep "$poll"; fi
         else
@@ -494,7 +498,7 @@ cmd_ls() {
 }
 
 cmd_read() {
-    local id="" keep=0 f fid
+    local id="" keep=0 f fid pretty
     while [ $# -gt 0 ]; do
         case "$1" in
             --keep) keep=1; shift ;;
@@ -509,11 +513,14 @@ cmd_read() {
             continue
         fi
         if [ "$fid" = "$id" ]; then
-            jq . "$f"
+            # A file that vanished since the scan (read by a concurrent
+            # reader) counts as "no unread message with that id".
+            pretty="$(jq . "$f" 2>/dev/null)" || continue
             if [ "$keep" -eq 0 ]; then
                 mkdir -p "$inbox/read"
-                mv -- "$f" "$inbox/read/"
+                mv -- "$f" "$inbox/read/" 2>/dev/null || continue
             fi
+            printf '%s\n' "$pretty"
             return 0
         fi
     done < <(unread_files)

@@ -294,3 +294,68 @@ def test_install_sh_installs_inotify_tools():
 
 def test_script_is_chmodded_in_install_sh():
     assert "chmod 0755 /usr/local/bin/jailbee-inbox" in install_sh_text()
+
+
+def _stub(tmp_path: Path, body: str) -> Path:
+    stubs = tmp_path / "stubs"
+    stubs.mkdir(exist_ok=True)
+    stub = stubs / "inotifywait"
+    stub.write_text("#!/bin/bash\n" + body)
+    stub.chmod(0o755)
+    return stubs
+
+
+def test_inotify_watch_is_capped_to_a_short_slice(script, base, tmp_path):
+    log = tmp_path / "t.log"
+    stubs = _stub(
+        tmp_path,
+        f'printf "%s\\n" "$3" >> {log}\n'
+        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
+        "exit 0\n",
+    )
+    env = env_for(base, tmp_path)
+    env["PATH"] = f"{stubs}:{env['PATH']}"
+    r = run(script, "wait", "--timeout", "600", env=env)
+    assert r.returncode == 0, r.stderr
+    assert int(log.read_text().split()[0]) <= 10
+
+
+def test_wait_finds_message_that_landed_without_an_event(script, base, tmp_path):
+    counter = tmp_path / "count"
+    stubs = _stub(
+        tmp_path,
+        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
+        'if [ "$n" -ge 1 ]; then exit 2; fi\n'
+        "sleep 0.3\nexit 2\n",
+    )
+    env = env_for(base, tmp_path)
+    env["PATH"] = f"{stubs}:{env['PATH']}"
+
+    def later() -> None:
+        while not counter.exists():
+            time.sleep(0.02)
+        write_inbox(base, FIRST, message("h-0000aaaa"))  # no event for the stub
+
+    t = threading.Thread(target=later)
+    t.start()
+    r = run(script, "wait", "--timeout", "30", env=env)
+    t.join()
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().endswith(FIRST)
+
+
+def test_read_of_a_file_that_vanishes_exits_1(script, base, tmp_path):
+    path = write_inbox(base, FIRST, message("h-0000aaaa"))
+    env = env_for(base, tmp_path)
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    real_jq = shutil.which("jq")
+    shim = shim_dir / "jq"
+    shim.write_text(
+        f'#!/bin/bash\nif [ "$1" = "." ]; then rm -f "{path}"; exit 2; fi\nexec {real_jq} "$@"\n'
+    )
+    shim.chmod(0o755)
+    env["PATH"] = f"{shim_dir}:{env['PATH']}"
+    r = run(script, "read", "h-0000aaaa", env=env)
+    assert r.returncode == 1
+    assert "no unread message with id h-0000aaaa" in r.stderr
