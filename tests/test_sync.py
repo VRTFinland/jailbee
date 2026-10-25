@@ -8956,6 +8956,87 @@ def test_fetch_from_container_defaults_to_reachable(mocker, tmp_path, make_cfg):
     assert fetch_url.call_args.kwargs["tags"] == "reachable"
 
 
+def test_fetch_from_container_forwards_an_optional_timeout(mocker, tmp_path, make_cfg):
+    from jailbee import sync
+
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    fetch_url = mocker.patch("jailbee.git.fetch_url")
+
+    sync.fetch_from_container(cfg, incus, "feat-foo")
+    assert fetch_url.call_args.kwargs.get("timeout") is None
+    sync.fetch_from_container(cfg, incus, "feat-foo", timeout=120)
+    assert fetch_url.call_args.kwargs["timeout"] == 120
+
+
+@pytest.mark.parametrize("base_label", [None, "dev"])
+def test_push_to_container_forwards_an_optional_timeout(mocker, make_cfg, tmp_path, base_label):
+    """Single- and multi-refspec pushes and the host-namespace submodule
+    transport all get the bound."""
+    from jailbee import sync
+
+    to_container = mocker.patch("jailbee.sync.submodules.transport_submodules_to_container")
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    full = f"{cfg.container_prefix}-target"
+    _mock_container_running(incus, full)
+    incus.config_get.side_effect = lambda name, key: (
+        base_label if key == "user.jailbee.base_branch" else None
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="newsha")
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=None)
+    mocker.patch("jailbee.sync.ff_container_branch", return_value=None)
+    push = mocker.patch("jailbee.sync.git.push_url")
+    push_multi = mocker.patch("jailbee.sync.git.push_url_multi")
+
+    sync.push_to_container(
+        cfg, incus, "target", source="dev", source_ref="refs/heads/dev", timeout=120
+    )
+
+    used = push_multi if base_label else push
+    assert used.call_args.kwargs["timeout"] == 120
+    assert to_container.call_args.kwargs["timeout"] == 120
+
+
+def test_merge_container_into_container_forwards_an_optional_timeout(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{cfg.container_prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="feat/b")
+    fetch = mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="feat/a", old_oid=None, new_oid="asha", base_oid=None, commits_added=1
+        ),
+    )
+    to_host = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["lib"])
+    to_container = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=sync.PushResult(
+            source="feat/a",
+            source_ref="refs/jailbee/c1/feat/a",
+            container_ref="refs/jailbee/from/c1/feat/a",
+            old_oid=None,
+            new_oid="asha",
+        ),
+    )
+    mocker.patch("jailbee.sync._container_head_oid", return_value="targethead")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True, timeout=120)
+
+    for mock in (fetch, to_host, to_container, push):
+        assert mock.call_args.kwargs["timeout"] == 120
+
+
 def test_sync_refs_from_container_forwards_the_tag_policy(mocker, make_cfg, tmp_path):
     """`sync_refs_from_container` forwards `tags` to its own `fetch_from_container`
     call unconditionally — a dropped `tags=tags` there would silently fall back

@@ -9,7 +9,15 @@ from jailbee import lifecycle, sync
 from jailbee.git import GitError
 from jailbee.incus import IncusError
 from jailbee.orchestration import labels
-from jailbee.orchestration.actions import ActionContext, Node, Outcome, done, refused
+from jailbee.orchestration.actions import (
+    CHILD_EXEC_TIMEOUT_S,
+    CHILD_TRANSPORT_TIMEOUT_S,
+    ActionContext,
+    Node,
+    Outcome,
+    done,
+    refused,
+)
 from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.protocol import InboxMessage, MessageManifest, new_host_id
 from jailbee.sync import SyncError
@@ -74,23 +82,31 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
     """Check a child's `done` report, record its commit, then relay it.
 
     Nothing is recorded or relayed unless the work tree is clean, HEAD is on a
-    branch and that branch was fetched to the host.
+    branch and that branch was fetched to the host. Every exec into the child
+    and the fetch from it are bounded (`CHILD_EXEC_TIMEOUT_S`,
+    `CHILD_TRANSPORT_TIMEOUT_S`); an expiry is a refusal like any failure.
     """
     uid = ctx.cfg.container_user.uid
     full = ctx.sender.full
+    bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
     try:
-        repo_dir = lifecycle.container_repo_dir(ctx.cfg, ctx.incus, full)
-        if sync._container_status_dirty(ctx.incus, full, repo_dir, uid=uid):
+        repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, full)
+        if sync._container_status_dirty(bounded, full, repo_dir, uid=uid):
             return refused("uncommitted changes: commit everything before reporting done")
         # None also covers a failed exec, which cannot be told from a detached HEAD.
-        branch = sync._container_current_branch(ctx.incus, full, repo_dir, uid=uid)
+        branch = sync._container_current_branch(bounded, full, repo_dir, uid=uid)
     except (SyncError, GitError, IncusError) as exc:
         return refused(str(exc))
     if branch is None:
         return refused("detached HEAD: check out your branch before reporting done")
     try:
         fetched = sync.fetch_from_container(
-            ctx.cfg, ctx.incus, ctx.sender.short, branch=branch, tags="none"
+            ctx.cfg,
+            bounded,
+            ctx.sender.short,
+            branch=branch,
+            tags="none",
+            timeout=CHILD_TRANSPORT_TIMEOUT_S,
         )
     except (SyncError, GitError, IncusError) as exc:
         return refused(f"could not fetch your branch to the host: {exc}")

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -634,7 +634,32 @@ def _refuse_host_tree_write(action: str) -> None:
         raise HostTreeWriteRefusedError(host_tree_refusal(action))
 
 
-def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "reachable") -> None:
+def _call_transport(
+    args: list[str], *, cwd: Path, op: str, timeout: float | None, **kwargs: Any
+) -> int:
+    """`subprocess.call` for an ext:: transport, optionally bounded.
+
+    Without ``timeout`` the call is exactly as before (no ``timeout`` keyword).
+    With one, `subprocess.call` kills git on expiry and the timeout surfaces
+    as a `GitError` — the orchestration broker bounds child-driven transports
+    this way so one hostile container cannot stall its loop.
+    """
+    if timeout is None:
+        return subprocess.call(args, cwd=cwd, **kwargs)
+    try:
+        return subprocess.call(args, cwd=cwd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise GitError(f"git {op} timed out after {timeout:g}s") from exc
+
+
+def fetch_url(
+    repo_root: Path,
+    url: str,
+    refspec: str,
+    *,
+    tags: TagPolicy = "reachable",
+    timeout: float | None = None,
+) -> None:
     """Run `git fetch <url> <refspec>` in repo_root.
 
     Used by `jailbee git fetch` to pull commits from a container's clone via the
@@ -666,7 +691,7 @@ def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "rea
     progress and the resulting ref update directly.
     """
     tag_flag = {"none": ["--no-tags"], "all": ["--tags"], "reachable": []}[tags]
-    returncode = subprocess.call(
+    returncode = _call_transport(
         [
             "git",
             "-c",
@@ -678,12 +703,21 @@ def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "rea
             refspec,
         ],
         cwd=repo_root,
+        op="fetch",
+        timeout=timeout,
     )
     if returncode != 0:
         raise GitError(f"git fetch failed (exit {returncode})")
 
 
-def push_url(repo_root: Path, url: str, refspec: str, *, quiet: bool = False) -> None:
+def push_url(
+    repo_root: Path,
+    url: str,
+    refspec: str,
+    *,
+    quiet: bool = False,
+    timeout: float | None = None,
+) -> None:
     """Run `git push <url> <refspec>` in repo_root.
 
     Mirror of `fetch_url` for the host->container direction. Used by
@@ -721,11 +755,16 @@ def push_url(repo_root: Path, url: str, refspec: str, *, quiet: bool = False) ->
         refspec,
     ]
     if quiet:
-        returncode = subprocess.call(
-            args, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        returncode = _call_transport(
+            args,
+            cwd=repo_root,
+            op="push",
+            timeout=timeout,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     else:
-        returncode = subprocess.call(args, cwd=repo_root)
+        returncode = _call_transport(args, cwd=repo_root, op="push", timeout=timeout)
     if returncode != 0:
         raise GitError(f"git push failed (exit {returncode})")
 
@@ -1302,14 +1341,16 @@ def submodule_absorb_gitdirs(repo_root: Path) -> None:
     subprocess.call(["git", "submodule", "absorbgitdirs"], cwd=repo_root)
 
 
-def fetch_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
+def fetch_url_multi(
+    repo_root: Path, url: str, refspecs: list[str], *, timeout: float | None = None
+) -> None:
     """`git fetch <url> <refspec...>` in repo_root (multiple refspecs).
 
     ``--no-recurse-submodules``: this is itself a per-submodule transport, so
     we must not let git's ``on-demand`` default recurse further (see
     ``fetch_url``).
     """
-    returncode = subprocess.call(
+    returncode = _call_transport(
         [
             "git",
             "-c",
@@ -1320,19 +1361,23 @@ def fetch_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
             *refspecs,
         ],
         cwd=repo_root,
+        op="fetch",
+        timeout=timeout,
     )
     if returncode != 0:
         raise GitError(f"git fetch failed (exit {returncode})")
 
 
-def push_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
+def push_url_multi(
+    repo_root: Path, url: str, refspecs: list[str], *, timeout: float | None = None
+) -> None:
     """`git push <url> <refspec...>` in repo_root (multiple refspecs).
 
     ``--no-recurse-submodules``: jailbee drives submodule transport explicitly;
     don't let a configured ``push.recurseSubmodules`` interfere (see
     ``push_url``).
     """
-    returncode = subprocess.call(
+    returncode = _call_transport(
         [
             "git",
             "-c",
@@ -1343,6 +1388,8 @@ def push_url_multi(repo_root: Path, url: str, refspecs: list[str]) -> None:
             *refspecs,
         ],
         cwd=repo_root,
+        op="push",
+        timeout=timeout,
     )
     if returncode != 0:
         raise GitError(f"git push failed (exit {returncode})")

@@ -8,7 +8,14 @@ from jailbee import sync
 from jailbee.git import GitError
 from jailbee.incus import IncusError
 from jailbee.orchestration import labels
-from jailbee.orchestration.actions import ActionContext, Outcome, done, refused
+from jailbee.orchestration.actions import (
+    CHILD_EXEC_TIMEOUT_S,
+    CHILD_TRANSPORT_TIMEOUT_S,
+    ActionContext,
+    Outcome,
+    done,
+    refused,
+)
 from jailbee.orchestration.protocol import ImportManifest, Manifest
 from jailbee.sync import SyncError
 
@@ -21,8 +28,9 @@ def handle_import(ctx: ActionContext, manifest: Manifest) -> Outcome:
     Transport only (`plain=True`): the orchestrator merges from the ref named in
     the outcome. `ff_local_branch=False` keeps the branch name the child chose
     from touching the orchestrator's own `refs/heads/*` (spec 7.2: the branch
-    lands at `refs/jailbee/from/<child>/<branch>` without merging). Labels are
-    written only after the transport succeeded.
+    lands at `refs/jailbee/from/<child>/<branch>` without merging). Execs into
+    both containers and every git transport are bounded, as for `done`.
+    Labels are written only after the transport succeeded.
     """
     if not isinstance(manifest, ImportManifest):
         return refused("not an import manifest")
@@ -33,7 +41,13 @@ def handle_import(ctx: ActionContext, manifest: Manifest) -> Outcome:
         return refused(f"{child.short} is not running; restart it first")
     try:
         result = sync.merge_container_into_container(
-            ctx.cfg, ctx.incus, child.short, ctx.sender.short, plain=True, ff_local_branch=False
+            ctx.cfg,
+            ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S),
+            child.short,
+            ctx.sender.short,
+            plain=True,
+            ff_local_branch=False,
+            timeout=CHILD_TRANSPORT_TIMEOUT_S,
         )
     except (SyncError, GitError, IncusError) as exc:
         return refused(str(exc))

@@ -2613,3 +2613,40 @@ def test_relay_missing_authoritative_repo_refuses_before_any_target_write(mocker
         )
     incus.exec.assert_not_called()
     push.assert_not_called()
+
+
+def test_transport_to_host_forwards_a_timeout(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = " 1111 lib (v1)\n"
+    mocker.patch(
+        "jailbee.submodules.locate_host_subrepo",
+        return_value=submodules.HostSubRepo(
+            path="lib", gitdir=tmp_path / ".git/modules/lib", worktree=tmp_path / "lib"
+        ),
+    )
+    fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, ""))
+    mocker.patch("jailbee.submodules.git.init_subrepo_gitdir")
+
+    submodules.transport_submodules_to_host(
+        cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo", timeout=90
+    )
+
+    assert fetch.call_args.kwargs["timeout"] == 90
+
+
+def test_transport_to_container_forwards_a_timeout(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    mocker.patch("jailbee.submodules.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at", return_value=_commit_subs(tmp_path, "lib")
+    )
+    push = mocker.patch("jailbee.submodules.git.push_url_multi")
+
+    submodules.transport_submodules_to_container(
+        cfg, MagicMock(), "full-c", repo_dir="/home/dev/repo", commit="c0", timeout=90
+    )
+
+    assert push.call_args.kwargs["timeout"] == 90

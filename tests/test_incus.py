@@ -1642,3 +1642,17 @@ def test_storage_pool_resources_runs_query(incus, mocker):
     run = _mock_run(mocker, stdout=json.dumps(payload))
     assert incus.storage_pool_resources("fast") == payload
     assert run.call_args.args[0][-2:] == ["query", "/1.0/storage-pools/fast/resources"]
+
+
+def test_with_exec_timeout_bounds_exec_calls_without_their_own_timeout(incus, mocker):
+    run = _mock_run(mocker, stdout="x")
+    bounded = incus.with_exec_timeout(60)
+
+    bounded.exec("c", ["true"])
+    assert run.call_args.kwargs["timeout"] == 60
+    bounded.exec("c", ["true"], timeout=5)
+    assert run.call_args.kwargs["timeout"] == 5
+    # The original wrapper is untouched.
+    incus.exec("c", ["true"])
+    assert run.call_args.kwargs["timeout"] is None
+    assert bounded.binary == incus.binary

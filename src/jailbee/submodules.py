@@ -1734,6 +1734,7 @@ def transport_submodules_to_host(
     *,
     repo_dir: str,
     only: str | None = None,
+    timeout: float | None = None,
 ) -> dict[str, HostSubRepo]:
     """Fetch container submodules without materialising any host worktree.
 
@@ -1743,6 +1744,7 @@ def transport_submodules_to_host(
     but never creates unrelated repos. All fetched repos receive the namespaced
     HEAD and branch refs used by later placement and publication. Return the
     authoritative located repos so consumers need not rediscover container names.
+    `timeout` bounds each per-repo fetch (`git.fetch_url_multi`).
     """
     uid = cfg.container_user.uid
     repo_root = Path(cfg.repo_root)
@@ -1807,6 +1809,7 @@ def transport_submodules_to_host(
                 f"+HEAD:refs/jailbee-sub/{short}/{path}/HEAD",
                 f"+refs/heads/*:refs/jailbee-sub/{short}/{path}/heads/*",
             ],
+            timeout=timeout,
         )
         if created or incomplete:
             ok, error = git.run_capture(
@@ -1911,6 +1914,7 @@ def transport_submodules_to_container(
     commit: str | None = None,
     mode: Literal["host", "relay"] = "host",
     host_repos: dict[str, HostSubRepo] | None = None,
+    timeout: float | None = None,
 ) -> None:
     """Push submodule objects into `container`'s matching sub-repos.
 
@@ -1943,6 +1947,8 @@ def transport_submodules_to_container(
     An *existing* container sub-repo is only pushed into: it may hold the
     user's own in-container work, so its HEAD and working tree stay untouched.
     The container-side `submodule update` is the verify gate.
+
+    `timeout` bounds each per-repo push (`git.push_url_multi`).
     """
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
@@ -2011,7 +2017,7 @@ def transport_submodules_to_container(
             ]
         else:
             refspecs = [f"+{ns}/HEAD:{head_ref}", f"+{ns}/heads/*:{ns}/heads/*"]
-        git.push_url_multi(host_root, url, refspecs)
+        git.push_url_multi(host_root, url, refspecs, timeout=timeout)
         if created:
             incus.exec(
                 container,

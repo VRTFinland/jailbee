@@ -6,6 +6,7 @@ this interface, which makes them unit-testable with mocks.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -171,6 +172,8 @@ class Incus:
     def __init__(self, binary: str = "incus", dry_run: bool = False) -> None:
         self.binary = binary
         self.dry_run = dry_run
+        # Default for `exec` calls that pass no timeout; see `with_exec_timeout`.
+        self.exec_timeout: int | None = None
         self._client_version: tuple[int, ...] | None = None
         self._client_version_probed = False
 
@@ -492,6 +495,19 @@ class Incus:
             args += ["--", *cmd]
         return args
 
+    def with_exec_timeout(self, seconds: int) -> Incus:
+        """A copy of this wrapper whose `exec` bounds every call to `seconds`
+        unless the call passes its own ``timeout``.
+
+        For callers that run shared helpers (`sync`, `lifecycle`) against a
+        container they do not trust — the orchestration broker — without
+        threading a timeout through each of them. Only `exec` is affected; an
+        expiry raises `IncusError` like any failed exec.
+        """
+        clone = copy.copy(self)
+        clone.exec_timeout = seconds
+        return clone
+
     def exec(
         self,
         name: str,
@@ -509,12 +525,13 @@ class Incus:
         ``uid`` and ``gid`` are passed to ``incus exec --user`` /
         ``--group`` (Incus requires numeric IDs, not names). Set
         ``init_groups`` to run with the user's full supplementary groups
-        (see ``_exec_args``).
+        (see ``_exec_args``). Without ``timeout`` the wrapper's
+        `exec_timeout` applies (None unless set by `with_exec_timeout`).
         """
         args = self._exec_args(
             name, cmd, uid=uid, gid=gid, cwd=cwd, env=env, init_groups=init_groups
         )
-        result = self._run(args, timeout=timeout)
+        result = self._run(args, timeout=timeout if timeout is not None else self.exec_timeout)
         return result.stdout
 
     def running_instance(

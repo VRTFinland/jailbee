@@ -12,7 +12,14 @@ from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.orchestration import importing, labels
-from jailbee.orchestration.actions import ActionContext, Node, done, refused
+from jailbee.orchestration.actions import (
+    CHILD_EXEC_TIMEOUT_S,
+    CHILD_TRANSPORT_TIMEOUT_S,
+    ActionContext,
+    Node,
+    done,
+    refused,
+)
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.protocol import ImportManifest
 from jailbee.sync import MergeInContainerResult, PushResult, SyncError
@@ -68,8 +75,15 @@ def test_import_transports_and_labels(tmp_path: Path, merge: MagicMock) -> None:
     ctx = _ctx(tmp_path)
     out = importing.handle_import(ctx, _manifest())
     merge.assert_called_once_with(
-        ctx.cfg, ctx.incus, "fix-1", "orch", plain=True, ff_local_branch=False
+        ctx.cfg,
+        ctx.incus.with_exec_timeout.return_value,  # type: ignore[attr-defined]
+        "fix-1",
+        "orch",
+        plain=True,
+        ff_local_branch=False,
+        timeout=CHILD_TRANSPORT_TIMEOUT_S,
     )
+    ctx.incus.with_exec_timeout.assert_called_once_with(CHILD_EXEC_TIMEOUT_S)  # type: ignore[attr-defined]
     calls = [c.args for c in ctx.incus.config_set.call_args_list]  # type: ignore[attr-defined]
     assert calls == [
         (CHILD, labels.LAST_IMPORT, SHA),
@@ -141,3 +155,11 @@ def test_import_handler_registered_by_importing_actions_only() -> None:
     code = "from jailbee.orchestration import actions; assert callable(actions.HANDLERS['import'])"
     subprocess.run([sys.executable, "-c", code], check=True)
     subprocess.run([sys.executable, "-c", "import jailbee.orchestration.importing"], check=True)
+
+
+def test_import_timeout_refused_without_labels(tmp_path: Path, merge: MagicMock) -> None:
+    ctx = _ctx(tmp_path)
+    merge.side_effect = GitError("git push timed out after 600s")
+    out = importing.handle_import(ctx, _manifest())
+    assert out == refused("git push timed out after 600s")
+    ctx.incus.config_set.assert_not_called()  # type: ignore[attr-defined]

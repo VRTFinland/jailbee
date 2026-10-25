@@ -1278,6 +1278,7 @@ def fetch_from_container(
     *,
     branch: str | None = None,
     tags: TagPolicy = "reachable",
+    timeout: float | None = None,
 ) -> FetchResult:
     """Fetch commits from container `short` into `refs/jailbee/<short>/<branch>`.
 
@@ -1288,6 +1289,9 @@ def fetch_from_container(
     ``tags`` is the container-to-host tag policy (``cfg.pull.tags``, or the
     caller's flag). It reaches `git.fetch_url` unchanged; this function is the
     single choke point for that direction.
+
+    ``timeout`` bounds the `git fetch` (None = unbounded, as for every CLI
+    caller); the orchestration broker sets it for a child's `done`.
     """
     from jailbee.lifecycle import container_repo_dir
 
@@ -1314,7 +1318,7 @@ def fetch_from_container(
     refspec = f"+refs/heads/{resolved}:{ref}"
 
     old_oid = git.rev_parse(cfg.repo_root, ref)
-    git.fetch_url(cfg.repo_root, url, refspec, tags=tags)
+    git.fetch_url(cfg.repo_root, url, refspec, tags=tags, timeout=timeout)
     new_oid = git.rev_parse(cfg.repo_root, ref)
     if new_oid is None:
         raise SyncError(f"fetch succeeded but {ref} did not resolve")
@@ -2353,6 +2357,7 @@ def push_to_container(
     namespace: str = "host",
     tags: TagPolicy = "none",
     ff_local_branch: bool = True,
+    timeout: float | None = None,
 ) -> PushResult:
     """Push `source` into container `short` as refs/jailbee/<namespace>/<source>.
 
@@ -2397,6 +2402,8 @@ def push_to_container(
     None. The orchestration import passes it: a child chooses its own branch
     name, and a child on (say) `dev` must not fast-forward the orchestrator's
     own `dev` to unreviewed commits.
+
+    ``timeout`` bounds each git transport this call runs (None = unbounded).
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -2487,15 +2494,15 @@ def push_to_container(
         # Transfer pinned submodule objects before the superproject ref.
         try:
             submodules.transport_submodules_to_container(
-                cfg, incus, full_name, repo_dir=repo_dir, commit=new_oid
+                cfg, incus, full_name, repo_dir=repo_dir, commit=new_oid, timeout=timeout
             )
         except submodules.SubmoduleError as exc:
             raise SyncError(str(exc)) from exc
 
     if len(refspecs) == 1:
-        git.push_url(cfg.repo_root, url, refspecs[0])
+        git.push_url(cfg.repo_root, url, refspecs[0], timeout=timeout)
     else:
-        git.push_url_multi(cfg.repo_root, url, refspecs)
+        git.push_url_multi(cfg.repo_root, url, refspecs, timeout=timeout)
 
     return PushResult(
         source=resolved_source,
@@ -3010,6 +3017,7 @@ def merge_container_into_container(
     no_ff: bool | None = None,
     confirm: ConfirmFn | None = None,
     ff_local_branch: bool = True,
+    timeout: float | None = None,
 ) -> MergeInContainerResult:
     """Merge container `source_short`'s branch into container `target_short`.
 
@@ -3053,6 +3061,7 @@ def merge_container_into_container(
     `ff_local_branch` is forwarded to `push_to_container`: False keeps the
     target's own same-named `refs/heads/<branch>` where it is (the
     orchestration import, which must land only in `refs/jailbee/from/...`).
+    `timeout` bounds each git transport of the relay (None = unbounded).
 
     `no_ff` / `confirm` pick the merge mode exactly as for `push_and_merge`
     (see `_decide_fast_forward_only`). The automatic case matters more here
@@ -3087,12 +3096,14 @@ def merge_container_into_container(
     # target container through the same two transports. Inheriting the host's
     # tag policy would push the HOST's tag set into a target container that
     # asked for none of it, so both legs are pinned to "none".
-    fetch_result = fetch_from_container(cfg, incus, source_short, branch=branch, tags="none")
+    fetch_result = fetch_from_container(
+        cfg, incus, source_short, branch=branch, tags="none", timeout=timeout
+    )
     source_full = resolve_container_name(cfg, incus, source_short)
     source_repo_dir = container_repo_dir(cfg, incus, source_full)
     try:
         host_repos = submodules.transport_submodules_to_host(
-            cfg, incus, source_full, source_short, repo_dir=source_repo_dir
+            cfg, incus, source_full, source_short, repo_dir=source_repo_dir, timeout=timeout
         )
         sub_paths = submodules._container_submodule_paths(
             incus, source_full, source_repo_dir, uid=uid
@@ -3107,6 +3118,7 @@ def merge_container_into_container(
                 mode="relay",
                 host_repos=host_repos,
                 paths=sub_paths,
+                timeout=timeout,
             )
     except submodules.SubmoduleError as exc:
         raise SyncError(str(exc)) from exc
@@ -3120,6 +3132,7 @@ def merge_container_into_container(
         namespace=f"from/{source_short}",
         tags="none",
         ff_local_branch=ff_local_branch,
+        timeout=timeout,
     )
 
     if plain:

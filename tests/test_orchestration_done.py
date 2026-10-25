@@ -10,7 +10,15 @@ from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.orchestration import labels, messages
-from jailbee.orchestration.actions import ActionContext, Node, Outcome, done, refused
+from jailbee.orchestration.actions import (
+    CHILD_EXEC_TIMEOUT_S,
+    CHILD_TRANSPORT_TIMEOUT_S,
+    ActionContext,
+    Node,
+    Outcome,
+    done,
+    refused,
+)
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.protocol import MessageManifest
 from jailbee.sync import FetchResult, SyncError
@@ -119,7 +127,14 @@ def test_done_on_detached_head_bounced(tmp_path: Path, mocker: MockerFixture) ->
 def test_done_fetches_sets_labels_and_relays(tmp_path: Path, mocker: MockerFixture) -> None:
     rig = _make(tmp_path, mocker)
     out = messages.handle_message(rig.ctx, _done())
-    rig.fetch.assert_called_once_with(rig.ctx.cfg, rig.incus, "fix-1", branch="fix-1", tags="none")
+    rig.fetch.assert_called_once_with(
+        rig.ctx.cfg,
+        rig.incus.with_exec_timeout.return_value,
+        "fix-1",
+        branch="fix-1",
+        tags="none",
+        timeout=CHILD_TRANSPORT_TIMEOUT_S,
+    )
     calls = [c.args for c in rig.incus.config_set.call_args_list]
     assert calls == [(CHILD, labels.DONE_SHA, SHA), (CHILD, labels.STATE, labels.STATE_DONE)]
     msg = rig.deliver.call_args.args[3]
@@ -182,3 +197,37 @@ def test_done_state_is_written_after_sha(tmp_path: Path, mocker: MockerFixture) 
     messages.handle_message(rig.ctx, _done())
     keys = [c.args[1] for c in rig.incus.config_set.call_args_list]
     assert keys == [labels.DONE_SHA, labels.STATE]
+
+
+def test_done_bounds_every_child_probe_and_the_fetch(tmp_path: Path, mocker: MockerFixture) -> None:
+    """A hostile child must not stall the single broker loop: every exec into it
+    and the ext:: fetch from it run with a timeout."""
+    rig = _make(tmp_path, mocker)
+    messages.handle_message(rig.ctx, _done())
+    rig.incus.with_exec_timeout.assert_called_once_with(CHILD_EXEC_TIMEOUT_S)
+    bounded = rig.incus.with_exec_timeout.return_value
+    assert rig.repo_dir.call_args.args[1] is bounded
+    assert rig.dirty.call_args.args[0] is bounded
+    assert rig.branch.call_args.args[0] is bounded
+    assert rig.fetch.call_args.args[1] is bounded
+    assert rig.fetch.call_args.kwargs["timeout"] == CHILD_TRANSPORT_TIMEOUT_S
+    # Labels go through the plain wrapper.
+    bounded.config_set.assert_not_called()
+    assert rig.incus.config_set.call_count == 2
+
+
+def test_done_fetch_timeout_refused_without_labels(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    rig.fetch.side_effect = GitError("git fetch timed out after 600s")
+    out = messages.handle_message(rig.ctx, _done())
+    assert out == refused("could not fetch your branch to the host: git fetch timed out after 600s")
+    _untouched(rig)
+
+
+def test_done_probe_timeout_refused_without_labels(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    rig.repo_dir.side_effect = IncusError("`incus exec ...` timed out after 60s")
+    out = messages.handle_message(rig.ctx, _done())
+    assert out.state == "refused"
+    assert "timed out" in out.detail
+    _untouched(rig)

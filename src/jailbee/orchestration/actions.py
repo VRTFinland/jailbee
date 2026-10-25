@@ -44,6 +44,16 @@ Role = Literal["orchestrator", "child", "none"]
 _SHORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 NOT_ALLOWED = "orchestration is not allowed in this repo"
 
+#: Bounds for the git work a child's `done` and an orchestrator's `import` run
+#: against containers the broker does not trust (NOPASSWD sudo inside): one
+#: stalled `incus exec` or `git upload-pack` must not stall the single broker
+#: loop. A probe exec (repo dir, status, branch) answers in well under a
+#: minute on any sane tree — the same bound `sync`'s status probe uses.
+CHILD_EXEC_TIMEOUT_S = 60
+#: Each git transport (fetch from / push into a container, per submodule).
+#: Generous: a first import of a large branch moves real data.
+CHILD_TRANSPORT_TIMEOUT_S = 600
+
 
 @dataclass(frozen=True)
 class Node:

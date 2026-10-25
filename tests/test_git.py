@@ -2053,3 +2053,32 @@ def test_network_fetch_retains_no_discovery_deadline(mocker, tmp_path):
 
 def test_the_refusal_is_a_git_error_every_caller_already_handles():
     assert issubclass(git.HostTreeWriteRefusedError, git.GitError)
+
+
+@pytest.mark.parametrize(
+    ("func", "extra", "op"),
+    [
+        ("fetch_url", ("+refs/heads/x:refs/y/x",), "fetch"),
+        ("push_url", ("+refs/heads/x:refs/y/x",), "push"),
+        ("fetch_url_multi", (["+HEAD:refs/x/HEAD"],), "fetch"),
+        ("push_url_multi", (["+HEAD:refs/x/HEAD"],), "push"),
+    ],
+)
+def test_url_transports_take_an_optional_timeout(mocker, tmp_path, func, extra, op):
+    """The orchestration broker bounds a child-driven transport; on expiry the
+    killed git surfaces as a GitError naming the timeout."""
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    getattr(git, func)(tmp_path, "ext::url", *extra, timeout=30)
+    assert call.call_args.kwargs["timeout"] == 30
+
+    call.side_effect = subprocess.TimeoutExpired(["git"], 30)
+    with pytest.raises(git.GitError, match=rf"git {op} timed out after 30s"):
+        getattr(git, func)(tmp_path, "ext::url", *extra, timeout=30)
+
+
+@pytest.mark.parametrize("func", ["fetch_url", "fetch_url_multi", "push_url_multi"])
+def test_url_transports_pass_no_timeout_by_default(mocker, tmp_path, func):
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    refspec = "+HEAD:refs/x/HEAD"
+    getattr(git, func)(tmp_path, "ext::url", [refspec] if "multi" in func else refspec)
+    assert "timeout" not in call.call_args.kwargs
