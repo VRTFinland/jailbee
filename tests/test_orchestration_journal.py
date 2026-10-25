@@ -44,3 +44,19 @@ def test_truncated_last_line_ignored(tmp_path: Path) -> None:
     j = Journal(tmp_path)
     assert j.seen("c1", "d1")
     assert not j.seen("c1", "d2")
+
+
+def test_old_entries_without_a_key_fall_back_to_the_name(tmp_path: Path) -> None:
+    (tmp_path / "journal.jsonl").write_text(
+        '{"container_full": "c1", "digest": "d1", "manifest_id": "m", "outcome": "ok", "at": ""}\n'
+    )
+    assert Journal(tmp_path).seen("c1", "d1")
+
+
+def test_record_keeps_the_full_name_for_reading(tmp_path: Path) -> None:
+    import json
+
+    Journal(tmp_path).record("uuid-1", "d1", "m1", "ok", AT, container_full="proj-x")
+    entry = json.loads((tmp_path / "journal.jsonl").read_text())
+    assert entry["container_key"] == "uuid-1"
+    assert entry["container_full"] == "proj-x"

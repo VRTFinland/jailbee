@@ -38,7 +38,12 @@ from jailbee.orchestration.protocol import (
     new_host_id,
     parse_manifest,
 )
-from jailbee.orchestration.state import load_queue, save_queue, state_root
+from jailbee.orchestration.state import (
+    load_queue,
+    purge_vanished_pending,
+    save_queue,
+    state_root,
+)
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
@@ -197,7 +202,7 @@ def _handle_raw(
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
     digest = manifest_digest(raw.file_name, raw.text, bodies)
-    if journal.seen(ctx.sender.full, digest):
+    if journal.seen(ctx.sender.key, digest):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -215,7 +220,14 @@ def _handle_raw(
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
             outcome = refused("broker error")
     # Journal before anything else: a crash after acting must never act again.
-    journal.record(ctx.sender.full, digest, ref, outcome.state if outcome else "ignored", ctx.now)
+    journal.record(
+        ctx.sender.key,
+        digest,
+        ref,
+        outcome.state if outcome else "ignored",
+        ctx.now,
+        container_full=ctx.sender.full,
+    )
     if outcome is not None:
         _reply(ctx, ref, outcome)
     delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
@@ -283,6 +295,9 @@ def tick(
     present = {e.get("name") for e in raw}
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
+    # Parked messages of a vanished container must never reach a namesake.
+    for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
+        log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
     if not candidates and not queues:
         return False

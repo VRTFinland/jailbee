@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from jailbee.db import state_dir
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,22 @@ def state_root() -> Path:
 def pending_dir(root: Path, recipient_full: str) -> Path:
     """Return the directory holding messages not yet delivered to `recipient_full`."""
     return root / "pending" / recipient_full
+
+
+def purge_pending(root: Path, recipient_full: str) -> None:
+    """Drop everything parked for `recipient_full` (it is gone)."""
+    shutil.rmtree(pending_dir(root, recipient_full), ignore_errors=True)
+
+
+def purge_vanished_pending(root: Path, present: Collection[str]) -> list[str]:
+    """Drop the pending directories of containers not in `present`; return their names."""
+    base = root / "pending"
+    if not base.is_dir():
+        return []
+    gone = sorted(p.name for p in base.iterdir() if p.is_dir() and p.name not in present)
+    for name in gone:
+        purge_pending(root, name)
+    return gone
 
 
 def atomic_write_text(path: Path, text: str) -> None:

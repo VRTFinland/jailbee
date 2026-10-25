@@ -661,3 +661,43 @@ def test_cli_broker_command_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(app, ["_broker"])
     assert result.exit_code == 0, result.output
     run.assert_called_once()
+
+
+def test_recreated_container_acts_on_a_manifest_identical_to_the_old_ones(rig: Rig) -> None:
+    """Same name, new Incus instance: the old instance's journal must not swallow it."""
+    raw = _spawn_raw("s1")
+    old, new = _orch(), _orch()
+    old["config"]["volatile.uuid"] = "uuid-old"
+    new["config"]["volatile.uuid"] = "uuid-new"
+    rig.outboxes["proj-orch"] = [raw]
+    rig.incus.list_containers.return_value = [old]
+    rig.tick()
+    rig.incus.list_containers.return_value = [new]  # destroyed and recreated
+    rig.tick()
+    assert rig.dispatch.call_count == 2
+
+
+def test_journal_keyed_by_instance_uuid(rig: Rig) -> None:
+    raw = _spawn_raw("s1")
+    digest = manifest_digest(raw.file_name, raw.text, {"s1.md": raw.files["s1.md"]})
+    rig.journal.record("uuid-1", digest, "s1", "started", NOW)
+    orch = _orch()
+    orch["config"]["volatile.uuid"] = "uuid-1"
+    rig.incus.list_containers.return_value = [orch]
+    rig.outboxes["proj-orch"] = [raw]
+    rig.tick()
+    rig.dispatch.assert_not_called()
+    rig.delete.assert_called_once()
+
+
+def test_vanished_container_pending_is_purged(rig: Rig) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    for name in ("proj-gone", "proj-orch"):
+        d = pending_dir(rig.root, name)
+        d.mkdir(parents=True)
+        (d / "x.json").write_text("{}")
+    rig.incus.list_containers.return_value = [_orch(running=False)]
+    rig.tick()
+    assert not pending_dir(rig.root, "proj-gone").exists()
+    assert (pending_dir(rig.root, "proj-orch") / "x.json").exists()

@@ -298,3 +298,27 @@ def test_restart_clears_labels_before_booting(
     out = actions.handle_restart(rig.ctx(), _restart())
     assert out.state == "refused"
     seams["boot"].assert_not_called()
+
+
+def test_destroy_purges_the_childs_pending_messages(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    rig = Rig(tmp_path, running=True)
+    parked = pending_dir(rig.root, "proj-c1")
+    parked.mkdir(parents=True)
+    (parked / "20261025T000000Z-h-1.json").write_text("{}")
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
+    assert not parked.exists()
+
+
+def test_failed_destroy_keeps_pending(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    rig = Rig(tmp_path, running=True)
+    parked = pending_dir(rig.root, "proj-c1")
+    parked.mkdir(parents=True)
+    seams["destroy"].side_effect = RuntimeError("busy")
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "refused"
+    assert parked.exists()

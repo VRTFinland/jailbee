@@ -26,7 +26,7 @@ from jailbee.orchestration.protocol import (
     SpawnManifest,
     StopManifest,
 )
-from jailbee.orchestration.state import QueuedRequest, load_queue, save_queue
+from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping
@@ -52,6 +52,15 @@ class Node:
     short: str
     running: bool
     config: Mapping[str, str]
+
+    @property
+    def key(self) -> str:
+        """Identity of this Incus instance: `volatile.uuid`, else the name.
+
+        A container destroyed and recreated under the same name gets a new
+        uuid, so per-instance broker state (the journal) never carries over.
+        """
+        return self.config.get("volatile.uuid") or self.full
 
 
 @dataclass(frozen=True)
@@ -576,6 +585,8 @@ def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
         lifecycle.destroy_container(ctx.cfg, ctx.incus, child.full, force=True)
     except Exception as e:
         return refused(f"child `{child.short}` could not be destroyed: {e}")
+    # Parked messages were for this instance; a recreated namesake must not get them.
+    purge_pending(ctx.root, child.full)
     return done(f"child `{child.short}` destroyed")
 
 

@@ -29,7 +29,13 @@ def manifest_digest(file_name: str, text: str, files: Mapping[str, str]) -> str:
 
 
 class Journal:
-    """JSON-lines journal of `(container, digest)` pairs already processed."""
+    """JSON-lines journal of `(container key, digest)` pairs already processed.
+
+    The container key is the Incus instance's `volatile.uuid` (the name when
+    absent, see `actions.Node.key`), so a container recreated under a reused
+    name starts with a clean slate. Entries written before the key existed
+    fall back to `container_full`.
+    """
 
     def __init__(self, root: Path) -> None:
         self._path = root / JOURNAL_FILE
@@ -45,29 +51,33 @@ class Journal:
             for line in lines:
                 try:
                     entry = json.loads(line)
-                    seen.add((entry["container_full"], entry["digest"]))
+                    key = entry.get("container_key") or entry["container_full"]
+                    seen.add((key, entry["digest"]))
                 except (ValueError, KeyError, TypeError):
                     continue
             self._seen = seen
         return self._seen
 
-    def seen(self, container_full: str, digest: str) -> bool:
+    def seen(self, container_key: str, digest: str) -> bool:
         """Return whether this manifest content was already processed for the container."""
-        return (container_full, digest) in self._load()
+        return (container_key, digest) in self._load()
 
     def record(
         self,
-        container_full: str,
+        container_key: str,
         digest: str,
         manifest_id: str,
         outcome: str,
         at: datetime,
+        *,
+        container_full: str | None = None,
     ) -> None:
-        """Append one entry and fsync it."""
+        """Append one entry and fsync it; `container_full` is for people reading it."""
         seen = self._load()
         line = json.dumps(
             {
-                "container_full": container_full,
+                "container_key": container_key,
+                "container_full": container_full or container_key,
                 "digest": digest,
                 "manifest_id": manifest_id,
                 "outcome": outcome,
@@ -90,4 +100,4 @@ class Journal:
             fh.write(prefix + line + "\n")
             fh.flush()
             os.fsync(fh.fileno())
-        seen.add((container_full, digest))
+        seen.add((container_key, digest))
