@@ -86,7 +86,7 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
 
 
 def _full(rig: Rig, branch: str) -> str:
-    return lifecycle.derive_container_name(rig.cfg, branch)
+    return str(lifecycle.derive_container_name(rig.cfg, branch))
 
 
 def test_spawn_under_limit_starts(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
@@ -128,7 +128,7 @@ def _queue(rig: Rig, branches: list[str], kind: str = "fork") -> None:
         QueuedRequest(
             manifest_id=f"m{i}",
             child_full=_full(rig, b),
-            kind=kind,  # type: ignore[arg-type]  # test passes arbitrary kind strings
+            kind=kind,
             commit="c0ffee" if kind == "fork" else None,
             queued_at="t",
             branch=b,
@@ -228,3 +228,61 @@ def test_revoked_grant_drops_queue_with_status(tmp_path: Path, seams: dict[str, 
 
 def test_handler_registered() -> None:
     assert actions.HANDLERS["spawn"] is actions.handle_spawn
+
+
+def test_new_spawn_queues_behind_nonempty_queue(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, limit=3)
+    _queue(rig, ["fix/1"])
+    out = actions.handle_spawn(rig.ctx(), _m("fix/2", mid="a2"))
+    assert out == Outcome("queued", "queued at position 2")
+    seams["start"].assert_not_called()
+
+
+def test_drain_without_grant_does_nothing(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, limit=2)
+    _queue(rig, ["fix/1"])
+    rig.sender = Node(full="proj-orch", short="orch", running=True, config={})
+    assert actions.drain_queue(rig.ctx()) == []
+    seams["start"].assert_not_called()
+    assert len(load_queue(tmp_path)["proj-orch"]) == 1
+
+
+def test_drain_dequeues_new_kind_without_fork(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, limit=2)
+    _queue(rig, ["fix/1"], kind="new")
+    ((_, out),) = actions.drain_queue(rig.ctx())
+    assert out.state == "started"
+    assert seams["start"].call_args.kwargs["fork"] is None
+
+
+def _jobs(monkeypatch: pytest.MonkeyPatch, rows: dict[str, MagicMock]) -> None:
+    monkeypatch.setattr("sqlmodel.Session", MagicMock())
+    monkeypatch.setattr("jailbee.db.get_engine", MagicMock())
+    monkeypatch.setattr("jailbee.background.list_all_jobs", lambda _s: rows)
+
+
+def _job(pid: int, phase: str = "cloning") -> MagicMock:
+    return MagicMock(op_kind="create", container_prefix="proj", pid=pid, phase=phase)
+
+
+def test_live_jobs_counts_alive_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    _jobs(monkeypatch, {"proj-x": _job(4242)})
+    monkeypatch.setattr("jailbee.background.worker_alive", lambda _p: True)
+    assert actions.live_create_jobs("proj") == {"proj-x"}
+
+
+def test_live_jobs_skips_terminal_phase(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.background import TERMINAL_PHASES
+
+    phase = sorted(TERMINAL_PHASES)[0]
+    _jobs(monkeypatch, {"proj-x": _job(4242, phase)})
+    monkeypatch.setattr("jailbee.background.worker_alive", lambda _p: True)
+    assert actions.live_create_jobs("proj") == set()
+
+
+def test_live_jobs_skips_pid_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    _jobs(monkeypatch, {"proj-x": _job(0)})
+    monkeypatch.setattr("jailbee.background.worker_alive", lambda _p: True)
+    assert actions.live_create_jobs("proj") == set()

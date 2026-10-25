@@ -256,7 +256,8 @@ def live_create_jobs(prefix: str) -> set[str]:
         for name, job in rows.items()
         if job.op_kind == JOB_CREATE
         and job.container_prefix == prefix
-        and background.worker_alive(job.pid)
+        and job.pid > 0  # os.kill(0, 0) would probe our own process group
+        and not background.clearable(job.phase, job.pid)
     }
 
 
@@ -304,7 +305,8 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             forking.pin_fork_commit(ctx.cfg, plan.child_full, fork.commit)
         except (ForkError, git.GitError) as e:
             return refused(str(e))
-    if running_children(ctx) < grant.max_running_children:
+    # A non-empty queue goes first: a new spawn never overtakes it.
+    if not queued and running_children(ctx) < grant.max_running_children:
         return start_child(ctx, plan, fork=fork)
     queued.append(
         QueuedRequest(
