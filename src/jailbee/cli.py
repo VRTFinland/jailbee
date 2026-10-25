@@ -3134,6 +3134,15 @@ def _state_service() -> None:
     raise typer.Exit(run_service(Incus()))
 
 
+@app.command("_broker", hidden=True)
+def _broker() -> None:
+    """Internal: the orchestration broker. Run by `jailbee-broker.service`."""
+    from jailbee.incus import Incus
+    from jailbee.orchestration.broker import run_broker
+
+    raise typer.Exit(run_broker(Incus()))
+
+
 @app.command("_destroy-worker", hidden=True)
 def _destroy_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to destroy.")],
