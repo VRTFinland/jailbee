@@ -71,6 +71,16 @@ interactively, as for every command; `revoke` always shows the picker.
 `jb orchestrate grant` also makes sure the [broker service](#the-broker) is
 running.
 
+Over remote SSH, `grant` needs the host's `remote.ssh.orchestration` setting
+(`off` by default). `ssh` limits the grantable mounts, loose network and egress
+to what the session could do itself (`remote.ssh.mounts`, `remote.ssh.network`;
+`mount_roots` never); `orchestrator` limits them to the orchestrator's
+permanent rights. The child limit and operations are always adjustable,
+narrowing is always allowed, and elements the stored grant already holds are
+kept. The check happens when the grant is made, so later turning the remote
+settings off does not narrow stored grants. See
+[Security](security.md#remote-ssh) and [config](config.md#remotessh).
+
 Revoking stops new spawns and other operations and drops queued spawns.
 Existing children are untouched and stay children.
 

@@ -1044,8 +1044,10 @@ import, stop and destroy children, within the grant and the repo's caps.
   `~/.config/jailbee/global.yaml` or the host-local config file. A repo's
   `.jailbee/config.yaml` may only narrow: `allowed`, `max_running_children`,
   `mounts`, `egress`, `loose`. Details: [config](../../config.md#orchestration).
-- `grant` runs on the host only; over remote SSH `revoke`, `show` and `ls` work
-  but `grant` is refused, since it widens what a container may do.
+- Over remote SSH `revoke`, `show` and `ls` always work. `grant` is refused
+  unless the host sets `remote.ssh.orchestration` to `ssh` (children may get
+  what the session could do itself) or `orchestrator` (what the orchestrator
+  permanently holds); it is off by default.
 - What an agent does with a grant is covered by two separate skills: an
   orchestrator agent uses `jailbee-orchestration`, a child agent uses
   `jailbee-orchestration-child`. Guide:

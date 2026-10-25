@@ -150,6 +150,17 @@ With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
 `net egress rm` only narrow a container and are always permitted; `--repo` on
 `net egress add`/`rm` is refused regardless, because it writes the host-local
 repo layer.
+`orchestrate grant` is refused in a restricted session while
+`remote.ssh.orchestration` is `off` (the default); `revoke`, `show` and `ls`
+are not affected. With `ssh`, a grant may give children only what the session
+could do itself: loose network and egress hosts need `remote.ssh.network`,
+optional-mount kinds need `remote.ssh.mounts`, and `mount_roots` never
+qualifies. With `orchestrator`, it may give only what the orchestrator
+container permanently holds, as defined. The number of children and the
+operations are never bounded. A remote grant can always narrow, and elements
+the stored grant already holds, including wider host-set ones, are kept. The
+bound is checked when the grant is made: turning `network` or `mounts` off
+later does not narrow stored grants, so revoke or edit those on the host.
 The startup log names allowlisted commands still refused by these restrictions.
 A regression test checks that every public leaf has a host/container
 classification; restricted routing also rejects unclassified commands at runtime.
