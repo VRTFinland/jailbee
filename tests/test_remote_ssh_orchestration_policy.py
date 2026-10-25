@@ -214,3 +214,68 @@ def test_rights_forced_readonly_in_any_incus_spelling_is_not_counted(tmp_path, q
 def test_rights_readonly_config_matches_a_numeric_readonly_device(tmp_path, quiet):
     cfg, host = _rights_cfg(tmp_path, readonly=True)
     assert read_orchestrator_rights(cfg, _incus(_dev(host, "1")), NAME).mounts == ("data",)
+
+
+# --- wildcard direction, in-bound grants, rights_from_info --------------------
+
+
+def test_wildcard_grant_is_not_covered_by_an_exact_stored_entry():
+    b = GrantBound("ssh", frozenset(), False, ())
+    current = _grant(egress=("api.example.com",))
+    assert len(grant_excess(_grant(egress=("*.example.com",)), current, b)) == 1
+
+
+def test_wildcard_grant_is_not_covered_by_an_exact_orchestrator_bound():
+    b = GrantBound("orchestrator", frozenset(), False, ("api.example.com",))
+    assert len(grant_excess(_grant(egress=("*.example.com",)), None, b)) == 1
+
+
+def test_mount_inside_the_bound_passes():
+    b = GrantBound("orchestrator", frozenset({"data"}), False, ())
+    assert grant_excess(_grant(mounts=("data",)), None, b) == []
+
+
+def test_loose_passes_when_the_bound_allows_it():
+    b = GrantBound("ssh", frozenset(), True, None)
+    assert grant_excess(_grant(loose=True), None, b) == []
+
+
+def test_loose_passes_when_the_stored_grant_already_has_it():
+    b = GrantBound("ssh", frozenset(), False, ())
+    assert grant_excess(_grant(loose=True), _grant(loose=True), b) == []
+
+
+def _info(**fields):
+    from jailbee.lifecycle import ContainerInfo
+
+    base = {"name": NAME, "state": "running", "network": "strict", "ip": None}
+    return ContainerInfo(**{**base, "memory_limit": None, **fields})
+
+
+def test_rights_from_info_drops_mounts_with_a_deadline():
+    from datetime import UTC, datetime
+
+    from jailbee.remote_ssh.orchestration_policy import rights_from_info
+
+    info = _info(
+        optional_mounts=("data", "aws"),
+        mount_until={"aws": datetime(2999, 1, 1, tzinfo=UTC)},
+    )
+    assert rights_from_info(info).mounts == ("data",)
+
+
+def test_rights_from_info_loose_needs_no_deadline():
+    from datetime import UTC, datetime
+
+    from jailbee.remote_ssh.orchestration_policy import rights_from_info
+
+    timed = _info(network="loose", loose_until=datetime(2999, 1, 1, tzinfo=UTC))
+    assert rights_from_info(timed).loose is False
+    assert rights_from_info(_info(network="loose", loose_until=None)).loose is True
+    assert rights_from_info(_info(network="strict")).loose is False
+
+
+def test_rights_from_info_egress_is_the_container_extras():
+    from jailbee.remote_ssh.orchestration_policy import rights_from_info
+
+    assert rights_from_info(_info(egress_extra=("a.example.com",))).egress == ("a.example.com",)
