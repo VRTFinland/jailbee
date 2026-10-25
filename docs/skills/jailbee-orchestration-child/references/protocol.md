@@ -69,7 +69,12 @@ A `message` from your orchestrator (`from` is its short name):
 ```
 
 A `status` reply answers one of your manifests; `ref` is the manifest id and
-`state` is `done` or `refused` for a child's messages. `refused` is final.
+`state` is `done` (delivered), `queued` (your orchestrator is not running; the
+message is delivered when it starts) or `refused`. Only `refused` is final and
+needs action. The two `done`-check refusals above are joined by
+`could not fetch your branch to the host: ...` and
+`could not record the done report: ...`, which are not your manifest's fault:
+retry `done` once under a new id, and send `blocked` if it repeats.
 
 ```json
 {"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "msg-0003",

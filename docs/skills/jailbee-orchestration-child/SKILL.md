@@ -77,6 +77,13 @@ and moves it to `inbox/read/`; or `mv` the file there yourself.
 
 ## Status messages for you
 
-You only get `status` messages as bounces of your own messages: `refused`
-with a `detail` saying why. A refusal is final; fix the cause and send a new
-message under a new id.
+Every message you send gets a `status` reply whose `ref` is its id, with
+state `done` (delivered), `queued` or `refused`. Only `refused` needs action;
+it is final, so fix the cause and send a new message under a new id.
+`queued` is not a failure: your orchestrator is not running, and the message
+is delivered when it starts. Do not resend it.
+
+Two `refused` details for `done` are not a fault in your manifest or your
+tree: `could not fetch your branch to the host: ...` and
+`could not record the done report: ...`. Retry `done` once under a new id; if
+it repeats, send a `blocked` message describing the detail.
