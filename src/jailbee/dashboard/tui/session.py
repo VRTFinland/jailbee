@@ -187,6 +187,44 @@ if TYPE_CHECKING:
     from jailbee.state_service.client import StateClient
 
 
+def _normalised(grant: GrantView | None) -> GrantView | None:
+    """``grant`` as the CLI stores it: operations, mounts and egress sorted and de-duplicated."""
+    if grant is None:
+        return None
+    return replace(
+        grant,
+        operations=tuple(sorted(set(grant.operations))),
+        mounts=tuple(sorted(set(grant.mounts))),
+        egress=tuple(sorted(set(grant.egress))),
+    )
+
+
+def _with_grant(
+    groups: list[RepoGroup], container: str, grant: GrantView | None
+) -> list[RepoGroup]:
+    """``groups`` with ``container``'s grant replaced; other groups are shared."""
+    return [
+        replace(
+            g,
+            containers=[
+                replace(c, grant=grant) if c.name == container else c for c in g.containers
+            ],
+        )
+        if any(c.name == container for c in g.containers)
+        else g
+        for g in groups
+    ]
+
+
+@dataclass(frozen=True)
+class _GrantPatch:
+    """A grant edit shown before the snapshot has it (``grant`` None: revoked)."""
+
+    grant: GrantView | None
+    expires: float
+    base: GrantView | None  # the snapshot's grant when the first edit was made
+
+
 log = logging.getLogger(__name__)
 
 _TOGGLE_OPERATIONS = ("import", "restart", "stop", "destroy")  # spawn/message are the baseline
@@ -381,7 +419,7 @@ class DashboardSession:
         self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
-        self._grant_patches: dict[str, tuple[GrantView, float]] = {}
+        self._grant_patches: dict[str, _GrantPatch] = {}
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
@@ -432,6 +470,7 @@ class DashboardSession:
         self.presented = self._without_dismissed(
             present(snapshot.groups, self.cwd_root, self.scope)
         )
+        self._apply_grant_patches()
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if self.over_ssh else snapshot.update
@@ -439,7 +478,6 @@ class DashboardSession:
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
-        self._apply_grant_patches()
         self.rows = selectable_rows(self.groups, self.folded)
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
@@ -1107,7 +1145,8 @@ class DashboardSession:
             # Not `dispatchable`: that resolves a shared-menu verb, and this entry is terminal-only.
             repo = self.repo_for(container, "container")
             if repo is not None:
-                self.run_quiet_cli(repo, dact.orchestrate_revoke_argv(container))
+                if self.run_quiet_cli(repo, dact.orchestrate_revoke_argv(container)):
+                    self._patch_grant(container, None)
             else:
                 self.set_notice(f"'{container}' is gone")
             return None
@@ -1136,6 +1175,8 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(container, profile=entry.value[len("profile:") :])
         else:
             argv = dact.orchestrate_grant_argv(container)
+        # the profile's grant is unknown here: drop any local edit and let the snapshot show it
+        self._grant_patches.pop(container, None)
         self.run_quiet_cli(repo, argv)
         return None
 
@@ -1238,37 +1279,43 @@ class DashboardSession:
             self._patch_grant(container, patched)
         return self._reopen_orchestration(container, value)
 
-    def _patch_grant(self, container: str, grant: GrantView) -> None:
-        """Show ``grant`` for ``container`` until the gathered snapshot has it too.
+    def _patch_grant(self, container: str, grant: GrantView | None) -> None:
+        """Show ``grant`` (None: revoked) for ``container`` until the snapshot has caught up.
 
         ``run_quiet_cli`` only asks for a refresh; the snapshot that answers it
         arrives later, so without this the reopened picker (and the next edit,
         which computes from the grant) would use the pre-edit grant. The patch
-        is dropped once the snapshot agrees, or after a timeout.
+        is dropped once the snapshot's grant differs from the one the edit
+        started from (the real state has arrived), or after a timeout.
         """
-        self._grant_patches[container] = (grant, time.monotonic() + GRANT_PATCH_SECONDS)
-        self._apply_grant_patches()
+        held = self._grant_patches.get(container)
+        found = self._listed_container(container)
+        base = held.base if held is not None else (found[1].grant if found else None)
+        self._grant_patches[container] = _GrantPatch(
+            _normalised(grant), time.monotonic() + GRANT_PATCH_SECONDS, base
+        )
+        # the lists already hold earlier patches, so no snapshot comparison here; every
+        # list a rebuild starts from changes too (_recompute_shown re-sorts `presented`)
+        patched = self._grant_patches[container].grant
+        self.presented = _with_grant(self.presented, container, patched)
+        self.all_groups = _with_grant(self.all_groups, container, patched)
+        self.groups = _with_grant(self.groups, container, patched)
 
     def _apply_grant_patches(self) -> None:
+        """Overlay the held patches on the freshly gathered ``self.presented`` (tick only)."""
         if not self._grant_patches:
             return
         now = time.monotonic()
-        groups: list[RepoGroup] = []
-        for group in self.groups:
-            containers = list(group.containers)
-            for i, info in enumerate(containers):
+        for group in self.presented:
+            for info in group.containers:
                 held = self._grant_patches.get(info.name)
-                if held is None:
-                    continue
-                if info.grant == held[0] or now >= held[1]:
+                if held is not None and (info.grant != held.base or now >= held.expires):
                     del self._grant_patches[info.name]
-                else:
-                    containers[i] = replace(info, grant=held[0])
-            groups.append(replace(group, containers=containers))
-        self._grant_patches = {
-            n: h for n, h in self._grant_patches.items() if self._listed_container(n) is not None
-        }
-        self.groups = groups
+        # prune against the unfiltered list: a filtered-out container keeps its patch
+        listed = {c.name for g in self.presented for c in g.containers}
+        self._grant_patches = {n: h for n, h in self._grant_patches.items() if n in listed}
+        for name, held in self._grant_patches.items():
+            self.presented = _with_grant(self.presented, name, held.grant)
 
     def _refresh_orchestration_picker(self) -> None:
         """Rebuild an open Orchestration picker from the new snapshot, keeping its cursor."""

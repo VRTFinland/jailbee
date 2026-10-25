@@ -291,6 +291,12 @@ def _open(overlay: object):  # type: ignore[no-untyped-def]
     return lambda app: setattr(app.session, "overlay", overlay)
 
 
+def test_picker_start_index_places_the_cursor(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta", "Gamma"), start_index=2)
+    run = drive(mocker, [_open(picker)], [alpha_group(tmp_path)])
+    assert run.natives[1] == NativeState("picker", 2)
+
+
 def test_picker_is_native(mocker, tmp_path):
     group = cfg_group(tmp_path)
     steps = [*_apply_picker(group), "j"]

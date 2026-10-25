@@ -892,16 +892,106 @@ def test_tick_rebuilds_the_orchestration_picker_and_keeps_cursor(mocker, tmp_pat
     assert session.overlay.start_index == reopened.start_index > 0
 
 
-def test_snapshot_confirming_the_edit_drops_the_patch(mocker, tmp_path):
+def test_snapshot_with_a_changed_grant_drops_the_patch(mocker, tmp_path):
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
     session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
     assert "alpha-one" in session._grant_patches
-    patched = session._grant_patches["alpha-one"][0]
+    info = session.client.groups[0].containers[0]
+    # the real state differs from both the base and the patch (another writer): it wins
     session.client.groups[0].containers[0] = dataclasses.replace(
-        session.client.groups[0].containers[0], grant=patched
+        info, grant=dataclasses.replace(info.grant, limit=7)
     )
     session.tick()
     assert session._grant_patches == {}
+    assert session.groups[0].containers[0].grant.limit == 7
+
+
+def test_stale_snapshot_keeps_the_patch_for_the_next_edit(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    session.tick()  # the snapshot still shows the pre-edit grant
+    labels = {e.value: e.label for e in session.overlay.entries}
+    assert labels["loose"] == "Children may be loose: yes"
+    session.submit_picker(session.overlay, PickerEntry("", "loose"))
+    assert quiet.call_args.args[1][2] == "--no-loose"
+
+
+def test_patch_expires(mocker, tmp_path):
+    import jailbee.dashboard.tui.session as tsession
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    clock = mocker.patch.object(tsession.time, "monotonic", return_value=1000.0)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    clock.return_value = 1000.0 + tsession.GRANT_PATCH_SECONDS - 1
+    session.tick()
+    assert session.groups[0].containers[0].grant.loose is True
+    clock.return_value = 1000.0 + tsession.GRANT_PATCH_SECONDS + 1
+    session.tick()
+    assert session.groups[0].containers[0].grant.loose is False
+    assert session._grant_patches == {}
+
+
+def test_patch_survives_a_filtered_out_container(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    session.hidden_repos = frozenset({"alpha"})  # filtered out of session.groups
+    session.tick()
+    assert session.groups == []
+    assert "alpha-one" in session._grant_patches
+
+
+def test_revoke_after_edit_leaves_no_grant(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    confirm = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("Revoke…", "revoke")
+    )
+    session.submit_picker(confirm, PickerEntry("Yes, revoke", "yes"))
+    assert session.groups[0].containers[0].grant is None
+    session.tick()  # a stale snapshot still has the grant
+    assert session.groups[0].containers[0].grant is None
+    # then the real (revoked) snapshot arrives and the patch goes
+    session.client.groups[0].containers[0] = dataclasses.replace(
+        session.client.groups[0].containers[0], grant=None
+    )
+    session.tick()
+    assert session._grant_patches == {}
+
+
+def test_reapply_profile_after_edit_drops_the_patch(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "loose"))
+    session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "profile:bugfixer")
+    )
+    assert session._grant_patches == {}
+    session.tick()
+    assert session.groups[0].containers[0].grant.loose is False  # the snapshot, not the old patch
+
+
+def test_patched_grant_is_normalised_like_the_cli(mocker, tmp_path):
+    from jailbee.orchestration.grant import Grant, Grantable
+
+    session, quiet = _orchestration_session(
+        mocker,
+        tmp_path,
+        grant=True,
+        ops=("spawn", "message"),
+        mounts=("docs",),
+        kinds=("data", "docs"),
+    )
+    _run_edits(session, quiet, "mount:data", "op:restart", "op:import")
+    patched = session.groups[0].containers[0].grant
+    real = Grant(
+        operations=("spawn", "message", "restart", "import"),
+        grantable=Grantable(mounts=("docs", "data", "data")),
+    )
+    assert patched.operations == real.operations
+    assert patched.mounts == real.grantable.mounts
+    from jailbee.dashboard.tui.session import _normalised
+
+    ops = _normalised(dataclasses.replace(patched, egress=("b", "a", "a"))).egress
+    assert ops == Grantable(egress=("b", "a", "a")).egress
 
 
 def test_limit_one_is_valid(mocker, tmp_path):
