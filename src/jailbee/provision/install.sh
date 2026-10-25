@@ -377,6 +377,7 @@ usage() {
 Usage: jailbee-inbox wait [--timeout DUR]
        jailbee-inbox ls
        jailbee-inbox read <id> [--keep]
+       jailbee-inbox send <type> [options]
 
   wait   Print the path of the oldest unread message (exit 0), waiting up to
          DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1
@@ -386,6 +387,17 @@ Usage: jailbee-inbox wait [--timeout DUR]
   read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
          it in place); exit 1 if no unread message has that id.
 
+  send   Write a manifest for the orchestrator's host into outbox/ and print
+         its id. Text (body or prompt) comes from --text T, --file PATH or -
+         (stdin); at most 65536 bytes, not empty.
+           message  [--to C] [--kind note|question|done|blocked]
+                    [--reply-to ID] + text
+           spawn    --branch B [--new [--base B]] [--mount M]... [--loose]
+                    [--egress H]... [--note T] + text (the prompt)
+           restart  --child C + text (the prompt)
+           import | stop   --child C
+           destroy  --child C [--force]
+
 Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration),
 JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5).
 USAGE
@@ -393,6 +405,7 @@ USAGE
 
 base="${JAILBEE_ORCHESTRATION_DIR:-$HOME/.jailbee/orchestration}"
 inbox="$base/inbox"
+outbox="$base/outbox"
 poll="${JAILBEE_INBOX_POLL:-5}"
 WATCH_SLICE=10  # seconds; longest single inotifywait (see cmd_wait)
 [[ "$poll" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] \
@@ -528,12 +541,188 @@ cmd_read() {
     return 1
 }
 
+# Writes one manifest (plus its body file) atomically into outbox/ and prints
+# its id. Mirrors the cheap checks of the host's manifest validator so a bad
+# request fails here rather than as a refusal status later.
+MAX_TEXT_BYTES=65536
+
+bad_usage() {
+    printf 'jailbee-inbox: %s\n' "$1" >&2
+    usage >&2
+    exit 2
+}
+
+new_id() {
+    local suffix
+    suffix="$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+    printf '%s-%s-%s' "$1" "$(date -u +%Y%m%d%H%M%S)" "$suffix"
+}
+
+cmd_send() {
+    [ $# -ge 1 ] || bad_usage "send needs a type"
+    local type="$1"; shift
+    case "$type" in
+        message|spawn|import|restart|stop|destroy) ;;
+        *) bad_usage "unknown message type '$type'" ;;
+    esac
+    local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
+    local text="" text_set=0 file="" file_set=0 stdin=0
+    local -a mounts=() egress=()
+    local opt_val
+    while [ $# -gt 0 ]; do
+        opt_val=""
+        case "$1" in
+            --new) new=1; shift; continue ;;
+            --loose) loose=1; shift; continue ;;
+            --force) force=1; shift; continue ;;
+            -) stdin=1; shift; continue ;;
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child)
+                [ $# -ge 2 ] || bad_usage "$1 needs a value"
+                opt_val="$2"
+                if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
+                    bad_usage "$1 needs a non-empty value"
+                fi
+                ;;
+            *) bad_usage "unknown argument '$1'" ;;
+        esac
+        case "$1" in
+            --text) text="$opt_val"; text_set=1 ;;
+            --file) file="$opt_val"; file_set=1 ;;
+            --to) to="$opt_val" ;;
+            --kind) kind="$opt_val" ;;
+            --reply-to) reply_to="$opt_val" ;;
+            --branch) branch="$opt_val" ;;
+            --base) base_branch="$opt_val" ;;
+            --mount) mounts+=("$opt_val") ;;
+            --egress) egress+=("$opt_val") ;;
+            --note) note="$opt_val" ;;
+            --child) child="$opt_val" ;;
+        esac
+        shift 2
+    done
+
+    # Which options belong to which type.
+    local has_body=0
+    case "$type" in message|spawn|restart) has_body=1 ;; esac
+    local sources=$((text_set + file_set + stdin))
+    if [ "$has_body" -eq 1 ]; then
+        [ "$sources" -eq 1 ] || bad_usage "$type needs exactly one of --text, --file or -"
+    else
+        [ "$sources" -eq 0 ] || bad_usage "$type takes no text, file or stdin"
+    fi
+    if [ "$type" != "message" ] && { [ -n "$to" ] || [ -n "$kind" ] || [ -n "$reply_to" ]; }; then
+        bad_usage "--to, --kind and --reply-to only apply to message"
+    fi
+    if [ "$type" != "spawn" ] && {
+        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ "$loose" -eq 1 ] \
+            || [ -n "$note" ] || [ "${#mounts[@]}" -gt 0 ] || [ "${#egress[@]}" -gt 0 ]; }; then
+        bad_usage "--branch, --new, --base, --mount, --loose, --egress and --note only apply to spawn"
+    fi
+    if [ "$type" != "destroy" ] && [ "$force" -eq 1 ]; then
+        bad_usage "--force only applies to destroy"
+    fi
+    case "$type" in
+        import|stop|destroy|restart)
+            [ -n "$child" ] || bad_usage "$type needs --child" ;;
+        *) [ -z "$child" ] || bad_usage "--child does not apply to $type" ;;
+    esac
+    if [ "$type" = "spawn" ]; then
+        [ -n "$branch" ] || bad_usage "spawn needs --branch"
+        [ -z "$base_branch" ] || [ "$new" -eq 1 ] || bad_usage "--base needs --new"
+    fi
+    if [ "$type" = "message" ] && [ -n "$kind" ]; then
+        case "$kind" in
+            note|question|done|blocked) ;;
+            *) bad_usage "--kind must be note, question, done or blocked" ;;
+        esac
+    fi
+
+    mkdir -p "$outbox"
+    local id attempt
+    for attempt in 1 2; do
+        id="$(new_id "$type")"
+        if [ ! -e "$outbox/$id.json" ] && [ ! -e "$outbox/$id.md" ]; then break; fi
+        id=""
+    done
+    if [ -z "$id" ]; then
+        printf 'jailbee-inbox: could not find a free manifest id\n' >&2
+        return 1
+    fi
+
+    local body_name="$id.md"
+    # Globals: the EXIT trap runs after this function's locals are gone.
+    body_tmp="$outbox/.$id.md.tmp"
+    json_tmp="$outbox/.$id.json.tmp"
+    trap 'rm -f -- "$body_tmp" "$json_tmp"' EXIT
+
+    if [ "$has_body" -eq 1 ]; then
+        if [ "$text_set" -eq 1 ]; then
+            printf '%s' "$text" > "$body_tmp"
+        elif [ "$file_set" -eq 1 ]; then
+            [ -f "$file" ] && [ -r "$file" ] || die "cannot read file '$file'"
+            cat -- "$file" > "$body_tmp"
+        else
+            cat > "$body_tmp"
+        fi
+        local size
+        size="$(wc -c < "$body_tmp")"
+        [ "$size" -gt 0 ] || die "the $type text is empty"
+        [ "$size" -le "$MAX_TEXT_BYTES" ] || die "the $type text is $size bytes; the limit is $MAX_TEXT_BYTES"
+    fi
+
+    case "$type" in
+        message)
+            jq -n --arg id "$id" --arg bf "$body_name" --arg to "$to" --arg kind "$kind" \
+                --arg reply "$reply_to" \
+                '{version: 1, id: $id, type: "message", body_file: $bf}
+                 + (if $to != "" then {to: $to} else {} end)
+                 + (if $kind != "" then {kind: $kind} else {} end)
+                 + (if $reply != "" then {in_reply_to: $reply} else {} end)' > "$json_tmp" ;;
+        spawn)
+            local mounts_json egress_json
+            mounts_json="$(jq -nc '$ARGS.positional' --args "${mounts[@]}")"
+            egress_json="$(jq -nc '$ARGS.positional' --args "${egress[@]}")"
+            jq -n --arg id "$id" --arg pf "$body_name" --arg branch "$branch" \
+                --arg base "$base_branch" --arg note "$note" --argjson new "$new" \
+                --argjson loose "$loose" --argjson mounts "$mounts_json" \
+                --argjson egress "$egress_json" \
+                '{version: 1, id: $id, type: "spawn", kind: (if $new == 1 then "new" else "fork" end),
+                  branch: $branch, prompt_file: $pf,
+                  rights: {version: 1, mounts: $mounts, loose: ($loose == 1), egress: $egress}}
+                 + (if $base != "" then {base: $base} else {} end)
+                 + (if $note != "" then {note: $note} else {} end)' > "$json_tmp" ;;
+        restart)
+            jq -n --arg id "$id" --arg pf "$body_name" --arg child "$child" \
+                '{version: 1, id: $id, type: "restart", child: $child, prompt_file: $pf}' > "$json_tmp" ;;
+        destroy)
+            jq -n --arg id "$id" --arg child "$child" --argjson force "$force" \
+                '{version: 1, id: $id, type: "destroy", child: $child}
+                 + (if $force == 1 then {force: true} else {} end)' > "$json_tmp" ;;
+        import|stop)
+            jq -n --arg id "$id" --arg type "$type" --arg child "$child" \
+                '{version: 1, id: $id, type: $type, child: $child}' > "$json_tmp" ;;
+    esac
+
+    # Body first: the broker reads it only once the manifest names it.
+    if [ "$has_body" -eq 1 ]; then
+        mv -- "$body_tmp" "$outbox/$body_name"
+    fi
+    if ! mv -- "$json_tmp" "$outbox/$id.json"; then
+        [ "$has_body" -eq 1 ] && rm -f -- "$outbox/$body_name"
+        printf 'jailbee-inbox: could not write the manifest\n' >&2
+        return 1
+    fi
+    trap - EXIT
+    printf '%s\n' "$id"
+}
+
 [ $# -ge 1 ] || { usage >&2; exit 2; }
 sub="$1"; shift
 case "$sub" in
     wait) cmd_wait "$@" ;;
     ls) cmd_ls "$@" ;;
     read) cmd_read "$@" ;;
+    send) cmd_send "$@" ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
 esac

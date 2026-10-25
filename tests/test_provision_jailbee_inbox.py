@@ -3,6 +3,8 @@ orchestration directory. Needs bash and jq (both in the golden image)."""
 
 import importlib.resources
 import json
+import os
+import re
 import shutil
 import subprocess
 import threading
@@ -72,7 +74,23 @@ def write_inbox(base: Path, name: str, payload: dict[str, object]) -> Path:
 def env_for(base: Path, tmp_path: Path, path: str | None = None) -> dict[str, str]:
     bin_dir = tmp_path / "nobin"
     bin_dir.mkdir(exist_ok=True)
-    for tool in ("jq", "sleep", "ls", "mv", "mkdir", "date", "cat", "head", "sort", "env", "bash"):
+    for tool in (
+        "jq",
+        "sleep",
+        "ls",
+        "mv",
+        "mkdir",
+        "date",
+        "cat",
+        "head",
+        "sort",
+        "env",
+        "bash",
+        "od",
+        "tr",
+        "wc",
+        "rm",
+    ):
         found = shutil.which(tool)
         assert found
         link = bin_dir / tool
@@ -359,3 +377,268 @@ def test_read_of_a_file_that_vanishes_exits_1(script, base, tmp_path):
     r = run(script, "read", "h-0000aaaa", env=env)
     assert r.returncode == 1
     assert "no unread message with id h-0000aaaa" in r.stderr
+
+
+# --- send ---------------------------------------------------------------
+
+SEND_ID_RE = r"^[a-z0-9][a-z0-9-]{0,63}$"
+
+
+def send(
+    script: Path,
+    base: Path,
+    tmp_path: Path,
+    *args: str,
+    stdin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/bash", str(script), "send", *args],
+        env=env or env_for(base, tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        input=stdin,
+    )
+
+
+def manifest_of(base: Path, r: subprocess.CompletedProcess[str]) -> tuple[str, dict[str, object]]:
+    assert r.returncode == 0, r.stderr
+    mid = r.stdout.strip()
+    assert r.stdout == mid + "\n"
+    return mid, json.loads((base / "outbox" / f"{mid}.json").read_text())
+
+
+def test_send_message_writes_manifest_and_body(script, base, tmp_path):
+    r = send(
+        script,
+        base,
+        tmp_path,
+        "message",
+        "--kind",
+        "question",
+        "--reply-to",
+        "h-0000aaaa",
+        "--text",
+        "which db?",
+    )
+    mid, m = manifest_of(base, r)
+    assert re.match(SEND_ID_RE, mid) and re.match(r"^message-\d{14}-[0-9a-f]{4}$", mid)
+    assert m == {
+        "version": 1,
+        "id": mid,
+        "type": "message",
+        "kind": "question",
+        "in_reply_to": "h-0000aaaa",
+        "body_file": f"{mid}.md",
+    }
+    assert (base / "outbox" / f"{mid}.md").read_text() == "which db?"
+
+
+def test_send_message_minimal_and_to(script, base, tmp_path):
+    mid, m = manifest_of(
+        base, send(script, base, tmp_path, "message", "--to", "c1", "--text", "hi")
+    )
+    assert m == {"version": 1, "id": mid, "type": "message", "to": "c1", "body_file": f"{mid}.md"}
+
+
+def test_send_spawn_fork_with_rights(script, base, tmp_path):
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("do it\n")
+    r = send(
+        script,
+        base,
+        tmp_path,
+        "spawn",
+        "--branch",
+        "fix-1",
+        "--mount",
+        "data",
+        "--egress",
+        "pypi.org",
+        "--file",
+        str(prompt),
+    )
+    mid, m = manifest_of(base, r)
+    assert m["kind"] == "fork"
+    assert m["rights"] == {"version": 1, "mounts": ["data"], "loose": False, "egress": ["pypi.org"]}
+    assert m["prompt_file"] == f"{mid}.md" and "base" not in m and "note" not in m
+    assert (base / "outbox" / f"{mid}.md").read_text() == "do it\n"
+
+
+def test_send_spawn_new_with_base_and_repeats(script, base, tmp_path):
+    r = send(
+        script,
+        base,
+        tmp_path,
+        "spawn",
+        "--branch",
+        "feat/x",
+        "--new",
+        "--base",
+        "main",
+        "--mount",
+        "a",
+        "--mount",
+        "b",
+        "--egress",
+        "x.io",
+        "--egress",
+        "y.io",
+        "--loose",
+        "--note",
+        "why",
+        "--text",
+        "p",
+    )
+    _, m = manifest_of(base, r)
+    assert m["kind"] == "new" and m["base"] == "main" and m["note"] == "why"
+    assert m["rights"] == {
+        "version": 1,
+        "mounts": ["a", "b"],
+        "loose": True,
+        "egress": ["x.io", "y.io"],
+    }
+
+
+def test_send_spawn_empty_rights_written_in_full(script, base, tmp_path):
+    _, m = manifest_of(base, send(script, base, tmp_path, "spawn", "--branch", "b", "--text", "p"))
+    assert m["rights"] == {"version": 1, "mounts": [], "loose": False, "egress": []}
+
+
+def test_send_destroy_force(script, base, tmp_path):
+    mid, m = manifest_of(
+        base, send(script, base, tmp_path, "destroy", "--child", "fix-1", "--force")
+    )
+    assert m == {"version": 1, "id": mid, "type": "destroy", "child": "fix-1", "force": True}
+    mid, m = manifest_of(base, send(script, base, tmp_path, "destroy", "--child", "fix-1"))
+    assert "force" not in m
+
+
+def test_send_restart_import_stop(script, base, tmp_path):
+    mid, m = manifest_of(
+        base, send(script, base, tmp_path, "restart", "--child", "c", "--text", "again")
+    )
+    assert m == {
+        "version": 1,
+        "id": mid,
+        "type": "restart",
+        "child": "c",
+        "prompt_file": f"{mid}.md",
+    }
+    for t in ("import", "stop"):
+        mid, m = manifest_of(base, send(script, base, tmp_path, t, "--child", "c"))
+        assert m == {"version": 1, "id": mid, "type": t, "child": "c"}
+        assert not (base / "outbox" / f"{mid}.md").exists()
+
+
+def test_send_reads_stdin_dash(script, base, tmp_path):
+    r = send(script, base, tmp_path, "message", "-", stdin="from stdin\nline 2\n")
+    mid, _ = manifest_of(base, r)
+    assert (base / "outbox" / f"{mid}.md").read_text() == "from stdin\nline 2\n"
+
+
+def test_send_creates_outbox_and_leaves_no_temp_file(script, tmp_path):
+    base = tmp_path / "fresh"
+    r = send(script, base, tmp_path, "message", "--text", "x")
+    assert r.returncode == 0
+    names = os.listdir(base / "outbox")
+    assert not [n for n in names if n.startswith(".")]
+    assert len(names) == 2
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["bogus"],
+        [],
+        ["spawn", "--text", "p"],
+        ["spawn", "--branch", "b"],
+        ["spawn", "--branch", "b", "--text", "p", "--bogus"],
+        ["spawn", "--branch", "b", "--base", "main", "--text", "p"],
+        ["message", "--kind", "weird", "--text", "p"],
+        ["message", "--text", "a", "--file", "x"],
+        ["message"],
+        ["message", "--text", ""],
+        ["message", "--text", "p", "--branch", "b"],
+        ["import"],
+        ["stop", "--child", "c", "--text", "p"],
+        ["restart", "--child", "c"],
+        ["import", "--child", "c", "--force"],
+        ["message", "--text", "p", "--child", "c"],
+        ["message", "--to"],
+        [
+            "message",
+            "--file",
+            "/nonexistent",
+        ],
+    ],
+)
+def test_send_bad_usage_exits_2_and_writes_nothing(script, base, tmp_path, args):
+    r = send(script, base, tmp_path, *args)
+    assert r.returncode == 2, r.stderr
+    assert r.stderr.startswith("jailbee-inbox: ")
+    assert r.stdout == ""
+    assert not list((base / "outbox").glob("*")) if (base / "outbox").exists() else True
+
+
+def test_send_refuses_oversized_text(script, base, tmp_path):
+    ok = send(script, base, tmp_path, "message", "--text", "x" * 65536)
+    assert ok.returncode == 0
+    r = send(script, base, tmp_path, "message", "-", stdin="x" * 65537)
+    assert r.returncode == 2 and "65536" in r.stderr
+    assert len(os.listdir(base / "outbox")) == 2  # only the accepted one
+
+
+def test_send_refuses_to_overwrite_existing_id(script, base, tmp_path):
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "od").write_text("#!/bin/bash\necho ' ab cd'\n")
+    (shim / "date").write_text("#!/bin/bash\necho 20261025120000\n")
+    for f in shim.iterdir():
+        f.chmod(0o755)
+    env = env_for(base, tmp_path)
+    env["PATH"] = f"{shim}:{env['PATH']}"
+    first = send(script, base, tmp_path, "stop", "--child", "c", env=env)
+    assert first.returncode == 0 and first.stdout.strip() == "stop-20261025120000-abcd"
+    before = (base / "outbox" / "stop-20261025120000-abcd.json").read_text()
+    again = send(script, base, tmp_path, "stop", "--child", "other", env=env)
+    assert again.returncode == 1
+    assert (base / "outbox" / "stop-20261025120000-abcd.json").read_text() == before
+
+
+def test_send_output_parses_with_protocol(script, base, tmp_path):
+    from jailbee.orchestration.protocol import parse_manifest
+
+    cases = [
+        ("message", "--text", "hello"),
+        ("spawn", "--branch", "fix-1", "--mount", "data", "--egress", "pypi.org", "--text", "go"),
+        (
+            "spawn",
+            "--branch",
+            "n",
+            "--new",
+            "--base",
+            "main",
+            "--loose",
+            "--note",
+            "n",
+            "--text",
+            "go",
+        ),
+        ("restart", "--child", "c", "--text", "again"),
+        ("import", "--child", "c"),
+        ("stop", "--child", "c"),
+        ("destroy", "--child", "c"),
+        ("destroy", "--child", "c", "--force"),
+    ] + [
+        ("message", "--kind", k, "--to", "c", "--reply-to", "h-1", "--text", "t")
+        for k in ("note", "question", "done", "blocked")
+    ]
+    for args in cases:
+        r = send(script, base, tmp_path, *args)
+        assert r.returncode == 0, (args, r.stderr)
+        mid = r.stdout.strip()
+        files = {p.name: p.read_text() for p in (base / "outbox").glob("*.md")}
+        parsed = parse_manifest(f"{mid}.json", (base / "outbox" / f"{mid}.json").read_text(), files)
+        assert parsed.id == mid
