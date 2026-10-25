@@ -5898,11 +5898,11 @@ Never `tmux kill-server`. The private socket vanishes with its last session.
 
 ## Orchestration broker (plan D)
 
-> **Status: not yet run — needs a real Incus rig.** Derived from the code
-> (`orchestration/broker.py`, `actions.py`, `protocol.py`, `outbox.py`).
-> Only `spawn`, `restart`, `stop` and `destroy` are handled; `message`,
-> `import` and the child's `done` arrive with the next phase and are answered
-> with a `refused` status ("not supported by this broker version").
+> **Status: run 2026-10-25 on a nested rig** (broker started in the foreground
+> with `jailbee _broker`, not as the user unit). Everything below passed after
+> one fix: a child was labelled too late to count against the limit while it
+> was being created, so a queued spawn could start next to it. The inotify
+> branch of `jailbee-inbox wait` ran against a real `inotifywait`.
 
 Needs a disposable nested rig (see the sections above), a registered repo
 with a running container `<c>`, and one optional mount `<m>` declared in the
@@ -5915,7 +5915,7 @@ is named in the `ref` field), and the broker keeps a read-only copy of the effec
 
 ```bash
 # Host: grant <c> the right to run one child at a time
-jb orchestrate grant <c> --children 1 --mount <m>
+jb orchestrate grant <c> --children 1 --mount <m> --allow destroy   # destroy is opt-in
 jb orchestrate show <c>                  # limit 1, mounts <m>, Running children: 0
 systemctl --user status jailbee-broker   # active (running)
 ```
@@ -5976,12 +5976,46 @@ echo '{"version": 1, "id": "destroy-a2", "type": "destroy", "child": "child-a", 
 # inbox: "done", "child `child-a` destroyed"
 ```
 
-Refusals worth one probe each (all `refused` statuses): a `rights.mounts`
+A `restart` takes a `prompt` (or `prompt_file`) like a spawn does; without
+one it is refused. Refusals worth one probe each (all `refused` statuses): a `rights.mounts`
 entry the grant does not list; a second spawn of an existing branch
 (``container `<short>` already exists``); a `stop` naming a container that
-is not a child (```x` is not a child of this orchestrator``); a `restart` of
+is not a child (```x` is not a child of this orchestrator``); a `restart` (with a `prompt`) of
 a running child (``child `<short>` is running; stop it first``); a manifest
 from a container with no grant (`orchestration is not allowed in this repo`).
+
+### Messages, `done` and `import` (plan E)
+
+With `child-b` running (limit 1, so stop or destroy others first), use the
+in-container helper instead of hand-written manifests. In `child-b`, in the repo
+clone:
+
+```bash
+jailbee-inbox send message --kind question --text "which file name?"   # prints the manifest id
+```
+
+In the orchestrator, `jailbee-inbox wait` returns the path of the first unread
+message (it blocks on `inotifywait` when installed, polls every
+`JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and `read
+<id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
+messages read first, or `wait` returns at once. Reply:
+
+```bash
+jailbee-inbox send message --to child-b --reply-to <id> --text "call it hello-b.txt"
+```
+
+expect: the child's `wait` returns the reply, whose `in_reply_to` is `<id>`, and
+the sender gets a `status` "delivered to ..." for each message.
+
+In `child-b` commit a file, then `jailbee-inbox send message --kind done --text
+"finished"`. The orchestrator receives it as a `message` with `kind: done`.
+Then, in the orchestrator, `jailbee-inbox send import --child child-b`:
+
+expect: `done`, "imported as refs/jailbee/from/child-b/<branch> at <sha>"; the
+orchestrator's own local branch of that name is not touched. Then
+`jailbee-inbox send stop --child child-b` and `... destroy --child child-b`
+both succeed without `force`, while destroying a stopped child whose commits
+were never imported is refused until `--force`.
 
 Finally, on the host:
 
