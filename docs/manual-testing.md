@@ -5951,20 +5951,6 @@ grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat  
 grep -l '"ref":\s*"spawn-b"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "queued",  "detail": "queued at position 1"
 ```
 
-Failure report: spawn on a nonexistent base and expect a final `failed`.
-
-```bash
-cat > ~/.jailbee/orchestration/outbox/spawn-bad.json <<'JSON'
-{"version": 1, "id": "spawn-bad", "type": "spawn", "kind": "new",
- "branch": "child-bad", "base": "no-such-branch", "prompt": "x",
- "rights": {"version": 1}}
-JSON
-grep -l '"ref":\s*"spawn-bad"' ~/.jailbee/orchestration/inbox/*.json | xargs cat
-```
-
-expect: `started`, then `failed` with ``creation of child `child-bad` failed: ...``
-(plus ` — the child was removed`), within about a minute.
-
 expect: one child container for `child-a` (host: `jb ls` shows it, spawned by
 `<c>`), none for `child-b`, and the processed manifests gone from the outbox.
 
@@ -5978,6 +5964,23 @@ grep -l '"ref":\s*"stop-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   
 
 expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
 (same `grep -l` on its `ref`) reads ``creation of child `child-b` started``.
+
+Failure report. The limit is 1, so first stop `child-b` (a `stop` manifest
+as above) to leave a free slot, then spawn on a nonexistent base and expect a
+final `failed`.
+
+```bash
+cat > ~/.jailbee/orchestration/outbox/spawn-bad.json <<'JSON'
+{"version": 1, "id": "spawn-bad", "type": "spawn", "kind": "new",
+ "branch": "child-bad", "base": "no-such-branch", "prompt": "x",
+ "rights": {"version": 1}}
+JSON
+grep -l '"ref":\s*"spawn-bad"' ~/.jailbee/orchestration/inbox/*.json | xargs cat
+```
+
+expect: `started`, then `failed` with ``creation of child `child-bad` failed: ...``
+(plus ` — the child was removed`), within about a minute; host: `jb ls` shows no
+`child-bad` container.
 
 Destroy guard. `child-a` has commits that were never imported:
 
