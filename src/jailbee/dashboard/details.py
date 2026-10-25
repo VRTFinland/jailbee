@@ -98,6 +98,8 @@ class ContainerPanel:
     directly under the summary (0-2; empty: none are drawn). ``memory`` is a
     running container's (used, limit) bytes: drawn as a bar at the right end of
     the summary row when the row has room for it, else not at all.
+    ``orchestration`` are an orchestrator's or child's own lines, one row each
+    right under the exceptions line (empty: none are drawn).
     """
 
     summary: tuple[str, ...]
@@ -108,6 +110,7 @@ class ContainerPanel:
     warnings: tuple[str, ...] = ()
     processes: tuple[str, ...] = ()
     memory: tuple[int, int] | None = None
+    orchestration: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -392,7 +395,52 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         _warnings(c),
         _process_lines(c),
         _memory_use(c),
+        _orchestration_lines(c),
     )
+
+
+def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
+    """An orchestrator's or child's card lines, as escaped markup; empty for others."""
+
+    def names(values: tuple[str, ...]) -> str:
+        return ", ".join(escape(v) for v in values) or "—"
+
+    def rights(label: str, mounts: tuple[str, ...], loose: bool, egress: tuple[str, ...]) -> str:
+        return (
+            f"[dim]{label}[/dim] mounts {names(mounts)} · loose {'yes' if loose else 'no'}"
+            f" · egress {names(egress)}"
+        )
+
+    gs = c.git_status
+    unread = (gs.unread_inbox or 0) if gs else 0
+    if c.grant is not None:
+        g = c.grant
+        head = f"orchestrator · children {c.running_children}/{g.limit}"
+        if c.queued_children:
+            head += f" · {c.queued_children} queued"
+        if unread:
+            head += f" · inbox {unread} unread"
+        return (
+            head,
+            f"[dim]may:[/dim] {', '.join(escape(o) for o in g.operations)}",
+            rights("may grant:", g.mounts, g.loose, g.egress),
+        )
+    if c.child is not None:
+        ch = c.child
+        short = ch.orchestrator
+        if c.repo and short.startswith(f"{c.repo}-"):
+            short = short[len(c.repo) + 1 :]
+        head = f"child of {escape(short)}"
+        if c.orchestrator_running is False:
+            head += " [red](not running)[/red]"
+        head += f" · {escape(ch.state)}"
+        if unread:
+            head += f" · inbox {unread} unread"
+        outbox = (gs.pending_orch_outbox or 0) if gs else 0
+        if outbox:
+            head += f" · outbox {outbox} pending"
+        return (head, rights("rights:", ch.mounts, ch.loose, ch.egress))
+    return ()
 
 
 def _memory_use(c: ContainerInfo) -> tuple[int, int] | None:
@@ -679,6 +727,8 @@ def _panel_lines(
         one(markup)
     if panel.exceptions:
         one(_SUMMARY_GAP.join(panel.exceptions))
+    for markup in panel.orchestration:
+        one(markup)
     for markup in panel.warnings:
         one(markup)
     lines.append([_BLANK])
