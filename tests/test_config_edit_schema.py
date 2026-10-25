@@ -292,11 +292,12 @@ def test_build_specs_covers_every_config_leaf():
     adds one more: 108 + 1 = 109. `container.tmpfs` (`enabled`, `size`) adds two:
     109 + 2 = 111. The host-level `orchestration` block (`profiles`,
     `default_profile`) brings the global model to 54 leaves.
+    `remote.ssh.orchestration` makes 55.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 112
-    assert len(build_specs(GlobalConfig)) == 54
+    assert len(build_specs(GlobalConfig)) == 55
 
 
 def test_a_default_factory_field_reports_its_real_default():

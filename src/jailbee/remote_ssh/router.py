@@ -261,7 +261,8 @@ def command_path(argv: Sequence[str]) -> str:
 #     can open the host's own and its LAN's addresses to it, so both are
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
 #   - widening what a container may do: `orchestrate grant` lets it start
-#     and manage child containers, so it is a host command like `net loose`;
+#     and manage child containers, so it is a host command like `net loose`
+#     unless `remote.ssh.orchestration` unlocks it (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry) unless `remote.ssh.mount_roots` or
@@ -355,6 +356,11 @@ _NETWORK_WIDENING_COMMANDS: frozenset[str] = frozenset({"net loose", "net egress
 _MOUNT_COMMANDS: frozenset[str] = frozenset({"mount"})
 
 
+# The orchestration command that `remote.ssh.orchestration` turns from a host
+# command into a container command. `revoke` is already a container command.
+_ORCHESTRATION_COMMANDS: frozenset[str] = frozenset({"orchestrate grant"})
+
+
 @dataclass(frozen=True)
 class RemoteUnlocks:
     """The `remote.ssh` switches that move host commands to the container side.
@@ -366,6 +372,7 @@ class RemoteUnlocks:
     gui: bool = False
     network: bool = False
     mounts: bool = False
+    orchestration: bool = False
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
 
@@ -390,6 +397,7 @@ class RemoteUnlocks:
             gui=config.rdp or (config.waypipe and waypipe),
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
+            orchestration=config.orchestration != "off",
             waypipe_available=config.waypipe,
         )
 
@@ -399,6 +407,7 @@ class RemoteUnlocks:
             (_GUI_APP_COMMANDS if self.gui else frozenset())
             | (_NETWORK_WIDENING_COMMANDS if self.network else frozenset())
             | (_MOUNT_COMMANDS if self.mounts else frozenset())
+            | (_ORCHESTRATION_COMMANDS if self.orchestration else frozenset())
         )
 
 

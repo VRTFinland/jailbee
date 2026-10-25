@@ -233,6 +233,14 @@ class RemoteSSHConfig(BaseModel):
             "remote session can reach. Off by default; prefer `mount_roots`."
         ),
     )
+    orchestration: Literal["off", "ssh", "orchestrator"] = Field(
+        default="off",
+        description=(
+            "Let remote sessions run `orchestrate grant`: `ssh` bounds what children may be "
+            "given to what the session could do itself, `orchestrator` to the orchestrator's "
+            "own permanent rights. `revoke` never needs this. Off by default."
+        ),
+    )
     excluded_repos: list[str] = Field(
         default_factory=list,
         description="Registered repository prefixes unavailable through remote SSH.",

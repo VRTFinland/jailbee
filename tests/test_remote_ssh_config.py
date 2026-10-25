@@ -410,3 +410,12 @@ def test_global_yaml_with_only_gui_false_turns_waypipe_off(tmp_path) -> None:
     config, _ = load_global_config(path)
     assert config.remote.ssh.waypipe is False
     assert config.remote.ssh.rdp is False
+
+
+def test_orchestration_setting_defaults_off() -> None:
+    assert RemoteSSHConfig().orchestration == "off"
+
+
+def test_orchestration_setting_rejects_unknown_level() -> None:
+    with pytest.raises(ValidationError):
+        RemoteSSHConfig(orchestration="all")

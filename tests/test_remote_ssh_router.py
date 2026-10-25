@@ -1732,3 +1732,38 @@ def test_unclassified_hidden_command_is_still_not_routable(monkeypatch) -> None:
     finally:
         cli.app.registered_commands.pop()
         router._command_tree.cache_clear()
+
+
+def test_remote_unlocks_orchestration_unlocks_grant_only() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    for level in ("ssh", "orchestrator"):
+        unlocks = RemoteUnlocks.of(RemoteSSHConfig(orchestration=level))
+        assert unlocks.orchestration is True
+        assert unlocks.commands() == frozenset({"orchestrate grant"})
+    assert RemoteUnlocks.of(RemoteSSHConfig()).orchestration is False
+
+
+def test_orchestrate_grant_is_a_host_command_unless_the_feature_is_on(monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    argv = ("orchestrate", "grant", "box")
+    with pytest.raises(RouteError, match="manages the host itself"):
+        policy_allows(argv, FULL)
+    assert (
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(orchestration=True)) == "orchestrate grant"
+    )
+
+
+def test_orchestrate_grant_unlock_still_respects_an_allowlist() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["orchestrate ls"])
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(
+            ["orchestrate", "grant", "box"],
+            policy,
+            restrict_host=True,
+            unlocks=RemoteUnlocks(orchestration=True),
+        )
