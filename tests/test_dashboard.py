@@ -394,6 +394,29 @@ def test_gather_rows_carries_remote_mountable(tmp_path, mocker, make_cfg):
     assert groups[0].remote_mountable == ("data",)
 
 
+def test_gather_rows_sets_orchestration_profiles(tmp_path, mocker, make_cfg):
+    from jailbee.config.models_orchestration import (
+        OrchestrationProfile,
+        OrchestrationView,
+        RepoOrchestration,
+    )
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    cfg._orchestration_view = OrchestrationView(
+        profiles={"b": OrchestrationProfile(), "a": OrchestrationProfile()},
+        default_profile=None,
+        repo=RepoOrchestration(),
+    )
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
+
+    assert groups[0].orchestration_profiles == ("a", "b")
+    assert dmodel.RepoGroup("orphan", None, None, []).orchestration_profiles == ()
+
+
 def test_orphan_groups_have_no_optional_mounts():
     assert dmodel.RepoGroup("orphan", None, None, []).optional_mounts == ()
 

@@ -32,7 +32,8 @@ from jailbee.update_check import UpdateNotice
 # RepoGroup.advisories, Snapshot.system and each container's top_cpu, top_mem
 # and root_pool. 9 added Refresh.settle. 10 added RepoGroup.memory_default
 # and ContainerInfo.memory_override, needed for safe memory-limit editing.
-# 11 added the orchestration fields on ContainerInfo (grant, child, counts).
+# 11 added the orchestration fields: ContainerInfo grant/child/children counts,
+# GitStatus inbox/outbox counts, RepoGroup.orchestration_profiles.
 PROTOCOL = 11
 
 
