@@ -167,6 +167,9 @@ profile or a tier the profile lacks) is refused with the reason; it never falls
 back to the default. Orchestrators discover the options with
 `jailbee-inbox runners`, and are told to omit `runner` unless the user (or
 the user's own instructions) asked for a specific agent, profile or model.
+The default agent is reported only when it is known (it is set at agent launch
+in a container holding a grant); otherwise `jailbee-inbox runners` prints
+`default: omit runner (unknown)` and the orchestrator simply omits `runner`.
 
 ## The broker
 

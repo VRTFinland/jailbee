@@ -1234,6 +1234,28 @@ def test_runner_prompts_claude_when_primary_is_codex(tmp_path):
     assert steps[0].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
 
 
+def test_runner_with_autostarting_codex_primary_keeps_codex_unprompted(tmp_path):
+    from jailbee.initial_prompt import PROMPT_ENV, prompted_run
+    from jailbee.orchestration.runner import Runner
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        primary_agent="codex",
+        agents={
+            "codex": {"enabled": True, "autostart": True},
+            "claude": {"enabled": True, "autostart": False},
+        },
+    )
+    steps = agent_autostart_steps(
+        cfg, initial_prompt=True, runner=Runner(agent="claude", model="opus")
+    )
+    assert [s.name for s in steps] == ["codex", "claude"]
+    assert steps[0].run == "exec codex" and PROMPT_ENV not in steps[0].env
+    assert PROMPT_ENV in steps[1].env
+    assert steps[1].run == prompted_run("claude --model opus", cfg.agents["claude"].prompt_args)
+
+
 def test_native_runner_overrides_litellm_autostart(tmp_path):
     from jailbee.orchestration.runner import Runner
 

@@ -143,6 +143,7 @@ def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
 
 def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker):
     from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
 
     mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
     repo = tmp_path / "myrepo"
@@ -164,6 +165,7 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
                 labels.SPAWNED_BY: "myrepo-orch",
                 labels.STATE: "done",
                 labels.RIGHTS: '{"version":1,"mounts":["data"]}',
+                labels.RUNNER: Runner(agent="claude-jb", model="opus").to_label(),
             },
         ),
     ]
@@ -172,6 +174,7 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
     assert infos["myrepo-k1"].child.orchestrator == "myrepo-orch"
     assert infos["myrepo-k1"].child.state == "done"
     assert infos["myrepo-k1"].child.mounts == ("data",)
+    assert infos["myrepo-k1"].child.runner == "claude-jb opus"
     assert infos["myrepo-orch"].running_children == 1
     assert infos["myrepo-k1"].orchestrator_running is True
 

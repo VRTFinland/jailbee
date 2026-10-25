@@ -97,7 +97,8 @@ tune, so the rule is **default first**:
 - A `restart` without `runner` keeps the child's previous runner; `"runner":
   null` clears it, so the child runs the default again.
 
-List what you may name, and what omitting it starts:
+List what you may name, and what omitting it starts (the default agent shows
+as `unknown` when it is not known; then just omit `runner`):
 
 ```bash
 jailbee-inbox runners          # or --json

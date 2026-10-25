@@ -95,7 +95,8 @@ stdin (or `--text T`; `--file` only with an absolute path outside the repo).
 `--profile` and `--model` need `--agent`, and `--profile` needs
 `--agent claude-jb`. `jailbee-inbox runners [--json]` lists the runners you may name and what
 omitting one starts: `default: omit runner (<agent>)`, then one line per
-`claude` and per `claude-jb -P <profile>` with its models.
+`claude` and per `claude-jb -P <profile>` with its models. The default agent is named only when
+known; otherwise it reads `unknown` and you simply omit `runner`.
 Never leave prompt files in the repo work tree: untracked files make a
 `fork` spawn and an `import` refused.
 

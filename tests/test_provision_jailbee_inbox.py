@@ -796,6 +796,17 @@ def test_runners_without_claude_binary_lists_only_default(script, base, tmp_path
     ]
 
 
+def test_runners_reports_unknown_default_when_variable_unset(script, base, tmp_path):
+    env = _runners_env(base, tmp_path, claude=False)
+    env.pop("JAILBEE_DEFAULT_AGENT", None)
+    r = run(script, "runners", env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "default: omit runner (unknown)\n"
+    assert json.loads(run(script, "runners", "--json", env=env).stdout) == [
+        {"runner": None, "default": True, "agent": "unknown"}
+    ]
+
+
 def test_runners_neutralises_control_characters_in_profile_names(script, base, tmp_path):
     cfg = _litellm_config(tmp_path, {"p\x1b]0;x\x07\u009bq": {"sonnet": "a"}})
     r = run(script, "runners", env=_runners_env(base, tmp_path, config=cfg))

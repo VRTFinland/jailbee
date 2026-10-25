@@ -543,7 +543,7 @@ runners_json() {
     fi
     command -v claude >/dev/null 2>&1 && have_claude=1
     jq -n --argjson cfg "$cfg" --argjson have "$have_claude" \
-        --arg agent "${JAILBEE_DEFAULT_AGENT:-claude}" '
+        --arg agent "${JAILBEE_DEFAULT_AGENT:-unknown}" '
         def clean: gsub("[\\x{80}-\\x{9f}]"; "?");
         def tiers: ["fable", "opus", "sonnet", "haiku"];
         [{runner: null, default: true, agent: ($agent | clean)}]
