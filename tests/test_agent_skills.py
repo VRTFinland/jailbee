@@ -856,3 +856,15 @@ def test_skill_list_description_names_every_bundled_skill() -> None:
     desc = AgentConfig.model_fields["install_jailbee_skills"].description or ""
     for name in agent_skills.bundled_skill_names():
         assert f"`{name}`" in desc, name
+
+
+def test_docs_name_every_bundled_skill() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    pages = [
+        repo / "docs" / "agents.md",
+        repo / "docs" / "skills" / "jailbee-repo-setup" / "references" / "config-schema.md",
+    ]
+    for page in pages:
+        text = page.read_text()
+        for name in agent_skills.bundled_skill_names():
+            assert f"`{name}`" in text, f"{page.name} misses {name}"
