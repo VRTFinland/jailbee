@@ -19,6 +19,8 @@ from jailbee.config import CONTAINER_USERNAME
 from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
+from jailbee.orchestration.outbox import INBOX_DIR as ORCH_INBOX_DIR
+from jailbee.orchestration.outbox import OUTBOX_DIR as ORCH_OUTBOX_DIR
 from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
 
@@ -627,8 +629,8 @@ def probe_container_git(
                 "HOST_SOURCE": HOST_SOURCE,
                 "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 "ISSUE_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}",
-                "ORCH_INBOX_DIR": f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration/inbox",
-                "ORCH_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration/outbox",
+                "ORCH_INBOX_DIR": ORCH_INBOX_DIR,
+                "ORCH_OUTBOX_DIR": ORCH_OUTBOX_DIR,
                 # The probe only reads, but `git status`/`git diff --cached`
                 # refresh the index and write it back — which takes
                 # `.git/index.lock`. (Worktree `git diff` ignores this
