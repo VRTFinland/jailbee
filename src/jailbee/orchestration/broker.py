@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Literal
 
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
-from jailbee.lifecycle import derive_container_name
 from jailbee.orchestration import labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
@@ -214,6 +213,8 @@ def _watch_manifest(
 ) -> None:
     """Start watching what a handled spawn or restart left running; never raises."""
     try:
+        from jailbee.lifecycle import derive_container_name
+
         if isinstance(manifest, SpawnManifest) and outcome.state == "started":
             _track(ctx, ref, derive_container_name(ctx.cfg, manifest.branch), "spawn")
         elif isinstance(manifest, RestartManifest):
@@ -406,6 +407,8 @@ def tick(
         and not (isinstance(e.get("config"), dict) and _labelled(e["config"]))
         and has_pending(root, e["name"])
     ]
+    # Before the early return: a later namesake must not inherit stale entries.
+    _forget_vanished_watches(root, present)
     if not candidates and not queues and not parked:
         return False
 
@@ -501,7 +504,7 @@ def tick(
 def _settle_all_watches(
     root: Path, orchestrators: list[ActionContext], present: set[object], memory: BrokerMemory
 ) -> None:
-    """Settle each orchestrator's watches, then forget those of vanished orchestrators."""
+    """Settle each orchestrator's watches."""
     jobs = watch.read_jobs()
     if jobs is None:
         memory.warn_once(
@@ -513,6 +516,10 @@ def _settle_all_watches(
             _settle_watches(ctx, memory, jobs)
         except Exception:
             log.exception("broker: watches of %s failed", ctx.sender.full)
+
+
+def _forget_vanished_watches(root: Path, present: set[object]) -> None:
+    """Drop the watch entries of orchestrators that no longer exist."""
     watches = watch.load_watch(root)
     gone = [full for full in watches if full not in present]
     if gone:

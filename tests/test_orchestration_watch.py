@@ -190,6 +190,24 @@ def test_watch_roundtrip_and_corrupt_file(tmp_path: Path) -> None:
     assert load_watch(tmp_path) == {}
 
 
+def test_load_watch_drops_only_invalid_entries(tmp_path: Path) -> None:
+    good = entry()
+    bad = [
+        {"ref": "r", "child_full": "c", "kind": "bogus", "since": NOW.isoformat()},
+        {"ref": "r", "child_full": "c", "kind": "spawn", "since": "not a date"},
+        {"ref": "r", "child_full": "c", "kind": "spawn", "since": "2026-10-25T12:00:00"},
+        {"ref": 1, "child_full": "c", "kind": "spawn", "since": NOW.isoformat()},
+        "junk",
+    ]
+    import json
+    from dataclasses import asdict
+
+    (tmp_path / "watch.json").write_text(
+        json.dumps({"version": 1, "watches": {ORCH: [*bad, asdict(good)], "only-bad": bad}})
+    )
+    assert load_watch(tmp_path) == {ORCH: [good]}
+
+
 def test_watch_file_name() -> None:
     from jailbee.orchestration import state
 

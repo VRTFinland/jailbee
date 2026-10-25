@@ -999,6 +999,7 @@ def test_reply_before_save(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.deliver.side_effect = RuntimeError("inbox down")
     rig.tick()
+    rig.deliver.assert_called_once()
     assert len(_watches(rig)) == 1
 
 
@@ -1009,3 +1010,11 @@ def test_vanished_orchestrator_watches_dropped(rig: Rig, monkeypatch: pytest.Mon
     rig.tick()
     assert watch.load_watch(rig.root) == {}
     rig.deliver.assert_not_called()
+
+
+def test_vanished_orchestrator_watches_dropped_on_early_return(rig: Rig) -> None:
+    """No candidates, queues or parked messages: the round returns early, yet cleans up."""
+    _seed(rig, "proj-gone")
+    rig.incus.list_containers.return_value = []
+    assert rig.tick() is False
+    assert watch.load_watch(rig.root) == {}

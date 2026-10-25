@@ -66,14 +66,34 @@ def load_watch(root: Path) -> dict[str, list[WatchEntry]]:
         log.warning("ignoring unreadable orchestration watch list %s: %s", path, exc)
         return {}
     try:
-        return {
-            orchestrator: [WatchEntry(**item) for item in items]
-            for orchestrator, items in raw["watches"].items()
-            if items
-        }
+        items_by_orch = raw["watches"].items()
+        result: dict[str, list[WatchEntry]] = {}
+        for orchestrator, items in items_by_orch:
+            entries = [e for e in (_parse_entry(item) for item in items) if e is not None]
+            if entries:
+                result[orchestrator] = entries
+        return result
     except (KeyError, TypeError, AttributeError) as exc:
         log.warning("ignoring corrupt orchestration watch list %s: %s", path, exc)
         return {}
+
+
+def _parse_entry(item: object) -> WatchEntry | None:
+    """One valid entry, or None (logged) so a bad one cannot stall the others."""
+    try:
+        if not isinstance(item, dict):
+            raise TypeError("entry is not an object")
+        entry = WatchEntry(**item)
+        if entry.kind not in ("spawn", "restart"):
+            raise ValueError(f"unknown kind {entry.kind!r}")
+        if not all(isinstance(v, str) for v in (entry.ref, entry.child_full, entry.since)):
+            raise TypeError("non-string field")
+        if datetime.fromisoformat(entry.since).tzinfo is None:
+            raise ValueError("`since` is not timezone-aware")
+    except (TypeError, ValueError) as exc:
+        log.warning("dropping invalid orchestration watch entry %r: %s", item, exc)
+        return None
+    return entry
 
 
 def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
