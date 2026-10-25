@@ -782,6 +782,7 @@ def test_claude_step_appended_to_on_start(tmp_path):
     )
 
     incus = MagicMock()
+    incus.config_get.return_value = None
     applied: list[str] = []
 
     def fake_apply(_cfg, _incus, _container, step, _repo_dir, **_kwargs):
@@ -815,6 +816,7 @@ def test_claude_step_appended_even_with_github_enabled(tmp_path):
     )
 
     incus = MagicMock()
+    incus.config_get.return_value = None
     applied: list[str] = []
 
     def fake_apply(_cfg, _incus, _container, step, _repo_dir, **_kwargs):
@@ -1170,12 +1172,29 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     cfg = _claude_cfg(tmp_path)
     incus = MagicMock()
     pending = mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True)
+    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={})
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_CREATE, "/repo")
     pending.assert_not_called()
     steps.assert_not_called()
+
+
+def test_run_autostart_passes_child_env(mocker, tmp_path):
+    from jailbee.autostart import AutostartTrigger, run_autostart
+
+    cfg = _claude_cfg(tmp_path)
+    incus = MagicMock()
+    incus.config_get.return_value = f"{cfg.container_prefix}-orch"
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
+    steps.assert_called_once_with(
+        cfg,
+        initial_prompt=False,
+        extra_env={"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": "orch"},
+    )

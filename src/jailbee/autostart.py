@@ -377,7 +377,11 @@ def _on_start_agent_steps(
     from jailbee.initial_prompt import prompt_pending
 
     pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
-    return agent_autostart_steps(cfg, initial_prompt=pending)
+    from jailbee.orchestration.labels import child_env
+
+    return agent_autostart_steps(
+        cfg, initial_prompt=pending, extra_env=child_env(cfg, incus, container)
+    )
 
 
 def run_autostart(

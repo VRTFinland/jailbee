@@ -1243,7 +1243,10 @@ def test_run_detached_passes_prompt_pending_for_on_start(tmp_path, mocker, make_
     block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
     cfg = _cfg_with(make_cfg, tmp_path, block)
 
-    autostart_mod.run_detached(cfg, mocker.MagicMock(), _spec(tmp_path, block))
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
 
-    steps.assert_called_once_with(cfg, initial_prompt=True)
+    autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block))
+
+    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={})
     pending.assert_called_once()
