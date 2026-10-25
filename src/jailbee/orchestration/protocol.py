@@ -201,7 +201,7 @@ class InboxStatus(BaseModel):
     id: str
     type: Literal["status"]
     ref: str
-    state: Literal["queued", "started", "done", "refused"]
+    state: Literal["queued", "started", "done", "refused", "failed"]
     detail: str
 
 

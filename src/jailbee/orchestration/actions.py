@@ -76,7 +76,7 @@ class Node:
 
 @dataclass(frozen=True)
 class Outcome:
-    state: Literal["queued", "started", "done", "refused"]
+    state: Literal["queued", "started", "done", "refused", "failed"]
     detail: str
 
 
@@ -86,6 +86,10 @@ def refused(detail: str) -> Outcome:
 
 def done(detail: str) -> Outcome:
     return Outcome("done", detail)
+
+
+def failed(detail: str) -> Outcome:
+    return Outcome("failed", detail)
 
 
 @dataclass
@@ -294,6 +298,26 @@ def live_create_jobs(prefix: str) -> set[str]:
         and job.pid > 0  # os.kill(0, 0) would probe our own process group
         and not background.clearable(job.phase, job.pid)
     }
+
+
+def live_job_kind(name: str) -> str | None:
+    """The `op_kind` of this container's job row while its worker is still alive.
+
+    None when there is no row, or the row is clearable (terminal phase or dead
+    worker). Unlike `live_create_jobs` this is not filtered by kind or prefix.
+    """
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+
+    with Session(get_engine()) as session:
+        job = background.get_job(session, name)
+    if job is None or job.pid <= 0:  # os.kill(0, 0) would probe our own process group
+        return None
+    if background.clearable(job.phase, job.pid):
+        return None
+    return job.op_kind
 
 
 def running_children(ctx: ActionContext) -> int:

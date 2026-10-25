@@ -168,3 +168,36 @@ def test_child_message_reaches_handler(tmp_path: Path, monkeypatch: pytest.Monke
     ctx = _ctx(tmp_path, _node("proj-x", **{labels.SPAWNED_BY: "proj-p"}))
     m = MessageManifest(version=1, id="m1", type="message", body="hi")
     assert dispatch(ctx, m) == Outcome("done", "ok")
+
+
+def test_failed_helper() -> None:
+    assert actions.failed("x") == Outcome("failed", "x")
+
+
+def _live_job(
+    monkeypatch: pytest.MonkeyPatch, *, pid: int, clearable: bool, kind: str = "create"
+) -> None:
+    monkeypatch.setattr("sqlmodel.Session", MagicMock())
+    monkeypatch.setattr("jailbee.db.get_engine", MagicMock())
+    row = MagicMock(op_kind=kind, pid=pid, phase="cloning")
+    monkeypatch.setattr("jailbee.background.get_job", lambda _s, _n: row)
+    monkeypatch.setattr("jailbee.background.clearable", lambda _phase, _pid: clearable)
+
+
+def test_live_job_kind_returns_kind_for_live_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    _live_job(monkeypatch, pid=4242, clearable=False, kind="message")
+    assert actions.live_job_kind("proj-x") == "message"
+
+
+def test_live_job_kind_none_for_failed_or_dead_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    _live_job(monkeypatch, pid=4242, clearable=True)
+    assert actions.live_job_kind("proj-x") is None
+    _live_job(monkeypatch, pid=0, clearable=False)
+    assert actions.live_job_kind("proj-x") is None
+
+
+def test_live_job_kind_none_without_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sqlmodel.Session", MagicMock())
+    monkeypatch.setattr("jailbee.db.get_engine", MagicMock())
+    monkeypatch.setattr("jailbee.background.get_job", lambda _s, _n: None)
+    assert actions.live_job_kind("proj-x") is None

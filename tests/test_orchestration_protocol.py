@@ -249,3 +249,17 @@ def test_spawn_accepts_ordinary_refs(ref: str) -> None:
     m = parse_manifest("a.json", _spawn(kind="new", branch=ref, base=ref), {})
     assert isinstance(m, SpawnManifest)
     assert (m.branch, m.base) == (ref, ref)
+
+
+def test_inbox_status_accepts_failed() -> None:
+    raw = {
+        "version": 1,
+        "id": "h-0123abcd",
+        "type": "status",
+        "ref": "fix-1",
+        "state": "failed",
+        "detail": "boot failed",
+    }
+    s = InboxStatus.model_validate(raw)
+    assert s.state == "failed"
+    assert s.model_dump() == {**raw, "version": 1}
