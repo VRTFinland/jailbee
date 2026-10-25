@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 GRANT = "user.jailbee.orchestration.grant"
 RIGHTS = "user.jailbee.orchestration.rights"
+RUNNER = "user.jailbee.orchestration.runner"
 SPAWNED_BY = "user.jailbee.spawned_by"
 STATE = "user.jailbee.orchestration.state"
 # LAST_IMPORT, DONE_SHA and STOPPED_HEAD hold a commit as the full 40-hex

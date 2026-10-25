@@ -13,12 +13,15 @@ from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
     MessageManifest,
+    RestartManifest,
     SpawnManifest,
     body_file_of,
     inbox_file_name,
     new_host_id,
     parse_manifest,
+    restart_sets_runner,
 )
+from jailbee.orchestration.runner import Runner
 
 RIGHTS = {"version": 1, "mounts": [], "loose": False, "egress": []}
 
@@ -249,3 +252,31 @@ def test_spawn_accepts_ordinary_refs(ref: str) -> None:
     m = parse_manifest("a.json", _spawn(kind="new", branch=ref, base=ref), {})
     assert isinstance(m, SpawnManifest)
     assert (m.branch, m.base) == (ref, ref)
+
+
+def test_spawn_manifest_accepts_runner() -> None:
+    m = parse_manifest("a.json", _spawn(runner={"agent": "claude", "model": "opus"}), {})
+    assert isinstance(m, SpawnManifest)
+    assert m.runner == Runner(agent="claude", model="opus")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"agent": "claude", "effort": "high"},
+        {"agent": "claude", "model": "gpt-5"},
+        {"agent": "codex"},
+    ],
+)
+def test_spawn_manifest_rejects_unknown_runner_key_and_tier(bad: dict[str, str]) -> None:
+    with pytest.raises(ManifestError):
+        parse_manifest("a.json", _spawn(runner=bad), {})
+
+
+def test_restart_distinguishes_absent_and_null_runner() -> None:
+    base = {"version": 1, "id": "r", "type": "restart", "child": "c", "prompt": "again"}
+    absent = parse_manifest("r.json", json.dumps(base), {})
+    cleared = parse_manifest("r.json", json.dumps({**base, "runner": None}), {})
+    assert isinstance(absent, RestartManifest) and isinstance(cleared, RestartManifest)
+    assert not restart_sets_runner(absent)
+    assert restart_sets_runner(cleared) and cleared.runner is None
