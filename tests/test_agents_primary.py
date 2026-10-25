@@ -37,6 +37,18 @@ def test_explicit_disabled_agent_is_a_problem(tmp_path):
 def test_explicit_unknown_agent_is_a_problem(tmp_path):
     p = primary_agent(make_cfg(tmp_path, primary_agent="nosuch"))
     assert p.name is None and "nosuch" in p.problem
+    assert "no agent of that name is configured" in p.problem
+
+
+def test_explicit_configured_but_disabled_agent_is_a_problem(tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        agents={"claude": AUTO, "codex": {"enabled": False, "command": "codex"}},
+        primary_agent="codex",
+    )
+    p = primary_agent(cfg)
+    assert p.name is None
+    assert "not enabled" in p.problem and "codex" in p.problem
 
 
 def test_primary_agent_loads_from_repo_yaml(tmp_path, mocker):
