@@ -7,7 +7,9 @@ this interface, which makes them unit-testable with mocks.
 from __future__ import annotations
 
 import json
+import os
 import re
+import selectors
 import subprocess
 import tempfile
 import time
@@ -594,6 +596,84 @@ class Incus:
         if max_bytes is not None and len(result.stdout) > max_bytes:
             raise IncusError(f"`incus {_render_args(args)}` output exceeded {max_bytes} bytes")
         return ExecResult(result.returncode, result.stdout, result.stderr)
+
+    _EXEC_CAPPED_CHUNK = 64 * 1024
+
+    def exec_capped(
+        self,
+        name: str,
+        cmd: list[str],
+        *,
+        max_bytes: int,
+        uid: int | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """Like ``exec``, but never hold more than ``max_bytes`` of stdout.
+
+        For output the container controls (the orchestration outbox): stdout
+        is read in chunks as it arrives, and the command is killed — raising
+        ``IncusError`` — as soon as it writes more than ``max_bytes``, so a
+        hostile container cannot make the host buffer an unbounded stream for
+        the whole ``timeout``. stderr goes to a temporary file, as in
+        ``exec_lines``. Decoded leniently, like ``exec``.
+        """
+        args = self._exec_args(name, cmd, uid=uid, gid=None, cwd=None, env=None, init_groups=False)
+        if self.dry_run:
+            return ""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        chunks: list[bytes] = []
+        size = 0
+        with tempfile.TemporaryFile() as stderr:
+            try:
+                proc = subprocess.Popen(
+                    [self.binary, *args],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr,
+                )
+            except FileNotFoundError as e:
+                raise _missing_binary_error(self.binary) from e
+            assert proc.stdout is not None  # stdout=PIPE
+            fd = proc.stdout.fileno()
+            try:
+                with selectors.DefaultSelector() as sel:
+                    sel.register(fd, selectors.EVENT_READ)
+                    while True:
+                        left = None if deadline is None else deadline - time.monotonic()
+                        if left is not None and left <= 0:
+                            raise IncusTimeoutError(
+                                f"`incus {_render_args(args)}` timed out after {timeout}s"
+                            )
+                        if not sel.select(left):
+                            continue
+                        data = os.read(fd, self._EXEC_CAPPED_CHUNK)
+                        if not data:
+                            break
+                        size += len(data)
+                        if size > max_bytes:
+                            raise IncusError(
+                                f"`incus {_render_args(args)}` output exceeded {max_bytes} bytes"
+                            )
+                        chunks.append(data)
+                left = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+                try:
+                    returncode = proc.wait(timeout=left)
+                except subprocess.TimeoutExpired as e:
+                    raise IncusTimeoutError(
+                        f"`incus {_render_args(args)}` timed out after {timeout}s"
+                    ) from e
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                proc.stdout.close()
+            if returncode != 0:
+                stderr.seek(0)
+                detail = stderr.read().decode(errors="replace").strip()
+                raise IncusError(
+                    f"`incus {_render_args(args)}` failed (exit {returncode}): {detail}"
+                )
+        return b"".join(chunks).decode(errors="replace")
 
     # How long `exec_lines` lets an abandoned command act on SIGTERM before
     # killing it.

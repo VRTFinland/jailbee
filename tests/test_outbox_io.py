@@ -89,7 +89,7 @@ def test_read_text_outbox_default_argv_is_unchanged(mocker):
 
 def test_read_text_outbox_bounded_filters_in_the_container(mocker):
     incus = mocker.MagicMock()
-    incus.exec.return_value = _archive({"001.json": b"{}"})
+    incus.exec_capped.return_value = _archive({"001.json": b"{}"})
     result = read_text_outbox(
         incus,
         "c",
@@ -99,7 +99,8 @@ def test_read_text_outbox_bounded_filters_in_the_container(mocker):
         select=[("*.json", 3), ("*.md", 5)],
     )
     assert result == {"001.json": "{}"}
-    argv = incus.exec.call_args.args[1]
+    incus.exec.assert_not_called()
+    argv = incus.exec_capped.call_args.args[1]
     script = argv[2]
     assert argv[:2] == ["bash", "-c"]
     total = (3 + 5) * (100 + 2048) + 10240
@@ -111,6 +112,57 @@ def test_read_text_outbox_bounded_filters_in_the_container(mocker):
     assert '| head -c "$total" |' in script
     # Values never reach the script text.
     assert "/outbox" not in script and "101" not in script and "*.json" not in script
+
+
+def _bounded(incus, **kw):
+    return read_text_outbox(
+        incus, "c", "/outbox", uid=1000, max_file_bytes=100, select=[("*.json", 2)], **kw
+    )
+
+
+def test_read_text_outbox_bounded_caps_captured_stdout(mocker):
+    """The host-side cap is the base64 size of the archive cap, enforced while reading."""
+    incus = mocker.MagicMock()
+    incus.exec_capped.return_value = ""
+    _bounded(incus)
+    total = 2 * (100 + 2048) + 10240
+    assert incus.exec_capped.call_args.kwargs["max_bytes"] == 4 * -(-total // 3)
+    assert incus.exec_capped.call_args.kwargs["timeout"] == 15
+
+
+def test_read_text_outbox_bounded_oversized_stdout_is_a_read_error(mocker):
+    incus = mocker.MagicMock()
+    incus.exec_capped.side_effect = IncusError("output exceeded 1 bytes")
+    with pytest.raises(OutboxReadError, match="exceeded"):
+        _bounded(incus)
+
+
+@pytest.mark.parametrize("mode", ["w:gz", "w:xz", "w:bz2"])
+def test_read_text_outbox_bounded_refuses_compressed_archives(mocker, mode):
+    """A small compressed archive can expand enormously; bounded reads take plain tar only."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode=mode) as tar:
+        info = tarfile.TarInfo(name="./001.json")
+        info.size = 2
+        tar.addfile(info, io.BytesIO(b"{}"))
+    incus = mocker.MagicMock()
+    incus.exec_capped.return_value = base64.b64encode(buf.getvalue()).decode()
+    with pytest.raises(OutboxReadError, match="corrupt"):
+        _bounded(incus)
+
+
+def test_read_text_outbox_bounded_refuses_too_many_members(mocker):
+    """More members than the selection could ever archive: the container lied."""
+    incus = mocker.MagicMock()
+    incus.exec_capped.return_value = _archive({f"{i}.json": b"{}" for i in range(5)})
+    with pytest.raises(OutboxReadError, match="more than 2 members"):
+        _bounded(incus)
+
+
+def test_read_text_outbox_bounded_accepts_the_selection_count(mocker):
+    incus = mocker.MagicMock()
+    incus.exec_capped.return_value = _archive({"1.json": b"{}", "2.json": b"{}"})
+    assert _bounded(incus) == {"1.json": "{}", "2.json": "{}"}
 
 
 @pytest.mark.parametrize("select", [[("", 1)], [("a/*.md", 1)], [("*.md", 0)]])

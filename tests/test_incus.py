@@ -13,6 +13,7 @@ from jailbee.incus import (
     RUNNING_INSTANCE_SCRIPT,
     Incus,
     IncusError,
+    IncusTimeoutError,
     RunningInstance,
     parse_running_instance,
 )
@@ -1303,6 +1304,53 @@ def test_exec_lines_reports_a_missing_binary_as_incus_error(tmp_path):
 
 def test_exec_lines_runs_nothing_in_dry_run():
     assert list(Incus(dry_run=True).exec_lines("c", ["true"])) == []
+
+
+def test_exec_capped_returns_stdout_within_the_cap(tmp_path):
+    incus = _fake_incus(tmp_path)
+
+    assert incus.exec_capped("c", ["sh", "-c", "printf abc"], max_bytes=3) == "abc"
+
+
+def test_exec_capped_kills_a_command_past_the_cap(tmp_path):
+    """The host never buffers more than the cap: an endless writer is cut off."""
+    incus = _fake_incus(tmp_path)
+    pidfile = tmp_path / "pid"
+    started = time.monotonic()
+
+    with pytest.raises(IncusError, match="exceeded 1000 bytes"):
+        incus.exec_capped(
+            "c", ["sh", "-c", f"echo $$ > {pidfile}; exec yes"], max_bytes=1000, timeout=30
+        )
+
+    assert time.monotonic() - started < 10
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+
+
+def test_exec_capped_times_out(tmp_path):
+    incus = _fake_incus(tmp_path)
+
+    with pytest.raises(IncusTimeoutError):
+        incus.exec_capped("c", ["sh", "-c", "exec sleep 30"], max_bytes=10, timeout=1)
+
+
+def test_exec_capped_raises_on_a_failing_command(tmp_path):
+    incus = _fake_incus(tmp_path)
+
+    with pytest.raises(IncusError, match=r"exit 3.*boom"):
+        incus.exec_capped("c", ["sh", "-c", "echo boom >&2; exit 3"], max_bytes=10)
+
+
+def test_exec_capped_reports_a_missing_binary_as_incus_error(tmp_path):
+    incus = Incus(binary=str(tmp_path / "no-such-incus"))
+
+    with pytest.raises(IncusError, match="no-such-incus"):
+        incus.exec_capped("c", ["true"], max_bytes=10)
+
+
+def test_exec_capped_runs_nothing_in_dry_run():
+    assert Incus(dry_run=True).exec_capped("c", ["true"], max_bytes=1) == ""
 
 
 def test_storage_volume_exists_matches_custom_volumes_only(incus, mocker):

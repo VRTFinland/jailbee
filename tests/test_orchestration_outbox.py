@@ -51,9 +51,9 @@ def test_read_outbox_selects_manifests_and_bodies_separately() -> None:
     manifests still arrive with their bodies (one name-ordered cap of 64 would
     have cut m25..m32's bodies)."""
     incus = MagicMock()
-    incus.exec.return_value = ""
+    incus.exec_capped.return_value = ""
     outbox.read_outbox(incus, FULL, uid=1000)
-    argv = incus.exec.call_args.args[1]
+    argv = incus.exec_capped.call_args.args[1]
     assert argv[-4:] == ["*.json", "32", "*.md", "64"]
     per_file = outbox.MAX_FILE_BYTES + 2048
     assert argv[-5] == str((32 + 64) * per_file + 10240)  # no legit round is truncated

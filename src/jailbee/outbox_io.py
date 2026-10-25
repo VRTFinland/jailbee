@@ -788,6 +788,9 @@ def read_text_outbox(
     archive is cut at a total those files can never exceed. Without it the
     whole directory is archived and filtered on the host.
     """
+    # Bounded reads only: the archive member cap and the captured-stdout cap.
+    max_members: int | None = None
+    max_stdout: int | None = None
     if select is None:
         argv = ["bash", "-c", _TAR_ALL, "bash", directory]
     else:
@@ -809,8 +812,17 @@ def read_text_outbox(
             str(total),
             *pairs,
         ]
+        max_members = count
+        # The container is not trusted to honour its own `head -c`: the host
+        # stops reading at the base64 size of the archive cap.
+        max_stdout = 4 * math.ceil(total / 3)
     try:
-        raw = incus.exec(container, argv, uid=uid, timeout=timeout)
+        if max_stdout is None:
+            raw = incus.exec(container, argv, uid=uid, timeout=timeout)
+        else:
+            raw = incus.exec_capped(
+                container, argv, uid=uid, timeout=timeout, max_bytes=max_stdout
+            )
     except IncusError as e:
         raise OutboxReadError(f"could not read the outbox in {container}: {e}") from e
     if not raw.strip():
@@ -822,12 +834,23 @@ def read_text_outbox(
 
     files: dict[str, str] = {}
     skipped = 0
+    # Bounded reads open plain tar only ("r:"): the container-side script
+    # never compresses, and a small compressed archive can expand enormously.
+    # Members are iterated lazily and counted, never collected up front.
+    mode: Literal["r:*", "r:"] = "r:*" if max_members is None else "r:"
+    members = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
-            for member in tar.getmembers():
+        with tarfile.open(fileobj=io.BytesIO(blob), mode=mode) as tar:
+            for member in tar:
                 name = member.name
                 if name == "." and member.isdir():
                     continue
+                members += 1
+                if max_members is not None and members > max_members:
+                    raise OutboxReadError(
+                        f"{container} returned an outbox archive with more than "
+                        f"{max_members} members"
+                    )
                 if name.startswith("./"):
                     name = name[2:]
                 if (
