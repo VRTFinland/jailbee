@@ -1503,6 +1503,23 @@ def _child_instance_config(opts: NewContainerOptions) -> dict[str, str]:
     return config
 
 
+def _record_child_baseline(cfg: Config, incus: Incus, name: str, repo_dir: str) -> None:
+    """Record a fresh child's HEAD as its `LAST_IMPORT`.
+
+    The orchestrator already has the commit a child starts from (its fork
+    commit or the base), so a child that never commits has nothing to import
+    and the destroy guard must let it go. Best-effort: without the label the
+    guard stays conservative and refuses until an import or `force`.
+    """
+    from jailbee import sync
+
+    try:
+        oid = sync._container_head_oid(incus, name, repo_dir, uid=cfg.container_user.uid)
+        incus.config_set(name, orch_labels.LAST_IMPORT, oid)
+    except Exception as e:
+        warn(f"Container created, but failed to record the child's starting commit: {e}")
+
+
 def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name: str) -> None:
     """Create the instance: copy the golden instance, or init from an image.
 
@@ -2154,6 +2171,8 @@ def _new_container(
             base_branch=base_label,
             checkout_commit=checkout_commit,
         )
+        if opts.spawned_by is not None:
+            _record_child_baseline(cfg, incus, name, repo_dir)
 
     # Attach host_mounts whose container path is under /home/<user>/<repo>/.
     # These cannot live in the <prefix>-binds profile: Incus pre-creates the

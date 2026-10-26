@@ -165,6 +165,10 @@ more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 `jailbee-inbox ls` lists what is unread.
 
+`wait` does not consume anything: while any message is unread it returns at
+once, with the oldest one. Mark every message read (by its id, `h-<hex>`, not
+its file name) before you wait again, or the loop spins on the same message.
+
 ## Status messages
 
 Every manifest you send gets a `status` reply whose `ref` is its id:
