@@ -16,8 +16,9 @@ before editing `## Unreleased`.
   selection, dashboard controls and bundled orchestrator/child skills support
   the workflow. Grants made over remote SSH are bounded by
   `remote.ssh.orchestration` (defaults to the session's SSH permissions).
-  Run `jailbee base build` for the `jailbee-inbox` helper and `jailbee apply`
-  for the skills.
+  The broker installs the `jailbee-inbox` helper into granted containers and
+  their children; `jailbee base build` bakes it into new images. Run
+  `jailbee apply` for the skills.
 - **Memory limit controls.** `jailbee mem` and the dashboard's Memory action
   set a container's memory limit; `default` clears its override. Limits below
   current use require confirmation.
