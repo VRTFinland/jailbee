@@ -22,6 +22,13 @@ working tree and runtime, see from the terminal dashboard which Claude Code
 session needs you, and bring commits back through a local git bridge. The
 same workflow serves development and review without an agent.
 
+**An agent can coordinate the containers, too.** Give it a host-side
+orchestration grant and ask it to delegate work: it can start child
+containers, exchange messages with their agents, and bring their commits
+back for review and merging. You set the child limit, allowed operations
+and the optional mounts and network exceptions it may give children.
+[Container orchestration](https://jailbee.gisgro.io/docs/orchestration/)
+
 The CLI is `jailbee`, or **`jb`** for short. It needs a **Linux host with
 Incus**. A repo's `.jailbee/config.yaml` describes its environment, so JailBee
 is project-agnostic — built at GISGRO, usable with any stack.
@@ -95,6 +102,16 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   are cheap.
   [Stacks](https://jailbee.gisgro.io/docs/config/#golden) ·
   [Storage](https://jailbee.gisgro.io/docs/storage/)
+
+- **Agent-led container orchestration.** Ask one agent to work through a
+  bug backlog using child containers: each worker gets its own branch,
+  working tree and runtime. The coordinator sends instructions, receives
+  progress reports, imports committed results, reviews and merges them,
+  then cleans up its workers. A host-side broker checks each operation
+  against your grant; the agent cannot widen its own permissions. Follow
+  the parent and its children together in the terminal dashboard.
+  [Orchestration guide](https://jailbee.gisgro.io/docs/orchestration/) ·
+  [Watch the orchestration demo](https://youtu.be/z-i82M_jzQw)
 
 - **A local git workflow.** `jb git push` and `jb git pull` move commits
   between host and container without a round trip through GitHub;

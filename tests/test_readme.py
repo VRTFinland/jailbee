@@ -48,6 +48,16 @@ def test_the_readme_links_the_demo_clip_at_an_anchor_the_site_still_has() -> Non
     assert 'id="demos"' in index, f"{anchor} points at a section the page does not have"
 
 
+def test_orchestration_is_in_the_intro_and_features_not_just_the_docs_table() -> None:
+    text = README.read_text()
+    intro = text.split("## What people run in it", 1)[0]
+    features = text.split("## What you get", 1)[1].split("## Getting started", 1)[0]
+    guide = "https://jailbee.gisgro.io/docs/orchestration/"
+    assert guide in intro
+    assert guide in features
+    assert "https://youtu.be/z-i82M_jzQw" in features
+
+
 def test_the_readme_sends_readers_to_the_documentation_site() -> None:
     """README.md is the repo front page *and* the PyPI description, so its
     links have to work for a reader who is on neither. The published pages

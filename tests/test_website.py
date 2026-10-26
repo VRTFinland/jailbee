@@ -480,6 +480,7 @@ def test_every_expected_section_id_exists() -> None:
     html = INDEX.read_text()
     for anchor in (
         "parallel",
+        "orchestration",
         "demos",
         "usecases",
         "network",
@@ -490,6 +491,16 @@ def test_every_expected_section_id_exists() -> None:
         "docs",
     ):
         assert f'id="{anchor}"' in html, f"missing section: {anchor}"
+
+
+def test_orchestration_is_discoverable_without_the_news_feed() -> None:
+    html = INDEX.read_text()
+    start = html.index('<section id="orchestration">')
+    section = html[start : html.index("</section>", start)]
+    hrefs = [value for attr, value in collect_references(section) if attr == "href"]
+    assert "docs/orchestration/" in hrefs
+    assert "https://youtu.be/z-i82M_jzQw" in hrefs
+    assert 'href="#orchestration"' in html[: html.index('<section id="demos">')]
 
 
 def test_incus_is_not_named_in_the_visible_hero() -> None:
