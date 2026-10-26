@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+RESERVATIONS_FILE = "reservations.json"
 QUEUE_FILE = "queue.json"
 WATCH_FILE = "watch.json"
 _QUEUE_VERSION = 1
@@ -40,6 +41,68 @@ class QueuedRequest:
     # `Runner` as JSON; defaults keep queue files written before runners loadable.
     runner: dict[str, object] | None = None
     runner_set: bool = False
+
+
+@dataclass(frozen=True)
+class Reservation:
+    """A broker-started create, independent of its best-effort job row."""
+
+    child_full: str
+    pid: int
+    started_at: str
+
+
+def load_reservations(root: Path) -> dict[str, list[Reservation]]:
+    """Load create reservations; missing/corrupt files yield an empty store."""
+    path = root / RESERVATIONS_FILE
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        groups = raw["reservations"]
+        if not isinstance(groups, dict):
+            return {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("ignoring unreadable orchestration reservations %s: %s", path, exc)
+        return {}
+    result: dict[str, list[Reservation]] = {}
+    for recipient, items in groups.items():
+        if not isinstance(items, list):
+            continue
+        entries = []
+        for item in items:
+            try:
+                entry = Reservation(**item)
+            except TypeError:
+                continue
+            if (isinstance(entry.child_full, str) and type(entry.pid) is int
+                    and isinstance(entry.started_at, str)):
+                entries.append(entry)
+        if entries:
+            result[recipient] = entries
+    return result
+
+
+def save_reservations(root: Path, reservations: dict[str, list[Reservation]]) -> None:
+    """Atomically persist reservations, omitting empty lists."""
+    payload = {
+        "version": 1,
+        "reservations": {k: [asdict(r) for r in v] for k, v in reservations.items() if v},
+    }
+    atomic_write_text(root / RESERVATIONS_FILE, json.dumps(payload, indent=2) + "\n")
+
+
+def reservation_alive(pid: int) -> bool:
+    """Probe a create worker, reaping exited workers parented by this broker."""
+    from jailbee import background
+
+    if pid <= 0:
+        return False
+    try:
+        waited, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return background.worker_alive(pid)
+    return waited == 0
 
 
 def state_root() -> Path:
