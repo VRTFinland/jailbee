@@ -724,47 +724,15 @@
       <div class="wrap">
         <h2><span class="eyebrow eyebrow--solution">Optional container orchestration</span>For some jobs, let an agent coordinate.</h2>
         <p>
-          The usual workflow is still yours to direct: choose the work, guide each agent and
-          decide what to merge. Orchestration is another option for bounded tasks that benefit
-          from separate working trees and runtimes, not a replacement for that workflow or
-          for an agent's built-in subagents.
+          Usually, you direct each agent yourself. For a batch of clear bug tickets or
+          implementation plans, you can instead ask one agent to coordinate child containers
+          — each with its own working tree and runtime — and review and merge their results.
         </p>
         <p>
-          A queue of clear bug tickets can suit one child container per ticket. A series of
-          implementation plans can suit one child per plan, with independent plans running
-          in parallel and dependent plans starting after their prerequisites are merged.
-          Each child handles a whole ticket or plan, using its own subagents for the steps.
-          You choose when to use this model and explicitly ask the agent to use children.
+          You set the child limit, allowed operations and access. Ordinary delegation stays
+          with the agent's built-in subagents; child containers are an option when the work
+          needs separate environments.
         </p>
-        <p>
-          <strong>You set the scope.</strong> A host-side grant bounds the running-child count,
-          allowed operations and which optional mounts and network exceptions the coordinator
-          may give its children. The host-side broker checks each request against that grant;
-          the agent cannot expand its own permissions.
-        </p>
-        <div class="cards">
-          <div class="card">
-            <p>
-              <strong>1. Delegate the work.</strong> The coordinator starts child containers
-              with a prompt for each worker. You set the running-child limit; extra requests
-              wait in a queue until a slot is free.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>2. Work in separate environments.</strong> Workers change code and run
-              tests in their own stacks. The coordinator and workers exchange instructions
-              and progress messages; the dashboard groups the children under their parent.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>3. Review and bring it together.</strong> The coordinator imports each
-              worker's committed results, reviews and merges or cherry-picks them, then cleans
-              up its children. It can stage a combined PR in the outbox for you to publish.
-            </p>
-          </div>
-        </div>
         <div class="actions">
           <a class="button button--primary" href="docs/orchestration/">Explore orchestration workflows</a>
           <a class="button button--secondary" href="https://youtu.be/z-i82M_jzQw" rel="noopener">Watch the orchestration demo</a>
