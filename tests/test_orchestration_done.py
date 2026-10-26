@@ -186,7 +186,9 @@ def test_parked_done_keeps_child_changed_since_report(
     elif change == "branch":
         rig.branch.return_value = "other"
     else:
-        rig.import_child.return_value = importing.Imported("refs/jailbee/from/fix-1/fix-1", "b" * 40)
+        rig.import_child.return_value = importing.Imported(
+            "refs/jailbee/from/fix-1/fix-1", "b" * 40
+        )
     msg, _ = finishing.complete(rig.ctx, rig.ctx.sender, orch, item)
     assert msg.on_done == "keep"
     assert msg.import_error is not None
@@ -201,7 +203,10 @@ def test_done_keeps_child_when_destroy_grant_revoked(tmp_path: Path, mocker: Moc
     _policy(rig, "destroy")
     orch = rig.ctx.nodes["myrepo-orch"]
     grant = Grant(operations=("spawn", "message", "import"))
-    rig.ctx.nodes = {CHILD: rig.ctx.sender, orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()})}
+    rig.ctx.nodes = {
+        CHILD: rig.ctx.sender,
+        orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
+    }
     messages.handle_message(rig.ctx, _done())
     msg = rig.write_inbox.call_args.args[2]
     assert msg.on_done == "keep"
@@ -351,7 +356,9 @@ def test_done_bounds_every_child_probe_and_the_fetch(tmp_path: Path, mocker: Moc
     rig = _make(tmp_path, mocker)
     messages.handle_message(rig.ctx, _done())
     assert rig.incus.with_exec_timeout.call_count == 2
-    assert all(c.args == (CHILD_EXEC_TIMEOUT_S,) for c in rig.incus.with_exec_timeout.call_args_list)
+    assert all(
+        c.args == (CHILD_EXEC_TIMEOUT_S,) for c in rig.incus.with_exec_timeout.call_args_list
+    )
     bounded = rig.incus.with_exec_timeout.return_value
     assert rig.repo_dir.call_args.args[1] is bounded
     assert rig.dirty.call_args.args[0] is bounded

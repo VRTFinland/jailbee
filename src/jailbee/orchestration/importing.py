@@ -59,16 +59,17 @@ class Imported:
     oid: str
 
 
-def imported_ref_matches(
-    ctx: ActionContext, orchestrator: Node, ref: str, oid: str
-) -> bool:
+def imported_ref_matches(ctx: ActionContext, orchestrator: Node, ref: str, oid: str) -> bool:
     """A child baseline label alone is not proof of an import into this target."""
     bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
     try:
         repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, orchestrator.full)
-        return sync._container_ref_oid(
-            bounded, orchestrator.full, repo_dir, ref, uid=ctx.cfg.container_user.uid
-        ) == oid
+        return (
+            sync._container_ref_oid(
+                bounded, orchestrator.full, repo_dir, ref, uid=ctx.cfg.container_user.uid
+            )
+            == oid
+        )
     except (SyncError, GitError, IncusError):
         return False
 

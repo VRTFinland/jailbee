@@ -1063,22 +1063,34 @@ def test_done_cleanup_waits_for_durable_reply(
     destroy = _destroy_seams(monkeypatch)
     monkeypatch.setattr(broker, "dispatch", actions.dispatch)
     monkeypatch.setattr(messages.sync, "_container_current_branch", MagicMock(return_value="b"))
-    monkeypatch.setattr(messages.sync, "fetch_from_container", MagicMock(return_value=FetchResult(
-        branch="b", old_oid=None, new_oid="a" * 40, base_oid=None, commits_added=1
-    )))
+    monkeypatch.setattr(
+        messages.sync,
+        "fetch_from_container",
+        MagicMock(
+            return_value=FetchResult(
+                branch="b", old_oid=None, new_oid="a" * 40, base_oid=None, commits_added=1
+            )
+        ),
+    )
     from jailbee.orchestration import importing
+
     def imported(*a, **k):
         kid["config"][labels.LAST_IMPORT] = "a" * 40
         return importing.Imported("refs/jailbee/from/kid/b", "a" * 40)
+
     monkeypatch.setattr(importing, "import_child", imported)
-    rig.incus.config_set.side_effect = lambda full, key, value: kid["config"].__setitem__(key, value)
+    rig.incus.config_set.side_effect = lambda full, key, value: kid["config"].__setitem__(
+        key, value
+    )
     raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
     rig.outboxes["proj-kid"] = [RawManifest("d1.json", json.dumps(raw), {})]
     if failure == "parked_reply":
         monkeypatch.setattr(broker, "deliver", outbox.deliver)
+
         def write(incus, full, *a, **k):
             if full == "proj-kid":
                 raise IncusError("reply write failed")
+
         monkeypatch.setattr(outbox, "write_inbox", write)
     else:
         rig.deliver.side_effect = RuntimeError("crash after journal")

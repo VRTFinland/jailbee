@@ -39,10 +39,10 @@ def complete(
     ctx: ActionContext, child: Node | None, orchestrator: Node, item: PendingFinish
 ) -> tuple[InboxMessage, str]:
     """Import and mark for later cleanup; never write to an inbox here."""
-    from jailbee.orchestration import importing
-    from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S, _child_head
     from jailbee import lifecycle, sync
     from jailbee.git import GitError
+    from jailbee.orchestration import importing
+    from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S, _child_head
 
     error: str | None = None
     imported: importing.Imported | str
