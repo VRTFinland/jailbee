@@ -346,6 +346,18 @@ def live_job_kind(name: str) -> str | None:
     return job.op_kind
 
 
+def prune_reservations(root: Path) -> None:
+    """Drop finished create workers across orchestrators, reaping our exited children."""
+    reservations = load_reservations(root)
+    live = {
+        sender: kept
+        for sender, entries in reservations.items()
+        if (kept := [r for r in entries if reservation_alive(r.pid)])
+    }
+    if live != reservations:
+        save_reservations(root, live)
+
+
 def live_reservations(ctx: ActionContext) -> set[str]:
     """Names of this orchestrator's children whose create workers are alive."""
     return {

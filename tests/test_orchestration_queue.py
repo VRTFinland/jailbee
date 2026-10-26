@@ -142,6 +142,31 @@ def test_reserved_not_running_child_counts(tmp_path: Path, seams: dict[str, Magi
     assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "queued"
 
 
+def test_prune_drops_dead_keeps_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    live = state.Reservation("proj-b", 2, "t")
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-a", 1, "t")], "proj-other": [live]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: pid == 2)
+    actions.prune_reservations(tmp_path)
+    assert state.load_reservations(tmp_path) == {"proj-other": [live]}
+    before = (tmp_path / state.RESERVATIONS_FILE).stat().st_mtime_ns
+    actions.prune_reservations(tmp_path)
+    assert (tmp_path / state.RESERVATIONS_FILE).stat().st_mtime_ns == before
+
+
+def test_failed_create_frees_slot_on_next_drain(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path)
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-failed", 777, "t")]})
+    alive = {777}
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: pid in alive)
+    _queue(rig, ["fix/1"], kind="new")
+    assert actions.drain_queue(rig.ctx()) == []
+    alive.clear()
+    actions.prune_reservations(tmp_path)
+    assert state.load_reservations(tmp_path) == {}
+    assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["started"]
+    assert load_queue(tmp_path) == {}
+
+
 def test_spawn_under_limit_starts(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     rig = Rig(tmp_path, limit=2, running=1)
     out = actions.handle_spawn(rig.ctx(), _m())

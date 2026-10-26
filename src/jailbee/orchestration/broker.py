@@ -25,6 +25,7 @@ from jailbee.orchestration.actions import (
     drain_queue,
     drop_queue,
     live_job_kind,
+    prune_reservations,
     refused,
 )
 from jailbee.orchestration.journal import Journal, manifest_digest
@@ -395,6 +396,7 @@ def tick(
     present = {e.get("name") for e in raw}
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
+    prune_reservations(root)
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)

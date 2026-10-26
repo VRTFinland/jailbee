@@ -125,6 +125,15 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     return Rig(tmp_path, monkeypatch)
 
 
+def test_tick_prunes_reservations(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration.state import Reservation, load_reservations, save_reservations
+
+    save_reservations(rig.root, {"proj-orch": [Reservation("proj-failed", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: False)
+    assert rig.tick() is False
+    assert load_reservations(rig.root) == {}
+
+
 def test_config_for_picks_longest_prefix(tmp_path: Path) -> None:
     a = make_config(tmp_path).model_copy(update={"container_prefix": "proj"})
     b = make_config(tmp_path).model_copy(update={"container_prefix": "proj-x"})
