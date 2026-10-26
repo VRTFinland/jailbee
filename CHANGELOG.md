@@ -10,7 +10,26 @@ before editing `## Unreleased`.
 
 ### Added
 
-- **Outbox manager.** `jailbee outbox` and the terminal dashboard's Outbox entry open one list-based manager: one-line summaries, expandable actions and comments, a rendered preview, deleting proposals/actions/comments with one confirmation, publishing (or publishing as a draft review) and clearing without leaving the dashboard. `outbox apply --dry-run -o json` prints the plan.
+- **Container orchestration.** Grant a container bounded rights to spawn and
+  manage child containers, exchange messages and import their commits through
+  a host-side broker. Named profiles, repo-level restrictions, runner
+  selection, dashboard controls and bundled orchestrator/child skills support
+  the workflow. Grants made over remote SSH are bounded by
+  `remote.ssh.orchestration` (defaults to the session's SSH permissions).
+  Run `jailbee base build` for the `jailbee-inbox` helper and `jailbee apply`
+  for the skills.
+- **Memory limit controls.** `jailbee mem` and the dashboard's Memory action
+  set a container's memory limit; `default` clears its override. Limits below
+  current use require confirmation.
+- **Initial prompts for new and forked containers.** `jailbee new` and
+  `jailbee fork` accept `--prompt FILE|-` to launch the primary agent with a
+  task after all autostart stages finish. `primary_agent` selects that agent
+  and also steers automatic PR-text generation; custom agents can define
+  `prompt_args`.
+- **Bulk cleanup.** `jailbee destroy --stopped` removes the repo's stopped
+  containers after one confirmation. The terminal dashboard offers
+  **Destroy orphans…** for marked orphan rows.
+- **Outbox manager.** `jailbee outbox` and the terminal dashboard's Outbox entry open one list-based manager instead of the old picker chain: one-line summaries, expandable actions and comments, a rendered preview, deleting proposals/actions/comments with one confirmation, publishing (or publishing as a draft review) and clearing without leaving the dashboard. `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo. `outbox apply --dry-run -o json` prints the plan.
 - **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox. Summaries are supported when creating a review. Existing pending reviews accept empty-summary inline comments and replies, but refuse nonempty summaries before adding that action's comments to avoid public edits after concurrent submission; add the summary in GitHub or stage an empty summary.
 - **`jailbee outbox clear`** deletes eligible unpublished proposals in one or
   more containers' PR and issue outboxes, with a dry-run preview and protection
@@ -19,7 +38,15 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- `jailbee outbox` on a terminal opens the new full-screen outbox manager instead of the questionary browser, and the dashboard's Outbox entry opens the manager instead of its chain of pickers; `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo.
+- **Containers inherit `defaults.memory` from the base profile** unless
+  `--memory` sets an override. `jailbee apply` updates inherited limits live;
+  forks without an override follow the default rather than their source's
+  limit. Run `jailbee apply` after upgrading.
+- **Dashboard layout and mount visibility.** Resize the details panel with
+  `+`/`-`, reset it with `=`, or drag its top border; the height is remembered.
+  Forks stay indented under their source regardless of sorting. MOUNT shows
+  one letter per optional mount, coloured by attachment and remaining time;
+  details list every available mount.
 - `jailbee review ls|show|drop` and `jailbee issue ls|show|drop` are deprecated in favour of `jailbee outbox ls|show|drop`; they still work and print a hint.
 - **Dashboard: the agent's last message is rendered as Markdown.** The details
   panel keeps the message's line breaks and lays out its lists, headings,
@@ -28,6 +55,16 @@ before editing `## Unreleased`.
   characters (was 1000). HTML is shown as written and terminal controls are
   dropped, as in `jailbee outbox show`; history entries and the Qt tooltip stay
   one line.
+
+### Fixed
+
+- **Orphan commands work outside a repository**, including when launched by
+  the dashboard from the home directory.
+- **`jailbee apply` reconciles host mounts targeting paths inside the repo**
+  on existing containers, including stopped ones, instead of applying changes
+  only to newly created containers.
+- **Container memory usage excludes reclaimable cache**, so the displayed
+  usage better reflects pressure against the container's memory limit.
 
 ## 1.7.8 - 2026-10-23
 

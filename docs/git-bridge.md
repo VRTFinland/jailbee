@@ -1271,7 +1271,7 @@ you submit it in GitHub. Draft mode is available only when a review or reply is
 pending; Cancel leaves everything unpublished. A dry run with `--draft` marks
 actions as pending, held back, or published without changing GitHub. This
 GitHub write path has not yet been verified against a real host PR; see the
-host-only recipe in [Manual testing](manual-testing.md#draft-review-publication).
+host-only recipe in [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md#draft-review-publication).
 
 A PR manifest normally names a PR the container owns: the one it was created
 from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked
