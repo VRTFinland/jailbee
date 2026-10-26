@@ -55,7 +55,7 @@ def test_orchestration_is_a_feature_not_the_readme_primary_pitch() -> None:
     guide = "https://jailbee.gisgro.io/docs/orchestration/"
     assert "orchestration" not in intro.lower()
     assert guide in features
-    assert "https://youtu.be/z-i82M_jzQw" in features
+    assert "https://youtu.be/AYC9bf2Bg_Q" in features
 
 
 def test_the_readme_sends_readers_to_the_documentation_site() -> None:

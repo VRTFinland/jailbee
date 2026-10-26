@@ -126,7 +126,7 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   access it may give workers. Ordinary delegation stays with the agent's
   built-in subagents.
   [Orchestration guide](https://jailbee.gisgro.io/docs/orchestration/) ·
-  [Watch the orchestration demo](https://youtu.be/z-i82M_jzQw)
+  [Watch the orchestration demo](https://youtu.be/AYC9bf2Bg_Q)
 
 - **Explicit network policy and a GitHub outbox.** Strict mode is the
   default: a destination IP allowlist, optionally per TCP port, filters
