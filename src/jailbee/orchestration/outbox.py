@@ -73,9 +73,7 @@ def helper_script() -> str:
 def ensure_orchestration_env(incus: Incus, full: str, *, uid: int | None) -> None:
     """Create user-owned inbox/outbox dirs and atomically install the helper as root."""
     incus.exec(full, ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR], uid=uid)
-    incus.exec_with_input(
-        full, ["sh", "-c", _INSTALL_HELPER, "sh", INBOX_HELPER], helper_script()
-    )
+    incus.exec_with_input(full, ["sh", "-c", _INSTALL_HELPER, "sh", INBOX_HELPER], helper_script())
 
 
 def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest]:

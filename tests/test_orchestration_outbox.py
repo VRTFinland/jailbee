@@ -54,7 +54,9 @@ def test_ensure_env_script_replaces_only_when_different(tmp_path: Path) -> None:
     def install(text: str) -> None:
         subprocess.run(
             ["sh", "-c", outbox._INSTALL_HELPER, "sh", str(target)],
-            input=text, text=True, check=True,
+            input=text,
+            text=True,
+            check=True,
         )
 
     install("v1\n")

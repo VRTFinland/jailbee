@@ -617,7 +617,8 @@ def test_build_stages_jailbee_inbox_helper(make_cfg, tmp_path, mocker):
     incus = _incus()
     build_golden_image(cfg, incus)
     staged = [
-        c for c in incus.exec.call_args_list
+        c
+        for c in incus.exec.call_args_list
         if c.args[1][:2] == ["bash", "-c"]
         and "base64 -d > /provision/jailbee-inbox" in c.args[1][2]
     ]
