@@ -534,7 +534,7 @@ def launch_background(
             log_path=str(log_path),
             now=_dt.now().astimezone(),
         ),
-        "record the new job row",
+        f"record the new job row for {container_name}",
     )
     return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
 

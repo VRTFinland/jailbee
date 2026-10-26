@@ -51,6 +51,8 @@ cat ~/.jailbee/orchestration/grant.json
 
 - `max_running_children` is the limit on children **running** at once.
   Stopped children do not count. A spawn over the limit waits as `queued`.
+  During creation, a child counts from the `started` reply until it is
+  running and its create has finished, or its create has failed.
 - `operations` lists the manifest types you may use. `spawn` and `message`
   are always there; `import`, `restart`, `stop` and `destroy` may not be.
 - `grantable` is the most you may give a child: mounts by name, whether

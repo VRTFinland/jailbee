@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
@@ -29,7 +30,18 @@ from jailbee.orchestration.protocol import (
     restart_sets_runner,
 )
 from jailbee.orchestration.runner import Runner, parse_runner_label, runner_problems
-from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
+from jailbee.orchestration.state import (
+    QueuedRequest,
+    Reservation,
+    load_queue,
+    load_reservations,
+    purge_pending,
+    reservation_alive,
+    save_queue,
+    save_reservations,
+)
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator, Mapping
@@ -218,7 +230,7 @@ def plan_spawn(
     short = lifecycle.short_name(ctx.cfg, full)
     if full in ctx.nodes or ctx.incus.exists(full):
         return refused(f"container `{short}` already exists")
-    if full in live_create_jobs(ctx.cfg.container_prefix):
+    if full in creating_children(ctx):
         return refused(f"container `{short}` is already being created")
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
@@ -270,13 +282,25 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
     try:
         # config_path=None: the worker reloads the repo config from `cfg.repo_root`.
-        start_create(ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None)
+        started = start_create(
+            ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None
+        )
     except NeedsOperator as e:
         return refused(e.reason)
     except CreateError as e:
         return refused(e.message)
     except (ForkError, ValueError) as e:
         return refused(str(e))
+    reservations = load_reservations(ctx.root)
+    entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full]
+    entries.append(Reservation(plan.child_full, started.pid, ctx.now.isoformat()))
+    reservations[ctx.sender.full] = entries
+    try:
+        save_reservations(ctx.root, reservations)
+    except OSError as exc:
+        log.warning(
+            "could not reserve creating child %s for %s: %s", plan.child_full, ctx.sender.full, exc
+        )
     # Only the worker is launched here; a later create failure is not reported
     # (plan F), so the status must not claim the child exists.
     short = lifecycle.short_name(ctx.cfg, plan.child_full)
@@ -326,18 +350,66 @@ def live_job_kind(name: str) -> str | None:
     return job.op_kind
 
 
-def running_children(ctx: ActionContext) -> int:
-    """Children running plus children still being created, counted once each.
+def prune_reservations(root: Path) -> None:
+    """Drop finished create workers across orchestrators, reaping our exited children."""
+    reservations = load_reservations(root)
+    live = {
+        sender: kept
+        for sender, entries in reservations.items()
+        if (kept := [r for r in entries if reservation_alive(r.pid)])
+    }
+    if live != reservations:
+        save_reservations(root, live)
+
+
+def live_reservations(ctx: ActionContext) -> set[str]:
+    """Names held until the next pre-snapshot prune, even if a worker just exited."""
+    return {r.child_full for r in load_reservations(ctx.root).get(ctx.sender.full, [])}
+
+
+def creating_children(ctx: ActionContext) -> set[str]:
+    """Names already being created, including reservations with missing job rows."""
+    reserved = {r.child_full for entries in load_reservations(ctx.root).values() for r in entries}
+    return live_create_jobs(ctx.cfg.container_prefix) | reserved
+
+
+def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
+    """Running, live job, reservation counts and their deduplicated total.
 
     A job row does not record its orchestrator, so a live create job counts
     when its container does not exist yet or is one of this sender's children.
+    Reservations make the count independent of the job row, whose insert is best-effort.
     """
     mine = {n.full for n in ctx.children()}
-    names = {n.full for n in ctx.children() if n.running}
-    for name in live_create_jobs(ctx.cfg.container_prefix):
-        if name in mine or name not in ctx.nodes:
-            names.add(name)
-    return len(names)
+    running = {n.full for n in ctx.children() if n.running}
+    jobs = {
+        name
+        for name in live_create_jobs(ctx.cfg.container_prefix)
+        if name in mine or name not in ctx.nodes
+    }
+    reserved = live_reservations(ctx)
+    return len(running), len(jobs), len(reserved), len(running | jobs | reserved)
+
+
+def running_children(ctx: ActionContext) -> int:
+    """Children running plus children still being created, counted once each.
+
+    Reservations make the count independent of the job row, whose insert is best-effort.
+    """
+    return count_breakdown(ctx)[-1]
+
+
+def _log_spawn_decision(
+    ctx: ActionContext, child: str, counts: tuple[int, int, int, int], limit: int, state: str
+) -> None:
+    log.info(
+        "spawn %s for %s: running=%d creating(jobs)=%d reserved=%d total=%d limit=%d -> %s",
+        child,
+        ctx.sender.full,
+        *counts,
+        limit,
+        state,
+    )
 
 
 def _queued(ctx: ActionContext) -> list[QueuedRequest]:
@@ -371,8 +443,12 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
         except (ForkError, git.GitError) as e:
             return refused(str(e))
     # A non-empty queue goes first: a new spawn never overtakes it.
-    if not queued and running_children(ctx) < grant.max_running_children:
-        return start_child(ctx, plan, fork=fork)
+    counts = count_breakdown(ctx)
+    if not queued and counts[-1] < grant.max_running_children:
+        outcome = start_child(ctx, plan, fork=fork)
+        _log_spawn_decision(ctx, plan.child_full, counts, grant.max_running_children, outcome.state)
+        return outcome
+    _log_spawn_decision(ctx, plan.child_full, counts, grant.max_running_children, "queued")
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -467,7 +543,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
         return refused(f"container `{short}` already exists")
-    if req.child_full in live_create_jobs(ctx.cfg.container_prefix):
+    if req.child_full in creating_children(ctx):
         return refused(f"container `{short}` is already being created")
     plan = SpawnPlan(
         child_full=req.child_full,
@@ -502,7 +578,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"`{short}` is not a child of this orchestrator")
     if node.running:
         return refused(f"child `{short}` is running; stop it first")
-    if node.full in live_create_jobs(ctx.cfg.container_prefix):
+    if node.full in creating_children(ctx):
         return refused(f"child `{short}` is still being created")
     runner = Runner.model_validate(req.runner) if req.runner is not None else None
     effective = runner if req.runner_set else parse_runner_label(node.config.get(labels.RUNNER))
@@ -527,7 +603,8 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     queued = _queued(ctx)
     if grant is None or not queued:
         return []
-    free = grant.max_running_children - running_children(ctx)
+    counts = count_breakdown(ctx)
+    free = grant.max_running_children - counts[-1]
     results: list[tuple[QueuedRequest, Outcome]] = []
     while queued and free > 0:
         req = queued.pop(0)
@@ -538,9 +615,15 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
         outcome = (
             starter(ctx, req) if starter else refused(f"unknown queued request kind `{req.kind}`")
         )
+        _log_spawn_decision(ctx, req.child_full, counts, grant.max_running_children, outcome.state)
         if outcome.state == "started":
             free -= 1
         results.append((req, outcome))
+        # The nodes snapshot is unchanged this round; keep the drain's slot accounting.
+        fresh = count_breakdown(ctx)
+        counts = (*fresh[:3], grant.max_running_children - free)
+    if queued:
+        _log_spawn_decision(ctx, queued[0].child_full, counts, grant.max_running_children, "queued")
     return results
 
 
@@ -591,7 +674,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return child
     if child.running:
         return refused(f"child `{child.short}` is running; stop it first")
-    if child.full in live_create_jobs(ctx.cfg.container_prefix):
+    if child.full in creating_children(ctx):
         return refused(f"child `{child.short}` is still being created")
     set_runner = restart_sets_runner(m)
     # A restart that names no runner keeps the child's label; that kept runner

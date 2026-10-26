@@ -26,6 +26,7 @@ from jailbee.orchestration.actions import (
     drain_queue,
     drop_queue,
     live_job_kind,
+    prune_reservations,
     refused,
 )
 from jailbee.orchestration.journal import Journal, manifest_digest
@@ -409,6 +410,8 @@ def tick(
 ) -> bool:
     """Run one broker round; True while any running orchestrator or child exists."""
     memory = memory if memory is not None else BrokerMemory()
+    # Release finished workers before taking the snapshot that replaces their slots.
+    prune_reservations(root)
     raw = incus.list_containers()
     candidates = [
         e

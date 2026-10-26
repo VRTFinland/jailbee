@@ -580,7 +580,7 @@ def test_launch_background_spawns_worker_and_tracks(mocker, tmp_path, monkeypatc
     decoded, name, log_path = background.job_to_opts(json.loads(open(job_file).read()))
     assert (decoded, name, log_path) == (opts, "p-x", str(started.log_path))
     assert track.call_args.args[0] is engine
-    assert track.call_args.args[2] == "record the new job row"
+    assert track.call_args.args[2] == "record the new job row for p-x"
 
 
 def test_launch_background_passes_a_config_file(mocker, tmp_path, monkeypatch):

@@ -176,6 +176,21 @@ def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
     assert rig.ensure_env.call_count == 2
 
 
+def test_tick_prunes_reservations(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration.state import Reservation, load_reservations, save_reservations
+
+    save_reservations(rig.root, {"proj-orch": [Reservation("proj-failed", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: False)
+
+    def snapshot() -> list[dict[str, Any]]:
+        assert load_reservations(rig.root) == {}
+        return []
+
+    rig.incus.list_containers.side_effect = snapshot
+    assert rig.tick() is False
+    assert load_reservations(rig.root) == {}
+
+
 def test_config_for_picks_longest_prefix(tmp_path: Path) -> None:
     a = make_config(tmp_path).model_copy(update={"container_prefix": "proj"})
     b = make_config(tmp_path).model_copy(update={"container_prefix": "proj-x"})

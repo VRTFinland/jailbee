@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
+from jailbee import background
+from jailbee.orchestration import state
 from jailbee.orchestration.state import (
     QueuedRequest,
     atomic_write_text,
@@ -17,6 +22,84 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+
+def test_reservations_round_trip(tmp_path: Path) -> None:
+    reservations = {"proj-orch": [state.Reservation("proj-a", 123, "2026-10-26T00:00:00+00:00")]}
+    state.save_reservations(tmp_path, reservations)
+    assert state.load_reservations(tmp_path) == reservations
+    assert json.loads((tmp_path / state.RESERVATIONS_FILE).read_text())["version"] == 1
+
+
+def test_save_reservations_omits_empty(tmp_path: Path) -> None:
+    state.save_reservations(tmp_path, {"proj-orch": []})
+    assert state.load_reservations(tmp_path) == {}
+
+
+def test_load_reservations_missing_is_empty(tmp_path: Path) -> None:
+    assert state.load_reservations(tmp_path) == {}
+
+
+def test_load_reservations_corrupt_is_empty(tmp_path: Path) -> None:
+    (tmp_path / state.RESERVATIONS_FILE).write_text("{not json")
+    assert state.load_reservations(tmp_path) == {}
+
+
+def test_load_reservations_skips_malformed_entries(tmp_path: Path) -> None:
+    (tmp_path / state.RESERVATIONS_FILE).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reservations": {
+                    "proj-orch": [
+                        {"child_full": "proj-a", "pid": 123, "started_at": "t"},
+                        {"child_full": "proj-b"},
+                        {"child_full": "proj-c", "pid": "bad", "started_at": "t"},
+                    ]
+                },
+            }
+        )
+    )
+    assert state.load_reservations(tmp_path) == {
+        "proj-orch": [state.Reservation("proj-a", 123, "t")]
+    }
+
+
+def test_reservation_reaps_exited_child() -> None:
+    proc = subprocess.Popen(["true"])
+    try:
+        # Observe exit without reaping: reservation_alive must reap the zombie.
+        os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+        assert state.reservation_alive(proc.pid) is False
+    finally:
+        proc.wait()
+
+
+def test_reservation_live_child() -> None:
+    proc = subprocess.Popen(["sleep", "5"])
+    try:
+        assert state.reservation_alive(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_reservation_foreign_pid_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "waitpid", MagicMock(side_effect=ChildProcessError))
+    monkeypatch.setattr(background, "worker_alive", lambda pid: True)
+    assert state.reservation_alive(4242) is True
+
+
+def test_oversized_reservation_pid_is_pruned(tmp_path: Path) -> None:
+    from jailbee.orchestration.actions import prune_reservations
+
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-a", 10**100, "t")]})
+    prune_reservations(tmp_path)
+    assert state.load_reservations(tmp_path) == {}
+
+
+def test_reservation_pid_zero_dead() -> None:
+    assert state.reservation_alive(0) is False
 
 
 def _req(manifest_id: str = "m1") -> QueuedRequest:

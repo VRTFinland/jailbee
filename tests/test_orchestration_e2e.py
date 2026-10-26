@@ -143,7 +143,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         running=True,
         **{labels.SPAWNED_BY: "proj-orch", labels.LAST_IMPORT: HEAD},
     )
-    start_create = MagicMock()
+    from jailbee.create_flow import CreateStarted
+
+    start_create = MagicMock(return_value=CreateStarted("proj-child", 4242, tmp_path / "log"))
     monkeypatch.setattr(actions, "start_create", start_create)
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     monkeypatch.setattr(broker, "repo_configs", lambda memory=None: {"proj": cfg})
