@@ -33,6 +33,9 @@ answer; see [Security and limitations](security.md).
   its tools, without provisioning another machine.
 - **Docker Sandboxes:** a microVM boundary with a separate kernel and
   brokered API credentials around a supported agent.
+- **Microsoft MXC:** an SDK that your own application embeds to run
+  untrusted code — model output, plugins, tool calls — under a declared
+  filesystem and network policy on Windows, Linux or macOS.
 - **JailBee:** a persistent runtime per branch, with its own Docker,
   localhost, desktop apps and git transport back to the host. You accept
   Linux-only host setup and a shared kernel in return.
@@ -169,6 +172,49 @@ The distinction is the workflow around the boundary:
 Both can run a Docker stack. Choose `sbx` when the stronger kernel boundary
 is decisive; choose JailBee when branch lifecycle, native desktop apps and
 explicit host integration are the work you would otherwise build yourself.
+
+### An embeddable sandbox: Microsoft MXC
+
+**[MXC](https://github.com/microsoft/mxc)** (Microsoft eXecution Container,
+MIT, Rust; 1.0 in October 2026) is not an environment you work in but a
+library an application builds in. Through Rust, .NET or Node SDKs — or a
+standalone executor taking a JSON request — the caller names a command, a
+backend and a versioned containment policy: read-only, read-write and denied
+paths, directional egress/ingress rules, and on some backends clipboard and
+UI restrictions. Network policy defaults to deny in both directions. It is
+aimed at agent hosts and tools that need to run model-generated code, not at
+a developer's branch workflow, so it is not a column in the table above.
+
+Its breadth is in the backends behind one policy language. The Linux default
+is Bubblewrap; LXC is an explicit choice; Windows uses its native
+ProcessContainer, with WSL containers and Windows Sandbox beside it; macOS
+uses Seatbelt. Experimental KVM/WHP-based Nanvix microVMs and Hyperlight
+unikernels give a separate-kernel option on Linux and Windows, but are not
+selectable in the stable 1.0 request contract. An audit mode records what a
+trusted tool actually accesses, to help author a Windows policy.
+
+The differences from JailBee follow from that role:
+
+- **Transient by default.** The usual call creates a sandbox, runs one
+  command and cleans up. Provision/start/exec/stop lifecycle operations exist
+  in 1.0 only for the Windows IsolationSession and WSL container backends;
+  the Linux backends are create-and-run.
+- **Policy per call, not an environment per branch.** Nothing provisions a
+  repo's toolchain, services, Docker daemon, browser or IDE, and there is no
+  checkout, git bridge or snapshot. The caller supplies the workload and the
+  paths it may touch.
+- **Network rules are CIDRs and ports.** Hostname filtering is delegated to
+  a caller-managed loopback proxy that MXC relays to; MXC does not provide
+  one. JailBee's strict mode resolves allowlisted hostnames into its ACL and
+  adds a hostname proxy on the work network.
+- **Cross-platform.** MXC runs on Windows, Linux and macOS hosts; JailBee
+  requires Linux.
+
+If you are building an agent or tool that executes untrusted snippets on
+users' machines, MXC addresses that problem and JailBee does not. The two can
+also nest: an agent using MXC can run inside a JailBee container, subject to
+the container's own namespace and network restrictions — a combination not
+validated in this comparison.
 
 ### Two more you may be thinking of
 
@@ -416,6 +462,17 @@ and the following external sources were re-read for the corrections here:
   [FAQ](https://docs.docker.com/ai/sandboxes/faq/). The table compares **local**
   sandboxes, not the separately offered cloud service; current documentation
   is not pinned to the previously reviewed CLI version.
+
+On 2026-10-26, MXC was added from its documentation at commit
+[`05a430b`](https://github.com/microsoft/mxc/tree/05a430bc17a3e1b3fa2131524fc52e4319e07298)
+(after the v1.0.1 release): the
+[README](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/README.md),
+[containment policy 1.0.0](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/containment-policy/1.0.0/policy.md),
+[container lifecycle](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/container-lifecycle.md),
+and the [Bubblewrap](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/bwrap/bubblewrap-backend.md),
+[LXC](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/lxc/lxc-backend.md)
+and [Nanvix](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/nanvix/nanvix.md)
+backend guides. No MXC build was run.
 
 The smaller projects above were not re-audited in the same depth. All these
 tools move quickly; absence of documented support is not proof that a feature
