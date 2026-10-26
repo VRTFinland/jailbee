@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import itertools
+import json
 import logging
 import signal
 import time
@@ -41,6 +42,7 @@ from jailbee.orchestration.outbox import (
 from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
+    MessageManifest,
     RestartManifest,
     SpawnManifest,
     body_file_of,
@@ -186,6 +188,11 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory)
         now=ctx.now,
         seq=next(memory.seq),
     )
+    path = finishing.reply_path(ctx, ctx.sender)
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved.get("ref") == ref:
+            path.unlink(missing_ok=True)
 
 
 def _track(
@@ -308,6 +315,13 @@ def _handle_raw(
             # The detail goes to the container; the exception text stays in the log.
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
             outcome = refused("broker error")
+    if isinstance(manifest, MessageManifest) and manifest.kind == "done" and outcome is not None:
+        from jailbee.orchestration.state import atomic_write_text
+
+        atomic_write_text(
+            finishing.reply_path(ctx, ctx.sender),
+            json.dumps({"ref": ref, "state": outcome.state, "detail": outcome.detail}),
+        )
     # Journal before anything else: a crash after acting must never act again.
     journal.record(
         ctx.sender.key,
@@ -366,6 +380,11 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     )
     if ctx.role() == "orchestrator":
         _sync_grant_json(ctx, memory)
+    path = finishing.reply_path(ctx, ctx.sender)
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved.get("ref"):
+            _reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
         _handle_raw(ctx, raw, journal, memory)
 

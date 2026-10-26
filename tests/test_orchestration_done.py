@@ -59,6 +59,7 @@ class Rig:
             "jailbee.orchestration.importing.import_child",
             return_value=importing.Imported("refs/jailbee/from/fix-1/fix-1", SHA),
         )
+        self.head = mocker.patch("jailbee.orchestration.actions._child_head", return_value=SHA)
         self.write_inbox = mocker.patch("jailbee.orchestration.outbox.write_inbox")
         self.deliver = mocker.patch(
             "jailbee.orchestration.messages.deliver", return_value="delivered"
@@ -155,12 +156,56 @@ def test_done_import_failure_delivers_with_error_and_keeps(
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
 
-def test_done_skips_import_when_already_imported(tmp_path: Path, mocker: MockerFixture) -> None:
+@pytest.mark.parametrize("target_oid", [None, "b" * 40, SHA])
+def test_done_checks_target_ref_before_skipping_import(
+    tmp_path: Path, mocker: MockerFixture, target_oid: str | None
+) -> None:
     rig = _make(tmp_path, mocker)
     rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.LAST_IMPORT: SHA})
+    mocker.patch("jailbee.sync._container_ref_oid", return_value=target_oid)
     messages.handle_message(rig.ctx, _done())
-    rig.import_child.assert_not_called()
+    assert rig.import_child.call_count == (0 if target_oid == SHA else 1)
     assert rig.write_inbox.call_args.args[2].imported_sha == SHA
+
+
+@pytest.mark.parametrize("change", ["head", "branch", "during_import"])
+def test_parked_done_keeps_child_changed_since_report(
+    tmp_path: Path, mocker: MockerFixture, change: str
+) -> None:
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.protocol import PendingFinish
+
+    rig = _make(tmp_path, mocker, orch_running=False)
+    _policy(rig, "destroy")
+    messages.handle_message(rig.ctx, _done())
+    path = next(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
+    item = PendingFinish.model_validate_json(path.read_text())
+    orch = rig.ctx.nodes["myrepo-orch"]
+    if change == "head":
+        rig.head.return_value = "b" * 40
+    elif change == "branch":
+        rig.branch.return_value = "other"
+    else:
+        rig.import_child.return_value = importing.Imported("refs/jailbee/from/fix-1/fix-1", "b" * 40)
+    msg, _ = finishing.complete(rig.ctx, rig.ctx.sender, orch, item)
+    assert msg.on_done == "keep"
+    assert msg.import_error is not None
+    assert "changed" in msg.import_error
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
+    if change != "during_import":
+        rig.import_child.assert_not_called()
+
+
+def test_done_keeps_child_when_destroy_grant_revoked(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    orch = rig.ctx.nodes["myrepo-orch"]
+    grant = Grant(operations=("spawn", "message", "import"))
+    rig.ctx.nodes = {CHILD: rig.ctx.sender, orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()})}
+    messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.on_done == "keep"
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
 
 def test_done_with_destroyed_orchestrator_refused_and_kept(
@@ -305,7 +350,8 @@ def test_done_bounds_every_child_probe_and_the_fetch(tmp_path: Path, mocker: Moc
     and the ext:: fetch from it run with a timeout."""
     rig = _make(tmp_path, mocker)
     messages.handle_message(rig.ctx, _done())
-    rig.incus.with_exec_timeout.assert_called_once_with(CHILD_EXEC_TIMEOUT_S)
+    assert rig.incus.with_exec_timeout.call_count == 2
+    assert all(c.args == (CHILD_EXEC_TIMEOUT_S,) for c in rig.incus.with_exec_timeout.call_args_list)
     bounded = rig.incus.with_exec_timeout.return_value
     assert rig.repo_dir.call_args.args[1] is bounded
     assert rig.dirty.call_args.args[0] is bounded

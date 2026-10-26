@@ -139,6 +139,11 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         in_reply_to=manifest.in_reply_to,
         uid=uid,
     )
+    # Before any cleanup marker: a crash before the broker journals/replies
+    # must conservatively keep the child, even if its outbox disappears.
+    from jailbee.orchestration.state import atomic_write_text
+
+    atomic_write_text(finishing.reply_path(ctx, ctx.sender), "{}\n")
     if target.running and not outbox.has_pending(ctx.root, target.full):
         # Persist intent before a destroy marker can exist: a broker crash
         # before the inbox write must leave a retryable delivery gate.

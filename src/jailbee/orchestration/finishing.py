@@ -23,11 +23,26 @@ if TYPE_CHECKING:
     from jailbee.orchestration.actions import ActionContext, Node
 
 
+def reply_path(ctx: ActionContext, child: Node) -> Path:
+    """Durable gate from accepting done until its status reaches the child."""
+    return ctx.root / "done-replies" / f"{child.full}.json"
+
+
+def _destroy_allowed(ctx: ActionContext, orchestrator: Node) -> bool:
+    from dataclasses import replace
+
+    grant = replace(ctx, sender=orchestrator).grant()
+    return grant is not None and "destroy" in grant.operations
+
+
 def complete(
     ctx: ActionContext, child: Node | None, orchestrator: Node, item: PendingFinish
 ) -> tuple[InboxMessage, str]:
     """Import and mark for later cleanup; never write to an inbox here."""
     from jailbee.orchestration import importing
+    from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S, _child_head
+    from jailbee import lifecycle, sync
+    from jailbee.git import GitError
 
     error: str | None = None
     imported: importing.Imported | str
@@ -39,18 +54,38 @@ def complete(
             f"child {item.child_short} no longer exists; its branch is on the host at "
             f"refs/jailbee/{item.child_short}/{item.branch} ({item.done_sha[:12]})"
         )
-    elif child.config.get(labels.LAST_IMPORT) == item.done_sha:
+    elif child.config.get(labels.LAST_IMPORT) == item.done_sha and importing.imported_ref_matches(
+        ctx, orchestrator, f"refs/jailbee/from/{item.child_short}/{item.branch}", item.done_sha
+    ):
         ref = f"refs/jailbee/from/{item.child_short}/{item.branch}"
         oid = item.done_sha
     elif not child.running:
         error = f"{item.child_short} is stopped; restart it and send import"
     else:
-        imported = importing.import_child(ctx, child=child, orchestrator=orchestrator)
-        if isinstance(imported, str):
-            error = imported
-        else:
-            ref, oid = imported.ref, imported.oid
+        bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+        try:
+            repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, child.full)
+            branch = sync._container_current_branch(
+                bounded, child.full, repo_dir, uid=ctx.cfg.container_user.uid
+            )
+            if branch != item.branch or _child_head(ctx, child) != item.done_sha:
+                error = "child branch or HEAD changed since done; send a new done report"
+        except (sync.SyncError, GitError, IncusError) as exc:
+            error = str(exc)
+        if error is None:
+            imported = importing.import_child(ctx, child=child, orchestrator=orchestrator)
+            if isinstance(imported, str):
+                error = imported
+            elif imported.oid != item.done_sha or imported.ref != (
+                f"refs/jailbee/from/{item.child_short}/{item.branch}"
+            ):
+                error = "child branch or HEAD changed during import; send a new done report"
+            else:
+                ref, oid = imported.ref, imported.oid
     if error is not None:
+        policy = "keep"
+    elif policy == "destroy" and not _destroy_allowed(ctx, orchestrator):
+        error = "orchestrator no longer has destroy permission"
         policy = "keep"
     elif policy == "destroy" and child is not None and oid is not None:
         try:
@@ -117,11 +152,15 @@ def settle_destroys(ctx: ActionContext) -> None:
         marker = child.config.get(labels.PENDING_DESTROY)
         if not marker:
             continue
-        reason = (
-            "the imported commit changed"
-            if child.config.get(labels.LAST_IMPORT) != marker
-            else destroy_guard(ctx, child)
-        )
+        if reply_path(ctx, child).exists() or outbox.has_pending(ctx.root, child.full):
+            continue
+        reason: str | None
+        if not _destroy_allowed(ctx, ctx.sender):
+            reason = "orchestrator no longer has destroy permission"
+        elif child.config.get(labels.LAST_IMPORT) != marker:
+            reason = "the imported commit changed"
+        else:
+            reason = destroy_guard(ctx, child)
         if reason is not None:
             body = f"child {child.short} was kept instead of destroyed: {reason}"
         else:

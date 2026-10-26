@@ -294,6 +294,7 @@ def git_done(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     monkeypatch.setattr(lifecycle, "container_repo_dir", lambda cfg, incus, full: "/repo")
     monkeypatch.setattr(sync, "_container_status_dirty", lambda *a, **k: False)
     monkeypatch.setattr(sync, "_container_current_branch", lambda *a, **k: "c1-branch")
+    monkeypatch.setattr(actions, "_child_head", lambda *a, **k: DONE_SHA)
     fetch = MagicMock(
         return_value=FetchResult(
             branch="c1-branch", old_oid=None, new_oid=DONE_SHA, base_oid=None, commits_added=1
