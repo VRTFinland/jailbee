@@ -217,6 +217,10 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 1. Send `import` for the child. Wait for a `done` status whose detail names
    `refs/jailbee/from/<child>/<branch>`.
 2. `git merge` (or cherry-pick) from that ref and resolve conflicts yourself.
+   The import also brings the child's submodule commits, but a merge only
+   moves the gitlinks: run `git submodule update` afterwards so the
+   submodule working trees match. No network is needed; the objects are
+   already local.
 3. Free the slot: a finished child is normally still running, so `stop`
    it, then `destroy` it if your grant has that operation (stop first is
    the recommended order). Stopping alone frees the slot, so queued spawns

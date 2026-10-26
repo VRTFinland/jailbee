@@ -163,3 +163,55 @@ def test_import_timeout_refused_without_labels(tmp_path: Path, merge: MagicMock)
     out = importing.handle_import(ctx, _manifest())
     assert out == refused("git push timed out after 600s")
     ctx.incus.config_set.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_import_relays_the_childs_submodules_into_the_orchestrator(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """Every submodule commit the child made reaches the orchestrator.
+
+    Runs the real `merge_container_into_container` with only its transports
+    stubbed, so swapping the import onto a superproject-only transport (which
+    would leave the merged gitlinks pointing at commits the orchestrator lacks)
+    fails here.
+    """
+    from jailbee import sync
+
+    ctx = _ctx(tmp_path)
+    prefix = ctx.cfg.container_prefix
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        side_effect=lambda c, i, s: f"{prefix}-{s}",
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    ctx.incus.with_exec_timeout.return_value.config_get.return_value = None  # type: ignore[attr-defined]
+    mocker.patch("jailbee.sync._container_is_running", return_value=True)
+    mocker.patch("jailbee.sync._run_container_preflights", return_value="main")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="c" * 40)
+    mocker.patch(
+        "jailbee.sync.fetch_from_container",
+        return_value=sync.FetchResult(
+            branch="fix-1", old_oid=None, new_oid=SHA, base_oid=None, commits_added=1
+        ),
+    )
+    host_repos = {"deps/libfoo": tmp_path / "libfoo"}
+    to_host = mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host", return_value=host_repos
+    )
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=["deps/libfoo"])
+    to_target = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch("jailbee.sync.push_to_container", return_value=_result().push)
+
+    out = importing.handle_import(ctx, _manifest())
+
+    assert out == done(f"imported as {REF} at {'b' * 12}")
+    assert to_host.call_args.args[2:4] == (CHILD, "fix-1")
+    assert to_host.call_args.kwargs["timeout"] == CHILD_TRANSPORT_TIMEOUT_S
+    to_target.assert_called_once()
+    assert to_target.call_args.args[2] == "myrepo-orch"
+    kw = to_target.call_args.kwargs
+    assert kw["source_ns"] == "fix-1"
+    assert kw["mode"] == "relay"
+    assert kw["host_repos"] is host_repos
+    assert kw["paths"] == ["deps/libfoo"]
+    assert kw["timeout"] == CHILD_TRANSPORT_TIMEOUT_S
