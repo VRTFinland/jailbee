@@ -75,7 +75,7 @@ interactively, as for every command; `revoke` always shows the picker.
 running.
 
 Over remote SSH, `grant` needs the host's `remote.ssh.orchestration` setting
-(`off` by default). `ssh` limits the grantable mounts, loose network and egress
+(`ssh` by default; `off` refuses it). `ssh` limits the grantable mounts, loose network and egress
 to what the session could do itself (`remote.ssh.mounts`, `remote.ssh.network`;
 `mount_roots` never); `orchestrator` limits them to the orchestrator's
 permanent rights. The child limit and operations are always adjustable,

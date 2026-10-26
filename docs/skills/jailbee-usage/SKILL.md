@@ -1049,7 +1049,7 @@ import, stop and destroy children, within the grant and the repo's caps.
 - Over remote SSH `revoke`, `show` and `ls` always work. `grant` is refused
   unless the host sets `remote.ssh.orchestration` to `ssh` (children may get
   what the session could do itself) or `orchestrator` (what the orchestrator
-  permanently holds); it is off by default.
+  permanently holds); the default is `ssh`.
 - What an agent does with a grant is covered by two separate skills: an
   orchestrator agent uses `jailbee-orchestration`, a child agent uses
   `jailbee-orchestration-child`. Guide:

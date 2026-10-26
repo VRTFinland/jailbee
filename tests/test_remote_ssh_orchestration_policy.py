@@ -24,7 +24,7 @@ def _grant(mounts=(), loose=False, egress=(), children=4):
 
 
 def test_off_has_no_bound():
-    assert grant_bound(RemoteSSHConfig(), ["data"], None) is None
+    assert grant_bound(RemoteSSHConfig(orchestration="off"), ["data"], None) is None
 
 
 def test_ssh_bound_without_unlocks_allows_nothing_grantable():

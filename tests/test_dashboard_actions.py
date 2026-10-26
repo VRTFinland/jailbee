@@ -167,8 +167,9 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         (_LOCAL, _ALL_CONTAINER),
         (_LOCAL_DISABLED, _ALL_CONTAINER),
         # `mount` brings a host path into a container: a host command
-        # `orchestrate grant` widens what a container may do: not in the SSH default
-        (_SSH_DEFAULT, _ALL_CONTAINER - {"orchestration"}),
+        (_SSH_DEFAULT, _ALL_CONTAINER),
+        # `orchestrate grant` widens what a container may do: `off` withholds it
+        ((True, {"orchestration": "off"}), _ALL_CONTAINER - {"orchestration"}),
         (_allow("orchestrate grant", restrict_host=False), {"orchestration"}),
         (_allow("mount", "unmount"), {"mounts"}),
         (_allow("mount", restrict_host=False), {"mounts"}),
@@ -184,6 +185,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         "local",
         "local-ignores-policy",
         "ssh-default",
+        "ssh-orchestration-off",
         "ssh-allowlist-orchestrate-grant",
         "ssh-allowlist-mount-restricted",
         "ssh-allowlist-mount-unrestricted",
@@ -526,7 +528,7 @@ def test_revoke_argv():
         ({"child": "child"}, _LOCAL),
         ({"mode": "mount"}, _LOCAL),
         ({"state": "—"}, _LOCAL),
-        ({}, _SSH_DEFAULT),
+        ({}, (True, {"orchestration": "off"})),
     ],
     ids=["child", "mount-mode", "mid-creation", "ssh-denied"],
 )
@@ -552,7 +554,7 @@ def _granted_container() -> ContainerInfo:
 
 
 def test_orchestration_offered_over_ssh_with_revoke_only_when_setting_off():
-    policy = RemoteSSHConfig()
+    policy = RemoteSSHConfig(orchestration="off")
     assert dact.orchestration_offered(_granted_container(), policy, over_ssh=True)
     assert not dact.orchestration_offered(_container(), policy, over_ssh=True)
 

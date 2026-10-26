@@ -151,8 +151,8 @@ With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
 `net egress add`/`rm` is refused regardless, because it writes the host-local
 repo layer.
 `orchestrate grant` is refused in a restricted session while
-`remote.ssh.orchestration` is `off` (the default); `revoke`, `show` and `ls`
-are not affected. With `ssh`, a grant may give children only what the session
+`remote.ssh.orchestration` is `off`; `revoke`, `show` and `ls`
+are not affected. With `ssh` (the default), a grant may give children only what the session
 could do itself: loose network and egress hosts need `remote.ssh.network`,
 optional-mount kinds need `remote.ssh.mounts`, and `mount_roots` never
 qualifies. With `orchestrator`, it may give only what the orchestrator

@@ -1097,7 +1097,7 @@ def test_remote_unlocks_default_unlocks_nothing() -> None:
 def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    unlocks = RemoteUnlocks.of(RemoteSSHConfig(rdp=True))
+    unlocks = RemoteUnlocks.of(RemoteSSHConfig(rdp=True, orchestration="off"))
     assert unlocks.commands() == frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
     assert "gui" not in unlocks.commands()
 
@@ -1185,7 +1185,7 @@ def test_allowed_command_paths_follow_the_network_switch() -> None:
 def test_remote_unlocks_network_unlocks_widening_only() -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    assert RemoteUnlocks.of(RemoteSSHConfig(network=True)).commands() == frozenset(
+    assert RemoteUnlocks.of(RemoteSSHConfig(network=True, orchestration="off")).commands() == frozenset(
         {"net loose", "net egress add"}
     )
     both = RemoteUnlocks(gui=True, network=True).commands()
@@ -1215,8 +1215,10 @@ def test_remote_unlocks_mounts_from_either_switch(tmp_path) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
     assert RemoteUnlocks.of(RemoteSSHConfig()).mounts is False
-    assert RemoteUnlocks.of(RemoteSSHConfig(mounts=True)).commands() == frozenset({"mount"})
-    roots = RemoteSSHConfig(mount_roots=[RemoteMountRoot(path=tmp_path.resolve())])
+    assert RemoteUnlocks.of(RemoteSSHConfig(mounts=True, orchestration="off")).commands() == frozenset({"mount"})
+    roots = RemoteSSHConfig(
+        mount_roots=[RemoteMountRoot(path=tmp_path.resolve())], orchestration="off"
+    )
     assert RemoteUnlocks.of(roots).commands() == frozenset({"mount"})
 
 
@@ -1741,7 +1743,8 @@ def test_remote_unlocks_orchestration_unlocks_grant_only() -> None:
         unlocks = RemoteUnlocks.of(RemoteSSHConfig(orchestration=level))
         assert unlocks.orchestration is True
         assert unlocks.commands() == frozenset({"orchestrate grant"})
-    assert RemoteUnlocks.of(RemoteSSHConfig()).orchestration is False
+    assert RemoteUnlocks.of(RemoteSSHConfig()).orchestration is True
+    assert RemoteUnlocks.of(RemoteSSHConfig(orchestration="off")).orchestration is False
 
 
 def test_orchestrate_grant_is_a_host_command_unless_the_feature_is_on(monkeypatch) -> None:

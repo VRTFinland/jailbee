@@ -412,8 +412,22 @@ def test_global_yaml_with_only_gui_false_turns_waypipe_off(tmp_path) -> None:
     assert config.remote.ssh.rdp is False
 
 
-def test_orchestration_setting_defaults_off() -> None:
-    assert RemoteSSHConfig().orchestration == "off"
+def test_orchestration_setting_defaults_ssh() -> None:
+    assert RemoteSSHConfig().orchestration == "ssh"
+
+
+@pytest.mark.parametrize(("value", "level"), [(True, "ssh"), (False, "off")])
+def test_orchestration_setting_accepts_booleans(value: bool, level: str) -> None:
+    assert RemoteSSHConfig(orchestration=value).orchestration == level
+
+
+def test_orchestration_boolean_from_yaml(tmp_path) -> None:
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text("remote:\n  ssh:\n    orchestration: true\n")
+    config, _ = load_global_config(path)
+    assert config.remote.ssh.orchestration == "ssh"
 
 
 def test_orchestration_setting_rejects_unknown_level() -> None:
