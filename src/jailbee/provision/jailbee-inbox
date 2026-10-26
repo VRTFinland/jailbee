@@ -26,14 +26,16 @@ Usage: jailbee-inbox wait [--timeout DUR]
          one array.
 
   send   Write a manifest for the orchestrator's host into outbox/ and print
-         its id. Text (body or prompt) comes from --text T, --file PATH or -
+         its id. --wait [--timeout DUR] waits for its status (default 30m):
+         exit 0 on done/queued/started, 1 on refused/failed, 3 on timeout.
+         Text (body or prompt) comes from --text T, --file PATH or -
          (stdin); at most 65536 bytes, not empty.
            message  [--to C] [--kind note|question|done|blocked]
                     [--reply-to ID] + text
            spawn    --branch B [--new [--base B]] [--mount M]... [--loose]
-                    [--egress H]... [--note T] [runner] + text (the prompt)
-           restart  --child C [runner | --default-runner] + text (the prompt)
-           import | stop   --child C
+                    [--egress H]... [--note T] [--on-done destroy|keep] [runner] + text
+           restart  --child C [--on-done destroy|keep] [runner | --default-runner] + text
+           import | update | stop   --child C
            destroy  --child C [--force]
          runner = --agent claude|claude-jb [--profile P (claude-jb only)]
                   [--model fable|opus|sonnet|haiku]; see `runners`.
@@ -127,7 +129,7 @@ settle_inbox() {
 }
 
 cmd_wait() {
-    local timeout=1800 first waited=0
+    local timeout=1800 first waited=0 status_ref="${wait_status_ref:-}"
     while [ $# -gt 0 ]; do
         case "$1" in
             --timeout)
@@ -141,9 +143,9 @@ cmd_wait() {
     local deadline_ms remaining_ms remaining rc slice
     deadline_ms=$(( $(now_ms) + timeout * 1000 ))
     while :; do
-        first="$(oldest)"
+        if [ -n "$status_ref" ]; then first="$(find_status "$status_ref")"; else first="$(oldest)"; fi
         if [ -n "$first" ]; then
-            if [ "$waited" -eq 1 ]; then
+            if [ "$waited" -eq 1 ] && [ -z "$status_ref" ]; then
                 settle_inbox "$deadline_ms"
                 first="$(oldest)"
                 [ -n "$first" ] || continue
@@ -172,6 +174,28 @@ cmd_wait() {
     done
 }
 
+find_status() {
+    local f
+    while IFS= read -r f; do
+        if jq -e --arg ref "$1" '.type == "status" and .ref == $ref' "$f" >/dev/null 2>&1; then
+            printf '%s\n' "$f"
+            return 0
+        fi
+    done < <(unread_files)
+}
+
+wait_for_status() {
+    local wait_status_ref="$1" path state id
+    if ! path="$(cmd_wait --timeout "$2")"; then return 3; fi
+    state="$(jq -r '.state' "$path")"
+    id="$(message_id "$path")"
+    cmd_read "$id" || return 1
+    case "$state" in
+        done|queued|started) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Prints the message's id; fails (silently) on unreadable JSON.
 message_id() {
     jq -er '.id | select(type == "string")' "$1" 2>/dev/null
@@ -188,7 +212,9 @@ cmd_ls() {
                 .type,
                 (if .type == "status" then .ref else .from end),
                 (if .type == "status" then .state else (.kind // "") end),
-                ((.body // .detail // "") | tostring | .[0:60])
+                (((.body // .detail // "") | tostring | .[0:60])
+                 + (if .type == "message" and .imported_sha then " [imported \(.imported_sha[0:12])]" else "" end)
+                 + (if .type == "message" and .import_error then " [import failed]" else "" end))
             ] | map(if . == null then "-" else tostring end
                     | gsub("[\\x{00}-\\x{1f}\\x{7f}-\\x{9f}]"; "?")) | @tsv' "$f" 2>/dev/null)"; then
             printf 'jailbee-inbox: skipping unreadable message %s\n' "$f" >&2
@@ -318,23 +344,24 @@ cmd_send() {
     [ $# -ge 1 ] || bad_usage "send needs a type"
     local type="$1"; shift
     case "$type" in
-        message|spawn|import|restart|stop|destroy) ;;
+        message|spawn|import|update|restart|stop|destroy) ;;
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local agent="" profile="" model="" default_runner=0
+    local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=()
     local opt_val
     while [ $# -gt 0 ]; do
         opt_val=""
         case "$1" in
+            --wait) wait=1; shift; continue ;;
             --new) new=1; shift; continue ;;
             --loose) loose=1; shift; continue ;;
             --force) force=1; shift; continue ;;
             --default-runner) default_runner=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child|--agent|--profile|--model)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -358,10 +385,20 @@ cmd_send() {
             --agent) agent="$opt_val" ;;
             --profile) profile="$opt_val" ;;
             --model) model="$opt_val" ;;
+            --on-done) on_done="$opt_val" ;;
+            --timeout) timeout="$opt_val" ;;
         esac
         shift 2
     done
 
+    if [ -n "$timeout" ]; then
+        [ "$wait" -eq 1 ] || bad_usage "--timeout needs --wait"
+        parse_duration "$timeout" >/dev/null
+    fi
+    if [ -n "$on_done" ]; then
+        [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--on-done only applies to spawn and restart"
+        case "$on_done" in destroy|keep) ;; *) bad_usage "--on-done must be destroy or keep" ;; esac
+    fi
     # Which options belong to which type.
     local has_body=0
     case "$type" in message|spawn|restart) has_body=1 ;; esac
@@ -417,8 +454,11 @@ cmd_send() {
     elif [ "$default_runner" -eq 1 ]; then
         runner_json='{"runner": null}'
     fi
+    if [ -n "$on_done" ]; then
+        runner_json="$(jq -c --arg p "$on_done" '. + {on_done: $p}' <<<"$runner_json")"
+    fi
     case "$type" in
-        import|stop|destroy|restart)
+        import|update|stop|destroy|restart)
             [ -n "$child" ] || bad_usage "$type needs --child" ;;
         *) [ -z "$child" ] || bad_usage "--child does not apply to $type" ;;
     esac
@@ -495,7 +535,7 @@ cmd_send() {
             jq -n --arg id "$id" --arg child "$child" --argjson force "$force" \
                 '{version: 1, id: $id, type: "destroy", child: $child}
                  + (if $force == 1 then {force: true} else {} end)' > "$json_tmp" ;;
-        import|stop)
+        import|update|stop)
             jq -n --arg id "$id" --arg type "$type" --arg child "$child" \
                 '{version: 1, id: $id, type: $type, child: $child}' > "$json_tmp" ;;
     esac
@@ -511,6 +551,9 @@ cmd_send() {
     fi
     trap - EXIT
     printf '%s\n' "$id"
+    if [ "$wait" -eq 1 ]; then
+        wait_for_status "$id" "${timeout:-30m}"
+    fi
 }
 
 [ $# -ge 1 ] || { usage >&2; exit 2; }
