@@ -283,7 +283,9 @@ refused ("`x` is not a child of this orchestrator"); after a revoked grant,
 ```
 
 - `max_running_children`: how many children may run at once. A spawn beyond
-  it is `queued` until a slot frees.
+  it is `queued` until a slot frees. During creation, a child counts from
+  the `started` reply until it is running and its create has finished, or
+  its create has failed.
 - `operations`: the manifest types you may use. `spawn` and `message` are
   always present.
 - `grantable`: the most you may hand to a child.

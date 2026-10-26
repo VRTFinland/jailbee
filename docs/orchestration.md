@@ -230,7 +230,9 @@ JSON by hand; rebuild with `jb base build` to get it.
 - **Spawn.** `kind: fork` (from the orchestrator's committed work) or `kind:
   new` (from a base), plus the prompt and rights. Only **running** children
   count against `max_running_children`; a child being created counts as
-  running. Beyond the limit the spawn is queued in order, reported as
+  running. During creation, a child counts from the `started` reply until
+  it is running and its create has finished, or its create has failed.
+  Beyond the limit the spawn is queued in order, reported as
   `queued at position N`, and started when a slot frees. A queued fork pins
   its source commit when it is queued.
 - **Done.** A child reports `done` when finished. If its work tree is dirty or
