@@ -1,15 +1,14 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Separate environments</title><link rel="stylesheet" href="episode.css"></head><body><main class="stage">
-<div class="kicker">Illustrative workflow / not recorded execution</div><h2>One ticket. One environment.</h2>
+<div class="kicker">Separate environments</div><h2>One ticket. One environment.</h2>
 <div class="coordinator">Coordinator <div class="sub">Read the backlog / assign work</div></div>
 <div class="work-items"><div class="work-item">Ticket A<small>Own branch<br>Own checkout<br>Own tools + Docker</small></div><div class="work-item">Ticket B<small>Own branch<br>Own checkout<br>Own tools + Docker</small></div><div class="work-item">Ticket C<small>Own branch<br>Own checkout<br>Own tools + Docker</small></div></div>
-<p class="sub task">Investigate. Change code. Test.</p><div class="footer">Conceptual bug backlog — not evidence of completed fixes</div>
+<p class="sub task">Investigate. Change code. Test.</p>
 </main><script src="../../../lib/runtime.js"></script><script>
 JB.scene(({word, show}) => {
   show('.kicker', .1); show('h2', word('each git branch'));
   show('.coordinator', word('one coordinator'));
   show('.work-items', word('one child per ticket'));
   show('.task', word('investigate'));
-  show('.footer', word('illustrative workflow'));
 });
 </script></body></html>

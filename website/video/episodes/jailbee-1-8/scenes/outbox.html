@@ -1,16 +1,16 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Humans publish</title><link rel="stylesheet" href="episode.css"></head><body><main class="stage">
-<div class="kicker">Real outbox / pending proposal</div><h2>Agents prepare. Humans publish.</h2>
-<div class="two"><div class="screenshot"><img class="shot proposal" src="../assets/proposal.png" alt="Actual pending PR proposal and description"></div><div class="points"><p class="pending"><strong>Pending</strong><br>Not a published pull request.</p><p class="preview"><strong>Preview</strong><br>Inspect the proposal.</p><p class="publish"><strong>Publish</strong><br>A human action on the host.</p></div></div>
+<div class="kicker">Pull request outbox</div><h2>Agents prepare. Humans publish.</h2>
+<div class="two"><div class="screenshot"><img class="shot proposal" src="../assets/proposal.png" alt="Actual pending PR proposal and description"></div><div class="points"><p class="pending"><strong>Pending</strong><br>Ready for review.</p><p class="preview"><strong>Preview</strong><br>Inspect the proposal.</p><p class="publish"><strong>Publish</strong><br>A human action on the host.</p></div></div>
 <div class="screenshot controls"><img class="shot buttons" src="../assets/outbox-controls.png" alt="Actual outbox preview and publish controls"></div>
 </main><script src="../../../lib/runtime.js"></script><script>
 JB.scene(({word, show, zoom, ring}) => {
   show('.kicker', .1); show('h2', .2);
   const proposal = zoom(document.querySelector('.proposal'), 3);
   const controls = zoom(document.querySelector('.buttons'), 2);
-  show('.two', word('genuine pending proposal'));
-  show('.pending', word('genuine pending proposal'));
-  show(ring(proposal, [0,0,90,18]), word('genuine pending proposal'), word('Preview lets'));
+  show('.two', word('pending proposal'));
+  show('.pending', word('pending proposal'));
+  show(ring(proposal, [0,0,90,18]), word('pending proposal'), word('Preview lets'));
   show('.controls', word('Preview lets')); show('.preview', word('Preview lets'));
   show(ring(controls, [578,0,78,20]), word('Preview lets'), word('Publication stays'));
   show('.publish', word('Publication stays'));

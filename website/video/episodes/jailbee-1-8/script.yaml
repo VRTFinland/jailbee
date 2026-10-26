@@ -27,8 +27,7 @@ scenes:
       own checkout, tools, and Docker daemon. Now an agent can coordinate
       several of those environments. Imagine a bug backlog: one coordinator,
       one child per ticket. Each child gets a task and an isolated place to
-      investigate, change code, and test. This is an illustrative workflow,
-      not a recording of those bugs being fixed.
+      investigate, change code, and test.
 
   - id: permissions
     page: scenes/permissions.html
@@ -45,10 +44,9 @@ scenes:
     page: scenes/workers.html
     formats: [main]
     narration: >-
-      The dashboard makes the relationship visible. Here is a real captured
-      state: one orchestrator and four children. The role column distinguishes
-      the coordinator from its workers, and the count shows four of four slots.
-      These children are idle in this screenshot, not actively coding.
+      The dashboard makes the relationship visible: one orchestrator and four
+      children. The role column distinguishes the coordinator from its workers,
+      and the count shows four of four slots.
       During work, messages travel both ways: instructions, questions, and
       reports back to the coordinator. Requests beyond the running-child limit
       wait in a queue.
@@ -60,18 +58,16 @@ scenes:
       In the bug workflow, a worker commits its changes before reporting done.
       Import brings its branch into the coordinator without merging it.
       The coordinator then merges or cherry-picks and resolves any conflicts.
-      This real test card demonstrates something narrower: four forks were
-      created and reported back, then stopped and destroyed. It tests
-      orchestration, not four completed bug fixes. Keep that distinction:
-      moving a branch and integrating its work are separate steps.
+      This test card shows four forks created and reporting back, then stopped
+      and destroyed. Moving a branch and integrating its work are separate steps.
 
   - id: outbox
     page: scenes/outbox.html
     formats: [main]
     narration: >-
       When the combined work is ready, the coordinator can prepare a pull
-      request proposal through the outbox. Here is a genuine pending proposal,
-      not a published pull request. Preview lets you inspect it. Publication
+      request proposal through the outbox. Here is a pending proposal.
+      Preview lets you inspect it. Publication
       stays with the human on the host. The agents can prepare the work;
       you decide what leaves the machine.
 
@@ -96,8 +92,8 @@ scenes:
     formats: [short]
     params: {short: true}
     narration: >-
-      Here is the real dashboard: one orchestrator, four children, idle in this
-      captured state. Each has a separate checkout and tools. Messages connect
+      Here is the dashboard: one orchestrator, four children.
+      Each has a separate checkout and tools. Messages connect
       the workers to their coordinator.
 
   - id: short-permissions

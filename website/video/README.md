@@ -170,6 +170,19 @@ reason: the videos are worth making only if they show the real thing.
 
 ## Publishing an episode
 
+Every completed render handoff includes a ready-to-paste YouTube title and
+English description for **both main and Short**, without waiting for a separate
+request. Include documentation/setup links, the main video's chapter timestamps,
+and paths to the MP4/SRT files. Keep the current copy in the episode's `NOTES.md`
+under **Proposed YouTube copy**, and give the copy in the chat as well.
+
+Calculate chapter starts from `pipeline.timeline(...)` using the **current cached
+narration durations**, padding and cross-fades; round down to whole seconds and
+start at `0:00`. Recalculate after narration edits and re-renders: old chapter
+lists are stale even when the scene order is unchanged. Shorts need their own
+description, not a copy of the main video's chapters. If the full video's URL is
+not known, refer to the channel rather than inventing a link.
+
 After `render main` and `render short`, in this order:
 
 1. **Watch both, end to end.** Frame checks catch layout, not pacing.

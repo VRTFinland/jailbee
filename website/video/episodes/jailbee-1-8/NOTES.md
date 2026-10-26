@@ -110,10 +110,13 @@ Main title: JailBee 1.8: one AI coordinator, isolated workers, your rules
 
 Main description:
 
-Let a coding agent coordinate child containers without giving it a host shell.
-This tour shows grants, real dashboard roles, the import-versus-merge boundary,
-and the human-controlled PR outbox. The bug-backlog sequence is illustrative;
-the recorded test demonstrates spawn, messaging, stop and destroy.
+One agent coordinates. Other agents work in their own isolated environments.
+You decide what they are allowed to do.
+
+JailBee 1.8 adds container orchestration for AI coding agents on your own machine.
+Give each worker its own git branch, checkout, tools and Docker daemon. Set
+host-enforced permissions, exchange messages, bring the branches back, and
+integrate the work. Agents prepare pull request proposals; humans publish them.
 
 JailBee is free and open source for Linux hosts.
 Documentation: https://jailbee.gisgro.io/docs/orchestration/
@@ -124,15 +127,18 @@ Chapters from the measured timeline (rounded down to whole seconds):
 ```text
 0:00 One agent. Four workers. Your rules.
 0:14 Separate environments
-0:40 Host-enforced grants
-1:09 Orchestrator and children
-1:37 Import is not merge
-2:08 Humans publish
-2:30 Get JailBee
+0:37 Host-enforced grants
+1:05 Orchestrator and children
+1:28 Import is not merge
+1:52 Humans publish
+2:09 Get JailBee
 ```
 
-Exact starts: 0.00, 14.30, 40.95, 69.10, 97.50, 128.90, 150.85 seconds.
-Short starts: 0.00, 7.90, 19.80, 30.00 seconds.
+Exact starts after the narration cleanup: 0.00, 14.30, 37.75, 65.90, 88.95,
+112.20, 129.45 seconds. Main export: 144.80 seconds.
+Short starts: 0.00, 7.90, 18.10, 28.30 seconds. Short export: 37.60 seconds.
+Current exports and subtitles are in `website/video/out/`; the archive and
+verification records above describe the earlier render.
 
 Short title: One AI coordinator. Four isolated workers. Your rules. #shorts
 

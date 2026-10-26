@@ -1,16 +1,16 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Import is not merge</title><link rel="stylesheet" href="episode.css"></head><body><main class="stage">
-<div class="kicker">Illustrative workflow / not recorded execution</div><h2>Import is not merge.</h2>
+<div class="kicker">Bring the work together</div><h2>Import is not merge.</h2>
 <div class="flow"><div class="step commit">Commit<small>Worker's changes</small></div><span class="arrow">→</span><div class="step done">Done<small>Report to coordinator</small></div><span class="arrow">→</span><div class="step import">Import<small>Bring back the branch</small></div><span class="arrow">→</span><div class="step merge">Merge<small>Integrate / resolve conflicts</small></div></div>
-<div class="evidence"><div class="chip">Real orchestration test / not four bug fixes</div><div class="screenshot result-card"><img class="shot test" src="../assets/test-card.png" alt="Actual retest report: four forks, replies, stop and destroy"></div></div>
+<div class="evidence"><div class="chip">Orchestration test</div><div class="screenshot result-card"><img class="shot test" src="../assets/test-card.png" alt="Actual retest report: four forks, replies, stop and destroy"></div></div>
 </main><script src="../../../lib/runtime.js"></script><script>
 JB.scene(({word, show, zoom, ring}) => {
   show('.kicker', .1); show('h2', .2);
   show('.commit', word('commits its changes')); show('.done', word('reporting done'));
   show('.import', word('Import brings')); show('.merge', word('then merges'));
   document.querySelectorAll('.arrow').forEach((el, i) => show(el, word(['reporting done','Import brings','then merges'][i])));
-  show('.evidence', word('real test card'));
+  show('.evidence', word('test card'));
   const img = zoom(document.querySelector('.test'), 1.7);
-  show(ring(img, [53,78,703,83]), word('four forks'), word('It tests'));
+  show(ring(img, [53,78,703,83]), word('four forks'), word('Moving a branch'));
 });
 </script></body></html>
