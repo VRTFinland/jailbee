@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -165,6 +166,26 @@ def test_failed_create_frees_slot_on_next_drain(tmp_path: Path, seams: dict[str,
     assert state.load_reservations(tmp_path) == {}
     assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["started"]
     assert load_queue(tmp_path) == {}
+
+
+@pytest.mark.parametrize("running, expected", [(0, "started"), (2, "queued")])
+def test_spawn_logs_limit_breakdown(tmp_path: Path, seams: dict[str, MagicMock], caplog: pytest.LogCaptureFixture, running: int, expected: str) -> None:
+    rig = Rig(tmp_path, limit=2, running=running)
+    with caplog.at_level(logging.INFO, logger=actions.__name__):
+        assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == expected
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages == [f"spawn proj-fix-1 for proj-orch: running={running} creating(jobs)=0 reserved=0 total={running} limit=2 -> {expected}"]
+
+
+def test_drain_logs_limit_breakdown(tmp_path: Path, seams: dict[str, MagicMock], caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path, limit=1)
+    _queue(rig, ["fix/1", "fix/2"], kind="new")
+    with caplog.at_level(logging.INFO, logger=actions.__name__):
+        actions.drain_queue(rig.ctx())
+    assert [r.getMessage() for r in caplog.records] == [
+        "spawn proj-fix-1 for proj-orch: running=0 creating(jobs)=0 reserved=0 total=0 limit=1 -> started",
+        "spawn proj-fix-2 for proj-orch: running=0 creating(jobs)=0 reserved=0 total=1 limit=1 -> queued",
+    ]
 
 
 def test_spawn_under_limit_starts(tmp_path: Path, seams: dict[str, MagicMock]) -> None:

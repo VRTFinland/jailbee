@@ -366,19 +366,36 @@ def live_reservations(ctx: ActionContext) -> set[str]:
     }
 
 
-def running_children(ctx: ActionContext) -> int:
-    """Children running plus children still being created, counted once each.
+def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
+    """Running, live job, reservation counts and their deduplicated total.
 
     A job row does not record its orchestrator, so a live create job counts
     when its container does not exist yet or is one of this sender's children.
     Reservations make the count independent of the job row, whose insert is best-effort.
     """
     mine = {n.full for n in ctx.children()}
-    names = {n.full for n in ctx.children() if n.running}
-    for name in live_create_jobs(ctx.cfg.container_prefix):
-        if name in mine or name not in ctx.nodes:
-            names.add(name)
-    return len(names | live_reservations(ctx))
+    running = {n.full for n in ctx.children() if n.running}
+    jobs = {
+        name for name in live_create_jobs(ctx.cfg.container_prefix)
+        if name in mine or name not in ctx.nodes
+    }
+    reserved = live_reservations(ctx)
+    return len(running), len(jobs), len(reserved), len(running | jobs | reserved)
+
+
+def running_children(ctx: ActionContext) -> int:
+    """Children running plus children still being created, counted once each.
+
+    Reservations make the count independent of the job row, whose insert is best-effort.
+    """
+    return count_breakdown(ctx)[-1]
+
+
+def _log_spawn_decision(ctx: ActionContext, child: str, counts: tuple[int, int, int, int], limit: int, state: str) -> None:
+    log.info(
+        "spawn %s for %s: running=%d creating(jobs)=%d reserved=%d total=%d limit=%d -> %s",
+        child, ctx.sender.full, *counts, limit, state,
+    )
 
 
 def _queued(ctx: ActionContext) -> list[QueuedRequest]:
@@ -412,8 +429,12 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
         except (ForkError, git.GitError) as e:
             return refused(str(e))
     # A non-empty queue goes first: a new spawn never overtakes it.
-    if not queued and running_children(ctx) < grant.max_running_children:
-        return start_child(ctx, plan, fork=fork)
+    counts = count_breakdown(ctx)
+    if not queued and counts[-1] < grant.max_running_children:
+        outcome = start_child(ctx, plan, fork=fork)
+        _log_spawn_decision(ctx, plan.child_full, counts, grant.max_running_children, outcome.state)
+        return outcome
+    _log_spawn_decision(ctx, plan.child_full, counts, grant.max_running_children, "queued")
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -568,7 +589,8 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     queued = _queued(ctx)
     if grant is None or not queued:
         return []
-    free = grant.max_running_children - running_children(ctx)
+    counts = count_breakdown(ctx)
+    free = grant.max_running_children - counts[-1]
     results: list[tuple[QueuedRequest, Outcome]] = []
     while queued and free > 0:
         req = queued.pop(0)
@@ -579,9 +601,15 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
         outcome = (
             starter(ctx, req) if starter else refused(f"unknown queued request kind `{req.kind}`")
         )
+        _log_spawn_decision(ctx, req.child_full, counts, grant.max_running_children, outcome.state)
         if outcome.state == "started":
             free -= 1
         results.append((req, outcome))
+        # The nodes snapshot is unchanged this round; keep the drain's slot accounting.
+        fresh = count_breakdown(ctx)
+        counts = (*fresh[:3], grant.max_running_children - free)
+    if queued:
+        _log_spawn_decision(ctx, queued[0].child_full, counts, grant.max_running_children, "queued")
     return results
 
 
