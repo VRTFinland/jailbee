@@ -146,6 +146,7 @@ OPERATION_OF: Mapping[str, str] = {
     "spawn": "spawn",
     "message": "message",
     "import": "import",
+    "update": "import",
     "restart": "restart",
     "stop": "stop",
     "destroy": "destroy",

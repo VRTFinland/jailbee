@@ -25,7 +25,10 @@ from jailbee.orchestration.runner import Runner
 
 MAX_PROMPT_BYTES = 64 * 1024
 
-ORCHESTRATOR_TYPES = frozenset({"spawn", "message", "import", "restart", "stop", "destroy"})
+OnDone = Literal["destroy", "keep"]
+FINISH_SUFFIX = ".finish.json"
+
+ORCHESTRATOR_TYPES = frozenset({"spawn", "message", "import", "update", "restart", "stop", "destroy"})
 CHILD_TYPES = frozenset({"message"})
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -105,6 +108,7 @@ class SpawnManifest(_Manifest):
     prompt: str
     rights: ChildRights
     runner: Runner | None = None
+    on_done: OnDone | None = None
     note: str | None = None
 
     @field_validator("prompt")
@@ -148,6 +152,11 @@ class ImportManifest(_Manifest):
     child: str
 
 
+class UpdateManifest(_Manifest):
+    type: Literal["update"]
+    child: str
+
+
 class RestartManifest(_Manifest):
     type: Literal["restart"]
     child: str
@@ -155,6 +164,7 @@ class RestartManifest(_Manifest):
     # Absent keeps the child's runner; an explicit null clears it
     # (see `restart_sets_runner`).
     runner: Runner | None = None
+    on_done: OnDone | None = None
 
     @field_validator("prompt")
     @classmethod
@@ -182,6 +192,7 @@ Manifest = (
     SpawnManifest
     | MessageManifest
     | ImportManifest
+    | UpdateManifest
     | RestartManifest
     | StopManifest
     | DestroyManifest
@@ -202,6 +213,30 @@ class InboxMessage(BaseModel):
     body: str
     kind: str | None = None
     in_reply_to: str | None = None
+    imported_ref: str | None = None
+    imported_sha: str | None = None
+    import_error: str | None = None
+    on_done: OnDone | None = None
+
+
+class PendingFinish(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal[1]
+    type: Literal["finish"]
+    id: str
+    child_full: str
+    child_short: str
+    branch: str
+    done_sha: str
+    body: str
+    in_reply_to: str | None
+    uid: int | None
+
+
+def finish_file_name(item: PendingFinish, now: datetime, *, seq: int = 0) -> str:
+    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{seq:08d}-{item.id}{FINISH_SUFFIX}"
 
 
 class InboxStatus(BaseModel):

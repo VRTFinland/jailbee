@@ -3100,6 +3100,7 @@ def merge_container_into_container(
 
     target_repo_dir = container_repo_dir(cfg, incus, target_full)
     uid = cfg.container_user.uid
+    target_branch: str | None
     if require_clean_target:
         target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
     else:
