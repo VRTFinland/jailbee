@@ -109,6 +109,78 @@ def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
     )
 
 
+def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
+
+    def writer():
+        time.sleep(0.5)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        time.sleep(0.4)
+        write_inbox(base, SECOND, message("h-0000bbbb"))
+
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        r = run(script, "wait", "--timeout", "10", env=env)
+        ls = run(script, "ls", env=env)
+        assert r.returncode == 0 and r.stdout.strip().endswith(FIRST)
+        assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
+    finally:
+        t.join()
+
+
+def test_wait_with_message_present_returns_without_settling(script, base, tmp_path):
+    write_inbox(base, FIRST, message("h-0000aaaa"))
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
+    started = time.monotonic()
+    assert run(script, "wait", "--timeout", "10", env=env).returncode == 0
+    assert time.monotonic() - started < 1.5
+
+
+def test_wait_settle_zero_disables(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "0"}
+
+    def writer():
+        time.sleep(0.3)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        time.sleep(0.8)
+        write_inbox(base, SECOND, message("h-0000bbbb"))
+
+    t = threading.Thread(target=writer)
+    started = time.monotonic()
+    t.start()
+    try:
+        r = run(script, "wait", "--timeout", "10", env=env)
+        assert r.returncode == 0, r.stderr
+        assert time.monotonic() - started < 1.0
+        assert not (base / "inbox" / SECOND).exists()
+    finally:
+        t.join()
+
+
+@pytest.mark.parametrize("settle", ["abc", "-1", "1e2", "."])
+def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": settle}
+    assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+
+
+def test_wait_settle_respects_timeout(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
+
+    def writer():
+        time.sleep(0.3)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+
+    t = threading.Thread(target=writer)
+    t.start()
+    started = time.monotonic()
+    r = run(script, "wait", "--timeout", "1", env=env)
+    t.join()
+    elapsed = time.monotonic() - started
+    assert r.returncode == 0, r.stderr
+    assert 0.85 < elapsed < 1.5
+
+
 def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
     write_inbox(base, FIRST, message("h-0000aaaa"))
     start = time.monotonic()

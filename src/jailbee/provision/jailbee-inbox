@@ -14,7 +14,8 @@ Usage: jailbee-inbox wait [--timeout DUR]
 
   wait   Print the path of the oldest unread message (exit 0), waiting up to
          DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1
-         on timeout. --timeout 0 checks once.
+         on timeout. --timeout 0 checks once. After an arrival, wait briefly
+         for the burst to settle; then use ls to handle every unread message.
   ls     One line per unread message, oldest first:
          <id> <type> <from or ref> <kind or state> <first 60 chars of text>
   read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
@@ -40,7 +41,8 @@ Usage: jailbee-inbox wait [--timeout DUR]
 
 Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration),
 JAILBEE_LITELLM_CONFIG (default /etc/jailbee/litellm.json), JAILBEE_DEFAULT_AGENT,
-JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5).
+JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5),
+JAILBEE_INBOX_SETTLE (quiet seconds after an arrival; default 1, 0 disables).
 USAGE
 }
 
@@ -48,6 +50,10 @@ base="${JAILBEE_ORCHESTRATION_DIR:-$HOME/.jailbee/orchestration}"
 inbox="$base/inbox"
 outbox="$base/outbox"
 poll="${JAILBEE_INBOX_POLL:-5}"
+settle="${JAILBEE_INBOX_SETTLE:-1}"
+SETTLE_MAX=5
+[[ "$settle" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] \
+    || die "JAILBEE_INBOX_SETTLE must be a non-negative number of seconds, got '$settle'"
 WATCH_SLICE=10  # seconds; longest single inotifywait (see cmd_wait)
 [[ "$poll" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] \
     && [[ "$poll" =~ [1-9] ]] \
@@ -94,8 +100,34 @@ now_ms() {
     echo $((t / 1000))
 }
 
+# Replies are atomic renames from separate execs, not one batch write.
+settle_inbox() {
+    local deadline_ms="$1" settle_ms step_ms cap_ms quiet_ms current count previous
+    settle_ms="$(jq -nr --arg s "$settle" --argjson max "$SETTLE_MAX" \
+        '[($s | tonumber), $max] | min | . * 1000 | ceil')"
+    [ "$settle_ms" -gt 0 ] || return 0
+    current="$(now_ms)"
+    cap_ms=$((current + SETTLE_MAX * 1000))
+    [ "$cap_ms" -le "$deadline_ms" ] || cap_ms="$deadline_ms"
+    quiet_ms=$((current + settle_ms))
+    previous="$(unread_files | wc -l)"
+    while :; do
+        current="$(now_ms)"
+        [ "$current" -lt "$cap_ms" ] && [ "$current" -lt "$quiet_ms" ] || break
+        step_ms=$((settle_ms < 200 ? settle_ms : 200))
+        [ "$step_ms" -le "$((cap_ms - current))" ] || step_ms=$((cap_ms - current))
+        [ "$step_ms" -le "$((quiet_ms - current))" ] || step_ms=$((quiet_ms - current))
+        sleep "$(printf '%d.%03d' "$((step_ms / 1000))" "$((step_ms % 1000))")"
+        count="$(unread_files | wc -l)"
+        if [ "$count" -gt "$previous" ]; then
+            quiet_ms=$(( $(now_ms) + settle_ms ))
+        fi
+        previous="$count"
+    done
+}
+
 cmd_wait() {
-    local timeout=1800 first
+    local timeout=1800 first waited=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --timeout)
@@ -111,12 +143,18 @@ cmd_wait() {
     while :; do
         first="$(oldest)"
         if [ -n "$first" ]; then
+            if [ "$waited" -eq 1 ]; then
+                settle_inbox "$deadline_ms"
+                first="$(oldest)"
+                [ -n "$first" ] || continue
+            fi
             printf '%s\n' "$first"
             return 0
         fi
         remaining_ms=$((deadline_ms - $(now_ms)))
         [ "$remaining_ms" -gt 0 ] || return 1
         remaining=$(( (remaining_ms + 999) / 1000 ))
+        waited=1
         if command -v inotifywait >/dev/null 2>&1; then
             # inotifywait only sees events after it has set its watch, so a
             # message that lands between the check above and the watch gives
