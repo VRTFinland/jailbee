@@ -282,7 +282,9 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
     try:
         # config_path=None: the worker reloads the repo config from `cfg.repo_root`.
-        started = start_create(ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None)
+        started = start_create(
+            ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None
+        )
     except NeedsOperator as e:
         return refused(e.reason)
     except CreateError as e:
@@ -296,7 +298,9 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     try:
         save_reservations(ctx.root, reservations)
     except OSError as exc:
-        log.warning("could not reserve creating child %s for %s: %s", plan.child_full, ctx.sender.full, exc)
+        log.warning(
+            "could not reserve creating child %s for %s: %s", plan.child_full, ctx.sender.full, exc
+        )
     # Only the worker is launched here; a later create failure is not reported
     # (plan F), so the status must not claim the child exists.
     short = lifecycle.short_name(ctx.cfg, plan.child_full)
@@ -361,7 +365,8 @@ def prune_reservations(root: Path) -> None:
 def live_reservations(ctx: ActionContext) -> set[str]:
     """Names of this orchestrator's children whose create workers are alive."""
     return {
-        r.child_full for r in load_reservations(ctx.root).get(ctx.sender.full, [])
+        r.child_full
+        for r in load_reservations(ctx.root).get(ctx.sender.full, [])
         if reservation_alive(r.pid)
     }
 
@@ -376,7 +381,8 @@ def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
     mine = {n.full for n in ctx.children()}
     running = {n.full for n in ctx.children() if n.running}
     jobs = {
-        name for name in live_create_jobs(ctx.cfg.container_prefix)
+        name
+        for name in live_create_jobs(ctx.cfg.container_prefix)
         if name in mine or name not in ctx.nodes
     }
     reserved = live_reservations(ctx)
@@ -391,10 +397,16 @@ def running_children(ctx: ActionContext) -> int:
     return count_breakdown(ctx)[-1]
 
 
-def _log_spawn_decision(ctx: ActionContext, child: str, counts: tuple[int, int, int, int], limit: int, state: str) -> None:
+def _log_spawn_decision(
+    ctx: ActionContext, child: str, counts: tuple[int, int, int, int], limit: int, state: str
+) -> None:
     log.info(
         "spawn %s for %s: running=%d creating(jobs)=%d reserved=%d total=%d limit=%d -> %s",
-        child, ctx.sender.full, *counts, limit, state,
+        child,
+        ctx.sender.full,
+        *counts,
+        limit,
+        state,
     )
 
 

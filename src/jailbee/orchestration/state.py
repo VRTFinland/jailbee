@@ -75,8 +75,11 @@ def load_reservations(root: Path) -> dict[str, list[Reservation]]:
                 entry = Reservation(**item)
             except TypeError:
                 continue
-            if (isinstance(entry.child_full, str) and type(entry.pid) is int
-                    and isinstance(entry.started_at, str)):
+            if (
+                isinstance(entry.child_full, str)
+                and type(entry.pid) is int
+                and isinstance(entry.started_at, str)
+            ):
                 entries.append(entry)
         if entries:
             result[recipient] = entries

@@ -91,14 +91,19 @@ def _full(rig: Rig, branch: str) -> str:
 
 
 def test_limit_holds_when_job_row_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jailbee.create_flow import CreateStarted
 
     rig = Rig(tmp_path, limit=2)
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     pids = iter(range(777, 782))
-    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-x", next(pids), tmp_path / "log"))
+    monkeypatch.setattr(
+        actions,
+        "start_create",
+        lambda *a, **kw: CreateStarted("proj-x", next(pids), tmp_path / "log"),
+    )
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: True, raising=False)
     states = [
         actions.handle_spawn(rig.ctx(), _m(f"fix/{i}", kind="new", mid=f"s{i}")).state
@@ -112,21 +117,27 @@ def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.Mon
 
     rig = Rig(tmp_path, limit=2)
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
-    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-fix-1", 777, tmp_path / "log"))
+    monkeypatch.setattr(
+        actions, "start_create", lambda *a, **kw: CreateStarted("proj-fix-1", 777, tmp_path / "log")
+    )
     assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
     assert state.load_reservations(tmp_path) == {
         "proj-orch": [state.Reservation("proj-fix-1", 777, "2026-10-25T00:00:00+00:00")],
     }
 
 
-def test_dead_reservation_does_not_count(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dead_reservation_does_not_count(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path)
     state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-x", 777, "t")]})
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: False, raising=False)
     assert actions.running_children(rig.ctx()) == 0
 
 
-def test_reservation_and_running_child_deduplicated(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reservation_and_running_child_deduplicated(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path, running=1)
     state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-c0", 777, "t")]})
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: True, raising=False)
@@ -134,7 +145,9 @@ def test_reservation_and_running_child_deduplicated(tmp_path: Path, seams: dict[
 
 
 @pytest.mark.parametrize("job_live", [False, True])
-def test_reserved_not_running_child_counts(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, job_live: bool) -> None:
+def test_reserved_not_running_child_counts(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, job_live: bool
+) -> None:
     rig = Rig(tmp_path)
     rig.children = [Node("proj-c0", "c0", False, {labels.SPAWNED_BY: "proj-orch"})]
     seams["jobs"].return_value = {"proj-c0"} if job_live else set()
@@ -145,7 +158,9 @@ def test_reserved_not_running_child_counts(tmp_path: Path, seams: dict[str, Magi
 
 def test_prune_drops_dead_keeps_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     live = state.Reservation("proj-b", 2, "t")
-    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-a", 1, "t")], "proj-other": [live]})
+    state.save_reservations(
+        tmp_path, {"proj-orch": [state.Reservation("proj-a", 1, "t")], "proj-other": [live]}
+    )
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: pid == 2)
     actions.prune_reservations(tmp_path)
     assert state.load_reservations(tmp_path) == {"proj-other": [live]}
@@ -154,7 +169,9 @@ def test_prune_drops_dead_keeps_live(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert (tmp_path / state.RESERVATIONS_FILE).stat().st_mtime_ns == before
 
 
-def test_failed_create_frees_slot_on_next_drain(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_create_frees_slot_on_next_drain(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path)
     state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-failed", 777, "t")]})
     alive = {777}
@@ -169,22 +186,35 @@ def test_failed_create_frees_slot_on_next_drain(tmp_path: Path, seams: dict[str,
 
 
 @pytest.mark.parametrize("running, expected", [(0, "started"), (2, "queued")])
-def test_spawn_logs_limit_breakdown(tmp_path: Path, seams: dict[str, MagicMock], caplog: pytest.LogCaptureFixture, running: int, expected: str) -> None:
+def test_spawn_logs_limit_breakdown(
+    tmp_path: Path,
+    seams: dict[str, MagicMock],
+    caplog: pytest.LogCaptureFixture,
+    running: int,
+    expected: str,
+) -> None:
     rig = Rig(tmp_path, limit=2, running=running)
     with caplog.at_level(logging.INFO, logger=actions.__name__):
         assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == expected
     messages = [r.getMessage() for r in caplog.records]
-    assert messages == [f"spawn proj-fix-1 for proj-orch: running={running} creating(jobs)=0 reserved=0 total={running} limit=2 -> {expected}"]
+    assert messages == [
+        f"spawn proj-fix-1 for proj-orch: running={running} creating(jobs)=0 "
+        f"reserved=0 total={running} limit=2 -> {expected}"
+    ]
 
 
-def test_drain_logs_limit_breakdown(tmp_path: Path, seams: dict[str, MagicMock], caplog: pytest.LogCaptureFixture) -> None:
+def test_drain_logs_limit_breakdown(
+    tmp_path: Path, seams: dict[str, MagicMock], caplog: pytest.LogCaptureFixture
+) -> None:
     rig = Rig(tmp_path, limit=1)
     _queue(rig, ["fix/1", "fix/2"], kind="new")
     with caplog.at_level(logging.INFO, logger=actions.__name__):
         actions.drain_queue(rig.ctx())
     assert [r.getMessage() for r in caplog.records] == [
-        "spawn proj-fix-1 for proj-orch: running=0 creating(jobs)=0 reserved=0 total=0 limit=1 -> started",
-        "spawn proj-fix-2 for proj-orch: running=0 creating(jobs)=0 reserved=0 total=1 limit=1 -> queued",
+        "spawn proj-fix-1 for proj-orch: running=0 creating(jobs)=0 "
+        "reserved=0 total=0 limit=1 -> started",
+        "spawn proj-fix-2 for proj-orch: running=0 creating(jobs)=0 "
+        "reserved=0 total=1 limit=1 -> queued",
     ]
 
 

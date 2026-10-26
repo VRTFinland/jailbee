@@ -4,13 +4,11 @@ import json
 import logging
 import os
 import subprocess
-import time
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from jailbee import background
 from jailbee.orchestration import state
-from typing import TYPE_CHECKING
-
 from jailbee.orchestration.state import (
     QueuedRequest,
     atomic_write_text,
@@ -48,14 +46,23 @@ def test_load_reservations_corrupt_is_empty(tmp_path: Path) -> None:
 
 
 def test_load_reservations_skips_malformed_entries(tmp_path: Path) -> None:
-    (tmp_path / state.RESERVATIONS_FILE).write_text(json.dumps({
-        "version": 1, "reservations": {"proj-orch": [
-            {"child_full": "proj-a", "pid": 123, "started_at": "t"},
-            {"child_full": "proj-b"},
-            {"child_full": "proj-c", "pid": "bad", "started_at": "t"},
-        ]},
-    }))
-    assert state.load_reservations(tmp_path) == {"proj-orch": [state.Reservation("proj-a", 123, "t")]}
+    (tmp_path / state.RESERVATIONS_FILE).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reservations": {
+                    "proj-orch": [
+                        {"child_full": "proj-a", "pid": 123, "started_at": "t"},
+                        {"child_full": "proj-b"},
+                        {"child_full": "proj-c", "pid": "bad", "started_at": "t"},
+                    ]
+                },
+            }
+        )
+    )
+    assert state.load_reservations(tmp_path) == {
+        "proj-orch": [state.Reservation("proj-a", 123, "t")]
+    }
 
 
 def test_reservation_reaps_exited_child() -> None:
