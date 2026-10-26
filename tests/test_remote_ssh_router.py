@@ -1185,9 +1185,9 @@ def test_allowed_command_paths_follow_the_network_switch() -> None:
 def test_remote_unlocks_network_unlocks_widening_only() -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    assert RemoteUnlocks.of(RemoteSSHConfig(network=True, orchestration="off")).commands() == frozenset(
-        {"net loose", "net egress add"}
-    )
+    assert RemoteUnlocks.of(
+        RemoteSSHConfig(network=True, orchestration="off")
+    ).commands() == frozenset({"net loose", "net egress add"})
     both = RemoteUnlocks(gui=True, network=True).commands()
     assert {"chrome", "net loose"} <= both
 
@@ -1215,7 +1215,9 @@ def test_remote_unlocks_mounts_from_either_switch(tmp_path) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
     assert RemoteUnlocks.of(RemoteSSHConfig()).mounts is False
-    assert RemoteUnlocks.of(RemoteSSHConfig(mounts=True, orchestration="off")).commands() == frozenset({"mount"})
+    assert RemoteUnlocks.of(
+        RemoteSSHConfig(mounts=True, orchestration="off")
+    ).commands() == frozenset({"mount"})
     roots = RemoteSSHConfig(
         mount_roots=[RemoteMountRoot(path=tmp_path.resolve())], orchestration="off"
     )
