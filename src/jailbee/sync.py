@@ -3017,6 +3017,7 @@ def merge_container_into_container(
     no_ff: bool | None = None,
     confirm: ConfirmFn | None = None,
     ff_local_branch: bool = True,
+    require_clean_target: bool = True,
     timeout: float | None = None,
 ) -> MergeInContainerResult:
     """Merge container `source_short`'s branch into container `target_short`.
@@ -3058,6 +3059,12 @@ def merge_container_into_container(
     for "no merge was attempted" — it is not meaningful, and a caller must not
     render fast-forward semantics from it.
 
+    With `plain=True`, `require_clean_target=False` skips dirty-tree and
+    in-progress merge/rebase checks while still requiring a branch. Existing
+    submodule repos receive only objects and refs; missing sub-repos are
+    initialized and checked out detached by the relay. No existing worktree
+    or index is changed when `ff_local_branch=False`.
+
     `ff_local_branch` is forwarded to `push_to_container`: False keeps the
     target's own same-named `refs/heads/<branch>` where it is (the
     orchestration import, which must land only in `refs/jailbee/from/...`).
@@ -3073,6 +3080,9 @@ def merge_container_into_container(
     the merge leaves conflicts.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
+
+    if not require_clean_target and not plain:
+        raise ValueError("require_clean_target=False needs plain=True")
 
     target_full = resolve_container_name(cfg, incus, target_short)
 
@@ -3090,7 +3100,12 @@ def merge_container_into_container(
 
     target_repo_dir = container_repo_dir(cfg, incus, target_full)
     uid = cfg.container_user.uid
-    target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
+    if require_clean_target:
+        target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
+    else:
+        target_branch = _container_current_branch(incus, target_full, target_repo_dir, uid=uid)
+        if target_branch is None:
+            raise SyncError("Container has detached HEAD. Check out a branch first.")
 
     # Decision 7 (design doc): the relay runs source container -> host ->
     # target container through the same two transports. Inheriting the host's
