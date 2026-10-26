@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.resources
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -24,6 +25,18 @@ _BASE = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration"
 OUTBOX_DIR = f"{_BASE}/outbox"
 INBOX_DIR = f"{_BASE}/inbox"
 GRANT_FILE = f"{_BASE}/grant.json"
+INBOX_HELPER = "/usr/local/bin/jailbee-inbox"
+
+_INSTALL_HELPER = """set -e
+dir=$(dirname "$1")
+tmp=$(mktemp "$dir/.jailbee-inbox.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp"
+if cmp -s "$tmp" "$1"; then exit 0; fi
+chmod 0755 "$tmp"
+mv -f "$tmp" "$1"
+trap - EXIT
+"""
 
 MAX_MANIFESTS_PER_ROUND = 32
 MAX_FILE_BYTES = 128 * 1024
@@ -50,6 +63,19 @@ class RawManifest:
     file_name: str
     text: str
     files: Mapping[str, str]
+
+
+def helper_script() -> str:
+    """Read the packaged helper shared by golden builds and the broker."""
+    return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+
+
+def ensure_orchestration_env(incus: Incus, full: str, *, uid: int | None) -> None:
+    """Create user-owned inbox/outbox dirs and atomically install the helper as root."""
+    incus.exec(full, ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR], uid=uid)
+    incus.exec_with_input(
+        full, ["sh", "-c", _INSTALL_HELPER, "sh", INBOX_HELPER], helper_script()
+    )
 
 
 def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest]:
