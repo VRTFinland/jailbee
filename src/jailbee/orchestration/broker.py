@@ -424,6 +424,12 @@ def tick(
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
     memory.env_ensured.intersection_update(present)
+    # Warn workers before deleting a vanished parent's queued finish reports.
+    finishing.notify_orphaned_finishes(
+        incus, root, {n for n in present if isinstance(n, str)},
+        {str(e["name"]) for e in raw if e.get("status") == "Running"},
+        now=now, seq=memory.seq,
+    )
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)
@@ -503,6 +509,18 @@ def tick(
                 _serve(ctx, journal, memory)
         except Exception:
             log.exception("broker: serving %s failed", node.full)
+
+    # Handlers changed labels and may have stopped children after our initial
+    # snapshot. Refresh once before cleanup; share deletions with queue drain.
+    if orchestrators:
+        nodes = _nodes(incus.list_containers(), configs)
+        for ctx in orchestrators:
+            ctx.nodes = nodes
+            ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
+            try:
+                finishing.settle_destroys(ctx)
+            except Exception:
+                log.exception("broker: finished children of %s failed", ctx.sender.full)
 
     # After every round: queues move whenever a slot may have freed up.
     seen = {ctx.sender.full for ctx in orchestrators}

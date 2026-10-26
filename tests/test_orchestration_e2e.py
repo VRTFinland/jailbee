@@ -175,22 +175,21 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
 
     # Round 1: the only slot is taken by c1 -> the spawn queues; c1 stops.
     assert broker.tick(incus, root=root, journal=journal, now=T0, memory=memory)  # type: ignore[arg-type]  # fake
-    world["start_create"].assert_not_called()
-    assert [r.manifest_id for r in load_queue(root)["proj-orch"]] == ["a-spawn"]
+    world["start_create"].assert_called_once()
+    assert load_queue(root) == {}
     assert incus.containers["proj-c1"]["status"] == "Stopped"
     assert incus.containers["proj-c1"]["config"][labels.STOPPED_HEAD] == HEAD
     assert incus.outbox["proj-orch"] == {}
 
-    # Round 2, orchestrator stopped: the freed slot starts the queued spawn,
-    # and its status is parked.
+    # The refreshed cleanup snapshot frees the slot in the same round.
+    # Round 2 with a stopped orchestrator does not start it twice.
     incus.set_running("proj-orch", False)
     broker.tick(incus, root=root, journal=journal, now=T0 + timedelta(seconds=5), memory=memory)  # type: ignore[arg-type]  # fake
     world["start_create"].assert_called_once()
     opts = world["start_create"].call_args.args[3]
     assert (opts.name, opts.network, opts.spawned_by) == ("proj-fix-1", "strict", "proj-orch")
     assert load_queue(root) == {}
-    parked = sorted(p.name for p in pending_dir(root, "proj-orch").iterdir())
-    assert len(parked) == 1
+    assert not list(pending_dir(root, "proj-orch").glob("*.json"))
 
     # Round 3, orchestrator back: the parked status is flushed after the others.
     incus.set_running("proj-orch", True)
@@ -202,9 +201,8 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
         ("a-spawn", "started"),
     ]
     assert inbox[2][1]["detail"] == "creation of child `fix-1` started; on done: destroy"
-    assert inbox[2][0] == parked[0]
     assert [name for name, _ in inbox] == sorted(name for name, _ in inbox)
-    assert not any(pending_dir(root, "proj-orch").iterdir())
+    assert not list(pending_dir(root, "proj-orch").glob("*.json"))
 
     # Journal before reply, reply before delete, per manifest.
     events = [e for e in incus.events if e[0] in ("rm", "write") and e[1] == "proj-orch"]

@@ -131,6 +131,9 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         in_reply_to=manifest.in_reply_to, uid=uid,
     )
     if target.running and not outbox.has_pending(ctx.root, target.full):
+        # Persist intent before a destroy marker can exist: a broker crash
+        # before the inbox write must leave a retryable delivery gate.
+        pending = finishing.park(ctx, target, item)
         msg, summary = finishing.complete(ctx, ctx.sender, target, item)
         seq = next(ctx.seq)
         try:
@@ -138,6 +141,7 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         except IncusError:
             outbox.deliver(ctx.incus, ctx.root, target.full, msg, running=False,
                            uid=uid, now=ctx.now, seq=seq)
+        pending.unlink(missing_ok=True)
         return done(summary)
     finishing.park(ctx, target, item)
     return Outcome("queued", f"{target.short} is not running or busy; your work is on the host "

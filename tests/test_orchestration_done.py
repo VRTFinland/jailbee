@@ -116,6 +116,15 @@ def test_done_imports_then_delivers_then_marks_destroy(tmp_path: Path, mocker: M
     assert out.state == "done" and "will be destroyed" in out.detail
 
 
+def test_done_durable_finish_survives_crash_before_delivery(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    rig.write_inbox.side_effect = RuntimeError("broker crashed")
+    with pytest.raises(RuntimeError, match="broker crashed"):
+        messages.handle_message(rig.ctx, _done())
+    assert list(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
+
+
 def test_done_keep_policy_imports_without_marker(tmp_path: Path, mocker: MockerFixture) -> None:
     rig = _make(tmp_path, mocker)
     _policy(rig, "keep")
@@ -213,7 +222,7 @@ def test_done_fetches_sets_labels_and_relays(tmp_path: Path, mocker: MockerFixtu
     assert calls == [(CHILD, labels.DONE_SHA, SHA), (CHILD, labels.STATE, labels.STATE_DONE)]
     msg = rig.write_inbox.call_args.args[2]
     assert (msg.kind, msg.body, msg.from_) == ("done", "all finished", "fix-1")
-    assert rig.write_inbox.call_args.kwargs["seq"] == 0
+    assert rig.write_inbox.call_args.kwargs["seq"] == 1
     assert out == done(f"imported into orch at {'a' * 12}; this container is kept")
 
 
