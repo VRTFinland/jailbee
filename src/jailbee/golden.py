@@ -615,6 +615,19 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
 
         # Stage user/repo install.d/ snippets when no provision_script override.
         if cfg.golden.provision_script is None:
+            helper = (
+                importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+            )
+            helper_encoded = base64.b64encode(helper.encode()).decode()
+            incus.exec(
+                build_container,
+                [
+                    "bash",
+                    "-c",
+                    f"echo '{helper_encoded}' | base64 -d > /provision/jailbee-inbox && "
+                    "chmod 0755 /provision/jailbee-inbox",
+                ],
+            )
             # Warn only on user-supplied enable_snippets names; stack-derived
             # names are always valid library entries and must not trigger
             # spurious warnings. This stays here rather than moving into

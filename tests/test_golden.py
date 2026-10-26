@@ -1,6 +1,7 @@
 """Tests for golden image building."""
 
 import base64
+import importlib.resources
 import re
 from datetime import date
 from pathlib import Path
@@ -611,6 +612,25 @@ def _find_install_copy_call(incus):
     raise AssertionError("install.sh copy exec not found")
 
 
+def test_build_stages_jailbee_inbox_helper(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    incus = _incus()
+    build_golden_image(cfg, incus)
+    staged = [
+        c
+        for c in incus.exec.call_args_list
+        if c.args[1][:2] == ["bash", "-c"]
+        and "base64 -d > /provision/jailbee-inbox" in c.args[1][2]
+    ]
+    assert len(staged) == 1
+    encoded = staged[0].args[1][2].split("'")[1]
+    assert base64.b64decode(encoded).decode() == (
+        importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+    )
+    calls = incus.exec.call_args_list
+    assert calls.index(staged[0]) < calls.index(_find_install_run_call(incus))
+
+
 def test_build_uses_custom_provision_script(make_cfg, tmp_path, mocker):
     script = tmp_path / "custom.sh"
     script.write_text("#!/bin/bash\necho custom-marker-xyz\n")
@@ -630,6 +650,7 @@ def test_build_uses_custom_provision_script(make_cfg, tmp_path, mocker):
     assert match is not None
     decoded = base64.b64decode(match.group(1)).decode()
     assert "custom-marker-xyz" in decoded
+    assert not any("/provision/jailbee-inbox" in str(c) for c in incus.exec.call_args_list)
 
 
 def test_build_uses_relative_provision_script_under_repo_root(

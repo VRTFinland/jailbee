@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-_MARKER = "cat > /usr/local/bin/jailbee-inbox <<'EOF'\n"
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
 FIRST = "20261025T100000Z-00000001-h-0000aaaa.json"
@@ -24,14 +23,14 @@ def install_sh_text() -> str:
     return importlib.resources.files("jailbee.provision").joinpath("install.sh").read_text()
 
 
+def helper_text() -> str:
+    return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+
+
 @pytest.fixture
 def script(tmp_path: Path) -> Path:
-    text = install_sh_text()
-    assert _MARKER in text
-    start = text.index(_MARKER) + len(_MARKER)
-    body = text[start : text.index("\nEOF\n", start)]
     path = tmp_path / "jailbee-inbox"
-    path.write_text(body + "\n")
+    path.write_text(helper_text())
     path.chmod(0o755)
     return path
 
@@ -108,6 +107,81 @@ def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
     return subprocess.run(
         ["/bin/bash", str(script), *args], env=env, capture_output=True, text=True, timeout=30
     )
+
+
+def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
+
+    def writer():
+        time.sleep(0.5)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        time.sleep(0.4)
+        write_inbox(base, SECOND, message("h-0000bbbb"))
+        time.sleep(0.8)
+        write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
+
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        r = run(script, "wait", "--timeout", "10", env=env)
+        ls = run(script, "ls", env=env)
+        assert r.returncode == 0 and r.stdout.strip().endswith(FIRST)
+        assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
+        assert "h-0000cccc" in ls.stdout
+    finally:
+        t.join()
+
+
+def test_wait_with_message_present_returns_without_settling(script, base, tmp_path):
+    write_inbox(base, FIRST, message("h-0000aaaa"))
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
+    started = time.monotonic()
+    assert run(script, "wait", "--timeout", "10", env=env).returncode == 0
+    assert time.monotonic() - started < 1.5
+
+
+def test_wait_settle_zero_disables(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "0"}
+
+    def writer():
+        time.sleep(0.3)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        time.sleep(0.8)
+        write_inbox(base, SECOND, message("h-0000bbbb"))
+
+    t = threading.Thread(target=writer)
+    started = time.monotonic()
+    t.start()
+    try:
+        r = run(script, "wait", "--timeout", "10", env=env)
+        assert r.returncode == 0, r.stderr
+        assert time.monotonic() - started < 1.0
+        assert not (base / "inbox" / SECOND).exists()
+    finally:
+        t.join()
+
+
+@pytest.mark.parametrize("settle", ["abc", "-1", "1e2", "."])
+def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": settle}
+    assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+
+
+def test_wait_settle_respects_timeout(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
+
+    def writer():
+        time.sleep(0.3)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+
+    t = threading.Thread(target=writer)
+    t.start()
+    started = time.monotonic()
+    r = run(script, "wait", "--timeout", "1", env=env)
+    t.join()
+    elapsed = time.monotonic() - started
+    assert r.returncode == 0, r.stderr
+    assert 0.85 < elapsed < 1.5
 
 
 def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
@@ -310,8 +384,17 @@ def test_install_sh_installs_inotify_tools():
     assert "inotify-tools" in install_sh_text()
 
 
-def test_script_is_chmodded_in_install_sh():
-    assert "chmod 0755 /usr/local/bin/jailbee-inbox" in install_sh_text()
+def test_helper_is_a_bash_script() -> None:
+    assert helper_text().startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+
+
+def test_install_sh_installs_packaged_helper() -> None:
+    text = install_sh_text()
+    assert (
+        'install -m 0755 "$JAILBEE_PROVISION_DIR/jailbee-inbox" /usr/local/bin/jailbee-inbox'
+        in text
+    )
+    assert "cat > /usr/local/bin/jailbee-inbox" not in text
 
 
 def _stub(tmp_path: Path, body: str) -> Path:

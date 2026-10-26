@@ -154,6 +154,11 @@ Fix the request or tell the human; do not retry with another model.
 
 ## The inbox loop
 
+If `jailbee-inbox`, `inbox/` or `outbox/` is missing just after a grant,
+wait briefly: the broker installs them on its next round, within a few
+seconds. Do not hand-roll the protocol. If they stay missing, tell the
+human; the broker may not be running (`jailbee orchestrate status` on the host).
+
 ```bash
 jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
 ```
@@ -163,7 +168,8 @@ error. Run it in the background if your agent supports it (for example
 Claude's background Bash), or use a /loop-style cycle. If you must poll, never poll
 more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
-`jailbee-inbox ls` lists what is unread.
+After `wait` returns, run `jailbee-inbox ls` and handle **every** unread
+message before waiting again: replies to several manifests arrive as a burst.
 
 `wait` does not consume anything: while any message is unread it returns at
 once, with the oldest one. Mark every message read (by its id, `h-<hex>`, not
