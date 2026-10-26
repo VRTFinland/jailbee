@@ -117,6 +117,8 @@ def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
         write_inbox(base, FIRST, message("h-0000aaaa"))
         time.sleep(0.4)
         write_inbox(base, SECOND, message("h-0000bbbb"))
+        time.sleep(0.8)
+        write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
 
     t = threading.Thread(target=writer)
     t.start()
@@ -125,6 +127,7 @@ def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
         ls = run(script, "ls", env=env)
         assert r.returncode == 0 and r.stdout.strip().endswith(FIRST)
         assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
+        assert "h-0000cccc" in ls.stdout
     finally:
         t.join()
 
