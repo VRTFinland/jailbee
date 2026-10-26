@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>JailBee orchestration</title><link rel="stylesheet" href="episode.css"></head>
+<body><img class="hero" src="../assets/orchestration.png" alt="Illustration of a coordinator bee and four separately enclosed workers">
+<div class="hero-copy"><div class="kicker">Container orchestration</div><div class="wordmark">J<span>ai</span>lBee 1.8</div><h1>One agent.<br>Four workers.<br><span class="amber">Your rules.</span></h1><p class="sub">On your own machine.</p></div>
+<script src="../../../lib/runtime.js"></script><script>
+JB.scene(({word, show, format}) => {
+  show('.hero', .1); show('.kicker', .2);
+  show('.wordmark', word('JailBee one point eight'));
+  show('h1', word('One agent coordinates'));
+  if (format === 'main') show('.sub', word('on your own machine'));
+  else document.querySelector('.sub').hidden = true;
+});
+</script></body></html>

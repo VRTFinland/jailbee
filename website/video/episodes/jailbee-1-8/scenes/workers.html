@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orchestrator and children</title><link rel="stylesheet" href="episode.css"></head><body><main class="stage">
+<div class="kicker">Real captured state / idle children</div><h2>One orchestrator.<br>Four children.</h2>
+<div class="screenshot worker-full"><img class="shot full" src="../assets/workers.png" alt="Actual dashboard hierarchy with orchestrator and four idle children"></div>
+<div class="screenshot mobile-names"><img class="shot names" src="../assets/worker-names.png" alt="Close-up of the actual indented child names"></div>
+<div class="worker-detail"><div class="screenshot"><img class="shot roles" src="../assets/roles.png" alt="Actual orch and child roles with a 4/4 count"></div><p class="sub">Role + child slots<br><span class="amber">4 / 4</span> running slots occupied</p></div>
+<p class="sub workers-note">Messages connect workers to their coordinator.</p>
+<div class="footer long-only">Beyond the limit: queued until a running slot frees</div>
+</main><script src="../../../lib/runtime.js"></script><script>
+JB.scene(({word, show, zoom, ring, format}) => {
+  const short = format === 'short';
+  show('.kicker', .1); show('h2', .2);
+  zoom(document.querySelector('.full'), 2); zoom(document.querySelector('.names'), 3);
+  const roles = zoom(document.querySelector('.roles'), short ? 3 : 2);
+  show('.worker-full', word('one orchestrator'));
+  show('.mobile-names', word('one orchestrator'));
+  show('.worker-detail', short ? word('four children') : word('role column'));
+  show(ring(roles, [0,0,114,17]), short ? word('four children') : word('count shows'));
+  show('.workers-note', word('Messages'));
+  if (!short) show('.footer', word('wait in a queue'));
+});
+</script></body></html>

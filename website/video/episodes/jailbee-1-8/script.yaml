@@ -1,0 +1,117 @@
+title: JailBee 1.8
+fps: 30
+pad: 0.6
+fade: 0.4
+tts:
+  model: gpt-4o-mini-tts-2025-12-15
+  voice: marin
+  instructions: >-
+    You are a calm, confident developer advocate narrating a product video for
+    software engineers. Speak clearly and warmly at an unhurried pace, with
+    natural emphasis. Friendly and assured, never salesy or over-excited.
+
+scenes:
+  - id: hook
+    page: scenes/hook.html
+    formats: [main]
+    narration: >-
+      One agent coordinates. Other agents work in their own environments.
+      You decide what they are allowed to do. This is JailBee one point eight:
+      container orchestration for AI coding agents, on your own machine.
+
+  - id: environments
+    page: scenes/environments.html
+    formats: [main]
+    narration: >-
+      JailBee gives each git branch its own Linux system container, with its
+      own checkout, tools, and Docker daemon. Now an agent can coordinate
+      several of those environments. Imagine a bug backlog: one coordinator,
+      one child per ticket. Each child gets a task and an isolated place to
+      investigate, change code, and test. This is an illustrative workflow,
+      not a recording of those bugs being fixed.
+
+  - id: permissions
+    page: scenes/permissions.html
+    formats: [main]
+    narration: >-
+      First, you give the coordinator a grant on the host. Set the child limit,
+      choose the allowed operations, and decide what access it may grant:
+      optional mounts, extra network destinations, or loose networking.
+      The agent cannot widen its own grant. A host-side broker checks every
+      request against those limits before acting. The container does not get
+      a host shell, and children cannot become orchestrators themselves.
+
+  - id: workers
+    page: scenes/workers.html
+    formats: [main]
+    narration: >-
+      The dashboard makes the relationship visible. Here is a real captured
+      state: one orchestrator and four children. The role column distinguishes
+      the coordinator from its workers, and the count shows four of four slots.
+      These children are idle in this screenshot, not actively coding.
+      During work, messages travel both ways: instructions, questions, and
+      reports back to the coordinator. Requests beyond the running-child limit
+      wait in a queue.
+
+  - id: results
+    page: scenes/results.html
+    formats: [main]
+    narration: >-
+      In the bug workflow, a worker commits its changes before reporting done.
+      Import brings its branch into the coordinator without merging it.
+      The coordinator then merges or cherry-picks and resolves any conflicts.
+      This real test card demonstrates something narrower: four forks were
+      created and reported back, then stopped and destroyed. It tests
+      orchestration, not four completed bug fixes. Keep that distinction:
+      moving a branch and integrating its work are separate steps.
+
+  - id: outbox
+    page: scenes/outbox.html
+    formats: [main]
+    narration: >-
+      When the combined work is ready, the coordinator can prepare a pull
+      request proposal through the outbox. Here is a genuine pending proposal,
+      not a published pull request. Preview lets you inspect it. Publication
+      stays with the human on the host. The agents can prepare the work;
+      you decide what leaves the machine.
+
+  - id: outro
+    page: scenes/outro.html
+    formats: [main]
+    narration: >-
+      Separate environments. Bounded permissions. One coordinator bringing the
+      work together. JailBee is free and open source, for Linux hosts.
+      Explore orchestration and the setup guide at jailbee dot gisgro dot io.
+
+  - id: short-hook
+    page: scenes/hook.html
+    formats: [short]
+    params: {short: true}
+    narration: >-
+      One agent coordinates. Four children have their own environments.
+      This is JailBee one point eight.
+
+  - id: short-workers
+    page: scenes/workers.html
+    formats: [short]
+    params: {short: true}
+    narration: >-
+      Here is the real dashboard: one orchestrator, four children, idle in this
+      captured state. Each has a separate checkout and tools. Messages connect
+      the workers to their coordinator.
+
+  - id: short-permissions
+    page: scenes/permissions.html
+    formats: [short]
+    params: {short: true}
+    narration: >-
+      You set the child limit and allowed operations. A host-side broker
+      enforces the grant. Import brings back a branch; merging is a separate step.
+
+  - id: short-outro
+    page: scenes/outro.html
+    formats: [short]
+    params: {short: true}
+    narration: >-
+      Agents prepare the proposal. Humans publish. JailBee is free and open
+      source. Watch the full tour on the channel.
