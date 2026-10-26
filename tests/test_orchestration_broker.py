@@ -5,7 +5,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -429,7 +429,7 @@ def test_flush_pending_runs_before_any_new_status(rig: Rig) -> None:
     names = [c[0] for c in rig.seq.mock_calls if c[0] in {"flush_pending", "deliver"}]
     assert names == ["flush_pending", "deliver"]
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
 
 
@@ -827,7 +827,7 @@ def test_tick_flushes_pending_for_revoked_orchestrator(rig: Rig) -> None:
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
     rig.read_outbox.assert_not_called()
     rig.dispatch.assert_not_called()
@@ -859,7 +859,7 @@ def test_tick_flushes_pending_for_container_with_no_labels(rig: Rig) -> None:
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
     rig.read_outbox.assert_not_called()
     rig.dispatch.assert_not_called()
@@ -874,6 +874,29 @@ def test_tick_skips_unlabelled_pending_without_repo_config(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_c("other-box")]
     rig.tick()
     rig.flush_pending.assert_not_called()
+
+
+def test_tick_completes_parked_finish_when_orchestrator_starts(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration import finishing, importing, outbox
+    from jailbee.orchestration.actions import ActionContext, Node
+    from jailbee.orchestration.protocol import PendingFinish
+
+    orch = Node("proj-orch", "orch", True, {labels.GRANT: Grant().to_label()})
+    child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full})
+    ctx = ActionContext(rig.cfg, GlobalConfig(), rig.incus, rig.root, orch,
+                        {orch.full: orch, child.full: child}, NOW)
+    item = PendingFinish(version=1, type="finish", id="d1", child_full=child.full,
+                         child_short="kid", branch="b", done_sha="a" * 40,
+                         body="done", in_reply_to=None, uid=1000)
+    finishing.park(ctx, orch, item)
+    relay = MagicMock(return_value=importing.Imported("refs/jailbee/from/kid/b", "a" * 40))
+    monkeypatch.setattr(importing, "import_child", relay)
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    rig.incus.list_containers.return_value = [_orch(grant=Grant()), _child()]
+    rig.tick()
+    relay.assert_called_once()
+    delivered = [json.loads(c.args[2]) for c in rig.incus.exec_with_input.call_args_list]
+    assert delivered[0]["kind"] == "done" and delivered[0]["imported_sha"] == "a" * 40
 
 
 def test_tick_clears_stale_stopped_dirty(rig: Rig) -> None:

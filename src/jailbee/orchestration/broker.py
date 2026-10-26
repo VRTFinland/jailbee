@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Literal
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import labels, watch
+from jailbee.orchestration import finishing, labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -361,7 +361,8 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
-    flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=uid)
+    flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=uid,
+                  finish=finishing.flush_callback(ctx))
     if ctx.role() == "orchestrator":
         _sync_grant_json(ctx, memory)
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
@@ -493,7 +494,8 @@ def tick(
                 )
                 # Messages parked while it was an orchestrator still get delivered.
                 if node.running and has_pending(root, node.full):
-                    flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
+                    flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
+                          finish=finishing.flush_callback(ctx))
                 continue
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
@@ -574,7 +576,8 @@ def _flush_unlabelled(
     try:
         ctx = context(node)
         if ctx is not None:
-            flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
+            flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
+                          finish=finishing.flush_callback(ctx))
     except Exception:
         log.exception("broker: flushing %s failed", node.full)
 

@@ -302,6 +302,10 @@ def git_done(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         )
     )
     monkeypatch.setattr(sync, "fetch_from_container", fetch)
+    push = PushResult(source="c1-branch", source_ref="refs/jailbee/c1/c1-branch",
+                      container_ref=IMPORT_REF, old_oid=None, new_oid=DONE_SHA)
+    monkeypatch.setattr(sync, "merge_container_into_container", MagicMock(return_value=
+        MergeInContainerResult(push=push, container_branch="main", fast_forward_only=False, head_oid=HEAD)))
     return fetch
 
 
@@ -318,11 +322,11 @@ def test_child_done_while_orchestrator_runs(world: dict[str, Any], git_done: Mag
     _done_manifest(incus)
     _tick(world, broker.BrokerMemory())
     config = incus.containers["proj-c1"]["config"]
-    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_DONE)
+    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_IMPORTED)
     [msg] = _messages(incus, "proj-orch")
     assert (msg["from"], msg["kind"], msg["body"]) == ("c1", "done", "finished")
     assert _statuses(incus, "proj-c1") == [
-        ("d-1", "done", f"done reported to orch at {DONE_SHA[:12]}")
+        ("d-1", "done", f"imported into orch at {DONE_SHA[:12]}; this container is kept")
     ]
     assert ("bound", actions.CHILD_EXEC_TIMEOUT_S) in incus.events
     assert git_done.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S

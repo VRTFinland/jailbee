@@ -10,6 +10,8 @@ from jailbee.orchestration.protocol import InboxMessage, PendingFinish, finish_f
 from jailbee.orchestration.state import atomic_write_text, pending_dir
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.orchestration.actions import ActionContext, Node
 
 
@@ -59,6 +61,15 @@ def complete(
         ending = "will be destroyed" if policy == "destroy" else "is kept"
         summary = f"imported into {orchestrator.short} at {str(oid)[:12]}; this container {ending}"
     return msg, summary
+
+
+def flush_callback(ctx: ActionContext) -> Callable[[PendingFinish], InboxMessage]:
+    """Complete a queued report with the recipient as the orchestrator."""
+    def finish(item: PendingFinish) -> InboxMessage:
+        msg, _ = complete(ctx, ctx.nodes.get(item.child_full), ctx.sender, item)
+        return msg
+
+    return finish
 
 
 def park(ctx: ActionContext, orchestrator: Node, item: PendingFinish) -> None:
