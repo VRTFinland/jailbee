@@ -2,10 +2,11 @@
 
 ## Production status
 
-Narration draft awaiting editorial and paid-API approval. No audio generated,
-no video uploaded, no website embeds changed. Final duration and scene start
-times are unknown until narration exists. Targets: approximately three minutes
-main, 35-45 seconds Short. Same voice settings as episode 1.7.
+Narration and paid API calls approved in-session on 2026-10-26. All 11 TTS
+clips and Whisper word timings generated. Measured timeline: main 166.2 seconds,
+Short 39.3 seconds (including padding and cross-fades). Same voice settings as
+episode 1.7. Both exports and SRT files are archived under
+`.local/jailbee-1-8-video/`; no video uploaded or embed changed.
 
 Headline: **One agent. Four workers. Your rules.**
 
@@ -68,7 +69,40 @@ entire terminal into portrait.
 - Preview PNGs, main/Short contact sheets, and a 1280x720 padded thumbnail from
   `website/assets/news/jailbee-1-8.jpg` are archived under
   `.local/jailbee-1-8-video/`. No earlier `website/video/out/` existed.
-- Pipeline regression tests: 24 passed. Existing renderer and 1.7 unchanged.
+- Pipeline regression tests: 24 passed. Full suite: 16186 passed, 12 snapshots
+  passed (639.20 seconds). Ruff check and format check clean; mypy clean across
+  285 source files. Existing renderer and 1.7 unchanged.
+- Independent read-only source review found no Critical, Important or Minor
+  findings. This review does not substitute for final playback.
+
+## Audio-timed verification
+
+All 11 clips and word timings are cached. Actual-word frames after the phrase
+anchors and fully revealed/caption end frames are in
+`.local/jailbee-1-8-video/timed/`. Contact sheets cover the main story, sequential
+menu/outbox highlights and portrait anchors. Used anchors loaded without runtime
+errors; portrait captions remain separate from scene content. Main timeline is
+166.2 seconds; Short is 39.3 seconds.
+
+Complete audiovisual playback has not been performed by the production agent.
+Frame inspection and decode checks cannot establish listening quality or pacing;
+a human must watch both exports end to end before publication.
+
+## Deliverables and stream verification
+
+| File under `.local/jailbee-1-8-video/` | Verified result |
+| --- | --- |
+| main.mp4 | 1920 x 1080, 30 fps, H.264 + AAC, 166.200 s, 12656497 bytes |
+| short.mp4 | 1080 x 1920, 30 fps, H.264 + AAC, 39.300 s, 5338982 bytes |
+| main.srt / short.srt | Separate English timed subtitles |
+| thumbnail.jpg | 1280 x 720, feature graphic scaled and padded, not cropped |
+| main-export-contact.jpg / short-export-contact.jpg | Frames extracted from final MP4 exports |
+
+`ffprobe` confirms both audio/video streams and dimensions. Full sequential
+`ffmpeg -v error -i FILE -f null -` decoding completed with no errors for both
+exports. Final MP4 frame contact sheets were inspected, including portrait
+captions. Rendering/preview workers terminate after their commands; no production
+server was started. The pre-existing blog server was not intentionally changed.
 
 ## Proposed YouTube copy
 
@@ -85,7 +119,20 @@ JailBee is free and open source for Linux hosts.
 Documentation: https://jailbee.gisgro.io/docs/orchestration/
 Setup: https://jailbee.gisgro.io/docs/installation/
 
-Chapters: pending measured scene start times; do not publish estimated chapters.
+Chapters from the measured timeline (rounded down to whole seconds):
+
+```text
+0:00 One agent. Four workers. Your rules.
+0:14 Separate environments
+0:40 Host-enforced grants
+1:09 Orchestrator and children
+1:37 Import is not merge
+2:08 Humans publish
+2:30 Get JailBee
+```
+
+Exact starts: 0.00, 14.30, 40.95, 69.10, 97.50, 128.90, 150.85 seconds.
+Short starts: 0.00, 7.90, 19.80, 30.00 seconds.
 
 Short title: One AI coordinator. Four isolated workers. Your rules. #shorts
 
@@ -95,11 +142,12 @@ Watch the full tour on the channel. https://jailbee.gisgro.io/
 
 ## Remaining production and publication steps
 
-1. Approve `script.yaml` narration and paid API calls.
-2. Generate narration, inspect each phrase-anchored reveal and caption band.
-3. Preserve any existing `website/video/out/` exports, render both formats with
-   two jobs, and archive MP4/SRT plus thumbnail/contact sheets under
-   `.local/jailbee-1-8-video/`.
-4. Verify streams with ffprobe; watch both exports end to end (frame checks are
-   not a substitute). Record measured durations and chapter starts here.
-5. Obtain explicit publication approval before any YouTube upload or embed edit.
+1. Narration and paid calls: approved and generated; real-word frame and
+   caption checks performed.
+2. Rendering uses two jobs per format. Archive MP4/SRT, padded thumbnail and
+   contact sheets under `.local/jailbee-1-8-video/`; media is not committed.
+3. Watch both exports end to end (frame checks and decode checks are not a
+   substitute). In particular, listen for pronunciation and transitions.
+4. Obtain explicit publication approval before any YouTube upload or embed edit.
+   Upload English subtitles with timing, then confirm the measured chapter list.
+5. Only after upload, record genuine video IDs and update any approved embeds.
