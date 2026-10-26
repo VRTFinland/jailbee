@@ -105,6 +105,8 @@ def reservation_alive(pid: int) -> bool:
         waited, _status = os.waitpid(pid, os.WNOHANG)
     except ChildProcessError:
         return background.worker_alive(pid)
+    except OverflowError:
+        return False  # Corrupt state cannot name a process outside pid_t's range.
     return waited == 0
 
 

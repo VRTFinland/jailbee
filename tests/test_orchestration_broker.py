@@ -130,6 +130,12 @@ def test_tick_prunes_reservations(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> 
 
     save_reservations(rig.root, {"proj-orch": [Reservation("proj-failed", 777, "t")]})
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: False)
+
+    def snapshot() -> list[dict[str, Any]]:
+        assert load_reservations(rig.root) == {}
+        return []
+
+    rig.incus.list_containers.side_effect = snapshot
     assert rig.tick() is False
     assert load_reservations(rig.root) == {}
 

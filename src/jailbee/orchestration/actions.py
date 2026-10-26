@@ -230,7 +230,7 @@ def plan_spawn(
     short = lifecycle.short_name(ctx.cfg, full)
     if full in ctx.nodes or ctx.incus.exists(full):
         return refused(f"container `{short}` already exists")
-    if full in live_create_jobs(ctx.cfg.container_prefix):
+    if full in creating_children(ctx):
         return refused(f"container `{short}` is already being created")
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
@@ -363,12 +363,16 @@ def prune_reservations(root: Path) -> None:
 
 
 def live_reservations(ctx: ActionContext) -> set[str]:
-    """Names of this orchestrator's children whose create workers are alive."""
-    return {
-        r.child_full
-        for r in load_reservations(ctx.root).get(ctx.sender.full, [])
-        if reservation_alive(r.pid)
+    """Names held until the next pre-snapshot prune, even if a worker just exited."""
+    return {r.child_full for r in load_reservations(ctx.root).get(ctx.sender.full, [])}
+
+
+def creating_children(ctx: ActionContext) -> set[str]:
+    """Names already being created, including reservations with missing job rows."""
+    reserved = {
+        r.child_full for entries in load_reservations(ctx.root).values() for r in entries
     }
+    return live_create_jobs(ctx.cfg.container_prefix) | reserved
 
 
 def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
@@ -541,7 +545,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused("; ".join(problems))
     if req.child_full in ctx.nodes or ctx.incus.exists(req.child_full):
         return refused(f"container `{short}` already exists")
-    if req.child_full in live_create_jobs(ctx.cfg.container_prefix):
+    if req.child_full in creating_children(ctx):
         return refused(f"container `{short}` is already being created")
     plan = SpawnPlan(
         child_full=req.child_full,
@@ -576,7 +580,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"`{short}` is not a child of this orchestrator")
     if node.running:
         return refused(f"child `{short}` is running; stop it first")
-    if node.full in live_create_jobs(ctx.cfg.container_prefix):
+    if node.full in creating_children(ctx):
         return refused(f"child `{short}` is still being created")
     runner = Runner.model_validate(req.runner) if req.runner is not None else None
     effective = runner if req.runner_set else parse_runner_label(node.config.get(labels.RUNNER))
@@ -672,7 +676,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return child
     if child.running:
         return refused(f"child `{child.short}` is running; stop it first")
-    if child.full in live_create_jobs(ctx.cfg.container_prefix):
+    if child.full in creating_children(ctx):
         return refused(f"child `{child.short}` is still being created")
     set_runner = restart_sets_runner(m)
     # A restart that names no runner keeps the child's label; that kept runner

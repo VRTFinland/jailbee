@@ -112,6 +112,61 @@ def test_limit_holds_when_job_row_missing(
     assert states == ["started", "started", "queued", "queued", "queued"]
 
 
+def test_finished_create_holds_slot_until_next_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.create_flow import CreateStarted
+
+    rig = Rig(tmp_path, limit=1)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-a", 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True)
+    assert actions.handle_spawn(rig.ctx(), _m("a", kind="new")).state == "started"
+    # Worker succeeds, but this tick's nodes still predate its container.
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: False)
+    assert actions.handle_spawn(rig.ctx(), _m("b", kind="new", mid="b1")).state == "queued"
+    actions.prune_reservations(tmp_path)
+    rig.children = [Node("proj-a", "a", True, {labels.SPAWNED_BY: "proj-orch"})]
+    assert actions.drain_queue(rig.ctx()) == []
+    rig.children = []  # later stopped/destroyed
+    assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["started"]
+
+
+def test_duplicate_spawn_cannot_replace_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.create_flow import CreateStarted
+
+    rig = Rig(tmp_path, limit=2)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    launch = MagicMock(return_value=CreateStarted("proj-a", 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "start_create", launch)
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True)
+    assert actions.handle_spawn(rig.ctx(), _m("a", kind="new")).state == "started"
+    assert actions.handle_spawn(rig.ctx(), _m("a", kind="new", mid="a2")) == Outcome(
+        "refused", "container `a` is already being created",
+    )
+    assert launch.call_count == 1
+    assert state.load_reservations(tmp_path)["proj-orch"][0].pid == 777
+
+
+def test_reserved_name_blocks_queued_spawn_and_restart(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.orchestration.protocol import RestartManifest
+
+    rig = Rig(tmp_path, limit=3)
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-fix-1", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True)
+    _queue(rig, ["fix/1"], kind="new")
+    assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["refused"]
+    rig.children = [Node("proj-fix-1", "fix-1", False, {labels.SPAWNED_BY: "proj-orch"})]
+    m = RestartManifest(version=1, id="r1", type="restart", child="fix-1", prompt="go")
+    assert actions.handle_restart(rig.ctx(), m) == Outcome("refused", "child `fix-1` is still being created")
+    _queue(rig, ["fix/1"], kind="restart")
+    assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["refused"]
+
+
 def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from jailbee.create_flow import CreateStarted
 
@@ -132,6 +187,7 @@ def test_dead_reservation_does_not_count(
     rig = Rig(tmp_path)
     state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-x", 777, "t")]})
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: False, raising=False)
+    actions.prune_reservations(tmp_path)
     assert actions.running_children(rig.ctx()) == 0
 
 

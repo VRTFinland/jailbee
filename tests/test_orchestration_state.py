@@ -90,6 +90,14 @@ def test_reservation_foreign_pid_alive(monkeypatch: pytest.MonkeyPatch) -> None:
     assert state.reservation_alive(4242) is True
 
 
+def test_oversized_reservation_pid_is_pruned(tmp_path: Path) -> None:
+    from jailbee.orchestration.actions import prune_reservations
+
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-a", 10**100, "t")]})
+    prune_reservations(tmp_path)
+    assert state.load_reservations(tmp_path) == {}
+
+
 def test_reservation_pid_zero_dead() -> None:
     assert state.reservation_alive(0) is False
 

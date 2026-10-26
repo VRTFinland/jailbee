@@ -383,6 +383,8 @@ def tick(
 ) -> bool:
     """Run one broker round; True while any running orchestrator or child exists."""
     memory = memory if memory is not None else BrokerMemory()
+    # Release finished workers before taking the snapshot that replaces their slots.
+    prune_reservations(root)
     raw = incus.list_containers()
     candidates = [
         e
@@ -396,7 +398,6 @@ def tick(
     present = {e.get("name") for e in raw}
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
-    prune_reservations(root)
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)
