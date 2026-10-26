@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-_MARKER = "cat > /usr/local/bin/jailbee-inbox <<'EOF'\n"
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
 FIRST = "20261025T100000Z-00000001-h-0000aaaa.json"
@@ -24,14 +23,14 @@ def install_sh_text() -> str:
     return importlib.resources.files("jailbee.provision").joinpath("install.sh").read_text()
 
 
+def helper_text() -> str:
+    return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+
+
 @pytest.fixture
 def script(tmp_path: Path) -> Path:
-    text = install_sh_text()
-    assert _MARKER in text
-    start = text.index(_MARKER) + len(_MARKER)
-    body = text[start : text.index("\nEOF\n", start)]
     path = tmp_path / "jailbee-inbox"
-    path.write_text(body + "\n")
+    path.write_text(helper_text())
     path.chmod(0o755)
     return path
 
@@ -310,8 +309,17 @@ def test_install_sh_installs_inotify_tools():
     assert "inotify-tools" in install_sh_text()
 
 
-def test_script_is_chmodded_in_install_sh():
-    assert "chmod 0755 /usr/local/bin/jailbee-inbox" in install_sh_text()
+def test_helper_is_a_bash_script() -> None:
+    assert helper_text().startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+
+
+def test_install_sh_installs_packaged_helper() -> None:
+    text = install_sh_text()
+    assert (
+        'install -m 0755 "$JAILBEE_PROVISION_DIR/jailbee-inbox" /usr/local/bin/jailbee-inbox'
+        in text
+    )
+    assert "cat > /usr/local/bin/jailbee-inbox" not in text
 
 
 def _stub(tmp_path: Path, body: str) -> Path:
