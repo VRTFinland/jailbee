@@ -11650,6 +11650,56 @@ def test_child_without_runner_has_no_runner_label(make_cfg, tmp_path, mocker):
     assert labels.RUNNER not in incus.init.call_args.kwargs["config"]
 
 
+def _head_exec(oid):
+    """An `incus.exec` that answers `git rev-parse HEAD` with `oid`."""
+
+    def _exec(_name, cmd, **_kw):
+        return f"{oid}\n" if cmd[-2:] == ["rev-parse", "HEAD"] else ""
+
+    return _exec
+
+
+def test_child_records_its_starting_head_as_last_import(make_cfg, tmp_path, mocker):
+    """A child that never commits has nothing to import: its destroy guard must
+    compare against the commit it started from, not refuse for want of a label."""
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, store = _child_incus(cfg)
+    incus.exec.side_effect = _head_exec("a" * 40)
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=ChildRights())
+    assert store[labels.LAST_IMPORT] == "a" * 40
+
+
+def test_ordinary_container_gets_no_last_import(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, store = _child_incus(cfg)
+    incus.exec.side_effect = _head_exec("a" * 40)
+    _new_child(cfg, incus, mocker)
+    assert labels.LAST_IMPORT not in store
+
+
+def test_child_starting_head_unreadable_is_not_fatal(make_cfg, tmp_path, mocker):
+    """Best-effort: without the label the guard just stays conservative."""
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, store = _child_incus(cfg)
+
+    def _exec(_name, cmd, **_kw):
+        if cmd[-2:] == ["rev-parse", "HEAD"]:
+            raise IncusError("boom")
+        return ""
+
+    incus.exec.side_effect = _exec
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch", rights=ChildRights())
+    assert labels.LAST_IMPORT not in store
+
+
 def test_ordinary_container_is_created_without_child_config(make_cfg, tmp_path, mocker):
     cfg = _child_cfg(make_cfg, tmp_path)
     incus, _ = _child_incus(cfg)

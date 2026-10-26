@@ -165,6 +165,10 @@ more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 `jailbee-inbox ls` lists what is unread.
 
+`wait` does not consume anything: while any message is unread it returns at
+once, with the oldest one. Mark every message read (by its id, `h-<hex>`, not
+its file name) before you wait again, or the loop spins on the same message.
+
 ## Status messages
 
 Every manifest you send gets a `status` reply whose `ref` is its id:
@@ -213,6 +217,10 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 1. Send `import` for the child. Wait for a `done` status whose detail names
    `refs/jailbee/from/<child>/<branch>`.
 2. `git merge` (or cherry-pick) from that ref and resolve conflicts yourself.
+   The import also brings the child's submodule commits, but a merge only
+   moves the gitlinks: run `git submodule update` afterwards so the
+   submodule working trees match. No network is needed; the objects are
+   already local.
 3. Free the slot: a finished child is normally still running, so `stop`
    it, then `destroy` it if your grant has that operation (stop first is
    the recommended order). Stopping alone frees the slot, so queued spawns

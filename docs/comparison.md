@@ -181,8 +181,19 @@ Neither has been checked in the same depth as the four above:
   (Apache-2.0) runs OCI images in local libkrun microVMs without a daemon or
   root, behind SDKs.
 
-One that is not an alternative at all, although it is often named in the
-same breath: **[herdr](https://github.com/herdrdev/herdr)** (Apache-2.0,
+Two that are not alternatives at all, although they are often named in the
+same breath.
+
+**[Microsoft MXC](https://github.com/microsoft/mxc)** (MIT, Rust) is a
+library, not an environment: an agent host or tool embeds its Rust, .NET or
+Node SDK to run one command — model output, a plugin, a tool call — under a
+declared path and network policy, then usually discards the sandbox. It is
+closest to nono, using Bubblewrap on Linux, Seatbelt on macOS and native
+containment on Windows. Nothing provisions a repo's runtime, so it
+complements JailBee rather than replacing it: an agent that uses MXC could
+run inside a JailBee container, a combination not validated here.
+
+**[herdr](https://github.com/herdrdev/herdr)** (Apache-2.0,
 Rust) is a terminal multiplexer for coding agents — a background server
 keeps each agent's terminal alive, a sidebar shows whether it is working,
 blocked or idle, and a socket API lets agents open panes and wait on each
@@ -416,6 +427,17 @@ and the following external sources were re-read for the corrections here:
   [FAQ](https://docs.docker.com/ai/sandboxes/faq/). The table compares **local**
   sandboxes, not the separately offered cloud service; current documentation
   is not pinned to the previously reviewed CLI version.
+
+On 2026-10-26, the MXC note was written from its documentation at commit
+[`05a430b`](https://github.com/microsoft/mxc/tree/05a430bc17a3e1b3fa2131524fc52e4319e07298)
+(after the v1.0.1 release): the
+[README](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/README.md),
+[containment policy 1.0.0](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/containment-policy/1.0.0/policy.md),
+[container lifecycle](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/container-lifecycle.md),
+and the [Bubblewrap](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/bwrap/bubblewrap-backend.md),
+[LXC](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/lxc/lxc-backend.md)
+and [Nanvix](https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/docs/backends/nanvix/nanvix.md)
+backend guides. No MXC build was run.
 
 The smaller projects above were not re-audited in the same depth. All these
 tools move quickly; absence of documented support is not proof that a feature

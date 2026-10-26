@@ -248,6 +248,8 @@ JSON by hand; rebuild with `jb base build` to get it.
 - **Destroy** (needs `destroy` in the grant) works on a running or stopped
   child (stopping first is the recommended order) and is refused while the
   child has commits never imported: its HEAD must equal the last import. A
+  child's starting commit counts as imported, so one that never committed
+  is destroyed without `force`. A
   stopped child's HEAD is the one recorded when the broker stopped it; a
   child stopped any other way is refused until restarted.
   `force: true` overrides the guard.

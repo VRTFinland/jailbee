@@ -81,7 +81,8 @@ jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread messag
 ```
 
 It exits 0 with a path, 1 on timeout and 2 on a usage error. On timeout,
-wait again. Never poll tighter than every 5 min. Treat the next message from
+wait again. It returns at once while any message is unread, so `jailbee-inbox
+read <id>` each one before waiting again. Never poll tighter than every 5 min. Treat the next message from
 your orchestrator as the answer. Its `in_reply_to` is informational only: the
 host gives relayed messages new ids, so it need not equal the id of your
 message.
