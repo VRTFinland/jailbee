@@ -123,12 +123,21 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
     target = ctx.nodes.get(orchestrator_full)
     if target is None:
         short = lifecycle.short_name(ctx.cfg, orchestrator_full)
-        return refused(f"your orchestrator {short} no longer exists; your work is on the host "
-                       f"at {oid[:12]} and this container is kept")
+        return refused(
+            f"your orchestrator {short} no longer exists; your work is on the host "
+            f"at {oid[:12]} and this container is kept"
+        )
     item = PendingFinish(
-        version=1, type="finish", id=manifest.id, child_full=full,
-        child_short=ctx.sender.short, branch=branch, done_sha=oid, body=manifest.body,
-        in_reply_to=manifest.in_reply_to, uid=uid,
+        version=1,
+        type="finish",
+        id=manifest.id,
+        child_full=full,
+        child_short=ctx.sender.short,
+        branch=branch,
+        done_sha=oid,
+        body=manifest.body,
+        in_reply_to=manifest.in_reply_to,
+        uid=uid,
     )
     if target.running and not outbox.has_pending(ctx.root, target.full):
         # Persist intent before a destroy marker can exist: a broker crash
@@ -139,13 +148,17 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         try:
             outbox.write_inbox(ctx.incus, target.full, msg, uid=uid, now=ctx.now, seq=seq)
         except IncusError:
-            outbox.deliver(ctx.incus, ctx.root, target.full, msg, running=False,
-                           uid=uid, now=ctx.now, seq=seq)
+            outbox.deliver(
+                ctx.incus, ctx.root, target.full, msg, running=False, uid=uid, now=ctx.now, seq=seq
+            )
         pending.unlink(missing_ok=True)
         return done(summary)
     finishing.park(ctx, target, item)
-    return Outcome("queued", f"{target.short} is not running or busy; your work is on the host "
-                   f"at {oid[:12]} and is imported when it is delivered")
+    return Outcome(
+        "queued",
+        f"{target.short} is not running or busy; your work is on the host "
+        f"at {oid[:12]} and is imported when it is delivered",
+    )
 
 
 def _from_child(ctx: ActionContext, manifest: MessageManifest) -> Outcome:

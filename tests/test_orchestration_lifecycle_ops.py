@@ -69,7 +69,9 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     return m
 
 
-def test_destroy_refused_when_running_child_tree_dirty(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destroy_refused_when_running_child_tree_dirty(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
     monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=True))
     out = actions.handle_destroy(rig.ctx(), _destroy())
@@ -77,15 +79,21 @@ def test_destroy_refused_when_running_child_tree_dirty(tmp_path: Path, seams: di
     seams["destroy"].assert_not_called()
 
 
-def test_destroy_refused_when_tree_probe_fails(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destroy_refused_when_tree_probe_fails(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
-    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(side_effect=RuntimeError("probe")))
+    monkeypatch.setattr(
+        actions.sync, "_container_status_dirty", MagicMock(side_effect=RuntimeError("probe"))
+    )
     out = actions.handle_destroy(rig.ctx(), _destroy())
     assert out.state == "refused" and "could not be checked" in out.detail
     seams["destroy"].assert_not_called()
 
 
-def test_destroy_force_skips_dirty_guard(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_destroy_force_skips_dirty_guard(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
     rig = Rig(tmp_path, running=True)
     probe = MagicMock(side_effect=RuntimeError("must not probe"))
     monkeypatch.setattr(actions.sync, "_container_status_dirty", probe)
@@ -93,15 +101,22 @@ def test_destroy_force_skips_dirty_guard(tmp_path: Path, seams: dict[str, MagicM
     probe.assert_not_called()
 
 
-def test_destroy_refused_for_stopped_child_recorded_dirty(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
-    rig = Rig(tmp_path, config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa", labels.STOPPED_DIRTY: "1"})
+def test_destroy_refused_for_stopped_child_recorded_dirty(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(
+        tmp_path,
+        config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa", labels.STOPPED_DIRTY: "1"},
+    )
     out = actions.handle_destroy(rig.ctx(), _destroy())
     assert out.state == "refused" and "uncommitted changes" in out.detail
     seams["destroy"].assert_not_called()
 
 
 @pytest.mark.parametrize("dirty", [True, False, None])
-def test_stop_records_stopped_dirty(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, dirty: bool | None) -> None:
+def test_stop_records_stopped_dirty(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, dirty: bool | None
+) -> None:
     rig = Rig(tmp_path, running=True)
     monkeypatch.setattr(actions.sync, "_container_dirty_quiet", MagicMock(return_value=dirty))
     m = StopManifest(version=1, id="s1", type="stop", child="c1")
@@ -125,7 +140,9 @@ def _destroy(force: bool = False, child: str = "c1") -> DestroyManifest:
 
 
 @pytest.mark.parametrize("policy", [None, "keep", "destroy"])
-def test_restart_sets_on_done_label_only_when_given(tmp_path: Path, seams: dict[str, MagicMock], policy: str | None) -> None:
+def test_restart_sets_on_done_label_only_when_given(
+    tmp_path: Path, seams: dict[str, MagicMock], policy: str | None
+) -> None:
     rig = Rig(tmp_path)
     m = _restart().model_copy(update={"on_done": policy})
     assert actions.handle_restart(rig.ctx(), m).state == "done"
@@ -133,7 +150,9 @@ def test_restart_sets_on_done_label_only_when_given(tmp_path: Path, seams: dict[
     assert calls == ([] if policy is None else [(rig.child.full, labels.ON_DONE, policy)])
 
 
-def test_restart_clears_pending_destroy_and_stopped_dirty(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+def test_restart_clears_pending_destroy_and_stopped_dirty(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
     rig = Rig(tmp_path)
     actions.handle_restart(rig.ctx(), _restart())
     unset = [c.args[1] for c in rig.incus.config_unset_checked.call_args_list]
@@ -142,7 +161,12 @@ def test_restart_clears_pending_destroy_and_stopped_dirty(tmp_path: Path, seams:
 
 def test_restart_explicit_destroy_needs_grant(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     rig = Rig(tmp_path)
-    rig.sender = Node("proj-orch", "orch", True, {labels.GRANT: Grant(operations=("spawn", "message", "restart")).to_label()})
+    rig.sender = Node(
+        "proj-orch",
+        "orch",
+        True,
+        {labels.GRANT: Grant(operations=("spawn", "message", "restart")).to_label()},
+    )
     out = actions.handle_restart(rig.ctx(), _restart().model_copy(update={"on_done": "destroy"}))
     assert out.state == "refused" and "destroy` operation" in out.detail
     seams["boot"].assert_not_called()

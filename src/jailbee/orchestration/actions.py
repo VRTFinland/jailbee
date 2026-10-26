@@ -430,8 +430,13 @@ def _boot(
     # `working` again (absent STATE = working). Clearing first means a running
     # child never carries a stale value.
     try:
-        for key in (labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE,
-                    labels.PENDING_DESTROY, labels.STOPPED_DIRTY):
+        for key in (
+            labels.STOPPED_HEAD,
+            labels.DONE_SHA,
+            labels.STATE,
+            labels.PENDING_DESTROY,
+            labels.STOPPED_DIRTY,
+        ):
             ctx.incus.config_unset_checked(child.full, key)
         if set_runner:
             if runner is not None:
@@ -492,8 +497,11 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         prompt=req.prompt,
         rights=rights,
         runner=runner,
-        on_done=("destroy" if req.on_done == "destroy" and grant is not None
-                 and "destroy" in grant.operations else "keep"),
+        on_done=(
+            "destroy"
+            if req.on_done == "destroy" and grant is not None and "destroy" in grant.operations
+            else "keep"
+        ),
     )
     fork: ForkSource | None = None
     if req.kind == "fork":
@@ -531,8 +539,15 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     policy = req.on_done
     if policy == "destroy" and (grant is None or "destroy" not in grant.operations):
         policy = "keep"
-    return _boot(ctx, node, req.prompt, started=True, runner=runner,
-                 set_runner=req.runner_set, on_done=policy)
+    return _boot(
+        ctx,
+        node,
+        req.prompt,
+        started=True,
+        runner=runner,
+        set_runner=req.runner_set,
+        on_done=policy,
+    )
 
 
 # Queue kind -> starter.
@@ -594,7 +609,9 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_HEAD)
             bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
             dirty = sync._container_dirty_quiet(
-                bounded, child.full, lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                bounded,
+                child.full,
+                lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
                 uid=ctx.cfg.container_user.uid,
             )
             if dirty is False:
@@ -639,8 +656,15 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if not queued and running_children(ctx) < grant.max_running_children:
-        return _boot(ctx, child, prompt, started=False, runner=m.runner,
-                     set_runner=set_runner, on_done=m.on_done)
+        return _boot(
+            ctx,
+            child,
+            prompt,
+            started=False,
+            runner=m.runner,
+            set_runner=set_runner,
+            on_done=m.on_done,
+        )
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -691,17 +715,20 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
         try:
             bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
             dirty = sync._container_status_dirty(
-                bounded, child.full, lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                bounded,
+                child.full,
+                lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
                 uid=ctx.cfg.container_user.uid,
             )
         except Exception:
-            return (f"child `{child.short}`: its working tree could not be checked "
-                    "(use force: true to destroy anyway)")
+            return (
+                f"child `{child.short}`: its working tree could not be checked "
+                "(use force: true to destroy anyway)"
+            )
     else:
         dirty = child.config.get(labels.STOPPED_DIRTY) == "1"
     if dirty:
-        return (f"child `{child.short}` has uncommitted changes "
-                "(use force: true to destroy anyway)")
+        return f"child `{child.short}` has uncommitted changes (use force: true to destroy anyway)"
     return None
 
 

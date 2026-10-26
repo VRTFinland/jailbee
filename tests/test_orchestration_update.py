@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from jailbee.orchestration import actions, importing, outbox
+from jailbee.orchestration import actions, outbox
 from jailbee.orchestration.protocol import UpdateManifest
 from jailbee.sync import SyncError
 from tests.test_orchestration_import import CHILD, SHA, _ctx, _result
@@ -19,7 +17,9 @@ def seams(mocker):
     return {
         "branch": mocker.patch("jailbee.sync._container_current_branch", return_value="main"),
         "repo": mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r"),
-        "merge": mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result()),
+        "merge": mocker.patch(
+            "jailbee.sync.merge_container_into_container", return_value=_result()
+        ),
         "deliver": mocker.patch.object(outbox, "deliver", return_value="delivered"),
     }
 
@@ -29,8 +29,14 @@ def test_update_transports_and_messages_child(tmp_path, seams):
     out = actions.dispatch(ctx, _manifest())
     assert out.state == "done"
     seams["merge"].assert_called_once_with(
-        ctx.cfg, ctx.incus.with_exec_timeout.return_value, "orch", "fix-1",
-        branch="main", plain=True, ff_local_branch=False, require_clean_target=False,
+        ctx.cfg,
+        ctx.incus.with_exec_timeout.return_value,
+        "orch",
+        "fix-1",
+        branch="main",
+        plain=True,
+        ff_local_branch=False,
+        require_clean_target=False,
         timeout=actions.CHILD_TRANSPORT_TIMEOUT_S,
     )
     msg = seams["deliver"].call_args.args[3]
@@ -64,8 +70,12 @@ def test_update_gated_by_import_operation(tmp_path, seams):
     from jailbee.orchestration.grant import Grant
 
     ctx = _ctx(tmp_path)
-    ctx.sender = actions.Node(ctx.sender.full, "orch", True,
-        {labels.GRANT: Grant(operations=("spawn", "message")).to_label()})
+    ctx.sender = actions.Node(
+        ctx.sender.full,
+        "orch",
+        True,
+        {labels.GRANT: Grant(operations=("spawn", "message")).to_label()},
+    )
     out = actions.dispatch(ctx, _manifest())
     assert out.state == "refused" and "operation `import`" in out.detail
     seams["merge"].assert_not_called()

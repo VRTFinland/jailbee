@@ -32,9 +32,18 @@ def _incus() -> MagicMock:
 def _finish_item():
     from jailbee.orchestration.protocol import PendingFinish
 
-    return PendingFinish(version=1, type="finish", id="f-1", child_full="proj-c",
-                         child_short="c", branch="b", done_sha="a" * 40,
-                         body="done", in_reply_to=None, uid=1000)
+    return PendingFinish(
+        version=1,
+        type="finish",
+        id="f-1",
+        child_full="proj-c",
+        child_short="c",
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
 
 
 def _finished_message():

@@ -64,7 +64,9 @@ def _m(branch: str = "fix/1", **rights: object) -> SpawnManifest:
     )
 
 
-def test_spawn_records_on_done_destroy_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_spawn_records_on_done_destroy_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctx = _ctx(tmp_path)
     plan = plan_spawn(ctx, _m(), queued_names=())
     assert isinstance(plan, actions.SpawnPlan)
@@ -79,7 +81,10 @@ def test_spawn_without_destroy_operation_defaults_to_keep(tmp_path: Path) -> Non
     ctx = _ctx(tmp_path, {"operations": ["spawn", "message", "import"]})
     plan = plan_spawn(ctx, _m(), queued_names=())
     assert isinstance(plan, actions.SpawnPlan)
-    assert actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=None).on_done == "keep"
+    assert (
+        actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=None).on_done
+        == "keep"
+    )
 
 
 def test_spawn_explicit_destroy_without_destroy_operation_refused(tmp_path: Path) -> None:

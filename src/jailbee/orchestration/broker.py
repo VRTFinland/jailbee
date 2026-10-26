@@ -361,8 +361,9 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
-    flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=uid,
-                  finish=finishing.flush_callback(ctx))
+    flush_pending(
+        ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
+    )
     if ctx.role() == "orchestrator":
         _sync_grant_json(ctx, memory)
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
@@ -426,9 +427,12 @@ def tick(
     memory.env_ensured.intersection_update(present)
     # Warn workers before deleting a vanished parent's queued finish reports.
     finishing.notify_orphaned_finishes(
-        incus, root, {n for n in present if isinstance(n, str)},
+        incus,
+        root,
+        {n for n in present if isinstance(n, str)},
         {str(e["name"]) for e in raw if e.get("status") == "Running"},
-        now=now, seq=memory.seq,
+        now=now,
+        seq=memory.seq,
     )
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
@@ -478,7 +482,9 @@ def tick(
     # Before anything is served, so a `stop` handled later in this round keeps
     # the STOPPED_HEAD it records (the snapshot above predates it).
     for node in nodes.values():
-        if node.running and (node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)):
+        if node.running and (
+            node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)
+        ):
             _clear_stale_stop_labels(incus, node)
 
     orchestrators: list[ActionContext] = []
@@ -500,8 +506,13 @@ def tick(
                 )
                 # Messages parked while it was an orchestrator still get delivered.
                 if node.running and has_pending(root, node.full):
-                    flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
-                          finish=finishing.flush_callback(ctx))
+                    flush_pending(
+                        incus,
+                        root,
+                        node.full,
+                        uid=ctx.cfg.container_user.uid,
+                        finish=finishing.flush_callback(ctx),
+                    )
                 continue
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
@@ -594,8 +605,13 @@ def _flush_unlabelled(
     try:
         ctx = context(node)
         if ctx is not None:
-            flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
-                          finish=finishing.flush_callback(ctx))
+            flush_pending(
+                incus,
+                root,
+                node.full,
+                uid=ctx.cfg.container_user.uid,
+                finish=finishing.flush_callback(ctx),
+            )
     except Exception:
         log.exception("broker: flushing %s failed", node.full)
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 import contextlib
 import importlib.resources
 import logging
-
-from pydantic import ValidationError
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+from pydantic import ValidationError
 
 from jailbee.config.common import CONTAINER_USERNAME
 from jailbee.incus import IncusError
@@ -165,7 +165,11 @@ def has_pending(root: Path, recipient_full: str) -> bool:
 
 
 def flush_pending(
-    incus: Incus, root: Path, recipient_full: str, *, uid: int | None,
+    incus: Incus,
+    root: Path,
+    recipient_full: str,
+    *,
+    uid: int | None,
     finish: Callable[[PendingFinish], InboxMessage] | None = None,
 ) -> int:
     """Deliver parked files in name order; stop at the first failure."""
@@ -174,7 +178,9 @@ def flush_pending(
         return 0
     delivered = 0
     for path in sorted(
-        p for p in directory.iterdir() if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".bad")
+        p
+        for p in directory.iterdir()
+        if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".bad")
     ):
         name = path.name
         text = path.read_text(encoding="utf-8")

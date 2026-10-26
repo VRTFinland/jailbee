@@ -28,7 +28,9 @@ MAX_PROMPT_BYTES = 64 * 1024
 OnDone = Literal["destroy", "keep"]
 FINISH_SUFFIX = ".finish.json"
 
-ORCHESTRATOR_TYPES = frozenset({"spawn", "message", "import", "update", "restart", "stop", "destroy"})
+ORCHESTRATOR_TYPES = frozenset(
+    {"spawn", "message", "import", "update", "restart", "stop", "destroy"}
+)
 CHILD_TYPES = frozenset({"message"})
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")

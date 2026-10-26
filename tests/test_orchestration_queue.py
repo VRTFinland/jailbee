@@ -99,11 +99,15 @@ def test_queued_spawn_keeps_on_done(tmp_path: Path, seams: dict[str, MagicMock])
     assert seams["start"].call_args.args[1].on_done == "keep"
 
 
-def test_queued_spawn_downgrades_destroy_when_grant_changes(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+def test_queued_spawn_downgrades_destroy_when_grant_changes(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
     rig = Rig(tmp_path, running=1)
     actions.handle_spawn(rig.ctx(), _m())
     rig.children = []
-    rig.sender = Node("proj-orch", "orch", True, {labels.GRANT: Grant(operations=("spawn", "message")).to_label()})
+    rig.sender = Node(
+        "proj-orch", "orch", True, {labels.GRANT: Grant(operations=("spawn", "message")).to_label()}
+    )
     actions.drain_queue(rig.ctx())
     assert seams["start"].call_args.args[1].on_done == "keep"
 

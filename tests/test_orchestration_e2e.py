@@ -300,10 +300,22 @@ def git_done(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         )
     )
     monkeypatch.setattr(sync, "fetch_from_container", fetch)
-    push = PushResult(source="c1-branch", source_ref="refs/jailbee/c1/c1-branch",
-                      container_ref=IMPORT_REF, old_oid=None, new_oid=DONE_SHA)
-    monkeypatch.setattr(sync, "merge_container_into_container", MagicMock(return_value=
-        MergeInContainerResult(push=push, container_branch="main", fast_forward_only=False, head_oid=HEAD)))
+    push = PushResult(
+        source="c1-branch",
+        source_ref="refs/jailbee/c1/c1-branch",
+        container_ref=IMPORT_REF,
+        old_oid=None,
+        new_oid=DONE_SHA,
+    )
+    monkeypatch.setattr(
+        sync,
+        "merge_container_into_container",
+        MagicMock(
+            return_value=MergeInContainerResult(
+                push=push, container_branch="main", fast_forward_only=False, head_oid=HEAD
+            )
+        ),
+    )
     return fetch
 
 
@@ -406,7 +418,9 @@ def test_spawn_reports_ready_after_worker_finishes(
     )
 
     _tick(world, memory)  # round 1: started, worker still running
-    assert _statuses(incus, "proj-orch") == [("sp1", "started", "creation of child `k1` started; on done: destroy")]
+    assert _statuses(incus, "proj-orch") == [
+        ("sp1", "started", "creation of child `k1` started; on done: destroy")
+    ]
 
     jobs.clear()  # the worker finished and removed its row
     incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})

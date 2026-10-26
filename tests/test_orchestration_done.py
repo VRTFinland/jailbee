@@ -10,7 +10,6 @@ from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.orchestration import importing, labels, messages
-from jailbee.orchestration.state import pending_dir
 from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
     CHILD_TRANSPORT_TIMEOUT_S,
@@ -22,6 +21,7 @@ from jailbee.orchestration.actions import (
 )
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.protocol import MessageManifest
+from jailbee.orchestration.state import pending_dir
 from jailbee.sync import FetchResult, SyncError
 from tests.conftest import make_config
 
@@ -101,7 +101,9 @@ def _policy(rig: Rig, policy: str) -> None:
     rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.ON_DONE: policy})
 
 
-def test_done_imports_then_delivers_then_marks_destroy(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_done_imports_then_delivers_then_marks_destroy(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
     order = MagicMock()
@@ -109,14 +111,21 @@ def test_done_imports_then_delivers_then_marks_destroy(tmp_path: Path, mocker: M
     order.attach_mock(rig.write_inbox, "write_inbox")
     order.attach_mock(rig.incus.config_set, "set")
     out = messages.handle_message(rig.ctx, _done())
-    calls = [c[0] for c in order.mock_calls if c[0] in {"import_child", "write_inbox"} or (c[0] == "set" and c.args[1] == labels.PENDING_DESTROY)]
+    calls = [
+        c[0]
+        for c in order.mock_calls
+        if c[0] in {"import_child", "write_inbox"}
+        or (c[0] == "set" and c.args[1] == labels.PENDING_DESTROY)
+    ]
     assert calls == ["import_child", "set", "write_inbox"]
     msg = rig.write_inbox.call_args.args[2]
     assert msg.imported_sha == SHA and msg.on_done == "destroy"
     assert out.state == "done" and "will be destroyed" in out.detail
 
 
-def test_done_durable_finish_survives_crash_before_delivery(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_done_durable_finish_survives_crash_before_delivery(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
     rig.write_inbox.side_effect = RuntimeError("broker crashed")
@@ -133,7 +142,9 @@ def test_done_keep_policy_imports_without_marker(tmp_path: Path, mocker: MockerF
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
 
-def test_done_import_failure_delivers_with_error_and_keeps(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_done_import_failure_delivers_with_error_and_keeps(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
     rig.import_child.return_value = "boom"
@@ -152,7 +163,9 @@ def test_done_skips_import_when_already_imported(tmp_path: Path, mocker: MockerF
     assert rig.write_inbox.call_args.args[2].imported_sha == SHA
 
 
-def test_done_with_destroyed_orchestrator_refused_and_kept(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_done_with_destroyed_orchestrator_refused_and_kept(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     rig = _make(tmp_path, mocker)
     rig.ctx.nodes = {CHILD: rig.ctx.sender}
     out = messages.handle_message(rig.ctx, _done())
@@ -162,7 +175,9 @@ def test_done_with_destroyed_orchestrator_refused_and_kept(tmp_path: Path, mocke
     rig.import_child.assert_not_called()
 
 
-def test_done_parks_behind_existing_pending_items_even_when_running(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_done_parks_behind_existing_pending_items_even_when_running(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     rig = _make(tmp_path, mocker)
     directory = pending_dir(tmp_path, "myrepo-orch")
     directory.mkdir(parents=True)
@@ -237,7 +252,9 @@ def test_done_while_orchestrator_stopped_still_records_and_queues(
     rig.incus.config_set.assert_any_call(CHILD, labels.DONE_SHA, SHA)
     rig.incus.config_set.assert_any_call(CHILD, labels.STATE, labels.STATE_DONE)
     assert out == Outcome(
-        "queued", f"orch is not running or busy; your work is on the host at {'a' * 12} and is imported when it is delivered"
+        "queued",
+        f"orch is not running or busy; your work is on the host at {'a' * 12} "
+        "and is imported when it is delivered",
     )
 
 

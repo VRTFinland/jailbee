@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
 from jailbee.orchestration import labels
-from jailbee.orchestration.protocol import InboxMessage, PendingFinish, finish_file_name, new_host_id
+from jailbee.orchestration.protocol import (
+    InboxMessage,
+    PendingFinish,
+    finish_file_name,
+    new_host_id,
+)
 from jailbee.orchestration.state import atomic_write_text, pending_dir
 
 if TYPE_CHECKING:
@@ -15,7 +20,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from jailbee.incus import Incus
-
     from jailbee.orchestration.actions import ActionContext, Node
 
 
@@ -31,8 +35,10 @@ def complete(
     ref: str | None = None
     oid: str | None = None
     if child is None:
-        error = (f"child {item.child_short} no longer exists; its branch is on the host at "
-                 f"refs/jailbee/{item.child_short}/{item.branch} ({item.done_sha[:12]})")
+        error = (
+            f"child {item.child_short} no longer exists; its branch is on the host at "
+            f"refs/jailbee/{item.child_short}/{item.branch} ({item.done_sha[:12]})"
+        )
     elif child.config.get(labels.LAST_IMPORT) == item.done_sha:
         ref = f"refs/jailbee/from/{item.child_short}/{item.branch}"
         oid = item.done_sha
@@ -53,14 +59,26 @@ def complete(
             # The import succeeded, but cleanup must not hide the done report.
             error = f"imported but could not schedule destruction: {exc}"
             policy = "keep"
-    msg = InboxMessage.model_validate({
-        "version": 1, "id": new_host_id(), "type": "message", "from": item.child_short,
-        "body": item.body, "kind": "done", "in_reply_to": item.in_reply_to,
-        "imported_ref": ref, "imported_sha": oid, "import_error": error, "on_done": policy,
-    })
+    msg = InboxMessage.model_validate(
+        {
+            "version": 1,
+            "id": new_host_id(),
+            "type": "message",
+            "from": item.child_short,
+            "body": item.body,
+            "kind": "done",
+            "in_reply_to": item.in_reply_to,
+            "imported_ref": ref,
+            "imported_sha": oid,
+            "import_error": error,
+            "on_done": policy,
+        }
+    )
     if error is not None:
-        summary = (f"done reported to {orchestrator.short} at {item.done_sha[:12]}, but the "
-                   f"import failed: {error}; this container is kept")
+        summary = (
+            f"done reported to {orchestrator.short} at {item.done_sha[:12]}, but the "
+            f"import failed: {error}; this container is kept"
+        )
     else:
         ending = "will be destroyed" if policy == "destroy" else "is kept"
         summary = f"imported into {orchestrator.short} at {str(oid)[:12]}; this container {ending}"
@@ -69,6 +87,7 @@ def complete(
 
 def flush_callback(ctx: ActionContext) -> Callable[[PendingFinish], InboxMessage]:
     """Complete a queued report with the recipient as the orchestrator."""
+
     def finish(item: PendingFinish) -> InboxMessage:
         msg, _ = complete(ctx, ctx.nodes.get(item.child_full), ctx.sender, item)
         return msg
@@ -78,7 +97,9 @@ def flush_callback(ctx: ActionContext) -> Callable[[PendingFinish], InboxMessage
 
 def park(ctx: ActionContext, orchestrator: Node, item: PendingFinish) -> Path:
     """Keep a finish item in the same causal queue as ordinary inbox messages."""
-    path = pending_dir(ctx.root, orchestrator.full) / finish_file_name(item, ctx.now, seq=next(ctx.seq))
+    path = pending_dir(ctx.root, orchestrator.full) / finish_file_name(
+        item, ctx.now, seq=next(ctx.seq)
+    )
     atomic_write_text(path, item.model_dump_json() + "\n")
     return path
 
@@ -96,8 +117,11 @@ def settle_destroys(ctx: ActionContext) -> None:
         marker = child.config.get(labels.PENDING_DESTROY)
         if not marker:
             continue
-        reason = ("the imported commit changed" if child.config.get(labels.LAST_IMPORT) != marker
-                  else destroy_guard(ctx, child))
+        reason = (
+            "the imported commit changed"
+            if child.config.get(labels.LAST_IMPORT) != marker
+            else destroy_guard(ctx, child)
+        )
         if reason is not None:
             body = f"child {child.short} was kept instead of destroyed: {reason}"
         else:
@@ -111,15 +135,36 @@ def settle_destroys(ctx: ActionContext) -> None:
                     ctx.nodes.pop(child.full, None)
                 continue
         ctx.incus.config_unset_checked(child.full, labels.PENDING_DESTROY)
-        msg = InboxMessage.model_validate({"version": 1, "id": new_host_id(), "type": "message",
-                                          "from": child.short, "kind": "note", "body": body})
-        outbox.deliver(ctx.incus, ctx.root, ctx.sender.full, msg, running=True,
-                       uid=ctx.cfg.container_user.uid, now=ctx.now, seq=next(ctx.seq))
+        msg = InboxMessage.model_validate(
+            {
+                "version": 1,
+                "id": new_host_id(),
+                "type": "message",
+                "from": child.short,
+                "kind": "note",
+                "body": body,
+            }
+        )
+        outbox.deliver(
+            ctx.incus,
+            ctx.root,
+            ctx.sender.full,
+            msg,
+            running=True,
+            uid=ctx.cfg.container_user.uid,
+            now=ctx.now,
+            seq=next(ctx.seq),
+        )
 
 
 def notify_orphaned_finishes(
-    incus: Incus, root: Path, present: Collection[str], running: Collection[str], *,
-    now: datetime, seq: Iterator[int],
+    incus: Incus,
+    root: Path,
+    present: Collection[str],
+    running: Collection[str],
+    *,
+    now: datetime,
+    seq: Iterator[int],
 ) -> None:
     """Tell surviving workers about undeliverable reports before purging them."""
     from pydantic import ValidationError
@@ -139,12 +184,27 @@ def notify_orphaned_finishes(
                 continue
             if item.child_full not in present:
                 continue
-            msg = InboxMessage.model_validate({
-                "version": 1, "id": new_host_id(), "type": "message", "kind": "note",
-                "from": directory.name,
-                "body": f"your orchestrator {directory.name} was destroyed; your work was not imported and this container is kept",
-            })
+            msg = InboxMessage.model_validate(
+                {
+                    "version": 1,
+                    "id": new_host_id(),
+                    "type": "message",
+                    "kind": "note",
+                    "from": directory.name,
+                    "body": (
+                        f"your orchestrator {directory.name} was destroyed; "
+                        "your work was not imported and this container is kept"
+                    ),
+                }
+            )
             incus.config_unset_checked(item.child_full, labels.PENDING_DESTROY)
-            outbox.deliver(incus, root, item.child_full, msg,
-                           running=item.child_full in running, uid=item.uid,
-                           now=now, seq=next(seq))
+            outbox.deliver(
+                incus,
+                root,
+                item.child_full,
+                msg,
+                running=item.child_full in running,
+                uid=item.uid,
+                now=now,
+                seq=next(seq),
+            )

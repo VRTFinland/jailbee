@@ -495,15 +495,20 @@ def manifest_of(base: Path, r: subprocess.CompletedProcess[str]) -> tuple[str, d
 
 @pytest.mark.parametrize("kind,opts", [("spawn", ["--branch", "b"]), ("restart", ["--child", "c"])])
 def test_send_on_done(script, base, tmp_path, kind, opts):
-    _, manifest = manifest_of(base, send(script, base, tmp_path, kind, *opts, "--on-done", "keep", "--text", "go"))
+    _, manifest = manifest_of(
+        base, send(script, base, tmp_path, kind, *opts, "--on-done", "keep", "--text", "go")
+    )
     assert manifest["on_done"] == "keep"
 
 
-@pytest.mark.parametrize("args", [
-    ["spawn", "--branch", "b", "--on-done", "later", "--text", "go"],
-    ["message", "--on-done", "keep", "--text", "go"],
-    ["message", "--timeout", "1", "--text", "go"],
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["spawn", "--branch", "b", "--on-done", "later", "--text", "go"],
+        ["message", "--on-done", "keep", "--text", "go"],
+        ["message", "--timeout", "1", "--text", "go"],
+    ],
+)
 def test_send_new_option_errors(script, base, tmp_path, args):
     assert send(script, base, tmp_path, *args).returncode == 2
     assert not list((base / "outbox").glob("*.json"))
@@ -514,10 +519,13 @@ def test_send_update_writes_manifest(script, base, tmp_path):
     assert manifest == {"version": 1, "id": mid, "type": "update", "child": "c"}
 
 
-@pytest.mark.parametrize("state,code", [("done", 0), ("queued", 0), ("started", 0), ("refused", 1), ("failed", 1)])
+@pytest.mark.parametrize(
+    "state,code", [("done", 0), ("queued", 0), ("started", 0), ("refused", 1), ("failed", 1)]
+)
 def test_send_wait_reads_only_matching_status(script, base, tmp_path, state, code):
     unrelated = write_inbox(base, FIRST, message("h-other"))
     errors = []
+
     def reply():
         try:
             deadline = time.monotonic() + 5
@@ -533,6 +541,7 @@ def test_send_wait_reads_only_matching_status(script, base, tmp_path, state, cod
                 time.sleep(0.01)
         except Exception as exc:
             errors.append(exc)
+
     thread = threading.Thread(target=reply)
     thread.start()
     try:
