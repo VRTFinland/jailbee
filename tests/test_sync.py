@@ -8299,6 +8299,36 @@ def _merge_relay_wiring(mocker, make_cfg, tmp_path, *, target_branch="feat/b"):
     return cfg, incus
 
 
+def test_container_merge_plain_skips_clean_preflight_when_not_required(mocker, make_cfg, tmp_path):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    preflight = mocker.patch("jailbee.sync._run_container_preflights")
+    mocker.patch("jailbee.sync._container_status_dirty", return_value=True)
+    mocker.patch("jailbee.sync._container_current_branch", return_value="feat/b")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="b" * 40)
+    result = sync.merge_container_into_container(
+        cfg, incus, "c1", "c2", plain=True, require_clean_target=False
+    )
+    preflight.assert_not_called()
+    assert result.push.container_ref == "refs/jailbee/from/c1/feat/a"
+    sync.push_to_container.assert_called_once()
+
+
+def test_container_merge_plain_still_refuses_detached_target(mocker, make_cfg, tmp_path):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch("jailbee.sync._container_current_branch", return_value=None)
+    with pytest.raises(sync.SyncError, match="detached HEAD"):
+        sync.merge_container_into_container(
+            cfg, incus, "c1", "c2", plain=True, require_clean_target=False
+        )
+    sync.push_to_container.assert_not_called()
+
+
+def test_container_merge_require_clean_false_needs_plain(mocker, make_cfg, tmp_path):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    with pytest.raises(ValueError, match="require_clean_target=False needs plain=True"):
+        sync.merge_container_into_container(cfg, incus, "c1", "c2", require_clean_target=False)
+
+
 def test_merge_container_into_container_reports_submodule_moves(mocker, make_cfg, tmp_path):
     """The gitlinks that moved are read from inside the TARGET container.
 

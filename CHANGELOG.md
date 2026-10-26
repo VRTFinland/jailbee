@@ -18,7 +18,9 @@ before editing `## Unreleased`.
   `remote.ssh.orchestration` (defaults to the session's SSH permissions).
   The broker installs the `jailbee-inbox` helper into granted containers and
   their children; `jailbee base build` bakes it into new images. Run
-  `jailbee apply` for the skills.
+  `jailbee apply` for the skills. A child's `done` imports its work into the
+  orchestrator and, unless spawned with `on_done: keep`, destroys the finished
+  child; `update` brings the orchestrator's branch into a child.
 - **Memory limit controls.** `jailbee mem` and the dashboard's Memory action
   set a container's memory limit; `default` clears its override. Limits below
   current use require confirmation.

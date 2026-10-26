@@ -88,14 +88,14 @@ Commit everything before you send `done`.
   the id. Give the prompt on stdin (`-`) or with `--text`:
 
 ```bash
-jailbee-inbox send spawn --branch fix/issue-12 --note "GitHub #12" - <<'EOF'
+jailbee-inbox send spawn --branch fix/issue-12 --note "GitHub #12" --wait - <<'EOF'
 Task: fix issue 12 ...
 EOF
 ```
 
   Never write prompt, summary or any scratch file inside the repo work tree
   (and so never pass a relative `--file`): an untracked file makes the tree
-  dirty, and a dirty tree makes a `fork` spawn and an `import` refused. If
+  dirty, and a dirty tree makes a `fork` spawn refused. If
   you need a file, use an absolute path under `/tmp`.
 - Note the id the helper prints (`<type>-<UTC time>-<hex>`, for example
   `spawn-20261025101500-a1b2`): it is the `ref` of the status reply.
@@ -108,6 +108,12 @@ EOF
   write `.<id>.json.tmp`, then `mv` it to `<id>.json`.
 - Use a new id every time and keep a scheme (`spawn-fix-12`, `import-fix-12`).
   Ids are never reused, not even after a refusal.
+
+New children default to `on_done: destroy`: after importing and delivering
+`done`, the broker removes them. Use `--on-done keep` for multi-session
+children. Without the `destroy` operation the default is `keep`; explicitly
+requesting `destroy` is refused. Restart may change the policy; omission
+keeps the current value.
 
 ## Choosing the child's agent (`runner`)
 
@@ -194,6 +200,10 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
 
+Use `send --wait` for `spawn`, `update` and `destroy`. It prints and marks
+only the matching status read: exit 0 for done/queued/started, 1 for
+refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m).
+A timeout is not a refusal: read the eventual reply instead of resending.
 The broker is not instant; expect seconds, not milliseconds.
 
 A spawn gets `queued` or `started`, then a final `done` (``child `<short>` is
@@ -222,27 +232,26 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 
 ## When a child says done
 
-1. Send `import` for the child. Wait for a `done` status whose detail names
-   `refs/jailbee/from/<child>/<branch>`.
-2. `git merge` (or cherry-pick) from that ref and resolve conflicts yourself.
-   The import also brings the child's submodule commits, but a merge only
-   moves the gitlinks: run `git submodule update` afterwards so the
-   submodule working trees match. No network is needed; the objects are
-   already local.
-3. Free the slot: a finished child is normally still running, so `stop`
-   it, then `destroy` it if your grant has that operation (stop first is
-   the recommended order). Stopping alone frees the slot, so queued spawns
-   and restarts can start. `destroy` is refused if the child has commits
-   you have not imported, unless `force` is true. Use `force` only when you
-   mean to discard them.
+1. The report already carries `imported_ref` (`refs/jailbee/from/<child>/<branch>`)
+   and `imported_sha`. If it has
+   `import_error`, fix the cause and send `import --child C --wait` to retry.
+2. `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself.
+   Submodule commits are already local; run `git submodule update` after
+   merging so the working trees match their gitlinks.
+3. `on_done: destroy` schedules automatic cleanup after delivery. A done
+   `keep` child needs only `jailbee-inbox send destroy --child C --wait`, not
+   a separate stop. Destroy refuses new commits, uncommitted changes and an
+   unreadable working tree; `force` deliberately discards them. If work
+   changes after done, automatic cleanup keeps the child and tells you.
 
 ## Rework
 
-To redo a child's work, `restart` a stopped child with a new prompt. A
-restart that runs at once is answered `done` ("child `x` restarted"); with
-no free slot it is `queued`, then `started` when it later begins. Never
-try to merge your own work into a child. If you need newer base work in a
-child, spawn a fresh fork instead.
+Prefer a fresh fork for rework: it starts from your latest merged state.
+For an existing `keep` child, `jailbee-inbox send update --child C --wait`
+transports your branch and tells the child which ref to merge. The broker
+never merges it. To launch another session, stop then restart the child
+with a new prompt; an immediate restart reports `done`, a queued one reports
+`queued` then `started`.
 
 ## Finishing
 

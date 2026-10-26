@@ -64,6 +64,46 @@ def _m(branch: str = "fix/1", **rights: object) -> SpawnManifest:
     )
 
 
+def test_spawn_records_on_done_destroy_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _ctx(tmp_path)
+    plan = plan_spawn(ctx, _m(), queued_names=())
+    assert isinstance(plan, actions.SpawnPlan)
+    from jailbee.create_flow import CreateStarted
+
+    create = MagicMock(return_value=CreateStarted(plan.child_full, 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "start_create", create)
+    out = actions.start_child(ctx, plan, fork=None)
+    assert create.call_args.args[3].on_done == "destroy"
+    assert out.detail.endswith("on done: destroy")
+
+
+def test_spawn_without_destroy_operation_defaults_to_keep(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, {"operations": ["spawn", "message", "import"]})
+    plan = plan_spawn(ctx, _m(), queued_names=())
+    assert isinstance(plan, actions.SpawnPlan)
+    assert (
+        actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=None).on_done
+        == "keep"
+    )
+
+
+def test_spawn_explicit_destroy_without_destroy_operation_refused(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, {"operations": ["spawn", "message"]})
+    out = plan_spawn(ctx, _m().model_copy(update={"on_done": "destroy"}), queued_names=())
+    assert isinstance(out, Outcome) and out.state == "refused"
+    assert "destroy` operation" in out.detail
+
+
+def test_child_instance_config_writes_on_done(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    plan = plan_spawn(ctx, _m(), queued_names=())
+    assert isinstance(plan, actions.SpawnPlan)
+    opts = actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=None)
+    assert lifecycle._child_instance_config(opts)[labels.ON_DONE] == "destroy"
+
+
 def test_plan_spawn_prepends_preamble(tmp_path: Path) -> None:
     plan = plan_spawn(_ctx(tmp_path), _m(), queued_names=())
     assert not isinstance(plan, Outcome)
@@ -262,7 +302,7 @@ def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     ctx, plan = _plan(tmp_path)
     out = actions.start_child(ctx, plan, fork=None)
     assert out.state == "started"
-    assert out.detail == "creation of child `fix-1` started"
+    assert out.detail == "creation of child `fix-1` started; on done: destroy"
     inter = seen["interaction"]
     assert inter.accept_escalation is not None  # type: ignore[attr-defined]
     assert inter.confirm is None  # type: ignore[attr-defined]

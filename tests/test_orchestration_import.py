@@ -81,6 +81,7 @@ def test_import_transports_and_labels(tmp_path: Path, merge: MagicMock) -> None:
         "orch",
         plain=True,
         ff_local_branch=False,
+        require_clean_target=False,
         timeout=CHILD_TRANSPORT_TIMEOUT_S,
     )
     ctx.incus.with_exec_timeout.assert_called_once_with(CHILD_EXEC_TIMEOUT_S)  # type: ignore[attr-defined]
@@ -90,6 +91,20 @@ def test_import_transports_and_labels(tmp_path: Path, merge: MagicMock) -> None:
         (CHILD, labels.STATE, labels.STATE_IMPORTED),
     ]
     assert out == done(f"imported as {REF} at {'b' * 12}")
+
+
+def test_import_child_from_the_child_side_records_labels(tmp_path: Path, merge: MagicMock) -> None:
+    ctx = _ctx(tmp_path)
+    orch = ctx.sender
+    child = ctx.nodes[CHILD]
+    ctx.sender = child
+    assert importing.import_child(ctx, child, orch) == importing.Imported(REF, SHA)
+    assert merge.call_args.args[2:4] == ("fix-1", "orch")
+    # Incus is mocked because the real operation crosses the container boundary.
+    assert [c.args for c in ctx.incus.config_set.call_args_list] == [
+        (CHILD, labels.LAST_IMPORT, SHA),
+        (CHILD, labels.STATE, labels.STATE_IMPORTED),
+    ]
 
 
 def test_import_of_stopped_child_refused(tmp_path: Path, merge: MagicMock) -> None:

@@ -4,22 +4,25 @@ from __future__ import annotations
 
 import contextlib
 import importlib.resources
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from pydantic import ValidationError
+
 from jailbee.config.common import CONTAINER_USERNAME
 from jailbee.incus import IncusError
-from jailbee.orchestration.protocol import inbox_file_name
+from jailbee.orchestration.protocol import FINISH_SUFFIX, PendingFinish, inbox_file_name
 from jailbee.orchestration.state import atomic_write_text, pending_dir
 from jailbee.outbox_io import _validate_outbox_name, read_text_outbox
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
     from jailbee.incus import Incus
-    from jailbee.orchestration.protocol import InboxItem
+    from jailbee.orchestration.protocol import InboxItem, InboxMessage
 
 _BASE = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration"
 OUTBOX_DIR = f"{_BASE}/outbox"
@@ -161,22 +164,44 @@ def has_pending(root: Path, recipient_full: str) -> bool:
     return any(p.is_file() and not p.name.startswith(".") for p in directory.iterdir())
 
 
-def flush_pending(incus: Incus, root: Path, recipient_full: str, *, uid: int | None) -> int:
+def flush_pending(
+    incus: Incus,
+    root: Path,
+    recipient_full: str,
+    *,
+    uid: int | None,
+    finish: Callable[[PendingFinish], InboxMessage] | None = None,
+) -> int:
     """Deliver parked files in name order; stop at the first failure."""
     directory = pending_dir(root, recipient_full)
     if not directory.is_dir():
         return 0
     delivered = 0
     for path in sorted(
-        p for p in directory.iterdir() if p.is_file() and not p.name.startswith(".")
+        p
+        for p in directory.iterdir()
+        if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".bad")
     ):
+        name = path.name
+        text = path.read_text(encoding="utf-8")
+        if name.endswith(FINISH_SUFFIX):
+            try:
+                item = PendingFinish.model_validate_json(text)
+            except ValidationError:
+                logging.getLogger(__name__).exception("invalid pending finish %s", path)
+                path.rename(path.with_name(path.name + ".bad"))
+                continue
+            if finish is None:
+                break
+            text = _item_json(finish(item))
+            name = name.removesuffix(FINISH_SUFFIX) + ".json"
         try:
             _atomic_write(
                 incus,
                 recipient_full,
                 INBOX_DIR,
-                path.name,
-                path.read_text(encoding="utf-8"),
+                name,
+                text,
                 "0644",
                 uid=uid,
             )

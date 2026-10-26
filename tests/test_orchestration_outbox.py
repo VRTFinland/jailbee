@@ -29,6 +29,83 @@ def _incus() -> MagicMock:
     return MagicMock()
 
 
+def _finish_item():
+    from jailbee.orchestration.protocol import PendingFinish
+
+    return PendingFinish(
+        version=1,
+        type="finish",
+        id="f-1",
+        child_full="proj-c",
+        child_short="c",
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
+
+
+def _finished_message():
+    from jailbee.orchestration.protocol import InboxMessage
+
+    return InboxMessage(version=1, id="h-f", type="message", from_="c", body="done")
+
+
+def test_flush_runs_finish_callback_in_order(tmp_path: Path) -> None:
+    from jailbee.orchestration.protocol import finish_file_name
+
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / inbox_file_name(_item("1"), AT, seq=0)).write_text(_item("1").model_dump_json())
+    path = directory / finish_file_name(_finish_item(), AT, seq=1)
+    path.write_text(_finish_item().model_dump_json())
+    (directory / inbox_file_name(_item("3"), AT, seq=2)).write_text(_item("3").model_dump_json())
+    incus = _incus()
+    finish = MagicMock(return_value=_finished_message())
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
+    writes = incus.exec_with_input.call_args_list
+    assert [json.loads(c.args[2])["id"] for c in writes] == ["h-1", "h-f", "h-3"]
+    assert writes[1].args[1][-2] == path.name.replace(".finish.json", ".json")
+    finish.assert_called_once_with(_finish_item())
+
+
+def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    path = directory / "a.finish.json"
+    path.write_text(_finish_item().model_dump_json())
+    incus = _incus()
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000) == 0
+    assert path.exists()
+    incus.exec_with_input.assert_not_called()
+
+
+def test_flush_keeps_finish_item_when_write_fails(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    path = directory / "a.finish.json"
+    path.write_text(_finish_item().model_dump_json())
+    incus = _incus()
+    incus.exec_with_input.side_effect = IncusError("offline")
+    finish = MagicMock(return_value=_finished_message())
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 0
+    assert path.exists()
+    incus.exec_with_input.side_effect = None
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 1
+    assert finish.call_count == 2
+
+
+def test_flush_quarantines_invalid_finish_and_continues(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    path = directory / "a.finish.json"
+    path.write_text("invalid")
+    (directory / "b.json").write_text(_item("1").model_dump_json())
+    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
+    assert path.with_name(path.name + ".bad").exists()
+
+
 def test_helper_script_is_packaged_file() -> None:
     assert outbox.helper_script().startswith("#!/usr/bin/env bash")
 

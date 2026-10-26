@@ -46,7 +46,7 @@ it to match replies.
  "in_reply_to": null}
 ```
 
-CLI: `jailbee-inbox send message [--kind K] [--reply-to ID] --text T`
+CLI: `jailbee-inbox send message [--kind K] [--reply-to ID] --wait --text T`
 (or `-` for stdin; `--file` only with an absolute path outside the repo).
 Never leave summary files in the repo work tree: they make your `done`
 refused. Note the id the helper prints (`<type>-<UTC time>-<hex>`).
@@ -57,7 +57,12 @@ answered `refused` unless the work tree is clean and HEAD is on a branch:
 - `uncommitted changes: commit everything before reporting done`
 - `detached HEAD: check out your branch before reporting done`
 
-Fix the cause and send a new `done` under a new id.
+Fix the cause and send a new `done` under a new id. Always use `--wait` for
+done, and for any message your work depends on. Exit 0 means accepted
+(done/queued/started), 1 refused/failed, 2 usage error, 3 timeout; the default
+`--timeout` is 30m. It prints and marks only the matching status read. End
+the session only after done returns 0. A timeout needs the original reply,
+not another report. The container may be destroyed after done, so commit first.
 
 ## Inbox
 
@@ -72,6 +77,17 @@ A `message` from your orchestrator (`from` is its short name):
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "main-orch",
  "kind": "note", "body": "Use the existing parser.", "in_reply_to": "h-77aa01bc"}
 ```
+
+An `update` message carries optional `imported_ref` and `imported_sha`
+(full commit ID), plus a body naming the parent's branch. Commit or stash,
+`git merge <imported_ref>`, resolve conflicts, commit, then continue. The
+broker never merges into your worktree. Other import fields on messages are
+`import_error` and `on_done` (`destroy` or `keep`).
+
+Done status details say where the work was imported and whether the child
+will be destroyed or kept. Import errors keep the child and are delivered
+to the orchestrator for retry. A queued finish waits for parent delivery
+before import/cleanup; a vanished parent keeps the child and reports an error.
 
 A `status` reply answers one of your manifests; `ref` is the manifest id and
 `state` is `done` (delivered), `queued` (your orchestrator is not running; the

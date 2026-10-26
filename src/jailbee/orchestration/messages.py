@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from jailbee import lifecycle, sync
 from jailbee.git import GitError
 from jailbee.incus import IncusError
-from jailbee.orchestration import labels
+from jailbee.orchestration import finishing, labels, outbox
 from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
     CHILD_TRANSPORT_TIMEOUT_S,
@@ -19,7 +19,7 @@ from jailbee.orchestration.actions import (
     refused,
 )
 from jailbee.orchestration.outbox import deliver
-from jailbee.orchestration.protocol import InboxMessage, MessageManifest, new_host_id
+from jailbee.orchestration.protocol import InboxMessage, MessageManifest, PendingFinish, new_host_id
 from jailbee.sync import SyncError
 
 if TYPE_CHECKING:
@@ -119,13 +119,50 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         ctx.incus.config_set(full, labels.STATE, labels.STATE_DONE)
     except IncusError as exc:
         return refused(f"could not record the done report: {exc}")
-    target = _orchestrator_of(ctx)
-    outcome = _relay(ctx, target, manifest)
-    if outcome.state == "done":
-        return done(f"done reported to {target.short} at {oid[:12]}")
+    orchestrator_full = ctx.sender.config[labels.SPAWNED_BY]
+    target = ctx.nodes.get(orchestrator_full)
+    if target is None:
+        short = lifecycle.short_name(ctx.cfg, orchestrator_full)
+        return refused(
+            f"your orchestrator {short} no longer exists; your work is on the host "
+            f"at {oid[:12]} and this container is kept"
+        )
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id=manifest.id,
+        child_full=full,
+        child_short=ctx.sender.short,
+        branch=branch,
+        done_sha=oid,
+        body=manifest.body,
+        in_reply_to=manifest.in_reply_to,
+        uid=uid,
+    )
+    # Before any cleanup marker: a crash before the broker journals/replies
+    # must conservatively keep the child, even if its outbox disappears.
+    from jailbee.orchestration.state import atomic_write_text
+
+    atomic_write_text(finishing.reply_path(ctx, ctx.sender), "{}\n")
+    if target.running and not outbox.has_pending(ctx.root, target.full):
+        # Persist intent before a destroy marker can exist: a broker crash
+        # before the inbox write must leave a retryable delivery gate.
+        pending = finishing.park(ctx, target, item)
+        msg, summary = finishing.complete(ctx, ctx.sender, target, item)
+        seq = next(ctx.seq)
+        try:
+            outbox.write_inbox(ctx.incus, target.full, msg, uid=uid, now=ctx.now, seq=seq)
+        except IncusError:
+            outbox.deliver(
+                ctx.incus, ctx.root, target.full, msg, running=False, uid=uid, now=ctx.now, seq=seq
+            )
+        pending.unlink(missing_ok=True)
+        return done(summary)
+    finishing.park(ctx, target, item)
     return Outcome(
-        outcome.state,
-        f"{target.short} is not running; done at {oid[:12]} is delivered when it starts",
+        "queued",
+        f"{target.short} is not running or busy; your work is on the host "
+        f"at {oid[:12]} and is imported when it is delivered",
     )
 
 

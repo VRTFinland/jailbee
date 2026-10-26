@@ -99,6 +99,8 @@ class FakeIncus:
             for file_name in argv[3:]:
                 self.outbox[name].pop(file_name, None)
             return ""
+        if "status" in argv and "--porcelain" in argv:
+            return ""
         if argv[-2:] == ["rev-parse", "HEAD"]:
             return HEAD + "\n"
         raise AssertionError(f"unexpected exec {argv}")
@@ -175,22 +177,21 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
 
     # Round 1: the only slot is taken by c1 -> the spawn queues; c1 stops.
     assert broker.tick(incus, root=root, journal=journal, now=T0, memory=memory)  # type: ignore[arg-type]  # fake
-    world["start_create"].assert_not_called()
-    assert [r.manifest_id for r in load_queue(root)["proj-orch"]] == ["a-spawn"]
+    world["start_create"].assert_called_once()
+    assert load_queue(root) == {}
     assert incus.containers["proj-c1"]["status"] == "Stopped"
     assert incus.containers["proj-c1"]["config"][labels.STOPPED_HEAD] == HEAD
     assert incus.outbox["proj-orch"] == {}
 
-    # Round 2, orchestrator stopped: the freed slot starts the queued spawn,
-    # and its status is parked.
+    # The refreshed cleanup snapshot frees the slot in the same round.
+    # Round 2 with a stopped orchestrator does not start it twice.
     incus.set_running("proj-orch", False)
     broker.tick(incus, root=root, journal=journal, now=T0 + timedelta(seconds=5), memory=memory)  # type: ignore[arg-type]  # fake
     world["start_create"].assert_called_once()
     opts = world["start_create"].call_args.args[3]
     assert (opts.name, opts.network, opts.spawned_by) == ("proj-fix-1", "strict", "proj-orch")
     assert load_queue(root) == {}
-    parked = sorted(p.name for p in pending_dir(root, "proj-orch").iterdir())
-    assert len(parked) == 1
+    assert not list(pending_dir(root, "proj-orch").glob("*.json"))
 
     # Round 3, orchestrator back: the parked status is flushed after the others.
     incus.set_running("proj-orch", True)
@@ -201,10 +202,9 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
         ("b-stop", "done"),
         ("a-spawn", "started"),
     ]
-    assert inbox[2][1]["detail"] == "creation of child `fix-1` started"
-    assert inbox[2][0] == parked[0]
+    assert inbox[2][1]["detail"] == "creation of child `fix-1` started; on done: destroy"
     assert [name for name, _ in inbox] == sorted(name for name, _ in inbox)
-    assert not any(pending_dir(root, "proj-orch").iterdir())
+    assert not list(pending_dir(root, "proj-orch").glob("*.json"))
 
     # Journal before reply, reply before delete, per manifest.
     events = [e for e in incus.events if e[0] in ("rm", "write") and e[1] == "proj-orch"]
@@ -296,12 +296,29 @@ def git_done(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     monkeypatch.setattr(lifecycle, "container_repo_dir", lambda cfg, incus, full: "/repo")
     monkeypatch.setattr(sync, "_container_status_dirty", lambda *a, **k: False)
     monkeypatch.setattr(sync, "_container_current_branch", lambda *a, **k: "c1-branch")
+    monkeypatch.setattr(actions, "_child_head", lambda *a, **k: DONE_SHA)
     fetch = MagicMock(
         return_value=FetchResult(
             branch="c1-branch", old_oid=None, new_oid=DONE_SHA, base_oid=None, commits_added=1
         )
     )
     monkeypatch.setattr(sync, "fetch_from_container", fetch)
+    push = PushResult(
+        source="c1-branch",
+        source_ref="refs/jailbee/c1/c1-branch",
+        container_ref=IMPORT_REF,
+        old_oid=None,
+        new_oid=DONE_SHA,
+    )
+    monkeypatch.setattr(
+        sync,
+        "merge_container_into_container",
+        MagicMock(
+            return_value=MergeInContainerResult(
+                push=push, container_branch="main", fast_forward_only=False, head_oid=HEAD
+            )
+        ),
+    )
     return fetch
 
 
@@ -318,11 +335,11 @@ def test_child_done_while_orchestrator_runs(world: dict[str, Any], git_done: Mag
     _done_manifest(incus)
     _tick(world, broker.BrokerMemory())
     config = incus.containers["proj-c1"]["config"]
-    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_DONE)
+    assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_IMPORTED)
     [msg] = _messages(incus, "proj-orch")
     assert (msg["from"], msg["kind"], msg["body"]) == ("c1", "done", "finished")
     assert _statuses(incus, "proj-c1") == [
-        ("d-1", "done", f"done reported to orch at {DONE_SHA[:12]}")
+        ("d-1", "done", f"imported into orch at {DONE_SHA[:12]}; this container is kept")
     ]
     assert ("bound", actions.CHILD_EXEC_TIMEOUT_S) in incus.events
     assert git_done.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S
@@ -404,7 +421,9 @@ def test_spawn_reports_ready_after_worker_finishes(
     )
 
     _tick(world, memory)  # round 1: started, worker still running
-    assert _statuses(incus, "proj-orch") == [("sp1", "started", "creation of child `k1` started")]
+    assert _statuses(incus, "proj-orch") == [
+        ("sp1", "started", "creation of child `k1` started; on done: destroy")
+    ]
 
     jobs.clear()  # the worker finished and removed its row
     incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})

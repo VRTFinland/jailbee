@@ -31,7 +31,7 @@ prints the id:
 ```bash
 jailbee-inbox send message --kind question --text "Which parser do you mean?"
 jailbee-inbox send message --kind blocked --text "Tests need network access I do not have."
-jailbee-inbox send message --kind done - <<'EOF'
+jailbee-inbox send message --kind done --wait - <<'EOF'
 Fixed the parser; tests pass. Everything is committed.
 EOF
 ```
@@ -69,8 +69,20 @@ body: what changed, tests run, open points:
 If your prompted agent exits non-zero (1 to 127), Jailbee reports it to the
 orchestrator as a `blocked` message for you; do not send your own duplicate.
 
-After `done`, stop working and wait. The orchestrator may message you or
-restart you later with a new prompt.
+Always send `done` with `--wait` and end the session only after exit 0
+(`done` or `queued`). The reply says whether work was imported and whether
+the container will be destroyed or kept. On exit 1, fix the refusal and
+resend under a new id. Exit 3 is a timeout, not a refusal: wait for the
+original status; do not duplicate the report. After accepted `done`, stop
+working: the container may be destroyed. Commit everything before reporting.
+Use the same `--wait` rule for any message your work depends on.
+
+## Updates from your orchestrator
+
+An `update` message carries `imported_ref` and `imported_sha`. Commit or
+stash current work, run `git merge <imported_ref>`, resolve conflicts,
+commit, then continue. The broker only transports objects and refs; it
+never merges into your working tree. The message body names the branch.
 
 ## Waiting for a reply
 
@@ -100,8 +112,11 @@ and moves it to `inbox/read/`; or `mv` the file there yourself.
 Every message you send gets a `status` reply whose `ref` is its id, with
 state `done` (delivered), `queued` or `refused`. Only `refused` needs action;
 it is final, so fix the cause and send a new message under a new id.
-`queued` is not a failure: your orchestrator is not running, and the message
-is delivered when it starts. Do not resend it.
+`queued` is not a failure: your orchestrator is stopped or has older parked
+items; the report is imported before delivery when it can receive it. Do not
+resend it. `send --wait [--timeout DUR]` (default 30m) prints the matching
+status and moves only that status to `inbox/read/`: 0 for done/queued/started,
+1 for refused/failed, 2 for usage error, 3 for timeout.
 
 Two `refused` details for `done` are not a fault in your manifest or your
 tree: `could not fetch your branch to the host: ...` and

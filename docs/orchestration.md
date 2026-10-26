@@ -228,7 +228,13 @@ bakes the same helper (`wait`, `ls`, `read`, `runners`, `send`) into new images
 so agents need not write JSON by hand. After `wait`, run `ls` and handle every
 unread message. `JAILBEE_INBOX_SETTLE` controls the quiet window after an arrival
 (default 1 second, 0 disables), capped at 5 seconds and the wait timeout;
-messages already present return immediately.
+messages already present return immediately. Use `send --wait` for spawn,
+update and destroy, and always for a child's done report: it consumes only
+that manifest's status, returning 0 for done/queued/started, 1 for
+refused/failed, 2 for usage errors and 3 for timeout (default 30m).
+For multi-session work, spawn with `--on-done keep`; `update --child C`
+brings the parent's latest committed branch into the existing child.
+Prefer a fresh fork for rework so it starts from the latest merged state.
 
 ## Lifecycle
 
@@ -243,18 +249,30 @@ messages already present return immediately.
 - **Done.** A child reports `done` when finished. If its work tree is dirty or
   its HEAD is detached, the broker refuses with `uncommitted changes` (or
   `detached HEAD`) and does not relay it. Otherwise the broker fetches the
-  branch to the host and relays the message. The child keeps running.
+  branch to the host, imports it into the orchestrator, then delivers `done`
+  with `imported_ref` and `imported_sha`. Merge that ref yourself. The default
+  `on_done: destroy` removes the child after delivery and its status reply;
+  `on_done: keep` leaves it available for another session. A grant without
+  `destroy` defaults to `keep` and refuses an explicit `destroy` policy.
+  Import failures arrive as `import_error`, keep the child, and can be retried
+  with `import` after fixing the cause.
 - **Import.** `import` brings a running child's branch into the orchestrator
   at `refs/jailbee/from/<child>/<branch>`, without merging. The orchestrator
   merges or cherry-picks from that ref itself; conflicts are its to solve.
   A stopped child is refused ("restart it first"). The orchestrator needs a
-  clean tree and must not be a mount-mode container.
+  branch and must not be a mount-mode container; its tree may be dirty or
+  have an in-progress merge because the transport only writes refs and objects.
+- **Update.** `update` (allowed by the `import` operation) brings the
+  orchestrator's current branch into a running child at
+  `refs/jailbee/from/<orchestrator>/<branch>`. The child receives an `update`
+  message and merges that ref itself. No worktree or index is merged by the broker.
 - **Stop** a child; **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is
   refused ("stop it first").
 - **Destroy** (needs `destroy` in the grant) works on a running or stopped
-  child (stopping first is the recommended order) and is refused while the
-  child has commits never imported: its HEAD must equal the last import. A
+  child; a done `keep` child needs only `destroy`, not `stop` first. It is
+  refused for uncommitted changes or commits never imported: HEAD must equal
+  the last import. Unreadable status also keeps the child. A
   child's starting commit counts as imported, so one that never committed
   is destroyed without `force`. A
   stopped child's HEAD is the one recorded when the broker stopped it; a
@@ -264,9 +282,11 @@ messages already present return immediately.
   `done`). A child can only message its orchestrator, and an orchestrator only
   its own children.
 
-If the orchestrator is stopped or destroyed, nothing happens to its children.
-They keep running, and their messages wait until it returns. This is an
-error state for a human to resolve.
+If the orchestrator is stopped, `done` waits as an ordered finish item:
+import, delivery and cleanup run when it returns. If it is destroyed, the
+child is kept and told the report cannot be imported; the fetched branch
+remains on the host. A child that commits or edits after `done` is also kept
+instead of destroyed, with a notice to the orchestrator.
 
 ## Typical workflows
 
@@ -278,8 +298,8 @@ of that unit; the orchestrator never splits a plan's tasks across children.
 tickets on GitHub. The orchestrator reads them with the read-only `gh`,
 spawns one child per ticket (`fix/issue-<n>`) whose prompt carries the
 ticket text and the acceptance tests, and lets each child investigate, fix
-and test. As each reports `done` it imports and merges the branch, then
-stops (or destroys) the child so the next queued ticket starts. Forking
+and test. Each `done` arrives after auto-import; the orchestrator merges its
+`imported_ref`, while default cleanup frees the slot for the next ticket. Forking
 each new child from the orchestrator's latest merged HEAD keeps later
 fixes from conflicting with earlier ones.
 
@@ -287,7 +307,7 @@ fixes from conflicting with earlier ones.
 several implementation plans (for example written with the superpowers
 `writing-plans` skill), some independent and some depending on others. The
 orchestrator spawns a child per plan whose dependencies are met, one per
-free slot. When a child is done it imports and merges the result, resolves
+free slot. When a child is done it merges the already-imported result, resolves
 any conflicts itself, commits, and only then forks the plans that depended
 on it, so they start from the merged work. It continues step by step until
 the higher-level plan is complete.

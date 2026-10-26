@@ -5,7 +5,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -444,7 +444,7 @@ def test_flush_pending_runs_before_any_new_status(rig: Rig) -> None:
     names = [c[0] for c in rig.seq.mock_calls if c[0] in {"flush_pending", "deliver"}]
     assert names == ["flush_pending", "deliver"]
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
 
 
@@ -698,7 +698,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    rig.incus.list_containers.assert_called_once()  # exactly one round
+    assert rig.incus.list_containers.call_count == 2  # one round plus cleanup snapshot
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
@@ -842,7 +842,7 @@ def test_tick_flushes_pending_for_revoked_orchestrator(rig: Rig) -> None:
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
     rig.read_outbox.assert_not_called()
     rig.dispatch.assert_not_called()
@@ -874,7 +874,7 @@ def test_tick_flushes_pending_for_container_with_no_labels(rig: Rig) -> None:
     rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
     )
     rig.read_outbox.assert_not_called()
     rig.dispatch.assert_not_called()
@@ -889,6 +889,276 @@ def test_tick_skips_unlabelled_pending_without_repo_config(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_c("other-box")]
     rig.tick()
     rig.flush_pending.assert_not_called()
+
+
+def test_tick_completes_parked_finish_when_orchestrator_starts(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import finishing, importing, outbox
+    from jailbee.orchestration.actions import ActionContext, Node
+    from jailbee.orchestration.protocol import PendingFinish
+
+    orch = Node("proj-orch", "orch", True, {labels.GRANT: Grant().to_label()})
+    child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full})
+    ctx = ActionContext(
+        rig.cfg,
+        GlobalConfig(),
+        rig.incus,
+        rig.root,
+        orch,
+        {orch.full: orch, child.full: child},
+        NOW,
+    )
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="d1",
+        child_full=child.full,
+        child_short="kid",
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
+    finishing.park(ctx, orch, item)
+    relay = MagicMock(return_value=importing.Imported("refs/jailbee/from/kid/b", "a" * 40))
+    monkeypatch.setattr(importing, "import_child", relay)
+    monkeypatch.setattr(actions, "_child_head", MagicMock(return_value="a" * 40))
+    monkeypatch.setattr(actions.sync, "_container_current_branch", MagicMock(return_value="b"))
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    rig.incus.list_containers.return_value = [_orch(grant=Grant()), _child()]
+    rig.tick()
+    relay.assert_called_once()
+    delivered = [json.loads(c.args[2]) for c in rig.incus.exec_with_input.call_args_list]
+    assert delivered[0]["kind"] == "done" and delivered[0]["imported_sha"] == "a" * 40
+
+
+def _marked_child(rig: Rig) -> dict[str, Any]:
+    kid = _child()
+    kid["config"].update(
+        {labels.ON_DONE: "destroy", labels.LAST_IMPORT: "a" * 40, labels.PENDING_DESTROY: "a" * 40}
+    )
+    rig.incus.list_containers.return_value = [_orch(grant=Grant()), kid]
+    return kid
+
+
+def _destroy_seams(monkeypatch: pytest.MonkeyPatch):
+    destroy = MagicMock()
+    monkeypatch.setattr(actions.lifecycle, "destroy_container", destroy)
+    monkeypatch.setattr(actions, "_child_head", MagicMock(return_value="a" * 40))
+    monkeypatch.setattr(actions.lifecycle, "container_repo_dir", MagicMock(return_value="/r"))
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=False))
+    return destroy
+
+
+def test_tick_destroys_child_marked_for_destroy(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    directory = pending_dir(rig.root, "proj-kid")
+    directory.mkdir(parents=True)
+    rig.tick()
+    destroy.assert_called_once_with(rig.cfg, rig.incus, "proj-kid", force=True)
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_tick_keeps_marked_child_whose_head_moved_or_tree_dirty(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, dirty: bool
+) -> None:
+    from jailbee.orchestration import outbox
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    monkeypatch.setattr(
+        actions, "_child_head", MagicMock(return_value=("a" if dirty else "b") * 40)
+    )
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=dirty))
+    notice = MagicMock()
+    monkeypatch.setattr(outbox, "deliver", notice)
+    rig.tick()
+    destroy.assert_not_called()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.PENDING_DESTROY)
+    assert "kept" in notice.call_args.args[3].body
+
+
+def test_destroy_rechecks_revoked_grant(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration import outbox
+
+    kid = _marked_child(rig)
+    grant = Grant(operations=("spawn", "message", "import"))
+    rig.incus.list_containers.return_value = [_orch(grant=grant), kid]
+    destroy = _destroy_seams(monkeypatch)
+    notice = MagicMock()
+    monkeypatch.setattr(outbox, "deliver", notice)
+    rig.tick()
+    destroy.assert_not_called()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.PENDING_DESTROY)
+    assert "destroy permission" in notice.call_args.args[3].body
+
+
+def test_destroy_failure_unsets_marker_and_notifies(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import outbox
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    destroy.side_effect = RuntimeError("busy")
+    notice = MagicMock()
+    monkeypatch.setattr(outbox, "deliver", notice)
+    rig.tick()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.PENDING_DESTROY)
+    assert "could not be destroyed: busy" in notice.call_args.args[3].body
+
+
+def test_destroy_waits_for_parent_pending_delivery(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    directory = pending_dir(rig.root, "proj-orch")
+    directory.mkdir(parents=True)
+    (directory / "report.json").write_text("{}")
+    rig.tick()
+    destroy.assert_not_called()
+
+
+def test_destroy_step_runs_after_done_reply(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.orchestration import importing, messages
+    from jailbee.sync import FetchResult
+
+    kid = _marked_child(rig)
+    kid["config"].pop(labels.PENDING_DESTROY)
+    kid["config"].pop(labels.LAST_IMPORT)
+    destroy = _destroy_seams(monkeypatch)
+    monkeypatch.setattr(broker, "dispatch", actions.dispatch)
+    monkeypatch.setattr(messages.sync, "_container_current_branch", MagicMock(return_value="b"))
+    monkeypatch.setattr(
+        messages.sync,
+        "fetch_from_container",
+        MagicMock(
+            return_value=FetchResult(
+                branch="b", old_oid=None, new_oid="a" * 40, base_oid=None, commits_added=1
+            )
+        ),
+    )
+
+    def imported(*a, **k):
+        kid["config"][labels.LAST_IMPORT] = "a" * 40
+        return importing.Imported("refs/jailbee/from/kid/b", "a" * 40)
+
+    monkeypatch.setattr(importing, "import_child", imported)
+    rig.incus.config_set.side_effect = lambda full, key, value: kid["config"].__setitem__(
+        key, value
+    )
+    raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
+    rig.outboxes["proj-kid"] = [RawManifest("d1.json", json.dumps(raw), {})]
+    rig.seq.attach_mock(destroy, "destroy")
+    rig.tick()
+    names = [c[0] for c in rig.seq.mock_calls]
+    assert "destroy" in names and names.index("deliver") < names.index("destroy")
+    assert names.index("delete_outbox_files") < names.index("destroy")
+
+
+@pytest.mark.parametrize("failure", ["parked_reply", "crash_after_journal"])
+def test_done_cleanup_waits_for_durable_reply(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from jailbee.orchestration import messages, outbox
+    from jailbee.sync import FetchResult
+
+    kid = _marked_child(rig)
+    kid["config"].pop(labels.PENDING_DESTROY)
+    kid["config"].pop(labels.LAST_IMPORT)
+    destroy = _destroy_seams(monkeypatch)
+    monkeypatch.setattr(broker, "dispatch", actions.dispatch)
+    monkeypatch.setattr(messages.sync, "_container_current_branch", MagicMock(return_value="b"))
+    monkeypatch.setattr(
+        messages.sync,
+        "fetch_from_container",
+        MagicMock(
+            return_value=FetchResult(
+                branch="b", old_oid=None, new_oid="a" * 40, base_oid=None, commits_added=1
+            )
+        ),
+    )
+    from jailbee.orchestration import importing
+
+    def imported(*a, **k):
+        kid["config"][labels.LAST_IMPORT] = "a" * 40
+        return importing.Imported("refs/jailbee/from/kid/b", "a" * 40)
+
+    monkeypatch.setattr(importing, "import_child", imported)
+    rig.incus.config_set.side_effect = lambda full, key, value: kid["config"].__setitem__(
+        key, value
+    )
+    raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
+    rig.outboxes["proj-kid"] = [RawManifest("d1.json", json.dumps(raw), {})]
+    if failure == "parked_reply":
+        monkeypatch.setattr(broker, "deliver", outbox.deliver)
+
+        def write(incus, full, *a, **k):
+            if full == "proj-kid":
+                raise IncusError("reply write failed")
+
+        monkeypatch.setattr(outbox, "write_inbox", write)
+    else:
+        rig.deliver.side_effect = RuntimeError("crash after journal")
+    rig.tick()
+    destroy.assert_not_called()
+    # A fresh broker round must replay the reply without dispatching done again.
+    rig.deliver.side_effect = None
+    rig.deliver.return_value = "delivered"
+    monkeypatch.setattr(outbox, "write_inbox", MagicMock())
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    rig.tick()
+    destroy.assert_called_once()
+
+
+def test_vanished_orchestrator_finish_notifies_child(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import outbox
+    from jailbee.orchestration.protocol import PendingFinish
+    from jailbee.orchestration.state import pending_dir
+
+    destroy = _destroy_seams(monkeypatch)
+    directory = pending_dir(rig.root, "proj-orch")
+    directory.mkdir(parents=True)
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="d1",
+        child_full="proj-kid",
+        child_short="kid",
+        branch="b",
+        done_sha="a" * 40,
+        body="finished",
+        in_reply_to=None,
+        uid=1000,
+    )
+    (directory / "a.finish.json").write_text(item.model_dump_json())
+    notice = MagicMock()
+    monkeypatch.setattr(outbox, "deliver", notice)
+    rig.incus.list_containers.return_value = [_child()]
+    rig.tick()
+    assert "was destroyed" in notice.call_args.args[3].body
+    assert notice.call_args.args[2] == "proj-kid"
+    destroy.assert_not_called()
+    assert not directory.exists()
+
+
+def test_tick_clears_stale_stopped_dirty(rig: Rig) -> None:
+    kid = _child()
+    kid["config"][labels.STOPPED_DIRTY] = "1"
+    rig.incus.list_containers.return_value = [_orch(), kid]
+    rig.tick()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.STOPPED_DIRTY)
 
 
 def test_tick_clears_stopped_head_of_a_running_child(rig: Rig) -> None:

@@ -158,6 +158,7 @@ OPERATION_OF: Mapping[str, str] = {
     "spawn": "spawn",
     "message": "message",
     "import": "import",
+    "update": "import",
     "restart": "restart",
     "stop": "stop",
     "destroy": "destroy",
@@ -207,6 +208,7 @@ class SpawnPlan:
     prompt: str
     rights: ChildRights
     runner: Runner | None = None
+    on_done: Literal["destroy", "keep"] = "destroy"
 
 
 def plan_spawn(
@@ -234,8 +236,14 @@ def plan_spawn(
         return refused(f"container `{short}` is already being created")
     if full in queued_names:
         return refused(f"a request for `{short}` is already queued")
+    effective = ctx.grant()
+    if effective is None:
+        return refused(NOT_ALLOWED)
+    if m.on_done == "destroy" and "destroy" not in effective.operations:
+        return refused("on_done destroy needs the `destroy` operation in this container's grant")
+    policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, m.runner)
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, m.runner, policy)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -272,6 +280,7 @@ def child_options(
         spawned_by=orchestrator_full,
         rights=plan.rights,
         runner=plan.runner,
+        on_done=plan.on_done,
         assume_yes=False,
     )
 
@@ -304,7 +313,7 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     # Only the worker is launched here; a later create failure is not reported
     # (plan F), so the status must not claim the child exists.
     short = lifecycle.short_name(ctx.cfg, plan.child_full)
-    return Outcome("started", f"creation of child `{short}` started")
+    return Outcome("started", f"creation of child `{short}` started; on done: {plan.on_done}")
 
 
 GRANT_REVOKED = "orchestration grant revoked"
@@ -462,6 +471,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             rights=plan.rights.model_dump(mode="json"),
             runner=plan.runner.model_dump(mode="json") if plan.runner else None,
             runner_set=plan.runner is not None,
+            on_done=plan.on_done,
         )
     )
     _store(ctx, queued)
@@ -489,19 +499,28 @@ def _boot(
     started: bool,
     runner: Runner | None = None,
     set_runner: bool = False,
+    on_done: str | None = None,
 ) -> Outcome:
     # Before the boot: a restarted child commits anew, so a HEAD recorded at
     # its last stop (or its last `done`) no longer describes it, and it is
     # `working` again (absent STATE = working). Clearing first means a running
     # child never carries a stale value.
     try:
-        for key in (labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE):
+        for key in (
+            labels.STOPPED_HEAD,
+            labels.DONE_SHA,
+            labels.STATE,
+            labels.PENDING_DESTROY,
+            labels.STOPPED_DIRTY,
+        ):
             ctx.incus.config_unset_checked(child.full, key)
         if set_runner:
             if runner is not None:
                 ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
             else:
                 ctx.incus.config_unset_checked(child.full, labels.RUNNER)
+        if on_done is not None:
+            ctx.incus.config_set(child.full, labels.ON_DONE, on_done)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
@@ -545,6 +564,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         return refused(f"container `{short}` already exists")
     if req.child_full in creating_children(ctx):
         return refused(f"container `{short}` is already being created")
+    grant = ctx.grant()
     plan = SpawnPlan(
         child_full=req.child_full,
         kind="fork" if req.kind == "fork" else "new",
@@ -553,6 +573,11 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         prompt=req.prompt,
         rights=rights,
         runner=runner,
+        on_done=(
+            "destroy"
+            if req.on_done == "destroy" and grant is not None and "destroy" in grant.operations
+            else "keep"
+        ),
     )
     fork: ForkSource | None = None
     if req.kind == "fork":
@@ -586,7 +611,19 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
             return refused("; ".join(problems))
-    return _boot(ctx, node, req.prompt, started=True, runner=runner, set_runner=req.runner_set)
+    grant = ctx.grant()
+    policy = req.on_done
+    if policy == "destroy" and (grant is None or "destroy" not in grant.operations):
+        policy = "keep"
+    return _boot(
+        ctx,
+        node,
+        req.prompt,
+        started=True,
+        runner=runner,
+        set_runner=req.runner_set,
+        on_done=policy,
+    )
 
 
 # Queue kind -> starter.
@@ -653,6 +690,17 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_set(child.full, labels.STOPPED_HEAD, head)
             else:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_HEAD)
+            bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+            dirty = sync._container_dirty_quiet(
+                bounded,
+                child.full,
+                lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                uid=ctx.cfg.container_user.uid,
+            )
+            if dirty is False:
+                ctx.incus.config_unset_checked(child.full, labels.STOPPED_DIRTY)
+            else:
+                ctx.incus.config_set(child.full, labels.STOPPED_DIRTY, "1")
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
         try:
@@ -669,6 +717,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
+    if m.on_done == "destroy" and "destroy" not in grant.operations:
+        return refused("on_done destroy needs the `destroy` operation in this container's grant")
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child
@@ -689,7 +739,15 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if not queued and running_children(ctx) < grant.max_running_children:
-        return _boot(ctx, child, prompt, started=False, runner=m.runner, set_runner=set_runner)
+        return _boot(
+            ctx,
+            child,
+            prompt,
+            started=False,
+            runner=m.runner,
+            set_runner=set_runner,
+            on_done=m.on_done,
+        )
     queued.append(
         QueuedRequest(
             manifest_id=m.id,
@@ -703,6 +761,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             rights={},
             runner=m.runner.model_dump(mode="json") if m.runner else None,
             runner_set=set_runner,
+            on_done=m.on_done,
         )
     )
     _store(ctx, queued)
@@ -735,6 +794,24 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
             )
     if head is None or head != last:
         return reason
+    if child.running:
+        try:
+            bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+            dirty = sync._container_status_dirty(
+                bounded,
+                child.full,
+                lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                uid=ctx.cfg.container_user.uid,
+            )
+        except Exception:
+            return (
+                f"child `{child.short}`: its working tree could not be checked "
+                "(use force: true to destroy anyway)"
+            )
+    else:
+        dirty = child.config.get(labels.STOPPED_DIRTY) == "1"
+    if dirty:
+        return f"child `{child.short}` has uncommitted changes (use force: true to destroy anyway)"
     return None
 
 
@@ -781,3 +858,12 @@ def _handle_import(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 HANDLERS["import"] = _handle_import
+
+
+def _handle_update(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration import importing
+
+    return importing.handle_update(ctx, m)
+
+
+HANDLERS["update"] = _handle_update

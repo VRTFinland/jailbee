@@ -428,6 +428,7 @@ def op_to_job(
             "spawned_by": opts.spawned_by,
             "rights": (opts.rights.model_dump(mode="json") if opts.rights is not None else None),
             "runner": (opts.runner.model_dump(mode="json") if opts.runner is not None else None),
+            "on_done": opts.on_done,
         },
     }
 
@@ -490,6 +491,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # Dropped here (or in `op_to_job`) a background child would run the
         # repo's default agent instead of the runner its orchestrator chose.
         runner=(Runner.model_validate(o["runner"]) if o.get("runner") else None),
+        on_done=o.get("on_done"),
     )
     return opts, job["container_name"], job["log_path"]
 

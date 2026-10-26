@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import itertools
+import json
 import logging
 import signal
 import time
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import labels, watch
+from jailbee.orchestration import finishing, labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -42,6 +43,7 @@ from jailbee.orchestration.outbox import (
 from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
+    MessageManifest,
     RestartManifest,
     SpawnManifest,
     body_file_of,
@@ -187,6 +189,11 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory)
         now=ctx.now,
         seq=next(memory.seq),
     )
+    path = finishing.reply_path(ctx, ctx.sender)
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved.get("ref") == ref:
+            path.unlink(missing_ok=True)
 
 
 def _track(
@@ -309,6 +316,13 @@ def _handle_raw(
             # The detail goes to the container; the exception text stays in the log.
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
             outcome = refused("broker error")
+    if isinstance(manifest, MessageManifest) and manifest.kind == "done" and outcome is not None:
+        from jailbee.orchestration.state import atomic_write_text
+
+        atomic_write_text(
+            finishing.reply_path(ctx, ctx.sender),
+            json.dumps({"ref": ref, "state": outcome.state, "detail": outcome.detail}),
+        )
     # Journal before anything else: a crash after acting must never act again.
     journal.record(
         ctx.sender.key,
@@ -362,9 +376,16 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
-    flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=uid)
+    flush_pending(
+        ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
+    )
     if ctx.role() == "orchestrator":
         _sync_grant_json(ctx, memory)
+    path = finishing.reply_path(ctx, ctx.sender)
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved.get("ref"):
+            _reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
         _handle_raw(ctx, raw, journal, memory)
 
@@ -426,6 +447,15 @@ def tick(
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
     memory.env_ensured.intersection_update(present)
+    # Warn workers before deleting a vanished parent's queued finish reports.
+    finishing.notify_orphaned_finishes(
+        incus,
+        root,
+        {n for n in present if isinstance(n, str)},
+        {str(e["name"]) for e in raw if e.get("status") == "Running"},
+        now=now,
+        seq=memory.seq,
+    )
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)
@@ -474,8 +504,10 @@ def tick(
     # Before anything is served, so a `stop` handled later in this round keeps
     # the STOPPED_HEAD it records (the snapshot above predates it).
     for node in nodes.values():
-        if node.running and node.config.get(labels.STOPPED_HEAD):
-            _clear_stale_stopped_head(incus, node)
+        if node.running and (
+            node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)
+        ):
+            _clear_stale_stop_labels(incus, node)
 
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
@@ -496,7 +528,13 @@ def tick(
                 )
                 # Messages parked while it was an orchestrator still get delivered.
                 if node.running and has_pending(root, node.full):
-                    flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
+                    flush_pending(
+                        incus,
+                        root,
+                        node.full,
+                        uid=ctx.cfg.container_user.uid,
+                        finish=finishing.flush_callback(ctx),
+                    )
                 continue
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
@@ -504,6 +542,18 @@ def tick(
                 _serve(ctx, journal, memory)
         except Exception:
             log.exception("broker: serving %s failed", node.full)
+
+    # Handlers changed labels and may have stopped children after our initial
+    # snapshot. Refresh once before cleanup; share deletions with queue drain.
+    if orchestrators:
+        nodes = _nodes(incus.list_containers(), configs)
+        for ctx in orchestrators:
+            ctx.nodes = nodes
+            ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
+            try:
+                finishing.settle_destroys(ctx)
+            except Exception:
+                log.exception("broker: finished children of %s failed", ctx.sender.full)
 
     # After every round: queues move whenever a slot may have freed up.
     seen = {ctx.sender.full for ctx in orchestrators}
@@ -560,13 +610,14 @@ def _forget_vanished_watches(root: Path, present: set[object]) -> None:
         watch.save_watch(root, watches)
 
 
-def _clear_stale_stopped_head(incus: Incus, node: Node) -> None:
-    """Unset STOPPED_HEAD of a running container: it was started outside the
-    broker (whose own restart clears it), so the recorded HEAD is stale."""
+def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
+    """A running container's recorded stop-time HEAD and dirty flag are stale."""
     try:
-        incus.config_unset_checked(node.full, labels.STOPPED_HEAD)
+        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY):
+            if node.config.get(key):
+                incus.config_unset_checked(node.full, key)
     except Exception:
-        log.exception("broker: clearing the stale stopped HEAD of %s failed", node.full)
+        log.exception("broker: clearing the stale stop labels of %s failed", node.full)
 
 
 def _flush_unlabelled(
@@ -576,7 +627,13 @@ def _flush_unlabelled(
     try:
         ctx = context(node)
         if ctx is not None:
-            flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid)
+            flush_pending(
+                incus,
+                root,
+                node.full,
+                uid=ctx.cfg.container_user.uid,
+                finish=finishing.flush_callback(ctx),
+            )
     except Exception:
         log.exception("broker: flushing %s failed", node.full)
 

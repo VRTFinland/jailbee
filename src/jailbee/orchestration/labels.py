@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -24,6 +26,18 @@ LAST_IMPORT = "user.jailbee.orchestration.last_import"
 # no fallback, spec 7.3 as amended); the broker unsets it whenever it sees
 # the child running, so a start outside the broker leaves no stale value.
 STOPPED_HEAD = "user.jailbee.orchestration.stopped_head"
+
+ON_DONE = "user.jailbee.orchestration.on_done"
+PENDING_DESTROY = "user.jailbee.orchestration.pending_destroy"
+STOPPED_DIRTY = "user.jailbee.orchestration.stopped_dirty"
+ON_DONE_DESTROY = "destroy"
+ON_DONE_KEEP = "keep"
+
+
+def on_done_of(config: Mapping[str, str]) -> Literal["destroy", "keep"]:
+    """Old or invalid policies keep the child rather than risk losing work."""
+    return "destroy" if config.get(ON_DONE) == ON_DONE_DESTROY else "keep"
+
 
 STATE_WORKING = "working"
 STATE_DONE = "done"

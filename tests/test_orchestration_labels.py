@@ -7,6 +7,12 @@ import pytest
 from jailbee.orchestration import labels
 
 
+def test_on_done_of_defaults_to_keep():
+    assert labels.on_done_of({}) == "keep"
+    assert labels.on_done_of({labels.ON_DONE: "destroy"}) == "destroy"
+    assert labels.on_done_of({labels.ON_DONE: "x"}) == "keep"
+
+
 def test_child_env_empty_for_ordinary(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = MagicMock()

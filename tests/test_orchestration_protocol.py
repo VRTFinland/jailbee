@@ -40,6 +40,62 @@ def _spawn(name: str = "a", **over: Any) -> str:
     return json.dumps({k: v for k, v in d.items() if v is not None})
 
 
+def test_update_manifest_parses() -> None:
+    m = parse_manifest(
+        "a.json", json.dumps({"version": 1, "id": "a", "type": "update", "child": "c"}), {}
+    )
+    assert m.type == "update" and m.child == "c"
+
+
+def test_spawn_on_done_values() -> None:
+    for value in ("destroy", "keep", None):
+        m = parse_manifest("a.json", _spawn(on_done=value), {})
+        assert m.on_done == value
+    with pytest.raises(ManifestError):
+        parse_manifest("a.json", _spawn(on_done="later"), {})
+
+
+def test_restart_on_done_absent_is_none() -> None:
+    m = RestartManifest(version=1, id="a", type="restart", child="c", prompt="go")
+    assert m.on_done is None
+
+
+def test_inbox_message_import_fields_round_trip() -> None:
+    m = InboxMessage(
+        version=1,
+        id="h-1",
+        type="message",
+        from_="c",
+        body="done",
+        imported_ref="refs/jailbee/from/c/b",
+        imported_sha="a" * 40,
+        import_error=None,
+        on_done="destroy",
+    )
+    assert InboxMessage.model_validate(m.model_dump(by_alias=True)) == m
+
+
+def test_finish_file_name_sorts_with_inbox_names() -> None:
+    from jailbee.orchestration.protocol import PendingFinish, finish_file_name
+
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="f-1",
+        child_full="r-c",
+        child_short="c",
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
+    msg = InboxMessage(version=1, id="h-1", type="message", from_="c", body="later")
+    now = datetime(2026, 10, 26, tzinfo=UTC)
+    assert finish_file_name(item, now, seq=1).endswith(".finish.json")
+    assert finish_file_name(item, now, seq=1) < inbox_file_name(msg, now, seq=2)
+
+
 def test_spawn_from_inline_prompt() -> None:
     m = parse_manifest("fix-1.json", _spawn("fix-1"), {})
     assert isinstance(m, SpawnManifest) and m.prompt == "do it" and m.base is None

@@ -140,8 +140,6 @@ def test_orchestration_skill_covers_review_focus() -> None:
     assert "new id" in text
     assert "refused" in text and "queued" in text and "--timeout" in text
     assert "destroy" in text and "stop" in text and "slot" in text
-    step = text[text.index("Free the slot") :]
-    assert step.index("`stop`") < step.index("`destroy`"), "stop must come before destroy"
     assert "is refused while it runs" not in text
     assert "restart` alike" in text
 

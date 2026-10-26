@@ -493,6 +493,82 @@ def manifest_of(base: Path, r: subprocess.CompletedProcess[str]) -> tuple[str, d
     return mid, json.loads((base / "outbox" / f"{mid}.json").read_text())
 
 
+@pytest.mark.parametrize("kind,opts", [("spawn", ["--branch", "b"]), ("restart", ["--child", "c"])])
+def test_send_on_done(script, base, tmp_path, kind, opts):
+    _, manifest = manifest_of(
+        base, send(script, base, tmp_path, kind, *opts, "--on-done", "keep", "--text", "go")
+    )
+    assert manifest["on_done"] == "keep"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["spawn", "--branch", "b", "--on-done", "later", "--text", "go"],
+        ["message", "--on-done", "keep", "--text", "go"],
+        ["message", "--timeout", "1", "--text", "go"],
+    ],
+)
+def test_send_new_option_errors(script, base, tmp_path, args):
+    assert send(script, base, tmp_path, *args).returncode == 2
+    assert not list((base / "outbox").glob("*.json"))
+
+
+def test_send_update_writes_manifest(script, base, tmp_path):
+    mid, manifest = manifest_of(base, send(script, base, tmp_path, "update", "--child", "c"))
+    assert manifest == {"version": 1, "id": mid, "type": "update", "child": "c"}
+
+
+@pytest.mark.parametrize(
+    "state,code", [("done", 0), ("queued", 0), ("started", 0), ("refused", 1), ("failed", 1)]
+)
+def test_send_wait_reads_only_matching_status(script, base, tmp_path, state, code):
+    unrelated = write_inbox(base, FIRST, message("h-other"))
+    errors = []
+
+    def reply():
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                files = list((base / "outbox").glob("*.json"))
+                if files:
+                    mid = json.loads(files[0].read_text())["id"]
+                    time.sleep(0.5)
+                    payload = status("h-reply", ref=mid)
+                    payload["state"] = state
+                    write_inbox(base, SECOND, payload)
+                    return
+                time.sleep(0.01)
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=reply)
+    thread.start()
+    try:
+        r = send(script, base, tmp_path, "message", "--text", "done", "--wait", "--timeout", "3")
+    finally:
+        thread.join()
+    assert not errors
+    assert r.returncode == code, r.stderr
+    assert '"state": "' + state + '"' in r.stdout
+    assert (base / "inbox" / "read" / SECOND).exists()
+    assert unrelated.exists()
+
+
+def test_send_wait_times_out_with_3(script, base, tmp_path):
+    r = send(script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "1")
+    assert r.returncode == 3
+    assert r.stdout.startswith("message-")
+
+
+def test_ls_marks_imported_and_failed_imports(script, base, tmp_path):
+    write_inbox(base, FIRST, {**message("h-1"), "imported_sha": "a" * 40})
+    write_inbox(base, SECOND, {**message("h-2"), "import_error": "failed"})
+    r = run(script, "ls", env=env_for(base, tmp_path))
+    assert "[imported aaaaaaaaaaaa]" in r.stdout
+    assert "[import failed]" in r.stdout
+
+
 def test_send_message_writes_manifest_and_body(script, base, tmp_path):
     r = send(
         script,
@@ -712,6 +788,9 @@ def test_send_output_parses_with_protocol(script, base, tmp_path):
         ),
         ("restart", "--child", "c", "--text", "again"),
         ("import", "--child", "c"),
+        ("update", "--child", "c"),
+        ("spawn", "--branch", "b", "--on-done", "destroy", "--text", "go"),
+        ("restart", "--child", "c", "--on-done", "keep", "--text", "go"),
         ("stop", "--child", "c"),
         ("destroy", "--child", "c"),
         ("destroy", "--child", "c", "--force"),
