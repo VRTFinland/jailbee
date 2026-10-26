@@ -480,6 +480,7 @@ def test_every_expected_section_id_exists() -> None:
     html = INDEX.read_text()
     for anchor in (
         "parallel",
+        "orchestration",
         "demos",
         "usecases",
         "network",
@@ -490,6 +491,19 @@ def test_every_expected_section_id_exists() -> None:
         "docs",
     ):
         assert f'id="{anchor}"' in html, f"missing section: {anchor}"
+
+
+def test_orchestration_is_discoverable_without_the_news_feed() -> None:
+    html = INDEX.read_text()
+    start = html.index('<section id="orchestration">')
+    section = html[start : html.index("</section>", start)]
+    hrefs = [value for attr, value in collect_references(section) if attr == "href"]
+    assert "docs/orchestration/" in hrefs
+    assert "https://youtu.be/z-i82M_jzQw" in hrefs
+    hero = html[: html.index('<section id="demos">')]
+    assert "orchestration" not in hero.lower()
+    assert html.index('<section id="agents">') < start
+    assert start < html.index('<section id="features">')
 
 
 def test_incus_is_not_named_in_the_visible_hero() -> None:
@@ -537,8 +551,12 @@ def test_the_tour_is_a_click_to_load_player() -> None:
     assert video_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
     buttons = [a for t, a in elements if t == "button" and "yt__play" in (a.get("class") or "")]
     assert len(buttons) == 1 and buttons[0].get("aria-label"), "the player needs a named button"
-    thumbnail = f"assets/videos/{video_id}.jpg"
-    assert any(t == "img" and a.get("src") == thumbnail for t, a in elements)
+    tour = demos[demos.index('<figure class="demo" id="demo-tour">') :]
+    tour = tour[: tour.index("</figure>")]
+    thumbnails = [a.get("src") for t, a in collect_elements(tour) if t == "img"]
+    assert len(thumbnails) == 1
+    thumbnail = thumbnails[0]
+    assert thumbnail and thumbnail.startswith("assets/videos/")
     assert (SITE / thumbnail).is_file(), f"the tour's thumbnail is not committed: {thumbnail}"
     assert "<iframe" not in html and "youtube-nocookie" not in html and "ytimg" not in html
     assert f'href="https://www.youtube.com/watch?v={video_id}"' in demos, (

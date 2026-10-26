@@ -1,0 +1,55 @@
+@import url("../../../lib/base.css");
+
+.stage { padding: 76px 96px; }
+.kicker { margin-bottom: 24px; }
+h2 { font-size: 74px; max-width: 1600px; }
+.sub { font-size: 32px; color: var(--muted); line-height: 1.4; }
+.footer { position: absolute; left: 96px; bottom: 65px; font: 25px var(--mono); color: var(--muted); }
+.wordmark { color: var(--amber); font-size: 110px; letter-spacing: -.05em; }
+.wordmark span { color: var(--text); }
+.hero { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.hero-copy { position: absolute; left: 96px; top: 245px; width: 650px; }
+.hero-copy h1 { font-size: 78px; margin-top: 35px; }
+.hero-copy .sub { margin-top: 34px; }
+.hero-copy .url { color: var(--amber); font: 32px var(--mono); margin-top: 42px; }
+.screenshot { position: relative; display: inline-block; }
+.screenshot img { display: block; }
+.two { display: flex; align-items: flex-start; gap: 80px; margin-top: 65px; }
+.points { flex: 1; font-size: 39px; line-height: 1.4; }
+.points p { margin: 0 0 30px; }
+.points strong { color: var(--amber); font-weight: 600; }
+.chip { font: 25px var(--mono); color: var(--amber); letter-spacing: .03em; }
+.flow { display: flex; gap: 28px; align-items: center; margin: 64px 0 46px; }
+.step { flex: 1; border-top: 3px solid var(--amber); padding: 24px 0; font-size: 45px; }
+.step small { display: block; font-size: 27px; color: var(--muted); margin-top: 12px; }
+.arrow { font-size: 38px; color: var(--amber); }
+.coordinator { margin: 65px auto 60px; width: 550px; text-align: center; border: 2px solid var(--amber); padding: 30px; font-size: 45px; border-radius: 18px; }
+.work-items { display: flex; gap: 30px; }
+.work-item { flex: 1; padding: 32px; border: 1px solid var(--border); border-top: 4px solid var(--amber); background: var(--surface); border-radius: 12px; font-size: 37px; }
+.work-item small { display: block; font-size: 27px; color: var(--muted); margin-top: 20px; }
+.worker-full { margin: 65px 0 52px; }
+.worker-detail { display: flex; gap: 70px; align-items: center; }
+.worker-detail .sub { max-width: 740px; }
+.mobile-names { display: none; }
+.result-card { margin-top: 22px; }
+.controls { margin-top: 65px; }
+
+html[data-format="short"] .stage { padding: 100px 72px; }
+html[data-format="short"] h2 { font-size: 76px; }
+html[data-format="short"] .hero { inset: 300px auto auto -480px; width: 1540px; height: 800px; object-fit: contain; }
+html[data-format="short"] .hero-copy { top: 100px; left: 72px; width: 936px; }
+html[data-format="short"] .wordmark { font-size: 126px; }
+html[data-format="short"] .hero-copy h1 { margin-top: 750px; font-size: 76px; }
+html[data-format="short"] .hero-copy .sub { font-size: 38px; }
+html[data-format="short"] .hero-copy .url { font-size: 38px; }
+html[data-format="short"] .hero-copy .kicker { font-size: 30px; }
+html[data-format="short"] .footer { left: 72px; bottom: 510px; font-size: 27px; max-width: 900px; }
+html[data-format="short"] .two { display: block; margin-top: 70px; }
+html[data-format="short"] .points { margin-top: 60px; font-size: 42px; }
+html[data-format="short"] .points p { margin-bottom: 26px; }
+html[data-format="short"] .worker-full { display: none; }
+html[data-format="short"] .mobile-names { display: block; margin-top: 80px; }
+html[data-format="short"] .worker-detail { margin-top: 80px; gap: 60px; }
+html[data-format="short"] .worker-detail .sub { font-size: 39px; max-width: 440px; }
+html[data-format="short"] .workers-note { margin-top: 70px; font-size: 42px; }
+html[data-format="short"] .long-only { display: none; }

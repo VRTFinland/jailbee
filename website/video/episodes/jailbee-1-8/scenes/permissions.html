@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Host enforced grants</title><link rel="stylesheet" href="episode.css"></head><body><main class="stage">
+<div class="kicker">Your rules / real grant menu</div><h2>Permission is bounded.</h2>
+<div class="two"><div class="screenshot"><img class="shot menu" src="../assets/permissions.png" alt="Actual orchestration grant menu"></div><div class="points"><p class="limit"><strong>Child limit</strong><br>Bound concurrent workers.</p><p class="operations"><strong>Allowed operations</strong><br>Choose what the agent may do.</p><p class="access long-only"><strong>Grantable access</strong><br>Mounts, egress, loose network.</p><p class="broker">The <strong>host-side broker</strong><br>checks the grant.</p><p class="import-note" hidden>Import a branch.<br>Merge separately.</p></div></div>
+<div class="footer long-only">No host shell. No self-widening grants.</div>
+</main><script src="../../../lib/runtime.js"></script><script>
+JB.scene(({word, show, zoom, ring, format}) => {
+  const short = format === 'short';
+  const img = zoom(document.querySelector('.menu'), 2);
+  show('.kicker', .1); show('h2', .2); show('.screenshot', .3);
+  const limit = word('child limit'), ops = word('allowed operations');
+  const broker = word('host-side broker');
+  show('.limit', limit); show(ring(img, [5,65,360,17]), limit, ops);
+  show('.operations', ops); show(ring(img, [5,83,360,68]), ops, short ? broker : word('what access'));
+  show('.broker', broker);
+  if (short) {
+    document.querySelector('.import-note').hidden = false;
+    document.querySelector('.points').style.fontSize = '36px';
+    show('.import-note', word('Import brings back'));
+  } else {
+    const access = word('what access');
+    show('.access', access); show(ring(img, [5,151,360,68]), access, broker);
+    show('.footer', word('host shell'));
+  }
+});
+</script></body></html>

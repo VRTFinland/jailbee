@@ -115,6 +115,19 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   [Agents](https://jailbee.gisgro.io/docs/agents/) ·
   [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/)
 
+- **Optional orchestration for bounded tasks.** A queue of clear bug tickets
+  or a series of implementation plans can suit an agent coordinator, with
+  one child container per ticket or plan and dependent plans starting only
+  after their prerequisites are merged. You normally direct containers and
+  agents yourself; choose orchestration when a defined batch of work benefits
+  from separate working trees and runtimes. The coordinator exchanges
+  messages with workers and imports, reviews and merges their commits.
+  A host-side grant bounds its operations, child count and the optional
+  access it may give workers. Ordinary delegation stays with the agent's
+  built-in subagents.
+  [Orchestration guide](https://jailbee.gisgro.io/docs/orchestration/) ·
+  [Watch the orchestration demo](https://youtu.be/z-i82M_jzQw)
+
 - **Explicit network policy and a GitHub outbox.** Strict mode is the
   default: a destination IP allowlist, optionally per TCP port, filters
   container traffic, and an HTTP(S) egress proxy adds hostname rules with
