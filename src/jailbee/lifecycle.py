@@ -1178,6 +1178,7 @@ class NewContainerOptions:
     # The agent a spawned child runs (orchestration child runner); None keeps
     # the configured launch.
     runner: Runner | None = None
+    on_done: Literal["destroy", "keep"] | None = None
 
 
 def check_storage_pool(incus: Incus, pool: str | None) -> None:
@@ -1500,6 +1501,8 @@ def _child_instance_config(opts: NewContainerOptions) -> dict[str, str]:
         config[orchestration_labels.RIGHTS] = opts.rights.to_label()
     if opts.runner is not None:
         config[orchestration_labels.RUNNER] = opts.runner.to_label()
+    if opts.on_done is not None:
+        config[orchestration_labels.ON_DONE] = opts.on_done
     return config
 
 

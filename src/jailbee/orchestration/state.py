@@ -40,6 +40,7 @@ class QueuedRequest:
     # `Runner` as JSON; defaults keep queue files written before runners loadable.
     runner: dict[str, object] | None = None
     runner_set: bool = False
+    on_done: str | None = None
 
 
 def state_root() -> Path:

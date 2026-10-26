@@ -89,6 +89,25 @@ def _full(rig: Rig, branch: str) -> str:
     return str(lifecycle.derive_container_name(rig.cfg, branch))
 
 
+def test_queued_spawn_keeps_on_done(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, running=1)
+    m = _m().model_copy(update={"on_done": "keep"})
+    assert actions.handle_spawn(rig.ctx(), m).state == "queued"
+    assert load_queue(tmp_path)["proj-orch"][0].on_done == "keep"
+    rig.children = []
+    actions.drain_queue(rig.ctx())
+    assert seams["start"].call_args.args[1].on_done == "keep"
+
+
+def test_queued_spawn_downgrades_destroy_when_grant_changes(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, running=1)
+    actions.handle_spawn(rig.ctx(), _m())
+    rig.children = []
+    rig.sender = Node("proj-orch", "orch", True, {labels.GRANT: Grant(operations=("spawn", "message")).to_label()})
+    actions.drain_queue(rig.ctx())
+    assert seams["start"].call_args.args[1].on_done == "keep"
+
+
 def test_spawn_under_limit_starts(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     rig = Rig(tmp_path, limit=2, running=1)
     out = actions.handle_spawn(rig.ctx(), _m())

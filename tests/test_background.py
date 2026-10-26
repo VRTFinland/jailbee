@@ -922,6 +922,16 @@ def test_job_without_child_keys_reads_none():
     assert back.spawned_by is None and back.rights is None
 
 
+def test_job_round_trip_keeps_on_done():
+    import json
+
+    from jailbee.background import job_to_opts, op_to_job
+
+    job = json.loads(json.dumps(op_to_job(_prompt_opts(on_done="keep"), container_name="c", log_path="/l")))
+    back, _, _ = job_to_opts(job)
+    assert back.on_done == "keep"
+
+
 def test_codec_roundtrips_runner():
     import json
 
