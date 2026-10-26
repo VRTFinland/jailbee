@@ -9,7 +9,8 @@ import pytest
 from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import labels, messages
+from jailbee.orchestration import importing, labels, messages
+from jailbee.orchestration.state import pending_dir
 from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
     CHILD_TRANSPORT_TIMEOUT_S,
@@ -54,6 +55,11 @@ class Rig:
             "jailbee.orchestration.messages.lifecycle.container_repo_dir",
             return_value="/home/dev/repo",
         )
+        self.import_child = mocker.patch(
+            "jailbee.orchestration.importing.import_child",
+            return_value=importing.Imported("refs/jailbee/from/fix-1/fix-1", SHA),
+        )
+        self.write_inbox = mocker.patch("jailbee.orchestration.outbox.write_inbox")
         self.deliver = mocker.patch(
             "jailbee.orchestration.messages.deliver", return_value="delivered"
         )
@@ -89,6 +95,74 @@ def _done(**kw: Any) -> MessageManifest:
 def _untouched(rig: Rig) -> None:
     rig.incus.config_set.assert_not_called()
     rig.deliver.assert_not_called()
+
+
+def _policy(rig: Rig, policy: str) -> None:
+    rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.ON_DONE: policy})
+
+
+def test_done_imports_then_delivers_then_marks_destroy(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    order = MagicMock()
+    order.attach_mock(rig.import_child, "import_child")
+    order.attach_mock(rig.write_inbox, "write_inbox")
+    order.attach_mock(rig.incus.config_set, "set")
+    out = messages.handle_message(rig.ctx, _done())
+    calls = [c[0] for c in order.mock_calls if c[0] in {"import_child", "write_inbox"} or (c[0] == "set" and c.args[1] == labels.PENDING_DESTROY)]
+    assert calls == ["import_child", "set", "write_inbox"]
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.imported_sha == SHA and msg.on_done == "destroy"
+    assert out.state == "done" and "will be destroyed" in out.detail
+
+
+def test_done_keep_policy_imports_without_marker(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "keep")
+    out = messages.handle_message(rig.ctx, _done())
+    assert "is kept" in out.detail
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
+
+
+def test_done_import_failure_delivers_with_error_and_keeps(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    rig.import_child.return_value = "boom"
+    out = messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.import_error == "boom" and msg.on_done == "keep"
+    assert "import failed: boom" in out.detail
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
+
+
+def test_done_skips_import_when_already_imported(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.LAST_IMPORT: SHA})
+    messages.handle_message(rig.ctx, _done())
+    rig.import_child.assert_not_called()
+    assert rig.write_inbox.call_args.args[2].imported_sha == SHA
+
+
+def test_done_with_destroyed_orchestrator_refused_and_kept(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    rig.ctx.nodes = {CHILD: rig.ctx.sender}
+    out = messages.handle_message(rig.ctx, _done())
+    assert out.state == "refused" and "no longer exists" in out.detail
+    rig.incus.config_set.assert_any_call(CHILD, labels.DONE_SHA, SHA)
+    rig.write_inbox.assert_not_called()
+    rig.import_child.assert_not_called()
+
+
+def test_done_parks_behind_existing_pending_items_even_when_running(tmp_path: Path, mocker: MockerFixture) -> None:
+    rig = _make(tmp_path, mocker)
+    directory = pending_dir(tmp_path, "myrepo-orch")
+    directory.mkdir(parents=True)
+    earlier = directory / "20261025T000000Z-00000000-a.json"
+    earlier.write_text("{}")
+    assert messages.handle_message(rig.ctx, _done()).state == "queued"
+    rig.import_child.assert_not_called()
+    finish = list(directory.glob("*.finish.json"))
+    assert len(finish) == 1 and earlier.name < finish[0].name
 
 
 def test_done_with_dirty_tree_bounced(tmp_path: Path, mocker: MockerFixture) -> None:
@@ -137,10 +211,10 @@ def test_done_fetches_sets_labels_and_relays(tmp_path: Path, mocker: MockerFixtu
     )
     calls = [c.args for c in rig.incus.config_set.call_args_list]
     assert calls == [(CHILD, labels.DONE_SHA, SHA), (CHILD, labels.STATE, labels.STATE_DONE)]
-    msg = rig.deliver.call_args.args[3]
+    msg = rig.write_inbox.call_args.args[2]
     assert (msg.kind, msg.body, msg.from_) == ("done", "all finished", "fix-1")
-    assert rig.deliver.call_args.kwargs["seq"] == 0
-    assert out == done(f"done reported to orch at {'a' * 12}")
+    assert rig.write_inbox.call_args.kwargs["seq"] == 0
+    assert out == done(f"imported into orch at {'a' * 12}; this container is kept")
 
 
 def test_done_while_orchestrator_stopped_still_records_and_queues(
@@ -149,11 +223,12 @@ def test_done_while_orchestrator_stopped_still_records_and_queues(
     rig = _make(tmp_path, mocker, orch_running=False)
     rig.deliver.return_value = "parked"
     out = messages.handle_message(rig.ctx, _done())
-    assert rig.deliver.call_args.kwargs["running"] is False
+    assert list(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
+    rig.import_child.assert_not_called()
     rig.incus.config_set.assert_any_call(CHILD, labels.DONE_SHA, SHA)
     rig.incus.config_set.assert_any_call(CHILD, labels.STATE, labels.STATE_DONE)
     assert out == Outcome(
-        "queued", f"orch is not running; done at {'a' * 12} is delivered when it starts"
+        "queued", f"orch is not running or busy; your work is on the host at {'a' * 12} and is imported when it is delivered"
     )
 
 
