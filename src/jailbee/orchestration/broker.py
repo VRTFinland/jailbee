@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
+from jailbee.incus import IncusError
 from jailbee.orchestration import labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
@@ -31,6 +32,7 @@ from jailbee.orchestration.journal import Journal, manifest_digest
 from jailbee.orchestration.outbox import (
     delete_outbox_files,
     deliver,
+    ensure_orchestration_env,
     flush_pending,
     has_pending,
     read_outbox,
@@ -78,6 +80,7 @@ class BrokerMemory:
 
     # Orchestrator full name -> grant.json text last written into it.
     grant_written: dict[str, str] = field(default_factory=dict)
+    env_ensured: set[str] = field(default_factory=set)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
     # Inbox file sequence: orders the items emitted within one second.
@@ -330,8 +333,32 @@ def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> 
         log.exception("broker: %s: could not watch %s", ctx.sender.full, req.manifest_id)
 
 
+def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
+    """Ensure each served container once per broker process; retry failures.
+
+    Upgrades restart the broker, pushing changed helpers then. Fork children
+    copy an ensured orchestrator; new children use the current golden image.
+    A vanished name is forgotten so a recreated older image is ensured again.
+    """
+    full = ctx.sender.full
+    if full in memory.env_ensured:
+        return
+    try:
+        ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+    except IncusError as exc:
+        memory.warn_once(
+            f"env:{full}",
+            "broker: %s: could not install the orchestration inbox helper: %s",
+            full,
+            exc,
+        )
+    else:
+        memory.env_ensured.add(full)
+
+
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     """One running orchestrator or child: parked messages, grant copy, outbox."""
+    _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
     flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=uid)
@@ -395,6 +422,7 @@ def tick(
     present = {e.get("name") for e in raw}
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
+    memory.env_ensured.intersection_update(present)
     # Parked messages of a vanished container must never reach a namesake.
     for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
         log.info("broker: dropped parked messages of vanished %s", full)

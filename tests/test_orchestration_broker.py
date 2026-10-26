@@ -12,6 +12,7 @@ import pytest
 from jailbee import background
 from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
+from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
@@ -80,6 +81,7 @@ class Rig:
         self.flush_pending = MagicMock(return_value=0)
         self.delete = MagicMock()
         self.write_grant = MagicMock()
+        self.ensure_env = MagicMock()
         self.dispatch = MagicMock(
             return_value=Outcome("started", "creation of child `fix-1` started")
         )
@@ -93,6 +95,7 @@ class Rig:
             ("flush_pending", self.flush_pending),
             ("delete_outbox_files", self.delete),
             ("write_grant_json", self.write_grant),
+            ("ensure_orchestration_env", self.ensure_env),
             ("dispatch", self.dispatch),
             ("drain_queue", self.drain),
             ("drop_queue", self.drop),
@@ -123,6 +126,54 @@ class Rig:
 @pytest.fixture
 def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     return Rig(tmp_path, monkeypatch)
+
+
+def test_ensure_env_runs_for_orchestrator_before_grant_json(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick()
+    rig.ensure_env.assert_called_once_with(rig.incus, "proj-orch", uid=rig.cfg.container_user.uid)
+    names = [c[0] for c in rig.seq.mock_calls]
+    assert names.index("ensure_orchestration_env") < names.index("flush_pending")
+    assert names.index("ensure_orchestration_env") < names.index("write_grant_json")
+
+
+def test_ensure_env_runs_for_children(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_child()]
+    rig.tick()
+    rig.ensure_env.assert_called_once_with(rig.incus, "proj-kid", uid=rig.cfg.container_user.uid)
+
+
+def test_ensure_env_once_per_broker_process(rig: Rig) -> None:
+    memory = broker.BrokerMemory()
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    rig.tick(memory)
+    assert rig.ensure_env.call_count == 1
+
+
+def test_ensure_env_failure_is_logged_once_and_retried(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = broker.BrokerMemory()
+    rig.ensure_env.side_effect = IncusError("read-only file system")
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    rig.tick(memory)
+    assert rig.ensure_env.call_count == 2
+    assert rig.write_grant.call_count == 1
+    assert rig.read_outbox.call_count == 2
+    assert len([r for r in caplog.records if "inbox helper" in r.getMessage()]) == 1
+
+
+def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
+    memory = broker.BrokerMemory()
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    rig.incus.list_containers.return_value = []
+    rig.tick(memory)
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    assert rig.ensure_env.call_count == 2
 
 
 def test_config_for_picks_longest_prefix(tmp_path: Path) -> None:
