@@ -179,8 +179,6 @@
               JailBee gives each branch a full system container: its own services and, if you
               enable them, its own Docker daemon, IDE and browser. Build one golden image, then
               run several stacks in parallel on one host, each with its own localhost.
-              Manage them yourself, or <a href="#orchestration">let an agent coordinate the work</a>
-              within limits you set.
             </p>
 
             <div class="actions">
@@ -561,52 +559,6 @@
       </div>
     </section>
 
-    <section id="orchestration">
-      <div class="wrap">
-        <h2><span class="eyebrow eyebrow--solution">Container orchestration</span>One agent coordinates. Each worker gets a whole stack.</h2>
-        <p>
-          You do not have to dispatch every agent yourself. Give one container an orchestration
-          grant on the host, then ask its agent to delegate work to child containers. A bug
-          backlog becomes parallel work, with separate branches, working trees and runtimes
-          rather than several agents editing the same checkout.
-        </p>
-        <p>
-          <strong>Your rules still apply.</strong> You choose allowed operations and which
-          optional mounts and network exceptions the coordinator may give its children.
-          A host-side broker checks each request against that grant; the agent cannot expand
-          its own permissions. Child containers complement an agent's built-in subagents
-          when the work needs a separate runtime.
-        </p>
-        <div class="cards">
-          <div class="card">
-            <p>
-              <strong>1. Delegate the work.</strong> The coordinator starts child containers
-              with a prompt for each worker. You set the running-child limit; extra requests
-              wait in a queue until a slot is free.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>2. Work in separate environments.</strong> Workers change code and run
-              tests in their own stacks. The coordinator and workers exchange instructions
-              and progress messages; the dashboard groups the children under their parent.
-            </p>
-          </div>
-          <div class="card">
-            <p>
-              <strong>3. Review and bring it together.</strong> The coordinator imports each
-              worker's committed results, reviews and merges or cherry-picks them, then cleans
-              up its children. It can stage a combined PR in the outbox for you to publish.
-            </p>
-          </div>
-        </div>
-        <div class="actions">
-          <a class="button button--primary" href="docs/orchestration/">Set up orchestration</a>
-          <a class="button button--secondary" href="https://youtu.be/z-i82M_jzQw" rel="noopener">Watch the orchestration demo</a>
-        </div>
-      </div>
-    </section>
-
     <!-- Who does this, concretely. #problem and #parallel argue the case in
          the abstract; a reader who does not yet know they have the problem
          recognises it from a set-up that looks like their own. Each card is a
@@ -765,6 +717,58 @@
           src="assets/img/hive-observation.jpg"
           alt="Isometric illustration: the same beehive brood box and server chassis, its front now a single sealed pane of glass rimmed in glowing amber; inside, four bees rebuild honeycomb amid drifting comb fragments, while the air outside the box is completely still."
         />
+      </div>
+    </section>
+
+    <section id="orchestration">
+      <div class="wrap">
+        <h2><span class="eyebrow eyebrow--solution">Optional container orchestration</span>For some jobs, let an agent coordinate.</h2>
+        <p>
+          The usual workflow is still yours to direct: choose the work, guide each agent and
+          decide what to merge. Orchestration is another option for bounded tasks that benefit
+          from separate working trees and runtimes, not a replacement for that workflow or
+          for an agent's built-in subagents.
+        </p>
+        <p>
+          A queue of clear bug tickets can suit one child container per ticket. A series of
+          implementation plans can suit one child per plan, with independent plans running
+          in parallel and dependent plans starting after their prerequisites are merged.
+          Each child handles a whole ticket or plan, using its own subagents for the steps.
+          You choose when to use this model and explicitly ask the agent to use children.
+        </p>
+        <p>
+          <strong>You set the scope.</strong> A host-side grant bounds the running-child count,
+          allowed operations and which optional mounts and network exceptions the coordinator
+          may give its children. The host-side broker checks each request against that grant;
+          the agent cannot expand its own permissions.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <p>
+              <strong>1. Delegate the work.</strong> The coordinator starts child containers
+              with a prompt for each worker. You set the running-child limit; extra requests
+              wait in a queue until a slot is free.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>2. Work in separate environments.</strong> Workers change code and run
+              tests in their own stacks. The coordinator and workers exchange instructions
+              and progress messages; the dashboard groups the children under their parent.
+            </p>
+          </div>
+          <div class="card">
+            <p>
+              <strong>3. Review and bring it together.</strong> The coordinator imports each
+              worker's committed results, reviews and merges or cherry-picks them, then cleans
+              up its children. It can stage a combined PR in the outbox for you to publish.
+            </p>
+          </div>
+        </div>
+        <div class="actions">
+          <a class="button button--primary" href="docs/orchestration/">Explore orchestration workflows</a>
+          <a class="button button--secondary" href="https://youtu.be/z-i82M_jzQw" rel="noopener">Watch the orchestration demo</a>
+        </div>
       </div>
     </section>
 

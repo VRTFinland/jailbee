@@ -48,12 +48,12 @@ def test_the_readme_links_the_demo_clip_at_an_anchor_the_site_still_has() -> Non
     assert 'id="demos"' in index, f"{anchor} points at a section the page does not have"
 
 
-def test_orchestration_is_in_the_intro_and_features_not_just_the_docs_table() -> None:
+def test_orchestration_is_a_feature_not_the_readme_primary_pitch() -> None:
     text = README.read_text()
     intro = text.split("## What people run in it", 1)[0]
     features = text.split("## What you get", 1)[1].split("## Getting started", 1)[0]
     guide = "https://jailbee.gisgro.io/docs/orchestration/"
-    assert guide in intro
+    assert "orchestration" not in intro.lower()
     assert guide in features
     assert "https://youtu.be/z-i82M_jzQw" in features
 

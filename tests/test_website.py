@@ -500,7 +500,10 @@ def test_orchestration_is_discoverable_without_the_news_feed() -> None:
     hrefs = [value for attr, value in collect_references(section) if attr == "href"]
     assert "docs/orchestration/" in hrefs
     assert "https://youtu.be/z-i82M_jzQw" in hrefs
-    assert 'href="#orchestration"' in html[: html.index('<section id="demos">')]
+    hero = html[: html.index('<section id="demos">')]
+    assert "orchestration" not in hero.lower()
+    assert html.index('<section id="agents">') < start
+    assert start < html.index('<section id="features">')
 
 
 def test_incus_is_not_named_in_the_visible_hero() -> None:
