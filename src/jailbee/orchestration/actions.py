@@ -748,3 +748,12 @@ def _handle_import(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 HANDLERS["import"] = _handle_import
+
+
+def _handle_update(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration import importing
+
+    return importing.handle_update(ctx, m)
+
+
+HANDLERS["update"] = _handle_update
