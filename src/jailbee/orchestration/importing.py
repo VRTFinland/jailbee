@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from jailbee import sync
 from jailbee.git import GitError
@@ -12,6 +13,7 @@ from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
     CHILD_TRANSPORT_TIMEOUT_S,
     ActionContext,
+    Node,
     Outcome,
     done,
     refused,
@@ -39,26 +41,41 @@ def handle_import(ctx: ActionContext, manifest: Manifest) -> Outcome:
         return child
     if not child.running:
         return refused(f"{child.short} is not running; restart it first")
+    result = import_child(ctx, child, ctx.sender)
+    if isinstance(result, str):
+        return refused(result)
+    return done(f"imported as {result.ref} at {result.oid[:12]}")
+
+
+@dataclass(frozen=True)
+class Imported:
+    ref: str
+    oid: str
+
+
+def import_child(ctx: ActionContext, child: Node, orchestrator: Node) -> Imported | str:
+    """Transport a child's branch, recording LAST_IMPORT before STATE."""
     try:
         result = sync.merge_container_into_container(
             ctx.cfg,
             ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S),
             child.short,
-            ctx.sender.short,
+            orchestrator.short,
             plain=True,
             ff_local_branch=False,
+            require_clean_target=False,
             timeout=CHILD_TRANSPORT_TIMEOUT_S,
         )
     except (SyncError, GitError, IncusError) as exc:
-        return refused(str(exc))
+        return str(exc)
     ref = result.push.container_ref
     oid = result.push.new_oid
     if not _FULL_OID.fullmatch(oid or ""):
-        return refused(f"imported as {ref}, but its commit id `{oid}` could not be recorded")
+        return f"imported as {ref}, but its commit id `{oid}` could not be recorded"
     try:
         # STATE last: a crash in between never shows `imported` without a commit.
         ctx.incus.config_set(child.full, labels.LAST_IMPORT, oid)
         ctx.incus.config_set(child.full, labels.STATE, labels.STATE_IMPORTED)
     except IncusError as exc:
-        return refused(f"imported but could not record the import: {exc}")
-    return done(f"imported as {ref} at {oid[:12]}")
+        return f"imported but could not record the import: {exc}"
+    return Imported(ref, oid)
