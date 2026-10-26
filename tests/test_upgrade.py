@@ -970,15 +970,15 @@ def test_host_wide_instructions_render_in_the_existing_claude_apply_reason() -> 
 
 
 def test_memory_profile_upgrade_note() -> None:
-    from jailbee.upgrade import UPGRADE_NOTES
+    from jailbee.upgrade import Watermark, pending
 
-    reason = (
-        "`defaults.memory` now lives in the base profile, so containers follow it; "
-        "per-container limits are set with `jailbee mem`"
-    )
+    owed = pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
+
     assert any(
-        note.version == (1, 7, 8) and note.actions == {"apply"} and note.reason == reason
-        for note in UPGRADE_NOTES
+        "defaults.memory" in reason
+        for item in owed.actions
+        if item.action == "apply"
+        for reason in item.reasons
     )
 
 

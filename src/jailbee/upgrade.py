@@ -373,7 +373,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 7, 8),
+        version=(1, 8, 0),
         actions=frozenset({"apply"}),
         reason=(
             "`defaults.memory` now lives in the base profile, so containers follow it; "
