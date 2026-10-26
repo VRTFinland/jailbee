@@ -50,9 +50,12 @@ grantable:
   egress: ["pypi.org", "*.npmjs.org"]   # extra egress hosts for children
 ```
 
-`spawn` and `message` are implied by any grant. Defaults for fields you omit:
-4 running children, operations `spawn message import restart stop destroy`,
-nothing grantable. Leave `destroy` out with `--deny destroy`.
+`spawn` and `message` are implied by any grant. A new grant without
+`--profile` starts from the configured
+[`orchestration.default_profile`](config.md#orchestration), so the defaults are
+yours to set. Without one, fields you omit default to 4 running children,
+operations `spawn message import restart stop destroy`, nothing grantable.
+Leave `destroy` out with `--deny destroy`.
 
 ```bash
 jb orchestrate grant bugs --children 4 --mount data --egress pypi.org

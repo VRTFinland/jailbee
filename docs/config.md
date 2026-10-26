@@ -2683,7 +2683,9 @@ orchestration:
 Profile names are lowercase letters, digits and dashes, starting with a letter
 (max 32 characters). `operations` may be `spawn`, `message`, `import`,
 `restart`, `stop` and `destroy`, and must include `spawn` and `message`.
-`default_profile` is applied by `jailbee new` to the new container, except for
+`default_profile` is also where a plain `jailbee orchestrate grant` starts
+when the container holds no grant yet and no `--profile` is named.
+It is applied by `jailbee new` to the new container, except for
 mount-mode containers, children, and when the repo's caps (`allowed` or an
 excess) would refuse the grant.
 

@@ -1021,13 +1021,15 @@ broker acts on it: the container's agent writes manifests to spawn, message,
 import, stop and destroy children, within the grant and the repo's caps.
 
 - `jailbee orchestrate grant [NAME]` — store a grant. Without flags it is the
-  default grant: 4 running children; operations `import`, `message`,
+  `orchestration.default_profile` grant when one is set, else the built-in
+  default: 4 running children; operations `destroy`, `import`, `message`,
   `restart`, `spawn`, `stop`; nothing grantable (no mounts, no loose, no
   egress). Flags: `--profile P`, `--children N`, `--allow OP`/`--deny OP`
   (`spawn`, `message`, `import`, `restart`, `stop`, `destroy`),
   `--mount M`/`--clear-mounts`, `--loose`/`--no-loose`,
   `--egress HOST`/`--clear-egress`. Fields not given come from `--profile`
-  if named, else the container's current grant, else the defaults.
+  if named, else the container's current grant, else `default_profile`,
+  else the built-in defaults.
 - `spawn` and `message` are always part of a grant: `--deny spawn|message` is
   refused. To take everything away use `jailbee orchestrate revoke [NAME]`.
 - Refused: mount-mode containers, children (a container that was spawned by

@@ -167,6 +167,22 @@ def test_flags_start_from_current_grant_without_profile(cfg):
     assert commands.build_grant(cfg, cur, GrantFlags(loose=True)).max_running_children == 7
 
 
+def test_new_grant_starts_from_default_profile(cfg_with_profile_bugfixer_default):
+    g = commands.build_grant(cfg_with_profile_bugfixer_default, None, GrantFlags())
+    assert g.max_running_children == 5
+
+
+def test_current_grant_wins_over_default_profile(cfg_with_profile_bugfixer_default):
+    cur = Grant(max_running_children=7)
+    g = commands.build_grant(cfg_with_profile_bugfixer_default, cur, GrantFlags())
+    assert g.max_running_children == 7
+
+
+def test_new_grant_without_default_profile_uses_builtin_defaults(cfg):
+    g = commands.build_grant(cfg, None, GrantFlags())
+    assert g == Grant()
+
+
 def test_profile_replaces_current(cfg_with_profile_bugfixer):
     cur = Grant(max_running_children=7)
     g = commands.build_grant(cfg_with_profile_bugfixer, cur, GrantFlags(profile="bugfixer"))

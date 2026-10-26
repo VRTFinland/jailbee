@@ -126,7 +126,7 @@ def _check_mounts(cfg: Config, names: tuple[str, ...]) -> None:
 
 
 def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
-    """Apply `flags` onto the profile, the current grant or a default grant."""
+    """Apply `flags` onto the profile, the current grant, `default_profile` or the defaults."""
     if flags.mounts is not None and flags.clear_mounts:
         raise GrantError("--mount and --clear-mounts are mutually exclusive; give only one")
     if flags.egress is not None and flags.clear_egress:
@@ -141,7 +141,7 @@ def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
     if flags.profile:
         base = profile_grant(cfg, flags.profile)
     else:
-        base = current if current is not None else _default()
+        base = current if current is not None else (default_grant(cfg) or _default())
 
     ops = (set(base.operations) | set(flags.allow)) - set(flags.deny)
     mounts = base.grantable.mounts
