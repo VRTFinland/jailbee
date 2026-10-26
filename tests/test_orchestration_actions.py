@@ -90,7 +90,8 @@ def test_child_may_only_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_operation_not_granted_refused(tmp_path: Path) -> None:
-    ctx = _ctx(tmp_path, _node("proj-o", **{labels.GRANT: _grant()}))
+    grant = _grant(operations=["spawn", "message", "stop"])
+    ctx = _ctx(tmp_path, _node("proj-o", **{labels.GRANT: grant}))
     out = dispatch(ctx, DestroyManifest(version=1, id="d1", type="destroy", child="c"))
     assert out == Outcome("refused", "operation `destroy` is not in this container's grant")
 

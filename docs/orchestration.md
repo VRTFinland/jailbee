@@ -43,7 +43,7 @@ cannot widen its own grant. It holds:
 
 ```yaml
 max_running_children: 4
-operations: [spawn, message, import, restart, stop]   # destroy is opt-in
+operations: [spawn, message, import, restart, stop, destroy]
 grantable:
   mounts: [data, docs]                  # names of the repo's optional mounts
   loose: false                          # may set a child to loose network
@@ -51,11 +51,11 @@ grantable:
 ```
 
 `spawn` and `message` are implied by any grant. Defaults for fields you omit:
-4 running children, operations `spawn message import restart stop`, nothing
-grantable. `destroy` must be allowed explicitly.
+4 running children, operations `spawn message import restart stop destroy`,
+nothing grantable. Leave `destroy` out with `--deny destroy`.
 
 ```bash
-jb orchestrate grant bugs --children 4 --allow destroy --mount data --egress pypi.org
+jb orchestrate grant bugs --children 4 --mount data --egress pypi.org
 jb orchestrate grant bugs --profile bugfixer     # start from a configured profile
 jb orchestrate show bugs      # the grant, what this repo leaves of it, running children
 jb orchestrate ls             # every container of this repo with a grant (--json)

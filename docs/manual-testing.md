@@ -5915,7 +5915,7 @@ is named in the `ref` field), and the broker keeps a read-only copy of the effec
 
 ```bash
 # Host: grant <c> the right to run one child at a time
-jb orchestrate grant <c> --children 1 --mount <m> --allow destroy   # destroy is opt-in
+jb orchestrate grant <c> --children 1 --mount <m> --allow destroy
 jb orchestrate show <c>                  # limit 1, mounts <m>, Running children: 0
 systemctl --user status jailbee-broker   # active (running)
 ```

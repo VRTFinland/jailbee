@@ -278,7 +278,7 @@ refused ("`x` is not a child of this orchestrator"); after a revoked grant,
 <!-- kind: grant -->
 ```json
 {"version": 1, "max_running_children": 2,
- "operations": ["import", "message", "restart", "spawn", "stop"],
+ "operations": ["destroy", "import", "message", "restart", "spawn", "stop"],
  "grantable": {"mounts": [], "loose": false, "egress": []}}
 ```
 

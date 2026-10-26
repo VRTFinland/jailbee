@@ -2673,7 +2673,7 @@ orchestration:
   profiles:
     worker:
       max_running_children: 4    # 1-64, default 4
-      operations: [spawn, message, import, restart, stop]   # default; add destroy
+      operations: [spawn, message, import, restart, stop, destroy]   # default
       grantable:                 # what the holder may hand on to its children
         mounts: []               # optional_mounts names
         loose: false
