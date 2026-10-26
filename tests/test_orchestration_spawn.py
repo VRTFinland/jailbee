@@ -250,10 +250,13 @@ def test_start_child_create_error_refused(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.create_flow import CreateStarted
+
     seen: dict[str, object] = {}
 
-    def fake(cfg: object, incus: object, gcfg: object, opts: object, **kw: object) -> None:
+    def fake(cfg: object, incus: object, gcfg: object, opts: object, **kw: object) -> CreateStarted:
         seen.update(gcfg=gcfg, opts=opts, **kw)
+        return CreateStarted("proj-fix-1", 777, tmp_path / "log")
 
     monkeypatch.setattr(actions, "start_create", fake)
     ctx, plan = _plan(tmp_path)

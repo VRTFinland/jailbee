@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
@@ -29,7 +30,18 @@ from jailbee.orchestration.protocol import (
     restart_sets_runner,
 )
 from jailbee.orchestration.runner import Runner, parse_runner_label, runner_problems
-from jailbee.orchestration.state import QueuedRequest, load_queue, purge_pending, save_queue
+from jailbee.orchestration.state import (
+    QueuedRequest,
+    Reservation,
+    load_queue,
+    load_reservations,
+    purge_pending,
+    reservation_alive,
+    save_queue,
+    save_reservations,
+)
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator, Mapping
@@ -270,13 +282,21 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
     try:
         # config_path=None: the worker reloads the repo config from `cfg.repo_root`.
-        start_create(ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None)
+        started = start_create(ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None)
     except NeedsOperator as e:
         return refused(e.reason)
     except CreateError as e:
         return refused(e.message)
     except (ForkError, ValueError) as e:
         return refused(str(e))
+    reservations = load_reservations(ctx.root)
+    entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full]
+    entries.append(Reservation(plan.child_full, started.pid, ctx.now.isoformat()))
+    reservations[ctx.sender.full] = entries
+    try:
+        save_reservations(ctx.root, reservations)
+    except OSError as exc:
+        log.warning("could not reserve creating child %s for %s: %s", plan.child_full, ctx.sender.full, exc)
     # Only the worker is launched here; a later create failure is not reported
     # (plan F), so the status must not claim the child exists.
     short = lifecycle.short_name(ctx.cfg, plan.child_full)
@@ -326,18 +346,27 @@ def live_job_kind(name: str) -> str | None:
     return job.op_kind
 
 
+def live_reservations(ctx: ActionContext) -> set[str]:
+    """Names of this orchestrator's children whose create workers are alive."""
+    return {
+        r.child_full for r in load_reservations(ctx.root).get(ctx.sender.full, [])
+        if reservation_alive(r.pid)
+    }
+
+
 def running_children(ctx: ActionContext) -> int:
     """Children running plus children still being created, counted once each.
 
     A job row does not record its orchestrator, so a live create job counts
     when its container does not exist yet or is one of this sender's children.
+    Reservations make the count independent of the job row, whose insert is best-effort.
     """
     mine = {n.full for n in ctx.children()}
     names = {n.full for n in ctx.children() if n.running}
     for name in live_create_jobs(ctx.cfg.container_prefix):
         if name in mine or name not in ctx.nodes:
             names.add(name)
-    return len(names)
+    return len(names | live_reservations(ctx))
 
 
 def _queued(ctx: ActionContext) -> list[QueuedRequest]:

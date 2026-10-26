@@ -9,7 +9,7 @@ import pytest
 from jailbee import lifecycle
 from jailbee.forking import ForkSource
 from jailbee.global_config import GlobalConfig
-from jailbee.orchestration import actions, labels
+from jailbee.orchestration import actions, labels, state
 from jailbee.orchestration.actions import ActionContext, Node, Outcome
 from jailbee.orchestration.grant import ChildRights, Grant
 from jailbee.orchestration.protocol import SpawnManifest
@@ -87,6 +87,59 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
 
 def _full(rig: Rig, branch: str) -> str:
     return str(lifecycle.derive_container_name(rig.cfg, branch))
+
+
+def test_limit_holds_when_job_row_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.create_flow import CreateStarted
+
+    rig = Rig(tmp_path, limit=2)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    pids = iter(range(777, 782))
+    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-x", next(pids), tmp_path / "log"))
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True, raising=False)
+    states = [
+        actions.handle_spawn(rig.ctx(), _m(f"fix/{i}", kind="new", mid=f"s{i}")).state
+        for i in range(5)
+    ]
+    assert states == ["started", "started", "queued", "queued", "queued"]
+
+
+def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.create_flow import CreateStarted
+
+    rig = Rig(tmp_path, limit=2)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-fix-1", 777, tmp_path / "log"))
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
+    assert state.load_reservations(tmp_path) == {
+        "proj-orch": [state.Reservation("proj-fix-1", 777, "2026-10-25T00:00:00+00:00")],
+    }
+
+
+def test_dead_reservation_does_not_count(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path)
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-x", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: False, raising=False)
+    assert actions.running_children(rig.ctx()) == 0
+
+
+def test_reservation_and_running_child_deduplicated(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, running=1)
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-c0", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True, raising=False)
+    assert actions.running_children(rig.ctx()) == 1
+
+
+@pytest.mark.parametrize("job_live", [False, True])
+def test_reserved_not_running_child_counts(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, job_live: bool) -> None:
+    rig = Rig(tmp_path)
+    rig.children = [Node("proj-c0", "c0", False, {labels.SPAWNED_BY: "proj-orch"})]
+    seams["jobs"].return_value = {"proj-c0"} if job_live else set()
+    state.save_reservations(tmp_path, {"proj-orch": [state.Reservation("proj-c0", 777, "t")]})
+    monkeypatch.setattr(actions, "reservation_alive", lambda pid: True, raising=False)
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "queued"
 
 
 def test_spawn_under_limit_starts(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
