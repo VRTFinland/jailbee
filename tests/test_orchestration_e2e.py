@@ -99,6 +99,8 @@ class FakeIncus:
             for file_name in argv[3:]:
                 self.outbox[name].pop(file_name, None)
             return ""
+        if "status" in argv and "--porcelain" in argv:
+            return ""
         if argv[-2:] == ["rev-parse", "HEAD"]:
             return HEAD + "\n"
         raise AssertionError(f"unexpected exec {argv}")
@@ -199,7 +201,7 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
         ("b-stop", "done"),
         ("a-spawn", "started"),
     ]
-    assert inbox[2][1]["detail"] == "creation of child `fix-1` started"
+    assert inbox[2][1]["detail"] == "creation of child `fix-1` started; on done: destroy"
     assert inbox[2][0] == parked[0]
     assert [name for name, _ in inbox] == sorted(name for name, _ in inbox)
     assert not any(pending_dir(root, "proj-orch").iterdir())
@@ -402,7 +404,7 @@ def test_spawn_reports_ready_after_worker_finishes(
     )
 
     _tick(world, memory)  # round 1: started, worker still running
-    assert _statuses(incus, "proj-orch") == [("sp1", "started", "creation of child `k1` started")]
+    assert _statuses(incus, "proj-orch") == [("sp1", "started", "creation of child `k1` started; on done: destroy")]
 
     jobs.clear()  # the worker finished and removed its row
     incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})

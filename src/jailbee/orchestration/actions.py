@@ -592,6 +592,15 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_set(child.full, labels.STOPPED_HEAD, head)
             else:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_HEAD)
+            bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+            dirty = sync._container_dirty_quiet(
+                bounded, child.full, lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                uid=ctx.cfg.container_user.uid,
+            )
+            if dirty is False:
+                ctx.incus.config_unset_checked(child.full, labels.STOPPED_DIRTY)
+            else:
+                ctx.incus.config_set(child.full, labels.STOPPED_DIRTY, "1")
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
         try:
@@ -678,6 +687,21 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
             )
     if head is None or head != last:
         return reason
+    if child.running:
+        try:
+            bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+            dirty = sync._container_status_dirty(
+                bounded, child.full, lifecycle.container_repo_dir(ctx.cfg, bounded, child.full),
+                uid=ctx.cfg.container_user.uid,
+            )
+        except Exception:
+            return (f"child `{child.short}`: its working tree could not be checked "
+                    "(use force: true to destroy anyway)")
+    else:
+        dirty = child.config.get(labels.STOPPED_DIRTY) == "1"
+    if dirty:
+        return (f"child `{child.short}` has uncommitted changes "
+                "(use force: true to destroy anyway)")
     return None
 
 

@@ -64,8 +64,52 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     monkeypatch.setattr(actions.lifecycle, "boot_container", m["boot"])
     monkeypatch.setattr(actions.lifecycle, "destroy_container", m["destroy"])
     monkeypatch.setattr(actions.sync, "_container_head_oid", m["head"])
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=False))
     monkeypatch.setattr(actions.lifecycle, "container_repo_dir", MagicMock(return_value="/r"))
     return m
+
+
+def test_destroy_refused_when_running_child_tree_dirty(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=True))
+    out = actions.handle_destroy(rig.ctx(), _destroy())
+    assert out.state == "refused" and "uncommitted changes" in out.detail
+    seams["destroy"].assert_not_called()
+
+
+def test_destroy_refused_when_tree_probe_fails(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(side_effect=RuntimeError("probe")))
+    out = actions.handle_destroy(rig.ctx(), _destroy())
+    assert out.state == "refused" and "could not be checked" in out.detail
+    seams["destroy"].assert_not_called()
+
+
+def test_destroy_force_skips_dirty_guard(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, running=True)
+    probe = MagicMock(side_effect=RuntimeError("must not probe"))
+    monkeypatch.setattr(actions.sync, "_container_status_dirty", probe)
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
+    probe.assert_not_called()
+
+
+def test_destroy_refused_for_stopped_child_recorded_dirty(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    rig = Rig(tmp_path, config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa", labels.STOPPED_DIRTY: "1"})
+    out = actions.handle_destroy(rig.ctx(), _destroy())
+    assert out.state == "refused" and "uncommitted changes" in out.detail
+    seams["destroy"].assert_not_called()
+
+
+@pytest.mark.parametrize("dirty", [True, False, None])
+def test_stop_records_stopped_dirty(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, dirty: bool | None) -> None:
+    rig = Rig(tmp_path, running=True)
+    monkeypatch.setattr(actions.sync, "_container_dirty_quiet", MagicMock(return_value=dirty))
+    m = StopManifest(version=1, id="s1", type="stop", child="c1")
+    assert actions.handle_stop(rig.ctx(), m).state == "done"
+    if dirty is False:
+        rig.incus.config_unset_checked.assert_any_call(rig.child.full, labels.STOPPED_DIRTY)
+    else:
+        rig.incus.config_set.assert_any_call(rig.child.full, labels.STOPPED_DIRTY, "1")
 
 
 def _restart(child: str = "c1") -> RestartManifest:

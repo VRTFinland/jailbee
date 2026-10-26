@@ -471,8 +471,8 @@ def tick(
     # Before anything is served, so a `stop` handled later in this round keeps
     # the STOPPED_HEAD it records (the snapshot above predates it).
     for node in nodes.values():
-        if node.running and node.config.get(labels.STOPPED_HEAD):
-            _clear_stale_stopped_head(incus, node)
+        if node.running and (node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)):
+            _clear_stale_stop_labels(incus, node)
 
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
@@ -557,13 +557,14 @@ def _forget_vanished_watches(root: Path, present: set[object]) -> None:
         watch.save_watch(root, watches)
 
 
-def _clear_stale_stopped_head(incus: Incus, node: Node) -> None:
-    """Unset STOPPED_HEAD of a running container: it was started outside the
-    broker (whose own restart clears it), so the recorded HEAD is stale."""
+def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
+    """A running container's recorded stop-time HEAD and dirty flag are stale."""
     try:
-        incus.config_unset_checked(node.full, labels.STOPPED_HEAD)
+        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY):
+            if node.config.get(key):
+                incus.config_unset_checked(node.full, key)
     except Exception:
-        log.exception("broker: clearing the stale stopped HEAD of %s failed", node.full)
+        log.exception("broker: clearing the stale stop labels of %s failed", node.full)
 
 
 def _flush_unlabelled(

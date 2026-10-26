@@ -876,6 +876,14 @@ def test_tick_skips_unlabelled_pending_without_repo_config(rig: Rig) -> None:
     rig.flush_pending.assert_not_called()
 
 
+def test_tick_clears_stale_stopped_dirty(rig: Rig) -> None:
+    kid = _child()
+    kid["config"][labels.STOPPED_DIRTY] = "1"
+    rig.incus.list_containers.return_value = [_orch(), kid]
+    rig.tick()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.STOPPED_DIRTY)
+
+
 def test_tick_clears_stopped_head_of_a_running_child(rig: Rig) -> None:
     """A child started outside the broker (manual `jb start`) must not keep a
     STOPPED_HEAD that no longer describes it (spec 7.3 as amended)."""
