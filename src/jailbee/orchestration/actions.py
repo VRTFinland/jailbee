@@ -369,9 +369,7 @@ def live_reservations(ctx: ActionContext) -> set[str]:
 
 def creating_children(ctx: ActionContext) -> set[str]:
     """Names already being created, including reservations with missing job rows."""
-    reserved = {
-        r.child_full for entries in load_reservations(ctx.root).values() for r in entries
-    }
+    reserved = {r.child_full for entries in load_reservations(ctx.root).values() for r in entries}
     return live_create_jobs(ctx.cfg.container_prefix) | reserved
 
 

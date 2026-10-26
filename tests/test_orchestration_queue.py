@@ -113,13 +113,16 @@ def test_limit_holds_when_job_row_missing(
 
 
 def test_finished_create_holds_slot_until_next_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jailbee.create_flow import CreateStarted
 
     rig = Rig(tmp_path, limit=1)
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
-    monkeypatch.setattr(actions, "start_create", lambda *a, **kw: CreateStarted("proj-a", 777, tmp_path / "log"))
+    monkeypatch.setattr(
+        actions, "start_create", lambda *a, **kw: CreateStarted("proj-a", 777, tmp_path / "log")
+    )
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: True)
     assert actions.handle_spawn(rig.ctx(), _m("a", kind="new")).state == "started"
     # Worker succeeds, but this tick's nodes still predate its container.
@@ -133,7 +136,8 @@ def test_finished_create_holds_slot_until_next_snapshot(
 
 
 def test_duplicate_spawn_cannot_replace_reservation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jailbee.create_flow import CreateStarted
 
@@ -144,14 +148,17 @@ def test_duplicate_spawn_cannot_replace_reservation(
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: True)
     assert actions.handle_spawn(rig.ctx(), _m("a", kind="new")).state == "started"
     assert actions.handle_spawn(rig.ctx(), _m("a", kind="new", mid="a2")) == Outcome(
-        "refused", "container `a` is already being created",
+        "refused",
+        "container `a` is already being created",
     )
     assert launch.call_count == 1
     assert state.load_reservations(tmp_path)["proj-orch"][0].pid == 777
 
 
 def test_reserved_name_blocks_queued_spawn_and_restart(
-    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    seams: dict[str, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jailbee.orchestration.protocol import RestartManifest
 
@@ -162,7 +169,9 @@ def test_reserved_name_blocks_queued_spawn_and_restart(
     assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["refused"]
     rig.children = [Node("proj-fix-1", "fix-1", False, {labels.SPAWNED_BY: "proj-orch"})]
     m = RestartManifest(version=1, id="r1", type="restart", child="fix-1", prompt="go")
-    assert actions.handle_restart(rig.ctx(), m) == Outcome("refused", "child `fix-1` is still being created")
+    assert actions.handle_restart(rig.ctx(), m) == Outcome(
+        "refused", "child `fix-1` is still being created"
+    )
     _queue(rig, ["fix/1"], kind="restart")
     assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["refused"]
 
