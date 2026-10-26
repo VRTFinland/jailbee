@@ -32,7 +32,7 @@ names** (the branch-level name, never one prefixed with the repo).
 ## Envelope
 
 Every manifest has `"version": 1`, `"id"` and `"type"`. The type is one of
-`spawn`, `message`, `import`, `restart`, `stop`, `destroy`.
+`spawn`, `message`, `import`, `update`, `restart`, `stop`, `destroy`.
 
 ## Orchestrator manifests
 
@@ -42,6 +42,9 @@ Create a child container. `kind` is `fork` (the child starts from your
 committed HEAD; a dirty tree is refused) or `new` (a fresh checkout from
 `base`, which is only valid with `kind: "new"`). `branch` is the child's
 branch. `rights` must be within `grantable` (see below). `note` is optional.
+`on_done` is optional: `"destroy"` (default) or `"keep"`. If the grant lacks
+`destroy`, omission defaults to `keep` and explicit `destroy` is refused.
+CLI: `--on-done destroy|keep`.
 
 <!-- kind: outbox -->
 ```json
@@ -98,7 +101,7 @@ omitting one starts: `default: omit runner (<agent>)`, then one line per
 `claude` and per `claude-jb -P <profile>` with its models. The default agent is named only when
 known; otherwise it reads `unknown` and you simply omit `runner`.
 Never leave prompt files in the repo work tree: untracked files make a
-`fork` spawn and an `import` refused.
+`fork` spawn refused (plain import does not require a clean target).
 
 The short name is derived from the branch: lowercased, characters outside
 `[a-z0-9-]` become `-`, runs of `-` collapse. A taken name is refused
@@ -132,6 +135,22 @@ Fetch a child's committed work into your repo as
 {"version": 1, "id": "import-fix-12", "type": "import", "child": "fix-issue-12"}
 ```
 
+### `update`
+
+Transport the orchestrator's current branch into a running child at
+`refs/jailbee/from/<orchestrator>/<branch>`, without touching its index or
+existing worktree. The child receives an `update` message carrying
+`imported_ref` and `imported_sha`, and merges when convenient. The `import`
+grant operation permits update; no new grant is needed. Detached parent
+HEAD and stopped child are refused.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "update-fix-12", "type": "update", "child": "fix-issue-12"}
+```
+
+CLI: `jailbee-inbox send update --child C --wait`.
+
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
@@ -140,7 +159,10 @@ no slot is free, then `started` when it is later started.
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
 `"runner": null` clears it (the default agent again); an object replaces it.
-The refusals are the spawn ones above.
+The refusals are the spawn ones above. `on_done: "destroy" | "keep"`
+changes the policy; absent or null keeps it. Explicit destroy requires the
+`destroy` operation. Restart clears any pending cleanup and stop-time dirty
+marker.
 
 <!-- kind: outbox -->
 ```json
@@ -167,9 +189,9 @@ Stop a running child, freeing its slot.
 
 ### `destroy`
 
-Delete a child (stopping it first is the recommended order). Refused if it
-has commits you have not imported, unless `force` is true: its current HEAD
-must equal the last import. For a stopped child the HEAD recorded when the
+Delete a running or stopped child; a done `keep` child needs no prior stop.
+Refused for uncommitted changes, unreadable status or commits never imported,
+unless `force` is true: its current HEAD must equal the last import. For a stopped child the HEAD recorded when the
 broker stopped it counts; one stopped any other way is refused until
 restarted.
 
@@ -186,6 +208,7 @@ restarted.
 | `spawn` | `spawn` (always granted) |
 | `message` | `message` (always granted) |
 | `import` | `import` |
+| `update` | `import` |
 | `restart` | `restart` |
 | `stop` | `stop` |
 | `destroy` | `destroy` |
@@ -206,8 +229,11 @@ orchestrator).
  "in_reply_to": null}
 ```
 
-A `kind: "done"` message also makes the host record the child's HEAD, which
-is what a later `import` and the destroy guard use.
+A `kind: "done"` message records HEAD, imports before delivery, then schedules
+cleanup according to `on_done`. A stopped or busy orchestrator gets an
+ordered pending finish; a vanished orchestrator refuses the report and
+keeps the child. Import failure still delivers done with `import_error` and
+keeps the child. Report with `send message --kind done --wait`.
 
 ## Inbox
 
@@ -222,6 +248,17 @@ A `message` from a child:
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "fix-issue-12",
  "kind": "question", "body": "Which parser do you mean?", "in_reply_to": null}
 ```
+
+Messages may carry optional `imported_ref`, `imported_sha`, `import_error`
+and `on_done` (`destroy` or `keep`). Successful done reports carry the ref
+and full SHA; failed imports carry the error and `on_done: keep`. Update
+messages carry the parent's ref and SHA. `ls` marks imported/failed reports;
+`read` shows all fields. Merge `imported_ref` after done, or retry `import`
+after fixing `import_error`.
+
+`send --wait [--timeout DUR]` consumes only the status for that manifest:
+exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
+timeout (default 30m). Recommend it for spawn, update and destroy.
 
 A `status` reply answers one manifest; `ref` is the manifest id and `state`
 is one of five values: `queued`, `started`, `done`, `failed`, `refused`.
