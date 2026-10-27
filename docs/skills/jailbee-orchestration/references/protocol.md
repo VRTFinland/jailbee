@@ -249,9 +249,13 @@ A `message` from a child:
  "kind": "question", "body": "Which parser do you mean?", "in_reply_to": null}
 ```
 
-Messages may carry optional `imported_ref`, `imported_sha`, `import_error`
-and `on_done` (`destroy` or `keep`). Successful done reports carry the ref
-and full SHA; failed imports carry the error and `on_done: keep`. Update
+Messages may carry optional `imported_ref`, `imported_sha`, `import_error`,
+`on_done` (`destroy` or `keep`) and `on_done_reason`. Successful done reports
+carry the ref and full SHA; failed imports carry the error and `on_done: keep`.
+`import_error` is only ever a real import failure: when the import succeeded
+but the child is kept anyway (the grant lost `destroy`, or the destroy marker
+could not be set), the report has `on_done: keep` and `on_done_reason` says
+why, and no re-import is needed. Update
 messages carry the parent's ref and SHA. `ls` marks imported/failed reports;
 `read` shows all fields. Merge `imported_ref` after done, or retry `import`
 after fixing `import_error`.

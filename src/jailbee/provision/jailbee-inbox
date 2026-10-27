@@ -214,7 +214,8 @@ cmd_ls() {
                 (if .type == "status" then .state else (.kind // "") end),
                 (((.body // .detail // "") | tostring | .[0:60])
                  + (if .type == "message" and .imported_sha then " [imported \(.imported_sha[0:12])]" else "" end)
-                 + (if .type == "message" and .import_error then " [import failed]" else "" end))
+                 + (if .type == "message" and .import_error then " [import failed]" else "" end)
+                 + (if .type == "message" and .on_done_reason then " [kept: \(.on_done_reason | tostring | .[0:60])]" else "" end))
             ] | map(if . == null then "-" else tostring end
                     | gsub("[\\x{00}-\\x{1f}\\x{7f}-\\x{9f}]"; "?")) | @tsv' "$f" 2>/dev/null)"; then
             printf 'jailbee-inbox: skipping unreadable message %s\n' "$f" >&2

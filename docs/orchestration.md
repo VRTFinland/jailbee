@@ -255,7 +255,10 @@ Prefer a fresh fork for rework so it starts from the latest merged state.
   `on_done: keep` leaves it available for another session. A grant without
   `destroy` defaults to `keep` and refuses an explicit `destroy` policy.
   Import failures arrive as `import_error`, keep the child, and can be retried
-  with `import` after fixing the cause.
+  with `import` after fixing the cause. When the import succeeded but the
+  child is kept anyway (the grant lost `destroy`, or the destroy marker could
+  not be set), the report carries `on_done: keep` and `on_done_reason`
+  instead.
 - **Import.** `import` brings a running child's branch into the orchestrator
   at `refs/jailbee/from/<child>/<branch>`, without merging. The orchestrator
   merges or cherry-picks from that ref itself; conflicts are its to solve.

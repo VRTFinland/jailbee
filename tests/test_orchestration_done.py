@@ -156,6 +156,46 @@ def test_done_import_failure_delivers_with_error_and_keeps(
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
 
+def test_done_without_destroy_grant_at_completion_is_a_kept_import_not_an_error(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    orch = rig.ctx.nodes["myrepo-orch"]
+    grant = Grant(operations=("spawn", "message", "import"))
+    rig.ctx.nodes = {
+        CHILD: rig.ctx.sender,
+        orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
+    }
+    out = messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.import_error is None and msg.on_done == "keep"
+    assert msg.imported_sha == SHA
+    assert msg.on_done_reason and "destroy permission" in msg.on_done_reason
+    assert "is kept (" in out.detail and "destroy permission" in out.detail
+    assert "import failed" not in out.detail
+
+
+def test_done_marker_failure_is_a_kept_import_not_an_error(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+
+    def config_set(full: str, key: str, value: str) -> None:
+        if key == labels.PENDING_DESTROY:
+            raise IncusError("busy")
+
+    rig.incus.config_set.side_effect = config_set
+    out = messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.import_error is None and msg.on_done == "keep"
+    assert msg.imported_sha == SHA
+    assert msg.on_done_reason and "could not schedule destruction" in msg.on_done_reason
+    assert "this container is kept (" in out.detail
+    assert "import failed" not in out.detail
+
+
 @pytest.mark.parametrize("target_oid", [None, "b" * 40, SHA])
 def test_done_checks_target_ref_before_skipping_import(
     tmp_path: Path, mocker: MockerFixture, target_oid: str | None

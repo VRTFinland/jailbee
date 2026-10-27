@@ -219,6 +219,7 @@ class InboxMessage(BaseModel):
     imported_sha: str | None = None
     import_error: str | None = None
     on_done: OnDone | None = None
+    on_done_reason: str | None = None
 
 
 class PendingFinish(BaseModel):

@@ -45,6 +45,7 @@ def complete(
     from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S, _child_head
 
     error: str | None = None
+    kept_reason: str | None = None
     imported: importing.Imported | str
     policy = "keep" if child is None else labels.on_done_of(child.config)
     ref: str | None = None
@@ -85,14 +86,14 @@ def complete(
     if error is not None:
         policy = "keep"
     elif policy == "destroy" and not _destroy_allowed(ctx, orchestrator):
-        error = "orchestrator no longer has destroy permission"
+        kept_reason = "orchestrator no longer has destroy permission"
         policy = "keep"
     elif policy == "destroy" and child is not None and oid is not None:
         try:
             ctx.incus.config_set(child.full, labels.PENDING_DESTROY, oid)
         except IncusError as exc:
             # The import succeeded, but cleanup must not hide the done report.
-            error = f"imported but could not schedule destruction: {exc}"
+            kept_reason = f"could not schedule destruction: {exc}"
             policy = "keep"
     msg = InboxMessage.model_validate(
         {
@@ -107,6 +108,7 @@ def complete(
             "imported_sha": oid,
             "import_error": error,
             "on_done": policy,
+            "on_done_reason": kept_reason,
         }
     )
     if error is not None:
@@ -116,6 +118,8 @@ def complete(
         )
     else:
         ending = "will be destroyed" if policy == "destroy" else "is kept"
+        if kept_reason is not None:
+            ending += f" ({kept_reason})"
         summary = f"imported into {orchestrator.short} at {str(oid)[:12]}; this container {ending}"
     return msg, summary
 

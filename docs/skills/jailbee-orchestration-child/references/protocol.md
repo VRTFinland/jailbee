@@ -82,7 +82,8 @@ An `update` message carries optional `imported_ref` and `imported_sha`
 (full commit ID), plus a body naming the parent's branch. Commit or stash,
 `git merge <imported_ref>`, resolve conflicts, commit, then continue. The
 broker never merges into your worktree. Other import fields on messages are
-`import_error` and `on_done` (`destroy` or `keep`).
+`import_error`, `on_done` (`destroy` or `keep`) and `on_done_reason` (why a
+successfully imported child is kept).
 
 Done status details say where the work was imported and whether the child
 will be destroyed or kept. Import errors keep the child and are delivered

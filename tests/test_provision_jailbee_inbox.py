@@ -569,6 +569,21 @@ def test_ls_marks_imported_and_failed_imports(script, base, tmp_path):
     assert "[import failed]" in r.stdout
 
 
+def test_ls_marks_kept_with_reason_and_read_shows_it(script, base, tmp_path):
+    write_inbox(
+        base,
+        FIRST,
+        {**message("h-1"), "imported_sha": "a" * 40, "on_done": "keep", "on_done_reason": "no grant"},
+    )
+    env = env_for(base, tmp_path)
+    r = run(script, "ls", env=env)
+    assert "[imported aaaaaaaaaaaa]" in r.stdout
+    assert "[kept: no grant]" in r.stdout
+    assert "[import failed]" not in r.stdout
+    r = run(script, "read", "h-1", "--keep", env=env)
+    assert json.loads(r.stdout)["on_done_reason"] == "no grant"
+
+
 def test_send_message_writes_manifest_and_body(script, base, tmp_path):
     r = send(
         script,
