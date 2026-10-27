@@ -21,6 +21,9 @@ before editing `## Unreleased`.
   `jailbee apply` for the skills. A child's `done` imports its work into the
   orchestrator and, unless spawned with `on_done: keep`, destroys the finished
   child; `update` brings the orchestrator's branch into a child.
+- **Ghostty terminals work in containers.** The golden image ships the
+  `xterm-ghostty` terminfo entry; without it tmux refused to start with
+  "missing or unsuitable terminal". Run `jailbee base build` to pick it up.
 - **Memory limit controls.** `jailbee mem` and the dashboard's Memory action
   set a container's memory limit; `default` clears its override. Limits below
   current use require confirmation.

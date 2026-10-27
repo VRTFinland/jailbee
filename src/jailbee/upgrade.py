@@ -396,6 +396,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "new and `jailbee apply` syncs them into the shared skills mount"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image ships Ghostty's `xterm-ghostty` terminfo, so a Ghostty "
+            "terminal works in containers instead of tmux refusing to start"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

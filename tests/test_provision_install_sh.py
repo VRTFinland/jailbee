@@ -298,6 +298,17 @@ def test_install_sh_leaves_a_valid_utc_localtime_not_an_empty_file():
     assert "touch /etc/localtime" not in script
 
 
+def test_install_sh_installs_the_xterm_ghostty_terminfo():
+    """Ghostty exports TERM=xterm-ghostty, which ncurses-term lacks (or ships
+    only as `ghostty`): the image compiles the entry itself, or tmux refuses
+    to start."""
+    script = _install_sh()
+    assert "tic -x - <<'TERMINFO'" in script
+    entry = script.split("tic -x - <<'TERMINFO'\n", 1)[1].split("\nTERMINFO\n", 1)[0]
+    assert entry.startswith("xterm-ghostty|ghostty|")
+    assert "smcup=" in entry
+
+
 def test_install_sh_installs_the_xterm_kitty_terminfo():
     """The image carries xterm-kitty itself (ncurses-term has only `kitty`),
     so kitty terminals work even where the host has no file to mount."""

@@ -1762,6 +1762,11 @@ active, this block also RO bind-mounts the host's `xterm-kitty` terminfo file
 into every container, which keeps containers built from older images working;
 the mount is planned for removal in 2.0.0.
 
+The golden image also ships Ghostty's `xterm-ghostty` entry, so `jailbee shell`
+from Ghostty works without any host file; there is no mount for it. Other
+terminals whose `TERM` the image lacks can be added with an `install.d`
+snippet that compiles their terminfo with `tic -x`.
+
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `terminal.kitty.enabled` | `"auto"` \| bool | `"auto"` | `"auto"` and `true` mount the host terminfo file when it can be located; without one the image's own entry applies. `false` disables the mount unconditionally. |
