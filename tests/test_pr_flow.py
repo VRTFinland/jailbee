@@ -1564,7 +1564,7 @@ def _record(number=7, head=None, author=False, adopted=False):
 @pytest.mark.parametrize("prefix", ["user.jailbee.pr", pr_flow.STACKED_LABEL_PREFIX])
 def test_container_label_state_clear_unsets_all_suffixes(mocker, prefix):
     incus = mocker.MagicMock()
-    pr_flow.ContainerLabelState(incus, "c1", prefix=prefix).clear()
+    assert pr_flow.ContainerLabelState(incus, "c1", prefix=prefix).clear() is True
     assert incus.config_unset_checked.call_args_list == [
         mocker.call("c1", prefix + suffix)
         for suffix in ("", "_branch", "_author", "_adopted", "_base")
@@ -1577,7 +1577,7 @@ def test_container_label_state_clear_warns_on_incus_error(mocker):
     incus = mocker.MagicMock()
     incus.config_unset_checked.side_effect = IncusError("boom")
     warn = mocker.patch("jailbee.pr_flow.warn")
-    pr_flow.ContainerLabelState(incus, "c1").clear()
+    assert pr_flow.ContainerLabelState(incus, "c1").clear() is False
     assert "boom" in warn.call_args.args[0]
 
 
@@ -1640,6 +1640,7 @@ def test_unbind_not_bound_returns_false(tmp_path, mocker):
 def test_unbind_confirms_and_clears(tmp_path, mocker, yes):
     state = mocker.MagicMock()
     state.read.return_value = _record(head="feat/foo", author=True)
+    state.clear.return_value = True
     mocker.patch("jailbee.prompting.is_interactive", return_value=not yes)
     confirm = mocker.patch("typer.confirm", return_value=True)
     success = mocker.patch("jailbee.pr_flow.success")
@@ -1680,6 +1681,7 @@ def test_unbind_declined_does_not_clear(tmp_path, mocker):
 def test_unbind_review_container_mentions_untrusted(tmp_path, mocker, author, adopted, review):
     state = mocker.MagicMock()
     state.read.return_value = _record(author=author, adopted=adopted)
+    state.clear.return_value = True
     info = mocker.patch("jailbee.pr_flow.info")
     assert pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=True)
     if review:
@@ -1689,6 +1691,44 @@ def test_unbind_review_container_mentions_untrusted(tmp_path, mocker, author, ad
         )
     else:
         info.assert_not_called()
+
+
+@pytest.mark.parametrize("failed_unset", [0, 2])
+def test_unbind_container_clear_failure_exits_without_success(tmp_path, mocker, failed_unset):
+    from jailbee.incus import IncusError
+
+    labels = {"user.jailbee.pr": "7", "user.jailbee.pr_branch": "feat/foo"}
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda full, key: labels.get(key, "")
+    incus.config_unset_checked.side_effect = [None] * failed_unset + [IncusError("boom")]
+    state = pr_flow.ContainerLabelState(incus, "c1")
+    success = mocker.patch("jailbee.pr_flow.success")
+    info = mocker.patch("jailbee.pr_flow.info")
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    with pytest.raises(typer.Exit) as excinfo:
+        pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=True)
+    assert excinfo.value.exit_code == 1
+    assert incus.config_unset_checked.call_count == failed_unset + 1
+    assert "boom" in warn.call_args.args[0]
+    success.assert_not_called()
+    info.assert_not_called()
+
+
+def test_unbind_head_only_names_branch(tmp_path, mocker):
+    incus = mocker.MagicMock()
+    labels = {"user.jailbee.pr_branch": "feat/head-only"}
+    incus.config_get.side_effect = lambda full, key: labels.get(key, "")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+    success = mocker.patch("jailbee.pr_flow.success")
+    info = mocker.patch("jailbee.pr_flow.info")
+    assert pr_flow.unbind_pr(
+        _super_scope(tmp_path), pr_flow.ContainerLabelState(incus, "c1"),
+        target_label="c1", yes=False,
+    )
+    confirm.assert_called_once_with("Unbind c1 from branch 'feat/head-only'?", default=False)
+    success.assert_called_once_with("Unbound c1 from branch 'feat/head-only'.")
+    info.assert_not_called()
 
 
 def _resolve(tmp_path, record, state, **kwargs):

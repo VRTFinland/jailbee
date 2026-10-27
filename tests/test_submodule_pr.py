@@ -277,7 +277,7 @@ def _state(incus, subpath="lib/a"):
 def test_submodule_state_clear_removes_only_its_entry():
     incus = MagicMock()
     incus.config_get.return_value = '{"a": {"pr": 7}, "b": {"pr": 8}}'
-    _state(incus, "a").clear()
+    assert _state(incus, "a").clear() is True
     incus.config_set.assert_called_once_with(
         "sampleapp-feat-foo", submodule_pr.STATE_KEY, '{"b": {"pr": 8}}'
     )
@@ -287,7 +287,7 @@ def test_submodule_state_clear_removes_only_its_entry():
 def test_submodule_state_clear_last_entry_unsets_key():
     incus = MagicMock()
     incus.config_get.return_value = '{"a": {"pr": 7}}'
-    _state(incus, "a").clear()
+    assert _state(incus, "a").clear() is True
     incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", submodule_pr.STATE_KEY)
     incus.config_set.assert_not_called()
 
@@ -300,8 +300,32 @@ def test_submodule_state_clear_warns_on_incus_error(mocker, operation):
     )
     getattr(incus, operation).side_effect = IncusError("boom")
     warn = mocker.patch("jailbee.tui.warn")
-    _state(incus, "a").clear()
+    assert _state(incus, "a").clear() is False
     assert "boom" in warn.call_args.args[0]
+
+
+@pytest.mark.parametrize("operation", ["config_set", "config_unset_checked"])
+def test_unbind_submodule_clear_failure_exits_without_success(tmp_path, mocker, operation):
+    import typer
+
+    from jailbee import pr_flow
+
+    incus = MagicMock()
+    entries = {"a": {"pr": 7, "branch": "feat/a"}}
+    if operation == "config_set":
+        entries["b"] = {"pr": 8, "branch": "feat/b"}
+    incus.config_get.return_value = json.dumps(entries)
+    getattr(incus, operation).side_effect = IncusError("boom")
+    warn = mocker.patch("jailbee.tui.warn")
+    success = mocker.patch("jailbee.pr_flow.success")
+    info = mocker.patch("jailbee.pr_flow.info")
+    scope = pr_flow.PrScope(repo_root=tmp_path, remote="origin", prefix="[a] ", subpath="a")
+    with pytest.raises(typer.Exit) as excinfo:
+        pr_flow.unbind_pr(scope, _state(incus, "a"), target_label="a", yes=True)
+    assert excinfo.value.exit_code == 1
+    assert "boom" in warn.call_args.args[0]
+    success.assert_not_called()
+    info.assert_not_called()
 
 
 def test_state_reads_an_empty_map_as_a_blank_record(mocker):

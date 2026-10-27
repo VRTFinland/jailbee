@@ -390,8 +390,8 @@ class SubmodulePrState:
             default_context = f"Could not record the submodule PR decision for '{self._subpath}'"
             warn(f"{context or default_context}: {exc}")
 
-    def clear(self) -> None:
-        """Remove only this submodule's binding, best-effort."""
+    def clear(self) -> bool:
+        """Remove only this binding, reporting whether persistence succeeded."""
         try:
             current = _load_map(self._incus, self._full)
             current.pop(self._subpath, None)
@@ -403,6 +403,8 @@ class SubmodulePrState:
             from jailbee.tui import warn
 
             warn(f"Could not clear the submodule PR decision for '{self._subpath}': {exc}")
+            return False
+        return True
 
 
 if TYPE_CHECKING:

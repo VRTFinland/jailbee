@@ -706,7 +706,7 @@ class PrState(Protocol):
 
     def read(self) -> PrRecord: ...
 
-    def clear(self) -> None: ...
+    def clear(self) -> bool: ...
 
     def record(
         self,
@@ -806,8 +806,8 @@ class ContainerLabelState:
         except IncusError as exc:
             warn(f"{context or 'Could not record the PR decision'}: {exc}")
 
-    def clear(self) -> None:
-        """Remove this label set, best-effort like recording a decision."""
+    def clear(self) -> bool:
+        """Remove this label set, reporting whether every unset succeeded."""
         from jailbee.incus import IncusError
 
         try:
@@ -815,6 +815,8 @@ class ContainerLabelState:
                 self._incus.config_unset_checked(self._full, f"{self._prefix}{suffix}")
         except IncusError as exc:
             warn(f"Could not clear the PR decision: {exc}")
+            return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -1302,6 +1304,7 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
         info(f"{scope.prefix}{target_label} is not bound to a PR.")
         return False
 
+    binding_label = f"PR #{record.number}" if record.number is not None else f"branch '{record.head}'"
     if not yes:
         if not prompting.is_interactive():
             error(
@@ -1309,11 +1312,12 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
                 f"re-run with --yes when there is no terminal to ask on."
             )
             raise typer.Exit(1)
-        if not typer.confirm(f"Unbind {target_label} from PR #{record.number}?", default=False):
+        if not typer.confirm(f"Unbind {target_label} from {binding_label}?", default=False):
             raise typer.Abort()
 
-    state.clear()
-    success(f"{scope.prefix}Unbound {target_label} from PR #{record.number}.")
+    if not state.clear():
+        raise typer.Exit(1)
+    success(f"{scope.prefix}Unbound {target_label} from {binding_label}.")
     if record.number is not None and not record.author and not record.adopted:
         info(
             f"{target_label} is now an ordinary container; forks made from it from now on "
