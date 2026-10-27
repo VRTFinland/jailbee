@@ -6,10 +6,10 @@ submodule's own git data, remembering the PR decision, and the
 transport-plus-push pipeline. The interactive flow it shares with `jailbee pr`
 lives in `pr_flow`.
 
-Deliberately prompt-free: no `typer`, no confirmations. Failures are raised as
-`SubmodulePrError` subclasses and presented by `cli.py`. Container git goes
-through the `Incus` wrapper, host git through `git.py`, and `gh` through
-`pr.py` — this module calls no `subprocess` of its own.
+Standalone binding helpers resolve prompts and report errors here, while the
+publication helpers raise `SubmodulePrError` for the CLI to present. Container
+git goes through the `Incus` wrapper, host git through `git.py`, and `gh`
+through `pr.py` — this module calls no `subprocess` of its own.
 """
 
 from __future__ import annotations

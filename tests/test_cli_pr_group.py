@@ -101,6 +101,61 @@ def test_submodule_unbind_removes_entry(mocker, tmp_path):
     incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", "user.jailbee.sub_pr")
 
 
+def test_submodule_bind_fails_when_record_write_fails(mocker, tmp_path):
+    from jailbee.incus import IncusError
+
+    _, incus = _setup(mocker, tmp_path)
+    incus.config_set.side_effect = IncusError("write failed")
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(3, "topic", "abc", "OPEN", "main"))
+    result = CliRunner().invoke(app, ["submodule", "pr", "bind", "feat-foo", "lib/a", "3", "--yes"])
+    assert result.exit_code == 1
+    assert "write failed" in result.output
+
+
+@pytest.mark.parametrize("command,mode", [(c, m) for c in ("bind", "unbind") for m in ("stopped", "mount")])
+def test_submodule_binding_is_label_only(mocker, tmp_path, command, mode):
+    import json
+
+    labels = {"user.jailbee.mode": "mount" if mode == "mount" else "clone"}
+    if command == "unbind":
+        labels["user.jailbee.sub_pr"] = json.dumps({"lib/a": {"pr": 3, "branch": "topic"}})
+    _, incus = _setup(mocker, tmp_path, labels=labels)
+    incus.list_containers.return_value = [{"name": "sampleapp-feat-foo", "status": "Stopped" if mode == "stopped" else "Running"}]
+    preflight = mocker.patch("jailbee.sync.assert_container_publishable", side_effect=AssertionError("bridge required"))
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", side_effect=AssertionError("transport required"))
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(3, "topic", "abc", "OPEN", "main"))
+    args = ["submodule", "pr", command, "feat-foo", "lib/a"] + (["3"] if command == "bind" else []) + ["--yes"]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    preflight.assert_not_called()
+    transport.assert_not_called()
+    incus.exec.assert_not_called()
+
+
+def test_submodule_unbind_missing_path_requires_destructive_selection(mocker, tmp_path):
+    import json
+
+    _, incus = _setup(mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["submodule", "pr", "unbind", "feat-foo", "--yes"])
+    assert result.exit_code == 2
+    assert "lib/a" in result.output
+    incus.config_unset_checked.assert_not_called()
+
+
+def test_submodule_unbind_no_recorded_paths_is_noop(mocker, tmp_path):
+    _, incus = _setup(mocker, tmp_path, labels={})
+    result = CliRunner().invoke(app, ["submodule", "pr", "unbind", "feat-foo", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "no submodule PR recorded" in result.output
+    incus.config_unset_checked.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
 def test_old_option_hints_moved():
     result = CliRunner().invoke(app, ["pr", "--draft", "feat-x"])
     assert result.exit_code == 2
