@@ -8313,13 +8313,30 @@ def test_container_merge_plain_skips_clean_preflight_when_not_required(mocker, m
     sync.push_to_container.assert_called_once()
 
 
-def test_container_merge_plain_still_refuses_detached_target(mocker, make_cfg, tmp_path):
+def test_container_merge_plain_relay_allows_detached_target(mocker, make_cfg, tmp_path):
+    """The relay's ref uses the SOURCE branch, so a detached target (mid-rebase) is fine."""
     cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
     mocker.patch("jailbee.sync._container_current_branch", return_value=None)
+    mocker.patch("jailbee.sync._container_head_oid", return_value="b" * 40)
+    result = sync.merge_container_into_container(
+        cfg, incus, "c1", "c2", plain=True, require_clean_target=False
+    )
+    sync.push_to_container.assert_called_once()
+    assert result.push.container_ref == "refs/jailbee/from/c1/feat/a"
+    assert result.container_branch == ""
+    assert result.head_oid == "b" * 40
+
+
+def test_container_merge_plain_with_clean_target_still_refuses_detached(
+    mocker, make_cfg, tmp_path
+):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
+    mocker.patch(
+        "jailbee.sync._run_container_preflights",
+        side_effect=sync.SyncError("Container has detached HEAD. Check out a branch first."),
+    )
     with pytest.raises(sync.SyncError, match="detached HEAD"):
-        sync.merge_container_into_container(
-            cfg, incus, "c1", "c2", plain=True, require_clean_target=False
-        )
+        sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True)
     sync.push_to_container.assert_not_called()
 
 

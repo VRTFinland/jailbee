@@ -303,7 +303,8 @@ class MergeInContainerResult:
     Produced by `push_and_merge` (host source) and by
     `merge_container_into_container` (another container's branch, relayed
     through the host). `container_branch` is the target's own checked-out
-    branch — the one a merge would land on — in both cases.
+    branch — the one a merge would land on — in both cases, or `""` for a
+    plain relay into a detached target.
 
     `merge_container_into_container(plain=True)` returns this type for a
     transport with **no merge at all**: `head_oid` is then the target's
@@ -3060,7 +3061,8 @@ def merge_container_into_container(
     render fast-forward semantics from it.
 
     With `plain=True`, `require_clean_target=False` skips dirty-tree and
-    in-progress merge/rebase checks while still requiring a branch. Existing
+    in-progress merge/rebase checks and accepts a detached target HEAD (the
+    result's `container_branch` is then `""`). Existing
     submodule repos receive only objects and refs; missing sub-repos are
     initialized and checked out detached by the relay. No existing worktree
     or index is changed when `ff_local_branch=False`.
@@ -3100,13 +3102,15 @@ def merge_container_into_container(
 
     target_repo_dir = container_repo_dir(cfg, incus, target_full)
     uid = cfg.container_user.uid
-    target_branch: str | None
     if require_clean_target:
         target_branch = _run_container_preflights(incus, target_full, target_repo_dir, uid=uid)
     else:
-        target_branch = _container_current_branch(incus, target_full, target_repo_dir, uid=uid)
-        if target_branch is None:
-            raise SyncError("Container has detached HEAD. Check out a branch first.")
+        # A plain relay writes `refs/jailbee/from/<source>/<source branch>`; the
+        # target's own branch is informational only, so a detached HEAD (for
+        # example mid-rebase) is fine and reported as "".
+        target_branch = (
+            _container_current_branch(incus, target_full, target_repo_dir, uid=uid) or ""
+        )
 
     # Decision 7 (design doc): the relay runs source container -> host ->
     # target container through the same two transports. Inheriting the host's
