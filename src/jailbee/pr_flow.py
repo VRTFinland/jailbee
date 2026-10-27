@@ -17,7 +17,7 @@ PR and a submodule PR:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +88,48 @@ class PrScope:
     def command(self) -> str:
         """The CLI invocation to point users at for follow-up commands."""
         return "jailbee submodule pr" if self.subpath else "jailbee pr"
+
+
+def offer_outbox_binding(
+    scope: PrScope, refs: Mapping[int, Sequence[str]], *, yes: bool, short: str
+) -> int | None:
+    """Offer an explicit choice of an outbox-referenced PR, never an implicit binding."""
+    from jailbee import prompting
+
+    if not refs:
+        return None
+    if yes or not prompting.is_interactive():
+        references = ", ".join(
+            f"PR #{number} ({', '.join(names)})" for number, names in sorted(refs.items())
+        )
+        command = f"{scope.command} bind {short}"
+        if scope.subpath:
+            command += f" {scope.subpath}"
+        command += " <N>"
+        info(
+            f"{scope.prefix}The outbox of '{short}' references {references}. "
+            f"To publish to one of them instead: {command}"
+        )
+        return None
+
+    # None is reserved for cancellation by prompting.choose.
+    new_pr = object()
+    options: list[prompting.Option[int | object]] = [
+        prompting.Option(
+            value=number,
+            title=f"PR #{number} — {', '.join(names)}",
+            label=f"PR #{number}",
+        )
+        for number, names in sorted(refs.items())
+    ]
+    options.append(prompting.Option(value=new_pr, title="Open a new PR", label="Open a new PR"))
+    chosen = prompting.choose("Outbox manifests reference existing PRs. Publish to:", options)
+    if chosen is None:
+        raise typer.Abort()
+    if chosen is new_pr:
+        return None
+    assert isinstance(chosen, int)
+    return chosen
 
 
 def candidate_scopes(cfg: Config, *, extra_paths: Iterable[str] = ()) -> list[PrScope]:

@@ -54,7 +54,7 @@ from jailbee.pr_ai import PrText
 from jailbee.tui import console, error_plain, info, warn, warn_plain
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Collection, Iterable, Mapping, Sequence
 
     from jailbee.config import Config
     from jailbee.pr import PrInfo
@@ -440,6 +440,30 @@ def read_outbox(incus: Incus, container: str, *, uid: int | None, strict: bool =
             f"{container}: cannot bind outbox preview ({exc}); refresh required"
         ) from exc
     return Outbox(files=files, identity=identity)
+
+
+def outbox_pr_references(
+    incus: Incus, full: str, *, uid: int | None, repo: str, exclude: Collection[int]
+) -> dict[int, tuple[str, ...]]:
+    """Collect valid outbox references for this repository, without binding anything."""
+    try:
+        outbox = read_outbox(incus, full, uid=uid)
+    except OutboxReadError:
+        return {}
+
+    references: dict[int, list[str]] = {}
+    for name in outbox.manifest_names:
+        try:
+            manifest = parse_manifest(name, outbox.files[name], outbox.files)
+        except ManifestError:
+            continue
+        if (
+            manifest.repo.casefold() == repo.casefold()
+            and manifest.pr is not None
+            and manifest.pr not in exclude
+        ):
+            references.setdefault(manifest.pr, []).append(name)
+    return {number: tuple(names) for number, names in references.items()}
 
 
 # --------------------------------------------------------------------------

@@ -23,6 +23,55 @@ def _sub_scope(tmp_path: Path) -> pr_flow.PrScope:
     )
 
 
+@pytest.mark.parametrize("yes,interactive", [(True, True), (False, False), (True, False)])
+@pytest.mark.parametrize("submodule", [False, True])
+def test_offer_outbox_binding_without_picker_prints_scoped_advice(tmp_path, mocker, yes, interactive, submodule):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    select = mocker.patch("jailbee.prompting._select_question", side_effect=AssertionError("must not ask"))
+    legacy_select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("must not ask"))
+    info = mocker.patch("jailbee.pr_flow.info")
+    scope = _sub_scope(tmp_path) if submodule else _super_scope(tmp_path)
+
+    assert pr_flow.offer_outbox_binding(scope, {9: ("c.json",), 5: ("a.json", "b.json")}, yes=yes, short="c1") is None
+    prefix = "submodule 'libs/foo': " if submodule else ""
+    command = "jailbee submodule pr bind c1 libs/foo <N>" if submodule else "jailbee pr bind c1 <N>"
+    info.assert_called_once_with(f"{prefix}The outbox of 'c1' references PR #5 (a.json, b.json), PR #9 (c.json). To publish to one of them instead: {command}")
+    select.assert_not_called()
+    legacy_select.assert_not_called()
+
+
+def test_offer_outbox_binding_empty_is_silent(tmp_path, mocker, capsys):
+    mocker.patch("jailbee.prompting.is_interactive", side_effect=AssertionError("nothing to ask"))
+    assert pr_flow.offer_outbox_binding(_super_scope(tmp_path), {}, yes=False, short="c1") is None
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("refs,selection", [({9: ("c.json",), 5: ("a.json", "b.json")}, 9), ({5: ("a.json",)}, 5)])
+def test_offer_outbox_binding_pick_number_and_single_ref_still_asks(tmp_path, mocker, refs, selection):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select_question", return_value=selection)
+    assert pr_flow.offer_outbox_binding(_super_scope(tmp_path), refs, yes=False, short="c1") == selection
+    question, options = select.call_args.args
+    assert question == "Outbox manifests reference existing PRs. Publish to:"
+    if len(refs) == 2:
+        assert [(o.title, o.value) for o in options[:-1]] == [("PR #5 — a.json, b.json", 5), ("PR #9 — c.json", 9)]
+    assert options[-1].title == "Open a new PR"
+    assert options[-1].value is not None
+
+
+def test_offer_outbox_binding_pick_new_pr_returns_none(tmp_path, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select_question", side_effect=lambda question, options: options[-1].value)
+    assert pr_flow.offer_outbox_binding(_super_scope(tmp_path), {5: ("a.json",)}, yes=False, short="c1") is None
+
+
+def test_offer_outbox_binding_cancel_aborts(tmp_path, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select_question", return_value=None)
+    with pytest.raises(typer.Abort):
+        pr_flow.offer_outbox_binding(_super_scope(tmp_path), {5: ("a.json",)}, yes=False, short="c1")
+
+
 def test_scope_for_repo_uses_superproject_settings(tmp_path):
     cfg = _cfg(tmp_path)
 
