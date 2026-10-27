@@ -483,7 +483,7 @@ def complete_submodule_path(ctx: typer.Context, incomplete: str) -> list[str]:
 
     Context-dependent like `complete_snapshot`: reads the container from
     `ctx.params["name"]` and lists that container's submodule paths, so
-    `jailbee submodule pr feat-foo <TAB>` offers `lib/a`, `lib/b`. Returns []
+    `jailbee submodule pr push feat-foo <TAB>` offers `lib/a`, `lib/b`. Returns []
     when no container has been typed yet — guessing would query the wrong repo.
     """
     from jailbee.incus import IncusError

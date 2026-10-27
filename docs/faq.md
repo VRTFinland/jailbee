@@ -359,7 +359,7 @@ container — your own branches are untouched. Requires the `gh` CLI and
 
 ### How do I open or update a PR from a container?
 
-Run `jailbee pr <name>` **on the host**. It opens a draft PR, or pushes new
+Run `jailbee pr push <name>` **on the host**. It opens a draft PR, or pushes new
 commits and optionally regenerates the description when one exists. The
 title, body and head branch name are written by the repo's agent — the one
 it autostarts, or the one `pr.agent` names, as long as it has a `headless`
@@ -372,7 +372,7 @@ regeneration is opt-in. `--force` requires an additional confirmation unless
 
 ### How do I open a PR for a submodule?
 
-`jailbee submodule pr [<name>] [<path>]` — a separate command from `jailbee
+`jailbee submodule pr push [<name>] [<path>]` — a separate command from `jailbee
 pr`, because a submodule is a separate GitHub repository. Without `<path>`,
 an interactive terminal offers a picker, with ahead submodules first, even
 for a single candidate. Non-interactively, exactly one ahead submodule is
@@ -451,7 +451,7 @@ token as given, rather than reducing its permissions. A write-capable token
 can permit API writes even in strict mode.
 
 The intended workflow is to bring commits to the host (`jailbee git checkout
-<name>` then `git push`, or `jailbee pr <name>`) and let agents stage issue
+<name>` then `git push`, or `jailbee pr push <name>`) and let agents stage issue
 and PR writes in the outbox for you to publish. Loose mode can fix blocked
 connections, but cannot grant missing token permissions.
 

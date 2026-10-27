@@ -171,7 +171,7 @@ storage, not host-mounted shared state or a mount-mode working tree. Quiesce
 services before snapshotting if you need a consistent database backup.
 
 As an alternative to the manual push and `gh pr create`, run
-`jailbee pr feat-my-feature` **on the host**. It fetches the container's
+`jailbee pr push feat-my-feature` **on the host**. It fetches the container's
 commits, pushes with the host's credentials and creates or updates the PR.
 The container can stay in strict mode; optional AI generation only needs
 access to the selected agent's allowed API endpoints. An in-container agent
@@ -241,7 +241,7 @@ What turning it on gets you:
   that has one (claude, codex,
   gemini, opencode), so the in-container agents can drive `jailbee` commands
   for you.
-- **AI-written PRs.** `jailbee pr <name>` asks the container's own agent —
+- **AI-written PRs.** `jailbee pr push <name>` asks the container's own agent —
   the one the repo autostarts, or whichever `pr.agent` names — for the title,
   body, and branch name (`--no-ai` opts out per call). Claude runs on Sonnet by
   default (`pr.model`), and the agent follows your project's own PR-writing
@@ -251,7 +251,7 @@ With `autostart: true`, JailBee launches Claude in a tmux window during
 container startup. `jailbee tmux <name>` attaches to the session; later
 attachments return to the last selected window, which may not be Claude's.
 See [Claude configuration](config.md#claude) for the agent options and
-[`pr`](config.md#pr) for how `jailbee pr` selects the agent that writes PRs.
+[`pr`](config.md#pr) for how `jailbee pr push` selects the agent that writes PRs.
 
 ## Next steps
 

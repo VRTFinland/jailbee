@@ -396,7 +396,7 @@ def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: i
     """Ask before an outbox description replaces the body of a foreign PR.
 
     "Foreign" is `is_foreign_pr_head`: a PR jailbee did not open, which is as
-    true of the user's own PR adopted with `jailbee pr --pr N` as it is of a
+    true of the user's own PR adopted with `jailbee pr bind <container> N` as it is of a
     stranger's. The manifest has already been narrowed to one that names this
     PR (`pending_pr_text(numbered_only=True)`), so the question is not "is this
     text about this PR" — it is "may a body the container's agent wrote replace
@@ -534,7 +534,7 @@ def resolve_pr_text_and_head(
         if ai_text is None:
             warn(
                 f"{scope.prefix}{pr_ai.agent_label(cfg)} PR-text generation failed; using a "
-                f"placeholder. Edit the PR later with `{scope.command} --description`."
+                f"placeholder. Edit the PR later with `{scope.command} push --description`."
             )
 
     if as_name is not None:
@@ -720,7 +720,7 @@ def resolve_pr_description_update(
     regeneration of both fields. Returns None when nothing should change.
 
     `foreign_head` is "this is a PR jailbee did not open" — as true of the
-    user's own PR adopted with `jailbee pr --pr N` as of a stranger's. It
+    user's own PR adopted with `jailbee pr bind <container> N` as of a stranger's. It
     governs both text sources, and it says something different to each:
 
       - The interactive "regenerate with Claude?" offer is suppressed outright.
@@ -851,7 +851,7 @@ PR_LABEL_PREFIX = "user.jailbee.pr"
 """Labels for the PR the container's branch itself publishes to."""
 
 STACKED_LABEL_PREFIX = "user.jailbee.stacked_pr"
-"""Labels for a PR opened *against* the reviewed PR's head (`jailbee pr --stacked`).
+"""Labels for a PR opened *against* the reviewed PR's head (`jailbee pr push --stacked`).
 
 Deliberately a second namespace rather than a reuse of `PR_LABEL_PREFIX`:
 `user.jailbee.pr` keeps naming the PR the container was created from, so
@@ -1069,7 +1069,7 @@ def resolve_review_target(
             error(
                 f"--stacked needs a review container: '{short}' was not created "
                 f"from a PR (no user.jailbee.pr label), so there is no PR head to "
-                f"stack onto. Open an ordinary PR with '{scope.command} {short}', or "
+                f"stack onto. Open an ordinary PR with '{scope.command} push {short}', or "
                 f"base the container on the branch you want with "
                 f"'jailbee new <branch> <base>'."
             )

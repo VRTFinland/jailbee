@@ -47,6 +47,12 @@ A `jb new --pr` clone sits on a detached PR-head commit, so a bare
 `gh pr view` (with no argument) may not resolve to the right PR — don't rely
 on it alone.
 
+For a numbered manifest targeting this container's PR, ask the host user to
+bind it with `jailbee pr bind <container> N` if it is not already bound. Forks
+inherit their source's PR binding. Other same-repository targets may be
+published through the host's explicit foreign-target confirmation; the binding
+is not a blanket requirement for every outbox publication.
+
 ## Finding `head_sha`
 
 Use `gh pr view <n> --json headRefOid` — the sha as GitHub itself reports the
@@ -57,25 +63,25 @@ staleness before publishing a `review` action.
 ## Writing a PR description worth using
 
 A `description` action is not busywork: when this container's branch is
-published with `jb pr`, a pending description manifest **replaces the
+published with `jb pr push`, a pending description manifest **replaces the
 in-container Claude run** that would otherwise write the title and body. So
 write it the way that run would:
 
 `repo` may name the superproject or any submodule repository. Inside the
 container, read a submodule's real upstream with
 `git -C <subpath> remote get-url origin`. A matching description is consumed
-by `jb submodule pr` for that submodule; its comments remain publishable with
+by `jb submodule pr push` for that submodule; its comments remain publishable with
 `jb review apply`.
 
 - First, `gh pr view --json number,title` for this branch. A PR that already
   exists goes in the manifest's `pr` field; only a branch with no PR at all
-  gets `pr: null`. `jb pr` will not apply a `pr: null` description to a PR it
+  gets `pr: null`. `jb pr push` will not apply a `pr: null` description to a PR it
   did not open itself, and an existing PR is often exactly that — one the user
-  opened elsewhere and bound with `jb pr --pr N`.
+  opened elsewhere and bound on the host with `jb pr bind <container> N`.
 - Set the `description` action's `title` to the intended PR title as a JSON
   string, separate from `body`/`body_file`. For a new PR, write a concise
   title based on the change; for a body-only update, copy the current title
-  from `gh pr view <n> --json title`. With `jb pr`, a missing, `null`, or
+  from `gh pr view <n> --json title`. With `jb pr push`, a missing, `null`, or
   blank title is replaced by the body's first non-blank line (without leading
   Markdown `#` markers), even when updating an existing PR. A body opening
   with `Why?` would therefore rename the PR to `Why?`.
@@ -94,7 +100,7 @@ by `jb submodule pr` for that submodule; its comments remain publishable with
   it becomes the manifest's `branch` field.
 
 **One rule is deliberately different here: running the test suite is
-allowed.** The in-container agent run behind `jb pr` forbids it only
+allowed.** The in-container agent run behind `jb pr push` forbids it only
 because that run has a time budget (`pr.timeout`, 600 s by default) and a
 test suite can eat all of it. Writing to the outbox has no such budget — run whatever you need to
 describe the change accurately.

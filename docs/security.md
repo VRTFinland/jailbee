@@ -233,7 +233,7 @@ The SSH protocol surface is also fail-closed:
 - publishing to GitHub with the host's own `gh` (`pr`, `submodule pr`,
   `review apply`, `issue apply`, `outbox apply`) stays available — the key holder is the
   human the outbox is reviewed by — but never with `--yes`, so each action
-  is shown and confirmed; `--web`/`--open` are refused as host browsers;
+  is shown and confirmed; `pr push --web` and `pr open` are refused as host browsers;
 - a branch whose autostart config widens privileges (the escalation prompt
   of `jailbee new`) is refused outright, `--yes` included: over SSH the one
   answering that prompt is the remote user it exists to hold back.
@@ -462,7 +462,7 @@ Configure the fine-grained PAT (`github.token`, injected as `GH_TOKEN`)
 with Contents, Issues, Pull requests and Metadata set to Read. This is a
 recommendation, not a permission JailBee assigns. With no other write
 credential exposed, the intended publication path is the host's independently
-authenticated `gh`: `jailbee pr` for PRs and the reviewed host-side outbox
+authenticated `gh`: `jailbee pr push` for PRs and the reviewed host-side outbox
 (`jailbee issue apply` / `jailbee review apply` / `jailbee outbox apply`) for
 queued issues and reviews. **jailbee cannot verify a fine-grained
 PAT's effective permissions** — `jailbee doctor` reminds you of the intended
@@ -479,7 +479,7 @@ dashboard and publishes to it only after a separate confirmation or an
 explicit `--foreign`, since the write uses the host's own GitHub identity.
 The same holds for a numbered PR manifest published through `jailbee outbox
 apply` (or an Outbox entry in a dashboard) that names another repository's
-PR; `jailbee review apply` and `jailbee pr` still refuse it.
+PR; `jailbee review apply` and `jailbee pr push` still refuse it.
 
 **Outside the filesystem boundary.** Host paths that have not been mounted
 into the container, including unattached `optional_mounts`, are not exposed
@@ -612,7 +612,7 @@ is an operator-configured permission boundary, not something JailBee verifies
 (see [GitHub CLI inside
 containers](git-bridge.md#github-cli-gh-inside-containers)).
 
-Prefer publishing from the host after review (`jailbee pr <name>`, or
+Prefer publishing from the host after review (`jailbee pr push <name>`, or
 `jailbee git checkout <name>` followed by `git push`). Switching to loose
 changes reachability, not credential permissions, and is not required merely
 because an operation writes to GitHub.

@@ -216,7 +216,7 @@ Host-management commands — `config edit`/`init`/`migrate`, `remote ...`, `setu
 in every mode, `full` and allowlists included (except that `ide`, the browsers and `apps run`
 are permitted when `remote.ssh.rdp` is on (they draw on the shared display) or inside a `waypipe ssh` session with `remote.ssh.waypipe` on (native windows); `net loose`, `new --net loose` and container-scope `net egress add` are permitted when `remote.ssh.network` is on; `mount` is permitted when `remote.ssh.mount_roots` or `remote.ssh.mounts` unlocks it); the startup log names any
 allowlisted one. Publishing (`pr`, `submodule pr`, `review apply`, `issue
-apply`, `outbox apply`) stays allowed but refuses `--yes`, and `pr --web`/`--open` are
+apply`, `outbox apply`) stays allowed but refuses `--yes`, and `pr push --web`/`pr open` are
 refused as host browsers. `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts every one of these at once; a server started from
 inside a restricted session stays restricted regardless.
@@ -224,7 +224,7 @@ inside a restricted session stays restricted regardless.
 A hidden top-level spelling that is a byte-identical alias of a public leaf
 (`merge` → `git merge`, `pull` → `git pull`, `push` → `git push`, `fetch` →
 `git fetch`, `checkout` → `git checkout`, `retarget` → `git retarget`, `diff`
-→ `git diff`, `git pr` → `pr`, `egress ...` → `net egress ...`) is
+→ `git diff`, `egress ...` → `net egress ...`) is
 policy-checked against its canonical public leaf: allowing `git merge` also
 allows `merge`, and `full` allows every one of these. A hidden command with no
 such public twin — `_remote-console`, the internal `_*-worker` commands, and
@@ -559,7 +559,7 @@ filesystem, so a destroy takes any unpublished review with it), or unapplied
 issue actions sitting in its issue outbox (see [Issue management
 outbox](#issue-management-outbox) — listed right after the PR reason).
 Nothing here fires for work already pulled to the host
-(`jailbee git pull`), pushed to a remote (`jailbee git push`, `jailbee pr`,
+(`jailbee git pull`), pushed to a remote (`jailbee git push`, `jailbee pr push`,
 a plain push from inside), or already published (`jailbee review
 apply`/`jailbee issue apply`). Three outcomes:
 
@@ -802,7 +802,7 @@ exactly what goes), `p` publish (the plan and the choice shown in the box),
 `submodule pr` for its resolved submodule), `X` clear, `v`/`m` preview and raw
 manifest, `r` refresh and Esc back; keys the SSH policy refuses are not
 offered), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
-`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr --open`,
+`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mounts…`, `Orchestration…` (`G`),
 `Credential group…`, plus `[f] Fork…` (running clone-mode containers: asks
@@ -814,7 +814,7 @@ when it would do something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live
   worker's log and prints a finished one once);
-- `pr --open` needs a known PR;
+- `pr open` needs a known PR;
 - `pr`, `git push`, `git push --pr`, `git pull` and `git diff` need a **running
   clone-mode** container (a stopped or `--mount` container has no clone to
   publish from);
@@ -1202,9 +1202,9 @@ container from `feat/a` to `main`.
 
 ## PR publishing
 
-### `jailbee pr [NAME]`
+### `jailbee pr push [NAME]`
 
-Create or update the container's GitHub PR (also `jailbee git pr`). Publishes the
+Create or update the container's GitHub PR. Publishes the
 container's branch to the GitHub `origin` by **fetching it to the host, then
 fast-forward pushing under the host's credentials** — so, unlike `jailbee git push
 --pr`, the network call happens host-side and needs no `jailbee net loose` on the
@@ -1249,9 +1249,9 @@ Opening one also offers to retarget the container's base branch onto the PR head
 the status commit count and `jailbee git diff` use the retargeted host target. Refused on
 a fork PR (its head is not a branch in your origin, so it cannot be a base), on
 a container already publishing to a PR's head, and on one never created from a
-PR. Later runs update it silently; `--open` prefers it over the parent.
+PR. Later runs update it silently; `jailbee pr open --stacked` opens it instead of the parent.
 
-Before the superproject push, `jailbee pr` offers submodules with commits ahead
+Before the superproject push, `jailbee pr push` offers submodules with commits ahead
 of their own base, a recorded submodule PR, or a pending outbox description for
 their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
 takes all. Off a TTY without `--yes`, they are skipped with a warning.
@@ -1261,7 +1261,7 @@ A failed submodule does not stop the superproject PR, but the run exits 1.
 Submodule outbox partial failures also exit 1, keeping the published PR's
 recorded identity so a retry updates it rather than opening another PR.
 
-Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+Both `jailbee pr push` and `jailbee submodule pr push` refresh cross-links: a
 `<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
 `Part of …` block in authored submodule PRs. Only the managed blocks change;
 an unchanged block causes no body edit. Foreign PR bodies are left untouched.
@@ -1310,7 +1310,7 @@ The prompt forbids running the project's tests, build, linters or installers —
 testing is described from the commits and the CI config, because the run's budget
 is fixed while a suite's cost is the repository's. `pr.timeout`
 (default 600 s) bounds the run; on expiry you get a warning plus a placeholder
-description, fixable afterwards with `jailbee pr --description`. The warning also
+description, fixable afterwards with `jailbee pr push --description`. The warning also
 names the container and the session id of the attempt, so you can see how far it
 got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
 transcript as it works, so a run that ran out of budget is still on disk. (Only
@@ -1344,9 +1344,9 @@ PR of the same repo that the container does not own is published only after
 a warning directly above its confirmation; with `-y` (nobody reads that warning) it is
 a refusal unless `--foreign` is also given. A repo mismatch or a malformed
 field is always a refusal (exit non-zero). A `pr: null` manifest resolves to the container's
-own PR when exactly one is bound to it (opened by `jailbee pr`, or adopted
-with `jailbee pr --pr N`); with none bound — or with both a PR and a stacked
-PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
+own PR when exactly one is bound to it (opened by `jailbee pr push`, or adopted
+with `jailbee pr bind <container> N`); with none bound — or with both a PR and a stacked
+PR — it is left as a deferral for `jailbee pr push` to consume, not a refusal.
 
 ### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
 
@@ -1354,7 +1354,7 @@ PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
 
 One row per pending manifest across running containers: CONTAINER, PR,
 MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
-does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
+does not own, see `apply --foreign` — `for jb pr push`, or `error`), and ERROR
 (hidden from the default table). A stopped container's outbox cannot be read
 at all, so it is named in a note under the table instead of appearing empty.
 `--fields` is comma-separated from that same list; `-o json` describes
@@ -1378,9 +1378,9 @@ Delete pending manifests **without publishing them** — no GitHub call, no
 `applied.log` line. Confirms first unless `-y`; refuses off a TTY without
 it. Omit `MANIFEST` to drop everything pending in the container.
 
-### Interaction with `jailbee pr`
+### Interaction with `jailbee pr push`
 
-- **`--no-outbox`** on `jailbee pr` skips the outbox lookup entirely,
+- **`--no-outbox`** on `jailbee pr push` skips the outbox lookup entirely,
   including the post-publish offer described below.
 - **Description precedence**, most specific first: explicit
   `--title`/`--body` → a pending outbox description (`pr: null`, or one
@@ -1392,7 +1392,7 @@ it. Omit `MANIFEST` to drop everything pending in the container.
   already exists, not an AI run; `--no-ai` only turns off the *generation*
   step.
 - **On a PR jailbee did not open** — `jailbee new --pr N`, or your own PR
-  adopted with `jailbee pr --pr N` — the outbox is narrowed and confirmed
+  adopted with `jailbee pr bind <container> N` — the outbox is narrowed and confirmed
   rather than skipped: only a description that *names* that PR number is
   considered (a `pr: null` one is not, and is reported as withheld), and
   applying it asks once, `Replace PR #N's description with the one
@@ -1402,7 +1402,7 @@ it. Omit `MANIFEST` to drop everything pending in the container.
   itself proposes.** The branch field in a `description` action is
   confirmed like an AI-proposed name regardless of that toggle.
 - After a successful create or update, if non-description actions
-  (comments, replies) are still pending, `jailbee pr` offers to publish
+  (comments, replies) are still pending, `jailbee pr push` offers to publish
   them: `Post N pending PR comment(s) now? [y/N]`. A pending description is
   never part of that offer, but it is always *named* in it — a description
   the run did not use prints `<manifest> still holds a description this run
@@ -1414,7 +1414,7 @@ it. Omit `MANIFEST` to drop everything pending in the container.
 
 - `jailbee ls`'s PR column shows `✉N` for N pending manifests (visible even
   with no PR yet, since a container can hold a description ahead of
-  `jailbee pr`). Both dashboards show the same marker on their cards and add
+  `jailbee pr push`). Both dashboards show the same marker on their cards and add
   an "Apply N PR action(s)" (`review apply`) entry, shown for any running
   container with something pending regardless of network mode.
 - `jailbee ls`'s ISSUES column, right after PR, shows the same `✉N` for the
@@ -1582,18 +1582,18 @@ Module paths containing spaces cannot be transported: the path is part of a
 Git ref namespace, and Git ref names cannot contain spaces. Declared module
 names containing spaces or `=` work when their paths have no spaces.
 
-### `jailbee submodule pr [NAME] [PATH]`
+### `jailbee submodule pr push [NAME] [PATH]`
 
 Create or update a GitHub PR in a **submodule's own** repository, from commits
 made inside it in a container — a separate repo from the superproject, so a
-separate PR from `jailbee pr`. One PR per run; it can also run separately
+separate PR from `jailbee pr push`. One PR per run; it can also run separately
 (neither command is a precondition for the other).
 
 ```bash
-jailbee submodule pr feat-foo              # auto-target, draft PR
-jailbee submodule pr feat-foo libs/foo     # explicit submodule
-jailbee submodule pr feat-foo --ready      # mark ready for review
-jailbee submodule pr feat-foo --open       # just open it in the browser
+jailbee submodule pr push feat-foo              # auto-target, draft PR
+jailbee submodule pr push feat-foo libs/foo     # explicit submodule
+jailbee submodule pr push feat-foo --ready      # mark ready for review
+jailbee submodule pr open feat-foo       # just open it in the browser
 ```
 
 **Off a TTY** (or with NAME and PATH both given), without PATH the submodule
@@ -1609,8 +1609,7 @@ runs when PATH is not given (offering **every** submodule, not only the ones
 ahead of their base), and a plan block (base, head, commit count) is shown
 for confirmation before anything is transported or published. `--yes` skips
 only that last confirmation — it does not skip the pickers. Naming NAME/PATH
-still skips the corresponding picker. `--open` is unaffected: it never asks
-anything. Off a TTY, none of this applies — nothing is asked and no exit code
+still skips the corresponding picker. `jailbee submodule pr open` is unaffected: it does not publish or transport commits. Off a TTY, none of this applies — nothing is asked and no exit code
 changes — but the several-ahead table above now renders through the same
 code the picker uses, so it gains `[dirty]`/`[gitlink stale]`/`[detached]`
 flags; a script grepping that table sees more than before.
@@ -1636,8 +1635,8 @@ yet in the superproject's gitlink"), never as an error.
 | `--no-outbox` | Skip staged PR descriptions and the outbox publication offer. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
 | `--web` | Open the PR in the browser afterwards. |
-| `-b` / `--branch <b>` | **Different meaning than in `jailbee pr`:** which branch to read **from the submodule** in the container — the escape hatch for a detached submodule or for publishing a branch other than the one checked out there. |
-| `--open` | Read the recorded PR for PATH and open it; no preflight, no transport, no `gh` mutation. Requires PATH when PRs are recorded for more than one path. No recorded PR is exit 1. |
+| `-b` / `--branch <b>` | **Different meaning than in `jailbee pr push`:** which branch to read **from the submodule** in the container — the escape hatch for a detached submodule or for publishing a branch other than the one checked out there. |
+| `jailbee submodule pr open` | Read the recorded PR for PATH and open it; no preflight, no transport, no `gh` mutation. Requires PATH when PRs are recorded for more than one path. No recorded PR is exit 1. |
 
 Base branch: `--base` > `submodule.<name>.branch` declared in `.gitmodules`
 (unless `.`) > the sub-repo's `<remote>/HEAD` > `main`. The declaring
@@ -1658,7 +1657,7 @@ exit 2 explains why. The chosen head is remembered in one container config
 key, `user.jailbee.sub_pr` (a JSON map keyed by submodule path), so a re-run
 updates that PR instead of opening a second one for the same work.
 
-Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+Both `jailbee pr push` and `jailbee submodule pr push` refresh cross-links: a
 `<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
 `Part of …` block in authored submodule PRs. Only the managed blocks change;
 an unchanged block causes no body edit. Foreign PR bodies are left untouched.
@@ -1668,9 +1667,9 @@ Outbox partial failures exit 1 while keeping the published PR identity.
 
 Exit codes: 2 for usage errors (ambiguous target with no PATH, unknown PATH,
 `--as` once a PR is recorded, a detached submodule with no resolvable head
-name, `--open` with PRs recorded for more than one path); 1 for operational
+name, `jailbee submodule pr open` with PRs recorded for more than one path); 1 for operational
 failures (including outbox partial failures, preflight, a non-GitHub submodule upstream, publish failure, `gh`
-failure, `--open` with no PR recorded, `--force` onto a foreign/adopted PR
+failure, `jailbee submodule pr open` with no PR recorded, `--force` onto a foreign/adopted PR
 head with no TTY to confirm on, first-run adoption of an existing PR with no
 TTY to confirm on); 0 for success and for "no submodule has commits ahead of
 its base."

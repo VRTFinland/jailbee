@@ -1,7 +1,8 @@
 """`jailbee fork`: a new container at another container's committed state.
 
 Git state and PR bindings are carried over. Bindings are adopted rather than
-attributed to the fork; review bindings retain their original identity. The
+attributed to the fork; review bindings retain their original identity to preserve
+review-container semantics rather than imply adoption. The
 source's commits are fetched to the host
 (`refs/jailbee/<source>/<branch>`), its submodules' commits into the host
 sub-repos (`refs/jailbee-sub/<source>/...`), and the new container is an ordinary

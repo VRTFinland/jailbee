@@ -247,7 +247,7 @@ and [LiteLLM](litellm.md) for routing supported agents through the proxy.
 
 If your project has PR-description rules that no template or
 `CONTRIBUTING.md` states, commit them as `pr.prompt` to guide AI-generated
-PR text. `jailbee pr` runs on the host; these instructions have no effect
+PR text. `jailbee pr push` runs on the host; these instructions have no effect
 when AI generation is disabled or unavailable. See
 [Encoding a project's PR standard](config.md#encoding-a-projects-pr-standard).
 

@@ -1604,10 +1604,10 @@ jailbee destroy feat-notapr --force
 jailbee destroy $DERIVED --force
 ```
 
-## `jailbee pr` smoke test
+## `jailbee pr push` smoke test
 
 > Host-only. Requires `gh auth login` on the host and push access to origin.
-> SSH pushes may need a YubiKey touch. `jailbee pr` creates a draft PR when the
+> SSH pushes may need a YubiKey touch. `jailbee pr push` creates a draft PR when the
 > container has none yet; when one already exists (the container is its
 > author), re-running pushes new commits and updates the head, optionally
 > touching the description/state via `--description`/`--title`/`--body`/
@@ -1622,7 +1622,7 @@ cd ~/SampleApp
 echo "pr smoke" > pr.txt && git add . && git commit -m "feat: pr smoke"
 exit
 
-jailbee pr feat-prsmoke
+jailbee pr push feat-prsmoke
 # expect: fetch summary, git push output, then
 #         "Draft PR #<N> created for 'feat/prsmoke': https://github.com/..."
 gh pr view <N>                       # draft, base main, title "feat: pr smoke"
@@ -1633,23 +1633,23 @@ incus config get <prefix>-feat-prsmoke user.jailbee.pr_author  # → "1"
 # description is left untouched by default.
 jailbee shell feat-prsmoke
 cd ~/SampleApp && echo more > more.txt && git add . && git commit -m "more" && exit
-jailbee pr feat-prsmoke
+jailbee pr push feat-prsmoke
 # expect: "PR #<N> updated — head moved; description unchanged. https://github.com/..."
 
 # Since the container now counts as a PR container, the refresh path works:
 jailbee git push feat-prsmoke --pr
 
 # --description: regenerate + apply the PR body with Claude (requires claude.enabled).
-jailbee pr feat-prsmoke --description
+jailbee pr push feat-prsmoke --description
 # expect: spinner "Regenerating PR description with Claude…", then
 #         "PR #<N> updated — head moved, description refreshed. https://github.com/..."
 gh pr view <N>                       # body reflects the diff, applied via `gh pr edit`
 
 # --ready / --draft: toggle PR state independently of pushing commits.
-jailbee pr feat-prsmoke --ready
+jailbee pr push feat-prsmoke --ready
 # expect: "... updated — head moved; description unchanged. (marked ready) https://github.com/..."
 gh pr view <N> --json isDraft        # false
-jailbee pr feat-prsmoke --draft
+jailbee pr push feat-prsmoke --draft
 # expect: "... (marked draft) https://github.com/..."
 gh pr view <N> --json isDraft        # true
 
@@ -1657,14 +1657,14 @@ gh pr view <N> --json isDraft        # true
 jailbee new feat/aismoke
 jailbee shell feat-aismoke
 cd ~/SampleApp && echo ai > ai.txt && git add . && git commit -m "wip" && exit
-jailbee pr feat-aismoke
+jailbee pr push feat-aismoke
 # expect: spinner "Generating PR title/description with Claude in 'feat-aismoke'…"
 #         then a Claude-written title/body on the PR (not the placeholder).
 gh pr view <N>                      # title/body reflect the diff, not "wip"
 
 # Fallback: if Claude errors/times out, expect the warning
 #   "Claude PR-text generation failed; using a placeholder. Edit the PR
-#    later with `jailbee pr --description`."
+#    later with `jailbee pr push --description`."
 # and the PR still gets created with placeholder text.
 jailbee destroy feat-aismoke --force
 
@@ -1672,7 +1672,7 @@ jailbee destroy feat-aismoke --force
 jailbee new feat/noaismoke
 jailbee shell feat-noaismoke
 cd ~/SampleApp && echo x > x.txt && git add . && git commit -m "wip no-ai" && exit
-jailbee pr feat-noaismoke --no-ai  # uses commit subject + placeholder
+jailbee pr push feat-noaismoke --no-ai  # uses commit subject + placeholder
 jailbee destroy feat-noaismoke --force
 # Opt out permanently: set pr.ai_description: false in config.
 
@@ -1683,13 +1683,13 @@ jailbee destroy feat-noaismoke --force
 jailbee new feat/codexpr
 jailbee shell feat-codexpr
 cd ~/SampleApp && echo x > x.txt && git add . && git commit -m "wip codex" && exit
-jailbee pr feat-codexpr            # spinner and any warning say "codex", not "Claude"
+jailbee pr push feat-codexpr            # spinner and any warning say "codex", not "Claude"
 jailbee destroy feat-codexpr --force
 # A pinned agent that is off must be reported, not replaced:
 #   pr: {agent: gemini}   with agents.gemini unset
-jailbee pr feat-codexpr --description   # warns: set agents.gemini.enabled
+jailbee pr push feat-codexpr --description   # warns: set agents.gemini.enabled
 
-# Adoption: a `jailbee new --pr` (review) container no longer refuses `jailbee pr`
+# Adoption: a `jailbee new --pr` (review) container no longer refuses `jailbee pr push`
 # outright — it asks whether to push the container's commits to that PR's
 # head, then remembers the answer. Reuse PR #<N> from feat-prsmoke above: the
 # point is a container jailbee did NOT open the PR from (no user.jailbee.pr_author),
@@ -1705,11 +1705,11 @@ cd ~/SampleApp && echo adopt > adopt.txt && git add . && git commit -m "adopt" &
 incus config get <prefix>-feat-prsmoke user.jailbee.pr_author   # → "" (not jailbee's own PR)
 
 # No TTY and no --yes: errors out and names --yes — it does NOT push silently.
-echo "" | jailbee pr feat-prsmoke 2>&1 | grep -- "--yes"
+echo "" | jailbee pr push feat-prsmoke 2>&1 | grep -- "--yes"
 
 # Interactive, DECLINED: answer "n" at the prompt. Nothing is pushed and
 # nothing is recorded, so the next run asks again.
-jailbee pr feat-prsmoke
+jailbee pr push feat-prsmoke
 # expect: "Container 'feat-prsmoke' was created from PR #<N> by @<author>
 #          (OPEN); head '<head>' → base '<base>'."
 #         "Push this container's commits to PR #<N>'s head '<head>'? [y/N]" → n
@@ -1717,7 +1717,7 @@ jailbee pr feat-prsmoke
 incus config get <prefix>-feat-prsmoke user.jailbee.pr_adopted  # → "" (still unset)
 
 # Interactive, ACCEPTED: answer "y". The same summary line, then the push.
-jailbee pr feat-prsmoke
+jailbee pr push feat-prsmoke
 # expect: the summary line, prompt → y, fetch summary, git push output,
 #         "PR #<N> updated — head moved; description unchanged. https://..."
 incus config get <prefix>-feat-prsmoke user.jailbee.pr_adopted  # → "1"
@@ -1727,7 +1727,7 @@ incus config get <prefix>-feat-prsmoke user.jailbee.pr_branch   # → PR #<N>'s 
 # "was created from PR #<N> by @<author>" line BEFORE pushing.
 jailbee shell feat-prsmoke
 cd ~/SampleApp && echo again > again.txt && git add . && git commit -m "again" && exit
-jailbee pr feat-prsmoke --yes
+jailbee pr push feat-prsmoke --yes
 # expect: the summary line, then "PR #<N> updated — head moved; ...", no prompt.
 
 # Re-run without --yes: adoption is recorded, so no adoption prompt. The PR is
@@ -1735,22 +1735,22 @@ jailbee pr feat-prsmoke --yes
 # description — even on a TTY with claude.enabled.
 jailbee shell feat-prsmoke
 cd ~/SampleApp && echo third > third.txt && git add . && git commit -m "third" && exit
-jailbee pr feat-prsmoke
+jailbee pr push feat-prsmoke
 # expect: "PR #<N> updated — head moved; description unchanged. https://..."
 #         NO "Push this container's commits…?" and NO "Update the PR
 #         description with Claude?" prompt.
 # An explicit request still works:
-jailbee pr feat-prsmoke --title "adopted title"   # expect: "title updated"
+jailbee pr push feat-prsmoke --title "adopted title"   # expect: "title updated"
 
 # `--as` is refused on any container that already has a PR (exit 2) — the PR's
 # head is fixed, so a different name would leave the PR untouched.
-jailbee pr feat-prsmoke --as some/other-name 2>&1 | grep -- "--as cannot be combined"
+jailbee pr push feat-prsmoke --as some/other-name 2>&1 | grep -- "--as cannot be combined"
 
 # `--force` on a PR jailbee did not create asks a second time, naming the head.
 jailbee shell feat-prsmoke
 cd ~/SampleApp && git commit --amend -m "third (amended)" && exit
-echo "" | jailbee pr feat-prsmoke --force 2>&1 | grep -- "--yes"   # no TTY → error
-jailbee pr feat-prsmoke --force
+echo "" | jailbee pr push feat-prsmoke --force 2>&1 | grep -- "--yes"   # no TTY → error
+jailbee pr push feat-prsmoke --force
 # expect: "--force will overwrite PR #<N>'s head '<head>' …" then
 #         "Force-push over PR #<N>'s head '<head>'? [y/N]" → y
 #         "PR #<N> updated — head force-pushed (--force-with-lease) …"
@@ -1764,7 +1764,7 @@ git push origin --delete feat/prsmoke   # requires explicit user approval
 jailbee new dev-7           # generic container/branch name
 jailbee shell dev-7
 cd ~/SampleApp && echo x > x.txt && git add . && git commit -m "wip" && exit
-jailbee pr dev-7
+jailbee pr push dev-7
 # expect (TTY): a proposed head name (e.g. "user/...") you can accept/edit,
 #         then "Draft PR #N created for 'user/...'".
 # If a local 'dev-7' branch exists (from jailbee git checkout), expect:
@@ -1774,22 +1774,22 @@ gh pr view <N> --json headRefName                     # → the chosen name
 
 # Re-run reuses the stored name (no new AI, no new branch):
 jailbee shell dev-7 && cd ~/SampleApp && echo y > y.txt && git add . && git commit -m more && exit
-jailbee pr dev-7
+jailbee pr push dev-7
 # expect: "PR #N updated — head moved; ...", head still 'user/...'.
 
 # …and --as is refused on the re-run too (the PR head is fixed), even though
 # jailbee itself opened this PR:
-jailbee pr dev-7 --as user/other 2>&1 | grep -- "--as cannot be combined"   # exit 2
+jailbee pr push dev-7 --as user/other 2>&1 | grep -- "--as cannot be combined"   # exit 2
 
 # --as overrides the name; --no-ai keeps the container branch:
-jailbee new dev-8 && jailbee pr dev-8 --as user/manual-name
+jailbee new dev-8 && jailbee pr push dev-8 --as user/manual-name
 jailbee destroy dev-8 --force
 
 # --force: rebase in the container, then update the PR head safely.
 jailbee shell dev-7 && cd ~/SampleApp && git rebase -i HEAD~2 && exit  # rewrite history
-jailbee pr dev-7          # expect: non-ff rejection + hint pointing at --force
-jailbee pr dev-7 --force  # expect: "head force-pushed (--force-with-lease)"
-jailbee pr --force 2>&1 | grep "explicit container name"   # picker refused
+jailbee pr push dev-7          # expect: non-ff rejection + hint pointing at --force
+jailbee pr push dev-7 --force  # expect: "head force-pushed (--force-with-lease)"
+jailbee pr push --force 2>&1 | grep "explicit container name"   # picker refused
 
 jailbee destroy dev-7 --force
 ```
@@ -1811,7 +1811,7 @@ jailbee shell feat-outboxsmoke
 # inside container:
 cd ~/SampleApp && echo "outbox smoke" > outbox.txt && git add . && git commit -m "feat: outbox smoke"
 exit
-jailbee pr feat-outboxsmoke
+jailbee pr push feat-outboxsmoke
 # expect: "Draft PR #<N> created for 'feat/outboxsmoke': https://github.com/..."
 gh pr view <N> --json headRefOid   # copy the sha — this is the manifest's head_sha
 
@@ -1897,7 +1897,7 @@ cat > ~/.jailbee/pr-outbox/002-review.json <<'JSON'
 JSON
 echo "moved the head" >> outbox.txt && git add . && git commit -m "move the PR head"
 exit
-jailbee pr feat-outboxsmoke   # pushes the new commit; the PR head moves
+jailbee pr push feat-outboxsmoke   # pushes the new commit; the PR head moves
 # expect, among the push output: a warning shaped like
 #   "held back: manifest 002-review.json: PR #<N>'s head moved <old-sha> →
 #    <new-sha>; re-anchor the comments (ask the agent to re-read the diff) or
@@ -2315,7 +2315,7 @@ cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
     {
       "type": "description",
       "title": "feat: outbox description smoke",
-      "body": "## Summary\n\nSmoke-tests a pr: null description manifest consumed by jailbee pr.",
+      "body": "## Summary\n\nSmoke-tests a pr: null description manifest consumed by jailbee pr push.",
       "branch": "feat/outbox-desc-smoke"
     }
   ]
@@ -2323,7 +2323,7 @@ cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
 JSON
 exit
 
-jailbee pr feat-descoutbox
+jailbee pr push feat-descoutbox
 # expect: NO "Generating PR title/description with Claude in
 #         'feat-descoutbox'…" spinner — the pending manifest wins over Claude
 #         even with claude.enabled on. A branch-name confirmation appears for
@@ -2361,7 +2361,7 @@ cat > ~/.jailbee/pr-outbox/002-reply.json <<'JSON'
 JSON
 cd ~/SampleApp && echo more >> desc.txt && git add . && git commit -m "address feedback"
 exit
-jailbee pr feat-descoutbox
+jailbee pr push feat-descoutbox
 # expect: the usual push/update line, then — because 002-reply.json still
 #         holds an unapplied non-description action —
 #         "Post 1 pending PR comment(s) now? [y/N]"
@@ -2424,7 +2424,7 @@ cd ~/SampleApp && echo more >> adopted.txt && git add . && git commit -m "more"
 exit
 
 # 3. Bind the PR by number. The description is NOT applied silently.
-jailbee pr feat-adoptdesc --pr <N>
+jailbee pr push feat-adoptdesc --pr <N>
 # expect: "PR #<N> by @<you> (OPEN); head 'feat/adoptdesc' → base 'main'.",
 #         the bind confirmation, the push, then — because jailbee did not open
 #         this PR —
@@ -2436,7 +2436,7 @@ jailbee pr feat-adoptdesc --pr <N>
 #             `jailbee review apply feat-adoptdesc` publishes it."
 gh pr view <N> --json title      # expect: unchanged — declining consumed nothing
 
-jailbee pr feat-adoptdesc        # nothing new to push; answer y this time
+jailbee pr push feat-adoptdesc        # nothing new to push; answer y this time
 gh pr view <N> --json title,body
 # expect: "feat: adopted description smoke" and the manifest's body, and the
 #         success line ends "(description from 001-description.json)"
@@ -2456,7 +2456,7 @@ cat > ~/.jailbee/pr-outbox/002-description.json <<'JSON'
 }
 JSON
 exit
-jailbee pr feat-adoptdesc
+jailbee pr push feat-adoptdesc
 # expect: "002-description.json proposes a description for the PR this container
 #          would open (`pr: null`), and PR #<N> was not opened by jailbee; not
 #          putting an agent's text on a PR it was not written for."
@@ -2464,7 +2464,7 @@ jailbee pr feat-adoptdesc
 #         note. No prompt about the description at all.
 jailbee review ls
 # expect: one row, PR #<N> — a `pr: null` manifest resolves to the container's
-#         own bound PR rather than being deferred to `jailbee pr` for ever
+#         own bound PR rather than being deferred to `jailbee pr push` for ever
 jailbee review apply feat-adoptdesc -y
 gh pr view <N> --json title,body   # expect: "feat: second description"
 
@@ -2480,12 +2480,12 @@ Covers `retry.with_remote_retry` at all three call sites. Each needs a
 *recoverable* remote failure, so the trick is to break the remote reachably and
 then fix it while the prompt waits.
 
-### `jailbee pr` — a failed origin push
+### `jailbee pr push` — a failed origin push
 
 1. In a container with commits to publish, break the host's push credentials
    without breaking the container fetch. With an SSH origin, the simplest way is
    to point the agent at nothing:
-   `SSH_AUTH_SOCK=/nonexistent jailbee pr <name>`
+   `SSH_AUTH_SOCK=/nonexistent jailbee pr push <name>`
 2. Expect the container fetch to succeed and print its refs, then git's own
    authentication error, then:
    `Retry pushing '<branch>' to origin? [y/N]:`
@@ -2525,7 +2525,7 @@ then fix it while the prompt waits.
 
 ### Non-interactive paths must never prompt
 
-1. `JAILBEE_NONINTERACTIVE=1 SSH_AUTH_SOCK=/nonexistent jailbee pr <name>` — expect the
+1. `JAILBEE_NONINTERACTIVE=1 SSH_AUTH_SOCK=/nonexistent jailbee pr push <name>` — expect the
    old behaviour: failure, hint, exit 1, no prompt.
 2. `jailbee new --background <branch>` with a broken origin — expect the job to fail
    and be recorded by `jailbee job ls`, not to hang waiting on stdin.
@@ -2539,9 +2539,8 @@ then fix it while the prompt waits.
 > it would resurrect that ambiguity.
 > The aliases are **hidden** from `jailbee --help` — the top-level list stays
 > short — but stay invocable, and the canonical forms are listed under
-> `jailbee git --help`. `jailbee pr` is the mirror-image exception: it is the
-> visible, canonical top-level command, and `jailbee git pr` is its hidden
-> alias — so it does NOT show up under `jailbee git --help`. Also verifies
+> `jailbee git --help`. The top-level `jailbee pr` group replaces the removed
+> `jailbee git pr` alias. This also verifies
 > `jailbee git create-pr` (removed pre-1.0 name) no longer exists.
 
 ```bash
@@ -2551,10 +2550,10 @@ uv run jailbee --help | grep -c "Alias for"          # -> 0
 # Canonical subcommands are listed under the git group.
 uv run jailbee git --help | grep -E "fetch|checkout|pull|retarget|diff|push|merge"
 
-# `pr` is the exception: visible at the top level, hidden under `jailbee git`.
+# `pr` is a top-level group; the git alias has been removed.
 uv run jailbee --help | grep " pr "        # expect: listed as a normal top-level command
-uv run jailbee git --help | grep " pr "    # expect: no match — hidden alias
-uv run jailbee git pr --help | grep "jailbee pr --help"   # "See `jailbee pr --help`."
+uv run jailbee git --help | grep " pr "    # expect: no match — removed alias
+uv run jailbee git pr --help  # expect: unknown command (removed alias)
 
 # Each hidden alias is still reachable; its --help points at the canonical form.
 uv run jailbee checkout --help | grep "jailbee git checkout"   # "Alias for `jailbee git checkout`."
@@ -2842,7 +2841,7 @@ jailbee submodule checkout feat-submod-align2 -b feat/align-smoke
 jailbee destroy feat-submod-align2 --force
 ```
 
-## `jailbee submodule pr` smoke test
+## `jailbee submodule pr push` smoke test
 
 > Host-only. Requires a superproject with a submodule that has a GitHub remote
 > of its own, and `gh auth login` on the host for that remote. This is the one
@@ -2857,7 +2856,7 @@ cd ~/SampleApp/libs/foo
 echo "submodule pr smoke" > sub.txt && git add . && git commit -m "feat: submodule pr smoke"
 exit
 
-jailbee submodule pr feat-sub
+jailbee submodule pr push feat-sub
 # expect: transport summary, git push output, then
 #         "Draft PR #<N> created for 'libs/foo': https://github.com/..."
 gh pr view <N> --repo <submodule-org>/<submodule-repo>   # base is the submodule's own default branch
@@ -2868,18 +2867,18 @@ incus config get <prefix>-feat-sub user.jailbee.sub_pr    # → {"libs/foo": {"p
 # head name is what protects this).
 jailbee shell feat-sub
 cd ~/SampleApp/libs/foo && echo more > more.txt && git add . && git commit -m "more" && exit
-jailbee submodule pr feat-sub
+jailbee submodule pr push feat-sub
 # expect: "PR #<N> updated — head moved..." — same PR number as above
 gh pr list --repo <submodule-org>/<submodule-repo> --head <head>   # exactly one open PR
 
-# --open opens it in the browser without touching anything.
-jailbee submodule pr feat-sub --open
+# pr open opens it in the browser without touching anything.
+jailbee submodule pr open feat-sub
 
 jailbee destroy feat-sub --force
 ```
 
 Off a TTY, two submodules with commits ahead are worth checking too:
-`jailbee submodule pr feat-sub` with no `<path>` should list both candidates
+`jailbee submodule pr push feat-sub` with no `<path>` should list both candidates
 and exit 2 asking you to name one; on a TTY it offers the submodule picker.
 
 ### Orchestration and reciprocal PR links
@@ -2904,7 +2903,7 @@ git commit -m "feat: bump foo for PR family smoke"
 exit
 
 # Host, on a real terminal: keep libs/foo ticked in the all-ticked checklist.
-jb pr feat-sub-family
+jb pr push feat-sub-family
 # Expect: the submodule PR is published before the superproject push;
 # both draft PRs exist. Record their numbers and the submodule head SHA.
 gh pr view <super-N> --repo <super-org>/<super-repo> --json body
@@ -2913,11 +2912,11 @@ gh pr view <sub-N> --repo <sub-org>/<sub-repo> --json body
 # Submodule body: Part of ... links to the superproject PR.
 
 # Decline description regeneration if offered; no source or outbox changes.
-jb pr feat-sub-family
+jb pr push feat-sub-family
 # Expect: same PR numbers, no body edits. Check both GitHub timelines show
 # no new description edit and compare the bodies to the first run.
 
-jb pr feat-sub-family < /dev/null | cat
+jb pr push feat-sub-family < /dev/null | cat
 # Expect: warning naming libs/foo, no submodule push (head SHA unchanged).
 # The recorded submodule PR remains a candidate even without new commits.
 ```
@@ -2925,17 +2924,17 @@ jb pr feat-sub-family < /dev/null | cat
 Also check `--yes` selects all candidates without the checklist and
 `--no-submodules` skips their publishing without the warning. `--no-ai`,
 `--no-outbox` and `--ready`/`--draft` carry through to selected submodule PRs;
-other `jb pr` flags apply only to the superproject. In either dashboard,
+other `jb pr push` flags apply only to the superproject. In either dashboard,
 a container with submodule changes offers **Create/update submodule PR…**
 in its PR menu, entering the single-submodule flow.
 
 For a failure check, temporarily deny host push permission to the disposable
-submodule repo, add a new submodule commit and gitlink bump, and run `jb pr`
+submodule repo, add a new submodule commit and gitlink bump, and run `jb pr push`
 with that candidate selected. Expect its failure summary, a continuing
 superproject PR update and exit 1. Restore permission before retrying. A
 partially failed submodule outbox publication also exits 1 but retains the
 published PR identity; retry updates that PR, not a duplicate. Bind a foreign
-PR with `jb submodule pr feat-sub-family libs/foo --pr <N>` and verify its
+PR with `jb submodule pr push feat-sub-family libs/foo --pr <N>` and verify its
 body remains unchanged by link refresh (do not pass explicit description
 editing flags). Merge order remains advice: submodule first, superproject
 second. Close the disposable PRs and remove their remote branches manually
@@ -2944,7 +2943,7 @@ when finished, then destroy the test container.
 ## Submodule created in a container: interactive pr + transport smoke test
 
 > Host-only. Needs a real Incus daemon and a real terminal (not redirected).
-> Covers two things no unit test can: what `jailbee submodule pr` asks when
+> Covers two things no unit test can: what `jailbee submodule pr push` asks when
 > only one container and one submodule exist, and what a submodule created
 > inside a container looks like on the host once transported.
 
@@ -2958,9 +2957,9 @@ git submodule add https://github.com/octocat/Hello-World libs/hello
 git commit -m "add libs/hello submodule"
 exit
 
-# 1. `jailbee submodule pr` is interactive on a TTY, even with one container
+# 1. `jailbee submodule pr push` is interactive on a TTY, even with one container
 #    and one submodule — and declining transports nothing.
-jailbee submodule pr
+jailbee submodule pr push
 # expect, in order:
 #   - container picker offers 'feat-new-submod' (asked despite being the only
 #     one)
@@ -5345,7 +5344,7 @@ isolated nested Incus rig, never real postbox entries. Do not start system
 services or create a rig implicitly. Record PTY, offscreen Qt and rig results
 separately; mocked tests alone do not verify real terminal navigation or
 container ownership. No recipe in this section authorizes a GitHub write,
-`jb pr`, push, or a real-display GUI launch. The older publication smoke
+`jb pr push`, push, or a real-display GUI launch. The older publication smoke
 tests above require separate explicit authorization before their write steps.
 Even `outbox apply --dry-run` may read GitHub: use mocked publication
 preflight for the freshness check below.

@@ -330,7 +330,7 @@ does not mean the command is offline. Base-branch tracking supports review
 and stacked work; `jailbee git merge` and `jailbee fork` let containers
 exchange or branch from committed work.
 
-`jailbee new --pr <N>` creates a review environment, and host-side `jailbee pr`
+`jailbee new --pr <N>` creates a review environment, and host-side `jailbee pr push`
 opens or updates a PR (new PRs are drafts by default). Ordinary destruction
 checks dirty files, submodule changes and whether commits appear preserved
 on the host or in container remote-tracking refs. Those refs may be stale,

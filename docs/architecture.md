@@ -353,7 +353,7 @@ working tree. `jailbee git merge` between containers relays the source through
 the host without checking it out there, and runs the merge in the target.
 See [Git bridge](git-bridge.md) for flags, conflict handling and cleanup.
 
-`jailbee pr` is also run on the host: it fetches the container branch locally,
+`jailbee pr push` is also run on the host: it fetches the container branch locally,
 pushes it upstream using host credentials, then opens or updates the GitHub PR
 via `gh`. The bridge and publication do not require GitHub egress from the
 container. Optional AI description generation runs an agent inside the

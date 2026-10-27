@@ -100,7 +100,7 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   between host and container without a round trip through GitHub;
   `jb git merge` merges one container's branch into another, and `jb fork`
   starts a new environment from a container's committed work. Submodules
-  initialized on the host travel with the repo, and `jb pr` can open
+  initialized on the host travel with the repo, and `jb pr push` can open
   submodule PRs before the superproject's.
   [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/)
 

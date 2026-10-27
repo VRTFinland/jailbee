@@ -81,7 +81,8 @@ Commit everything before you send `done`.
 ## Spawning
 
 - `fork` (default) starts the child from your committed HEAD. Commit first:
-  a dirty tree is refused.
+  a dirty tree is refused. The child inherits the source's PR bindings; normal
+  bindings are adopted, while a review source retains its review identity.
 - `new` starts a fresh checkout from a base (`--new [--base main]`).
 - Grant the least rights the child needs, and only within `grantable`.
 - Prefer the helper; it writes the manifest and body atomically and prints
@@ -260,7 +261,7 @@ with a new prompt; an immediate restart reports `done`, a queued one reports
 ## Finishing
 
 When everything is merged, offer the human a pull request through the
-**jailbee-pr-review** / `jb pr` path. You cannot push. Summarise what each
+**jailbee-pr-review** / `jb pr push` path. You cannot push. Summarise what each
 child did.
 
 ## What not to assume

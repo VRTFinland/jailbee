@@ -1108,7 +1108,7 @@ def plan_checkout(
 
     The host target mirrors `checkout_from_container` exactly: an explicit
     `as_name` wins, then the container's `user.jailbee.pr_branch` label (a
-    PR-review or `jailbee pr --as` container updates its own PR head, whatever
+    PR-review or `jailbee pr push --as` container updates its own PR head, whatever
     branch is checked out inside it), otherwise the resolved container branch
     is used for both sides. See `_plan_container_side`'s docstring for the
     best-effort-vs-raises contract this shares with `plan_push` and `plan_pull`.
@@ -2277,7 +2277,7 @@ def retarget_container(
 
     ``source_ref`` overrides the host ref the anchor is taken from, exactly as
     it does in `push_to_container`. Default is ``refs/heads/<new_base>``, but
-    `jailbee pr --stacked` retargets onto a PR head, which lives in jailbee's
+    `jailbee pr push --stacked` retargets onto a PR head, which lives in jailbee's
     own ``refs/jailbee/pr/<N>/head`` and deliberately in no branch at all — a
     same-named local branch, stale or ahead, must not decide the anchor. The
     ``user.jailbee.base_branch`` label still records ``new_base``: it names the

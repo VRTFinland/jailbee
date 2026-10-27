@@ -632,7 +632,7 @@ def resolve_target(
     if manifest.pr is None:
         # `pr: null` is "the PR `jailbee pr` would open from this container".
         # Once the container HAS one bound — jailbee opened it, or the user
-        # bound it with `jailbee pr --pr N` — that IS the PR the description was
+        # bound it with `jailbee pr bind <container> N` — that IS the PR the description was
         # written for, so it resolves to it. Without this, an adopted
         # container's `pr: null` description could be published by neither
         # command: `jailbee pr` withholds it (`_eligible_for`'s `numbered_only`)

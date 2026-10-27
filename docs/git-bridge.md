@@ -79,7 +79,7 @@ jailbee git push feat-foo                  # send a host branch in (source/actio
 jailbee git push feat-foo --current --merge  # send current branch + merge it in the container
 jailbee git push feat-foo --pr             # PR containers: refresh the PR head from GitHub first
 jailbee git push feat-foo --from-local     # send the host's local branch, unfetched
-jailbee pr feat-foo                        # create a draft PR, or push new commits + optionally update it
+jailbee pr push feat-foo                        # create a draft PR, or push new commits + optionally update it
 ```
 
 `--merge`/`--rebase` apply the pushed ref to the container's branch (conflicts
@@ -278,9 +278,8 @@ Both `jailbee git push` and `jailbee git pull` print a one-line
 direction of the sync is always unambiguous at a glance.
 
 `jailbee pull` / `jailbee push` / `jailbee diff` / `jailbee fetch` / `jailbee checkout` /
-`jailbee retarget` / `jailbee merge` are top-level aliases. `jailbee pr` is a
-first-class top-level command in its own right (`jailbee git pr` is its hidden
-alias). `jailbee merge` came last and was withheld at first — that bare verb
+`jailbee retarget` / `jailbee merge` are top-level aliases. `jailbee pr` is a top-level group; `jailbee pr push` publishes PRs.
+The former `jailbee git pr` alias has been removed. `jailbee merge` came last and was withheld at first — that bare verb
 used to name today's `jailbee git pull` — but the merge target is never
 inferred, so the old `jailbee merge <name>` shape asks which container to merge
 into rather than quietly merging into the host. All bridge commands
@@ -331,7 +330,7 @@ source → host → target through the same two transports above, and inheriting
 the host's tag set would push it into a target container that asked for none
 of it.
 
-`jailbee pr` / `jailbee git push --pr` never send tags to the GitHub origin,
+`jailbee pr push` / `jailbee git push --pr` never send tags to the GitHub origin,
 and there is no flag to make them — pushing a tag to a shared remote is an
 outward-facing, effectively irreversible act.
 
@@ -592,18 +591,18 @@ counts use this anchor (falling back to `origin/HEAD` if missing). Status
 instead compares committed gitlinks against the **live host target**, so
 these views can differ on a stacked branch or after the host base advances.
 
-**Submodule pull requests.** `jailbee submodule pr [<name>] [<path>]` opens or
+**Submodule pull requests.** `jailbee submodule pr push [<name>] [<path>]` opens or
 updates a PR in a submodule's own GitHub repository — a separate repo from the
-superproject, so a separate PR from `jailbee pr`. Its signal is that same base
+superproject, so a separate PR from `jailbee pr push`. Its signal is that same base
 anchor, never the superproject's gitlink diff `jailbee ls` uses: when you've
 committed inside a submodule but not yet committed the gitlink bump in the
 superproject, the gitlink diff reads zero while the anchor sees exactly the
 commits the PR is for. That gap is reported as information, not an error.
 
 ```bash
-jailbee submodule pr feat-foo              # auto-target, draft PR
-jailbee submodule pr feat-foo libs/foo     # explicit submodule
-jailbee submodule pr feat-foo --ready      # mark ready for review
+jailbee submodule pr push feat-foo              # auto-target, draft PR
+jailbee submodule pr push feat-foo libs/foo     # explicit submodule
+jailbee submodule pr push feat-foo --ready      # mark ready for review
 ```
 
 Base and head come from the submodule's own data, not the superproject's:
@@ -613,7 +612,7 @@ is `--as` > the configured agent's proposal > the branch the commits were
 read from. The remote is resolved per submodule, since a submodule may name
 its upstream something the superproject doesn't.
 
-Before the superproject push, `jailbee pr` offers submodules with commits ahead
+Before the superproject push, `jailbee pr push` offers submodules with commits ahead
 of their own base, a recorded submodule PR, or a pending outbox description for
 their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
 takes all. Off a TTY without `--yes`, they are skipped with a warning.
@@ -625,7 +624,7 @@ stops before its push. Continuing still leaves the run with exit 1.
 Submodule outbox partial failures also exit 1, keeping the published PR's
 recorded identity so a retry updates it rather than opening another PR.
 
-Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+Both `jailbee pr push` and `jailbee submodule pr push` refresh cross-links: a
 `<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
 `Part of …` block in authored submodule PRs. Only the managed blocks change;
 an unchanged block causes no body edit. Foreign PR bodies are left untouched.
@@ -934,9 +933,9 @@ never asks for a source, because `--pr` already is one.
 Publish your own commits — either into the PR, or as a PR of your own:
 
 ```bash
-jailbee pr <name>                        # asks once (menu), then updates PR #N
-jailbee pr <name> --yes                  # non-interactive: push into PR #N's head
-jailbee pr <name> --stacked --as fix/x   # non-interactive: open a PR based on PR #N
+jailbee pr push <name>                        # asks once (menu), then updates PR #N
+jailbee pr push <name> --yes                  # non-interactive: push into PR #N's head
+jailbee pr push <name> --stacked --as fix/x   # non-interactive: open a PR based on PR #N
 ```
 
 The first run on a review container asks what to publish, because both
@@ -952,7 +951,7 @@ Container 'review-1234' was created from PR #1234 by @alice (OPEN);
 ```
 
 The confirmation is recorded on the container (`user.jailbee.pr_adopted`), so
-later `jailbee pr` runs push new commits without asking again. Fork PRs are
+later `jailbee pr push` runs push new commits without asking again. Fork PRs are
 refused: their head lives in another repository, so pushing to `origin`
 would create an unrelated branch instead of updating the PR.
 
@@ -968,7 +967,7 @@ PR #N's head branch rather than pushing into it, so the author reviews your
 commits separately and merges them into their own branch.
 
 ```bash
-jailbee pr review-1234 --stacked --as fix/worktime-review
+jailbee pr push review-1234 --stacked --as fix/worktime-review
 ```
 
 That PR is JailBee's own, so it needs a head branch of its own: `--as`, or
@@ -982,8 +981,8 @@ It is recorded separately, under `user.jailbee.stacked_pr` /
 `user.jailbee.pr` goes on naming the **reviewed** PR, which is the point:
 `jailbee ls`'s PR column and `jailbee git push --pr` ("refresh from PR
 head", above) keep tracking the parent, so the author's new commits still
-come to you over the bridge. Later `jailbee pr` runs read the stacked labels
-and update your PR with no question asked, and `--open` prefers it over the
+come to you over the bridge. Later `jailbee pr push` runs read the stacked labels
+and update your PR with no question asked, and `jailbee pr open --stacked` opens it instead of the
 parent.
 
 Two more things follow from the container's own base anchor being the
@@ -1032,7 +1031,7 @@ created stacked PR), JailBee keeps these hands-off rules:
 
 The same treatment applies to a container that was never created from a PR at
 all — `jailbee new <existing-branch>`, where the branch happens to have an open PR
-already. Before opening anything, `jailbee pr` asks GitHub whether the container's
+already. Before opening anything, `jailbee pr push` asks GitHub whether the container's
 branch has a PR (`gh pr view <branch>`) and, if it does, offers to push to that
 PR instead:
 
@@ -1274,7 +1273,7 @@ GitHub write path has not yet been verified against a real host PR; see the
 host-only recipe in [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md#draft-review-publication).
 
 A PR manifest normally names a PR the container owns: the one it was created
-from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked
+from (`jb new --pr`), opened (`jb pr push`), bound (`jb pr bind <container> N`) or stacked
 (`--stacked`). It may also name **any other PR of the same repository** — a
 description fix or a reply on a neighbouring PR, say. The repository lock
 still holds; only the ownership check is relaxed, and never silently. The plan
@@ -1289,7 +1288,7 @@ name a PR in **a repository that is neither the superproject nor one of its
 submodules** — a description fix on a plugin repository the change also
 touches, say. Its plan warns that the repository is not the container's, and
 the same confirmation or `--foreign` is the consent. A `pr: null` manifest is
-never sent to another repository, and `jb review apply` and `jb pr` keep the
+never sent to another repository, and `jb review apply` and `jb pr push` keep the
 repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
@@ -1298,7 +1297,7 @@ dashboard's publication terminal asks under the plan, so it needs no flag;
 the outbox manager (`jb outbox`, and the terminal dashboard's Outbox box)
 shows the plan and its warnings above its own choice, and choosing Publish
 there is the consent (`--foreign` is passed only then). Publication asks exactly once, under the
-plan. `jb pr`'s post-push
+plan. `jb pr push`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
 `jb review apply --foreign <container>`. `jb review ls` lists it with the state
@@ -1332,8 +1331,8 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   the box. A stale-head refusal says to use `--force` from a terminal; the box
   never forces.
 - **Create PR** (a description awaiting its PR) re-reads the listing and,
-  if the proposal is unchanged, hands the terminal to `jb pr` or
-  `jb submodule pr` for the resolved scope, with that command's own checks.
+  if the proposal is unchanged, hands the terminal to `jb pr push` or
+  `jb submodule pr push` for the resolved scope, with that command's own checks.
 - **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
   below does.
 
@@ -1365,7 +1364,7 @@ explicit `outbox drop` or `outbox apply` commands for mutations, each subject
 to remote command and host-protection policy. Native Qt is not offered over
 SSH.
 
-`jb review apply`, `jb issue apply/resolve`, `jb pr` and `jb submodule pr`
+`jb review apply`, `jb issue apply/resolve`, `jb pr push` and `jb submodule pr push`
 workflows remain available. `jb review ls/show/drop` and `jb issue
 ls/show/drop` are **deprecated** in favour of `jb outbox ls/show/drop`: they are
 hidden from `--help`, behave as before and print a hint on stderr. The unified interface does not authorize agents to publish:

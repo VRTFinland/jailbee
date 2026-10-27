@@ -207,7 +207,7 @@ append/reset behavior, still apply.
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
 | `env` | map[string, string] | `{}` | Literal values passed to the install/update step and autostart launch, not to ordinary shells or the PR headless invocation. No `~` or `$HOME` expansion; values are not masked by `config show`. |
 | `prompt_args` | string \| null | preset | Arguments appended to `command` (one space) to start the agent with an initial prompt from `jailbee new --prompt`. The prompt text is in the file `$JAILBEE_INITIAL_PROMPT_FILE`; read it from the environment, never interpolate it. Presets set it for `claude`, `codex` and `opencode`; unset means the agent cannot take an initial prompt. See [Primary agent and initial prompt](#primary-agent-and-initial-prompt). |
-| `headless` | string \| null | preset | One-shot command line that runs the agent once and prints its answer — what [`jailbee pr`](config.md#pr) uses to write PR text. Run in a `bash -lc` login shell in the repo directory; the prompt is in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL` — read both from the environment, never interpolate them. `$JAILBEE_PR_SESSION` holds a fresh UUID the agent may take as its session id, so a timed-out run's transcript can be found. Presets set it for `claude`, `codex`, `gemini` and `opencode`; leave unset for an agent with no one-shot mode, and `pr.agent: auto` skips it. |
+| `headless` | string \| null | preset | One-shot command line that runs the agent once and prints its answer — what [`jailbee pr push`](config.md#pr) uses to write PR text. Run in a `bash -lc` login shell in the repo directory; the prompt is in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL` — read both from the environment, never interpolate them. `$JAILBEE_PR_SESSION` holds a fresh UUID the agent may take as its session id, so a timed-out run's transcript can be found. Presets set it for `claude`, `codex`, `gemini` and `opencode`; leave unset for an agent with no one-shot mode, and `pr.agent: auto` skips it. |
 | `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the [bundled skills](#10-the-bundled-jailbee-skills) into the shared copy of it. Leave unset for an agent with no skills mechanism. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads host-wide instructions; `dir` is mounted read-only and must not overlap a `shared` mount in either direction, nor be `/`, `/etc`, `/usr`, `/home` or the home directory. `dir` is absolute or `~`-relative without `.`/`..` segments; `file` is a bare file name. Neither may contain a NUL byte. Only Claude's preset sets it today. |
 | `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. |
@@ -424,7 +424,7 @@ Use a host-only file such as `~/.config/jailbee/global.yaml` or the per-repo
 `~/.config/jailbee/repos/<container_prefix>.yaml`, protect its file permissions,
 and keep it out of version control. These values are **not masked by
 `jailbee config show`**. They are not added to ordinary container shells or
-the `jailbee pr` headless invocation; those need their own authentication
+the `jailbee pr push` headless invocation; those need their own authentication
 source, such as the agent's saved login.
 
 ```yaml
@@ -548,7 +548,7 @@ The AI-written PR descriptions are not Claude-only any more: they are the
 agent-neutral [`pr:` block](config.md#pr), whose `pr.agent` picks the agent.
 `auto` prefers enabled autostart agents with a `headless` command, then other
 enabled headless-capable agents; within each set Claude comes first, then
-other names alphabetically. Run `jailbee pr` on the host: the AI command
+other names alphabetically. Run `jailbee pr push` on the host: the AI command
 runs inside the container's repo directory, while GitHub publication uses
 the host's `gh` credentials. Selecting `pr.agent: claude-jb` runs Claude's
 headless command through the LiteLLM wrapper.

@@ -1618,7 +1618,7 @@ to share" rule, and a worked example live in
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
 | `prompt_args` | string \| null | preset | Arguments appended to `command` (joined with one space) when the agent is the [primary agent](#primary_agent) and a `jailbee new --prompt` is pending. Run in a shell; the prompt text is in the file `$JAILBEE_INITIAL_PROMPT_FILE` — read it from the environment, never interpolate it. Presets set it for `claude`, `codex` and `opencode`; unset means the agent cannot take an initial prompt and `--prompt` is refused (exit 2). The presets pass the prompt as a bare argument, so a prompt starting with `-` may be read as an option by the agent CLI and lost; start prompts with text. See [agents.md](agents.md#primary-agent-and-initial-prompt). |
-| `headless` | string \| null | preset | One-shot command line `jailbee pr` runs to write PR text (see [`pr`](#pr)): run in a `bash -lc` login shell in the repo directory, with the prompt in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL`. Read both from the environment — never interpolate them. `$JAILBEE_PR_SESSION` carries a fresh UUID an agent may use as its session id, so a timed-out run's transcript can be named. Presets set it for `claude`, `codex`, `gemini` and `opencode`; `aider` and `grok` have none. |
+| `headless` | string \| null | preset | One-shot command line `jailbee pr push` runs to write PR text (see [`pr`](#pr)): run in a `bash -lc` login shell in the repo directory, with the prompt in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL`. Read both from the environment — never interpolate them. `$JAILBEE_PR_SESSION` carries a fresh UUID an agent may use as its session id, so a timed-out run's transcript can be named. Presets set it for `claude`, `codex`, `gemini` and `opencode`; `aider` and `grok` have none. |
 | `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The four skill-capable presets set it; leave unset for an agent with no skills mechanism. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
 | `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. The pre-1.0 `claude.install_gie_skills` name was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads host-wide instructions: `~/.config/jailbee/AGENTS.md` is mounted read-only at `dir`, renamed to `file` — see [Agent-wide instructions](#agent-wide-instructions-configjailbeeagentsmd). Only Claude's preset sets it (`/etc/claude-code`, `CLAUDE.md`); constraints are in [agents.md](agents.md#4-writing-your-own-agent). |
@@ -1688,9 +1688,9 @@ list — they are auto-added by `Config.effective_shared_caches()` when
 
 ### `pr`
 
-How `jailbee pr` writes a pull request's title, body and head branch name.
+How `jailbee pr push` writes a pull request's title, body and head branch name.
 These settings used to hang off the Claude agent (`claude.ai_pr_*`,
-`claude.pr_prompt`); they describe `jailbee pr`, not Claude, so they moved. The
+`claude.pr_prompt`); they describe `jailbee pr push`, not Claude, so they moved. The
 old spelling still loads — each key is folded into `pr:` before the layers merge
 (so a repo's old key still beats the global `pr:`), with a deprecation notice
 naming the file — and is removed in 2.0.0. `jailbee config migrate --apply` rewrites it in
@@ -1698,12 +1698,12 @@ naming the file — and is removed in 2.0.0. `jailbee config migrate --apply` re
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pr.agent` | string | `auto` | Which in-container agent writes the PR text. `auto` picks the repo's own agent (see below): an explicit [`primary_agent`](#primary_agent) first, if it has a `headless` command. Name an agent (`claude`, `codex`, …) to pin it, or `claude-jb` to run Claude through the [LiteLLM wrapper](#litellm). A pinned agent must be enabled and have a `headless` command; if it cannot be used `jailbee pr` says what to change and falls back to a placeholder — it never quietly uses another agent. Settable in `global.yaml` and per repo. |
-| `pr.ai_description` | bool | `true` | When `true`, `jailbee pr` generates the PR title and body from the branch's commits and diff, showing a spinner while it runs. Falls back to a commit-subject title + placeholder body on any failure, with a warning. Pass `--no-ai` to opt out per invocation. |
-| `pr.ai_branch` | bool | `true` | When `true`, `jailbee pr` asks the agent to propose a convention-following head branch name when opening a **new** PR. Has no effect when `pr.ai_description: false`. |
+| `pr.agent` | string | `auto` | Which in-container agent writes the PR text. `auto` picks the repo's own agent (see below): an explicit [`primary_agent`](#primary_agent) first, if it has a `headless` command. Name an agent (`claude`, `codex`, …) to pin it, or `claude-jb` to run Claude through the [LiteLLM wrapper](#litellm). A pinned agent must be enabled and have a `headless` command; if it cannot be used `jailbee pr push` says what to change and falls back to a placeholder — it never quietly uses another agent. Settable in `global.yaml` and per repo. |
+| `pr.ai_description` | bool | `true` | When `true`, `jailbee pr push` generates the PR title and body from the branch's commits and diff, showing a spinner while it runs. Falls back to a commit-subject title + placeholder body on any failure, with a warning. Pass `--no-ai` to opt out per invocation. |
+| `pr.ai_branch` | bool | `true` | When `true`, `jailbee pr push` asks the agent to propose a convention-following head branch name when opening a **new** PR. Has no effect when `pr.ai_description: false`. |
 | `pr.model` | string \| null | agent's own | Model passed as `--model`. Left **unset**, Claude (and `claude-jb`) use `sonnet` — writing a description is a bounded job, and pinning it keeps generation from competing for the budget of the coding work — and every other agent uses its own default. Accepts an alias or a full model ID. An explicit `null` omits the flag on every agent, so the container's default model applies. `haiku` works but has a smaller context window. Rejected at load if it is not a single whitespace-free token. |
 | `pr.prompt` | string \| null | `null` | Project-specific PR-writing instructions, usually a YAML block scalar in a repo's `.jailbee/config.yaml`. Embedded in JailBee's own prompt as a delimited section that **outranks** the generic title/body guidance, so a project can dictate the shape of its descriptions — but it is placed before the JSON response contract, which it cannot override. Whitespace-only is treated as unset; capped at 20 000 characters. |
-| `pr.timeout` | int | `600` | Seconds `jailbee pr` gives the agent to produce the PR text before falling back to a placeholder. Generation is an agentic run, not one model call — it reads the log, the cumulative diff, the PR template, the branch's spec and the CI config across a dozen-plus turns, so the cost scales with the repository, not just with the diff. Measured in JailBee's own repo on a 21-file/+940 diff: 109 s. Raise it for a large tree, or when `pr.prompt` asks for slower work. Must be positive — to switch generation off use `pr.ai_description: false`. |
+| `pr.timeout` | int | `600` | Seconds `jailbee pr push` gives the agent to produce the PR text before falling back to a placeholder. Generation is an agentic run, not one model call — it reads the log, the cumulative diff, the PR template, the branch's spec and the CI config across a dozen-plus turns, so the cost scales with the repository, not just with the diff. Measured in JailBee's own repo on a 21-file/+940 diff: 109 s. Raise it for a large tree, or when `pr.prompt` asks for slower work. Must be positive — to switch generation off use `pr.ai_description: false`. |
 
 **What `auto` picks.** An explicit `primary_agent` name (not `auto`) wins when that agent has a `headless` command. Otherwise, among the enabled agents, the ones with `autostart` on
 first, then every enabled one; inside each group Claude first and then by name;
@@ -1728,7 +1728,7 @@ pr:
 
 #### Encoding a project's PR standard
 
-`jailbee pr` instructs the selected agent to read
+`jailbee pr push` instructs the selected agent to read
 `.github/pull_request_template.md`, the spec or issue a branch implements,
 and `CONTRIBUTING.md` / `CLAUDE.md` / `AGENTS.md` before drafting. This is a
 prompt instruction, not proof that every agent read every file. `pr.prompt`
@@ -2368,7 +2368,7 @@ defaults to `"base"`.
 | `default_source` | `"default-branch"` \| `"current"` \| `"base"` \| `"ask"` | `"base"` | Which branch to push. `"base"` resolves to each container's recorded base branch (`user.jailbee.base_branch`), so it selects that branch's current ref, not necessarily the original branch-off commit. `"default-branch"` always uses the repo's default branch, regardless of the container's base. `"current"` uses `git symbolic-ref --short HEAD`. `"ask"` opens an interactive picker every time. |
 | `push_from` | `"origin"` \| `"local"` | `"origin"` | Which *copy* of that branch to push. `"origin"` sends `refs/remotes/<upstream_remote>/<source>` and falls back to `refs/heads/<source>` when the branch has no upstream copy; `"local"` reverses the order. |
 | `autofetch` | bool | `true` | Run `git fetch <upstream_remote> <source>` on the host before resolving the ref, so the remote-tracking copy is current. Only applies in `push_from: origin` mode. Best-effort — the push proceeds with the refs already present; a failure is reported only when the origin ref is what ended up travelling (and may therefore be stale), not when resolution fell back to the local branch because the source simply isn't on origin. |
-| `tags` | `"none"` \| `"reachable"` \| `"all"` | `"none"` | Which tags travel from the host into a container. `"none"` sends none; `"reachable"` sends the tags reachable from the pushed branch (computed with `git tag --merged`, not `--follow-tags`, so lightweight tags survive); `"all"` mirrors every tag the host has. Never re-points a tag that already exists in the container, and never reaches the GitHub origin — `jailbee pr` is unaffected. See [Tags](git-bridge.md#tags). |
+| `tags` | `"none"` \| `"reachable"` \| `"all"` | `"none"` | Which tags travel from the host into a container. `"none"` sends none; `"reachable"` sends the tags reachable from the pushed branch (computed with `git tag --merged`, not `--follow-tags`, so lightweight tags survive); `"all"` mirrors every tag the host has. Never re-points a tag that already exists in the container, and never reaches the GitHub origin — `jailbee pr push` is unaffected. See [Tags](git-bridge.md#tags). |
 | `ff` | `"never"` \| `"auto"` \| `"always"` | `"auto"` | How `jailbee git push --merge` merges inside the container. `"auto"` tries fast-forward-only when already on the source branch, asking (TTY) or failing (no TTY) on divergence; on another branch it permits a normal merge. `"always"` requires fast-forward-only. `"never"` permits a normal merge, but currently does **not** force a merge commit: the container merge command omits `--no-ff`. See [Fast-forward policy](git-bridge.md#fast-forward-policy). |
 
 CLI flags (`--merge`, `--rebase`, `--plain`, `--from`, `--current`,
@@ -2744,7 +2744,7 @@ plus `container_prefix`, a real YAML key whose fallback is computed:
 does not exist yet, and supplies the base branch when a command does not name
 one. Status and container diffs resolve each container's recorded base branch
 against the host's live local branch (tracking-ref fallback), not this computed
-default and not the host's checked-out branch. A `jailbee pr` that names no
+default and not the host's checked-out branch. A `jailbee pr push` that names no
 base still uses the default. The default therefore has to be stable — a value
 that followed whatever the host has checked out would silently change those
 defaults — so jailbee reads something that exists rather than guessing a name,
@@ -3113,7 +3113,7 @@ path, except the global `--repo PREFIX` selector (see
 allowlist entries and are never included by `full`.
 
 A handful of hidden top-level spellings (`merge`, `fetch`, `checkout`, `pull`,
-`push`, `retarget`, `diff`, `git pr`, and the `egress` short alias for `net
+`push`, `retarget`, `diff`, and the `egress` short alias for `net
 egress`) are aliases of a public command: running one is policy-checked
 against its canonical public leaf, not against its own hidden name. `allow:
 [git merge]` therefore also permits `merge`; `full` permits every alias whose

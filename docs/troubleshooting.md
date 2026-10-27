@@ -206,7 +206,7 @@ to `gh` without verifying its permissions; use a token with only the read
 permissions the container needs. This token injection does not itself
 configure Git authentication.
 
-Prefer publishing on the host: run `jailbee pr <name>`, or bring the commits
+Prefer publishing on the host: run `jailbee pr push <name>`, or bring the commits
 into a host branch with `jailbee git checkout <name>` and then use the host's
 `git push`. Switching a container to loose only widens network access; it
 does not grant write permission or repair missing credentials.

@@ -35,9 +35,15 @@ manifest by hand, follow it exactly rather than guessing from the examples.
 |---|---|
 | `version` | Must be `1`. Anything else is refused by name ("manifest version 2 needs a newer JailBee"). |
 | `repo` | `owner/name`. Checked against the GitHub remotes of the host's superproject and submodules (gate 1). Another GitHub repository is published only through `jb outbox apply` (or a dashboard's Outbox entry), with `pr` set, after the human is warned it is not this container's repository — name one only when the user asked for it. |
-| `pr` | Integer, normally the container's own PR (gate 2). Another PR of the same repo is allowed, but the human publishing it is warned that the container does not own it and must consent — so name such a PR only when the user asked for it. Or `null`, meaning "the PR `jb pr` is about to open from this container". A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. **Name the number whenever the PR already exists** (`gh pr view --json number`): on a PR JailBee did not open — including the user's own, adopted with `jb pr --pr N` — `jb pr` uses only a description that names the PR it is updating. |
+| `pr` | Integer, normally the container's own PR (gate 2). Another PR of the same repo is allowed, but the human publishing it is warned that the container does not own it and must consent — so name such a PR only when the user asked for it. Or `null`, meaning "the PR `jb pr push` is about to open from this container". A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. **Name the number whenever the PR already exists** (`gh pr view --json number`): on a PR JailBee did not open — including the user's own, bound with `jb pr bind <container> N` — `jb pr push` uses only a description that names the PR it is updating. |
 | `head_sha` | Full sha as GitHub reports `headRefOid`. Checked for staleness (gate 3), which applies only to `review` actions. `null` is allowed on a `pr: null` manifest. |
 | `actions` | Non-empty list, applied in order. |
+
+For a numbered manifest targeting the container's own PR, bind it on the host
+with `jailbee pr bind <container> N` when needed; forked containers inherit the
+source binding. A different same-repository target can still be published with
+explicit host confirmation, and `jb outbox apply` handles other repositories
+with its own warning and confirmation gates.
 
 ## Body fields
 
@@ -92,12 +98,12 @@ sees the intent, not just a link.
 ## `type: "description"`
 
 The existing `pr.edit_pr`, i.e. `gh pr edit`, when applied by
-`jb review apply`; consumed directly by `jb pr` when that command runs first.
+`jb review apply`; consumed directly by `jb pr push` when that command runs first.
 `body_file`/`body` replaces the whole description. `title` and `branch` are
 optional in the schema, but `title` has different behavior depending on which
 command consumes the manifest:
 
-- `jb pr` / `jb submodule pr` (create **or** update): provide a non-blank
+- `jb pr push` / `jb submodule pr push` (create **or** update): provide a non-blank
   `title` string with the intended PR title. If the PR already exists and
   only its body should change, copy its current title from
   `gh pr view <n> --json title`. A missing, `null`, or blank title instead
@@ -109,7 +115,7 @@ command consumes the manifest:
 - `jb review apply` (existing PR only): a missing or `null` title leaves the
   current title unchanged. It does not derive a title from the body.
 
-`branch` is the proposed head branch name and is used **only** on the `jb pr`
+`branch` is the proposed head branch name and is used **only** on the `jb pr push`
 create path — `jb review apply` ignores it, because renaming the head of an
 existing PR is not a description edit. At most one `description` action per
 manifest.
@@ -189,7 +195,7 @@ Notes on this example:
 
 ## Worked example 2 — a `pr: null` description manifest
 
-Written before the PR exists yet, to hand `jb pr` a title, body, and
+Written before the PR exists yet, to hand `jb pr push` a title, body, and
 proposed head branch instead of running its own Claude pass:
 
 `~/.jailbee/pr-outbox/002-description.json`:
@@ -238,9 +244,9 @@ Notes on this example:
   `pr: null` manifest with a `review`, `reply`, or `comment` action is
   refused, since there is no PR to anchor them to.
 - Check first. If `gh pr view` finds a PR for this branch, write its number
-  instead of `null`: `jb pr` will not put a `pr: null` description on a PR it
+  instead of `null`: `jb pr push` will not put a `pr: null` description on a PR it
   did not open itself, and the number is what tells it this text was written
   for that PR.
-- `branch` is populated because this text is meant for the `jb pr` **create**
+- `branch` is populated because this text is meant for the `jb pr push` **create**
   path, where a proposed head branch name matters. On the `jb review apply`
   update path, `branch` is ignored.

@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **PR bindings.** `jailbee pr bind` / `unbind` and their submodule equivalents
+  manage existing PR targets without pushing; both dashboards offer binding and
+  unbinding. Forks inherit PR bindings, and PR creation offers targets named
+  by pending outbox manifests.
 - **Container orchestration.** Grant a container bounded rights to spawn and
   manage child containers, exchange messages and import their commits through
   a host-side broker. Named profiles, repo-level restrictions, runner
@@ -49,6 +53,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **Breaking:** `jailbee pr` and `jailbee submodule pr` are command groups.
+  Use `jailbee pr push <container>` instead of `jailbee pr <container>`,
+  and `jailbee pr open` instead of `--open`; the submodule group follows the
+  same pattern. The `jailbee git pr` alias is removed.
 - **Containers inherit `defaults.memory` from the base profile** unless
   `--memory` sets an override. `jailbee apply` updates inherited limits live;
   forks without an override follow the default rather than their source's

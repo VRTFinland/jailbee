@@ -5455,7 +5455,7 @@ def _git_group() -> None:
       jailbee git pull feat-foo             # fetch + merge into HEAD
       jailbee git pull feat-foo --ff        # ff-only, refuse on divergence
       jailbee git pull feat-foo --cleanup   # merge, destroy container, delete branch
-      jailbee pr feat-foo                   # push branch to origin + open draft PR
+      jailbee pr push feat-foo              # push branch to origin + open draft PR
 
     Send host updates into a container:
 
@@ -13321,9 +13321,8 @@ def port_ls_cmd(
 
 # ---- PR review outbox commands ----
 #
-# `jailbee pr` is a command with an optional positional container name, so
-# `jailbee pr apply` would parse `apply` as a container name — hence a group
-# of its own. Everything below is argument parsing, container resolution,
+# Review outbox actions live under their own `jailbee review` group.
+# Everything below is argument parsing, container resolution,
 # printing and prompting: reading, validating, planning, applying and
 # cleaning up the manifests is `pr_outbox`'s job.
 

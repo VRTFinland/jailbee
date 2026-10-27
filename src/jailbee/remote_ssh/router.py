@@ -540,7 +540,8 @@ def allowed_command_paths(
 #   - `net egress add`/`rm` `--repo` writes the host-local repo layer
 #     (`repos/<prefix>.yaml`) and so changes every container of the repo, not
 #     only the session's own;
-#   - `pr push --web` and `submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
+#   - `pr push --web`, `submodule pr push --web` and the `pr open` commands
+#     run `gh pr view --web`, a browser
 #     on the host's display;
 #   - `--yes` on the commands that publish to GitHub with the host's own
 #     credentials (`pr push`, `pr bind`, `pr unbind`, `submodule pr`,
