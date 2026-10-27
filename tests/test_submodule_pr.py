@@ -274,6 +274,34 @@ def _state(incus, subpath="lib/a"):
     return submodule_pr.SubmodulePrState(incus, "sampleapp-feat-foo", subpath)
 
 
+def test_submodule_state_clear_removes_only_its_entry():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"a": {"pr": 7}, "b": {"pr": 8}}'
+    _state(incus, "a").clear()
+    incus.config_set.assert_called_once_with(
+        "sampleapp-feat-foo", submodule_pr.STATE_KEY, '{"b": {"pr": 8}}'
+    )
+    incus.config_unset_checked.assert_not_called()
+
+
+def test_submodule_state_clear_last_entry_unsets_key():
+    incus = MagicMock()
+    incus.config_get.return_value = '{"a": {"pr": 7}}'
+    _state(incus, "a").clear()
+    incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", submodule_pr.STATE_KEY)
+    incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["config_get", "config_set", "config_unset_checked"])
+def test_submodule_state_clear_warns_on_incus_error(mocker, operation):
+    incus = MagicMock()
+    incus.config_get.return_value = '{"a": {"pr": 7}, "b": {"pr": 8}}' if operation == "config_set" else '{"a": {"pr": 7}}'
+    getattr(incus, operation).side_effect = IncusError("boom")
+    warn = mocker.patch("jailbee.tui.warn")
+    _state(incus, "a").clear()
+    assert "boom" in warn.call_args.args[0]
+
+
 def test_state_reads_an_empty_map_as_a_blank_record(mocker):
     from jailbee.pr_flow import PrRecord
 

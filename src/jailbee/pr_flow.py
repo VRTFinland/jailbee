@@ -21,7 +21,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Never, Protocol
+from typing import TYPE_CHECKING, Literal, Never, Protocol
 
 import typer
 
@@ -706,6 +706,8 @@ class PrState(Protocol):
 
     def read(self) -> PrRecord: ...
 
+    def clear(self) -> None: ...
+
     def record(
         self,
         *,
@@ -803,6 +805,16 @@ class ContainerLabelState:
                 self._incus.config_set(self._full, self._prefix, str(number))
         except IncusError as exc:
             warn(f"{context or 'Could not record the PR decision'}: {exc}")
+
+    def clear(self) -> None:
+        """Remove this label set, best-effort like recording a decision."""
+        from jailbee.incus import IncusError
+
+        try:
+            for suffix in ("", "_branch", "_author", "_adopted", "_base"):
+                self._incus.config_unset_checked(self._full, f"{self._prefix}{suffix}")
+        except IncusError as exc:
+            warn(f"Could not clear the PR decision: {exc}")
 
 
 @dataclass(frozen=True)
@@ -1178,6 +1190,9 @@ def bind_pr_by_number(
     record: PrRecord,
     yes: bool,
     record_context: str,
+    intent: Literal["push", "bind"] = "push",
+    confirmed: bool = False,
+    target_label: str = "this container",
 ) -> PrRecord:
     """Bind this target to PR ``number``, and return the record to run under.
 
@@ -1197,6 +1212,10 @@ def bind_pr_by_number(
     call or a prompt; re-running with the same ``--pr`` is not a decision.
     Bound to a *different* number -> confirms a retarget, which is also the
     only way back out of a mistyped number.
+
+    ``intent="bind"`` asks only about binding ``target_label`` rather than
+    pushing commits; retarget questions are unchanged. ``confirmed`` skips
+    confirmation when the caller has already obtained the user's decision.
 
     Exits non-zero on an unresolvable, closed/merged, or fork PR, and on a
     declined or unavailable confirmation.
@@ -1242,6 +1261,12 @@ def bind_pr_by_number(
             f"{scope.prefix}Retargeting from PR #{record.number} to #{number} needs "
             f"confirmation — re-run with --yes when there is no terminal to ask on."
         )
+    elif intent == "bind":
+        question = f"Bind {target_label} to PR #{number} ('{found.head_ref}')?"
+        refusal = (
+            f"{scope.prefix}binding to PR #{number} needs confirmation — "
+            f"re-run with --yes when there is no terminal to ask on."
+        )
     else:
         question = f"Push this container's commits to PR #{number} ('{found.head_ref}')?"
         refusal = (
@@ -1249,7 +1274,7 @@ def bind_pr_by_number(
             f"confirmation — re-run with --yes when there is no terminal to ask on."
         )
 
-    if not yes:
+    if not yes and not confirmed:
         if not prompting.is_interactive():
             error(refusal)
             raise typer.Exit(1)
@@ -1266,6 +1291,35 @@ def bind_pr_by_number(
     # In-process, not a re-read: `state.record` is best-effort, and the run
     # must publish to the right head even when the write failed.
     return PrRecord(number=number, head=found.head_ref, author=False, adopted=True)
+
+
+def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -> bool:
+    """Forget a target's PR binding after an explicit user decision."""
+    from jailbee import prompting
+
+    record = state.read()
+    if record.number is None and not record.head:
+        info(f"{scope.prefix}{target_label} is not bound to a PR.")
+        return False
+
+    if not yes:
+        if not prompting.is_interactive():
+            error(
+                f"{scope.prefix}Unbinding {target_label} needs confirmation — "
+                f"re-run with --yes when there is no terminal to ask on."
+            )
+            raise typer.Exit(1)
+        if not typer.confirm(f"Unbind {target_label} from PR #{record.number}?", default=False):
+            raise typer.Abort()
+
+    state.clear()
+    success(f"{scope.prefix}Unbound {target_label} from PR #{record.number}.")
+    if record.number is not None and not record.author and not record.adopted:
+        info(
+            f"{target_label} is now an ordinary container; forks made from it from now on "
+            "are no longer treated as untrusted."
+        )
+    return True
 
 
 def resolve_create_text(

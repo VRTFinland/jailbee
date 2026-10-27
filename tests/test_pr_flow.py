@@ -1561,6 +1561,125 @@ def _record(number=7, head=None, author=False, adopted=False):
     return pr_flow.PrRecord(number=number, head=head, author=author, adopted=adopted)
 
 
+@pytest.mark.parametrize("prefix", ["user.jailbee.pr", pr_flow.STACKED_LABEL_PREFIX])
+def test_container_label_state_clear_unsets_all_suffixes(mocker, prefix):
+    incus = mocker.MagicMock()
+    pr_flow.ContainerLabelState(incus, "c1", prefix=prefix).clear()
+    assert incus.config_unset_checked.call_args_list == [
+        mocker.call("c1", prefix + suffix)
+        for suffix in ("", "_branch", "_author", "_adopted", "_base")
+    ]
+
+
+def test_container_label_state_clear_warns_on_incus_error(mocker):
+    from jailbee.incus import IncusError
+
+    incus = mocker.MagicMock()
+    incus.config_unset_checked.side_effect = IncusError("boom")
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    pr_flow.ContainerLabelState(incus, "c1").clear()
+    assert "boom" in warn.call_args.args[0]
+
+
+def _bind_number(tmp_path, mocker, **kwargs):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info())
+    state = mocker.MagicMock()
+    result = pr_flow.bind_pr_by_number(
+        _super_scope(tmp_path), state, number=7, record=_record(number=None),
+        yes=False, record_context="for test", **kwargs,
+    )
+    return state, result
+
+
+def test_bind_by_number_bind_intent_wording(tmp_path, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+    _bind_number(tmp_path, mocker, intent="bind", target_label="submodule 'lib/a'")
+    confirm.assert_called_once_with("Bind submodule 'lib/a' to PR #7 ('feat/foo')?", default=True)
+
+
+def test_bind_by_number_bind_intent_refusal(tmp_path, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    error = mocker.patch("jailbee.pr_flow.error")
+    with pytest.raises(typer.Exit) as excinfo:
+        _bind_number(tmp_path, mocker, intent="bind")
+    assert excinfo.value.exit_code == 1
+    assert "binding to PR #7 needs confirmation" in error.call_args.args[0]
+
+
+def test_bind_by_number_confirmed_skips_prompt(tmp_path, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    confirm = mocker.patch("typer.confirm")
+    state, result = _bind_number(tmp_path, mocker, confirmed=True)
+    confirm.assert_not_called()
+    state.record.assert_called_once_with(
+        head="feat/foo", adopted=True, author=False, number=7,
+        context="Could not record PR #7 for test",
+    )
+    assert result == _record(head="feat/foo", adopted=True)
+
+
+def test_unbind_not_bound_returns_false(tmp_path, mocker):
+    state = mocker.MagicMock()
+    state.read.return_value = _record(number=None)
+    info = mocker.patch("jailbee.pr_flow.info")
+    assert not pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=False)
+    state.clear.assert_not_called()
+    info.assert_called_once_with("c1 is not bound to a PR.")
+
+
+@pytest.mark.parametrize("yes", [False, True])
+def test_unbind_confirms_and_clears(tmp_path, mocker, yes):
+    state = mocker.MagicMock()
+    state.read.return_value = _record(head="feat/foo", author=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=not yes)
+    confirm = mocker.patch("typer.confirm", return_value=True)
+    success = mocker.patch("jailbee.pr_flow.success")
+    assert pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=yes)
+    state.clear.assert_called_once_with()
+    success.assert_called_once()
+    if yes:
+        confirm.assert_not_called()
+    else:
+        confirm.assert_called_once_with("Unbind c1 from PR #7?", default=False)
+
+
+def test_unbind_noninteractive_without_yes_exits_1(tmp_path, mocker):
+    state = mocker.MagicMock()
+    state.read.return_value = _record()
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    error = mocker.patch("jailbee.pr_flow.error")
+    with pytest.raises(typer.Exit) as excinfo:
+        pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=False)
+    assert excinfo.value.exit_code == 1
+    state.clear.assert_not_called()
+    assert "--yes" in error.call_args.args[0]
+
+
+def test_unbind_declined_does_not_clear(tmp_path, mocker):
+    state = mocker.MagicMock()
+    state.read.return_value = _record()
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    with pytest.raises(typer.Abort):
+        pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=False)
+    state.clear.assert_not_called()
+
+
+@pytest.mark.parametrize("author,adopted,review", [(False, False, True), (True, False, False), (False, True, False)])
+def test_unbind_review_container_mentions_untrusted(tmp_path, mocker, author, adopted, review):
+    state = mocker.MagicMock()
+    state.read.return_value = _record(author=author, adopted=adopted)
+    info = mocker.patch("jailbee.pr_flow.info")
+    assert pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=True)
+    if review:
+        info.assert_called_once_with(
+            "c1 is now an ordinary container; forks made from it from now on are no longer treated as untrusted."
+        )
+    else:
+        info.assert_not_called()
+
+
 def _resolve(tmp_path, record, state, **kwargs):
     return pr_flow.resolve_review_target(
         _super_scope(tmp_path),

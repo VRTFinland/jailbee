@@ -390,6 +390,20 @@ class SubmodulePrState:
             default_context = f"Could not record the submodule PR decision for '{self._subpath}'"
             warn(f"{context or default_context}: {exc}")
 
+    def clear(self) -> None:
+        """Remove only this submodule's binding, best-effort."""
+        try:
+            current = _load_map(self._incus, self._full)
+            current.pop(self._subpath, None)
+            if current:
+                self._incus.config_set(self._full, STATE_KEY, json.dumps(current, sort_keys=True))
+            else:
+                self._incus.config_unset_checked(self._full, STATE_KEY)
+        except IncusError as exc:
+            from jailbee.tui import warn
+
+            warn(f"Could not clear the submodule PR decision for '{self._subpath}': {exc}")
+
 
 if TYPE_CHECKING:
     from jailbee.pr_flow import PrState
