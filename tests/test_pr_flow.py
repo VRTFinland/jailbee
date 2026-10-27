@@ -1693,7 +1693,9 @@ def test_bind_persistence_failure_depends_on_intent(tmp_path, mocker, intent):
             pr_flow.bind_pr_by_number(_super_scope(tmp_path), state, intent=intent, **arguments)
         assert excinfo.value.exit_code == 1
     else:
-        result = pr_flow.bind_pr_by_number(_super_scope(tmp_path), state, intent=intent, **arguments)
+        result = pr_flow.bind_pr_by_number(
+            _super_scope(tmp_path), state, intent=intent, **arguments
+        )
         assert result.number == 7
         assert result.head == "feat/foo"
         assert result.adopted

@@ -203,7 +203,9 @@ def test_push_real_offer_gate_never_implicitly_binds(mocker, tmp_path, yes, inte
     mocker.patch("jailbee.pr_flow.create_or_view_pr", return_value=_pr_created(already=True))
     mocker.patch("jailbee.pr_flow.apply_pr_updates")
     mocker.patch("jailbee.pr_links.link_pr_family")
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai", *(["--yes"] if yes else [])])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--no-ai", *(["--yes"] if yes else [])]
+    )
     assert result.exit_code == 0, result.output
     assert "jailbee pr bind" in result.output
     refs.assert_called_once()
