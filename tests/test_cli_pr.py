@@ -869,6 +869,7 @@ def _update_setup(mocker, tmp_path):
         tmp_path,
         labels={
             "user.jailbee.pr": "123",
+            "user.jailbee.pr_branch": "feat/foo",
             "user.jailbee.pr_author": "1",
             "user.jailbee.base_branch": "main",
         },

@@ -47,6 +47,8 @@ def test_submodule_open_recorded(mocker, tmp_path):
     import json
 
     _setup(mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})})
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=tmp_path / "lib/a")
     opened = mocker.patch("jailbee.pr.open_pr_in_browser")
     result = CliRunner().invoke(app, ["submodule", "pr", "open", "feat-foo", "lib/a"])
     assert result.exit_code == 0, result.output

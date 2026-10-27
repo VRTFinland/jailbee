@@ -481,6 +481,8 @@ def test_open_uses_the_recorded_pr(mocker, tmp_path):
         state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
     )
     mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=["lib/a"])
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=tmp_path / "lib/a")
     browser = mocker.patch("jailbee.pr.open_pr_in_browser")
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
@@ -1139,11 +1141,15 @@ def test_open_only_does_not_prompt_for_a_container(mocker, tmp_path):
         "jailbee.submodule_pr.SubmodulePrState.read",
         return_value=PrRecord(7, "feat/foo", True, False),
     )
-    mocker.patch("jailbee.pr.open_pr_in_browser")
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    located = tmp_path / ".git/modules/lib/a"
+    mocker.patch("jailbee.submodules.host_subrepo_root", return_value=located)
+    browser = mocker.patch("jailbee.pr.open_pr_in_browser")
 
     result = runner.invoke(app, ["submodule", "pr", "open"])
 
     assert result.exit_code == 0, result.output
+    browser.assert_called_once_with(located, 7)
     assert resolve.call_args.kwargs.get("always_prompt", False) is False
 
 

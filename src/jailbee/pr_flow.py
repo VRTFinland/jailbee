@@ -185,6 +185,7 @@ def bind_container_pr(
             else "enter a positive integer"
         )
 
+    assert_pr_inheritance_complete(incus, full)
     if number is None:
         number = int(prompting.ask_text("PR number", validate=problem))
     state = ContainerLabelState(incus, full, short=short)
@@ -218,6 +219,7 @@ def unbind_container_pr(
     yes: bool,
 ) -> None:
     """Forget only the selected binding."""
+    assert_pr_inheritance_complete(incus, full)
     state = ContainerLabelState(
         incus, full, short=short, prefix=STACKED_LABEL_PREFIX if stacked else "user.jailbee.pr"
     )
@@ -841,10 +843,42 @@ class PrRecord:
     head: str | None
     author: bool
     adopted: bool
+    base: str | None = None
 
 
 class MalformedPrLabelError(RuntimeError):
     """`user.jailbee.pr` is set but is not a valid integer."""
+
+
+PR_INHERITANCE_PENDING = "user.jailbee.pr_inheritance_pending"
+
+
+def assert_pr_inheritance_complete(incus: IncusType, full: str) -> None:
+    """Failed fork inheritance must never become a fresh publication decision."""
+    if incus.config_get(full, PR_INHERITANCE_PENDING):
+        error(
+            f"Container '{full}' has incomplete PR inheritance. Inspect the failed fork, "
+            "then destroy and recreate it from its source before publishing or changing bindings."
+        )
+        raise typer.Exit(1)
+
+
+def recover_pr_head(scope: PrScope, state: PrState, record: PrRecord) -> PrRecord:
+    """Recover a numbered, decided identity before selecting any publish branch."""
+    from jailbee import pr
+
+    if record.number is None or record.head or not (record.author or record.adopted):
+        return record
+    try:
+        found = pr.resolve_pr(scope.repo_root, record.number, remote=scope.remote, repo=_binding_repo(scope))
+        if found.state != "OPEN" or found.is_cross_repository or not found.head_ref:
+            raise pr.PrError(f"Cannot recover the publish head of PR #{record.number}; bind an open same-repository PR.")
+    except pr.PrError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    if not state.record(head=found.head_ref, number=record.number, author=record.author, adopted=record.adopted):
+        raise typer.Exit(1)
+    return PrRecord(record.number, found.head_ref, record.author, record.adopted, record.base)
 
 
 PR_LABEL_PREFIX = "user.jailbee.pr"
@@ -932,6 +966,7 @@ class ContainerLabelState:
             head=self._incus.config_get(self._full, f"{self._prefix}_branch") or None,
             author=bool(self._incus.config_get(self._full, f"{self._prefix}_author")),
             adopted=bool(self._incus.config_get(self._full, f"{self._prefix}_adopted")),
+            base=self._incus.config_get(self._full, f"{self._prefix}_base") or None,
         )
 
     def record(
@@ -960,6 +995,12 @@ class ContainerLabelState:
         from jailbee.incus import IncusError
 
         try:
+            # Revoke old privileges before changing the identity. A failed
+            # unset must never retarget a PR while preserving its authorship.
+            if not author:
+                self._incus.config_unset_checked(self._full, f"{self._prefix}_author")
+            if not adopted:
+                self._incus.config_unset_checked(self._full, f"{self._prefix}_adopted")
             self._incus.config_set(self._full, f"{self._prefix}_branch", head)
             if author:
                 self._incus.config_set(self._full, f"{self._prefix}_author", "1")
@@ -977,7 +1018,8 @@ class ContainerLabelState:
         from jailbee.incus import IncusError
 
         try:
-            for suffix in ("", "_branch", "_author", "_adopted", "_base"):
+            # Keep a selectable identity until all ancillary state is gone.
+            for suffix in ("_author", "_adopted", "_base", "_branch", ""):
                 self._incus.config_unset_checked(self._full, f"{self._prefix}{suffix}")
         except IncusError as exc:
             warn(f"Could not clear the PR decision: {exc}")
@@ -1395,7 +1437,9 @@ def bind_pr_by_number(
         return record
 
     try:
-        found = pr_module.resolve_pr(scope.repo_root, number, remote=scope.remote)
+        found = pr_module.resolve_pr(
+            scope.repo_root, number, remote=scope.remote, repo=_binding_repo(scope)
+        )
     except pr_module.PrError as exc:
         error(f"{scope.prefix}{exc}")
         raise typer.Exit(1) from exc
@@ -1468,12 +1512,14 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
     from jailbee import prompting
 
     record = state.read()
-    if record.number is None and not record.head:
+    if not (record.number is not None or record.head or record.author or record.adopted or record.base):
         info(f"{scope.prefix}{target_label} is not bound to a PR.")
         return False
 
     binding_label = (
-        f"PR #{record.number}" if record.number is not None else f"branch '{record.head}'"
+        f"PR #{record.number}" if record.number is not None
+        else f"branch '{record.head}'" if record.head
+        else "residual PR metadata"
     )
     if not yes:
         if not prompting.is_interactive():
@@ -1529,6 +1575,17 @@ def resolve_create_text(
     if resolved_body is None:
         resolved_body = f"Draft PR created by jailbee from {origin_label}. Description pending."
     return resolved_title, resolved_body
+
+
+def _binding_repo(scope: PrScope) -> str:
+    """Pin a numbered binding to its configured remote, never gh's default."""
+    from jailbee.pr import PrError
+    from jailbee.pr_outbox import scope_slug
+
+    repo = scope_slug(scope)
+    if repo is None:
+        raise PrError(f"{scope.prefix}Cannot resolve the GitHub repository for the binding.")
+    return repo
 
 
 def _outbox_repo(scope: PrScope) -> str:

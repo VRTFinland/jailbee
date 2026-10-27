@@ -1533,8 +1533,13 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
     """
     from jailbee.golden import golden_instance_name, golden_instance_pool
 
-    # Only a child passes `config`, so every other create is the call it always was.
-    extra = {"config": config} if (config := _child_instance_config(opts)) else {}
+    from jailbee.pr_flow import PR_INHERITANCE_PENDING
+
+    config = _child_instance_config(opts)
+    if opts.inherited_labels:
+        # Creation-time config closes the window before a running clone exists.
+        config[PR_INHERITANCE_PENDING] = "1"
+    extra = {"config": config} if config else {}
     golden = golden_instance_name(cfg.golden.alias)
     if opts.from_base == cfg.golden.alias and incus.exists(golden):
         golden_pool = golden_instance_pool(incus, golden)
@@ -1990,11 +1995,18 @@ def _new_container(
         except Exception as e:
             warn(f"Container created, but failed to set fork label: {e}")
 
-    for key, value in (opts.inherited_labels or {}).items():
+    if opts.inherited_labels:
+        from jailbee.pr_flow import PR_INHERITANCE_PENDING
+
         try:
-            incus.config_set(name, key, value)
+            for key, value in opts.inherited_labels.items():
+                incus.config_set(name, key, value)
+            incus.config_unset_checked(name, PR_INHERITANCE_PENDING)
         except Exception as e:
-            warn(f"Container created, but failed to set inherited PR label {key}: {e}")
+            raise RuntimeError(
+                f"PR inheritance failed for '{name}'; publishing is blocked. Inspect the failed "
+                f"fork, then destroy and recreate it from its source: {e}"
+            ) from e
 
     # Orchestration `default_profile`: grant the new container its profile.
     # Plan D writes `SPAWNED_BY` before this point, so a spawned container's

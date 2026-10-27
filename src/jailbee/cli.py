@@ -8516,6 +8516,7 @@ def pr_push_cmd(
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
     scope = pr_flow.PrScope.for_repo(cfg)
+    pr_flow.assert_pr_inheritance_complete(incus, full)
     state = pr_flow.ContainerLabelState(incus, full, short=short)
     stacked_state = pr_flow.ContainerLabelState(
         incus, full, short=short, prefix=pr_flow.STACKED_LABEL_PREFIX
@@ -8547,6 +8548,7 @@ def pr_push_cmd(
         active_state = stacked_state
         record = stacked_record
         stacked_base = incus.config_get(full, f"{pr_flow.STACKED_LABEL_PREFIX}_base")
+    record = pr_flow.recover_pr_head(scope, active_state, record)
     is_author = record.author
     stored_pr_branch = record.head
     pr_label = str(record.number) if record.number is not None else None
@@ -9310,7 +9312,7 @@ def submodule_pr_cmd(
       jailbee submodule pr push feat-foo --ready      # mark ready for review
       jailbee submodule pr open feat-foo         # just open it in the browser
     """
-    from jailbee import prompting, submodule_pr, sync
+    from jailbee import pr_flow, prompting, submodule_pr, sync
     from jailbee.lifecycle import container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
@@ -9332,6 +9334,7 @@ def submodule_pr_cmd(
         error(str(exc))
         raise typer.Exit(1) from exc
 
+    pr_flow.assert_pr_inheritance_complete(incus, full)
     super_base = incus.config_get(full, "user.jailbee.base_branch") or cfg.default_branch
     repo_dir = container_repo_dir(cfg, incus, full)
     try:

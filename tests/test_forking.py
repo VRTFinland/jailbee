@@ -59,11 +59,17 @@ def test_inherited_submodule_labels():
     import json
 
     labels = forking.inherited_pr_labels(
-        _labels(sub_pr='{"lib": {"number": 4, "author": true}}'), "src"
+        _labels(sub_pr='{"lib": {"pr": 4, "branch": "topic", "author": true}}'), "src"
     )
     assert json.loads(labels["user.jailbee.sub_pr"]) == {
-        "lib": {"number": 4, "author": False, "adopted": True}
+        "lib": {"pr": 4, "branch": "topic", "author": False, "adopted": True}
     }
+    from jailbee.pr_flow import PrRecord
+    from jailbee.submodule_pr import SubmodulePrState
+
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda full, key: labels.get(key)
+    assert SubmodulePrState(incus, "fork", "lib").read() == PrRecord(4, "topic", False, True)
 
 
 def test_invalid_primary_does_not_block_stacked(capsys):

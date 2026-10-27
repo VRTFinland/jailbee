@@ -348,6 +348,7 @@ def bind_standalone(
     from jailbee import pr, pr_flow, prompting
     from jailbee.tui import error
 
+    pr_flow.assert_pr_inheritance_complete(incus, full)
     if path is None:
         candidates = []
         for candidate in submodules.host_submodule_paths(cfg.repo_root):
@@ -395,6 +396,7 @@ def unbind_standalone(
     from jailbee import pr_flow
     from jailbee.tui import info
 
+    pr_flow.assert_pr_inheritance_complete(incus, full)
     if path is None:
         paths = recorded_paths(incus, full)
         if not paths:
@@ -426,7 +428,10 @@ def open_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: s
     if record.number is None:
         error(f"Submodule '{path}' has no PR recorded on '{short}'.")
         raise typer.Exit(1)
-    pr.open_pr_in_browser(cfg.repo_root / path, record.number)
+    if not submodules.host_subrepo_exists(cfg.repo_root, path):
+        error(f"Submodule '{path}' is not available on the host; initialize it before opening its PR.")
+        raise typer.Exit(1)
+    pr.open_pr_in_browser(submodules.host_subrepo_root(cfg.repo_root, path), record.number)
 
 
 class SubmodulePrState:

@@ -253,6 +253,7 @@ def publish_submodule_pr(
     offer_comments: OfferComments,
     management: PrManagement | None = None,
 ) -> SubPrOutcome:
+    pr_flow.assert_pr_inheritance_complete(incus, full)
     subpath = target.path
     source_branch = opts.branch or target.branch
 

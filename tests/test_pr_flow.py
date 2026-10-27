@@ -10,6 +10,11 @@ import typer
 from jailbee import pr_flow
 
 
+@pytest.fixture(autouse=True)
+def _github_binding_remote(mocker):
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
+
+
 def _super_scope(tmp_path: Path) -> pr_flow.PrScope:
     return pr_flow.PrScope(repo_root=tmp_path, remote="origin", prefix="", subpath=None)
 
@@ -1650,7 +1655,7 @@ def test_container_label_state_clear_unsets_all_suffixes(mocker, prefix):
     assert pr_flow.ContainerLabelState(incus, "c1", prefix=prefix).clear() is True
     assert incus.config_unset_checked.call_args_list == [
         mocker.call("c1", prefix + suffix)
-        for suffix in ("", "_branch", "_author", "_adopted", "_base")
+        for suffix in ("_author", "_adopted", "_base", "_branch", "")
     ]
 
 
