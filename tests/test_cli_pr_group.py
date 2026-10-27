@@ -29,6 +29,69 @@ def test_old_form_hints_push():
     assert "jailbee pr push feat-x" in result.output
 
 
+def test_submodule_old_form_hints_push():
+    result = CliRunner().invoke(app, ["submodule", "pr", "feat-x"])
+    assert result.exit_code == 2
+    assert "jailbee submodule pr push feat-x" in result.output
+
+
+def test_submodule_bind_missing_host_subrepo_exits_1(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    result = CliRunner().invoke(app, ["submodule", "pr", "bind", "feat-foo", "lib/a", "3", "--yes"])
+    assert result.exit_code == 1
+    assert "Submodule 'lib/a' is not checked out on the host" in result.output
+
+
+def test_submodule_open_recorded(mocker, tmp_path):
+    import json
+
+    _setup(mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})})
+    opened = mocker.patch("jailbee.pr.open_pr_in_browser")
+    result = CliRunner().invoke(app, ["submodule", "pr", "open", "feat-foo", "lib/a"])
+    assert result.exit_code == 0, result.output
+    opened.assert_called_once_with(tmp_path / "lib/a", 3)
+
+
+def test_submodule_bind_records_entry(mocker, tmp_path):
+    import json
+
+    _, incus = _setup(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(3, "topic", "abc", "OPEN", "main"))
+    result = CliRunner().invoke(app, ["submodule", "pr", "bind", "feat-foo", "lib/a", "3", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(incus.config_set.call_args.args[2]) == {
+        "lib/a": {"pr": 3, "branch": "topic", "adopted": True, "author": False}
+    }
+
+
+def test_submodule_bind_path_candidates_include_all_initialized_github_repos(mocker, tmp_path):
+    from jailbee.pr import PrError
+
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["lib/a", "lib/b", "lib/c"])
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch("jailbee.pr.assert_github_remote", side_effect=lambda root, remote: (_ for _ in ()).throw(PrError("not github")) if root.name == "c" else None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["submodule", "pr", "bind", "feat-foo"])
+    assert result.exit_code == 2
+    assert "lib/a" in result.output and "lib/b" in result.output
+    assert "lib/c" not in result.output
+
+
+def test_submodule_unbind_removes_entry(mocker, tmp_path):
+    import json
+
+    _, incus = _setup(mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})})
+    result = CliRunner().invoke(app, ["submodule", "pr", "unbind", "feat-foo", "lib/a", "--yes"])
+    assert result.exit_code == 0, result.output
+    incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", "user.jailbee.sub_pr")
+
+
 def test_old_option_hints_moved():
     result = CliRunner().invoke(app, ["pr", "--draft", "feat-x"])
     assert result.exit_code == 2

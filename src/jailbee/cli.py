@@ -9151,7 +9151,62 @@ def submodule_checkout(
     _align_tree_to_branch(cfg, branch=branch, container=name, submodules_only=submodules_only)
 
 
-@submodule_app.command("pr")
+submodule_pr_app = typer.Typer(
+    name="pr", cls=hinting_group("jailbee submodule pr push"), no_args_is_help=True,
+    help="Manage submodule pull requests.",
+)
+submodule_app.add_typer(submodule_pr_app)
+
+
+@submodule_pr_app.command("bind")
+def submodule_pr_bind_cmd(
+    name: ContainerArg = None,
+    path: Annotated[str | None, typer.Argument(help="Submodule path")] = None,
+    number: Annotated[int | None, typer.Argument(min=1, help="GitHub PR number")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Bind a submodule to an existing PR."""
+    from jailbee import submodule_pr
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    submodule_pr.bind_standalone(cfg, incus, full, short=short_name(cfg, full), path=path, number=number, yes=yes)
+
+
+@submodule_pr_app.command("unbind")
+def submodule_pr_unbind_cmd(
+    name: ContainerArg = None,
+    path: Annotated[str | None, typer.Argument(help="Submodule path")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Forget a submodule PR binding."""
+    from jailbee import submodule_pr
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name, always_prompt=True)
+    submodule_pr.unbind_standalone(cfg, incus, full, short=short_name(cfg, full), path=path, yes=yes)
+
+
+@submodule_pr_app.command("open")
+def submodule_pr_open_cmd(
+    name: ContainerArg = None,
+    path: Annotated[str | None, typer.Argument(help="Submodule path")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Open a recorded submodule PR on the host."""
+    from jailbee import submodule_pr
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    submodule_pr.open_standalone(cfg, incus, full, short=short_name(cfg, full), path=path)
+
+
+@submodule_pr_app.command("push")
 def submodule_pr_cmd(
     name: Annotated[
         str | None,
@@ -9222,9 +9277,6 @@ def submodule_pr_cmd(
         bool, typer.Option("--force", help="Force-push with --force-with-lease")
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmations")] = False,
-    open_only: Annotated[
-        bool, typer.Option("--open", help="Open the submodule's PR and exit")
-    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Create or update a GitHub PR for one submodule.
@@ -9246,10 +9298,10 @@ def submodule_pr_cmd(
 
     Examples:
 
-      jailbee submodule pr feat-foo              # auto-target, draft PR
-      jailbee submodule pr feat-foo libs/foo     # explicit submodule
-      jailbee submodule pr feat-foo --ready      # mark ready for review
-      jailbee submodule pr feat-foo --open       # just open it in the browser
+      jailbee submodule pr push feat-foo              # auto-target, draft PR
+      jailbee submodule pr push feat-foo libs/foo     # explicit submodule
+      jailbee submodule pr push feat-foo --ready      # mark ready for review
+      jailbee submodule pr open feat-foo         # just open it in the browser
     """
     from jailbee import pr as pr_mod
     from jailbee import prompting, submodule_pr, sync
@@ -9263,43 +9315,10 @@ def submodule_pr_cmd(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    # --open mutates nothing, so it keeps the silent auto-selection; the
-    # publishing path shows the user which container it will publish from on a
-    # terminal, because `gh` is about to change a GitHub repository. Off a TTY
-    # the prompt is withheld (a script must not hang) and a single container
-    # is still taken, as before.
     incus, full = _resolve_existing(
-        cfg,
-        name,
-        always_prompt=name is None and not open_only and prompting.is_interactive(),
+        cfg, name, always_prompt=name is None and prompting.is_interactive()
     )
     short = short_name(cfg, full)
-
-    # --open resolves from the recorded state alone: no preflight, no
-    # transport, no gh mutation (mirrors `jailbee pr open`).
-    if open_only:
-        target_path = path
-        if target_path is None:
-            recorded = submodule_pr.recorded_paths(incus, full)
-            if not recorded:
-                error(f"Container '{short}' has no submodule PR recorded.")
-                raise typer.Exit(1)
-            if len(recorded) != 1:
-                # Same condition as AmbiguousSubmoduleTargetError on the normal
-                # path ("disambiguate with PATH") — same exit code, so a script
-                # checking $? sees one meaning regardless of --open.
-                error(
-                    f"Container '{short}' has submodule PRs recorded for "
-                    f"{len(recorded)} paths; name one with PATH."
-                )
-                raise typer.Exit(2)
-            target_path = recorded[0]
-        record = submodule_pr.SubmodulePrState(incus, full, target_path).read()
-        if record.number is None:
-            error(f"Submodule '{target_path}' has no PR recorded on '{short}'.")
-            raise typer.Exit(1)
-        pr_mod.open_pr_in_browser(cfg.repo_root / target_path, record.number)
-        return
 
     try:
         sync.assert_container_publishable(cfg, incus, short)
@@ -9350,7 +9369,7 @@ def submodule_pr_cmd(
     except submodule_pr.AmbiguousSubmoduleTargetError as exc:
         error(f"Several submodules in '{short}' have commits to publish:")
         _print_submodule_pr_candidates(exc.candidates)
-        info("Pick one: `jailbee submodule pr <container> <path>`.")
+        info("Pick one: `jailbee submodule pr push <container> <path>`.")
         raise typer.Exit(2) from exc
     except submodule_pr.SubmodulePrError as exc:
         error(str(exc))

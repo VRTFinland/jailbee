@@ -15,7 +15,7 @@ def test_submodule_pr_links_the_pr_family(mocker, tmp_path):
     _setup(mocker, tmp_path)
     _happy(mocker)
     link = mocker.patch("jailbee.pr_links.link_pr_family")
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/a", "--yes", "--no-ai"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--no-ai"])
     assert result.exit_code == 0, result.output
     link.assert_called_once()
 
@@ -160,7 +160,7 @@ def test_create_submodule_pr_happy_path(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["subpath"] == "lib/a"
@@ -182,7 +182,7 @@ def test_explicit_path_is_passed_to_selection(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/b"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/b"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["subpath"] == "lib/b"
@@ -191,7 +191,7 @@ def test_explicit_path_is_passed_to_selection(mocker, tmp_path):
 def test_ambiguous_target_exits_2_and_lists_the_candidates(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a"), _candidate("lib/b")])
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 2
     assert "lib/a" in result.output
@@ -201,7 +201,7 @@ def test_ambiguous_target_exits_2_and_lists_the_candidates(mocker, tmp_path):
 def test_no_candidates_exits_0_with_an_explanation(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate(commits=0)])
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0
     assert "no submodule" in result.output.lower()
@@ -215,7 +215,7 @@ def test_no_submodules_at_all_exits_0_without_the_unactionable_path_advice(mocke
     ahead" case above."""
     _setup(mocker, tmp_path, candidates=[])
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "no submodules" in result.output.lower()
@@ -225,7 +225,7 @@ def test_no_submodules_at_all_exits_0_without_the_unactionable_path_advice(mocke
 def test_unknown_path_exits_2(mocker, tmp_path):
     _setup(mocker, tmp_path)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/nope"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/nope"])
 
     assert result.exit_code == 2
 
@@ -241,7 +241,7 @@ def test_dirty_submodule_warns(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "uncommitted" in result.output.lower()
@@ -258,7 +258,7 @@ def test_stale_gitlink_is_reported_as_information(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "gitlink" in result.output.lower()
@@ -267,7 +267,7 @@ def test_stale_gitlink_is_reported_as_information(mocker, tmp_path):
 def test_detached_submodule_without_a_name_exits_2(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate(branch=None)])
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 2
     assert "--as" in result.output
@@ -282,7 +282,7 @@ def test_as_is_rejected_once_a_pr_is_recorded(mocker, tmp_path):
         state_record=PrRecord(number=12, head="user/x", author=True, adopted=False),
     )
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--as", "user/y"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--as", "user/y"])
 
     assert result.exit_code == 2
     assert "--as" in result.output
@@ -305,7 +305,7 @@ def test_update_path_views_the_existing_pr(mocker, tmp_path):
     create = mocker.patch("jailbee.pr.create_pr")
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
@@ -352,7 +352,7 @@ def test_adopted_pr_publishes_to_the_adopted_head_even_when_recording_it_fails(m
     view = mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(42, True))
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
@@ -370,7 +370,7 @@ def test_non_github_submodule_upstream_exits_1_before_publishing(mocker, tmp_pat
     )
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "GitHub" in result.output
@@ -417,7 +417,7 @@ def test_transport_runs_before_the_steps_that_read_the_host_subrepo(mocker, tmp_
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert calls[0] == "transport"
@@ -435,7 +435,7 @@ def test_publish_failure_exits_1(mocker, tmp_path):
         side_effect=SubmodulePrError("rejected"),
     )
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "rejected" in result.output
@@ -448,7 +448,7 @@ def test_open_without_a_recorded_pr_exits_1(mocker, tmp_path):
     mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=[])
     detect = mocker.patch("jailbee.submodule_pr.detect_candidates")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--open"])
+    result = runner.invoke(app, ["submodule", "pr", "open", "feat-foo"])
 
     assert result.exit_code == 1
     detect.assert_not_called()
@@ -463,10 +463,10 @@ def test_open_with_several_recorded_paths_exits_2(mocker, tmp_path):
     mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=["lib/a", "lib/b"])
     detect = mocker.patch("jailbee.submodule_pr.detect_candidates")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--open"])
+    result = runner.invoke(app, ["submodule", "pr", "open", "feat-foo"])
 
     assert result.exit_code == 2
-    assert "PATH" in result.output
+    assert "missing submodule" in result.output
     detect.assert_not_called()
 
 
@@ -482,7 +482,7 @@ def test_open_uses_the_recorded_pr(mocker, tmp_path):
     browser = mocker.patch("jailbee.pr.open_pr_in_browser")
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--open"])
+    result = runner.invoke(app, ["submodule", "pr", "open", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     browser.assert_called_once_with(tmp_path / "lib/a", 12)
@@ -509,7 +509,7 @@ def test_update_flag_on_detached_submodule_without_branch_warns(mocker, tmp_path
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
     apply_updates = mocker.patch("jailbee.pr_flow.apply_pr_updates")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--ready"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--ready"])
 
     assert result.exit_code == 0, result.output
     apply_updates.assert_not_called()
@@ -538,7 +538,7 @@ def test_update_on_detached_submodule_without_branch_and_no_flags_does_not_crash
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
     apply_updates = mocker.patch("jailbee.pr_flow.apply_pr_updates")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     apply_updates.assert_not_called()
@@ -603,7 +603,7 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
     mocker.patch("jailbee.submodules.host_subrepo_root", return_value=tmp_path / "lib/a")
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("subprocess.run", side_effect=run)
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     pending.assert_called_once()
@@ -655,7 +655,7 @@ def test_submodule_pr_no_outbox_forwards_false_and_preserves_the_ai_path(mocker,
     apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
     offer = mocker.patch("jailbee.cli._offer_outbox_comments")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--no-outbox"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["use_outbox"] is False
@@ -681,7 +681,7 @@ def test_submodule_pr_uses_outbox_by_default_in_both_flow_calls(mocker, tmp_path
     apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["use_outbox"] is True
@@ -700,7 +700,7 @@ def test_submodule_pr_outbox_description_is_used_recorded_once_and_named(mocker,
     record_consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert create.call_args.kwargs["title"] == "feat: from container"
@@ -736,7 +736,7 @@ def test_submodule_pr_outbox_offer_runs_after_outcome_and_consumption(mocker, tm
         side_effect=lambda *args, **kwargs: events.append(("offer", kwargs["number"])) or 0,
     )
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert events == [("render", 123), ("record", None), ("offer", 123)]
@@ -764,7 +764,7 @@ def test_submodule_pr_outbox_offer_failure_exits_after_the_successful_outcome(mo
         side_effect=lambda *args, **kwargs: events.append("offer") or 1,
     )
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert events == ["render", "offer"]
@@ -776,7 +776,7 @@ def test_submodule_pr_no_outbox_skips_the_comment_offer(mocker, tmp_path):
     _happy(mocker)
     offer = mocker.patch("jailbee.cli._offer_outbox_comments")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--no-outbox"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox"])
 
     assert result.exit_code == 0, result.output
     offer.assert_not_called()
@@ -821,7 +821,7 @@ def test_submodule_pr_binds_to_a_numbered_pr(mocker, tmp_path):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(456, already=True))
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.args[1] == 456
@@ -840,7 +840,7 @@ def test_submodule_pr_bind_refuses_a_closed_pr(mocker, tmp_path):
     publish = _bind_publish(mocker)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(state="CLOSED"))
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 1
     assert "CLOSED" in result.output
@@ -853,7 +853,7 @@ def test_submodule_pr_bind_refuses_a_fork_pr(mocker, tmp_path):
     publish = _bind_publish(mocker)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(cross=True))
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 1
     assert "contributor" in result.output
@@ -866,7 +866,7 @@ def test_submodule_pr_bind_rejects_as_flag(mocker, tmp_path):
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info())
 
     result = runner.invoke(
-        app, ["submodule", "pr", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"]
+        app, ["submodule", "pr", "push", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"]
     )
 
     assert result.exit_code == 2
@@ -882,7 +882,7 @@ def test_submodule_pr_bind_prefix_names_the_submodule_in_errors(mocker, tmp_path
     _bind_publish(mocker)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_sub_pr_info(state="MERGED"))
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--pr", "456", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 1
     assert "lib/a" in result.output
@@ -906,7 +906,7 @@ def test_off_a_tty_a_single_container_is_still_auto_picked(mocker, tmp_path):
     pick = mocker.patch("jailbee.tui.pick_submodule")
     confirm = mocker.patch("typer.confirm")
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     pick.assert_not_called()
@@ -918,7 +918,7 @@ def test_off_a_tty_two_ahead_candidates_still_exit_2(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.tui.pick_submodule")
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 2, result.output
     pick.assert_not_called()
@@ -935,7 +935,7 @@ def test_off_a_tty_an_unknown_path_still_exits_2_when_there_are_no_submodules(mo
     _setup(mocker, tmp_path, candidates=[])
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/nope"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/nope"])
 
     assert result.exit_code == 2, result.output
     assert "lib/nope" in result.output
@@ -955,7 +955,7 @@ def test_off_a_tty_the_plan_block_is_not_printed_at_all(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     confirm = mocker.patch("typer.confirm")
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -972,7 +972,7 @@ def test_on_a_tty_the_picker_runs_for_a_single_candidate(mocker, tmp_path):
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     pick.assert_called_once()
@@ -992,7 +992,7 @@ def test_picking_a_zero_commit_submodule_proceeds_to_transport_and_publish(mocke
     mocker.patch("typer.confirm", return_value=True)
     transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     assert "0 commits" in result.output
@@ -1012,7 +1012,7 @@ def test_on_a_tty_the_picker_is_offered_every_candidate_ordered(mocker, tmp_path
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/b")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     offered = [c.path for c in pick.call_args[0][0]]
@@ -1025,7 +1025,7 @@ def test_cancelling_the_picker_aborts_without_transporting(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value=None)
     transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code != 0
     transport.assert_not_called()
@@ -1039,7 +1039,7 @@ def test_declining_the_confirmation_transports_nothing(mocker, tmp_path):
     transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code != 0
     transport.assert_not_called()
@@ -1053,7 +1053,7 @@ def test_yes_skips_the_confirmation_but_not_the_picker(mocker, tmp_path):
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     confirm = mocker.patch("typer.confirm")
 
-    result = runner.invoke(app, ["submodule", "pr", "--yes"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "--yes"])
 
     assert result.exit_code == 0, result.output
     pick.assert_called_once()
@@ -1067,7 +1067,7 @@ def test_an_explicit_path_skips_the_picker_but_still_confirms(mocker, tmp_path):
     pick = mocker.patch("jailbee.tui.pick_submodule")
     confirm = mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/a"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/a"])
 
     assert result.exit_code == 0, result.output
     pick.assert_not_called()
@@ -1085,7 +1085,7 @@ def test_the_container_picker_runs_when_no_name_is_given(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["always_prompt"] is True
@@ -1102,7 +1102,7 @@ def test_the_container_prompt_is_withheld_off_a_tty(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    runner.invoke(app, ["submodule", "pr"])
+    runner.invoke(app, ["submodule", "pr", "push"])
 
     assert resolve.call_args.kwargs["always_prompt"] is False
 
@@ -1117,7 +1117,7 @@ def test_an_explicit_container_name_does_not_prompt(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["always_prompt"] is False
@@ -1139,10 +1139,10 @@ def test_open_only_does_not_prompt_for_a_container(mocker, tmp_path):
     )
     mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = runner.invoke(app, ["submodule", "pr", "--open"])
+    result = runner.invoke(app, ["submodule", "pr", "open"])
 
     assert result.exit_code == 0, result.output
-    assert resolve.call_args.kwargs["always_prompt"] is False
+    assert resolve.call_args.kwargs.get("always_prompt", False) is False
 
 
 def test_the_plan_defers_base_and_remote_for_a_submodule_not_on_the_host(mocker, tmp_path):
@@ -1154,7 +1154,7 @@ def test_the_plan_defers_base_and_remote_for_a_submodule_not_on_the_host(mocker,
     mocker.patch("typer.confirm", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     assert "resolved once the submodule is on the host" in result.output
@@ -1168,7 +1168,7 @@ def test_the_plan_shows_real_base_and_remote_when_the_subrepo_exists(mocker, tmp
     mocker.patch("typer.confirm", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     assert "develop" in result.output  # _setup's resolve_base_branch
@@ -1186,7 +1186,7 @@ def test_the_plan_says_update_when_binding_to_a_numbered_pr(mocker, tmp_path):
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr", "--pr", "456"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "--pr", "456"])
 
     assert result.exit_code == 0, result.output
     assert "update the existing PR" in result.output
@@ -1216,7 +1216,7 @@ def test_the_plan_does_not_claim_a_draft_change_on_the_update_path(mocker, tmp_p
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("typer.confirm", return_value=True)
 
-    result = runner.invoke(app, ["submodule", "pr"])
+    result = runner.invoke(app, ["submodule", "pr", "push"])
 
     assert result.exit_code == 0, result.output
     assert "update the existing PR" in result.output
@@ -1305,7 +1305,7 @@ def test_submodule_publication_guard_covers_selection_to_comments(
         return 0
 
     mocker.patch("jailbee.pr_outbox.offer_pending_comments", side_effect=offer)
-    result = CliRunner().invoke(app, ["submodule", "pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-ai"])
     assert events[0] == "enter", (events, result.exception)
     assert events[-1] == "exit"
     assert events.count("select") == 1
@@ -1398,7 +1398,7 @@ def test_submodule_changed_source_after_prompt_never_publishes(mocker, tmp_path,
     )
     create = mocker.patch("jailbee.pr.create_pr")
     consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
-    result = CliRunner().invoke(app, ["submodule", "pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert "refresh required" in result.output
     create.assert_not_called()
@@ -1464,7 +1464,7 @@ def test_submodule_replacement_after_guard_check_cannot_select_new_identity(
     edit = mocker.patch("jailbee.pr.edit_pr")
     consume = mocker.patch("jailbee.pr_outbox.record_consumed")
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
-    result = CliRunner().invoke(app, ["submodule", "pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert isinstance(result.exception, SystemExit)
     assert "refresh required" in result.output

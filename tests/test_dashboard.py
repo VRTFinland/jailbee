@@ -1332,25 +1332,25 @@ def _git_with_submodule():
 def test_submodule_pr_offered_after_create_pr_when_submodules_changed():
     actions = dmenus.menu_actions(_ctx(git_status=_git_with_submodule()))
     verbs = [verb for _, verb in actions]
-    assert verbs[verbs.index("pr push") + 1] == "submodule pr"
+    assert verbs[verbs.index("pr push") + 1] == "submodule pr push"
     labels = {verb: label for label, verb in actions}
-    assert labels["submodule pr"] == "Create/update submodule PR…"
+    assert labels["submodule pr push"] == "Create/update submodule PR…"
 
 
 def test_submodule_pr_absent_without_submodule_changes():
     verbs = [verb for _, verb in dmenus.menu_actions(_ctx())]
-    assert "submodule pr" not in verbs
+    assert "submodule pr push" not in verbs
 
 
 def test_submodule_pr_absent_when_bridge_impossible():
     ctx = _ctx(state="Stopped", git_status=_git_with_submodule())
-    assert "submodule pr" not in [verb for _, verb in dmenus.menu_actions(ctx)]
+    assert "submodule pr push" not in [verb for _, verb in dmenus.menu_actions(ctx)]
 
 
 def test_submodule_pr_groups_under_pr_and_keeps_its_output():
-    leaves = [("Create/update PR", "pr push"), ("Create/update submodule PR…", "submodule pr")]
+    leaves = [("Create/update PR", "pr push"), ("Create/update submodule PR…", "submodule pr push")]
     assert dmenus.group_menu_actions(leaves) == [dmenus.MenuGroup("PR →", tuple(leaves))]
-    assert "submodule pr" in dmenus.PRINTING_VERBS
+    assert "submodule pr push" in dmenus.PRINTING_VERBS
 
 
 def test_menu_actions_running_offers_the_workflow_verbs():

@@ -64,7 +64,7 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
     if submodule:
         root, slug = tmp_path / "lib/a", "acme/lib-a"
-        args = ["submodule", "pr", "feat-foo"]
+        args = ["submodule", "pr", "push", "feat-foo"]
         mocker.patch(
             "jailbee.submodule_pr.detect_candidates",
             return_value=[

@@ -83,7 +83,7 @@ class MenuGroup:
 
 MenuItem = tuple[str, str] | MenuGroup
 
-_PR_MENU_VERBS = frozenset({"pr open", "pr push", "submodule pr", "review apply"})
+_PR_MENU_VERBS = frozenset({"pr open", "pr push", "submodule pr push", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
@@ -308,7 +308,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         if ctx.git_status is not None and ctx.git_status.submodules:
             # The submodule command opens its own picker. A submodule whose
             # gitlink is not yet bumped is missing from this probe.
-            actions.append(("Create/update submodule PR…", "submodule pr"))
+            actions.append(("Create/update submodule PR…", "submodule pr push"))
     if _bridge_possible(ctx):
         actions.append(("Merge into…", "merge"))
         if _has_commits_for_host(ctx.git_status):
@@ -742,7 +742,7 @@ def _is_gui_verb(verb: str) -> bool:
 PRINTING_VERBS: frozenset[str] = frozenset(
     {
         "pr push",
-        "submodule pr",
+        "submodule pr push",
         "git push",
         "git push --pr",
         "git pull",
