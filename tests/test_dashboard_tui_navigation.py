@@ -338,7 +338,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     run = drive(
         mocker,
-        ["j", "enter", "down", "down", "down", "down", "enter", "down", "down", "down", "enter"],
+        ["j", "enter", "down", "down", "down", "down", "enter", "down", "enter"],
         groups=[group],
     )
 
@@ -347,6 +347,22 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
     assert any(
         call.args[0] == ["jailbee", "pr", "push", "alpha-x"] for call in child.call_args_list
     )
+
+
+@pytest.mark.parametrize(
+    ("hotkey", "verb"),
+    [("b", "bind"), ("u", "unbind")],
+)
+def test_run_pr_binding_hotkeys_hand_off_cli_foreground(mocker, tmp_path, hotkey: str, verb: str):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha", pr_number=7)])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+
+    run = drive(mocker, ["j", "enter", "p", hotkey], groups=[group])
+
+    assert run.rc == 0
+    child.assert_called_once_with(["jailbee", "pr", verb, "alpha-x"], check=False, cwd=tmp_path)
 
 
 def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):

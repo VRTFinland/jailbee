@@ -362,7 +362,7 @@ def test_card_context_menu_submenus_dispatch_leaf_verb(qtbot):
     QTimer.singleShot(0, interact)
     view._on_context("p-foo", QPoint(0, 0))
     assert root_labels[:5] == ["Attach tmux", "Open shell", "Outbox", "PR →", "Git →"]
-    assert pr_labels == ["Open PR", "Create/update PR"]
+    assert pr_labels == ["Open PR", "Create/update PR", "Bind to PR…", "Unbind PR #482"]
     assert seen == [("outbox browse", "p-foo"), ("pr open", "p-foo")]
 
 

@@ -213,9 +213,20 @@ def test_launch_mode_classifies_the_verbs():
         assert a.launch_mode(verb) == "detached", verb
 
 
-def test_pr_bind_is_terminal_launch_mode():
-    assert a.launch_mode("pr bind") == "terminal"
-    assert a.launch_mode("pr unbind") == "terminal"
+@pytest.mark.parametrize("verb", ["pr bind", "pr unbind"])
+def test_pr_binding_actions_build_and_wrap_cli_invocation(verb: str) -> None:
+    action = a.build_action(verb, "alpha-x", _t("/repo/.jailbee/config.yaml"))
+    terminal = TerminalSpec(binary="xterm", run_args=["-e"])
+
+    assert action.launch == "terminal"
+    assert action.argv == [
+        "jailbee",
+        *verb.split(),
+        "alpha-x",
+        "--config",
+        "/repo/.jailbee/config.yaml",
+    ]
+    assert a.resolve_launch(action, terminal) == ["xterm", "-e", *action.argv]
 
 
 def test_review_apply_runs_in_a_terminal_because_it_prompts():

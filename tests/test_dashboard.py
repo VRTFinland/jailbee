@@ -1265,9 +1265,9 @@ def test_menu_actions_running_includes_open_pr_when_pr_known():
         "shell",
         "outbox browse",
         "pr open",
+        "pr push",
         "pr bind",
         "pr unbind",
-        "pr push",
     ]
 
 
@@ -1282,7 +1282,7 @@ def test_menu_offers_unbind_with_pr_number():
 
 
 def test_menu_bind_hidden_on_remote_row():
-    actions = dmenus.menu_actions(_ctx(remote=True))
+    actions = dmenus.menu_actions(_ctx(remote=True, pr_number=12))
     assert ("Bind to PR…", "pr bind") not in actions
     assert not any(verb == "pr unbind" for _, verb in actions)
 
@@ -1377,6 +1377,9 @@ def test_submodule_pr_offered_after_create_pr_when_submodules_changed():
     actions = dmenus.menu_actions(_ctx(git_status=_git_with_submodule()))
     verbs = [verb for _, verb in actions]
     assert verbs[verbs.index("pr push") + 1] == "submodule pr push"
+    assert verbs[verbs.index("submodule pr push") + 1] == "pr bind"
+    assert "pr unbind" not in verbs
+    assert verbs[verbs.index("pr bind") + 1] == "merge"
     labels = {verb: label for label, verb in actions}
     assert labels["submodule pr push"] == "Create/update submodule PR…"
 
@@ -1404,8 +1407,8 @@ def test_menu_actions_running_offers_the_workflow_verbs():
         "tmux",
         "shell",
         "outbox browse",
-        "pr bind",
         "pr push",
+        "pr bind",
         "merge",
         "git pull",
         "git push",
@@ -1703,9 +1706,9 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
         "job clear",
         "job log",
         "pr open",
+        "pr push",
         "pr bind",
         "pr unbind",
-        "pr push",
     ]
 
 

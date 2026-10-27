@@ -129,6 +129,11 @@ def test_canonical_merge_gets_selected_source() -> None:
     assert command_argv("git merge beta", "alpha") == ["git", "merge", "beta"]
 
 
+@pytest.mark.parametrize("verb", ["pr bind", "pr unbind"])
+def test_pr_binding_commands_get_selected_container(verb: str) -> None:
+    assert command_argv(verb, "alpha") == [*verb.split(), "alpha"]
+
+
 def test_shell_gets_selected_container() -> None:
     assert command_argv("shell", "alpha") == ["shell", "alpha"]
 

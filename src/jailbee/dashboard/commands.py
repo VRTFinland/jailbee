@@ -24,6 +24,8 @@ _CONTAINER_POSITIONALS: dict[str, str] = {
     "shell": "name",
     "tmux": "name",
     "git diff": "name",
+    "pr bind": "name",
+    "pr unbind": "name",
     "merge": "sources",
     "git merge": "sources",
 }
