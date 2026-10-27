@@ -327,13 +327,24 @@ def _choose_path(paths: list[str], *, destructive: bool = False) -> str:
     from jailbee import prompting
 
     return prompting.choose_one(
-        "submodule", [prompting.Option(value=p, title=p, label=p) for p in paths],
+        "submodule",
+        [prompting.Option(value=p, title=p, label=p) for p in paths],
         destructive=destructive,
     )
 
 
-def bind_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: str | None, number: int | None, yes: bool) -> None:
+def bind_standalone(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    *,
+    short: str,
+    path: str | None,
+    number: int | None,
+    yes: bool,
+) -> None:
     import typer
+
     from jailbee import pr, pr_flow, prompting
     from jailbee.tui import error
 
@@ -348,16 +359,39 @@ def bind_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: s
             candidates.append(candidate)
         path = _choose_path(candidates)
     if not submodules.host_subrepo_exists(cfg.repo_root, path):
-        error(f"Submodule '{path}' is not checked out on the host; run `git submodule update --init {path}` first.")
+        error(
+            f"Submodule '{path}' is not checked out on the host; "
+            f"run `git submodule update --init {path}` first."
+        )
         raise typer.Exit(1)
     if number is None:
-        number = int(prompting.ask_text("PR number", validate=lambda value: None if value.isascii() and value.isdigit() and int(value) > 0 else "enter a positive integer"))
+        number = int(
+            prompting.ask_text(
+                "PR number",
+                validate=lambda value: (
+                    None
+                    if value.isascii() and value.isdigit() and int(value) > 0
+                    else "enter a positive integer"
+                ),
+            )
+        )
     scope = pr_flow.PrScope.for_submodule(cfg, path)
     state = SubmodulePrState(incus, full, path)
-    pr_flow.bind_pr_by_number(scope, state, number=number, record=state.read(), yes=yes, record_context=f"on '{short}'", intent="bind", target_label=f"submodule '{path}' of '{short}'")
+    pr_flow.bind_pr_by_number(
+        scope,
+        state,
+        number=number,
+        record=state.read(),
+        yes=yes,
+        record_context=f"on '{short}'",
+        intent="bind",
+        target_label=f"submodule '{path}' of '{short}'",
+    )
 
 
-def unbind_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: str | None, yes: bool) -> None:
+def unbind_standalone(
+    cfg: Config, incus: Incus, full: str, *, short: str, path: str | None, yes: bool
+) -> None:
     from jailbee import pr_flow
     from jailbee.tui import info
 
@@ -368,11 +402,17 @@ def unbind_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path:
             return
         path = _choose_path(paths, destructive=True)
     scope = pr_flow.PrScope(cfg.repo_root / path, "origin", f"submodule '{path}': ", path)
-    pr_flow.unbind_pr(scope, SubmodulePrState(incus, full, path), target_label=f"submodule '{path}' of '{short}'", yes=yes)
+    pr_flow.unbind_pr(
+        scope,
+        SubmodulePrState(incus, full, path),
+        target_label=f"submodule '{path}' of '{short}'",
+        yes=yes,
+    )
 
 
 def open_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: str | None) -> None:
     import typer
+
     from jailbee import pr
     from jailbee.tui import error
 

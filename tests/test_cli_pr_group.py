@@ -71,11 +71,18 @@ def test_submodule_bind_path_candidates_include_all_initialized_github_repos(moc
     from jailbee.pr import PrError
 
     _setup(mocker, tmp_path)
-    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["lib/a", "lib/b", "lib/c"])
+    mocker.patch(
+        "jailbee.submodules.host_submodule_paths", return_value=["lib/a", "lib/b", "lib/c"]
+    )
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_root", side_effect=lambda root, path: root / path)
     mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
-    mocker.patch("jailbee.pr.assert_github_remote", side_effect=lambda root, remote: (_ for _ in ()).throw(PrError("not github")) if root.name == "c" else None)
+    mocker.patch(
+        "jailbee.pr.assert_github_remote",
+        side_effect=lambda root, remote: (
+            (_ for _ in ()).throw(PrError("not github")) if root.name == "c" else None
+        ),
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = CliRunner().invoke(app, ["submodule", "pr", "bind", "feat-foo"])
     assert result.exit_code == 2
@@ -86,7 +93,9 @@ def test_submodule_bind_path_candidates_include_all_initialized_github_repos(moc
 def test_submodule_unbind_removes_entry(mocker, tmp_path):
     import json
 
-    _, incus = _setup(mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})})
+    _, incus = _setup(
+        mocker, tmp_path, labels={"user.jailbee.sub_pr": json.dumps({"lib/a": {"pr": 3}})}
+    )
     result = CliRunner().invoke(app, ["submodule", "pr", "unbind", "feat-foo", "lib/a", "--yes"])
     assert result.exit_code == 0, result.output
     incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", "user.jailbee.sub_pr")

@@ -15,7 +15,9 @@ def test_submodule_pr_links_the_pr_family(mocker, tmp_path):
     _setup(mocker, tmp_path)
     _happy(mocker)
     link = mocker.patch("jailbee.pr_links.link_pr_family")
-    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--no-ai"])
+    result = runner.invoke(
+        app, ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--no-ai"]
+    )
     assert result.exit_code == 0, result.output
     link.assert_called_once()
 

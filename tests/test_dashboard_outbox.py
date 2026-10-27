@@ -385,7 +385,11 @@ def test_argv_builders():
     ]  # fmt: skip
     assert dob.create_pr_argv("c", {"kind": "repo"}) == ["pr", "push", "c"]
     assert dob.create_pr_argv("c", {"kind": "submodule", "path": "lib/a"}) == [
-        "submodule", "pr", "push", "c", "lib/a"
+        "submodule",
+        "pr",
+        "push",
+        "c",
+        "lib/a",
     ]
     assert dob.clear_prepare_argv("c") == ["outbox", "clear", "c", "--prepare-snapshot"]
     assert dob.clear_approved_argv("c", "tok") == [

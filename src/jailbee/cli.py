@@ -9152,7 +9152,9 @@ def submodule_checkout(
 
 
 submodule_pr_app = typer.Typer(
-    name="pr", cls=hinting_group("jailbee submodule pr push"), no_args_is_help=True,
+    name="pr",
+    cls=hinting_group("jailbee submodule pr push"),
+    no_args_is_help=True,
     help="Manage submodule pull requests.",
 )
 submodule_app.add_typer(submodule_pr_app)
@@ -9172,7 +9174,9 @@ def submodule_pr_bind_cmd(
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
-    submodule_pr.bind_standalone(cfg, incus, full, short=short_name(cfg, full), path=path, number=number, yes=yes)
+    submodule_pr.bind_standalone(
+        cfg, incus, full, short=short_name(cfg, full), path=path, number=number, yes=yes
+    )
 
 
 @submodule_pr_app.command("unbind")
@@ -9188,7 +9192,9 @@ def submodule_pr_unbind_cmd(
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name, always_prompt=True)
-    submodule_pr.unbind_standalone(cfg, incus, full, short=short_name(cfg, full), path=path, yes=yes)
+    submodule_pr.unbind_standalone(
+        cfg, incus, full, short=short_name(cfg, full), path=path, yes=yes
+    )
 
 
 @submodule_pr_app.command("open")
@@ -9303,7 +9309,6 @@ def submodule_pr_cmd(
       jailbee submodule pr push feat-foo --ready      # mark ready for review
       jailbee submodule pr open feat-foo         # just open it in the browser
     """
-    from jailbee import pr as pr_mod
     from jailbee import prompting, submodule_pr, sync
     from jailbee.lifecycle import container_repo_dir, short_name
 
