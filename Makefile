@@ -22,6 +22,11 @@ install:
 	@if command -v systemctl >/dev/null 2>&1; then \
 		systemctl --user try-restart jailbee-ssh.service; \
 	fi
+	@# So does the orchestration broker. It restarts itself when the version
+	@# changes, but a reinstall of the same version needs this.
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user try-restart jailbee-broker.service; \
+	fi
 	@# So does the dashboards' state service, and a reinstall of the same
 	@# version never replaces it (the handshake compares versions only). Open
 	@# dashboards reconnect and respawn it from the new code. The pattern is

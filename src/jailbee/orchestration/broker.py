@@ -10,9 +10,12 @@ import signal
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _metadata_version
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
+from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
@@ -75,6 +78,9 @@ ACTIVE_INTERVAL = 5.0
 IDLE_INTERVAL = 60.0
 SLEEP_SLICE = 1.0
 LOCK_FILE = "broker.lock"
+#: Exit status after another jailbee version was installed under the running
+#: broker; the unit's `RestartForceExitStatus` starts it again on the new code.
+UPGRADED_EXIT = 75
 
 
 @dataclass
@@ -650,11 +656,21 @@ def _pause(seconds: float, stop: StopFlag) -> None:
         time.sleep(min(SLEEP_SLICE, left))
 
 
+def _installed_version() -> str | None:
+    """The jailbee version installed on disk now, or None when it cannot be read."""
+    try:
+        return _metadata_version("jailbee")
+    except PackageNotFoundError:
+        return None
+
+
 def run_broker(incus: Incus) -> int:
     """Body of `jailbee _broker`: loop until SIGTERM (or SIGINT), then exit 0.
 
     The signal handler only sets a flag, checked between rounds, so a round is
-    never interrupted between acting on a manifest and journalling it.
+    never interrupted between acting on a manifest and journalling it. Once a
+    different jailbee version is installed, the broker exits `UPGRADED_EXIT`
+    after the round, so systemd restarts it on the new code.
     """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -683,6 +699,10 @@ def run_broker(incus: Incus) -> int:
             except Exception:
                 log.exception("broker: round failed")
                 active = False
+            installed = _installed_version()
+            if installed is not None and installed != __version__:
+                log.info("jailbee %s installed, running %s; restarting", installed, __version__)
+                return UPGRADED_EXIT
             _pause(ACTIVE_INTERVAL if active else IDLE_INTERVAL, stop)
         log.info("orchestration broker stopping")
         return 0

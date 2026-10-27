@@ -203,6 +203,11 @@ is not active. It is always on: every ~5 seconds it checks each running
 orchestrator and child for new manifests, and with no running orchestrator or
 child it slows to one check every 60 seconds. `jb doctor` reports whether the
 unit is active. Container-creation workers it starts outlive a broker restart.
+When a different jailbee version is installed, the broker finishes its round
+and exits with status 75, and systemd starts it again on the new code;
+`make install` restarts it as well, which also covers a reinstall of the same
+version. A unit written by an older `jb setup` restarts it too, but logs the
+exit as a failure until `jb setup` rewrites the unit.
 
 For each manifest the broker validates it, acts on it at most once, deletes
 it, and answers with a `status` message in the sender's inbox: `queued`,
