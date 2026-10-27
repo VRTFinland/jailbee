@@ -274,6 +274,7 @@ def child_options(
         base=None if fork is not None else plan.base,
         clone_commit=fork.commit if fork is not None else None,
         fork_of=fork.full_name if fork is not None else None,
+        inherited_labels=(fork.pr_labels or None) if fork else None,
         base_branch_label=fork.base_branch if fork is not None else None,
         untrusted_head=True,
         initial_prompt=plan.prompt,
@@ -589,6 +590,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
             commit=req.commit,
             base_branch=ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None,
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
+            pr_labels=forking.inherited_pr_labels(ctx.incus, ctx.sender.full),
         )
     return start_child(ctx, plan, fork=fork)
 

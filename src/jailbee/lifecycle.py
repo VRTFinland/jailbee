@@ -1132,6 +1132,8 @@ class NewContainerOptions:
     # `clone_commit`; this is only the remembered upstream. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     fork_of: str | None = None
+    # MUST be mirrored in `background.op_to_job`/`job_to_opts`.
+    inherited_labels: dict[str, str] | None = None
     # Suppress interactive confirmations (`jailbee new --yes`). Consulted for the
     # branch-autostart escalation prompt. MUST be mirrored in both
     # `background.op_to_job` and `background.job_to_opts` — a field added to
@@ -1987,6 +1989,12 @@ def _new_container(
             incus.config_set(name, "user.jailbee.fork_of", opts.fork_of)
         except Exception as e:
             warn(f"Container created, but failed to set fork label: {e}")
+
+    for key, value in (opts.inherited_labels or {}).items():
+        try:
+            incus.config_set(name, key, value)
+        except Exception as e:
+            warn(f"Container created, but failed to set inherited PR label {key}: {e}")
 
     # Orchestration `default_profile`: grant the new container its profile.
     # Plan D writes `SPAWNED_BY` before this point, so a spawned container's

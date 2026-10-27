@@ -239,8 +239,9 @@ def test_child_options_fork_is_untrusted_and_pinned(tmp_path: Path) -> None:
     from jailbee.forking import ForkSource
 
     ctx, plan = _plan(tmp_path, mounts=["data"])
-    fork = ForkSource("proj-src", "src-br", "deadbeef", "dev", False)
+    fork = ForkSource("proj-src", "src-br", "deadbeef", "dev", False, {"user.jailbee.pr": "4"})
     o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=fork)
+    assert o.inherited_labels == {"user.jailbee.pr": "4"}
     assert o.clone_commit == "deadbeef"
     assert o.fork_of == "proj-src"
     assert o.base_branch_label == "dev"

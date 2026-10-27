@@ -34,6 +34,33 @@ def _labels(**values):
     return incus
 
 
+def test_inherited_authored_labels_become_adopted():
+    labels = forking.inherited_pr_labels(_labels(pr="4", pr_branch="x", pr_author="1"), "src")
+    assert labels == {"user.jailbee.pr": "4", "user.jailbee.pr_branch": "x", "user.jailbee.pr_adopted": "1"}
+
+
+def test_inherited_review_and_stacked_labels():
+    labels = forking.inherited_pr_labels(_labels(pr="4", stacked_pr="5", stacked_pr_author="1", stacked_pr_base="main"), "src")
+    assert labels == {"user.jailbee.pr": "4", "user.jailbee.stacked_pr": "5", "user.jailbee.stacked_pr_adopted": "1", "user.jailbee.stacked_pr_base": "main"}
+
+
+def test_inherited_submodule_labels():
+    import json
+
+    labels = forking.inherited_pr_labels(_labels(sub_pr='{"lib": {"number": 4, "author": true}}'), "src")
+    assert json.loads(labels["user.jailbee.sub_pr"]) == {"lib": {"number": 4, "author": False, "adopted": True}}
+
+
+def test_invalid_primary_does_not_block_stacked(capsys):
+    labels = forking.inherited_pr_labels(_labels(pr="bad", pr_branch="x", stacked_pr="5"), "src")
+    assert labels == {"user.jailbee.stacked_pr": "5"}
+    assert "bad" in capsys.readouterr().out
+
+
+def test_inherited_unbound_and_malformed_submodule():
+    assert forking.inherited_pr_labels(_labels(sub_pr="not json"), "src") == {}
+
+
 def test_prepare_fork_returns_source_state(cfg, wired):
     incus = _labels(base_branch="main")
     fs = forking.prepare_fork(cfg, incus, "src")

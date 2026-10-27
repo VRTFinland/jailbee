@@ -1,6 +1,8 @@
 """`jailbee fork`: a new container at another container's committed state.
 
-Only git state is carried over. The source's commits are fetched to the host
+Git state and PR bindings are carried over. Bindings are adopted rather than
+attributed to the fork; review bindings retain their original identity. The
+source's commits are fetched to the host
 (`refs/jailbee/<source>/<branch>`), its submodules' commits into the host
 sub-repos (`refs/jailbee-sub/<source>/...`), and the new container is an ordinary
 `jailbee new`, pinned to that commit. That source ref is not what keeps the
@@ -16,7 +18,8 @@ share device), which is exactly what must not be shared.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -39,6 +42,47 @@ class ForkSource:
     # -> untrusted_head. Conservative: any PR, not just a cross-repo one,
     # because whether it was cross-repo is not recorded on the container.
     untrusted: bool = False
+    pr_labels: dict[str, str] = field(default_factory=dict)
+
+
+def inherited_pr_labels(incus: Incus, full: str) -> dict[str, str]:
+    """Transform source bindings without recording a new PR decision."""
+    from jailbee.tui import warn
+
+    result: dict[str, str] = {}
+    for prefix in ("user.jailbee.pr", "user.jailbee.stacked_pr"):
+        number = incus.config_get(full, prefix)
+        branch = incus.config_get(full, prefix + "_branch")
+        author = incus.config_get(full, prefix + "_author")
+        adopted = incus.config_get(full, prefix + "_adopted")
+        if number:
+            try:
+                int(number)
+            except (ValueError, TypeError):
+                warn(f"Skipping invalid PR label {prefix}: {number}")
+                continue
+        if number:
+            result[prefix] = number
+        if branch:
+            result[prefix + "_branch"] = branch
+        if (number or branch) and not (number and not author and not adopted):
+            result[prefix + "_adopted"] = "1"
+        if prefix.endswith("stacked_pr"):
+            base = incus.config_get(full, prefix + "_base")
+            if base:
+                result[prefix + "_base"] = base
+
+    raw = incus.config_get(full, "user.jailbee.sub_pr")
+    if raw:
+        try:
+            entries = json.loads(raw)
+            if isinstance(entries, dict) and all(isinstance(v, dict) for v in entries.values()):
+                for entry in entries.values():
+                    entry.update(author=False, adopted=True)
+                result["user.jailbee.sub_pr"] = json.dumps(entries, sort_keys=True)
+        except (ValueError, TypeError):
+            pass
+    return result
 
 
 def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
@@ -72,7 +116,7 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
         raise ForkError(str(e)) from e
     untrusted = bool(incus.config_get(full, "user.jailbee.pr"))
     base = incus.config_get(full, "user.jailbee.base_branch") or None
-    return ForkSource(full, fetched.branch, fetched.new_oid, base, untrusted)
+    return ForkSource(full, fetched.branch, fetched.new_oid, base, untrusted, inherited_pr_labels(incus, full))
 
 
 def fork_pin_ref(cfg: Config, fork_full: str) -> str:

@@ -2678,6 +2678,7 @@ def new_cmd(
             or (fork_source is not None and fork_source.untrusted),
             clone_commit=(fork_source.commit if fork_source is not None else pr_clone_commit),
             fork_of=fork_source.full_name if fork_source is not None else None,
+            inherited_labels=(fork_source.pr_labels or None) if fork_source else None,
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,

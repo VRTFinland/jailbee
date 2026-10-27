@@ -1433,17 +1433,23 @@ def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
         **extra,
     )
     new_container(cfg, incus, opts)
-    return [c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.fork_of"]
+    return incus.config_set.call_args_list
 
 
 def test_new_container_writes_fork_of_label(make_cfg, tmp_path, mocker):
-    calls = _fork_label_calls(make_cfg, tmp_path, mocker, fork_of="myrepo-src")
+    calls = [c for c in _fork_label_calls(make_cfg, tmp_path, mocker, fork_of="myrepo-src") if c.args[1] == "user.jailbee.fork_of"]
     assert len(calls) == 1
     assert calls[0].args[2] == "myrepo-src"
 
 
 def test_new_container_without_fork_of_writes_no_label(make_cfg, tmp_path, mocker):
-    assert _fork_label_calls(make_cfg, tmp_path, mocker) == []
+    assert not [c for c in _fork_label_calls(make_cfg, tmp_path, mocker) if c.args[1] == "user.jailbee.fork_of"]
+
+
+def test_new_container_writes_inherited_labels(make_cfg, tmp_path, mocker):
+    labels = {"user.jailbee.pr": "4", "user.jailbee.pr_adopted": "1"}
+    calls = _fork_label_calls(make_cfg, tmp_path, mocker, inherited_labels=labels)
+    assert {(c.args[1], c.args[2]) for c in calls} >= set(labels.items())
 
 
 def _new_container_with(make_cfg, tmp_path, mocker, **opts_extra):

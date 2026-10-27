@@ -599,6 +599,18 @@ def test_job_without_fork_of_key_reads_none():
     assert restored.fork_of is None
 
 
+def test_inherited_labels_job_round_trip_and_old_file():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    labels = {"user.jailbee.pr": "4", "user.jailbee.pr_adopted": "1"}
+    opts = NewContainerOptions(container_branch="x", name=None, network="strict", memory=None, cpu=2, from_base="base", clone=True, inherited_labels=labels)
+    job = op_to_job(opts, container_name="c", log_path="/tmp/l")
+    assert job_to_opts(job)[0].inherited_labels == labels
+    del job["opts"]["inherited_labels"]
+    assert job_to_opts(job)[0].inherited_labels is None
+
+
 def test_credential_group_survives_the_job_round_trip():
     from jailbee.background import job_to_opts, op_to_job
     from jailbee.lifecycle import NewContainerOptions
