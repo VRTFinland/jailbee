@@ -1,0 +1,137 @@
+"""Repository PR command group contracts."""
+
+import pytest
+from typer.testing import CliRunner
+
+from jailbee.cli import app
+from jailbee.pr import PrInfo
+from jailbee.pr_flow import PrRecord
+from tests.test_cli_pr import _pr_created, _publish_result, _setup
+
+
+@pytest.fixture(autouse=True)
+def isolated(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
+
+
+def test_bare_pr_shows_help():
+    runner = CliRunner()
+    result = runner.invoke(app, ["pr"])
+    assert result.exit_code == runner.invoke(app, ["submodule"]).exit_code
+    for command in ("push", "bind", "unbind", "open"):
+        assert command in result.output
+
+
+def test_old_form_hints_push():
+    result = CliRunner().invoke(app, ["pr", "feat-x"])
+    assert result.exit_code == 2
+    assert "jailbee pr push feat-x" in result.output
+
+
+def test_old_option_hints_moved():
+    result = CliRunner().invoke(app, ["pr", "--draft", "feat-x"])
+    assert result.exit_code == 2
+    assert "options moved to `jailbee pr push`" in result.output
+    assert "`--open` → `jailbee pr open`" in result.output
+
+
+def test_git_pr_alias_removed():
+    assert CliRunner().invoke(app, ["git", "pr", "x"]).exit_code == 2
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_pr_bind_records_adopted(mocker, tmp_path, stopped):
+    _, incus = _setup(mocker, tmp_path)
+    publish = mocker.patch("jailbee.sync.publish_branch_from_container")
+    if stopped:
+        mocker.patch("jailbee.sync.assert_container_publishable", side_effect=AssertionError)
+    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(12, "topic", "abc", "OPEN", "main"))
+    result = CliRunner().invoke(app, ["pr", "bind", "feat-foo", "12", "--yes"])
+    assert result.exit_code == 0, result.output
+    for key, value in (("pr_branch", "topic"), ("pr_adopted", "1"), ("pr", "12")):
+        assert mocker.call("sampleapp-feat-foo", f"user.jailbee.{key}", value) in incus.config_set.call_args_list
+    publish.assert_not_called()
+
+
+def test_pr_bind_missing_number_noninteractive_exits_2(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["pr", "bind", "feat-foo"])
+    assert result.exit_code == 2
+    assert "PR number" in result.output
+
+
+def test_pr_bind_already_bound_noop(mocker, tmp_path):
+    _, incus = _setup(mocker, tmp_path, labels={"user.jailbee.pr": "12", "user.jailbee.pr_branch": "topic"})
+    resolve = mocker.patch("jailbee.pr.resolve_pr")
+    result = CliRunner().invoke(app, ["pr", "bind", "feat-foo", "12"])
+    assert result.exit_code == 0, result.output
+    assert "Container 'feat-foo' is already bound to PR #12." in result.output
+    resolve.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["bind", "unbind", "open"])
+def test_malformed_pr_label_exits_1(mocker, tmp_path, command):
+    _setup(mocker, tmp_path, labels={"user.jailbee.pr": "broken"})
+    argv = ["pr", command, "feat-foo"]
+    if command == "bind":
+        argv += ["12"]
+    result = CliRunner().invoke(app, argv)
+    assert result.exit_code == 1
+    assert "broken" in result.output
+
+
+def test_open_missing_stacked_does_not_fall_back(mocker, tmp_path):
+    _setup(mocker, tmp_path, labels={"user.jailbee.pr": "12"})
+    opened = mocker.patch("jailbee.pr.open_pr_in_browser")
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo", "--stacked"])
+    assert result.exit_code == 1
+    opened.assert_not_called()
+
+
+def test_pr_open_is_host_command():
+    from jailbee.remote_ssh.router import is_host_command
+
+    assert is_host_command("pr open")
+    for command in ("push", "bind", "unbind"):
+        assert not is_host_command(f"pr {command}")
+
+
+def test_pr_unbind_clears(mocker, tmp_path):
+    _, incus = _setup(mocker, tmp_path, labels={"user.jailbee.pr": "12"})
+    result = CliRunner().invoke(app, ["pr", "unbind", "feat-foo", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert mocker.call("sampleapp-feat-foo", "user.jailbee.pr") in incus.config_unset_checked.call_args_list
+    assert "Unbound" in result.output
+
+
+@pytest.mark.parametrize("stacked,number", [(False, 12), (True, 13)])
+def test_pr_open_primary_and_stacked(mocker, tmp_path, stacked, number):
+    _setup(mocker, tmp_path, labels={"user.jailbee.pr": "12", "user.jailbee.stacked_pr": "13"})
+    opened = mocker.patch("jailbee.pr.open_pr_in_browser")
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo"] + (["--stacked"] if stacked else []))
+    assert result.exit_code == 0, result.output
+    opened.assert_called_once_with(tmp_path, number)
+
+
+@pytest.mark.parametrize("no_outbox", [False, True])
+def test_pr_push_offers_outbox_reference(mocker, tmp_path, no_outbox):
+    _setup(mocker, tmp_path)
+    refs = mocker.patch("jailbee.pr_outbox.outbox_pr_references", return_value={5: ("a.json",)})
+    mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=5)
+    bound = mocker.patch("jailbee.pr_flow.bind_pr_by_number", return_value=PrRecord(number=5, head="topic", author=False, adopted=True))
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    created = mocker.patch("jailbee.pr_flow.create_or_view_pr", return_value=_pr_created(already=True))
+    mocker.patch("jailbee.pr_flow.apply_pr_updates")
+    mocker.patch("jailbee.pr_links.link_pr_family")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"] + (["--no-outbox"] if no_outbox else []))
+    assert result.exit_code == 0, result.output
+    if no_outbox:
+        refs.assert_not_called()
+        bound.assert_not_called()
+    else:
+        assert bound.call_args.kwargs["number"] == 5
+        assert bound.call_args.kwargs["confirmed"] is True
+        assert created.call_args.kwargs["is_update"] is True

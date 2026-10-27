@@ -282,8 +282,8 @@ _MENU_KEYS: dict[str, str] = {
     "git retarget": "b",
     "git diff": "d",
     # PR →
-    "pr --open": "p",
-    "pr": "P",
+    "pr open": "p",
+    "pr push": "P",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
     "stop": "H",  # not `s`: shell and start own it, and a lone stop can sit beside them

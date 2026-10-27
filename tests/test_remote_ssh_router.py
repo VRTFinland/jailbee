@@ -352,7 +352,8 @@ def test_command_path_resolves_aliases_to_their_canonical_public_leaf() -> None:
     assert command_path(("retarget", "main")) == "git retarget"
     assert command_path(("diff",)) == "git diff"
     assert command_path(("egress", "ls")) == "net egress ls"
-    assert command_path(("git", "pr")) == "pr"
+    with pytest.raises(RouteError):
+        command_path(("git", "pr"))
 
 
 def test_leaf_and_alias_metadata_reuse_the_command_tree() -> None:
@@ -382,7 +383,8 @@ def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> Non
 def test_full_policy_allows_every_alias_whose_target_is_public() -> None:
     full = RemoteCommandPolicy(mode="full")
     assert policy_allows(("merge", "--into", "main"), full) == "git merge"
-    assert policy_allows(("git", "pr"), full) == "pr"
+    with pytest.raises(RouteError):
+        policy_allows(("git", "pr"), full)
 
 
 def test_allowlist_permits_an_alias_whose_canonical_leaf_is_allowed() -> None:
@@ -717,9 +719,10 @@ def test_host_command_group_help_stays_available() -> None:
 @pytest.mark.parametrize(
     ("argv", "flag"),
     [
-        (("pr", "box", "--open"), "--open"),
-        (("pr", "box", "--web"), "--web"),
-        (("pr", "box", "--yes"), "--yes"),
+        (("pr", "bind", "box", "12", "--yes"), "--yes"),
+        (("pr", "unbind", "box", "--yes"), "--yes"),
+        (("pr", "push", "box", "--web"), "--web"),
+        (("pr", "push", "box", "--yes"), "--yes"),
         (("submodule", "pr", "libs/x", "--web"), "--web"),
         (("submodule", "pr", "libs/x", "-y"), "--yes"),
         (("review", "apply", "box", "--yes"), "--yes"),
@@ -739,10 +742,10 @@ def test_publishing_is_confirmed_and_never_opens_a_host_browser(argv, flag, monk
 @pytest.mark.parametrize(
     "argv",
     [
-        ("pr", "box"),
+        ("pr", "push", "box"),
         ("review", "apply", "box"),
         ("issue", "apply", "box"),
-        ("pr", "box", "--force"),
+        ("pr", "push", "box", "--force"),
     ],
 )
 def test_publishing_itself_stays_allowed(argv, monkeypatch) -> None:
@@ -1589,7 +1592,7 @@ def test_route_clustered_config_is_rejected_before_child(restrict, engine, repo)
         exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full")
     )
     with pytest.raises(RouteError, match="--config and --repo"):
-        route("pr feat -yc/tmp/beta.yaml --repo project", cfg, engine=engine)
+        route("pr push feat -yc/tmp/beta.yaml --repo project", cfg, engine=engine)
 
 
 @pytest.mark.parametrize("restrict", [False, True])
@@ -1598,8 +1601,8 @@ def test_route_config_looking_title_is_not_a_config(restrict, value, engine, rep
     cfg = RemoteSSHConfig(
         exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full")
     )
-    result = route(f"pr feat --title '{value}' --repo project", cfg, engine=engine)
-    assert result.argv == ("pr", "feat", "--title", value)
+    result = route(f"pr push feat --title '{value}' --repo project", cfg, engine=engine)
+    assert result.argv == ("pr", "push", "feat", "--title", value)
     assert result.repo_root == repo
     assert result.repo_prefix == "project"
 

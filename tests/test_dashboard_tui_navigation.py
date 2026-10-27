@@ -344,7 +344,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     assert run.rc == 0
     assert any(state is not None and state.level == "PR →" for state in run.natives)
-    assert any(call.args[0] == ["jailbee", "pr", "alpha-x"] for call in child.call_args_list)
+    assert any(call.args[0] == ["jailbee", "pr", "push", "alpha-x"] for call in child.call_args_list)
 
 
 def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):

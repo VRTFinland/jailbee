@@ -213,9 +213,9 @@ def test_hand_off_runs_in_the_foreground_through_suspend(mocker):
         return fn()
 
     runner = LocalOutboxRunner(TARGET, read_only=False, suspend=suspend)
-    assert runner.hand_off(["pr", "alpha-x"]) == 3
+    assert runner.hand_off(["pr", "push", "alpha-x"]) == 3
     assert seen == [True]
-    fg.assert_called_once_with(TARGET, ["pr", "alpha-x"], style="output")
+    fg.assert_called_once_with(TARGET, ["pr", "push", "alpha-x"], style="output")
 
 
 def test_read_only_scope_key_does_nothing(quiet):
@@ -239,7 +239,7 @@ def test_read_only_scope_key_does_nothing(quiet):
         ["outbox", "drop", "alpha-x", "pr/a.json", "--revision", "r1", "--yes"],
         ["outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1", "-y"],
         ["outbox", "clear", "alpha-x", "--prepare-snapshot"],
-        ["pr", "alpha-x"],
+        ["pr", "push", "alpha-x"],
     ],
 )
 def test_read_only_runner_refuses_what_it_does_not_permit(mocker, argv):
@@ -319,7 +319,7 @@ def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker,
 
     drive(app, scenario, size=(160, 30))
     assert handed == [
-        (BETA, ["pr", "beta-one"], ["--config", "/repos/beta/.jailbee/config.yaml"],
+        (BETA, ["pr", "push", "beta-one"], ["--config", "/repos/beta/.jailbee/config.yaml"],
          Path("/repos/beta")),
     ]  # fmt: skip
 
@@ -340,8 +340,8 @@ def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
     fg.assert_not_called()
     assert app.controller.state.status[-1] == "beta-one: creating a PR is not available here"
     runner = app.runner
-    assert runner.permitted(["pr", "beta-one"]) is False
-    assert runner.hand_off(["pr", "beta-one"]) is None
+    assert runner.permitted(["pr", "push", "beta-one"]) is False
+    assert runner.hand_off(["pr", "push", "beta-one"]) is None
 
 
 def test_container_repo_is_the_resolved_owner(mocker, tmp_path):

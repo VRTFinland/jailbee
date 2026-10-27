@@ -31,7 +31,7 @@ def test_dialog_hands_its_cwd_to_the_view(qtbot, mocker):
     dropped would be invisible."""
     set_dir = mocker.patch.object(QProcess, "setWorkingDirectory")
     mocker.patch.object(QProcess, "start")
-    dlg = CommandOutputDialog(["jailbee", "pr", "alpha-x"], "jailbee pr alpha-x", _CWD)
+    dlg = CommandOutputDialog(["jailbee", "pr", "push", "alpha-x"], "jailbee pr push alpha-x", _CWD)
     qtbot.addWidget(dlg)
 
     set_dir.assert_called_once_with(str(_CWD))
@@ -105,8 +105,8 @@ def test_stop_is_a_no_op_when_nothing_is_running(qtbot, mocker):
 
 def test_dialog_titles_itself_after_the_command(qtbot, mocker):
     mocker.patch.object(CommandOutputView, "start")
-    dlg = CommandOutputDialog(["jailbee", "pr", "alpha-x"], "jailbee pr alpha-x", _CWD)
+    dlg = CommandOutputDialog(["jailbee", "pr", "push", "alpha-x"], "jailbee pr push alpha-x", _CWD)
     qtbot.addWidget(dlg)
 
-    assert dlg.windowTitle() == "jailbee pr alpha-x"
+    assert dlg.windowTitle() == "jailbee pr push alpha-x"
     assert isinstance(dlg.view, CommandOutputView)

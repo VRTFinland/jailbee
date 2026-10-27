@@ -543,7 +543,7 @@ def test_create_pr_hands_off_when_unchanged():
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("create-pr", _key())
-    assert ("hand_off", ["pr", C]) in runner.calls
+    assert ("hand_off", ["pr", "push", C]) in runner.calls
     assert runner.calls[-1][1][1] == "ls"
     assert runner.changes == 1
 

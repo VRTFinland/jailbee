@@ -276,6 +276,8 @@ def command_path(argv: Sequence[str]) -> str:
 # someone decides which side it is on.
 _HOST_COMMANDS: frozenset[str] = frozenset(
     {
+        # Opening a PR launches a browser on the host display.
+        "pr open",
         "config edit",
         "config init",
         "config migrate",
@@ -470,7 +472,9 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "port ls",
         "port rm",
         "port to-host",
-        "pr",
+        "pr push",
+        "pr bind",
+        "pr unbind",
         "prune",
         "registry status",
         "registry verify",
@@ -533,10 +537,10 @@ def allowed_command_paths(
 #   - `net egress add`/`rm` `--repo` writes the host-local repo layer
 #     (`repos/<prefix>.yaml`) and so changes every container of the repo, not
 #     only the session's own;
-#   - `pr`/`submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
+#   - `pr push --web` and `submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
 #     on the host's display;
 #   - `--yes` on the commands that publish to GitHub with the host's own
-#     credentials (`pr`, `submodule pr`, `review apply`, `issue apply`): the
+#     credentials (`pr push`, `pr bind`, `pr unbind`, `submodule pr`, `review apply`, `issue apply`): the
 #     remote user may publish, but each action is shown and confirmed rather
 #     than waved through — the same reasoning that refuses `--yes` for a
 #     branch's privilege widening.
@@ -547,7 +551,9 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     "new": frozenset({"mount"}),
     "net egress add": frozenset({"repo"}),
     "net egress rm": frozenset({"repo"}),
-    "pr": frozenset({"web", "open_only", "yes"}),
+    "pr push": frozenset({"web", "yes"}),
+    "pr bind": frozenset({"yes"}),
+    "pr unbind": frozenset({"yes"}),
     "submodule pr": frozenset({"web", "open_only", "yes"}),
     "review apply": frozenset({"yes"}),
     "issue apply": frozenset({"yes"}),
@@ -762,7 +768,9 @@ def policy_allows(
             "git fetch",
             "git checkout",
             "git merge",
-            "pr",
+            "pr push",
+            "pr bind",
+            "pr unbind",
             "new",
             "fork",
             "destroy",

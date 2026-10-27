@@ -89,8 +89,8 @@ def _clear_layout(layout: QLayout) -> None:
 
 
 # Verb dispatched when the PR pill is clicked — mirrors the "Open PR" context
-# action (jailbee.dashboard.menus.menu_actions), so the pill runs `jailbee pr --open <name>`.
-_OPEN_PR_VERB = "pr --open"
+# action (jailbee.dashboard.menus.menu_actions), so the pill runs `jailbee pr open <name>`.
+_OPEN_PR_VERB = "pr open"
 
 
 class _ClickableLabel(QLabel):

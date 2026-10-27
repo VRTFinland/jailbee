@@ -1320,7 +1320,7 @@ def test_console_clustered_config_never_spawns(console_env, mocker, capsys, loca
     cfg = RemoteSSHConfig(
         console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full")
     )
-    console_env.lines(["pr feat -yc/tmp/beta.yaml --repo other", "exit"])
+    console_env.lines(["pr push feat -yc/tmp/beta.yaml --repo other", "exit"])
     assert console.run_console(cfg, "project", local=local) == 0
     run.assert_not_called()
     assert "--config and --repo" in capsys.readouterr().err
@@ -1335,7 +1335,7 @@ def test_console_config_looking_title_reaches_child(console_env, mocker, local, 
     cfg = RemoteSSHConfig(
         console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full")
     )
-    console_env.lines([f"pr feat --title '{value}' --repo other", "exit"])
+    console_env.lines([f"pr push feat --title '{value}' --repo other", "exit"])
     assert console.run_console(cfg, "project", local=local) == 0
-    assert run.call_args.args[0][-4:] == ["pr", "feat", "--title", value]
+    assert run.call_args.args[0][-5:] == ["pr", "push", "feat", "--title", value]
     assert run.call_args.kwargs["cwd"] == console_env.other_root

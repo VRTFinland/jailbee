@@ -321,7 +321,7 @@ def test_implicit_outbox_group_config_conflicts(argv):
 
 
 @pytest.mark.parametrize(
-    "command", [["pr", "feat"], ["new", "feat"], ["outbox", "apply", "feat", "pr/a.json"]]
+    "command", [["pr", "push", "feat"], ["new", "feat"], ["outbox", "apply", "feat", "pr/a.json"]]
 )
 @pytest.mark.parametrize(
     "option",
@@ -343,24 +343,24 @@ def test_clustered_config_conflicts_before_selector_is_lost(command, option):
 @pytest.mark.parametrize("attached", [False, True])
 def test_config_looking_title_is_an_ordinary_value(value, attached):
     title = [f"--title={value}"] if attached else ["--title", value]
-    rest = ["pr", "feat", *title]
+    rest = ["pr", "push", "feat", *title]
     assert lift_repo([*rest, "--repo", "alpha"]) == ("alpha", rest)
 
 
 def test_config_after_consumed_sentinel_still_conflicts():
     with pytest.raises(RepoOptionError, match="--config and --repo"):
-        lift_repo(["--repo", "alpha", "pr", "feat", "--title", "--", "-yc/tmp/beta.yaml"])
+        lift_repo(["--repo", "alpha", "pr", "push", "feat", "--title", "--", "-yc/tmp/beta.yaml"])
 
 
 def test_config_detection_never_runs_parameter_callbacks(mocker):
     from jailbee.remote_ssh.router import command_leaf
 
-    _, command = command_leaf(["pr"])
+    _, command = command_leaf(["pr", "push"])
     callback = mocker.Mock(side_effect=AssertionError("parameter callback ran"))
     for param in command.params:
         mocker.patch.object(param, "callback", callback)
-    assert lift_repo(["pr", "--title", "-changes", "--repo", "alpha"]) == (
+    assert lift_repo(["pr", "push", "--title", "-changes", "--repo", "alpha"]) == (
         "alpha",
-        ["pr", "--title", "-changes"],
+        ["pr", "push", "--title", "-changes"],
     )
     callback.assert_not_called()

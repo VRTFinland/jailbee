@@ -1240,7 +1240,7 @@ def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):
     )
     open_output = mocker.patch.object(qapp.AppController, "_open_output")
 
-    controller.on_action("pr", "p-foo")
+    controller.on_action("pr push", "p-foo")
 
     dialog.assert_called_once()
     assert open_output.call_args.args[0][-2:] == ["--ready", "--yes"]
@@ -1259,7 +1259,7 @@ def test_on_action_pr_cancelled_dispatches_nothing(mocker, tmp_path):
     open_output = mocker.patch.object(qapp.AppController, "_open_output")
     popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
 
-    controller.on_action("pr", "p-foo")
+    controller.on_action("pr push", "p-foo")
 
     open_output.assert_not_called()
     popen.assert_not_called()

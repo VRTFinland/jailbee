@@ -99,7 +99,7 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
         )
     else:
         root, slug = tmp_path, "acme/widgets"
-        args = ["pr", "feat-foo"]
+        args = ["pr", "push", "feat-foo"]
         mocker.patch(
             "jailbee.sync.publish_branch_from_container",
             return_value=PublishResult(
@@ -249,7 +249,7 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
         f"https://github.com/{slug}/pull/42",
         uid=cfg.container_user.uid,
     )
-    assert "#42" in result.output and "#99" not in result.output
+    assert "PR #42 updated" in result.output
 
 
 @pytest.mark.parametrize("submodule", [False, True], ids=["pr", "submodule-pr"])

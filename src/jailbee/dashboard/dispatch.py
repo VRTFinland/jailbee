@@ -187,7 +187,7 @@ def _dispatch_action(
     The single dispatch point shared by the inline action menu and the
     quick-action keys, so both reuse the real command's behaviour and the
     target repo's own config. ``verb`` may be multi-token (``"net loose"``,
-    ``"pr --open"``, ``"job log --follow"``).
+    ``"pr open"``, ``"job log --follow"``).
 
     Every child runs in ``target.cwd()``, and a configured repo additionally
     gets ``--config``: a repo with no config file has no path to pass, so the

@@ -360,5 +360,5 @@ def test_prepare_clustered_config_is_rejected_before_resolution(mocker):
 
     resolve = mocker.patch("jailbee.repo_option.resolve_repo_root")
     with pytest.raises(RepoOptionError, match="--config and --repo"):
-        prepare_argv(["pr", "feat", "-yc/tmp/beta.yaml", "--repo", "alpha"])
+        prepare_argv(["pr", "push", "feat", "-yc/tmp/beta.yaml", "--repo", "alpha"])
     resolve.assert_not_called()

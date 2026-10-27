@@ -58,7 +58,7 @@ def _scope(value: object) -> dict[str, str] | None:
 
 def create_pr_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
     if scope == {"kind": "repo"}:
-        return ["pr", name]
+        return ["pr", "push", name]
     if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
         return ["submodule", "pr", name, scope["path"]]
     return None

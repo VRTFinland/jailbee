@@ -383,7 +383,7 @@ def test_argv_builders():
         "outbox", "drop", "c", "issue/x.json", "--with-dependents", "--archive-journal",
         "--yes", "--revision", "r",
     ]  # fmt: skip
-    assert dob.create_pr_argv("c", {"kind": "repo"}) == ["pr", "c"]
+    assert dob.create_pr_argv("c", {"kind": "repo"}) == ["pr", "push", "c"]
     assert dob.clear_prepare_argv("c") == ["outbox", "clear", "c", "--prepare-snapshot"]
     assert dob.clear_approved_argv("c", "tok") == [
         "outbox", "clear", "c", "--approved-snapshot", "tok", "--yes",

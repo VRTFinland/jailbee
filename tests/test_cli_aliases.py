@@ -272,15 +272,15 @@ def test_top_level_diff_calls_same_function(mocker, tmp_path):
 
 def test_pr_top_level_help_shows_full_docstring():
     """`jailbee pr --help` shows the canonical command docstring."""
-    result = CliRunner().invoke(app, ["pr", "--help"])
+    result = CliRunner().invoke(app, ["pr", "push", "--help"])
     assert result.exit_code == 0, result.output
     assert "Create or update" in result.output
 
 
-def test_git_pr_alias_is_invocable():
-    """`jailbee git pr --help` is reachable (hidden alias)."""
+def test_git_pr_alias_is_removed():
+    """The former hidden alias is no longer reachable."""
     result = CliRunner().invoke(app, ["git", "pr", "--help"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
 
 
 def test_git_help_hides_pr_alias():

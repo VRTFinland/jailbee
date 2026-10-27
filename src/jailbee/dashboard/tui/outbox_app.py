@@ -65,10 +65,10 @@ def container_repo(target: RepoTarget, name: str) -> RepoTarget | None:
 
 
 def _handed_container(argv: Sequence[str]) -> str | None:
-    """The container of a `pr NAME` / `submodule pr NAME PATH` hand-off, else None."""
+    """The container of a `pr push NAME` / `submodule pr NAME PATH` hand-off, else None."""
     words = list(argv)
-    if words[:1] == ["pr"] and len(words) > 1:
-        return words[1]
+    if words[:2] == ["pr", "push"] and len(words) > 2:
+        return words[2]
     if words[:2] == ["submodule", "pr"] and len(words) > 2:
         return words[2]
     return None

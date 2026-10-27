@@ -88,6 +88,8 @@ def _setup(mocker, tmp_path, labels=None):
     # The create path asks GitHub whether the container's branch already has a
     # PR. Stubbed to "no" for every test; the tests that care re-patch it.
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
+    # Binding offers are exercised by the command-group suite, not legacy text tests.
+    mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=None)
     # Likewise for the container's PR outbox: "nothing pending" for every test,
     # so `jailbee pr` takes its normal Claude/placeholder path. The outbox tests
     # below re-patch it. Without this the real `read_outbox` would run against
@@ -181,7 +183,7 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
         )
 
     mocker.patch("subprocess.run", side_effect=run)
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert commands[0][:3] == ["gh", "pr", "view" if is_update else "create"]
@@ -198,7 +200,7 @@ def test_create_pr_happy_path(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     publish.assert_called_once()
@@ -226,7 +228,7 @@ def test_pr_reports_the_fetch_and_announces_the_push_before_pushing(mocker, tmp_
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     summary = "refs/jailbee/feat-foo/feat/foo: abc1234..def5678 (2 new commits)"
@@ -246,7 +248,7 @@ def test_create_pr_title_falls_back_to_branch_name(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value=None)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert create.call_args.kwargs["title"] == "feat/foo"
@@ -264,7 +266,7 @@ def test_create_pr_explicit_flags_override_defaults(mocker, tmp_path):
     result = CliRunner().invoke(
         app,
         [
-            "pr",
+            "pr", "push",
             "feat-foo",
             "--title",
             "My title",
@@ -288,7 +290,7 @@ def test_create_pr_explicit_flags_override_defaults(mocker, tmp_path):
 def test_pr_rerun_author_container_takes_update_path(mocker, tmp_path):
     _update_setup(mocker, tmp_path)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "updated" in result.output.lower()
@@ -298,7 +300,7 @@ def test_create_pr_missing_base_label_requires_flag(mocker, tmp_path):
     _setup(mocker, tmp_path, labels={})  # no user.jailbee.base_branch
     publish = mocker.patch("jailbee.sync.publish_branch_from_container")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--base" in result.output
@@ -311,7 +313,7 @@ def test_create_pr_dirty_tree_warns(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="t")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "uncommitted" in result.output.lower()
@@ -326,7 +328,7 @@ def test_create_pr_sync_error_exits_1(mocker, tmp_path):
         side_effect=SyncError("Container 'feat-foo' is not running. ..."),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "not running" in result.output
@@ -346,7 +348,7 @@ def test_create_pr_pr_error_exits_1(mocker, tmp_path):
         side_effect=PrCreateError("'gh' is not authenticated. Run: gh auth login"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "authenticated" in result.output
@@ -362,7 +364,7 @@ def test_create_pr_web_opens_browser(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     web = mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--web"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--web"])
 
     assert result.exit_code == 0, result.output
     web.assert_called_once()
@@ -384,7 +386,7 @@ def test_create_pr_label_order_pr_author_first(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: order")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     calls = incus_mock.config_set.call_args_list
@@ -398,7 +400,7 @@ def test_create_pr_label_order_pr_author_first(mocker, tmp_path):
     )
 
 
-def test_git_pr_alias_calls_same_function(mocker, tmp_path):
+def test_git_pr_alias_is_removed(mocker, tmp_path):
     _setup(mocker, tmp_path)
     publish = mocker.patch(
         "jailbee.sync.publish_branch_from_container",
@@ -409,8 +411,8 @@ def test_git_pr_alias_calls_same_function(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "pr", "feat-foo"])
 
-    assert result.exit_code == 0, result.output
-    publish.assert_called_once()
+    assert result.exit_code == 2, result.output
+    publish.assert_not_called()
 
 
 def test_create_pr_label_write_failure_still_prints_url(mocker, tmp_path):
@@ -426,7 +428,7 @@ def test_create_pr_label_write_failure_still_prints_url(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     incus_mock.config_set.side_effect = IncusError("boom")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "https://github.com/acme/widgets/pull/123" in result.output
@@ -443,7 +445,7 @@ def test_create_pr_branch_override_forwarded(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="t")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--branch", "feat/x"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--branch", "feat/x"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["branch"] == "feat/x"
@@ -470,7 +472,7 @@ def test_create_pr_forwards_pull_tags_config(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["tags"] == "all"
@@ -486,7 +488,7 @@ def test_create_pr_fresh_success_includes_branch(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "created for 'feat/foo'" in result.output
@@ -514,7 +516,7 @@ def test_create_pr_uses_ai_text_when_enabled(mocker, tmp_path):
     subject = mocker.patch("jailbee.git.commit_subject")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -537,7 +539,7 @@ def test_create_pr_falls_back_when_ai_returns_none(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: subj")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "failed" in result.output.lower()  # warning shown
@@ -557,7 +559,7 @@ def test_create_pr_no_ai_flag_skips_generation(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: subj")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -599,7 +601,7 @@ def test_no_outbox_restores_the_claude_run(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    assert CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"]).exit_code == 0
+    assert CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"]).exit_code == 0
 
     pending.assert_not_called()
 
@@ -611,7 +613,7 @@ def test_no_ai_does_not_disable_the_outbox(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source("d.json"))
     mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"], input="\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"], input="\n")
 
     assert result.exit_code == 0, result.output
     assert create.call_args.kwargs["title"] == "feat: x"
@@ -622,7 +624,7 @@ def test_no_ai_help_says_the_outbox_is_unaffected():
     say in its own help that it does not disable the outbox."""
     # Rich wraps an option's help inside a bordered table, so the vertical rules
     # have to go before the whitespace is collapsed or every wrap leaves a "│".
-    output = CliRunner().invoke(app, ["pr", "--help"]).output
+    output = CliRunner().invoke(app, ["pr", "push", "--help"]).output
     flat = " ".join(output.replace("│", " ").split())
 
     assert (
@@ -635,7 +637,7 @@ def test_no_ai_help_says_the_outbox_is_unaffected():
 def test_description_help_says_the_outbox_outranks_it():
     """`--description` asks for a Claude regeneration, and a pending manifest
     now wins over it — the help has to say so, and name the escape."""
-    output = CliRunner().invoke(app, ["pr", "--help"]).output
+    output = CliRunner().invoke(app, ["pr", "push", "--help"]).output
     flat = " ".join(output.replace("│", " ").split())
 
     assert (
@@ -654,7 +656,7 @@ def test_outbox_description_is_used_recorded_and_named(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -683,7 +685,7 @@ def test_an_already_existing_pr_consumes_the_outbox_exactly_once(mocker, tmp_pat
     edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert edit.call_args.kwargs["body"] == "Body."
@@ -710,7 +712,7 @@ def test_outbox_is_not_consumed_when_the_pr_creation_fails(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     record.assert_not_called()
@@ -726,7 +728,7 @@ def test_a_failed_consumption_record_keeps_the_pr_url(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=FinalizeError("disk full"))
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "https://github.com/acme/widgets/pull/123" in result.output
@@ -746,7 +748,7 @@ def test_create_pr_ai_disabled_by_config(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: subj")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -765,7 +767,7 @@ def test_create_pr_both_explicit_skips_generation(mocker, tmp_path):
 
     result = CliRunner().invoke(
         app,
-        ["pr", "feat-foo", "--title", "T", "--body", "B"],
+        ["pr", "push", "feat-foo", "--title", "T", "--body", "B"],
     )
 
     assert result.exit_code == 0, result.output
@@ -790,7 +792,7 @@ def test_create_pr_only_title_explicit_generates_body(mocker, tmp_path):
     )
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "T"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--title", "T"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -814,7 +816,7 @@ def test_create_pr_only_body_explicit_generates_title(mocker, tmp_path):
     )
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--body", "B"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--body", "B"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -834,7 +836,7 @@ def test_pr_create_ready_makes_nondraft(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: ready test")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--ready"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ready"])
 
     assert result.exit_code == 0, result.output
     assert create.call_args.kwargs["draft"] is False
@@ -852,7 +854,7 @@ def test_pr_create_draft_flag_makes_draft(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: draft test")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--draft"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--draft"])
 
     assert result.exit_code == 0, result.output
     assert create.call_args.kwargs["draft"] is True
@@ -884,7 +886,7 @@ def test_pr_update_pushes_without_recreating(mocker, tmp_path):
     edit = mocker.patch("jailbee.pr.edit_pr")
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])  # non-TTY → no prompt
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])  # non-TTY → no prompt
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
@@ -897,7 +899,7 @@ def test_pr_update_explicit_title_edits(mocker, tmp_path):
     _update_setup(mocker, tmp_path)
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "New title"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--title", "New title"])
 
     assert result.exit_code == 0, result.output
     edit.assert_called_once()
@@ -915,7 +917,7 @@ def test_pr_names_the_description_an_explicit_title_outranked(mocker, tmp_path):
     mocker.patch("jailbee.pr.edit_pr")
     _description_only_outbox(mocker, name="003-desc.json")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "New title"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--title", "New title"])
 
     assert result.exit_code == 0, result.output
     assert "003-desc.json still holds a description" in result.output
@@ -943,7 +945,7 @@ def test_pr_says_nothing_about_a_description_it_consumed(mocker, tmp_path):
         mocker, {"004-d.json": text, "004-d.json.progress.json": '{"applied": [0], "urls": {}}'}
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "still holds a description" not in result.output
@@ -962,7 +964,7 @@ def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tm
     edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body.", "repo": "acme/widgets"}
@@ -979,7 +981,7 @@ def test_pr_update_asks_the_outbox_about_the_prs_own_number(mocker, tmp_path):
     _update_setup(mocker, tmp_path)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert pending.call_args.kwargs["for_pr"] == 123
@@ -994,7 +996,7 @@ def test_pr_update_no_outbox_restores_the_claude_offer(mocker, tmp_path):
     confirm = mocker.patch("typer.confirm", return_value=False)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"])
 
     assert result.exit_code == 0, result.output
     pending.assert_not_called()
@@ -1012,7 +1014,7 @@ def test_pr_update_description_regenerates(mocker, tmp_path):
     )
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--description"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--description"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -1033,7 +1035,7 @@ def test_pr_update_prompt_yes_regenerates(mocker, tmp_path):
     )
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     edit.assert_called_once()
@@ -1047,7 +1049,7 @@ def test_pr_update_prompt_no_skips(mocker, tmp_path):
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -1061,7 +1063,7 @@ def test_pr_update_no_ai_never_prompts(mocker, tmp_path):
     confirm = mocker.patch("typer.confirm")
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -1073,7 +1075,7 @@ def test_pr_update_description_flag_without_ai_warns_and_skips(mocker, tmp_path)
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--description", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--description", "--no-ai"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -1085,7 +1087,7 @@ def test_pr_update_ready_toggles_state(mocker, tmp_path):
     _update_setup(mocker, tmp_path)
     ready = mocker.patch("jailbee.pr.set_ready")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--ready"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--ready"])
 
     assert result.exit_code == 0, result.output
     ready.assert_called_once_with(tmp_path, 123, True, repo="acme/widgets")
@@ -1096,7 +1098,7 @@ def test_pr_update_draft_toggles_state(mocker, tmp_path):
     _update_setup(mocker, tmp_path)
     ready = mocker.patch("jailbee.pr.set_ready")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--draft"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--draft"])
 
     assert result.exit_code == 0, result.output
     ready.assert_called_once_with(tmp_path, 123, False, repo="acme/widgets")
@@ -1112,7 +1114,7 @@ def test_pr_update_via_already_exists_fallback(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="t")
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created(already=True))
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "updated" in result.output.lower()
@@ -1136,7 +1138,7 @@ def test_as_flag_overrides_name_and_skips_ai(mocker, tmp_path):
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "user/x"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "user/x"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -1164,7 +1166,7 @@ def test_ai_branch_used_non_tty(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["publish_name"] == "user/nice"
@@ -1194,7 +1196,7 @@ def test_reconcile_renames_local_branch(mocker, tmp_path):
     mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     rename.assert_called_once_with(cfg.repo_root, "dev-1", "feat/foo")
@@ -1206,7 +1208,7 @@ def test_force_requires_explicit_name(mocker, tmp_path):
         "jailbee.cli._resolve_existing",
         side_effect=AssertionError("must not resolve/pick before the --force guard"),
     )
-    result = CliRunner().invoke(app, ["pr", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "--force"])
     assert result.exit_code == 2
     assert "explicit container name" in result.output
 
@@ -1229,7 +1231,7 @@ def test_force_threads_into_publish(mocker, tmp_path):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["force"] is True
@@ -1258,7 +1260,7 @@ def test_update_path_reuses_stored_label_skips_ai(mocker, tmp_path):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()  # branch AI skipped on update
@@ -1289,7 +1291,7 @@ def test_branch_ai_only_desc_off(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()  # single call yields the branch name
@@ -1322,7 +1324,7 @@ def test_desc_ai_only_branch_off(mocker, tmp_path):
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -1351,7 +1353,7 @@ def test_as_with_desc_ai(mocker, tmp_path):
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "user/manual"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "user/manual"])
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
@@ -1378,7 +1380,7 @@ def test_pr_mount_mode_fails_before_ai(mocker, tmp_path):
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
     publish = mocker.patch("jailbee.sync.publish_branch_from_container")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "mount mode" in result.output
@@ -1406,7 +1408,7 @@ def test_create_stores_labels_in_safe_order(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     pr_labels = {"user.jailbee.pr_branch", "user.jailbee.pr_author", "user.jailbee.pr"}
@@ -1433,7 +1435,7 @@ def test_label_write_failure_is_nonfatal(mocker, tmp_path):
 
     incus.config_set.side_effect = _cfg_set
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "https://github.com/acme/widgets/pull/123" in result.output
@@ -1448,7 +1450,7 @@ def test_pr_open_opens_browser_and_skips_publish(mocker, tmp_path):
     create = mocker.patch("jailbee.pr.create_pr")
     open_web = mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--open"])
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     open_web.assert_called_once_with(tmp_path, 123)
@@ -1462,7 +1464,7 @@ def test_pr_open_works_for_review_checkout_container(mocker, tmp_path):
     _setup(mocker, tmp_path, labels={"user.jailbee.pr": "456"})
     open_web = mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--open"])
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     open_web.assert_called_once_with(tmp_path, 456)
@@ -1472,7 +1474,7 @@ def test_pr_open_errors_when_no_pr_label(mocker, tmp_path):
     _setup(mocker, tmp_path, labels={})
     open_web = mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--open"])
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo"])
 
     assert result.exit_code == 1
     assert "no associated PR" in result.output
@@ -1531,7 +1533,7 @@ def test_pr_adopts_review_container_after_confirmation(mocker, tmp_path):
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert publish.call_args.kwargs["publish_name"] == "contributor/fix-worktime"
@@ -1546,7 +1548,7 @@ def test_pr_adopt_writes_pr_branch_before_pr_adopted(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     writes = [tuple(c.args[-2:]) for c in incus.config_set.call_args_list]
@@ -1562,7 +1564,7 @@ def test_pr_adopt_declined_does_nothing(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value=None)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code != 0
     publish.assert_not_called()
@@ -1575,7 +1577,7 @@ def test_pr_adopt_without_tty_requires_yes(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.pr_flow._pick_review_action")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
@@ -1588,7 +1590,7 @@ def test_pr_adopt_yes_skips_the_prompt(mocker, tmp_path):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     pick = mocker.patch("jailbee.pr_flow._pick_review_action")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     pick.assert_not_called()
@@ -1602,7 +1604,7 @@ def test_pr_adopt_refuses_fork_pr(mocker, tmp_path):
         return_value=_review_pr_info(cross=True, owner="contributor"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 1
     assert "contributor" in result.output
@@ -1616,7 +1618,7 @@ def test_pr_adopt_refuses_as_flag(mocker, tmp_path):
     _cfg, incus, publish = _review_setup(mocker, tmp_path)
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "other/branch", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "other/branch", "--yes"])
 
     assert result.exit_code == 2
     assert "--as" in result.output
@@ -1637,7 +1639,7 @@ def test_pr_adopted_container_still_refuses_as_flag(mocker, tmp_path):
         },
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "other/branch"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "other/branch"])
 
     assert result.exit_code == 2
     assert "PR #456" in result.output
@@ -1652,7 +1654,7 @@ def test_pr_authored_container_refuses_as_flag(mocker, tmp_path):
         side_effect=AssertionError("must not publish after a --as usage error"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "other/branch"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "other/branch"])
 
     assert result.exit_code == 2
     assert "PR #123" in result.output
@@ -1663,7 +1665,7 @@ def test_pr_adopt_warns_on_closed_pr_but_proceeds(mocker, tmp_path):
     _cfg, _incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info(state="MERGED"))
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     assert "MERGED" in result.output
@@ -1683,7 +1685,7 @@ def test_pr_already_adopted_container_skips_gh_and_prompt(mocker, tmp_path):
     pick = mocker.patch("jailbee.pr_flow._pick_review_action")
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     resolve.assert_not_called()
@@ -1711,7 +1713,7 @@ def test_pr_applies_an_adopted_prs_description_after_one_confirmation(mocker, tm
     edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     # Narrowed to manifests that name this PR: a `pr: null` one is about the PR
@@ -1742,7 +1744,7 @@ def test_pr_leaves_an_adopted_foreign_prs_description_alone_when_declined(mocker
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
     _description_only_outbox(mocker)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     edit.assert_not_called()
@@ -1769,7 +1771,7 @@ def test_pr_adopted_push_failure_points_at_pr_refresh(mocker, tmp_path):
         side_effect=SyncError("Pushing 'alice/worktime-stomp' to origin failed: non-ff"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--pr --rebase" in result.output
@@ -1781,7 +1783,7 @@ def test_pr_adopt_yes_states_the_pr_before_pushing(mocker, tmp_path):
     _cfg, _incus, publish = _review_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     assert "PR #456 by @someone" in result.output
@@ -1810,7 +1812,7 @@ def test_pr_force_on_foreign_head_asks_for_confirmation(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_called_once()
@@ -1823,7 +1825,7 @@ def test_pr_force_on_foreign_head_declined_does_not_push(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code != 0
     publish.assert_not_called()
@@ -1833,7 +1835,7 @@ def test_pr_force_on_foreign_head_without_tty_requires_yes(mocker, tmp_path):
     _cfg, _incus, publish = _adopted_setup(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
@@ -1845,7 +1847,7 @@ def test_pr_force_on_foreign_head_yes_skips_confirmation(mocker, tmp_path):
     _cfg, _incus, publish = _adopted_setup(mocker, tmp_path)
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force", "--yes"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -1862,7 +1864,7 @@ def test_pr_force_on_authored_pr_is_not_gated(mocker, tmp_path):
         return_value=_publish_result(forced=True),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -1882,7 +1884,7 @@ def test_pr_foreign_head_never_offers_description_regen(mocker, tmp_path):
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -1905,7 +1907,7 @@ def test_pr_authored_pr_still_offers_description_regen(mocker, tmp_path):
     )
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     assert "description" in confirm.call_args.args[0].lower()
@@ -1925,7 +1927,7 @@ def test_pr_foreign_head_explicit_description_still_applies(mocker, tmp_path):
     )
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--description"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--description"])
 
     assert result.exit_code == 0, result.output
     edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B", repo="acme/widgets")
@@ -1935,7 +1937,7 @@ def test_pr_foreign_head_explicit_title_still_applies(mocker, tmp_path):
     _cfg, _incus, _publish = _adopted_setup(mocker, tmp_path)
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "New title"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--title", "New title"])
 
     assert result.exit_code == 0, result.output
     assert edit.call_args.kwargs["title"] == "New title"
@@ -1950,7 +1952,7 @@ def test_pr_authored_push_failure_has_no_pr_refresh_hint(mocker, tmp_path):
         side_effect=SyncError("Pushing 'feat/foo' to origin failed: non-ff"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--pr --rebase" not in result.output
@@ -2002,7 +2004,7 @@ def test_pr_updates_the_existing_pr_for_the_branch(mocker, tmp_path):
     mocker.patch("typer.confirm", return_value=True)
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
@@ -2022,7 +2024,7 @@ def test_pr_existing_pr_is_not_claimed_as_gie_authored(mocker, tmp_path):
     """
     _cfg, incus, _publish = _branch_pr_setup(mocker, tmp_path, _existing_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     written = [c.args[-2] for c in incus.config_set.call_args_list]
@@ -2032,7 +2034,7 @@ def test_pr_existing_pr_is_not_claimed_as_gie_authored(mocker, tmp_path):
 def test_pr_existing_pr_writes_pr_branch_before_pr_adopted(mocker, tmp_path):
     _cfg, incus, _publish = _branch_pr_setup(mocker, tmp_path, _existing_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     writes = [tuple(c.args[-2:]) for c in incus.config_set.call_args_list]
@@ -2047,7 +2049,7 @@ def test_pr_existing_pr_declined_publishes_nothing(mocker, tmp_path):
     mocker.patch("typer.confirm", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code != 0
     publish.assert_not_called()
@@ -2060,7 +2062,7 @@ def test_pr_existing_pr_without_tty_requires_yes(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
@@ -2072,7 +2074,7 @@ def test_pr_existing_pr_yes_skips_the_prompt(mocker, tmp_path):
     _cfg, _incus, publish = _branch_pr_setup(mocker, tmp_path, _existing_pr_info())
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -2086,7 +2088,7 @@ def test_pr_existing_pr_suppresses_ai_branch_naming(mocker, tmp_path):
     cfg.pr.ai_branch = True
     gen = mocker.patch("jailbee.pr_ai.generate_pr_text")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     gen.assert_not_called()
@@ -2099,7 +2101,7 @@ def test_pr_closed_pr_for_branch_opens_a_new_one(mocker, tmp_path):
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     create.assert_called_once()
@@ -2114,7 +2116,7 @@ def test_pr_fork_pr_for_branch_opens_a_new_one(mocker, tmp_path):
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     create.assert_called_once()
@@ -2133,7 +2135,7 @@ def test_pr_as_flag_skips_the_existing_pr_lookup(mocker, tmp_path):
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--as", "other/x"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--as", "other/x"])
 
     assert result.exit_code == 0, result.output
     find.assert_not_called()
@@ -2145,7 +2147,7 @@ def test_pr_lookup_is_skipped_on_a_container_that_already_has_a_pr(mocker, tmp_p
     _update_setup(mocker, tmp_path)
     find = mocker.patch("jailbee.pr.find_pr_for_branch")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     find.assert_not_called()
@@ -2161,7 +2163,7 @@ def test_pr_force_on_a_found_pr_asks_for_confirmation(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--force"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--force"])
 
     assert result.exit_code == 0, result.output
     # Two confirmations: adopt the PR, then overwrite its head.
@@ -2181,7 +2183,7 @@ def test_pr_found_pr_description_is_not_offered_for_regeneration(mocker, tmp_pat
     confirm = mocker.patch("typer.confirm", return_value=True)
     edit = mocker.patch("jailbee.pr.edit_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
 
     assert result.exit_code == 0, result.output
     edit.assert_not_called()
@@ -2219,7 +2221,7 @@ def test_pr_binds_to_a_numbered_pr_whose_head_differs_from_the_branch(mocker, tm
     find = mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.args[1] == 456
@@ -2234,7 +2236,7 @@ def test_pr_bind_records_the_pr_as_adopted_not_authored(mocker, tmp_path):
     _cfg, incus, _publish = _bind_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 0, result.output
     writes = {tuple(c.args[-2:]) for c in incus.config_set.call_args_list}
@@ -2250,7 +2252,7 @@ def test_pr_bind_writes_pr_branch_before_the_pr_number(mocker, tmp_path):
     _cfg, incus, _publish = _bind_setup(mocker, tmp_path)
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 0, result.output
     writes = [tuple(c.args[-2:]) for c in incus.config_set.call_args_list]
@@ -2265,7 +2267,7 @@ def test_pr_bind_asks_before_pushing_to_someone_elses_pr(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456"])
 
     assert result.exit_code != 0
     confirm.assert_called_once()
@@ -2278,7 +2280,7 @@ def test_pr_bind_without_tty_requires_yes(mocker, tmp_path):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
@@ -2293,7 +2295,7 @@ def test_pr_bind_refuses_a_merged_pr(mocker, tmp_path):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info(state="MERGED"))
     create = mocker.patch("jailbee.pr.create_pr")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 1
     assert "MERGED" in result.output
@@ -2308,7 +2310,7 @@ def test_pr_bind_refuses_a_fork_pr(mocker, tmp_path):
         "jailbee.pr.resolve_pr", return_value=_review_pr_info(cross=True, owner="contributor")
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 1
     assert "contributor" in result.output
@@ -2324,7 +2326,7 @@ def test_pr_bind_reports_an_unresolvable_number(mocker, tmp_path):
         "jailbee.pr.resolve_pr", side_effect=PrResolveError("PR #999 not found in this repo.")
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "999", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "999", "--yes"])
 
     assert result.exit_code == 1
     assert "999" in result.output
@@ -2337,7 +2339,7 @@ def test_pr_bind_rejects_as_flag(mocker, tmp_path):
     _cfg, incus, publish = _bind_setup(mocker, tmp_path)
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"])
 
     assert result.exit_code == 2
     assert "--as" in result.output and "--pr" in result.output
@@ -2360,7 +2362,7 @@ def test_pr_bind_to_the_same_number_is_a_no_op(mocker, tmp_path):
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
     confirm = mocker.patch("typer.confirm")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456"])
 
     assert result.exit_code == 0, result.output
     resolve.assert_not_called()
@@ -2383,7 +2385,7 @@ def test_pr_bind_retarget_to_another_number_needs_confirmation(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456"])
 
     assert result.exit_code != 0
     assert "111" in confirm.call_args.args[0] and "456" in confirm.call_args.args[0]
@@ -2403,7 +2405,7 @@ def test_pr_bind_retarget_confirmed_replaces_the_recorded_head(mocker, tmp_path)
     )
     mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456", "--yes"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--yes"])
 
     assert result.exit_code == 0, result.output
     writes = {tuple(c.args[-2:]) for c in incus.config_set.call_args_list}
@@ -2424,7 +2426,7 @@ def test_pr_bind_same_number_as_review_container_asks_to_adopt_not_retarget(mock
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--pr", "456"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456"])
 
     assert result.exit_code == 0, result.output
     question = confirm.call_args.args[0]
@@ -2468,7 +2470,7 @@ def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
     _incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
     )
 
     assert result.exit_code == 0, result.output
@@ -2482,7 +2484,7 @@ def test_stacked_records_its_own_labels_and_leaves_the_parent_alone(mocker, tmp_
     incus, _publish, _create, _retarget = _stacked_setup(mocker, tmp_path)
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
     )
 
     assert result.exit_code == 0, result.output
@@ -2504,7 +2506,7 @@ def test_stacked_refuses_to_publish_under_the_reviewed_head(mocker, tmp_path):
         mocker, tmp_path, publish_name="contributor/fix-worktime"
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--no-ai"])
 
     assert result.exit_code == 2
     assert "--as" in result.output
@@ -2513,7 +2515,7 @@ def test_stacked_refuses_to_publish_under_the_reviewed_head(mocker, tmp_path):
 
 
 def test_stacked_and_pr_number_are_mutually_exclusive(mocker, tmp_path):
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--pr", "77"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--pr", "77"])
 
     assert result.exit_code == 2
     assert "mutually exclusive" in result.output
@@ -2523,7 +2525,7 @@ def test_review_container_without_a_tty_names_both_flags(mocker, tmp_path):
     _incus, publish, _create, _retarget = _stacked_setup(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 1
     assert "--yes" in result.output
@@ -2537,7 +2539,7 @@ def test_menu_stacked_choice_opens_the_stacked_pr(mocker, tmp_path):
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value="stacked")
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--as", "fix/worktime-review", "--no-retarget"]
+        app, ["pr", "push", "feat-foo", "--as", "fix/worktime-review", "--no-retarget"]
     )
 
     assert result.exit_code == 0, result.output
@@ -2558,7 +2560,7 @@ def test_rerun_updates_the_stacked_pr_without_asking_again(mocker, tmp_path):
     )
     pick = mocker.patch("jailbee.pr_flow._pick_review_action")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     pick.assert_not_called()
@@ -2578,7 +2580,7 @@ def test_stacked_flag_is_a_no_op_on_an_already_stacked_container(mocker, tmp_pat
         },
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked"])
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
@@ -2595,7 +2597,7 @@ def test_stacked_refused_on_an_adopted_container(mocker, tmp_path):
         },
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked"])
 
     assert result.exit_code == 2
     assert "already publishes" in result.output
@@ -2607,7 +2609,7 @@ def test_stacked_refused_without_a_reviewed_pr(mocker, tmp_path):
     _setup(mocker, tmp_path)
     publish = mocker.patch("jailbee.sync.publish_branch_from_container")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked"])
 
     assert result.exit_code == 2
     assert "review container" in result.output
@@ -2619,7 +2621,7 @@ def test_stacked_refused_on_a_fork_pr(mocker, tmp_path):
         mocker, tmp_path, pr_info=_review_pr_info(cross=True, owner="contributor")
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/x"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/x"])
 
     assert result.exit_code == 1
     assert "contributor" in result.output
@@ -2636,7 +2638,7 @@ def test_stacked_never_renames_the_hosts_copy_of_the_reviewed_branch(mocker, tmp
     rename = mocker.patch("jailbee.git.rename_branch")
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
     )
 
     assert result.exit_code == 0, result.output
@@ -2648,7 +2650,7 @@ def test_stacked_retargets_the_container_base_when_confirmed(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     args, kwargs = retarget.call_args.args, retarget.call_args.kwargs
@@ -2661,7 +2663,7 @@ def test_stacked_retarget_declined_leaves_the_base_alone(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
@@ -2671,7 +2673,7 @@ def test_stacked_retarget_skipped_without_a_tty_and_prints_the_command(mocker, t
     _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
@@ -2685,7 +2687,7 @@ def test_stacked_retarget_failure_does_not_fail_the_publish(mocker, tmp_path):
     retarget.side_effect = SyncError("container is not running")
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
     )
 
     assert result.exit_code == 0, result.output
@@ -2699,14 +2701,14 @@ def test_stacked_retarget_skipped_when_the_base_already_matches(mocker, tmp_path
     )
 
     result = CliRunner().invoke(
-        app, ["pr", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--retarget"]
     )
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
 
 
-def test_open_prefers_the_stacked_pr(mocker, tmp_path):
+def test_open_stacked_is_explicit(mocker, tmp_path):
     _setup(
         mocker,
         tmp_path,
@@ -2718,7 +2720,7 @@ def test_open_prefers_the_stacked_pr(mocker, tmp_path):
     )
     open_browser = mocker.patch("jailbee.pr.open_pr_in_browser")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--open"])
+    result = CliRunner().invoke(app, ["pr", "open", "feat-foo", "--stacked"])
 
     assert result.exit_code == 0, result.output
     open_browser.assert_called_once_with(tmp_path, 123)
@@ -2803,7 +2805,7 @@ def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.finalize")
     _pending_comment_manifest(mocker, tmp_path)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     plan.assert_called()  # the plan is the question
@@ -2820,7 +2822,7 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
     _pending_comment_manifest(mocker, tmp_path)
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="n\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="n\n")
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
@@ -2851,7 +2853,7 @@ def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
     )
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output  # the PR itself succeeded
     assert "pull/123" in result.output  # ...and said so, before holding anything back
@@ -2877,7 +2879,7 @@ def test_a_non_stale_refusal_is_not_told_to_retry_with_force(mocker, tmp_path):
         side_effect=GateError("manifest 001-x.json targets acme/other, not acme/widgets"),
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     assert "acme/other" in result.output
@@ -2901,7 +2903,7 @@ def test_a_foreign_pr_manifest_is_held_back_and_names_foreign(mocker, tmp_path):
     )
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
@@ -2929,7 +2931,7 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
         ],
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
@@ -2944,7 +2946,7 @@ def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     read = mocker.patch("jailbee.pr_outbox.read_outbox")
 
-    assert CliRunner().invoke(app, ["pr", "feat-foo", "--no-outbox"]).exit_code == 0
+    assert CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"]).exit_code == 0
 
     read.assert_not_called()
 
@@ -2964,7 +2966,7 @@ def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
     )
     mocker.patch("jailbee.pr_outbox.finalize")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 1
     # The PR outcome was printed *first*: §F.2 is about the user seeing that the
@@ -2983,7 +2985,7 @@ def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
     _pending_comment_manifest(mocker, tmp_path, actions=[{"type": "description", "body": "a body"}])
     resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
@@ -3018,7 +3020,7 @@ def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
         ],
     )
 
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--body", "my own body"], input="y\n")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--body", "my own body"], input="y\n")
 
     assert result.exit_code == 0, result.output
     # Only the comment is offered, published and counted...
@@ -3113,7 +3115,7 @@ def test_pr_publication_guard_covers_selection_to_comments(mocker, tmp_path, mak
         return 0
 
     mocker.patch("jailbee.pr_outbox.offer_pending_comments", side_effect=offer)
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
     assert events[0] == "enter", (events, result.exception)
     assert events[-1] == "exit"
     assert events.count("select") == 1
@@ -3206,7 +3208,7 @@ def test_pr_changed_source_after_prompt_never_publishes(mocker, tmp_path, make_c
     )
     create = mocker.patch("jailbee.pr.create_pr")
     consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert "refresh required" in result.output
     create.assert_not_called()
@@ -3321,7 +3323,7 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
     mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=consume)
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
     try:
-        result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+        result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
         assert result.exit_code == (0 if outcome == "create" else 1), result.exception
         assert parent.poll(30), "lock was not released"
         status, detail = parent.recv()
@@ -3403,7 +3405,7 @@ def test_pr_replacement_after_guard_check_cannot_select_new_identity(
     edit = mocker.patch("jailbee.pr.edit_pr")
     consume = mocker.patch("jailbee.pr_outbox.record_consumed")
     mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
-    result = CliRunner().invoke(app, ["pr", "feat-foo", "--no-ai"])
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert isinstance(result.exception, SystemExit)
     assert "refresh required" in result.output

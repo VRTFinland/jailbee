@@ -132,6 +132,89 @@ def offer_outbox_binding(
     return chosen
 
 
+def bind_outbox_reference(
+    cfg: Config, incus: IncusType, full: str, scope: PrScope, state: PrState,
+    record: PrRecord, *, short: str, yes: bool,
+) -> PrRecord:
+    """Bind the explicitly selected outbox reference before publishing."""
+    from jailbee import pr_outbox
+
+    slug = pr_outbox.scope_slug(scope)
+    if slug is None:
+        return record
+    refs = pr_outbox.outbox_pr_references(
+        incus, full, uid=cfg.container_user.uid, repo=slug, exclude=set()
+    )
+    number = offer_outbox_binding(scope, refs, yes=yes, short=short)
+    if number is None:
+        return record
+    return bind_pr_by_number(
+        scope, state, number=number, record=record, yes=yes,
+        record_context=f"on '{short}'", confirmed=True,
+    )
+
+
+def bind_container_pr(
+    cfg: Config, incus: IncusType, full: str, *, short: str, number: int | None, yes: bool,
+) -> None:
+    """Resolve the PR number and bind without requiring a running container."""
+    from jailbee import prompting
+
+    def problem(value: str) -> str | None:
+        return None if value.isascii() and value.isdigit() and int(value) > 0 else "enter a positive integer"
+
+    if number is None:
+        number = int(prompting.ask_text("PR number", validate=problem))
+    state = ContainerLabelState(incus, full, short=short)
+    try:
+        record = state.read()
+        if record.number == number and record.head:
+            info(f"Container '{short}' is already bound to PR #{number}.")
+            return
+        bind_pr_by_number(
+            PrScope.for_repo(cfg), state, number=number, record=record, yes=yes,
+            record_context=f"on '{short}'", intent="bind", target_label=f"container '{short}'",
+        )
+    except MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
+def unbind_container_pr(
+    cfg: Config, incus: IncusType, full: str, *, short: str, stacked: bool, yes: bool,
+) -> None:
+    """Forget only the selected binding."""
+    state = ContainerLabelState(
+        incus, full, short=short, prefix=STACKED_LABEL_PREFIX if stacked else "user.jailbee.pr"
+    )
+    try:
+        unbind_pr(PrScope.for_repo(cfg), state, target_label=f"container '{short}'", yes=yes)
+    except MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
+def open_container_pr(
+    cfg: Config, incus: IncusType, full: str, *, short: str, stacked: bool,
+) -> None:
+    """Open exactly the primary or stacked binding, without publishing."""
+    from jailbee import pr
+
+    state = ContainerLabelState(
+        incus, full, short=short, prefix=STACKED_LABEL_PREFIX if stacked else "user.jailbee.pr"
+    )
+    try:
+        number = state.read().number
+    except MalformedPrLabelError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    if number is None:
+        kind = "stacked PR" if stacked else "PR"
+        error(f"Container '{short}' has no associated {kind}.")
+        raise typer.Exit(1)
+    pr.open_pr_in_browser(cfg.repo_root, number)
+
+
 def candidate_scopes(cfg: Config, *, extra_paths: Iterable[str] = ()) -> list[PrScope]:
     """The superproject, then unique initialized submodules in path order.
 

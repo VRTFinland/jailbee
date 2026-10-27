@@ -189,7 +189,7 @@ def test_launch_mode_classifies_the_verbs():
     for verb in ("shell", "tmux"):
         assert a.launch_mode(verb) == "terminal", verb
     for verb in (
-        "pr",
+        "pr push",
         "git push",
         "git push --pr",
         "git pull",
@@ -208,7 +208,7 @@ def test_launch_mode_classifies_the_verbs():
         "destroy",
         "net loose",
         "job clear",
-        "pr --open",
+        "pr open",
     ):
         assert a.launch_mode(verb) == "detached", verb
 

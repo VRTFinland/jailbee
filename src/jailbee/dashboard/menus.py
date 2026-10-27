@@ -83,7 +83,7 @@ class MenuGroup:
 
 MenuItem = tuple[str, str] | MenuGroup
 
-_PR_MENU_VERBS = frozenset({"pr --open", "pr", "submodule pr", "review apply"})
+_PR_MENU_VERBS = frozenset({"pr open", "pr push", "submodule pr", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
@@ -269,7 +269,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     ``ctx.git_status``) it leads the menu and
     carries the count; with an unknown count it follows "Open shell".
 
-    Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
+    Verbs may carry flags (``"pr open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
     :func:`_app_menu_verb`): every front-end splits them into argv, and Typer
     accepts options before the positional container name.
@@ -301,10 +301,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     if ctx.has_job:
         actions.append(("Job log", "job log --follow" if ctx.job_running else "job log"))
     if ctx.pr_number is not None and not ctx.remote:
-        # `pr --open` is a browser on the host's display.
-        actions.append(("Open PR", "pr --open"))
+        # `pr open` is a browser on the host's display.
+        actions.append(("Open PR", "pr open"))
     if _bridge_possible(ctx):
-        actions.append(("Create/update PR", "pr"))
+        actions.append(("Create/update PR", "pr push"))
         if ctx.git_status is not None and ctx.git_status.submodules:
             # The submodule command opens its own picker. A submodule whose
             # gitlink is not yet bumped is missing from this probe.
@@ -737,11 +737,11 @@ def _is_gui_verb(verb: str) -> bool:
 # (`qtui/actions.py` imports this) — so the list lives here, beside
 # :func:`menu_actions`, which is where the verb vocabulary is defined.
 #
-# Matched exactly, not by leading token: `pr --open` only opens a browser, and
+# Matched exactly, not by leading token: `pr open` only opens a browser, and
 # `job log` and `git push` each appear in two forms.
 PRINTING_VERBS: frozenset[str] = frozenset(
     {
-        "pr",
+        "pr push",
         "submodule pr",
         "git push",
         "git push --pr",

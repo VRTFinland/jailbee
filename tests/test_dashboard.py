@@ -1002,7 +1002,7 @@ def test_action_menu_lists_every_registry_app():
     assert "figma" in verbs
     assert ("Launch firefox", "firefox") in actions
     assert ("Launch figma", "figma") in actions
-    assert verbs.index("firefox") < verbs.index("figma") < verbs.index("pr")
+    assert verbs.index("firefox") < verbs.index("figma") < verbs.index("pr push")
 
 
 def test_remote_action_menu_offers_no_app_launches():
@@ -1255,8 +1255,8 @@ def test_menu_actions_running_includes_open_pr_when_pr_known():
         "tmux",
         "shell",
         "outbox browse",
-        "pr --open",
-        "pr",
+        "pr open",
+        "pr push",
     ]
 
 
@@ -1264,7 +1264,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     actions = dmenus.menu_actions(_ctx(state="Stopped", pr_number=7))
     assert actions == [
         ("Start", "start"),
-        ("Open PR", "pr --open"),
+        ("Open PR", "pr open"),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         ("Egress…", "net egress ls"),
@@ -1272,7 +1272,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     ]
     assert dmenus.group_menu_actions(actions, include_network=True) == [
         ("Start", "start"),
-        dmenus.MenuGroup("PR →", (("Open PR", "pr --open"),)),
+        dmenus.MenuGroup("PR →", (("Open PR", "pr open"),)),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
@@ -1309,8 +1309,8 @@ def test_clear_name_follows_the_remote_rename_policy(tmp_path, allowed):
 def test_menu_actions_omits_open_pr_when_no_pr():
     running = dmenus.menu_actions(_ctx())
     stopped = dmenus.menu_actions(_ctx(state="Stopped"))
-    assert ("Open PR", "pr --open") not in running
-    assert ("Open PR", "pr --open") not in stopped
+    assert ("Open PR", "pr open") not in running
+    assert ("Open PR", "pr open") not in stopped
 
 
 def test_menu_actions_orphan_stays_empty_even_with_pr():
@@ -1332,7 +1332,7 @@ def _git_with_submodule():
 def test_submodule_pr_offered_after_create_pr_when_submodules_changed():
     actions = dmenus.menu_actions(_ctx(git_status=_git_with_submodule()))
     verbs = [verb for _, verb in actions]
-    assert verbs[verbs.index("pr") + 1] == "submodule pr"
+    assert verbs[verbs.index("pr push") + 1] == "submodule pr"
     labels = {verb: label for label, verb in actions}
     assert labels["submodule pr"] == "Create/update submodule PR…"
 
@@ -1348,7 +1348,7 @@ def test_submodule_pr_absent_when_bridge_impossible():
 
 
 def test_submodule_pr_groups_under_pr_and_keeps_its_output():
-    leaves = [("Create/update PR", "pr"), ("Create/update submodule PR…", "submodule pr")]
+    leaves = [("Create/update PR", "pr push"), ("Create/update submodule PR…", "submodule pr")]
     assert dmenus.group_menu_actions(leaves) == [dmenus.MenuGroup("PR →", tuple(leaves))]
     assert "submodule pr" in dmenus.PRINTING_VERBS
 
@@ -1360,7 +1360,7 @@ def test_menu_actions_running_offers_the_workflow_verbs():
         "tmux",
         "shell",
         "outbox browse",
-        "pr",
+        "pr push",
         "merge",
         "git pull",
         "git push",
@@ -1380,8 +1380,8 @@ def test_menu_actions_running_offers_the_workflow_verbs():
 def test_group_menu_actions_separates_git_and_pr():
     leaves = [
         ("Attach tmux", "tmux"),
-        ("Open PR", "pr --open"),
-        ("Create/update PR", "pr"),
+        ("Open PR", "pr open"),
+        ("Create/update PR", "pr push"),
         ("Apply PR actions", "review apply"),
         ("Merge into…", "merge"),
         ("Send commits to host", "git pull"),
@@ -1406,7 +1406,7 @@ def test_group_menu_actions_collects_registry_launches_at_first_occurrence():
         ("Launch Chrome", "chrome"),
         ("Open shell", "shell"),
         ("Launch Figma", "apps run figma --container"),
-        ("Create/update PR", "pr"),
+        ("Create/update PR", "pr push"),
         ("Show diff", "git diff"),
     ]
     assert dmenus.group_menu_actions(leaves) == [
@@ -1423,9 +1423,9 @@ def test_group_menu_actions_keeps_relative_order_and_unclassified_leaves():
         ("Show diff", "git diff"),
         ("Launch git-tool", "apps run git-tool --container"),
         ("Apply issue actions", "issue apply"),
-        ("Open PR", "pr --open"),
+        ("Open PR", "pr open"),
         ("Merge into…", "merge"),
-        ("Create/update PR", "pr"),
+        ("Create/update PR", "pr push"),
     ]
     assert dmenus.group_menu_actions(leaves) == [
         dmenus.MenuGroup("Git →", (leaves[0], leaves[4])),
@@ -1460,7 +1460,7 @@ def test_grouped_git_leaves_respect_known_clean_and_unknown_status():
 
 def test_menu_actions_workflow_labels_name_their_verb():
     labels = {verb: label for label, verb in dmenus.menu_actions(_ctx())}
-    assert labels["pr"] == "Create/update PR"
+    assert labels["pr push"] == "Create/update PR"
     assert labels["git push"] == "Update from base (git push)"
     assert labels["git pull"] == "Send commits to host (git pull)"
     assert labels["git diff"] == "Show diff (git diff)"
@@ -1484,7 +1484,7 @@ def test_menu_actions_omits_pr_refresh_on_an_authored_pr():
     actions = dmenus.menu_actions(_ctx(pr_number=123, pr_author=True))
     verbs = [v for _, v in actions]
     assert "git push --pr" not in verbs
-    assert "pr --open" in verbs  # the PR itself is still reachable
+    assert "pr open" in verbs  # the PR itself is still reachable
 
 
 def test_menu_actions_omits_pr_refresh_without_a_pr():
@@ -1653,8 +1653,8 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
         "outbox browse",
         "job clear",
         "job log",
-        "pr --open",
-        "pr",
+        "pr open",
+        "pr push",
     ]
 
 
@@ -1705,7 +1705,7 @@ def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
 def _grouped_menu():
     return tmenu.MenuState(
         "alpha-x",
-        [("Attach tmux", "tmux"), ("Create/update PR", "pr"), ("Show diff (git diff)", "git diff")],
+        [("Attach tmux", "tmux"), ("Create/update PR", "pr push"), ("Show diff (git diff)", "git diff")],
     )
 
 
@@ -1719,7 +1719,7 @@ def test_menu_levels_are_the_root_and_each_group():
         "Git →",
         "PR →",
     ]
-    assert tmenu.menu_entries(root, "PR →") == (("Create/update PR", "pr"),)
+    assert tmenu.menu_entries(root, "PR →") == (("Create/update PR", "pr push"),)
     assert tmenu.menu_entries(root, "Git →") == (("Show diff (git diff)", "git diff"),)
     assert tmenu.menu_title(root, "PR →") == "alpha-x → PR"
 
@@ -2242,7 +2242,7 @@ def test_dispatch_style_classifies_every_menu_verb():
     """`git diff` is long enough to want a pager; the other printing verbs get
     a keypress pause, because Live repaints over their output on return."""
     assert ddispatch.dispatch_style("git diff") == "paged"
-    for verb in ("pr", "git push --pr", "git retarget", "job log", "job log --follow"):
+    for verb in ("pr push", "git push --pr", "git retarget", "job log", "job log --follow"):
         assert ddispatch.dispatch_style(verb) == "output", verb
     for verb in ("git push", "git pull"):
         assert ddispatch.dispatch_style(verb) == "report", verb
@@ -2251,9 +2251,9 @@ def test_dispatch_style_classifies_every_menu_verb():
 
 
 def test_dispatch_style_leaves_pr_open_alone():
-    """`pr --open` only opens a browser — pausing on it would be noise, and it
+    """`pr open` only opens a browser — pausing on it would be noise, and it
     is why the classification is exact rather than by leading token."""
-    assert ddispatch.dispatch_style("pr --open") == "plain"
+    assert ddispatch.dispatch_style("pr open") == "plain"
 
 
 def test_inline_noninteractive_commands_pause_for_output():
@@ -4428,7 +4428,7 @@ def test_menu_actions_no_clear_entry_when_not_clearable():
 def test_menu_actions_clear_job_precedes_open_pr():
     actions = dmenus.menu_actions(_ctx(pr_number=7, job_clearable=True))
     verbs = [verb for _, verb in actions]
-    assert verbs.index("job clear") < verbs.index("pr --open")
+    assert verbs.index("job clear") < verbs.index("pr open")
 
 
 def test_menu_actions_clear_job_offered_for_a_container_with_no_state():
@@ -5267,8 +5267,8 @@ def test_remote_action_menu_never_opens_the_pr_in_a_host_browser():
     local = dmenus.menu_actions(_ctx(pr_number=7))
     remote = dmenus.menu_actions(_ctx(pr_number=7, remote=True))
 
-    assert ("Open PR", "pr --open") in local
-    assert all(verb != "pr --open" for _label, verb in remote)
+    assert ("Open PR", "pr open") in local
+    assert all(verb != "pr open" for _label, verb in remote)
 
 
 def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker, monkeypatch):
@@ -5304,8 +5304,8 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
     leaves = [
         ("Attach tmux", "tmux"),
         ("Open shell", "shell"),
-        ("Open PR", "pr --open"),
-        ("Create/update PR", "pr"),
+        ("Open PR", "pr open"),
+        ("Create/update PR", "pr push"),
         ("Apply 2 PR action(s) (review apply)", "review apply"),
         ("Merge into…", "merge"),
         ("Update from base (git push)", "git push"),
@@ -5371,7 +5371,7 @@ def test_terminal_order_stopped_menu_keeps_a_lone_destroy_leaf(tmp_path):
 
 def test_group_menu_actions_default_order_is_unchanged_for_qt():
     leaves = [
-        ("Create/update PR", "pr"),
+        ("Create/update PR", "pr push"),
         ("Apply 2 PR action(s) (review apply)", "review apply"),
         ("Merge into…", "merge"),
     ]

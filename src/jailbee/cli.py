@@ -16,6 +16,7 @@ import typer
 import yaml
 
 from jailbee import __version__, completion, table_format
+from jailbee.cli_groups import hinting_group
 from jailbee.cli_outbox import app as outbox_app
 from jailbee.config import ConfigError, load_config, load_config_unsanitized
 from jailbee.constants import LEGACY_REMOVAL_VERSION
@@ -8276,7 +8277,15 @@ def _offer_outbox_comments(
     )
 
 
-def pr_cmd(
+pr_app = typer.Typer(
+    name="pr", cls=hinting_group("jailbee pr push"), no_args_is_help=True,
+    help="Create, update, bind and open a container's GitHub PR.",
+)
+app.add_typer(pr_app)
+
+
+@pr_app.command("push")
+def pr_push_cmd(
     name: ContainerArg = None,
     title: Annotated[
         str | None,
@@ -8418,13 +8427,6 @@ def pr_cmd(
             ),
         ),
     ] = False,
-    open_only: Annotated[
-        bool,
-        typer.Option(
-            "--open",
-            help="Open the container's PR in the browser and exit — no push or update.",
-        ),
-    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Create or update a container's GitHub PR.
@@ -8468,18 +8470,17 @@ def pr_cmd(
 
     Examples:
 
-      jailbee pr feat-foo --no-submodules   # superproject only
-      jailbee pr feat-foo                  # create a draft PR, or push new commits to it
-      jailbee pr feat-foo --ready          # create/mark ready for review
-      jailbee pr feat-foo --description    # update: regenerate the description with Claude
-      jailbee pr feat-foo --title "New"    # update: set the title
-      jailbee pr feat-foo --draft          # update: move the PR back to draft
-      jailbee pr feat-foo --as user/x    # explicit PR head branch name
-      jailbee pr review-1234 --stacked     # open a PR against the reviewed PR's branch
-      jailbee pr feat-foo --force          # force-push a rebased/amended branch
-      jailbee pr feat-foo --web            # open the PR in the browser
-      jailbee pr feat-foo --open           # just open the PR in the browser (no push)
-      jailbee pr                           # interactive container picker
+      jailbee pr push feat-foo --no-submodules   # superproject only
+      jailbee pr push feat-foo                  # create a draft PR, or push new commits to it
+      jailbee pr push feat-foo --ready          # create/mark ready for review
+      jailbee pr push feat-foo --description    # update: regenerate the description with Claude
+      jailbee pr push feat-foo --title "New"    # update: set the title
+      jailbee pr push feat-foo --draft          # update: move the PR back to draft
+      jailbee pr push feat-foo --as user/x    # explicit PR head branch name
+      jailbee pr push review-1234 --stacked     # open a PR against the reviewed PR's branch
+      jailbee pr push feat-foo --force          # force-push a rebased/amended branch
+      jailbee pr push feat-foo --web            # open the PR in the browser
+      jailbee pr push                      # interactive container picker
     """
     from jailbee import git as git_mod
     from jailbee import pr as pr_mod
@@ -8516,20 +8517,6 @@ def pr_cmd(
     stacked_state = pr_flow.ContainerLabelState(
         incus, full, short=short, prefix=pr_flow.STACKED_LABEL_PREFIX
     )
-
-    if open_only:
-        try:
-            # A stacked PR is the one this container publishes; the reviewed PR
-            # it is based on stays reachable through `jailbee ls`.
-            pr_num = stacked_state.read().number or state.read().number
-        except pr_flow.MalformedPrLabelError as exc:
-            error(str(exc))
-            raise typer.Exit(1) from exc
-        if pr_num is None:
-            error(f"Container '{short}' has no associated PR.")
-            raise typer.Exit(1)
-        pr_mod.open_pr_in_browser(cfg.repo_root, pr_num)
-        return
 
     # Fail fast on a mount-mode/stopped/no-clone container BEFORE any expensive
     # or interactive work (the gh call, the adoption prompt, AI generation, the
@@ -8630,6 +8617,19 @@ def pr_cmd(
             # foreign-head guards and `stored_pr_branch` selects the update path.
             pr_label = str(found_number)
             stored_pr_branch = found_head
+
+    if (
+        not (is_author or stored_pr_branch or pr_label)
+        and pr_number is None
+        and not stacked
+        and as_name is None
+        and not no_outbox
+        and not (review_target is not None and review_target.stacked)
+    ):
+        record = pr_flow.bind_outbox_reference(cfg, incus, full, scope, state, record, short=short, yes=yes)
+        is_author = record.author
+        stored_pr_branch = record.head
+        pr_label = str(record.number) if record.number is not None else None
 
     # A container whose PR jailbee did not create (`jailbee new --pr`, or a PR
     # adopted by number or by branch name). Three things follow: --force needs
@@ -8754,7 +8754,7 @@ def pr_cmd(
                         "This container publishes to an existing PR's head branch. A "
                         "rejected push usually means the PR author pushed in the "
                         f"meantime — bring their commits in with `jailbee git push {short} "
-                        "--pr --rebase`, then re-run `jailbee pr`. It can also mean you lack "
+                        "--pr --rebase`, then re-run `jailbee pr push`. It can also mean you lack "
                         "write access to the repository."
                     )
                 raise typer.Exit(1) from exc
@@ -8913,9 +8913,52 @@ def pr_cmd(
         raise typer.Exit(1) from exc
 
 
-# `jailbee pr` is the visible, canonical command; `jailbee git pr` is a hidden alias.
-app.command("pr")(pr_cmd)
-git_app.command("pr", hidden=True, help="See `jailbee pr --help`.")(pr_cmd)
+@pr_app.command("bind")
+def pr_bind_cmd(
+    name: ContainerArg = None,
+    number: Annotated[int | None, typer.Argument(min=1, help="GitHub PR number")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Bind a container to an existing PR without publishing commits."""
+    from jailbee import pr_flow
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    pr_flow.bind_container_pr(cfg, incus, full, short=short_name(cfg, full), number=number, yes=yes)
+
+
+@pr_app.command("unbind")
+def pr_unbind_cmd(
+    name: ContainerArg = None,
+    stacked: Annotated[bool, typer.Option("--stacked", help="Forget the stacked PR binding")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Forget a container's PR binding without changing GitHub."""
+    from jailbee import pr_flow
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name, always_prompt=True)
+    pr_flow.unbind_container_pr(cfg, incus, full, short=short_name(cfg, full), stacked=stacked, yes=yes)
+
+
+@pr_app.command("open")
+def pr_open_cmd(
+    name: ContainerArg = None,
+    stacked: Annotated[bool, typer.Option("--stacked", help="Open the stacked PR instead")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Open the container's primary (or stacked) PR in the browser."""
+    from jailbee import pr_flow
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    pr_flow.open_container_pr(cfg, incus, full, short=short_name(cfg, full), stacked=stacked)
+
 
 
 submodule_app = typer.Typer(
@@ -9226,7 +9269,7 @@ def submodule_pr_cmd(
     short = short_name(cfg, full)
 
     # --open resolves from the recorded state alone: no preflight, no
-    # transport, no gh mutation (mirrors `jailbee pr --open`).
+    # transport, no gh mutation (mirrors `jailbee pr open`).
     if open_only:
         target_path = path
         if target_path is None:

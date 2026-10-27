@@ -43,7 +43,7 @@ def test_completion_respects_default_and_disabled_remote_policy() -> None:
             ),
         ),
         (["config", "edit"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
-        (["pr", "--yes"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
+        (["pr", "push", "--yes"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
         (
             ["merge", "--config", "/tmp/host.yaml", "alpha"],
             RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full")),

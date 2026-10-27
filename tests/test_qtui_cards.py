@@ -163,7 +163,7 @@ def test_compact_pr_pill_click_opens_the_pr(qtbot):
 
     with qtbot.waitSignal(view.actionRequested, timeout=1000) as blocker:
         pill.clicked.emit()
-    assert blocker.args == ["pr --open", "p-foo"]
+    assert blocker.args == ["pr open", "p-foo"]
 
 
 def test_set_groups_creates_one_card_per_container(qtbot):
@@ -363,7 +363,7 @@ def test_card_context_menu_submenus_dispatch_leaf_verb(qtbot):
     view._on_context("p-foo", QPoint(0, 0))
     assert root_labels[:5] == ["Attach tmux", "Open shell", "Outbox", "PR →", "Git →"]
     assert pr_labels == ["Open PR", "Create/update PR"]
-    assert seen == [("outbox browse", "p-foo"), ("pr --open", "p-foo")]
+    assert seen == [("outbox browse", "p-foo"), ("pr open", "p-foo")]
 
 
 def _orphan_groups():
