@@ -429,7 +429,9 @@ def open_standalone(cfg: Config, incus: Incus, full: str, *, short: str, path: s
         error(f"Submodule '{path}' has no PR recorded on '{short}'.")
         raise typer.Exit(1)
     if not submodules.host_subrepo_exists(cfg.repo_root, path):
-        error(f"Submodule '{path}' is not available on the host; initialize it before opening its PR.")
+        error(
+            f"Submodule '{path}' is not available on the host; initialize it before opening its PR."
+        )
         raise typer.Exit(1)
     pr.open_pr_in_browser(submodules.host_subrepo_root(cfg.repo_root, path), record.number)
 

@@ -870,13 +870,20 @@ def recover_pr_head(scope: PrScope, state: PrState, record: PrRecord) -> PrRecor
     if record.number is None or record.head or not (record.author or record.adopted):
         return record
     try:
-        found = pr.resolve_pr(scope.repo_root, record.number, remote=scope.remote, repo=_binding_repo(scope))
+        found = pr.resolve_pr(
+            scope.repo_root, record.number, remote=scope.remote, repo=_binding_repo(scope)
+        )
         if found.state != "OPEN" or found.is_cross_repository or not found.head_ref:
-            raise pr.PrError(f"Cannot recover the publish head of PR #{record.number}; bind an open same-repository PR.")
+            raise pr.PrError(
+                f"Cannot recover the publish head of PR #{record.number}; "
+                "bind an open same-repository PR."
+            )
     except pr.PrError as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
-    if not state.record(head=found.head_ref, number=record.number, author=record.author, adopted=record.adopted):
+    if not state.record(
+        head=found.head_ref, number=record.number, author=record.author, adopted=record.adopted
+    ):
         raise typer.Exit(1)
     return PrRecord(record.number, found.head_ref, record.author, record.adopted, record.base)
 
@@ -1512,13 +1519,17 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
     from jailbee import prompting
 
     record = state.read()
-    if not (record.number is not None or record.head or record.author or record.adopted or record.base):
+    if not (
+        record.number is not None or record.head or record.author or record.adopted or record.base
+    ):
         info(f"{scope.prefix}{target_label} is not bound to a PR.")
         return False
 
     binding_label = (
-        f"PR #{record.number}" if record.number is not None
-        else f"branch '{record.head}'" if record.head
+        f"PR #{record.number}"
+        if record.number is not None
+        else f"branch '{record.head}'"
+        if record.head
         else "residual PR metadata"
     )
     if not yes:

@@ -1532,7 +1532,6 @@ def _create_instance(cfg: Config, incus: Incus, opts: NewContainerOptions, name:
     instance name; any other ``--from-base`` is an image and goes to ``init``.
     """
     from jailbee.golden import golden_instance_name, golden_instance_pool
-
     from jailbee.pr_flow import PR_INHERITANCE_PENDING
 
     config = _child_instance_config(opts)
