@@ -7,6 +7,9 @@ Type=simple
 ExecStart={jailbee_bin} _broker
 Restart=on-failure
 RestartSec=5s
+# 75: another jailbee version was installed; start again on the new code.
+SuccessExitStatus=75
+RestartForceExitStatus=75
 UMask=0077
 KillMode=process
 

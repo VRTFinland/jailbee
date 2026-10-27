@@ -654,6 +654,52 @@ def test_run_broker_backoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert pauses == [60.0, 5.0]
 
 
+def test_run_broker_exits_for_a_restart_when_another_version_is_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    tick = MagicMock(return_value=True)
+    monkeypatch.setattr(broker, "tick", tick)
+    monkeypatch.setattr(broker, "__version__", "1.7.8")
+    installed = iter(["1.7.8", "1.8.0"])
+    monkeypatch.setattr(broker, "_installed_version", lambda: next(installed))
+    monkeypatch.setattr(broker, "_pause", lambda seconds, stop: None)
+
+    assert broker.run_broker(MagicMock()) == broker.UPGRADED_EXIT
+    # The round that saw the new version finished before the exit.
+    assert tick.call_count == 2
+
+
+def test_run_broker_keeps_running_when_the_installed_version_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    monkeypatch.setattr(broker, "tick", MagicMock(return_value=False))
+    monkeypatch.setattr(broker, "_installed_version", lambda: None)
+    pauses: list[float] = []
+
+    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+        pauses.append(seconds)
+        if len(pauses) == 2:
+            _sigterm()
+
+    monkeypatch.setattr(broker, "_pause", fake_pause)
+    assert broker.run_broker(MagicMock()) == 0
+    assert len(pauses) == 2
+
+
+def test_installed_version_is_none_without_package_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from importlib.metadata import PackageNotFoundError
+
+    def missing(name: str) -> str:
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(broker, "_metadata_version", missing)
+    assert broker._installed_version() is None
+
+
 def test_pause_sleeps_in_short_slices_and_stops_early(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [0.0]
     slept: list[float] = []

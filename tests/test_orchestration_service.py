@@ -17,6 +17,22 @@ def test_unit_template_has_killmode_process_and_broker_execstart() -> None:
     assert "WantedBy=default.target" in text
 
 
+def test_unit_template_restarts_on_the_upgraded_exit_status() -> None:
+    from jailbee.orchestration import broker
+
+    text = (files("jailbee.templates.systemd") / "jailbee-broker.service").read_text()
+
+    assert f"RestartForceExitStatus={broker.UPGRADED_EXIT}" in text
+    assert f"SuccessExitStatus={broker.UPGRADED_EXIT}" in text
+
+
+def test_makefile_install_restarts_the_broker() -> None:
+    makefile = Path(__file__).resolve().parents[1] / "Makefile"
+    recipe = makefile.read_text().split("\ninstall:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "systemctl --user try-restart jailbee-broker.service" in recipe
+
+
 def test_install_writes_unit_and_reports_change(private_home: Path) -> None:
     from jailbee.orchestration import service
 

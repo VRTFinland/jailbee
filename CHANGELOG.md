@@ -20,7 +20,8 @@ before editing `## Unreleased`.
   their children; `jailbee base build` bakes it into new images. Run
   `jailbee apply` for the skills. A child's `done` imports its work into the
   orchestrator and, unless spawned with `on_done: keep`, destroys the finished
-  child; `update` brings the orchestrator's branch into a child.
+  child; `update` brings the orchestrator's branch into a child. The broker
+  restarts itself when another jailbee version is installed.
 - **Any terminal works in containers.** `jailbee shell` and `jailbee tmux`
   teach the container the host's `$TERM` from the host's terminfo, and fall
   back to `xterm-256color` when that is not possible; before, a terminal the
