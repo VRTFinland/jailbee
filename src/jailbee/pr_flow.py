@@ -1304,7 +1304,9 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
         info(f"{scope.prefix}{target_label} is not bound to a PR.")
         return False
 
-    binding_label = f"PR #{record.number}" if record.number is not None else f"branch '{record.head}'"
+    binding_label = (
+        f"PR #{record.number}" if record.number is not None else f"branch '{record.head}'"
+    )
     if not yes:
         if not prompting.is_interactive():
             error(

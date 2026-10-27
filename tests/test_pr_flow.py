@@ -1723,8 +1723,10 @@ def test_unbind_head_only_names_branch(tmp_path, mocker):
     success = mocker.patch("jailbee.pr_flow.success")
     info = mocker.patch("jailbee.pr_flow.info")
     assert pr_flow.unbind_pr(
-        _super_scope(tmp_path), pr_flow.ContainerLabelState(incus, "c1"),
-        target_label="c1", yes=False,
+        _super_scope(tmp_path),
+        pr_flow.ContainerLabelState(incus, "c1"),
+        target_label="c1",
+        yes=False,
     )
     confirm.assert_called_once_with("Unbind c1 from branch 'feat/head-only'?", default=False)
     success.assert_called_once_with("Unbound c1 from branch 'feat/head-only'.")
