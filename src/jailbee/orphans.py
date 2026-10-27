@@ -114,16 +114,20 @@ def attach_tmux(incus: Incus, name: str) -> int:
     Unlike `jailbee tmux` it never picks the agent window: which agents
     autostart was the lost repo's config.
     """
-    from jailbee.tmux import SESSION_NAME, ensure_session
+    from jailbee.terminfo import terminal_env
+    from jailbee.tmux import SESSION_NAME, enable_terminal_features, ensure_session
 
     ensure_session(incus, name, start_dir=_repo_dir(incus, name))
+    enable_terminal_features(incus, name)
     uid, gid = container_ids(incus, name)
+    env = _dev_env()
+    env.update(terminal_env(incus, name, uid=uid, gid=gid, home=env["HOME"], environ=os.environ))
     return incus.exec_interactive(
         name,
         ["tmux", "attach", "-t", SESSION_NAME],
         uid=uid,
         gid=gid,
-        env=_dev_env(),
+        env=env,
         init_groups=True,
     )
 
@@ -137,6 +141,9 @@ def attach_shell(incus: Incus, name: str, user: str) -> int:
     else:
         uid, gid = container_ids(incus, name)
         env = _dev_env()
+    from jailbee.terminfo import terminal_env
+
+    env.update(terminal_env(incus, name, uid=uid, gid=gid, home=env["HOME"], environ=os.environ))
     return incus.exec_interactive(
         name, ["bash", "-c", inner], uid=uid, gid=gid, env=env, init_groups=True
     )

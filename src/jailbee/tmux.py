@@ -116,6 +116,42 @@ def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -
         return
 
 
+_TERMINAL_MARKER = "@jailbee-terminal"
+
+_TERMINAL_FEATURES = (
+    "tmux set -g allow-passthrough on; "
+    "tmux set -as terminal-features ',xterm-ghostty:RGB:hyperlinks'; "
+    "tmux set -as terminal-features ',xterm-kitty:RGB:hyperlinks'; "
+    "tmux set -ga update-environment COLORTERM; "
+    "tmux set -ga update-environment TERM_PROGRAM; "
+    "tmux set -ga update-environment TERM_PROGRAM_VERSION; "
+    f"tmux set -g {_TERMINAL_MARKER} 1"
+)
+
+
+def enable_terminal_features(incus: Incus, container: str) -> None:
+    """Let the host terminal's own features through tmux; once per tmux server.
+
+    ``allow-passthrough`` lets image protocols (kitty graphics, sixel
+    wrappers, ...) reach the terminal; Ghostty and kitty are told they do
+    truecolor and hyperlinks, which their terminfo entries do not say;
+    ``update-environment`` hands the host's colour hints to new windows. A
+    marker option on the server keeps a second attach from appending the same
+    entries again. Best-effort: a tmux older than the options (3.3) must not
+    block the attach.
+    """
+    try:
+        incus.exec(
+            container,
+            _runuser(
+                f"tmux show-options -gqv {_TERMINAL_MARKER} | grep -q . || "
+                f"{{ {_TERMINAL_FEATURES}; }}"
+            ),
+        )
+    except IncusError:
+        pass
+
+
 def kill_window(incus: Incus, container: str, window: str) -> None:
     """Kill a window by name. Ignores 'no such window' errors.
 

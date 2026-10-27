@@ -10980,3 +10980,45 @@ def test_registry_up_silent_when_locked(mocker):
     result = CliRunner().invoke(app, ["registry", "up"])
 
     assert "not locked down" not in result.output
+
+
+def _unknown_term_incus(mocker, monkeypatch):
+    """An incus whose container does not know the host's `$TERM`."""
+    from jailbee import terminfo
+    from jailbee.incus import IncusError
+
+    monkeypatch.setenv("TERM", "xterm-fancy")
+    mocker.patch.object(terminfo, "_host_entry", return_value=None)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    incus = mocker.MagicMock()
+    incus.exec_interactive.return_value = 0
+
+    def fake_exec(_name, cmd, **_kwargs):
+        if cmd[0] == "infocmp":
+            raise IncusError("no entry")
+        return ""
+
+    incus.exec.side_effect = fake_exec
+    return incus
+
+
+def test_attach_shell_falls_back_to_a_known_term(mocker, monkeypatch):
+    from jailbee import cli
+
+    incus = _unknown_term_incus(mocker, monkeypatch)
+    cli._attach_shell(mocker.MagicMock(), incus, "c1")
+    env = incus.exec_interactive.call_args.kwargs["env"]
+    assert env["TERM"] == "xterm-256color"
+    assert env["HOME"] == "/home/dev"
+
+
+def test_attach_tmux_falls_back_to_a_known_term_and_enables_features(mocker, monkeypatch):
+    from jailbee import cli
+
+    incus = _unknown_term_incus(mocker, monkeypatch)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.ensure_session")
+    features = mocker.patch("jailbee.tmux.enable_terminal_features")
+    cli._attach_tmux(mocker.MagicMock(), incus, "c1")
+    features.assert_called_once_with(incus, "c1")
+    assert incus.exec_interactive.call_args.kwargs["env"]["TERM"] == "xterm-256color"

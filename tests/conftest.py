@@ -361,6 +361,19 @@ def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _neutral_host_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide the developer's terminal from every test.
+
+    Attaching to a container forwards `TERM` handling and the host's colour
+    hints into `incus exec --env` (`jailbee.terminfo`). A test asserting on
+    that env must not see whatever terminal ran the suite. Tests about the
+    terminal set the variables themselves.
+    """
+    for key in ("TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the PyPI update check out of every test that is not about it.
 

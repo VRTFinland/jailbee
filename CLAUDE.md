@@ -45,7 +45,8 @@ isolated per-branch development environments using Incus system containers. See
 - **Shelling out to non-incus binaries is intentional** and stays one module
   per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
   `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
-  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `mac_container.py`
+  (`du`), `terminfo.py` (`infocmp`, on the host; the container side goes through
+  `Incus`), `pool.py` (`rsync`), `macos.py` (`sh`), `mac_container.py`
   (Apple's `container`, for `jailbee mac setup`; the setup steps in
   `macsetup/` call no `container` of their own), `macsetup/steps_wiring.py`
   (`ssh-keygen`), `macsetup/steps_gui.py` (`brew`), `cswap.py` (`cswap`),

@@ -774,3 +774,26 @@ def test_window_targets_match_the_name_exactly(call):
     call(incus)
     cmd = " ".join(incus.exec.call_args.args[1])
     assert f"{SESSION_NAME}:=claude" in cmd
+
+
+def test_enable_terminal_features_sets_passthrough_and_truecolor_once():
+    """Image protocols need tmux to pass escapes through; Ghostty and kitty
+    get truecolor and hyperlinks. A marker option keeps repeats from piling up
+    duplicate `terminal-features` entries."""
+    incus = MagicMock()
+    tmux.enable_terminal_features(incus, "c1")
+    assert incus.exec.call_count == 1
+    cmd = " ".join(incus.exec.call_args.args[1])
+    assert "allow-passthrough on" in cmd
+    assert "xterm-ghostty:RGB:hyperlinks" in cmd
+    assert "xterm-kitty:RGB:hyperlinks" in cmd
+    assert "update-environment" in cmd
+    assert "@jailbee-terminal" in cmd
+    assert cmd.index("show-options") < cmd.index("allow-passthrough")
+
+
+def test_enable_terminal_features_swallows_tmux_errors():
+    """An old tmux without `allow-passthrough` must not block the attach."""
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("unknown option")
+    tmux.enable_terminal_features(incus, "c1")

@@ -1763,9 +1763,17 @@ into every container, which keeps containers built from older images working;
 the mount is planned for removal in 2.0.0.
 
 The golden image also ships Ghostty's `xterm-ghostty` entry, so `jailbee shell`
-from Ghostty works without any host file; there is no mount for it. Other
-terminals whose `TERM` the image lacks can be added with an `install.d`
-snippet that compiles their terminfo with `tic -x`.
+from Ghostty works without any host file; there is no mount for it.
+
+Any other terminal works too. When `jailbee shell` or `jailbee tmux` finds that
+the container does not know the host's `$TERM`, it compiles the host's entry
+(`infocmp -x`) into the container user's `~/.terminfo`; if the host has none
+either, the session runs as `xterm-256color`. `COLORTERM`, `TERM_PROGRAM` and
+`TERM_PROGRAM_VERSION` are forwarded as well. On a `jailbee tmux` attach, tmux
+is also told to pass escape sequences through (`allow-passthrough`, so image
+protocols such as kitty graphics reach the terminal) and that Ghostty and kitty
+do truecolor and hyperlinks. Inside tmux, an image tool still has to wrap its
+output for passthrough — `kitten icat --passthrough=tmux`, for example.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

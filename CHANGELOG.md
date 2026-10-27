@@ -21,9 +21,13 @@ before editing `## Unreleased`.
   `jailbee apply` for the skills. A child's `done` imports its work into the
   orchestrator and, unless spawned with `on_done: keep`, destroys the finished
   child; `update` brings the orchestrator's branch into a child.
-- **Ghostty terminals work in containers.** The golden image ships the
-  `xterm-ghostty` terminfo entry; without it tmux refused to start with
-  "missing or unsuitable terminal". Run `jailbee base build` to pick it up.
+- **Any terminal works in containers.** `jailbee shell` and `jailbee tmux`
+  teach the container the host's `$TERM` from the host's terminfo, and fall
+  back to `xterm-256color` when that is not possible; before, a terminal the
+  image did not know made tmux refuse to start with "missing or unsuitable
+  terminal". The golden image ships Ghostty's `xterm-ghostty` (run
+  `jailbee base build` to pick it up), and `jailbee tmux` lets image protocols
+  pass through tmux and enables truecolor and hyperlinks for Ghostty and kitty.
 - **Memory limit controls.** `jailbee mem` and the dashboard's Memory action
   set a container's memory limit; `default` clears its override. Limits below
   current use require confirmation.

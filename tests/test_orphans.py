@@ -137,3 +137,46 @@ def test_destroy_orphan_never_touches_a_repo(mocker):
     refs = mocker.patch("jailbee.git.list_refs")
     orphans.destroy_orphan(incus, "gamma-x", force=True)
     refs.assert_not_called()
+
+
+def _unknown_term_incus(mocker, monkeypatch):
+    """An incus whose container does not know the host's `$TERM`."""
+    from jailbee import terminfo
+
+    monkeypatch.setenv("TERM", "xterm-fancy")
+    mocker.patch.object(terminfo, "_host_entry", return_value=None)
+    incus = MagicMock()
+    incus.config_get.return_value = None
+    incus.exec_interactive.return_value = 0
+
+    def fake_exec(_name, cmd, **_kwargs):
+        if cmd[0] == "infocmp":
+            raise IncusError("no entry")
+        return ""
+
+    incus.exec.side_effect = fake_exec
+    mocker.patch.object(orphans, "container_ids", return_value=(1000, 1000))
+    return incus
+
+
+def test_attach_shell_falls_back_to_a_known_term(mocker, monkeypatch):
+    incus = _unknown_term_incus(mocker, monkeypatch)
+    orphans.attach_shell(incus, "gamma-x", "dev")
+    assert incus.exec_interactive.call_args.kwargs["env"]["TERM"] == "xterm-256color"
+
+
+def test_attach_shell_as_root_probes_root_home(mocker, monkeypatch):
+    incus = _unknown_term_incus(mocker, monkeypatch)
+    orphans.attach_shell(incus, "gamma-x", "root")
+    probe = incus.exec.call_args_list[0]
+    assert probe.kwargs["env"] == {"HOME": "/root"}
+    assert incus.exec_interactive.call_args.kwargs["env"]["TERM"] == "xterm-256color"
+
+
+def test_attach_tmux_falls_back_to_a_known_term_and_enables_features(mocker, monkeypatch):
+    incus = _unknown_term_incus(mocker, monkeypatch)
+    mocker.patch("jailbee.tmux.ensure_session")
+    features = mocker.patch("jailbee.tmux.enable_terminal_features")
+    orphans.attach_tmux(incus, "gamma-x")
+    features.assert_called_once_with(incus, "gamma-x")
+    assert incus.exec_interactive.call_args.kwargs["env"]["TERM"] == "xterm-256color"

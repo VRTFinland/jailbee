@@ -3616,10 +3616,12 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
     If the clone doesn't exist (e.g. ``jailbee new --no-clone``), falls back
     to the user's home dir so the shell still opens.
     """
+    import os
     import shlex
 
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
+    from jailbee.terminfo import terminal_env
 
     repo_dir = container_repo_dir(cfg, incus, name)
     # `cd ... 2>/dev/null` keeps the shell usable when the clone is
@@ -3639,12 +3641,14 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
     # `incus exec --user UID` does not derive USER/LOGNAME from /etc/passwd;
     # PAM/sudo would normally set them. Set them explicitly so prompt
     # frameworks and other tools that read $USER behave correctly.
+    env = {"HOME": home, "USER": username, "LOGNAME": username}
+    env.update(terminal_env(incus, name, uid=uid, gid=gid, home=home, environ=os.environ))
     return incus.exec_interactive(
         name,
         ["bash", "-c", inner],
         uid=uid,
         gid=gid,
-        env={"HOME": home, "USER": username, "LOGNAME": username},
+        env=env,
         # Load supplementary groups (kvm, docker, …) so group-based device
         # access works in the shell. `incus exec --user/--group` alone does
         # not initgroups; see Incus.exec_interactive / device_groups.
@@ -3659,12 +3663,22 @@ def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
     first attach; from then on tmux restores the window the user detached
     from. See `tmux.ever_attached`.
     """
+    import os
+
     from jailbee.autostart import agent_autostart_steps
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
-    from jailbee.tmux import SESSION_NAME, ensure_session, ever_attached, select_window
+    from jailbee.terminfo import terminal_env
+    from jailbee.tmux import (
+        SESSION_NAME,
+        enable_terminal_features,
+        ensure_session,
+        ever_attached,
+        select_window,
+    )
 
     ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
+    enable_terminal_features(incus, name)
     steps = agent_autostart_steps(cfg)
     if steps and not ever_attached(incus, name):
         # Only the first attach picks the window: afterwards tmux's own
@@ -3675,16 +3689,16 @@ def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
         select_window(incus, name, steps[-1].name)
     # See `_attach_shell` for why we route through `incus exec --user`
     # instead of `sudo -i`.
+    uid, gid = cfg.container_user.uid, cfg.container_user.gid
+    home = f"/home/{CONTAINER_USERNAME}"
+    env = {"HOME": home, "USER": CONTAINER_USERNAME, "LOGNAME": CONTAINER_USERNAME}
+    env.update(terminal_env(incus, name, uid=uid, gid=gid, home=home, environ=os.environ))
     return incus.exec_interactive(
         name,
         ["tmux", "attach", "-t", SESSION_NAME],
-        uid=cfg.container_user.uid,
-        gid=cfg.container_user.gid,
-        env={
-            "HOME": f"/home/{CONTAINER_USERNAME}",
-            "USER": CONTAINER_USERNAME,
-            "LOGNAME": CONTAINER_USERNAME,
-        },
+        uid=uid,
+        gid=gid,
+        env=env,
         init_groups=True,
     )
 
