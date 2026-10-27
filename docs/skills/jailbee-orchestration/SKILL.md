@@ -240,6 +240,8 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 2. `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself.
    Submodule commits are already local; run `git submodule update` after
    merging so the working trees match their gitlinks.
+   Merge an imported `refs/jailbee/from/<child>/<branch>` before spawning
+   another child with the same branch name: that child's `done` overwrites the ref.
 3. `on_done: destroy` schedules automatic cleanup after delivery. A done
    `keep` child needs only `jailbee-inbox send destroy --child C --wait`, not
    a separate stop. Destroy refuses new commits, uncommitted changes and an
