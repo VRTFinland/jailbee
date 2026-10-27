@@ -83,7 +83,9 @@ class MenuGroup:
 
 MenuItem = tuple[str, str] | MenuGroup
 
-_PR_MENU_VERBS = frozenset({"pr open", "pr push", "submodule pr push", "review apply"})
+_PR_MENU_VERBS = frozenset(
+    {"pr open", "pr push", "pr bind", "pr unbind", "submodule pr push", "review apply"}
+)
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
@@ -303,6 +305,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     if ctx.pr_number is not None and not ctx.remote:
         # `pr open` is a browser on the host's display.
         actions.append(("Open PR", "pr open"))
+    if ctx.state in ("Running", "Stopped") and not ctx.remote:
+        actions.append(("Bind to PR…", "pr bind"))
+        if ctx.pr_number is not None:
+            actions.append((f"Unbind PR #{ctx.pr_number}", "pr unbind"))
     if _bridge_possible(ctx):
         actions.append(("Create/update PR", "pr push"))
         if ctx.git_status is not None and ctx.git_status.submodules:

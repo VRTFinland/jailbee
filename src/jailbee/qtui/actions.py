@@ -42,6 +42,8 @@ _TERMINAL_VERBS: frozenset[str] = frozenset(
         "merge",
         "review apply",
         "issue apply",
+        "pr bind",
+        "pr unbind",
         "outbox browse",
         "fork",
         "rename",

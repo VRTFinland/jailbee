@@ -213,6 +213,11 @@ def test_launch_mode_classifies_the_verbs():
         assert a.launch_mode(verb) == "detached", verb
 
 
+def test_pr_bind_is_terminal_launch_mode():
+    assert a.launch_mode("pr bind") == "terminal"
+    assert a.launch_mode("pr unbind") == "terminal"
+
+
 def test_review_apply_runs_in_a_terminal_because_it_prompts():
     """`jailbee review apply` asks a y/N confirmation (unless `--yes`), and a
     prompting command run without a terminal just hangs."""

@@ -338,7 +338,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     run = drive(
         mocker,
-        ["j", "enter", "down", "down", "down", "down", "enter", "down", "enter"],
+        ["j", "enter", "down", "down", "down", "down", "enter", "down", "down", "down", "enter"],
         groups=[group],
     )
 

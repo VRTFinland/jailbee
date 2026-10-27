@@ -284,6 +284,8 @@ _MENU_KEYS: dict[str, str] = {
     # PR →
     "pr open": "p",
     "pr push": "P",
+    "pr bind": "b",
+    "pr unbind": "u",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
     "stop": "H",  # not `s`: shell and start own it, and a lone stop can sit beside them

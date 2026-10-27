@@ -1013,7 +1013,9 @@ def test_remote_action_menu_offers_no_app_launches():
 
     assert {verb for _label, verb in local} >= {"ide", "chrome", "figma"}
     assert not {verb for _label, verb in remote} & {"ide", "chrome", "figma"}
-    assert [a for a in local if a[1] not in {"ide", "chrome", "figma"}] == remote
+    assert [
+        a for a in local if a[1] not in {"ide", "chrome", "figma", "pr bind", "pr unbind"}
+    ] == remote
     assert [
         item.label
         for item in dmenus.group_menu_actions(remote)
@@ -1045,7 +1047,14 @@ def test_action_menu_has_no_apps_when_none_are_configured():
 
 def test_menu_actions_stopped():
     actions = dmenus.menu_actions(_ctx(state="Stopped"))
-    assert [a for _, a in actions] == ["start", "rename", "mem", "net egress ls", "destroy"]
+    assert [a for _, a in actions] == [
+        "start",
+        "pr bind",
+        "rename",
+        "mem",
+        "net egress ls",
+        "destroy",
+    ]
 
 
 def test_menu_actions_orphan_disabled():
@@ -1251,13 +1260,39 @@ def test_menu_actions_network_entries_ordered_after_chrome_before_restart():
 
 def test_menu_actions_running_includes_open_pr_when_pr_known():
     actions = dmenus.menu_actions(_ctx(pr_number=123))
-    assert [verb for _, verb in actions[:5]] == [
+    assert [verb for _, verb in actions[:7]] == [
         "tmux",
         "shell",
         "outbox browse",
         "pr open",
+        "pr bind",
+        "pr unbind",
         "pr push",
     ]
+
+
+def test_menu_offers_bind_without_pr():
+    actions = dmenus.menu_actions(_ctx())
+    assert ("Bind to PR…", "pr bind") in actions
+
+
+def test_menu_offers_unbind_with_pr_number():
+    actions = dmenus.menu_actions(_ctx(pr_number=12))
+    assert ("Unbind PR #12", "pr unbind") in actions
+
+
+def test_menu_bind_hidden_on_remote_row():
+    actions = dmenus.menu_actions(_ctx(remote=True))
+    assert ("Bind to PR…", "pr bind") not in actions
+    assert not any(verb == "pr unbind" for _, verb in actions)
+
+
+def test_pr_submenu_keys_unique():
+    menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(_ctx(pr_number=12)))
+    hotkeys = _hotkeys(menu, "PR →")
+    assert hotkeys["Bind to PR…"] == "b"
+    assert hotkeys["Unbind PR #12"] == "u"
+    assert len(hotkeys.values()) == len(set(hotkeys.values()))
 
 
 def test_menu_actions_stopped_includes_open_pr_when_pr_known():
@@ -1265,6 +1300,8 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     assert actions == [
         ("Start", "start"),
         ("Open PR", "pr open"),
+        ("Bind to PR…", "pr bind"),
+        ("Unbind PR #7", "pr unbind"),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         ("Egress…", "net egress ls"),
@@ -1272,7 +1309,14 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     ]
     assert dmenus.group_menu_actions(actions, include_network=True) == [
         ("Start", "start"),
-        dmenus.MenuGroup("PR →", (("Open PR", "pr open"),)),
+        dmenus.MenuGroup(
+            "PR →",
+            (
+                ("Open PR", "pr open"),
+                ("Bind to PR…", "pr bind"),
+                ("Unbind PR #7", "pr unbind"),
+            ),
+        ),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
@@ -1360,6 +1404,7 @@ def test_menu_actions_running_offers_the_workflow_verbs():
         "tmux",
         "shell",
         "outbox browse",
+        "pr bind",
         "pr push",
         "merge",
         "git pull",
@@ -1440,7 +1485,10 @@ def test_menu_actions_mount_mode_keeps_outbox_without_git():
         dmenus.menu_actions(_ctx(mode="mount")), include_network=True
     )
     assert ("Outbox", "outbox browse") in grouped
-    assert [item.label for item in grouped if isinstance(item, dmenus.MenuGroup)] == ["Network →"]
+    assert [item.label for item in grouped if isinstance(item, dmenus.MenuGroup)] == [
+        "PR →",
+        "Network →",
+    ]
 
 
 def test_grouped_git_leaves_respect_known_clean_and_unknown_status():
@@ -1597,6 +1645,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
         "tmux",
         "shell",
         "outbox browse",
+        "pr bind",
         "rename",
         "mem",
         "net loose",
@@ -1609,7 +1658,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
 
 def test_menu_actions_stopped_has_no_workflow_verbs():
     verbs = [v for _, v in dmenus.menu_actions(_ctx(state="Stopped"))]
-    assert verbs == ["start", "rename", "mem", "net egress ls", "destroy"]
+    assert verbs == ["start", "pr bind", "rename", "mem", "net egress ls", "destroy"]
 
 
 def test_menu_actions_hides_git_pull_when_nothing_is_ahead():
@@ -1647,13 +1696,15 @@ def test_menu_actions_job_log_only_when_there_is_a_job():
 def test_menu_actions_job_log_precedes_the_pr_entries():
     """Sessions first, then diagnostics before PR and Git leaves."""
     verbs = [v for _, v in dmenus.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))]
-    assert verbs[:7] == [
+    assert verbs[:9] == [
         "tmux",
         "shell",
         "outbox browse",
         "job clear",
         "job log",
         "pr open",
+        "pr bind",
+        "pr unbind",
         "pr push",
     ]
 
@@ -1788,7 +1839,12 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
         "Change base branch (git retarget)": "b",
         "Show diff (git diff)": "d",
     }
-    assert _hotkeys(root, "PR →") == {"Open PR": "p", "Create/update PR": "P"}
+    assert _hotkeys(root, "PR →") == {
+        "Open PR": "p",
+        "Bind to PR…": "b",
+        "Unbind PR #7": "u",
+        "Create/update PR": "P",
+    }
     assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "H", "Destroy": "D"}
     assert _hotkeys(root, "Network →") == {"Network: loose": "l", "Egress…": "e"}
 
@@ -1798,6 +1854,7 @@ def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
 
     assert _hotkeys(menu) == {
         "Start": "s",
+        "PR →": "p",
         "Rename…": "R",
         "Memory: unknown…": "z",
         "Network →": "w",
@@ -5385,17 +5442,16 @@ def test_group_menu_actions_default_order_is_unchanged_for_qt():
     ]
 
 
-def test_terminal_menu_drops_an_empty_pr_group_when_only_apply_remains():
-    # Mount mode: no Create/update PR, only the pending apply — the apply is
-    # hoisted and the PR → group must not survive as an empty shell.
+def test_terminal_menu_mount_mode_pr_group_contains_bind_action():
     actions = dmenus.menu_actions(_ctx(mode="mount", git_status=_dirty(pending_pr_actions=2)))
     menu = tmenu.MenuState("alpha-x", actions)
-    labels = [
-        item.label if isinstance(item, dmenus.MenuGroup) else item[0]
-        for item in tmenu.menu_entries(menu)
-    ]
+    entries = tmenu.menu_entries(menu)
+    labels = [item.label if isinstance(item, dmenus.MenuGroup) else item[0] for item in entries]
     assert labels[0] == "Outbox (2 pending)"
-    assert "PR →" not in labels
+    pr_group = next(
+        item for item in entries if isinstance(item, dmenus.MenuGroup) and item.label == "PR →"
+    )
+    assert ("Bind to PR…", "pr bind") in pr_group.actions
 
 
 # --- The Accounts panel (A) --------------------------------------------------
