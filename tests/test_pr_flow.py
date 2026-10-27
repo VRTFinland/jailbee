@@ -1585,8 +1585,13 @@ def _bind_number(tmp_path, mocker, **kwargs):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info())
     state = mocker.MagicMock()
     result = pr_flow.bind_pr_by_number(
-        _super_scope(tmp_path), state, number=7, record=_record(number=None),
-        yes=False, record_context="for test", **kwargs,
+        _super_scope(tmp_path),
+        state,
+        number=7,
+        record=_record(number=None),
+        yes=False,
+        record_context="for test",
+        **kwargs,
     )
     return state, result
 
@@ -1613,7 +1618,10 @@ def test_bind_by_number_confirmed_skips_prompt(tmp_path, mocker):
     state, result = _bind_number(tmp_path, mocker, confirmed=True)
     confirm.assert_not_called()
     state.record.assert_called_once_with(
-        head="feat/foo", adopted=True, author=False, number=7,
+        head="feat/foo",
+        adopted=True,
+        author=False,
+        number=7,
         context="Could not record PR #7 for test",
     )
     assert result == _record(head="feat/foo", adopted=True)
@@ -1666,7 +1674,9 @@ def test_unbind_declined_does_not_clear(tmp_path, mocker):
     state.clear.assert_not_called()
 
 
-@pytest.mark.parametrize("author,adopted,review", [(False, False, True), (True, False, False), (False, True, False)])
+@pytest.mark.parametrize(
+    "author,adopted,review", [(False, False, True), (True, False, False), (False, True, False)]
+)
 def test_unbind_review_container_mentions_untrusted(tmp_path, mocker, author, adopted, review):
     state = mocker.MagicMock()
     state.read.return_value = _record(author=author, adopted=adopted)
@@ -1674,7 +1684,8 @@ def test_unbind_review_container_mentions_untrusted(tmp_path, mocker, author, ad
     assert pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=True)
     if review:
         info.assert_called_once_with(
-            "c1 is now an ordinary container; forks made from it from now on are no longer treated as untrusted."
+            "c1 is now an ordinary container; forks made from it from now on "
+            "are no longer treated as untrusted."
         )
     else:
         info.assert_not_called()

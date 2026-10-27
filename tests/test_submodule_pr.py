@@ -295,7 +295,9 @@ def test_submodule_state_clear_last_entry_unsets_key():
 @pytest.mark.parametrize("operation", ["config_get", "config_set", "config_unset_checked"])
 def test_submodule_state_clear_warns_on_incus_error(mocker, operation):
     incus = MagicMock()
-    incus.config_get.return_value = '{"a": {"pr": 7}, "b": {"pr": 8}}' if operation == "config_set" else '{"a": {"pr": 7}}'
+    incus.config_get.return_value = (
+        '{"a": {"pr": 7}, "b": {"pr": 8}}' if operation == "config_set" else '{"a": {"pr": 7}}'
+    )
     getattr(incus, operation).side_effect = IncusError("boom")
     warn = mocker.patch("jailbee.tui.warn")
     _state(incus, "a").clear()
