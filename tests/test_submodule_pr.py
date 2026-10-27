@@ -362,7 +362,7 @@ def test_state_record_writes_one_merged_map():
     incus = MagicMock()
     incus.config_get.return_value = '{"lib/b": {"pr": 9, "branch": "old"}}'
 
-    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+    assert _state(incus).record(head="user/x", author=True, adopted=False, number=12) is True
 
     key, value = incus.config_set.call_args.args[1:3]
     assert key == submodule_pr.STATE_KEY
@@ -392,7 +392,7 @@ def test_state_record_survives_a_failed_write():
     incus.config_get.return_value = None
     incus.config_set.side_effect = IncusError("boom")
 
-    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+    assert _state(incus).record(head="user/x", author=True, adopted=False, number=12) is False
 
 
 def test_state_record_survives_a_failed_read(mocker):
@@ -406,7 +406,7 @@ def test_state_record_survives_a_failed_read(mocker):
     incus = MagicMock()
     incus.config_get.side_effect = IncusError("container is frozen")
 
-    _state(incus).record(head="user/x", author=True, adopted=False, number=12)
+    assert _state(incus).record(head="user/x", author=True, adopted=False, number=12) is False
 
     incus.config_set.assert_not_called()
     warn.assert_called_once()

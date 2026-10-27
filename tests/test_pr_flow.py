@@ -1679,6 +1679,26 @@ def _bind_number(tmp_path, mocker, **kwargs):
     return state, result
 
 
+@pytest.mark.parametrize("intent", ["bind", "push"])
+def test_bind_persistence_failure_depends_on_intent(tmp_path, mocker, intent):
+    from jailbee.incus import IncusError
+
+    incus = mocker.MagicMock()
+    incus.config_set.side_effect = IncusError("write failed")
+    state = pr_flow.ContainerLabelState(incus, "c1")
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info())
+    arguments = dict(number=7, record=_record(number=None), yes=True, record_context="for test")
+    if intent == "bind":
+        with pytest.raises(typer.Exit) as excinfo:
+            pr_flow.bind_pr_by_number(_super_scope(tmp_path), state, intent=intent, **arguments)
+        assert excinfo.value.exit_code == 1
+    else:
+        result = pr_flow.bind_pr_by_number(_super_scope(tmp_path), state, intent=intent, **arguments)
+        assert result.number == 7
+        assert result.head == "feat/foo"
+        assert result.adopted
+
+
 def test_bind_by_number_bind_intent_wording(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)

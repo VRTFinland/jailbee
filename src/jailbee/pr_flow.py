@@ -880,7 +880,7 @@ class PrState(Protocol):
         adopted: bool,
         number: int | None,
         context: str | None = None,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 class ContainerLabelState:
@@ -942,8 +942,8 @@ class ContainerLabelState:
         adopted: bool,
         number: int | None,
         context: str | None = None,
-    ) -> None:
-        """Write the decision, best-effort.
+    ) -> bool:
+        """Write the decision, reporting whether all writes succeeded.
 
         Write order matters for a partial (interrupted) write. `<prefix>_branch`
         goes FIRST so that even a partially-written container resolves the
@@ -969,6 +969,8 @@ class ContainerLabelState:
                 self._incus.config_set(self._full, self._prefix, str(number))
         except IncusError as exc:
             warn(f"{context or 'Could not record the PR decision'}: {exc}")
+            return False
+        return True
 
     def clear(self) -> bool:
         """Remove this label set, reporting whether every unset succeeded."""
@@ -1447,13 +1449,15 @@ def bind_pr_by_number(
         if not typer.confirm(question, default=True):
             raise typer.Abort()
 
-    state.record(
+    recorded = state.record(
         head=found.head_ref,
         author=False,
         adopted=True,
         number=number,
         context=f"Could not record PR #{number} {record_context}",
     )
+    if intent == "bind" and not recorded:
+        raise typer.Exit(1)
     # In-process, not a re-read: `state.record` is best-effort, and the run
     # must publish to the right head even when the write failed.
     return PrRecord(number=number, head=found.head_ref, author=False, adopted=True)

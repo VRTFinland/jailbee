@@ -359,8 +359,8 @@ class SubmodulePrState:
         adopted: bool,
         number: int | None,
         context: str | None = None,
-    ) -> None:
-        """Merge this submodule's decision into the map, best-effort.
+    ) -> bool:
+        """Merge this submodule's decision into the map, reporting persistence success.
 
         `number=None` keeps whatever number is already recorded — the adoption
         path can learn the head before the number. `context`, when given,
@@ -389,6 +389,8 @@ class SubmodulePrState:
 
             default_context = f"Could not record the submodule PR decision for '{self._subpath}'"
             warn(f"{context or default_context}: {exc}")
+            return False
+        return True
 
     def clear(self) -> bool:
         """Remove only this binding, reporting whether persistence succeeded."""
