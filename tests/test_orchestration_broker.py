@@ -1354,3 +1354,17 @@ def test_vanished_orchestrator_watches_dropped_on_early_return(rig: Rig) -> None
     rig.incus.list_containers.return_value = []
     assert rig.tick() is False
     assert watch.load_watch(rig.root) == {}
+
+
+def test_tick_destroys_marked_child_despite_quarantined_finish_file(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration.state import pending_dir
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    directory = pending_dir(rig.root, "proj-orch")
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json.bad").write_text("invalid")
+    rig.tick()
+    destroy.assert_called_once_with(rig.cfg, rig.incus, "proj-kid", force=True)

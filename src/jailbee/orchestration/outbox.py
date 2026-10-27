@@ -6,6 +6,7 @@ import contextlib
 import importlib.resources
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
@@ -18,7 +19,6 @@ from jailbee.outbox_io import _validate_outbox_name, read_text_outbox
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
-    from datetime import datetime
     from pathlib import Path
 
     from jailbee.incus import Incus
@@ -156,12 +156,43 @@ def deliver(
     return "parked"
 
 
+def _deliverable(path: Path) -> bool:
+    """A parked file that still waits for delivery (not a temp or quarantined one)."""
+    return path.is_file() and not path.name.startswith(".") and not path.name.endswith(".bad")
+
+
 def has_pending(root: Path, recipient_full: str) -> bool:
-    """Whether any parked (non-dot) file waits for `recipient_full`."""
+    """Whether any parked file (not a dot or `.bad` one) waits for `recipient_full`."""
     directory = pending_dir(root, recipient_full)
     if not directory.is_dir():
         return False
-    return any(p.is_file() and not p.name.startswith(".") for p in directory.iterdir())
+    return any(_deliverable(p) for p in directory.iterdir())
+
+
+def _note_quarantined(
+    incus: Incus, root: Path, recipient_full: str, bad_name: str, *, uid: int | None
+) -> None:
+    """Tell the orchestrator a queued done report was set aside, not lost silently."""
+    from jailbee.orchestration.protocol import InboxMessage, new_host_id
+
+    note = InboxMessage.model_validate(
+        {
+            "version": 1,
+            "id": new_host_id(),
+            "type": "message",
+            "from": "broker",
+            "kind": "note",
+            "body": (
+                "a queued done report could not be read and was set aside as "
+                f"{bad_name} in the broker state dir; the child's work was not reported"
+            ),
+        }
+    )
+    name = inbox_file_name(note, datetime.now(UTC))
+    try:
+        _atomic_write(incus, recipient_full, INBOX_DIR, name, _item_json(note), "0644", uid=uid)
+    except IncusError:
+        atomic_write_text(pending_dir(root, recipient_full) / name, _item_json(note))
 
 
 def flush_pending(
@@ -177,11 +208,7 @@ def flush_pending(
     if not directory.is_dir():
         return 0
     delivered = 0
-    for path in sorted(
-        p
-        for p in directory.iterdir()
-        if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".bad")
-    ):
+    for path in sorted(p for p in directory.iterdir() if _deliverable(p)):
         name = path.name
         text = path.read_text(encoding="utf-8")
         if name.endswith(FINISH_SUFFIX):
@@ -190,6 +217,7 @@ def flush_pending(
             except ValidationError:
                 logging.getLogger(__name__).exception("invalid pending finish %s", path)
                 path.rename(path.with_name(path.name + ".bad"))
+                _note_quarantined(incus, root, recipient_full, path.name + ".bad", uid=uid)
                 continue
             if finish is None:
                 break

@@ -367,3 +367,37 @@ def test_deliver_ignores_dot_files_in_pending(tmp_path: Path) -> None:
     (directory / ".x.tmp").write_text("{}")
     result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
     assert result == "delivered"
+
+
+def test_has_pending_ignores_quarantined_bad_files(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json.bad").write_text("invalid")
+    assert outbox.has_pending(tmp_path, FULL) is False
+    (directory / "b.json").write_text("{}")
+    assert outbox.has_pending(tmp_path, FULL) is True
+
+
+def test_flush_quarantine_notes_the_recipient(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json").write_text("invalid")
+    incus = _incus()
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 0
+    notes = [json.loads(c.args[2]) for c in incus.exec_with_input.call_args_list]
+    assert len(notes) == 1
+    assert notes[0]["kind"] == "note"
+    assert "a.finish.json.bad" in notes[0]["body"]
+    assert "could not be read" in notes[0]["body"]
+
+
+def test_flush_quarantine_note_is_parked_when_the_write_fails(tmp_path: Path) -> None:
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json").write_text("invalid")
+    incus = _incus()
+    incus.exec_with_input.side_effect = IncusError("offline")
+    outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock())
+    parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
+    assert len(parked) == 1
+    assert json.loads(parked[0].read_text())["kind"] == "note"
