@@ -448,7 +448,7 @@ def tick(
         del memory.grant_written[full]
     memory.env_ensured.intersection_update(present)
     # Warn workers before deleting a vanished parent's queued finish reports.
-    finishing.notify_orphaned_finishes(
+    unnotified = finishing.notify_orphaned_finishes(
         incus,
         root,
         {n for n in present if isinstance(n, str)},
@@ -457,7 +457,9 @@ def tick(
         seq=memory.seq,
     )
     # Parked messages of a vanished container must never reach a namesake.
-    for full in purge_vanished_pending(root, {n for n in present if isinstance(n, str)}):
+    # A directory still holding a report whose notice failed is kept for a retry.
+    keep = {n for n in present if isinstance(n, str)} | unnotified
+    for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
     parked = [

@@ -1368,3 +1368,62 @@ def test_tick_destroys_marked_child_despite_quarantined_finish_file(
     (directory / "a.finish.json.bad").write_text("invalid")
     rig.tick()
     destroy.assert_called_once_with(rig.cfg, rig.incus, "proj-kid", force=True)
+
+
+def _orphan_finish(root: Path, orch_full: str, child_full: str) -> Path:
+    from jailbee.orchestration.protocol import PendingFinish, finish_file_name
+    from jailbee.orchestration.state import atomic_write_text, pending_dir
+
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id=f"f-{child_full}",
+        child_full=child_full,
+        child_short=child_full.removeprefix("proj-"),
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
+    path = pending_dir(root, orch_full) / finish_file_name(item, datetime.now(UTC), seq=0)
+    atomic_write_text(path, item.model_dump_json() + "\n")
+    return path
+
+
+def test_orphaned_finish_failure_does_not_block_the_others(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jailbee.orchestration import finishing
+
+    first = _orphan_finish(tmp_path, "proj-gone", "proj-kid1")
+    second = _orphan_finish(tmp_path, "proj-gone", "proj-kid2")
+    incus = MagicMock()
+
+    def unset(full: str, key: str) -> None:
+        if full == "proj-kid1":
+            raise IncusError("no such container")
+
+    incus.config_unset_checked.side_effect = unset
+    with caplog.at_level(logging.WARNING):
+        retry = finishing.notify_orphaned_finishes(
+            incus,
+            tmp_path,
+            {"proj-kid1", "proj-kid2"},
+            {"proj-kid1", "proj-kid2"},
+            now=datetime.now(UTC),
+            seq=iter(range(100)),
+        )
+    delivered = [c.args[0] for c in incus.exec_with_input.call_args_list]
+    assert delivered == ["proj-kid2"]
+    assert first.exists() and not second.exists()
+    assert retry == {"proj-gone"}
+    assert "proj-kid1" in caplog.text
+
+
+def test_tick_survives_orphaned_finish_failure(rig: Rig) -> None:
+    path = _orphan_finish(rig.root, "proj-gone", "proj-kid")
+    rig.incus.list_containers.return_value = [_orch(grant=Grant()), _child()]
+    rig.incus.config_unset_checked.side_effect = IncusError("deleted meanwhile")
+    rig.tick()
+    assert path.exists()

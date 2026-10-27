@@ -208,15 +208,24 @@ def notify_orphaned_finishes(
     *,
     now: datetime,
     seq: Iterator[int],
-) -> None:
-    """Tell surviving workers about undeliverable reports before purging them."""
+) -> set[str]:
+    """Tell surviving workers about undeliverable reports before purging them.
+
+    A notified report's file is removed. An item whose notice fails (the child
+    vanished between listing and now) is logged and its file kept; the names of
+    the vanished orchestrators that still hold such files are returned, so the
+    caller leaves them unpurged and the next round retries.
+    """
+    import logging
+
     from pydantic import ValidationError
 
     from jailbee.orchestration import outbox
 
+    retry: set[str] = set()
     base = root / "pending"
     if not base.is_dir():
-        return
+        return retry
     for directory in base.iterdir():
         if not directory.is_dir() or directory.name in present:
             continue
@@ -240,14 +249,26 @@ def notify_orphaned_finishes(
                     ),
                 }
             )
-            incus.config_unset_checked(item.child_full, labels.PENDING_DESTROY)
-            outbox.deliver(
-                incus,
-                root,
-                item.child_full,
-                msg,
-                running=item.child_full in running,
-                uid=item.uid,
-                now=now,
-                seq=next(seq),
-            )
+            try:
+                incus.config_unset_checked(item.child_full, labels.PENDING_DESTROY)
+                outbox.deliver(
+                    incus,
+                    root,
+                    item.child_full,
+                    msg,
+                    running=item.child_full in running,
+                    uid=item.uid,
+                    now=now,
+                    seq=next(seq),
+                )
+            except IncusError as exc:
+                logging.getLogger(__name__).warning(
+                    "broker: notifying %s of the destroyed orchestrator %s failed: %s",
+                    item.child_full,
+                    directory.name,
+                    exc,
+                )
+                retry.add(directory.name)
+                continue
+            path.unlink(missing_ok=True)
+    return retry
