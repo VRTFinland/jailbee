@@ -39,7 +39,8 @@ def test_new_fork_of_pins_clone_and_records_source(tmp_path, mocker):
     assert result.exit_code == 0, result.output
     assert prep.call_args.args[2] == "src"
     opts = new_container.call_args.args[2]
-    assert (opts.container_branch, opts.name) == ("feat/a", "myrepo-b")
+    # The fork's branch is named after the fork, not the source's branch.
+    assert (opts.container_branch, opts.name) == ("b", "myrepo-b")
     assert opts.clone_commit == "abc123"
     assert opts.base_branch_label == "main"
     assert opts.base is None

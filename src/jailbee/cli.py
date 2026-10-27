@@ -2381,7 +2381,11 @@ def new_cmd(
         except create_flow.CreateError as e:
             error(str(e))
             raise typer.Exit(e.exit_code) from e
-        container_branch = container_branch or fork_source.branch
+        # Like `jailbee new`, the branch defaults to the container's own
+        # name; the source's branch stays the source's.
+        from jailbee.lifecycle import short_name
+
+        container_branch = container_branch or short_name(cfg, name)
 
     if no_fetch and pr is None:
         error("--no-fetch requires --pr.")
@@ -2910,9 +2914,9 @@ def fork_cmd(
 ) -> None:
     """Create a container from another container's committed state.
 
-    The new container starts at SOURCE's HEAD commit, on the same branch unless
-    --branch names a new one, and remembers SOURCE as its upstream: the dashboards
-    name it in the container's details, and `jailbee merge` offers SOURCE first.
+    The new container starts at SOURCE's HEAD commit, on a branch named after
+    the new container unless --branch names another, and remembers SOURCE as
+    its upstream: the dashboards name it in the container's details, and `jailbee merge` offers SOURCE first.
     SOURCE must be running and have no uncommitted changes.
 
     Examples:
