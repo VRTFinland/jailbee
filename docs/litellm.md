@@ -195,8 +195,8 @@ the SuperGrok one.
 
 A new profile inherits no tier mappings; name a route for each tier you want to
 use (at least one is required). The routes
-themselves are different: the four ChatGPT routes (`astra`, `sol-high`,
-`sol-medium`, `luna-high`) are built in and exist without being written here —
+themselves are different: the five ChatGPT routes (`astra`, `sol-high`,
+`sol-medium`, `terra-high`, `luna-high`) are built in and exist without being written here —
 naming one is enough. Only `grok` is new, so only it needs a `model`. The
 built-in routes and the models and efforts they carry are listed in
 [Routes and profiles](#routes-and-profiles).
@@ -242,7 +242,7 @@ litellm:
 
 The two ChatGPT routes need no `context_window`: jailbee already knows those
 models' window (272,000). `grok` does, because `xai/grok-4.3` is not in that
-table. `sol-medium` and `luna-high` are built in too, but `mix` maps no tier to
+table. `sol-medium`, `terra-high` and `luna-high` are built in too, but `mix` maps no tier to
 them, so there is nothing to repeat.
 
 `jailbee litellm up`, then both logins — `mix`'s routes use both providers, so
@@ -270,8 +270,11 @@ The built-in `codex` profile maps Claude Code tiers to these routes:
 |---|---|---|---|
 | Fable | `astra` | `chatgpt/gpt-6-astra` | Fixed `high` |
 | Opus | `sol-high` | `chatgpt/gpt-6.1-sol` | Fixed `high` |
-| Sonnet | `sol-medium` | `chatgpt/gpt-6.1-sol` | Fixed `medium` |
+| Sonnet | `terra-high` | `chatgpt/gpt-6.1-terra` | Fixed `high` |
 | Haiku | `luna-high` | `chatgpt/gpt-6-luna` | Fixed `high` |
+
+`sol-medium` (`chatgpt/gpt-6.1-sol`, fixed `medium`) is built in too, but no
+tier of `codex` maps to it; name it in a profile to use it.
 
 Override only the fields you need in the host's `global.yaml`. A same-named
 route overlays the built-in route field by field; a same-named profile overlays
@@ -328,7 +331,7 @@ Selecting a larger window prints a cost warning on stderr. It permits more
 context per request; actual billing or subscription usage depends on the
 provider and tokens sent, not just the selected limit. The configured ceiling
 is each route's `max_context_window`: 1,050,000 for the built-in
-`chatgpt/gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna` routes, and for any other
+`chatgpt/gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna` routes, and for any other
 route its `context_window` unless you set one. A profile's ceiling is the smallest
 of its routes', since Claude Code takes one window per session; a value above it
 is refused with the ceiling named. Set `max_context_window` on a route to allow
@@ -438,7 +441,6 @@ reach is a config edit away.
    litellm:
      routes:
        sol-high: {model: chatgpt/gpt-6.2-sol, context_window: 272000}
-       sol-medium: {model: chatgpt/gpt-6.2-sol, context_window: 272000}
    ```
 
    or add a route and remap the tier:

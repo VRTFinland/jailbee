@@ -26,7 +26,7 @@ def test_defaults_are_disabled_with_builtin_codex_profile():
     assert cfg.default_profile == "codex"
     assert cfg.effective_profiles()["codex"] == ResolvedProfile(
         name="codex",
-        tiers={"fable": "astra", "opus": "sol-high", "sonnet": "sol-medium", "haiku": "luna-high"},
+        tiers={"fable": "astra", "opus": "sol-high", "sonnet": "terra-high", "haiku": "luna-high"},
         effort=None,
         account="default",
         instructions=None,
@@ -49,6 +49,10 @@ def test_builtin_routes_carry_spec_models_and_efforts():
     assert (routes["sol-medium"].model, routes["sol-medium"].effort) == (
         "chatgpt/gpt-6.1-sol",
         "medium",
+    )
+    assert (routes["terra-high"].model, routes["terra-high"].effort) == (
+        "chatgpt/gpt-6.1-terra",
+        "high",
     )
     assert (routes["luna-high"].model, routes["luna-high"].effort) == ("chatgpt/gpt-6-luna", "high")
 
@@ -122,6 +126,7 @@ def test_builtin_gpt6_context_windows():
         "astra": 272_000,
         "sol-high": 272_000,
         "sol-medium": 272_000,
+        "terra-high": 272_000,
         "luna-high": 272_000,
     }
 
@@ -297,9 +302,9 @@ def test_renaming_the_only_account_needs_no_profile_override():
 def test_subscription_routes_default_to_the_first_account():
     cfg = LiteLLMConfig.model_validate({"accounts": ["personal", "work"]})
     routes = cfg.effective_routes()
-    assert {routes[n].account for n in ("astra", "sol-high", "sol-medium", "luna-high")} == {
-        "personal"
-    }
+    assert {
+        routes[n].account for n in ("astra", "sol-high", "sol-medium", "terra-high", "luna-high")
+    } == {"personal"}
 
 
 def test_a_route_account_moves_its_profile_to_that_account():
@@ -343,7 +348,10 @@ def test_an_explicit_null_route_account_is_rejected():
 
 
 def test_an_overlay_cannot_clear_a_pinned_route_account_with_null():
-    pinned = {n: {"account": "work"} for n in ("astra", "sol-high", "sol-medium", "luna-high")}
+    pinned = {
+        n: {"account": "work"}
+        for n in ("astra", "sol-high", "sol-medium", "terra-high", "luna-high")
+    }
     host = LiteLLMConfig.model_validate({"accounts": ["default", "work"], "routes": pinned})
     with pytest.raises(ValidationError, match=r"route 'sol-high': `account` cannot be null"):
         host.with_overlay(_overlay(routes={"sol-high": {"account": None}}))
@@ -391,7 +399,10 @@ def test_a_repo_overlay_route_account_is_validated_against_host_accounts():
         host.with_overlay(_overlay(routes={"sol-high": {"account": "nope"}}))
     with pytest.raises(ValidationError, match="more than one account"):
         host.with_overlay(_overlay(routes={"sol-high": {"account": "work"}}))
-    moved = {n: {"account": "work"} for n in ("astra", "sol-high", "sol-medium", "luna-high")}
+    moved = {
+        n: {"account": "work"}
+        for n in ("astra", "sol-high", "sol-medium", "terra-high", "luna-high")
+    }
     merged = host.with_overlay(_overlay(routes=moved))
     assert merged.effective_profiles()["codex"].account == "work"
 

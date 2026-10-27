@@ -81,7 +81,7 @@ def test_instance_config_serves_every_route_every_profile_tier_and_the_catch_all
     assert set(models) == {
         "jb-default-astra",
         "jb-default-sol-high",
-        "jb-default-sol-medium",
+        "jb-default-terra-high",
         "jb-default-luna-high",
         "jb.codex.most-capable",
         "jb.codex.capable",
@@ -125,7 +125,7 @@ def test_catch_all_targets_default_profiles_haiku_route():
 def test_catch_all_falls_back_to_sonnet_when_haiku_unmapped():
     cfg = LiteLLMConfig.model_validate({"profiles": {"codex": {"haiku": None}}})
     models = _by_name(render_instance_config(cfg, "default"))
-    assert models[CATCH_ALL]["litellm_params"] == {"model": "chatgpt/gpt-6.1-sol"}
+    assert models[CATCH_ALL]["litellm_params"] == {"model": "chatgpt/gpt-6.1-terra"}
 
 
 def test_proxy_settings_always_set():
@@ -267,7 +267,7 @@ def test_subscription_routes_are_served_by_their_accounts_and_api_key_routes_eve
     assert set(served_routes(cfg, "personal")) == {
         "astra",
         "sol-high",
-        "sol-medium",
+        "terra-high",
         "luna-high",
         "kimi",
     }
@@ -505,7 +505,7 @@ def test_a_scope_serves_its_subscription_routes_only_on_its_profiles_account():
                 {
                     "routes": {
                         n: {"account": "work"}
-                        for n in ("astra", "sol-high", "sol-medium", "luna-high")
+                        for n in ("astra", "sol-high", "sol-medium", "terra-high", "luna-high")
                     }
                 }
             )
@@ -766,7 +766,8 @@ def test_a_repo_scope_can_make_an_account_need_a_login():
         LiteLLMRepoOverlay.model_validate(
             {
                 "routes": {
-                    n: {"account": "keys"} for n in ("astra", "sol-high", "sol-medium", "luna-high")
+                    n: {"account": "keys"}
+                    for n in ("astra", "sol-high", "sol-medium", "terra-high", "luna-high")
                 },
                 "profiles": {"kimi": {"opus": "luna-high"}},
             }
