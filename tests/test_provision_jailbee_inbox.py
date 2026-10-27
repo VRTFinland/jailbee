@@ -573,7 +573,12 @@ def test_ls_marks_kept_with_reason_and_read_shows_it(script, base, tmp_path):
     write_inbox(
         base,
         FIRST,
-        {**message("h-1"), "imported_sha": "a" * 40, "on_done": "keep", "on_done_reason": "no grant"},
+        {
+            **message("h-1"),
+            "imported_sha": "a" * 40,
+            "on_done": "keep",
+            "on_done_reason": "no grant",
+        },
     )
     env = env_for(base, tmp_path)
     r = run(script, "ls", env=env)

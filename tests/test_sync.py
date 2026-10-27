@@ -8327,9 +8327,7 @@ def test_container_merge_plain_relay_allows_detached_target(mocker, make_cfg, tm
     assert result.head_oid == "b" * 40
 
 
-def test_container_merge_plain_with_clean_target_still_refuses_detached(
-    mocker, make_cfg, tmp_path
-):
+def test_container_merge_plain_with_clean_target_still_refuses_detached(mocker, make_cfg, tmp_path):
     cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path)
     mocker.patch(
         "jailbee.sync._run_container_preflights",
