@@ -1437,13 +1437,21 @@ def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
 
 
 def test_new_container_writes_fork_of_label(make_cfg, tmp_path, mocker):
-    calls = [c for c in _fork_label_calls(make_cfg, tmp_path, mocker, fork_of="myrepo-src") if c.args[1] == "user.jailbee.fork_of"]
+    calls = [
+        c
+        for c in _fork_label_calls(make_cfg, tmp_path, mocker, fork_of="myrepo-src")
+        if c.args[1] == "user.jailbee.fork_of"
+    ]
     assert len(calls) == 1
     assert calls[0].args[2] == "myrepo-src"
 
 
 def test_new_container_without_fork_of_writes_no_label(make_cfg, tmp_path, mocker):
-    assert not [c for c in _fork_label_calls(make_cfg, tmp_path, mocker) if c.args[1] == "user.jailbee.fork_of"]
+    assert not [
+        c
+        for c in _fork_label_calls(make_cfg, tmp_path, mocker)
+        if c.args[1] == "user.jailbee.fork_of"
+    ]
 
 
 def test_new_container_writes_inherited_labels(make_cfg, tmp_path, mocker):

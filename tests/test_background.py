@@ -604,7 +604,16 @@ def test_inherited_labels_job_round_trip_and_old_file():
     from jailbee.lifecycle import NewContainerOptions
 
     labels = {"user.jailbee.pr": "4", "user.jailbee.pr_adopted": "1"}
-    opts = NewContainerOptions(container_branch="x", name=None, network="strict", memory=None, cpu=2, from_base="base", clone=True, inherited_labels=labels)
+    opts = NewContainerOptions(
+        container_branch="x",
+        name=None,
+        network="strict",
+        memory=None,
+        cpu=2,
+        from_base="base",
+        clone=True,
+        inherited_labels=labels,
+    )
     job = op_to_job(opts, container_name="c", log_path="/tmp/l")
     assert job_to_opts(job)[0].inherited_labels == labels
     del job["opts"]["inherited_labels"]

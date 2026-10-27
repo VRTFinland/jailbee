@@ -116,7 +116,9 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
         raise ForkError(str(e)) from e
     untrusted = bool(incus.config_get(full, "user.jailbee.pr"))
     base = incus.config_get(full, "user.jailbee.base_branch") or None
-    return ForkSource(full, fetched.branch, fetched.new_oid, base, untrusted, inherited_pr_labels(incus, full))
+    return ForkSource(
+        full, fetched.branch, fetched.new_oid, base, untrusted, inherited_pr_labels(incus, full)
+    )
 
 
 def fork_pin_ref(cfg: Config, fork_full: str) -> str:

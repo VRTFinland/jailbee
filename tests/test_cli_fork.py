@@ -36,7 +36,9 @@ def test_new_fork_passes_inherited_labels(tmp_path, mocker):
     _, new_container = _setup(tmp_path, mocker)
     labels = {"user.jailbee.pr": "4"}
     mocker.patch("jailbee.forking.prepare_fork", return_value=replace(SRC, pr_labels=labels))
-    result = _run(["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"])
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
     assert result.exit_code == 0, result.output
     assert new_container.call_args.args[2].inherited_labels == labels
 
