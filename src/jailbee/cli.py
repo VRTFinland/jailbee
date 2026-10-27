@@ -2916,7 +2916,8 @@ def fork_cmd(
 
     The new container starts at SOURCE's HEAD commit, on a branch named after
     the new container unless --branch names another, and remembers SOURCE as
-    its upstream: the dashboards name it in the container's details, and `jailbee merge` offers SOURCE first.
+    its upstream: the dashboards name it in the container's details, and
+    `jailbee merge` offers SOURCE first.
     SOURCE must be running and have no uncommitted changes.
 
     Examples:
