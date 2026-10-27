@@ -29,15 +29,21 @@ def test_outbox_pr_references_groups_by_number(mocker):
     from jailbee.pr_outbox import Outbox, outbox_pr_references
 
     incus = mocker.Mock()
-    read = mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={
-        "b.json": _manifest_text(pr=5),
-        "c.json": _manifest_text(pr=9),
-        "a.json": _manifest_text(pr=5, actions=[{"type": "comment", "body_file": "a.md"}]),
-        "a.md": "A comment",
-        "a.progress.json": "{}",
-    }))
+    read = mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={
+                "b.json": _manifest_text(pr=5),
+                "c.json": _manifest_text(pr=9),
+                "a.json": _manifest_text(pr=5, actions=[{"type": "comment", "body_file": "a.md"}]),
+                "a.md": "A comment",
+                "a.progress.json": "{}",
+            }
+        ),
+    )
     assert outbox_pr_references(incus, "jb-c1", uid=1000, repo="acme/widgets", exclude=[]) == {
-        5: ("a.json", "b.json"), 9: ("c.json",),
+        5: ("a.json", "b.json"),
+        9: ("c.json",),
     }
     read.assert_called_once_with(incus, "jb-c1", uid=1000)
 
@@ -45,39 +51,68 @@ def test_outbox_pr_references_groups_by_number(mocker):
 def test_outbox_pr_references_skips_other_repo_and_null_pr(mocker):
     from jailbee.pr_outbox import Outbox, outbox_pr_references
 
-    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={
-        "a.json": _manifest_text(pr=5, repo="ACME/Widgets"),
-        "b.json": _manifest_text(pr=9, repo="other/widgets"),
-        "c.json": _manifest_text(pr=None, actions=[{"type": "description", "body": "New PR"}]),
-    }))
-    assert outbox_pr_references(mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[]) == {5: ("a.json",)}
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={
+                "a.json": _manifest_text(pr=5, repo="ACME/Widgets"),
+                "b.json": _manifest_text(pr=9, repo="other/widgets"),
+                "c.json": _manifest_text(
+                    pr=None, actions=[{"type": "description", "body": "New PR"}]
+                ),
+            }
+        ),
+    )
+    assert outbox_pr_references(
+        mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[]
+    ) == {5: ("a.json",)}
 
 
 def test_outbox_pr_references_skips_unparsable_manifest(mocker):
     from jailbee.pr_outbox import Outbox, outbox_pr_references
 
-    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={
-        "a.json": "not JSON",
-        "b.json": _manifest_text(pr=5, actions=[{"type": "comment", "body_file": "missing.md"}]),
-        "c.json": _manifest_text(pr=9),
-    }))
-    assert outbox_pr_references(mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[]) == {9: ("c.json",)}
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={
+                "a.json": "not JSON",
+                "b.json": _manifest_text(
+                    pr=5, actions=[{"type": "comment", "body_file": "missing.md"}]
+                ),
+                "c.json": _manifest_text(pr=9),
+            }
+        ),
+    )
+    assert outbox_pr_references(
+        mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[]
+    ) == {9: ("c.json",)}
 
 
 def test_outbox_pr_references_excludes_bound_numbers(mocker):
     from jailbee.pr_outbox import Outbox, outbox_pr_references
 
-    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={
-        "a.json": _manifest_text(pr=5), "b.json": _manifest_text(pr=9),
-    }))
-    assert outbox_pr_references(mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude={5}) == {9: ("b.json",)}
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={
+                "a.json": _manifest_text(pr=5),
+                "b.json": _manifest_text(pr=9),
+            }
+        ),
+    )
+    assert outbox_pr_references(
+        mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude={5}
+    ) == {9: ("b.json",)}
 
 
 def test_outbox_pr_references_unreadable_outbox_is_empty(mocker):
     from jailbee.pr_outbox import OutboxReadError, outbox_pr_references
 
     mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=OutboxReadError("unreadable"))
-    assert outbox_pr_references(mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[]) == {}
+    assert (
+        outbox_pr_references(mocker.Mock(), "jb-c1", uid=None, repo="acme/widgets", exclude=[])
+        == {}
+    )
 
 
 def test_parse_minimal_comment_manifest():
