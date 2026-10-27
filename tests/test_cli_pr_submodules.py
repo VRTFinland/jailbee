@@ -56,7 +56,8 @@ def test_flags_and_comments_callback_reach_step(mocker, tmp_path):
     guard = mocker.spy(pr_flow, "outbox_publication_guard")
     step, _, _ = _wire(mocker, tmp_path, [])
     result = runner.invoke(
-        app, ["pr", "push", "feat-foo", "--no-ai", "--no-outbox", "--ready", "--yes", "--no-submodules"]
+        app,
+        ["pr", "push", "feat-foo", "--no-ai", "--no-outbox", "--ready", "--yes", "--no-submodules"],
     )
     assert result.exit_code == 0, result.output
     kw = step.call_args.kwargs

@@ -540,8 +540,9 @@ def allowed_command_paths(
 #   - `pr push --web` and `submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
 #     on the host's display;
 #   - `--yes` on the commands that publish to GitHub with the host's own
-#     credentials (`pr push`, `pr bind`, `pr unbind`, `submodule pr`, `review apply`, `issue apply`): the
-#     remote user may publish, but each action is shown and confirmed rather
+#     credentials (`pr push`, `pr bind`, `pr unbind`, `submodule pr`,
+#     `review apply`, `issue apply`): the remote user may publish, but each
+#     action is shown and confirmed rather
 #     than waved through — the same reasoning that refuses `--yes` for a
 #     branch's privilege widening.
 _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {

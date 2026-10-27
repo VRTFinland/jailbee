@@ -266,7 +266,8 @@ def test_create_pr_explicit_flags_override_defaults(mocker, tmp_path):
     result = CliRunner().invoke(
         app,
         [
-            "pr", "push",
+            "pr",
+            "push",
             "feat-foo",
             "--title",
             "My title",
@@ -2339,7 +2340,9 @@ def test_pr_bind_rejects_as_flag(mocker, tmp_path):
     _cfg, incus, publish = _bind_setup(mocker, tmp_path)
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_review_pr_info())
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--pr", "456", "--as", "x/y", "--yes"]
+    )
 
     assert result.exit_code == 2
     assert "--as" in result.output and "--pr" in result.output
@@ -2650,7 +2653,9 @@ def test_stacked_retargets_the_container_base_when_confirmed(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=True)
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
+    )
 
     assert result.exit_code == 0, result.output
     args, kwargs = retarget.call_args.args, retarget.call_args.kwargs
@@ -2663,7 +2668,9 @@ def test_stacked_retarget_declined_leaves_the_base_alone(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
+    )
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
@@ -2673,7 +2680,9 @@ def test_stacked_retarget_skipped_without_a_tty_and_prints_the_command(mocker, t
     _incus, _publish, _create, retarget = _stacked_setup(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review"]
+    )
 
     assert result.exit_code == 0, result.output
     retarget.assert_not_called()
@@ -3020,7 +3029,9 @@ def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
         ],
     )
 
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--body", "my own body"], input="y\n")
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--body", "my own body"], input="y\n"
+    )
 
     assert result.exit_code == 0, result.output
     # Only the comment is offered, published and counted...

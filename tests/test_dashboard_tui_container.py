@@ -900,7 +900,9 @@ def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
     assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "c"], [group]).rc == 0
 
     child.assert_called_once_with(
-        ["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)], check=False, cwd=tmp_path
+        ["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],
+        check=False,
+        cwd=tmp_path,
     )
 
 

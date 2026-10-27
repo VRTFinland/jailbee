@@ -1705,7 +1705,11 @@ def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
 def _grouped_menu():
     return tmenu.MenuState(
         "alpha-x",
-        [("Attach tmux", "tmux"), ("Create/update PR", "pr push"), ("Show diff (git diff)", "git diff")],
+        [
+            ("Attach tmux", "tmux"),
+            ("Create/update PR", "pr push"),
+            ("Show diff (git diff)", "git diff"),
+        ],
     )
 
 

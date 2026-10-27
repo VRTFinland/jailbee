@@ -133,8 +133,15 @@ def offer_outbox_binding(
 
 
 def bind_outbox_reference(
-    cfg: Config, incus: IncusType, full: str, scope: PrScope, state: PrState,
-    record: PrRecord, *, short: str, yes: bool,
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    scope: PrScope,
+    state: PrState,
+    record: PrRecord,
+    *,
+    short: str,
+    yes: bool,
 ) -> PrRecord:
     """Bind the explicitly selected outbox reference before publishing."""
     from jailbee import pr_outbox
@@ -149,19 +156,34 @@ def bind_outbox_reference(
     if number is None:
         return record
     return bind_pr_by_number(
-        scope, state, number=number, record=record, yes=yes,
-        record_context=f"on '{short}'", confirmed=True,
+        scope,
+        state,
+        number=number,
+        record=record,
+        yes=yes,
+        record_context=f"on '{short}'",
+        confirmed=True,
     )
 
 
 def bind_container_pr(
-    cfg: Config, incus: IncusType, full: str, *, short: str, number: int | None, yes: bool,
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    *,
+    short: str,
+    number: int | None,
+    yes: bool,
 ) -> None:
     """Resolve the PR number and bind without requiring a running container."""
     from jailbee import prompting
 
     def problem(value: str) -> str | None:
-        return None if value.isascii() and value.isdigit() and int(value) > 0 else "enter a positive integer"
+        return (
+            None
+            if value.isascii() and value.isdigit() and int(value) > 0
+            else "enter a positive integer"
+        )
 
     if number is None:
         number = int(prompting.ask_text("PR number", validate=problem))
@@ -172,8 +194,14 @@ def bind_container_pr(
             info(f"Container '{short}' is already bound to PR #{number}.")
             return
         bind_pr_by_number(
-            PrScope.for_repo(cfg), state, number=number, record=record, yes=yes,
-            record_context=f"on '{short}'", intent="bind", target_label=f"container '{short}'",
+            PrScope.for_repo(cfg),
+            state,
+            number=number,
+            record=record,
+            yes=yes,
+            record_context=f"on '{short}'",
+            intent="bind",
+            target_label=f"container '{short}'",
         )
     except MalformedPrLabelError as exc:
         error(str(exc))
@@ -181,7 +209,13 @@ def bind_container_pr(
 
 
 def unbind_container_pr(
-    cfg: Config, incus: IncusType, full: str, *, short: str, stacked: bool, yes: bool,
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    *,
+    short: str,
+    stacked: bool,
+    yes: bool,
 ) -> None:
     """Forget only the selected binding."""
     state = ContainerLabelState(
@@ -195,7 +229,12 @@ def unbind_container_pr(
 
 
 def open_container_pr(
-    cfg: Config, incus: IncusType, full: str, *, short: str, stacked: bool,
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    *,
+    short: str,
+    stacked: bool,
 ) -> None:
     """Open exactly the primary or stacked binding, without publishing."""
     from jailbee import pr

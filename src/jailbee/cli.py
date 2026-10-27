@@ -8278,7 +8278,9 @@ def _offer_outbox_comments(
 
 
 pr_app = typer.Typer(
-    name="pr", cls=hinting_group("jailbee pr push"), no_args_is_help=True,
+    name="pr",
+    cls=hinting_group("jailbee pr push"),
+    no_args_is_help=True,
     help="Create, update, bind and open a container's GitHub PR.",
 )
 app.add_typer(pr_app)
@@ -8626,7 +8628,9 @@ def pr_push_cmd(
         and not no_outbox
         and not (review_target is not None and review_target.stacked)
     ):
-        record = pr_flow.bind_outbox_reference(cfg, incus, full, scope, state, record, short=short, yes=yes)
+        record = pr_flow.bind_outbox_reference(
+            cfg, incus, full, scope, state, record, short=short, yes=yes
+        )
         is_author = record.author
         stored_pr_branch = record.head
         pr_label = str(record.number) if record.number is not None else None
@@ -8932,7 +8936,9 @@ def pr_bind_cmd(
 @pr_app.command("unbind")
 def pr_unbind_cmd(
     name: ContainerArg = None,
-    stacked: Annotated[bool, typer.Option("--stacked", help="Forget the stacked PR binding")] = False,
+    stacked: Annotated[
+        bool, typer.Option("--stacked", help="Forget the stacked PR binding")
+    ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
     config: ConfigOption = None,
 ) -> None:
@@ -8942,7 +8948,9 @@ def pr_unbind_cmd(
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name, always_prompt=True)
-    pr_flow.unbind_container_pr(cfg, incus, full, short=short_name(cfg, full), stacked=stacked, yes=yes)
+    pr_flow.unbind_container_pr(
+        cfg, incus, full, short=short_name(cfg, full), stacked=stacked, yes=yes
+    )
 
 
 @pr_app.command("open")
@@ -8958,7 +8966,6 @@ def pr_open_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     pr_flow.open_container_pr(cfg, incus, full, short=short_name(cfg, full), stacked=stacked)
-
 
 
 submodule_app = typer.Typer(
