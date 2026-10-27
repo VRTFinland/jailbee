@@ -1410,10 +1410,11 @@ an unchanged block causes no body edit. Foreign PR bodies are left untouched.
 Merge the submodule PRs first, so the superproject's gitlink points at merged
 commits; the merge order is advice, not a gate.
 
-On a container created with `jailbee new --pr N`, `jailbee pr push` does not open a second PR:
-it asks once whether to push the container's commits to PR #N's head branch,
-records the answer (`user.jailbee.pr_adopted`), and updates that PR from then on.
-`--yes` skips the prompt and fork PRs are refused outright. Because the PR is
+On a container created with `jailbee new --pr N`, `jailbee pr push` asks once
+whether to push the container's commits to PR #N's head or open a stacked PR.
+Choosing the former records `user.jailbee.pr_adopted` and updates that PR on
+later runs; `--stacked` selects the latter. `--yes` selects the former without
+prompting, and publishing to fork PRs is refused. Because the adopted PR is
 not JailBee's own, two extra guards apply on **every** run: `--force` asks again
 before overwriting that head (`--yes` skips), and the interactive "regenerate
 the description?" offer is suppressed, so the PR author's text is never replaced

@@ -1354,7 +1354,7 @@ PR — it is left as a deferral for `jailbee pr push` to consume, not a refusal.
 
 One row per pending manifest across running containers: CONTAINER, PR,
 MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
-does not own, see `apply --foreign` — `for jb pr push`, or `error`), and ERROR
+does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
 (hidden from the default table). A stopped container's outbox cannot be read
 at all, so it is named in a note under the table instead of appearing empty.
 `--fields` is comma-separated from that same list; `-o json` describes

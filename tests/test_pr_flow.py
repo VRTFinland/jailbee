@@ -1932,9 +1932,11 @@ def test_review_target_is_none_once_the_decision_was_recorded(tmp_path, mocker, 
 
 def test_stacked_needs_a_review_container(tmp_path, mocker):
     record = _record(number=None)
+    error = mocker.patch("jailbee.pr_flow.error")
     with pytest.raises(typer.Exit) as excinfo:
         _resolve(tmp_path, record, mocker.MagicMock(), yes=False, stacked=True)
     assert excinfo.value.exit_code == 2
+    assert "Open an ordinary PR with 'jailbee pr push review-7'" in error.call_args.args[0]
 
 
 @pytest.mark.parametrize("labels", [{"author": True}, {"adopted": True}])

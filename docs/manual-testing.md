@@ -2934,9 +2934,10 @@ with that candidate selected. Expect its failure summary, a continuing
 superproject PR update and exit 1. Restore permission before retrying. A
 partially failed submodule outbox publication also exits 1 but retains the
 published PR identity; retry updates that PR, not a duplicate. Bind a foreign
-PR with `jb submodule pr push feat-sub-family libs/foo --pr <N>` and verify its
-body remains unchanged by link refresh (do not pass explicit description
-editing flags). Merge order remains advice: submodule first, superproject
+PR without pushing with `jb submodule pr bind feat-sub-family libs/foo <N>`.
+Separately run `jb pr push feat-sub-family` to refresh links, and verify the
+foreign PR's body remains unchanged (do not pass explicit description editing
+flags). Merge order remains advice: submodule first, superproject
 second. Close the disposable PRs and remove their remote branches manually
 when finished, then destroy the test container.
 
