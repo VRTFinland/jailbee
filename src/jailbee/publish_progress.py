@@ -7,6 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from io import TextIOBase
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,14 +46,46 @@ def reporting(
     if console is None:
         from rich.console import Console
 
-        console = Console(stderr=True)
+        console = Console(file=sys.stderr)
     if not console.is_terminal:
         yield lambda: None
         return
-    with console.status(f"Publishing 0/{total}…") as status:
-        def status_tick() -> None:
-            nonlocal n
-            n += 1
-            status.update(f"Publishing {n}/{total}…", spinner="dots")
+    from rich.file_proxy import FileProxy
 
-        yield status_tick
+    # Rich consoles unwrap FileProxy, bypassing the live display. Hide that
+    # attribute so independent consoles write through the active live console.
+    class ConsoleProxy(TextIOBase):
+        def __init__(self, proxy: FileProxy) -> None:
+            self.proxy = proxy
+
+        def write(self, text: str) -> int:
+            return self.proxy.write(text)
+
+        def flush(self) -> None:
+            self.proxy.flush()
+
+        def isatty(self) -> bool:
+            return self.proxy.isatty()
+
+        def fileno(self) -> int:
+            return self.proxy.fileno()
+
+    with console.status(f"Publishing 0/{total}…") as status:
+        stdout, stderr = sys.stdout, sys.stderr
+        if isinstance(stdout, FileProxy):
+            sys.stdout = ConsoleProxy(stdout)
+        if isinstance(stderr, FileProxy):
+            sys.stderr = ConsoleProxy(stderr)
+        try:
+            def status_tick() -> None:
+                nonlocal n
+                n += 1
+                status.update(f"Publishing {n}/{total}…", spinner="dots")
+
+            yield status_tick
+        finally:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            finally:
+                sys.stdout, sys.stderr = stdout, stderr

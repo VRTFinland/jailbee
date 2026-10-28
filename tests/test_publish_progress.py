@@ -1,4 +1,5 @@
 import io
+import sys
 
 import pytest
 from rich.console import Console
@@ -40,6 +41,23 @@ def test_reporting_tty_shows_and_clears_status():
         console.print("receipt")
     assert "receipt" in output.getvalue()
     assert "Publishing 2/2" in output.getvalue()
+    assert not console._live_stack
+
+
+def test_reporting_preserves_other_console_and_plain_receipts(monkeypatch):
+    output = io.StringIO()
+    monkeypatch.setattr("sys.stderr", output)
+    console = Console(file=output, force_terminal=True, width=80)
+    other = Console(stderr=True, force_terminal=True, width=80)
+    with reporting(2, env={}, console=console) as tick:
+        tick()
+        other.print("receipt one")
+        tick()
+        print("receipt two", file=sys.stderr)
+    text = output.getvalue()
+    assert "receipt one" in text
+    assert "receipt two" in text
+    assert "Publishing 1/2…receipt one" not in text
     assert not console._live_stack
 
 
