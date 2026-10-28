@@ -218,10 +218,12 @@ def apply_selected(
     if view.error:
         raise OutboxError(f"{proposal}: {view.error}")
 
-    if proposal.kind == "pr" and isinstance(manifest_data := json.loads(view.raw_text), dict) and "source" in manifest_data:
-        raise OutboxError(
-            f"Use jailbee pr push {container.name} --source-manifest {proposal.name}"
-        )
+    if (
+        proposal.kind == "pr"
+        and isinstance(manifest_data := json.loads(view.raw_text), dict)
+        and "source" in manifest_data
+    ):
+        raise OutboxError(f"Use jailbee pr push {container.name} --source-manifest {proposal.name}")
 
     def checked_confirm(total: int) -> bool:
         accepted = confirm(total)
@@ -375,7 +377,9 @@ def _attach_create_scopes(
             continue
         for proposal_row in proposals:
             if isinstance(proposal_row, dict) and proposal_row.get("state") == "awaiting-push":
-                view = next((p for p in container.proposals if str(p.id) == proposal_row.get("id")), None)
+                view = next(
+                    (p for p in container.proposals if str(p.id) == proposal_row.get("id")), None
+                )
                 if view is not None and view.error is None and view.id.kind == "pr":
                     proposal_row["create_scope"] = {"kind": "source", "manifest": view.id.name}
         if not any(isinstance(p, dict) and p.get("state") == "awaiting-pr" for p in proposals):

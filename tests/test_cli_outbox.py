@@ -1371,8 +1371,17 @@ def test_apply_real_dry_run_json_is_parseable(publication_env, capsys):
 
 
 def test_apply_source_exits_two_with_push_hint(env):
-    raw = json.dumps({"version": 1, "repo": "acme/main", "pr": 7, "head_sha": None,
-                      "source": "refs/heads/topic", "source_sha": "a" * 40, "actions": []})
+    raw = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/main",
+            "pr": 7,
+            "head_sha": None,
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "actions": [],
+        }
+    )
     env[2]["pr"] = store("pr", {"source.json": raw})
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
     assert result.exit_code == 2, result.output

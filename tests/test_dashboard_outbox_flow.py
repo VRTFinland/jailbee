@@ -914,7 +914,9 @@ def test_load_later_withdraws_an_open_question():
 
 
 def test_source_push_and_publish_hint():
-    row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"}, actions=[])
+    row = _proposal(
+        state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"}, actions=[]
+    )
     runner = FakeRunner(_listing(row))
     ctl = _controller(runner)
     ctl.load()

@@ -477,7 +477,15 @@ def _proposal_json(
 def _container_json(container: ContainerView) -> dict[str, object]:
     counts = {
         state: sum(p.state == state for p in container.proposals)
-        for state in ("pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr", "awaiting-push")
+        for state in (
+            "pending",
+            "partial",
+            "applied",
+            "uncertain",
+            "invalid",
+            "awaiting-pr",
+            "awaiting-push",
+        )
     }
     return {
         "name": container.name,
