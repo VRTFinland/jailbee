@@ -1369,7 +1369,9 @@ def fetch_ref_from_container(
     if actual is None:
         raise SyncError(f"fetch succeeded but {host_ref} did not resolve")
     if actual.lower() != expected_sha.lower():
-        raise SyncError(f"{ref} is at {actual[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest")
+        raise SyncError(
+            f"{ref} is at {actual[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest"
+        )
     return host_ref
 
 
@@ -1381,7 +1383,9 @@ def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) ->
     if not git.check_ref_format(host_ref):
         raise SyncError(f"Invalid host ref: {host_ref}")
     full = assert_container_publishable(cfg, incus, short)
-    git.fetch_url(cfg.repo_root, _build_ext_url(cfg, incus, full), f"+{sha}:{host_ref}", tags="none")
+    git.fetch_url(
+        cfg.repo_root, _build_ext_url(cfg, incus, full), f"+{sha}:{host_ref}", tags="none"
+    )
     actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if actual is None or actual.lower() != sha.lower():
         raise SyncError(f"Fetched source SHA {sha} does not resolve to the expected commit")
@@ -1389,7 +1393,11 @@ def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) ->
 
 
 def push_ref_to_remote(
-    cfg: Config, host_ref: str, head: str, *, force: bool,
+    cfg: Config,
+    host_ref: str,
+    head: str,
+    *,
+    force: bool,
     on_before_push: Callable[[], None] | None = None,
     expected_sha: str | None = None,
 ) -> None:
@@ -1404,7 +1412,9 @@ def push_ref_to_remote(
     if source_sha is None:
         raise SyncError(f"Source ref does not resolve: {host_ref}")
     if expected_sha is not None and source_sha.lower() != expected_sha.lower():
-        raise SyncError(f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest")
+        raise SyncError(
+            f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest"
+        )
     remote = cfg.upstream_remote
     try:
         lease = (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "") if force else None
@@ -1414,7 +1424,9 @@ def push_ref_to_remote(
         on_before_push()
     try:
         with_remote_retry(
-            lambda: git.push_to_remote(cfg.repo_root, remote, source_sha, head, force_with_lease=lease),
+            lambda: git.push_to_remote(
+                cfg.repo_root, remote, source_sha, head, force_with_lease=lease
+            ),
             label=f"pushing '{head}' to {remote}",
             catch=git.GitError,
             confirm=confirm_retry_quiet,

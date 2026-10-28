@@ -1731,6 +1731,7 @@ def transport_submodules_to_host_at_commit(
     cfg: Config, incus: Incus, container: str, short: str, *, repo_dir: str, commit: str
 ) -> None:
     """Fetch each gitlink from the selected tree, including nested gitlinks."""
+
     def walk(parent: HostSubRepo, at: str) -> None:
         root = str(parent.root)
         for name, raw_path in _gitmodules_paths_at(git.run_capture, root, at, strict=True):

@@ -109,7 +109,8 @@ def prepare_fork(cfg: Config, incus: Incus, source: str, *, ref: str | None = No
                 raise ForkError(f"Invalid source ref: {ref}")
             try:
                 commit = incus.exec(
-                    full, ["git", "-C", repo_dir, "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                    full,
+                    ["git", "-C", repo_dir, "rev-parse", "--verify", f"{ref}^{{commit}}"],
                     uid=cfg.container_user.uid,
                 ).strip()
             except IncusError as e:

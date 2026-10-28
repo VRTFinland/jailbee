@@ -241,15 +241,21 @@ def test_explicit_ref_resolves_source_commit_without_dirty_check(cfg, wired, moc
     dirty.return_value = True
     incus = _labels(pr="42", base_branch="main")
     incus.exec.return_value = sha + "\n"
-    pinned = mocker.patch("jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/src/source/heads/topic")
-    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host_at_commit", create=True)
+    pinned = mocker.patch(
+        "jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/src/source/heads/topic"
+    )
+    transport = mocker.patch(
+        "jailbee.submodules.transport_submodules_to_host_at_commit", create=True
+    )
     result = forking.prepare_fork(cfg, incus, "src", ref="refs/heads/topic")
     assert result.commit == sha
     assert result.untrusted and result.pr_labels == {}
     dirty.assert_not_called()
     fetch.assert_not_called()
     pinned.assert_called_once_with(cfg, incus, "src", "refs/heads/topic", sha)
-    transport.assert_called_once_with(cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo", commit=sha)
+    transport.assert_called_once_with(
+        cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo", commit=sha
+    )
 
 
 def test_explicit_sha_requires_commit_in_source(cfg, wired, mocker):
@@ -281,7 +287,7 @@ def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
 
     sha = "a" * 40
     child_sha = "b" * 40
-    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=[[('lib', 'lib')], []])
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=[[("lib", "lib")], []])
     mocker.patch("jailbee.submodules._gitlink_at", return_value=child_sha)
     sub = submodules.HostSubRepo("lib", cfg.repo_root / "lib.git", None)
     mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=sub)
