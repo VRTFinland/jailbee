@@ -321,5 +321,5 @@ def test_a_snapshot_without_load_decodes_to_none():
     )
     line = encode(snapshot)
     assert b',"load":null' in line
-    restored = decode(line.replace(b',"load":null', b'', 1))
+    restored = decode(line.replace(b',"load":null', b"", 1))
     assert restored.system is not None and restored.system.load is None

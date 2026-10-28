@@ -39,7 +39,9 @@ def test_read_load_takes_the_one_minute_figure(tmp_path: Path) -> None:
     assert read_load(proc_root=tmp_path, cpus=8) == LoadStatus(load1=2.34, cpus=8)
 
 
-def test_read_load_defaults_cpus_to_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_load_defaults_cpus_to_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "loadavg").write_text("1.00 1.00 1.00 1/1 1\n")
     monkeypatch.setattr("jailbee.sysstat.os.cpu_count", lambda: None)
     assert read_load(proc_root=tmp_path) == LoadStatus(load1=1.0, cpus=1)

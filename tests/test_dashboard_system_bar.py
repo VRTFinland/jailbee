@@ -52,10 +52,19 @@ def _styles_of(line: Text, needle: str) -> list[str]:
     return out
 
 
-@pytest.mark.parametrize(("value", "text"), [
-    (0.0, " 0.00"), (2.345, " 2.35"), (9.996, "10.00"), (12.34, "12.34"),
-    (99.996, "100.0"), (123.44, "123.4"), (999.96, " 1000"), (1234.4, " 1234"),
-])
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (0.0, " 0.00"),
+        (2.345, " 2.35"),
+        (9.996, "10.00"),
+        (12.34, "12.34"),
+        (99.996, "100.0"),
+        (123.44, "123.4"),
+        (999.96, " 1000"),
+        (1234.4, " 1234"),
+    ],
+)
 def test_format_load_is_five_wide(value: float, text: str) -> None:
     assert format_load(value) == text
 
@@ -118,7 +127,9 @@ def test_multiple_pools_use_names() -> None:
 
 @pytest.mark.parametrize("width", [100, 70, 50, 40, 20])
 def test_degrades_without_wrapping(width: int) -> None:
-    status = _status(pools=(PoolStatus("a", _disk()), PoolStatus("b", _disk())), load=LoadStatus(1.0, 4))
+    status = _status(
+        pools=(PoolStatus("a", _disk()), PoolStatus("b", _disk())), load=LoadStatus(1.0, 4)
+    )
     line = system_line(status, width)
     assert len(line.wrap(Console(), width)) == 1
     assert line.cell_len <= width

@@ -226,7 +226,8 @@ def _fit_bars(
     fixed = len(_GAP) * (len(items) - 1) + 2 * len(bars)  # gaps and brackets
     fixed += sum(
         (len(seg.label) + 1 if seg.label else 0) + len(_inner(seg))
-        for seg, compact in items if compact
+        for seg, compact in items
+        if compact
     )
     widths = _bar_widths([_min_bar(seg) for seg in bars], width - fixed)
     return None if widths is None else _render(items, widths)
