@@ -80,8 +80,14 @@ def test_prepare_pr_shares_fetched_head_and_base(tmp_path, mocker):
     mocker.patch("jailbee.pr.fetch_pr_head", return_value=_fetch_result())
     base = mocker.patch("jailbee.pr.fetch_base_ref", return_value=None)
     warnings = []
-    prepared = pr.prepare_pr(tmp_path, 1234, remote="origin", no_fetch=False,
-                             info=lambda message: None, warn=warnings.append)
+    prepared = pr.prepare_pr(
+        tmp_path,
+        1234,
+        remote="origin",
+        no_fetch=False,
+        info=lambda message: None,
+        warn=warnings.append,
+    )
     assert prepared.info == info
     assert prepared.commit == "newsha"
     base.assert_called_once()

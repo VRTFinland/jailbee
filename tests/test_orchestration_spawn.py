@@ -181,9 +181,13 @@ def test_pr_spawn_preserves_prepared_metadata(
     monkeypatch.setattr(actions.forking, "pin_fork_commit", pin)
     monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, int(queued)))
     captured = []
+
     def start(ctx, plan, *, fork):
-        captured.append(actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork))
+        captured.append(
+            actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork)
+        )
         return Outcome("started", "ok")
+
     monkeypatch.setattr(actions, "start_child", start)
     manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
     result = actions.handle_spawn(ctx, manifest)
@@ -201,7 +205,9 @@ def test_pr_spawn_preserves_prepared_metadata(
     pin.assert_called_once_with(ctx.cfg, "proj-real-head", "a" * 40)
 
 
-def test_pr_derived_name_is_checked_against_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pr_derived_name_is_checked_against_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from jailbee import pr
 
     prepared = pr.PreparedPr(pr.PrInfo(12, "actual", "a" * 40, "OPEN", "main"), "a" * 40)

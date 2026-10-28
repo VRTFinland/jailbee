@@ -2415,8 +2415,12 @@ def new_cmd(
 
         try:
             prepared = pr_module.prepare_pr(
-                cfg.repo_root, pr, remote=cfg.upstream_remote, no_fetch=no_fetch,
-                info=info, warn=warn,
+                cfg.repo_root,
+                pr,
+                remote=cfg.upstream_remote,
+                no_fetch=no_fetch,
+                info=info,
+                warn=warn,
             )
         except pr_module.PrError as e:
             error(str(e))

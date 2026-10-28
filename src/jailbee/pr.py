@@ -87,8 +87,10 @@ def prepare_pr(
         warn(f"PR #{number} is already MERGED. Continuing.")
     if no_fetch:
         commit = resolve_pr_head_sha(repo_root, resolved)
-        info(f"PR #{number} '{resolved.head_ref}' at {commit[:12]} "
-             "(--no-fetch: using the host's copy)")
+        info(
+            f"PR #{number} '{resolved.head_ref}' at {commit[:12]} "
+            "(--no-fetch: using the host's copy)"
+        )
     else:
         result = fetch_pr_head(repo_root, resolved, remote=remote)
         commit = result.new_sha
@@ -98,8 +100,10 @@ def prepare_pr(
             info(f"PR #{number} '{resolved.head_ref}' already at {commit[:12]}")
         base_sha = fetch_base_ref(repo_root, resolved.base_ref, remote=remote)
         if base_sha is None:
-            warn(f"Could not fetch PR base branch '{resolved.base_ref}' from origin; "
-                 "AHEAD numbers in `jailbee ls` may be inflated.")
+            warn(
+                f"Could not fetch PR base branch '{resolved.base_ref}' from origin; "
+                "AHEAD numbers in `jailbee ls` may be inflated."
+            )
         else:
             info(f"PR #{number} base '{resolved.base_ref}' at {base_sha[:12]}")
     return PreparedPr(resolved, commit)

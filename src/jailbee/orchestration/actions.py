@@ -244,8 +244,11 @@ def plan_spawn(
             return refused("PR number is required")
         try:
             prepared = pr.prepare_pr(
-                ctx.cfg.repo_root, m.pr, remote=ctx.cfg.upstream_remote,
-                info=log.info, warn=log.warning,
+                ctx.cfg.repo_root,
+                m.pr,
+                remote=ctx.cfg.upstream_remote,
+                info=log.info,
+                warn=log.warning,
             )
         except pr.PrError as exc:
             return refused(str(exc))
@@ -270,8 +273,9 @@ def plan_spawn(
         return refused("on_done destroy needs the `destroy` operation in this container's grant")
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, branch, m.base, prompt, m.rights, runner, policy,
-                     m.ref, m.pr, commit, pr_base)
+    return SpawnPlan(
+        full, m.kind, branch, m.base, prompt, m.rights, runner, policy, m.ref, m.pr, commit, pr_base
+    )
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
