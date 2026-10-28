@@ -104,8 +104,8 @@ def test_receipt_write_requires_exact_readback_before_delete(source_store, damag
 
 def test_source_progress_preflight_exact_boundary_and_maximum_url(source_store):
     from jailbee.pr_outbox import (
-        ManifestError,
         SOURCE_RECEIPT_URL_BYTES,
+        ManifestError,
         _source_progress_payload,
         preflight_source_progress,
     )
@@ -121,7 +121,9 @@ def test_source_progress_preflight_exact_boundary_and_maximum_url(source_store):
     # Escaping can only reduce available literal characters for the same budget.
     escaped_url = "\\" * ((SOURCE_RECEIPT_URL_BYTES - 2) // 2)
     assert len(json.dumps(escaped_url).encode()) == SOURCE_RECEIPT_URL_BYTES
-    assert len(_source_progress_payload(read(), "m.json", escaped_url).encode()) == len(payload.encode())
+    assert len(_source_progress_payload(read(), "m.json", escaped_url).encode()) == len(
+        payload.encode()
+    )
     with pytest.raises(ManifestError, match="URL exceeds"):
         _source_progress_payload(read(), "m.json", maximum_url + "x")
     files["m.json"] += " "

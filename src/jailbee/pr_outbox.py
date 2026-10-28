@@ -1741,17 +1741,19 @@ def _source_progress_payload(outbox: Outbox, name: str, url: str) -> str:
         f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
         f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}"
     )
-    return json.dumps({
-        "applied": list(range(len(manifest.actions))),
-        "urls": {str(i): url for i in range(len(manifest.actions))},
-        "source": {
-            "identity": [outbox.identity.full_name, outbox.identity.created_at],
-            "inputs": inputs,
-            "cleanup": sorted(_orphaned_body_files(outbox, name)),
-            "url": url,
-            "line": line,
-        },
-    })
+    return json.dumps(
+        {
+            "applied": list(range(len(manifest.actions))),
+            "urls": {str(i): url for i in range(len(manifest.actions))},
+            "source": {
+                "identity": [outbox.identity.full_name, outbox.identity.created_at],
+                "inputs": inputs,
+                "cleanup": sorted(_orphaned_body_files(outbox, name)),
+                "url": url,
+                "line": line,
+            },
+        }
+    )
 
 
 def preflight_source_progress(outbox: Outbox, name: str) -> None:
