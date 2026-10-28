@@ -668,6 +668,7 @@ def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
     incus = mocker.MagicMock()
     label_map = labels if labels is not None else {"user.jailbee.pr": "1234"}
     incus.config_get.side_effect = lambda name, key: label_map.get(key)
+    incus.config_get_checked.side_effect = incus.config_get.side_effect
     return incus
 
 
@@ -4501,9 +4502,13 @@ def test_source_null_manifest_does_not_resolve_own_pr(mocker, make_cfg, tmp_path
     from dataclasses import replace
     from jailbee.pr_outbox import resolve_target
 
-    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10"})
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)})
     manifest = replace(_null_pr_manifest(), source="topic", source_sha="a" * 40, base="main")
     assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
+    from jailbee import pr
+
+    pr.resolve_pr.assert_not_called()
 
 
 def test_source_manifest_refuses_submodule_scope(mocker, make_cfg, tmp_path):

@@ -1673,3 +1673,11 @@ def test_with_exec_timeout_bounds_exec_calls_without_their_own_timeout(incus, mo
     incus.exec("c", ["true"])
     assert run.call_args.kwargs["timeout"] is None
     assert bounded.binary == incus.binary
+
+
+def test_config_get_checked_distinguishes_missing_and_failure(incus, mocker):
+    run = _mock_run(mocker, stdout="\n")
+    assert incus.config_get_checked("c", "user.test") is None
+    run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="failed")
+    with pytest.raises(IncusError):
+        incus.config_get_checked("c", "user.test")

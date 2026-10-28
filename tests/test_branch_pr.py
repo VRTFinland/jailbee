@@ -9,7 +9,7 @@ def test_round_trip_and_drop():
 
     incus = MagicMock()
     labels = {}
-    incus.config_get.side_effect = lambda full, key: labels.get(key)
+    incus.config_get_checked.side_effect = lambda full, key: labels.get(key)
     incus.config_set.side_effect = lambda full, key, value: labels.update({key: value})
     incus.config_unset_checked.side_effect = lambda full, key: labels.pop(key, None)
     state = BranchPrMap(incus, "c")
@@ -34,7 +34,7 @@ def test_malformed_label_is_ignored(value):
     from jailbee.branch_pr import BranchPrMap
 
     incus = MagicMock()
-    incus.config_get.return_value = value
+    incus.config_get_checked.return_value = value
     assert BranchPrMap(incus, "c").read() == {}
 
 
@@ -42,8 +42,29 @@ def test_malformed_entries_are_skipped():
     from jailbee.branch_pr import BranchPrMap
 
     incus = MagicMock()
-    incus.config_get.return_value = json.dumps({
+    incus.config_get_checked.return_value = json.dumps({
         "ok": {"head": "ok", "pr": 42, "base": "main", "source": "s", "source_sha": "x"},
         "bad": {"head": "bad", "pr": True, "base": "main", "source": "s", "source_sha": "x"},
     })
     assert list(BranchPrMap(incus, "c").read()) == ["ok"]
+
+
+def test_checked_read_error_prevents_overwrite():
+    from jailbee.branch_pr import BranchPr, BranchPrMap
+    from jailbee.incus import IncusError
+
+    incus = MagicMock()
+    incus.config_get_checked.side_effect = IncusError("read failed")
+    state = BranchPrMap(incus, "c")
+    with pytest.raises(IncusError, match="read failed"):
+        state.put(BranchPr("a", 42, "main", "source", "x"))
+    incus.config_set.assert_not_called()
+
+
+def test_deeply_nested_json_is_ignored():
+    from jailbee.branch_pr import BranchPrMap
+
+    incus = MagicMock()
+    value = "[" * 100000 + "]" * 100000
+    incus.config_get_checked.return_value = value
+    assert BranchPrMap(incus, "c").read() == {}

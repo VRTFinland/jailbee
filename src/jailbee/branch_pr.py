@@ -29,10 +29,10 @@ class BranchPrMap:
         self._full = full
 
     def read(self) -> dict[str, BranchPr]:
-        raw = self._incus.config_get(self._full, BRANCH_PRS_LABEL)
+        raw = self._incus.config_get_checked(self._full, BRANCH_PRS_LABEL)
         try:
             data = json.loads(raw or "{}")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             return {}
         if not isinstance(data, dict):
             return {}
