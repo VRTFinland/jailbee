@@ -2682,6 +2682,17 @@ def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, t
     assert found.index == 0
 
 
+@pytest.mark.parametrize("pr", [None, 1234])
+def test_pending_pr_text_excludes_source_manifests(mocker, make_cfg, tmp_path, pr):
+    from jailbee.pr_outbox import Outbox
+
+    _host_repo(mocker)
+    text = _description_manifest(pr=pr, source="refs/heads/topic", source_sha="a" * 40)
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"source.json": text}))
+
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), for_pr=pr) is None
+
+
 def test_pending_pr_text_is_none_without_a_description(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import Outbox
 

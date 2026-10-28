@@ -4,6 +4,20 @@ from unittest.mock import MagicMock
 import pytest
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("refs/jailbee/from/child/feature/nested", "feature/nested"),
+        ("refs/heads/feature/nested", "feature/nested"),
+        ("refs/tags/release", "release"),
+    ],
+)
+def test_default_head_preserves_imported_branch_path(source, expected):
+    from jailbee.branch_pr import default_head
+
+    assert default_head(source) == expected
+
+
 def test_round_trip_and_drop():
     from jailbee.branch_pr import BRANCH_PRS_LABEL, BranchPr, BranchPrMap
 

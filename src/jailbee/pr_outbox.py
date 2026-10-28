@@ -1989,6 +1989,8 @@ def pending_pr_text(
         except ManifestError as e:
             warn(f"Ignoring outbox manifest {name}: {e}")
             continue
+        if is_source_manifest(manifest):
+            continue
         if manifest.repo != slug:
             if known_slugs is None:
                 # Candidate discovery walks .gitmodules, so the common path —

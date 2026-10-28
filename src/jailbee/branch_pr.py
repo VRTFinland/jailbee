@@ -12,6 +12,16 @@ if TYPE_CHECKING:
 BRANCH_PRS_LABEL = "user.jailbee.branch_prs"
 
 
+def default_head(source: str) -> str:
+    if source.startswith("refs/jailbee/from/"):
+        parts = source.split("/", 4)
+        if len(parts) == 5:
+            return parts[4]
+    if source.startswith("refs/heads/"):
+        return source.removeprefix("refs/heads/")
+    return source.rsplit("/", 1)[-1]
+
+
 @dataclass(frozen=True)
 class BranchPr:
     head: str
