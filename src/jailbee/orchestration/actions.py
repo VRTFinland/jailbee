@@ -518,6 +518,8 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             ref=plan.ref,
             pr=plan.pr,
             pr_base=plan.pr_base,
+            fork_base=fork.base_branch if fork is not None else None,
+            fork_base_pinned=fork is not None and plan.ref is not None,
         )
     )
     _store(ctx, queued)
@@ -637,7 +639,10 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
             full_name=ctx.sender.full,
             branch=req.branch,
             commit=req.commit,
-            base_branch=ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None,
+            base_branch=(
+                req.fork_base if req.fork_base_pinned
+                else ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None
+            ),
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
             pr_labels=(
                 {}
@@ -685,6 +690,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
 STARTERS: dict[str, Callable[[ActionContext, QueuedRequest], Outcome]] = {
     "fork": _start_spawn,
     "new": _start_spawn,
+    "pr": _start_spawn,
     "restart": _start_restart,
 }
 

@@ -9569,6 +9569,18 @@ def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp
             _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
 
 
+@pytest.mark.parametrize("actual", [None, "b" * 40])
+def test_fetch_sha_rejects_missing_or_mismatched_commit(mocker, make_cfg, tmp_path, actual):
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    mocker.patch("jailbee.git.rev_parse", return_value=actual)
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    sha = "a" * 40
+    with pytest.raises(sync.SyncError, match="expected commit"):
+        sync.fetch_sha_from_container(cfg, incus, "feat-foo", sha)
+    host_ref = f"refs/jailbee/feat-foo/source/commits/{sha}"
+    assert fetch.call_args.args[2] == f"+{sha}:{host_ref}"
+
+
 @pytest.mark.parametrize("actual", ["a" * 40, "b" * 40])
 def test_fetch_pinned_ref_checks_sha(mocker, make_cfg, tmp_path, actual):
     cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)

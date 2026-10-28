@@ -258,12 +258,23 @@ def test_explicit_ref_resolves_source_commit_without_dirty_check(cfg, wired, moc
     )
 
 
-def test_explicit_sha_requires_commit_in_source(cfg, wired, mocker):
+def test_explicit_full_ref_requires_commit_in_source(cfg, wired, mocker):
     from jailbee.incus import IncusError
 
     incus = _labels()
     incus.exec.side_effect = IncusError("missing")
     fetch = mocker.patch("jailbee.sync.fetch_ref_from_container")
+    with pytest.raises(forking.ForkError, match="refs/heads/missing"):
+        forking.prepare_fork(cfg, incus, "src", ref="refs/heads/missing")
+    fetch.assert_not_called()
+
+
+def test_explicit_sha_requires_commit_in_source(cfg, wired, mocker):
+    from jailbee.incus import IncusError
+
+    incus = _labels()
+    incus.exec.side_effect = IncusError("missing")
+    fetch = mocker.patch("jailbee.sync.fetch_sha_from_container")
     sha = "a" * 40
     with pytest.raises(forking.ForkError, match="resolve"):
         forking.prepare_fork(cfg, incus, "src", ref=sha)

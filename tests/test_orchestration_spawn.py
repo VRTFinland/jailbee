@@ -119,7 +119,10 @@ def test_explicit_ref_is_forwarded_to_fork_preparation(
     manifest = _m().model_copy(update={"version": 2, "ref": ref})
     assert actions.handle_spawn(ctx, manifest).state == "started"
     assert prepare.call_args.kwargs["ref"] == ref
-    assert started.call_args.kwargs["fork"].pr_labels == {}
+    fork = started.call_args.kwargs["fork"]
+    opts = actions.child_options(ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork)
+    assert opts.clone_commit == "a" * 40
+    assert opts.inherited_labels is None
 
 
 def test_queued_explicit_ref_does_not_inherit_pr_labels(
@@ -136,7 +139,7 @@ def test_queued_explicit_ref_does_not_inherit_pr_labels(
     monkeypatch.setattr(
         actions.forking,
         "prepare_fork",
-        MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "b" * 40, None, True, {})),
+        MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "b" * 40, "original", True, {})),
     )
     monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
     started = MagicMock(return_value=Outcome("started", "ok"))
@@ -147,7 +150,10 @@ def test_queued_explicit_ref_does_not_inherit_pr_labels(
     assert actions._start_spawn(ctx, req).state == "started"
     fork = started.call_args.kwargs["fork"]
     assert fork.commit == "b" * 40
-    assert fork.pr_labels == {}
+    opts = actions.child_options(ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork)
+    assert opts.inherited_labels is None
+    assert opts.clone_commit == "b" * 40
+    assert opts.base_branch_label == "original"
 
 
 def test_unresolved_ref_refuses_without_starting(
@@ -193,8 +199,11 @@ def test_pr_spawn_preserves_prepared_metadata(
     result = actions.handle_spawn(ctx, manifest)
     if queued:
         assert result.state == "queued"
-        req = load_queue(ctx.root)[ctx.sender.full][0]
-        assert actions._start_spawn(ctx, req).state == "started"
+        assert load_queue(ctx.root)[ctx.sender.full][0].kind == "pr"
+        monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 0, 0))
+        results = actions.drain_queue(ctx)
+        assert len(results) == 1 and results[0][1].state == "started"
+        assert not load_queue(ctx.root).get(ctx.sender.full)
     else:
         assert result.state == "started"
     opts = captured[0]
