@@ -166,7 +166,9 @@ class LocalOutboxRunner:
             path = Path(tmp) / "diagnostic"
             try:
                 rc = self.suspend(
-                    lambda: _run_cli_foreground(repo, list(argv), style="output", diagnostic_path=path)
+                    lambda: _run_cli_foreground(
+                        repo, list(argv), style="output", diagnostic_path=path
+                    )
                 )
             except (RouteError, OSError):
                 return None, None

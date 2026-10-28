@@ -366,10 +366,17 @@ def test_container_repo_is_the_resolved_owner(mocker, tmp_path):
 
 
 def test_local_runner_reads_foreground_diagnostic(mocker):
-    message = "non-fast-forward update of topic; run: jailbee pr push c --source-manifest a.json --force"
+    message = (
+        "non-fast-forward update of topic; run: jailbee pr push c --source-manifest a.json --force"
+    )
+
     def run(repo, argv, *, style, diagnostic_path):
         diagnostic_path.write_text(message)
         return 1
+
     mocker.patch.object(outbox_app, "_run_cli_foreground", side_effect=run)
     runner = LocalOutboxRunner(TARGET, read_only=False, suspend=lambda fn: fn())
-    assert runner.hand_off_diagnostic(["pr", "push", "alpha-x", "--source-manifest", "a.json"]) == (1, message)
+    assert runner.hand_off_diagnostic(["pr", "push", "alpha-x", "--source-manifest", "a.json"]) == (
+        1,
+        message,
+    )

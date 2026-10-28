@@ -934,7 +934,10 @@ def test_source_push_and_publish_hint():
 def test_source_handoff_diagnostic_survives_refresh():
     row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
     runner = FakeRunner(_listing(row))
-    message = "non-fast-forward update of topic; run: jailbee pr push alpha-x --source-manifest a.json --force"
+    message = (
+        "non-fast-forward update of topic; run: jailbee pr push alpha-x "
+        "--source-manifest a.json --force"
+    )
     runner.hand_off_diagnostic = lambda argv: (1, message)
     ctl = _controller(runner)
     ctl.load()
@@ -944,9 +947,12 @@ def test_source_handoff_diagnostic_survives_refresh():
 
 def test_source_handoff_missing_or_failure_gets_status():
     row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
-    for result, expected in [((None, None), "source push did not run"), ((2, None), "source push exited 2")]:
+    for result, expected in [
+        ((None, None), "source push did not run"),
+        ((2, None), "source push exited 2"),
+    ]:
         runner = FakeRunner(_listing(row))
-        runner.hand_off_diagnostic = lambda argv: result
+        runner.hand_off_diagnostic = lambda argv, result=result: result
         ctl = _controller(runner)
         ctl.load()
         ctl.intent("create-pr", _key())

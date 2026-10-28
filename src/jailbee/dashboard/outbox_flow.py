@@ -723,9 +723,16 @@ class OutboxController:
         self.state = state
         if listed.state == "awaiting-push":
             rc, diagnostic = self.runner.hand_off_diagnostic(argv)
-            status = (diagnostic,) if diagnostic and rc != 0 else (
-                ("source push did not run",) if rc is None else
-                (f"source push exited {rc}",) if rc else ()
+            status = (
+                (diagnostic,)
+                if diagnostic and rc != 0
+                else (
+                    ("source push did not run",)
+                    if rc is None
+                    else (f"source push exited {rc}",)
+                    if rc
+                    else ()
+                )
             )
             self._after_mutation(status)
         else:
