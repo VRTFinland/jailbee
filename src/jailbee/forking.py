@@ -20,6 +20,7 @@ share device), which is exactly what must not be shared.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -86,7 +87,7 @@ def inherited_pr_labels(incus: Incus, full: str) -> dict[str, str]:
     return result
 
 
-def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
+def prepare_fork(cfg: Config, incus: Incus, source: str, *, ref: str | None = None) -> ForkSource:
     """Check ``source`` can be forked and bring its HEAD commit to the host.
 
     Refuses a stopped, mount-mode or clone-less source and one with
@@ -94,13 +95,37 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
     and silently dropping work would surprise. ``git.GitError`` from the fetch
     propagates; the caller reports it.
     """
-    from jailbee import submodules, sync
+    from jailbee import git, submodules, sync
+    from jailbee.incus import IncusError
     from jailbee.lifecycle import container_repo_dir, short_name
 
     try:
         full = sync.assert_container_publishable(cfg, incus, source)
         short = short_name(cfg, full)
         repo_dir = container_repo_dir(cfg, incus, full)
+        if ref is not None:
+            is_sha = bool(re.fullmatch(r"[0-9a-fA-F]{40}", ref))
+            if not is_sha and (not ref.startswith("refs/") or not git.check_ref_format(ref)):
+                raise ForkError(f"Invalid source ref: {ref}")
+            try:
+                commit = incus.exec(
+                    full, ["git", "-C", repo_dir, "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                    uid=cfg.container_user.uid,
+                ).strip()
+            except IncusError as e:
+                raise ForkError(f"Cannot resolve source ref '{ref}' to a commit") from e
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+                raise ForkError(f"Cannot resolve source ref '{ref}' to a commit")
+            if is_sha:
+                sync.fetch_sha_from_container(cfg, incus, short, commit)
+            else:
+                sync.fetch_ref_from_container(cfg, incus, short, ref, commit)
+            submodules.transport_submodules_to_host_at_commit(
+                cfg, incus, full, short, repo_dir=repo_dir, commit=commit
+            )
+            branch = sync._resolve_branch(incus, full, repo_dir, None, uid=cfg.container_user.uid)
+            base = incus.config_get(full, "user.jailbee.base_branch") or None
+            return ForkSource(full, branch or "HEAD", commit, base, True, {})
         if sync._container_status_dirty(incus, full, repo_dir, uid=cfg.container_user.uid):
             raise ForkError(
                 f"uncommitted changes in '{short}': a fork carries commits only. "

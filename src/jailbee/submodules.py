@@ -17,6 +17,7 @@ chooses loud failure over silent drift.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -1724,6 +1725,46 @@ def _repoint_cloned_subrepo(
         f"origin was removed. Set one with: "
         f"git -C {subpath} remote add origin <url>"
     )
+
+
+def transport_submodules_to_host_at_commit(
+    cfg: Config, incus: Incus, container: str, short: str, *, repo_dir: str, commit: str
+) -> None:
+    """Fetch each gitlink from the selected tree, including nested gitlinks."""
+    def walk(parent: HostSubRepo, at: str) -> None:
+        root = str(parent.root)
+        for name, raw_path in _gitmodules_paths_at(git.run_capture, root, at, strict=True):
+            leaf = _normalize_declared_path(raw_path)
+            sha = _gitlink_at(git.run_capture, root, at, leaf, strict=True)
+            if sha is None:
+                continue
+            path = posixpath.join(parent.path, leaf) if parent.path else leaf
+            # ext:: parses whitespace and percent escapes as transport syntax.
+            if not re.fullmatch(r"[A-Za-z0-9._/-]+", path) or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", sha
+            ):
+                raise SubmoduleError(f"Unsafe submodule path or gitlink: {path}")
+            url = _sub_upload_pack_url(cfg, container, repo_dir, path)
+            sub = locate_host_subrepo(parent, leaf, name)
+            if sub is None:
+                target = _safe_subrepo_target(parent, leaf, name)
+                git.init_subrepo_gitdir(target, url)
+                sub = HostSubRepo(path=path, gitdir=target, worktree=None)
+                declared = _gitmodules_url_at(git.run_capture, root, at, name)
+                if declared and not declared.startswith(("ext::", "./", "../")):
+                    git.set_origin_url(sub.root, declared)
+                else:
+                    git.remove_origin(sub.root)
+            pin = f"refs/jailbee-sub/{short}/{path}/commits/{sha}"
+            if not git.check_ref_format(pin):
+                raise SubmoduleError(f"Invalid submodule pin: {pin}")
+            git.fetch_url(sub.root, url, f"+{sha}:{pin}", tags="none")
+            actual = git.rev_parse(sub.root, f"{pin}^{{commit}}")
+            if actual is None or actual.lower() != sha.lower():
+                raise SubmoduleError(f"Submodule '{path}' commit {sha} could not be fetched")
+            walk(sub, sha)
+
+    walk(superproject_subrepo(Path(cfg.repo_root)), commit)
 
 
 def transport_submodules_to_host(

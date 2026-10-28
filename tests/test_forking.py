@@ -225,3 +225,70 @@ def test_pin_fork_commit_failure_is_a_git_error(cfg, mocker):
 def test_fork_does_not_inherit_branch_pr_bindings():
     labels = forking.inherited_pr_labels(_labels(branch_prs='{"a": {"pr": 42}}'), "src")
     assert "user.jailbee.branch_prs" not in labels
+
+
+@pytest.mark.parametrize("ref", ["../x", "HEAD~1", "abc123"])
+def test_explicit_ref_rejects_invalid_input_before_fetch(cfg, wired, mocker, ref):
+    fetch = mocker.patch("jailbee.sync.fetch_ref_from_container")
+    with pytest.raises(forking.ForkError, match="Invalid"):
+        forking.prepare_fork(cfg, _labels(), "src", ref=ref)
+    fetch.assert_not_called()
+
+
+def test_explicit_ref_resolves_source_commit_without_dirty_check(cfg, wired, mocker):
+    sha = "a" * 40
+    dirty, fetch = wired
+    dirty.return_value = True
+    incus = _labels(pr="42", base_branch="main")
+    incus.exec.return_value = sha + "\n"
+    pinned = mocker.patch("jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/src/source/heads/topic")
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host_at_commit", create=True)
+    result = forking.prepare_fork(cfg, incus, "src", ref="refs/heads/topic")
+    assert result.commit == sha
+    assert result.untrusted and result.pr_labels == {}
+    dirty.assert_not_called()
+    fetch.assert_not_called()
+    pinned.assert_called_once_with(cfg, incus, "src", "refs/heads/topic", sha)
+    transport.assert_called_once_with(cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo", commit=sha)
+
+
+def test_explicit_sha_requires_commit_in_source(cfg, wired, mocker):
+    from jailbee.incus import IncusError
+
+    incus = _labels()
+    incus.exec.side_effect = IncusError("missing")
+    fetch = mocker.patch("jailbee.sync.fetch_ref_from_container")
+    sha = "a" * 40
+    with pytest.raises(forking.ForkError, match="resolve"):
+        forking.prepare_fork(cfg, incus, "src", ref=sha)
+    fetch.assert_not_called()
+
+
+def test_explicit_sha_fetches_verified_commit(cfg, wired, mocker):
+    sha = "b" * 40
+    incus = _labels(branch="main")
+    incus.exec.return_value = sha
+    fetch = mocker.patch("jailbee.sync.fetch_sha_from_container")
+    mocker.patch("jailbee.submodules.transport_submodules_to_host_at_commit")
+    result = forking.prepare_fork(cfg, incus, "src", ref=sha)
+    assert result.commit == sha
+    assert any("^{commit}" in arg for call in incus.exec.call_args_list for arg in call.args[1])
+    fetch.assert_called_once_with(cfg, incus, "src", sha)
+
+
+def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
+    from jailbee import submodules
+
+    sha = "a" * 40
+    child_sha = "b" * 40
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=[[('lib', 'lib')], []])
+    mocker.patch("jailbee.submodules._gitlink_at", return_value=child_sha)
+    sub = submodules.HostSubRepo("lib", cfg.repo_root / "lib.git", None)
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=sub)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    mocker.patch("jailbee.git.rev_parse", return_value=child_sha)
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, MagicMock(), "myrepo-src", "src", repo_dir="/repo", commit=sha
+    )
+    assert fetch.call_args.args[2] == f"+{child_sha}:refs/jailbee-sub/src/lib/commits/{child_sha}"

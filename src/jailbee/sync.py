@@ -1365,11 +1365,26 @@ def fetch_ref_from_container(
     full_name = assert_container_publishable(cfg, incus, short)
     url = _build_ext_url(cfg, incus, full_name)
     git.fetch_url(cfg.repo_root, url, f"+{ref}:{host_ref}", tags="none")
-    actual = git.rev_parse(cfg.repo_root, host_ref)
+    actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if actual is None:
         raise SyncError(f"fetch succeeded but {host_ref} did not resolve")
     if actual.lower() != expected_sha.lower():
         raise SyncError(f"{ref} is at {actual[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest")
+    return host_ref
+
+
+def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) -> str:
+    """Fetch a verified commit object into a source-specific host ref."""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise SyncError("Invalid source SHA: expected a full 40-character hexadecimal SHA")
+    host_ref = f"refs/jailbee/{short}/source/commits/{sha.lower()}"
+    if not git.check_ref_format(host_ref):
+        raise SyncError(f"Invalid host ref: {host_ref}")
+    full = assert_container_publishable(cfg, incus, short)
+    git.fetch_url(cfg.repo_root, _build_ext_url(cfg, incus, full), f"+{sha}:{host_ref}", tags="none")
+    actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
+    if actual is None or actual.lower() != sha.lower():
+        raise SyncError(f"Fetched source SHA {sha} does not resolve to the expected commit")
     return host_ref
 
 
