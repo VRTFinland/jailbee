@@ -12787,10 +12787,22 @@ def orchestrate_grant_cmd(
         bool,
         typer.Option("--clear-egress", help="Remove every egress host children may be allowed."),
     ] = False,
-    runner_agent: Annotated[str | None, typer.Option("--runner-agent")] = None,
-    runner_profile: Annotated[str | None, typer.Option("--runner-profile")] = None,
-    runner_model: Annotated[str | None, typer.Option("--runner-model")] = None,
-    clear_runner: Annotated[bool, typer.Option("--clear-runner")] = False,
+    runner_agent: Annotated[
+        str | None,
+        typer.Option("--runner-agent", help="Default agent to run in spawned children."),
+    ] = None,
+    runner_profile: Annotated[
+        str | None,
+        typer.Option("--runner-profile", help="LiteLLM profile for the default runner."),
+    ] = None,
+    runner_model: Annotated[
+        str | None,
+        typer.Option("--runner-model", help="Model tier for the default runner."),
+    ] = None,
+    clear_runner: Annotated[
+        bool,
+        typer.Option("--clear-runner", help="Clear the default runner for spawned children."),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Grant a container the right to start and manage child containers.

@@ -292,12 +292,16 @@ def test_build_specs_covers_every_config_leaf():
     adds one more: 108 + 1 = 109. `container.tmpfs` (`enabled`, `size`) adds two:
     109 + 2 = 111. The host-level `orchestration` block (`profiles`,
     `default_profile`) brings the global model to 54 leaves.
-    `remote.ssh.orchestration` makes 55.
+    `remote.ssh.orchestration` makes 55. The host and repo
+    `orchestration.default_runner` submodel adds its `agent`, `profile`, and
+    `model` leaves to GlobalConfig, bringing it to 58; these are editable
+    individually at each layer, with save-time validation enforcing Runner's
+    cross-field constraints.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 112
-    assert len(build_specs(GlobalConfig)) == 55
+    assert len(build_specs(GlobalConfig)) == 58
 
 
 def test_a_default_factory_field_reports_its_real_default():
@@ -838,3 +842,18 @@ def test_orchestration_trees_per_layer():
     assert any(p[:2] == ("orchestration", "profiles") for p in glob)
     assert any(p[:2] == ("orchestration", "profiles") for p in local)
     assert ("orchestration", "allowed") not in local
+
+
+def test_runner_config_is_editable_as_fields_in_each_layer():
+    from jailbee.config_edit.schema import FieldKind, global_specs, local_specs, repo_specs
+
+    expected = {
+        ("orchestration", "default_runner", "agent"): FieldKind.CHOICE,
+        ("orchestration", "default_runner", "profile"): FieldKind.STR,
+        ("orchestration", "default_runner", "model"): FieldKind.CHOICE,
+    }
+    for specs in (repo_specs(), global_specs(), local_specs()):
+        by_path = {spec.path: spec for spec in specs}
+        for path, kind in expected.items():
+            assert by_path[path].kind is kind
+            assert by_path[path].optional is (path[-1] != "agent")

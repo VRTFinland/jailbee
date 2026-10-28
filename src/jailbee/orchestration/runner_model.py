@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from jailbee.profile_names import PROFILE_NAME_RE
 
@@ -19,9 +19,15 @@ RUNNER_TIERS = ("fable", "opus", "sonnet", "haiku")
 class Runner(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    agent: Literal["claude", "claude-jb"]
-    profile: str | None = None
-    model: Literal["fable", "opus", "sonnet", "haiku"] | None = None
+    agent: Literal["claude", "claude-jb"] = Field(description="Agent to run in spawned children.")
+    profile: str | None = Field(
+        default=None,
+        description="LiteLLM profile for the `claude-jb` agent.",
+    )
+    model: Literal["fable", "opus", "sonnet", "haiku"] | None = Field(
+        default=None,
+        description="Model tier requested for the runner.",
+    )
 
     @field_validator("profile")
     @classmethod

@@ -605,6 +605,20 @@ def test_a_bad_container_prefix_in_the_global_layer_is_still_caught(tmp_path, mo
     assert "container_prefix" in error
 
 
+def test_validate_global_runner_fields_enforces_runner_constraints(tmp_path):
+    """The flattened editor fields still validate as one nested Runner."""
+    global_path = _write(
+        tmp_path / "global.yaml",
+        "orchestration:\n  default_runner:\n    agent: claude\n    profile: custom\n",
+    )
+    got = layers.read_layers(tmp_path / "repo" / "config.yaml", global_path)
+
+    error = layers.validate(got, "global", [YamlChange(("defaults", "cpu"), 8)])
+
+    assert error is not None
+    assert "profile is only valid with agent 'claude-jb'" in error
+
+
 def test_validate_still_catches_a_cross_layer_collision(tmp_path, monkeypatch, mocker):
     """The repo half of the check is what the cross-layer rules live in.
 
