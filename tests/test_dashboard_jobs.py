@@ -47,6 +47,50 @@ def test_snapshot_job_captures_stdout_only_when_requested(tmp_path: Path) -> Non
     assert results[0].stdout == "snapshot\n"
 
 
+def test_job_runner_delivers_progress_and_strips_it(tmp_path: Path) -> None:
+    import threading
+
+    events = []
+    runner = JobRunner()
+    code = (
+        "import os,sys; assert os.environ['JAILBEE_PROGRESS_LINES'] == '1'; "
+        "sys.stderr.write('jailbee-progress: 1/2\\nreal warning\\n"
+        "prefix jailbee-progress: 9/9\\njailbee-progress: 2/2\\n'); sys.stderr.flush()"
+    )
+    runner.start(
+        "k", "publish", _py(code), tmp_path,
+        lambda result: events.append(("done", result)),
+        on_progress=lambda n, total: events.append(("progress", n, total, threading.current_thread())),
+    )
+    _drain(runner)
+    assert events[-2] == ("progress", 2, 2, threading.current_thread())
+    result = events[-1][1]
+    assert result.returncode == 0
+    assert result.stderr.strip() == "real warning\nprefix jailbee-progress: 9/9"
+
+
+def test_job_runner_progress_does_not_deadlock_on_stdout(tmp_path: Path) -> None:
+    results = []
+    runner = JobRunner()
+    code = "import sys; sys.stdout.write('x' * (1 << 20)); sys.stderr.write('jailbee-progress: 1/1\\n')"
+    runner.start(
+        "k", "publish", _py(code), tmp_path, results.append,
+        capture_stdout=True, on_progress=lambda n, total: None,
+    )
+    _drain(runner)
+    assert results and len(results[0].stdout) == 1 << 20
+
+
+def test_job_runner_without_progress_leaves_env_alone(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_PROGRESS_LINES", raising=False)
+    results = []
+    runner = JobRunner()
+    code = "import os,sys; sys.exit(3 if 'JAILBEE_PROGRESS_LINES' in os.environ else 0)"
+    runner.start("k", "publish", _py(code), tmp_path, results.append)
+    _drain(runner)
+    assert results[0].returncode == 0
+
+
 def test_failure_keeps_stderr_and_failure_line(tmp_path: Path) -> None:
     results: list[JobResult] = []
     runner = JobRunner()

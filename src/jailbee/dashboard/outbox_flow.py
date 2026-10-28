@@ -80,7 +80,8 @@ class OutboxRunner(Protocol):
         ...
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None: ...
 
     def hand_off(self, argv: Sequence[str]) -> int | None: ...
@@ -234,6 +235,7 @@ class OutboxController:
         self.standalone = standalone
         self.on_change = on_change
         self.state = dob.OutboxState(title, (), prefix=prefix, scope_name=container)
+        self._publish_token: object | None = None
         # The keys asked about and the listing the question showed them from.
         self._pending_delete: (
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]] | None
@@ -323,11 +325,12 @@ class OutboxController:
         self.runner.changed()
 
     def _start(
-        self, busy: str, key: str, label: str, argv: list[str], done: Callable[[JobResult], None]
+        self, busy: str, key: str, label: str, argv: list[str], done: Callable[[JobResult], None],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         self.state = replace(self.state, busy=busy, question=None, status=())
         try:
-            self.runner.start(key, label, argv, done)
+            self.runner.start(key, label, argv, done, on_progress=on_progress)
         except (OSError, ValueError) as exc:
             self._set(replace(self.state, busy=None, status=(str(exc),)))
             return
@@ -677,12 +680,26 @@ class OutboxController:
             name, pid, revision, yes=True, draft=value == "draft", foreign=foreign == "foreign"
         )
 
+        token = object()
+        self._publish_token = token
+        current_busy = "publishing…"
+
+        def progress(n: int, total: int) -> None:
+            nonlocal current_busy
+            if self._publish_token is not token or self.state.busy != current_busy:
+                return
+            current_busy = f"publishing {_safe(pid)} {n}/{total}…"
+            self._set(replace(self.state, busy=current_busy))
+
         def done(result: JobResult) -> None:
+            if self._publish_token is token:
+                self._publish_token = None
             self.state = replace(self.state, busy=None)
             self._after_mutation(_lines(result.stdout, result.stderr) or ("published",))
 
         self._start(
-            "publishing…", f"outbox-apply:{name}:{pid}", f"publishing {_safe(pid)}…", argv, done
+            current_busy, f"outbox-apply:{name}:{pid}", f"publishing {_safe(pid)}…", argv, done,
+            on_progress=progress,
         )
 
     # -- create PR ----------------------------------------------------------

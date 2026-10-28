@@ -87,6 +87,7 @@ class FakeRunner:
         self.allow = allow
         self.calls: list[tuple[str, list[str]]] = []
         self.jobs: list[tuple[str, list[str], Callable[[JobResult], None]]] = []
+        self.progress: list[Callable[[int, int], None] | None] = []
         self.drop_results: list[CliResult] = []
         self.start_error: Exception | None = None
         self.changes = 0
@@ -121,12 +122,14 @@ class FakeRunner:
             deliver()
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
+        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         if self.start_error is not None:
             raise self.start_error
         self.calls.append(("start", list(argv)))
         self.jobs.append((key, list(argv), on_done))
+        self.progress.append(on_progress)
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
         self.calls.append(("hand_off", list(argv)))
@@ -458,6 +461,29 @@ def test_publish_passes_foreign_only_when_plan_says_so():
         assert ctl.state.status == ("published 2 actions",)
         assert all("--force" not in argv for _, argv in runner.calls)
         assert runner.changes == 1
+
+
+def test_publish_busy_shows_progress():
+    runner, ctl = _publishing(_plan())
+    ctl.intent("answer", None, "publish")
+    progress = runner.progress[-1]
+    assert progress is not None
+    progress(2, 5)
+    assert ctl.state.busy == "publishing pr/a.json 2/5…"
+    assert ctl.seen[-1].busy == ctl.state.busy
+    runner.finish(JobResult(0, "", "published"))
+    assert ctl.state.busy is None
+    progress(5, 5)
+    assert ctl.state.busy is None
+    ctl.state = replace(ctl.state, busy="publishing…")
+    progress(5, 5)
+    assert ctl.state.busy == "publishing…"
+
+
+def test_publish_without_progress_keeps_plain_busy():
+    _, ctl = _publishing(_plan())
+    ctl.intent("answer", None, "publish")
+    assert ctl.state.busy == "publishing…"
 
 
 def test_publish_cancel_publishes_nothing():
