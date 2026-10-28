@@ -67,8 +67,18 @@ def test_job_runner_delivers_progress_and_strips_it(tmp_path: Path) -> None:
             ("progress", n, total, threading.current_thread())
         ),
     )
-    _drain(runner)
-    assert events[-2] == ("progress", 2, 2, threading.current_thread())
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with runner._lock:
+            finished = bool(runner._finished)
+        if finished:
+            break
+        time.sleep(0.01)
+    assert finished
+    assert events == []
+    runner.poll()
+    assert len(events) == 2
+    assert events[0] == ("progress", 2, 2, threading.current_thread())
     result = events[-1][1]
     assert result.returncode == 0
     assert result.stderr.strip() == "real warning\nprefix jailbee-progress: 9/9"

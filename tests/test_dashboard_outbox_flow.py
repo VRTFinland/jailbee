@@ -472,16 +472,19 @@ def test_publish_busy_shows_progress():
     ctl.intent("answer", None, "publish")
     progress = runner.progress[-1]
     assert progress is not None
-    progress(2, 5)
-    assert ctl.state.busy == "publishing pr/a.json 2/5…"
-    assert ctl.seen[-1].busy == ctl.state.busy
     runner.finish(JobResult(0, "", "published"))
     assert ctl.state.busy is None
-    progress(5, 5)
-    assert ctl.state.busy is None
-    ctl.state = replace(ctl.state, busy="publishing…")
+    ctl.intent("publish", _key())
+    runner.finish(JobResult(0, "", _plan()))
+    ctl.intent("answer", None, "publish")
+    assert ctl.state.busy == "publishing…"
     progress(5, 5)
     assert ctl.state.busy == "publishing…"
+    new_progress = runner.progress[-1]
+    assert new_progress is not None
+    new_progress(2, 5)
+    assert ctl.state.busy == "publishing pr/a.json 2/5…"
+    assert ctl.seen[-1].busy == ctl.state.busy
 
 
 def test_publish_without_progress_keeps_plain_busy():

@@ -71,10 +71,23 @@ def reporting(
         def fileno(self) -> int:
             return self.proxy.fileno()
 
+    original_stdout = sys.stdout
+    progress_file = console.file
+    same_terminal = original_stdout is progress_file
+    if not same_terminal:
+        try:
+            same_terminal = (
+                original_stdout.isatty()
+                and progress_file.isatty()
+                and os.ttyname(original_stdout.fileno()) == os.ttyname(progress_file.fileno())
+            )
+        except (OSError, ValueError):
+            pass
+
     with console.status(f"Publishing 0/{total}…") as status:
         stdout, stderr = sys.stdout, sys.stderr
         if isinstance(stdout, FileProxy):
-            sys.stdout = ConsoleProxy(stdout)
+            sys.stdout = ConsoleProxy(stdout) if same_terminal else original_stdout
         if isinstance(stderr, FileProxy):
             sys.stderr = ConsoleProxy(stderr)
         try:

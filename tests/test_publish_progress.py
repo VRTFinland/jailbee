@@ -1,4 +1,6 @@
 import io
+import os
+import select
 import sys
 
 import pytest
@@ -71,6 +73,48 @@ def test_reporting_preserves_other_console_and_plain_receipts(monkeypatch):
     assert "receipt two" in text
     assert "Publishing 1/2…receipt one" not in text
     assert not console._live_stack
+
+
+def test_reporting_keeps_same_terminal_receipts_clear(monkeypatch):
+    master, slave = os.openpty()
+    try:
+        with os.fdopen(os.dup(slave), "w") as stdout, os.fdopen(os.dup(slave), "w") as stderr:
+            monkeypatch.setattr(sys, "stdout", stdout)
+            monkeypatch.setattr(sys, "stderr", stderr)
+            console = Console(file=stderr, force_terminal=True, width=80)
+            other = Console(force_terminal=True, width=80)
+            with reporting(1, env={}, console=console) as tick:
+                tick()
+                other.print("console receipt")
+                print("plain receipt")
+            output = b""
+            while select.select([master], [], [], 0.05)[0]:
+                output += os.read(master, 65536)
+            assert b"console receipt" in output
+            assert b"plain receipt" in output
+            assert b"Publishing 1/1\xe2\x80\xa6console receipt" not in output
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def test_reporting_keeps_redirected_stdout_on_error(monkeypatch):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    console = Console(file=stderr, force_terminal=True, width=80)
+    other = Console(force_terminal=True, width=80)
+    with pytest.raises(RuntimeError), reporting(1, env={}, console=console) as tick:
+        tick()
+        other.print("console receipt")
+        print("plain receipt")
+        raise RuntimeError("failed")
+    assert sys.stdout is stdout
+    assert sys.stderr is stderr
+    assert "console receipt" in stdout.getvalue()
+    assert "plain receipt" in stdout.getvalue()
+    assert "receipt" not in stderr.getvalue()
 
 
 def test_reporting_stops_status_on_exception():
