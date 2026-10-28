@@ -2094,3 +2094,12 @@ def test_remote_branch_sha_strict_distinguishes_failure(mocker, tmp_path, return
             git.remote_branch_sha_strict(tmp_path, "origin", "topic")
     else:
         assert git.remote_branch_sha_strict(tmp_path, "origin", "topic") is None
+
+
+@pytest.mark.parametrize("status,expected", [(0, True), (1, False)])
+def test_commit_object_exists_verifies_actual_commit(mocker, tmp_path, status, expected):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=status))
+    assert git.commit_object_exists(tmp_path, "b" * 40) is expected
+    assert run.call_args.args[0] == ["git", "cat-file", "-e", "b" * 40 + "^{commit}"]

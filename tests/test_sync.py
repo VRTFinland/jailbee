@@ -9618,6 +9618,7 @@ def test_pinned_ref_fast_forward_checks_remote_ancestry(mocker, make_cfg, tmp_pa
     cfg = make_cfg(tmp_path)
     mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
     mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
+    mocker.patch("jailbee.git.commit_object_exists", return_value=True)
     ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=relation)
     ref = "refs/jailbee/feat/source/heads/topic"
     if relation is None:
@@ -9665,12 +9666,14 @@ def test_pinned_push_stops_on_remote_lookup_failure(mocker, make_cfg, tmp_path):
 
 def test_fast_forward_fetches_missing_remote_object(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    mocker.patch("jailbee.git.rev_parse", side_effect=["a" * 40, None, "b" * 40])
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    exists = mocker.patch("jailbee.git.commit_object_exists", side_effect=[False, True], create=True)
     mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
     fetch = mocker.patch("jailbee.git.fetch_remote_ref")
     ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=True)
     assert sync.is_fast_forward(cfg, "refs/jailbee/feat/source/heads/topic", "topic") is True
     fetch.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, "refs/heads/topic")
+    assert exists.call_count == 2
     ancestor.assert_called_once_with(cfg.repo_root, "b" * 40, "a" * 40)
 
 

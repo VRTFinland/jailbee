@@ -1421,9 +1421,9 @@ def is_fast_forward(cfg: Config, host_ref: str, head: str) -> bool | None:
         remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
         if remote_sha is None:
             return None
-        if git.rev_parse(cfg.repo_root, remote_sha) is None:
+        if not git.commit_object_exists(cfg.repo_root, remote_sha):
             git.fetch_remote_ref(cfg.repo_root, cfg.upstream_remote, f"refs/heads/{head}")
-            if git.rev_parse(cfg.repo_root, remote_sha) is None:
+            if not git.commit_object_exists(cfg.repo_root, remote_sha):
                 raise SyncError(f"Remote head {remote_sha} is unavailable after fetching '{head}'")
     except (git.GitError, git.GitFetchError) as exc:
         raise SyncError(f"Cannot inspect remote head '{head}': {exc}") from exc

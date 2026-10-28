@@ -919,6 +919,18 @@ def rev_parse(repo_root: Path, ref: str) -> str | None:
     return oid or None
 
 
+def commit_object_exists(repo_root: Path, sha: str) -> bool:
+    """Verify that the object exists locally and resolves to a commit."""
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=repo_root, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
 def is_ancestor(repo_root: Path, old: str, new: str) -> bool | None:
     """Return whether `old` is an ancestor of `new`, or None on git failure.
 
