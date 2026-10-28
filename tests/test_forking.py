@@ -220,3 +220,8 @@ def test_pin_fork_commit_failure_is_a_git_error(cfg, mocker):
     mocker.patch("jailbee.git.update_ref", return_value=False)
     with pytest.raises(GitError, match="refs/jailbee/b/HEAD"):
         forking.pin_fork_commit(cfg, "myrepo-b", "abc123")
+
+
+def test_fork_does_not_inherit_branch_pr_bindings():
+    labels = forking.inherited_pr_labels(_labels(branch_prs='{"a": {"pr": 42}}'), "src")
+    assert "user.jailbee.branch_prs" not in labels

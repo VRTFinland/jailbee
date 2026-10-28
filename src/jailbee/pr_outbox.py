@@ -633,6 +633,7 @@ def resolve_target(
        actions don't depend on `head_sha`.
     """
     # Imported lazily because pr_flow also consumes this module.
+    from jailbee.branch_pr import BranchPrMap
     from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX, candidate_scopes
     from jailbee.submodule_pr import SubmodulePrState, recorded_paths
 
@@ -660,6 +661,12 @@ def resolve_target(
             f"(known GitHub repos: {known})"
         )
 
+    if is_source_manifest(manifest):
+        if scope.subpath is not None:
+            raise ManifestError("source manifests are not supported for submodules")
+        if manifest.pr is None:
+            return Target(manifest=manifest, pr=None, stale=False, scope=scope)
+
     owned_numbers: set[int] = set()
     for matched in matches:
         scope_numbers: set[int] = set()
@@ -674,6 +681,8 @@ def resolve_target(
                         pass  # a non-numeric label is not an owned PR
             if not scope_numbers and manifest.pr is not None:
                 branch = incus.config_get(container, "user.jailbee.branch")
+            if manifest.pr is not None:
+                owned_numbers.update(BranchPrMap(incus, container).numbers())
         else:
             record = SubmodulePrState(incus, container, matched.subpath).read()
             if record.number is not None:

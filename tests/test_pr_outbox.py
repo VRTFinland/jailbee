@@ -4478,3 +4478,38 @@ def test_plan_json_applied_review_is_already_published_in_a_draft(mocker, make_c
         ("already_published", "already_published"),
         ("publish", "draft"),
     ]
+
+
+def test_branch_binding_owns_numbered_manifest(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Manifest, resolve_target
+
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(42))
+    target = resolve_target(make_cfg(tmp_path), incus, "c", Manifest("m", "acme/widgets", 42, None), force=False)
+    assert target.pr.number == 42 and not target.foreign
+
+
+def test_branch_binding_does_not_change_legacy_null_resolution(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import resolve_target
+
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(10))
+    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr.number == 10
+
+
+def test_source_null_manifest_does_not_resolve_own_pr(mocker, make_cfg, tmp_path):
+    from dataclasses import replace
+    from jailbee.pr_outbox import resolve_target
+
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10"})
+    manifest = replace(_null_pr_manifest(), source="topic", source_sha="a" * 40, base="main")
+    assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
+
+
+def test_source_manifest_refuses_submodule_scope(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Manifest, ManifestError, resolve_target
+
+    cfg, incus, _, _ = _submodule_gate_setup(mocker, make_cfg, tmp_path)
+    manifest = Manifest("m", "acme/library", None, None, source="topic")
+    with pytest.raises(ManifestError, match="source manifests are not supported for submodules"):
+        resolve_target(cfg, incus, "c", manifest, force=False)
