@@ -262,8 +262,10 @@ def _build_view(
                 parse_files = files | source["inputs"]
             raw = parse_files.get(name, raw)
             manifest = prs.parse_manifest(name, raw, parse_files)
-            actions = _pr_actions(manifest, recorded_pr)
-            if manifest.pr is None and recorded_pr is None:
+            actions = _pr_actions(manifest, None if manifest.source else recorded_pr)
+            if manifest.source is not None:
+                state = "awaiting-push"
+            elif manifest.pr is None and recorded_pr is None:
                 state = "awaiting-pr"
         else:
             issue = issues.parse_manifest(name, raw, files)
@@ -475,7 +477,7 @@ def _proposal_json(
 def _container_json(container: ContainerView) -> dict[str, object]:
     counts = {
         state: sum(p.state == state for p in container.proposals)
-        for state in ("pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr")
+        for state in ("pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr", "awaiting-push")
     }
     return {
         "name": container.name,

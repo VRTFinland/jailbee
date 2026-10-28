@@ -8,7 +8,7 @@ from typing import Literal
 from jailbee.outbox_io import ContainerIdentity
 
 Kind = Literal["pr", "issue"]
-State = Literal["pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr"]
+State = Literal["pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr", "awaiting-push"]
 
 
 class OutboxError(ValueError):

@@ -911,3 +911,16 @@ def test_load_later_withdraws_an_open_question():
     assert ctl.state.question is None
     runner.finish_loads()
     assert ctl.state.status[0] == "outbox refreshed; ask again"
+
+
+def test_source_push_and_publish_hint():
+    row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"}, actions=[])
+    runner = FakeRunner(_listing(row))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("publish", _key())
+    assert ctl.state.status == ("pr/a.json: use c to push this source and open/update its PR",)
+    assert runner.jobs == []
+    assert not [c for c in runner.calls if c[0] == "hand_off"]
+    ctl.intent("create-pr", _key())
+    assert ("hand_off", ["pr", "push", C, "--source-manifest", "a.json"]) in runner.calls

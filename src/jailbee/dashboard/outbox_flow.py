@@ -582,6 +582,9 @@ class OutboxController:
             return
         container, proposal = found
         pid = _safe(proposal.id)
+        if proposal.state == "awaiting-push":
+            self._status(f"{pid}: use c to push this source and open/update its PR")
+            return
         if proposal.state == "awaiting-pr":
             self._status(f"{pid} awaits its PR: press c to create it")
             return
