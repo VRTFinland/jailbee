@@ -5,8 +5,8 @@ from rich.console import Console
 from rich.text import Text
 
 from jailbee.dashboard.system import PoolStatus, SystemStatus
-from jailbee.dashboard.system_bar import system_line
-from jailbee.sysstat import DiskStatus, MemoryStatus
+from jailbee.dashboard.system_bar import format_load, system_line
+from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 
 GIB = 1024**3
 
@@ -33,11 +33,13 @@ def _status(
     memory: MemoryStatus | None = None,
     pools: tuple[PoolStatus, ...] | None = None,
     root: DiskStatus | None = None,
+    load: LoadStatus | None = None,
 ) -> SystemStatus:
     return SystemStatus(
         memory=memory if memory is not None else _mem(),
         pools=pools if pools is not None else (PoolStatus("default", _disk()),),
         root=root if root is not None else _disk(),
+        load=load,
     )
 
 
@@ -48,6 +50,36 @@ def _styles_of(line: Text, needle: str) -> list[str]:
         if span.start <= start < span.end:
             out.append(str(span.style))
     return out
+
+
+@pytest.mark.parametrize(("value", "text"), [
+    (0.0, " 0.00"), (2.345, " 2.35"), (9.996, "10.00"), (12.34, "12.34"),
+    (99.996, "100.0"), (123.44, "123.4"), (999.96, " 1000"), (1234.4, " 1234"),
+])
+def test_format_load_is_five_wide(value: float, text: str) -> None:
+    assert format_load(value) == text
+
+
+def test_load_sits_after_swap_before_pools() -> None:
+    status = _status(memory=_mem(swap_total=100, swap_free=50), load=LoadStatus(1.5, 8))
+    plain = system_line(status, 160).plain
+    assert plain.index("Swap") < plain.index(" 1.50") < plain.index("Pool")
+    assert "Load" not in plain
+
+
+def test_load_alone_has_no_padding() -> None:
+    status = SystemStatus(memory=None, pools=(), root=None, load=LoadStatus(0.5, 4))
+    assert system_line(status, 80).plain == " 0.50"
+
+
+def test_no_load_segment_when_unread() -> None:
+    assert system_line(_status(), 120).plain == system_line(_status(load=None), 120).plain
+
+
+@pytest.mark.parametrize(("load1", "style"), [(2.0, ""), (2.8, "bold yellow"), (4.0, "bold red")])
+def test_load_colour_follows_per_cpu_level(load1: float, style: str) -> None:
+    line = system_line(_status(load=LoadStatus(load1, 4)), 160)
+    assert _styles_of(line, format_load(load1)) == ([style] if style else [])
 
 
 def test_line_has_all_segments_at_wide_width() -> None:
@@ -86,17 +118,18 @@ def test_multiple_pools_use_names() -> None:
 
 @pytest.mark.parametrize("width", [100, 70, 50, 40, 20])
 def test_degrades_without_wrapping(width: int) -> None:
-    status = _status(pools=(PoolStatus("a", _disk()), PoolStatus("b", _disk())))
+    status = _status(pools=(PoolStatus("a", _disk()), PoolStatus("b", _disk())), load=LoadStatus(1.0, 4))
     line = system_line(status, width)
     assert len(line.wrap(Console(), width)) == 1
     assert line.cell_len <= width
     if width == 40:
         assert "[" not in line.plain
+        assert " 1.00" in line.plain
 
 
 @pytest.mark.parametrize("width", range(0, 11))
 def test_tiny_widths_do_not_crash(width: int) -> None:
-    line = system_line(_status(), width)
+    line = system_line(_status(load=LoadStatus(1.0, 4)), width)
     assert line.cell_len <= width
     assert "\n" not in line.plain
 

@@ -1,4 +1,4 @@
-"""htop-style one-line host status: memory, swap, storage pools and root filesystem.
+"""htop-style one-line host status: memory, swap, load, storage pools and root filesystem.
 
 Pure Rich, frontend-agnostic. `system_line` always returns a single line no
 wider than the given width. While the bars fit, they stretch to fill the
@@ -11,7 +11,7 @@ The label sits inside the bar at its left end and the numbers at its right
 end, both coloured cell by cell like the bar beneath them: the level colour as
 far as the used share reaches, dark grey beyond. The unused part of the bar is
 plain blanks with no background. The swap bar is left out on a host without
-swap.
+swap. The bare fixed-width load figure follows memory and swap.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from rich.text import Text
 
-from jailbee.dashboard.system import SystemStatus, level
+from jailbee.dashboard.system import SystemStatus, level, load_level
 from jailbee.lifecycle import _format_bytes
 from jailbee.sysstat import DiskStatus, MemoryStatus
 
@@ -38,6 +38,16 @@ class _Segment:
     numbers: str
     short: str  # numbers when the bar is dropped and the segment is compact
     lvl: str
+    compact_only: bool = False
+
+
+def format_load(value: float) -> str:
+    """Format the load in five cells where its magnitude permits."""
+    if round(value, 2) < 100:
+        return f"{value:5.2f}"
+    if round(value, 1) < 1000:
+        return f"{value:5.1f}"
+    return f"{value:5.0f}"
 
 
 def _disk_segment(label: str, disk: DiskStatus) -> _Segment:
@@ -102,12 +112,15 @@ def usage_bar(label: str, used: int, total: int, width: int) -> Text:
 
 
 def _segments(status: SystemStatus) -> tuple[list[_Segment], _Segment | None]:
-    """Mem, swap and pool segments, and the root segment kept apart (it degrades first)."""
+    """Mem, swap, load and pool segments, with root apart (it degrades first)."""
     segs: list[_Segment] = []
     if status.memory is not None:
         segs.append(_memory_segment(status.memory))
         if status.memory.swap_total:
             segs.append(_swap_segment(status.memory))
+    if status.load is not None:
+        number = format_load(status.load.load1)
+        segs.append(_Segment("", 0, number, number, load_level(status.load), compact_only=True))
     many = len(status.pools) > 1
     for pool in status.pools:
         segs.append(_disk_segment(pool.name if many else "Pool", pool.disk))
@@ -157,7 +170,7 @@ def _items(
     segs: list[_Segment], root: _Segment | None, root_short: bool
 ) -> list[tuple[_Segment, bool]]:
     """Every segment in line order, each with whether it is shown compact (no bar)."""
-    items = [(s, False) for s in segs]
+    items = [(s, s.compact_only) for s in segs]
     if root is not None:
         items.append((root, root_short))
     return items
@@ -171,7 +184,8 @@ def _render(items: list[tuple[_Segment, bool]], widths: list[int] | None) -> Tex
         if i:
             line.append(_GAP)
         if compact or widths is None:
-            line.append(seg.label + " ")
+            if seg.label:
+                line.append(seg.label + " ")
             line.append(_inner(seg), style=_numbers_style(seg))
             continue
         line.append_text(_bar(seg, next(bars), _inner(seg)))
@@ -210,7 +224,10 @@ def _fit_bars(
     if not bars:
         return None
     fixed = len(_GAP) * (len(items) - 1) + 2 * len(bars)  # gaps and brackets
-    fixed += sum(len(seg.label) + 1 + len(_inner(seg)) for seg, compact in items if compact)
+    fixed += sum(
+        (len(seg.label) + 1 if seg.label else 0) + len(_inner(seg))
+        for seg, compact in items if compact
+    )
     widths = _bar_widths([_min_bar(seg) for seg in bars], width - fixed)
     return None if widths is None else _render(items, widths)
 

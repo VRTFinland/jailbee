@@ -89,6 +89,11 @@ def test_overlay_key_ignores_initial_cursor_fields():
     assert overlay_key(a) == overlay_key(b) == ("menu", "alpha-x")
 
 
+def test_help_lines_explain_the_load_average():
+    text = "\n".join(tframe.help_lines())
+    assert "1-minute load average" in text
+
+
 def test_help_lines_say_the_wheel_scrolls():
     text = "\n".join(tframe.help_lines())
     assert "the wheel moves" not in text

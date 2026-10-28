@@ -119,6 +119,7 @@ def help_lines() -> list[str]:
     return [
         *lines,
         "",
+        "System line: the bare number is the 1-minute load average; yellow ≥0.7, red ≥1.0 per CPU.",
         "ST: ▶ running, ■ stopped, Ⅱ frozen; LOOSE: ● loose + time left, ∞ no revert.",
         "MOUNT: a letter per repo mount kind; [dim]off[/dim]; on, by time left:",
         "  [bold red]∞[/bold red] [bold dark_orange]>4h[/bold dark_orange]"
