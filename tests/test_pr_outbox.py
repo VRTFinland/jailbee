@@ -240,6 +240,7 @@ def test_parse_manifest_source_fields_and_classification(mocker):
         ({"source": "feature", "source_sha": "a" * 40}, "source must start with refs/"),
         ({"source": "refs/heads/a..b", "source_sha": "a" * 40}, "source is not a valid ref"),
         ({"base": "main"}, "base requires source"),
+        ({"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "a..b"}, "base is not a valid branch name"),
         (
             {
                 "pr": 7,
@@ -2473,6 +2474,45 @@ def test_drop_fixture_keeps_invalid_text_without_losing_identity(mocker, tmp_pat
     assert store.as_dict() == outbox.files
     assert (store.rejected, store.warnings) == ((), ())
     incus.exec.assert_not_called()
+
+
+def test_consume_source_manifest_logs_and_deletes(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    outbox = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, outbox, tmp_path)
+    outbox = replace(outbox, identity=container_identity(incus, "c"))
+    from jailbee.outbox import io as store_io
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, outbox.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    consume_manifest(incus, "c", "001-x.json", "https://example/42", uid=1000, preview=outbox)
+    assert not (tmp_path / "pr-transport" / "001-x.json").exists()
+    assert "actions=0" in (tmp_path / "pr-transport" / "applied.log").read_text()
+
+
+def test_consume_source_refuses_changed_snapshot(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    original = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, original, tmp_path)
+    original = replace(original, identity=container_identity(incus, "c"))
+    changed = replace(original, files={"001-x.json": text + " "})
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=changed)
+    with pytest.raises(FinalizeError, match="changed"):
+        consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=original)
+    incus.exec_with_input.assert_not_called()
 
 
 def test_drop_manifest_deletes_it_with_its_sidecar_and_own_bodies(mocker, tmp_path):

@@ -18,6 +18,168 @@ def test_default_head_preserves_imported_branch_path(source, expected):
     assert default_head(source) == expected
 
 
+@pytest.fixture
+def source_publisher(mocker, make_cfg, tmp_path):
+    from contextlib import nullcontext
+
+    from jailbee.outbox_io import ContainerIdentity
+    from jailbee.pr import PrCreated
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.config_get_checked.return_value = None
+    data = {"version": 1, "repo": "acme/widgets", "pr": None, "head_sha": None,
+            "source": "refs/jailbee/from/child/feature/a", "source_sha": "a" * 40,
+            "base": "main", "actions": [{"type": "description", "title": "Title", "body": "Body"}]}
+    snapshot = Outbox({"m.json": json.dumps(data)}, identity=ContainerIdentity("full", "created"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="full")
+    mocker.patch("jailbee.pr_flow.outbox_publication_guard", return_value=nullcontext())
+    read = mocker.patch("jailbee.pr_outbox.read_outbox", return_value=snapshot)
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/widgets")
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    mocker.patch("jailbee.git.count_commits_between", return_value="3")
+    remote = mocker.patch("jailbee.git.remote_branch_sha_strict", return_value=None)
+    fetch = mocker.patch("jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/host/source")
+    ff = mocker.patch("jailbee.sync.is_fast_forward", return_value=True)
+    push = mocker.patch("jailbee.sync.push_ref_to_remote")
+    create = mocker.patch("jailbee.pr.create_pr", return_value=PrCreated(42, "https://github.com/acme/widgets/pull/42", False))
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    resolve = mocker.patch("jailbee.pr.resolve_pr")
+    consume = mocker.patch("jailbee.pr_outbox.consume_manifest", create=True)
+    return locals()
+
+
+def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
+    from jailbee.branch_pr import publish_source_manifest
+
+    return publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=force, yes=yes, confirm=confirm)
+
+
+def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
+    p = source_publisher
+    assert _publish(p) == 0
+    assert "(base main, 3 commits)" in " ".join(capsys.readouterr().out.split())
+    p["push"].assert_called_once()
+    assert p["push"].call_args.kwargs["expected_sha"] == "a" * 40
+    assert p["create"].call_args.kwargs["head"] == "feature/a"
+    assert p["create"].call_args.kwargs["base"] == "main"
+    saved = json.loads(p["incus"].config_set.call_args.args[2])
+    assert saved["feature/a"]["pr"] == 42
+    p["consume"].assert_called_once()
+
+
+def test_source_update_uses_actual_pr_head_and_skips_equal_remote(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["pr"] = 42
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["incus"].config_get_checked.return_value = "42"
+    p["resolve"].return_value = PrInfo(42, "actual", "b" * 40, "OPEN", "develop")
+    p["remote"].return_value = "a" * 40
+    assert _publish(p) == 0
+    p["push"].assert_not_called()
+    p["edit"].assert_called_once()
+    saved = json.loads(p["incus"].config_set.call_args.args[2])
+    assert saved["actual"]["base"] == "develop"
+
+
+def test_source_foreign_consent_before_fetch_even_with_yes(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["pr"] = 42
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
+    assert _publish(p, confirm=lambda _: False) == 1
+    p["fetch"].assert_not_called()
+    p["push"].assert_not_called()
+
+
+def test_source_missing_manifest_is_idempotent(source_publisher):
+    p = source_publisher
+    p["snapshot"].files.clear()
+    assert _publish(p) == 0
+    p["push"].assert_not_called()
+
+
+def test_source_sha_mismatch_stops_before_push(source_publisher, capsys):
+    from jailbee.sync import SyncError
+
+    p = source_publisher
+    p["fetch"].side_effect = SyncError("at bbbbbbb, pins aaaaaaa")
+    assert _publish(p) == 1
+    assert "bbbbbbb" in capsys.readouterr().err
+    p["push"].assert_not_called()
+
+
+def test_source_cross_repository_refused(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["pr"] = 42
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main", is_cross_repository=True)
+    assert _publish(p) == 1
+    p["fetch"].assert_not_called()
+
+
+def test_source_nonfastforward_requires_force(source_publisher, capsys):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["pr"] = 42
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+    p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
+    p["remote"].return_value = "b" * 40
+    p["ff"].return_value = False
+    assert _publish(p) == 1
+    assert "jailbee pr push c --source-manifest m.json --force" in " ".join(capsys.readouterr().err.split())
+    p["push"].assert_not_called()
+
+
+def test_source_changed_after_confirmation_never_pushes(source_publisher):
+    from jailbee.pr_outbox import Outbox
+
+    p = source_publisher
+    changed = Outbox({"m.json": "changed"}, identity=p["snapshot"].identity)
+    p["read"].side_effect = [p["snapshot"], changed]
+    assert _publish(p) == 1
+    p["push"].assert_not_called()
+    p["consume"].assert_not_called()
+
+
+def test_source_zero_actions_updates_without_edit(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data.update(pr=42, actions=[])
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+    p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
+    assert _publish(p) == 0
+    p["push"].assert_called_once()
+    p["edit"].assert_not_called()
+    p["consume"].assert_called_once()
+
+
+def test_source_lookup_failure_never_pushes(source_publisher):
+    from jailbee.git import GitError
+
+    p = source_publisher
+    p["remote"].side_effect = GitError("network unavailable")
+    assert _publish(p) == 1
+    p["push"].assert_not_called()
+    p["consume"].assert_not_called()
+
+
 def test_round_trip_and_drop():
     from jailbee.branch_pr import BRANCH_PRS_LABEL, BranchPr, BranchPrMap
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.incus import Incus
 
 BRANCH_PRS_LABEL = "user.jailbee.branch_prs"
@@ -20,6 +22,117 @@ def default_head(source: str) -> str:
     if source.startswith("refs/heads/"):
         return source.removeprefix("refs/heads/")
     return source.rsplit("/", 1)[-1]
+
+
+def publish_source_manifest(
+    cfg: Config, incus: Incus, short: str, manifest_name: str, *, force: bool,
+    yes: bool, confirm: Callable[[str], bool],
+) -> int:
+    """Publish a pinned container source without changing the container's own PR."""
+    from jailbee import git, lifecycle, pr, pr_flow, pr_outbox, sync
+    from jailbee.incus import IncusError
+    from jailbee.outbox.io import PrManagement
+    from jailbee.outbox.models import OutboxChanged, OutboxError, ProposalId
+    from jailbee.outbox_io import JournalError, OutboxReadError
+    from jailbee.tui import error_plain, info_plain
+
+    try:
+        ProposalId("pr", manifest_name)
+        full = lifecycle.resolve_container_name(cfg, incus, short)
+        manager = PrManagement()
+        with pr_flow.outbox_publication_guard(cfg, incus, full, enabled=True, management=manager):
+            snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
+            if snapshot.rejected or snapshot.identity is None:
+                raise OutboxChanged("outbox snapshot incomplete; refresh required")
+            if manager.identity is not None and snapshot.identity != manager.identity:
+                raise OutboxChanged("container changed; refresh required")
+            if manifest_name not in snapshot.files:
+                info_plain(f"{manifest_name}: nothing pending")
+                return 0
+            manifest = pr_outbox.parse_manifest(manifest_name, snapshot.files[manifest_name], snapshot.files)
+            if manifest.source is None or manifest.source_sha is None:
+                raise pr_outbox.ManifestError(f"{manifest_name} is not a source manifest")
+            scope = pr_flow.PrScope.for_repo(cfg)
+            repo = pr_outbox.scope_slug(scope)
+            if repo is None or repo.casefold() != manifest.repo.casefold():
+                raise pr_outbox.ManifestError(f"manifest {manifest_name} targets {manifest.repo}, not {repo or 'a configured GitHub repository'}")
+            action = manifest.actions[0] if manifest.actions else None
+            if action is not None and not isinstance(action, pr_outbox.DescriptionAction):
+                raise pr_outbox.ManifestError("source manifest contains an unsupported action")
+            head = default_head(manifest.source)
+            if action is not None:
+                head = pr_outbox._outbox_branch(action, head, manifest_name)
+            base = manifest.base or cfg.default_branch
+            if not git.check_ref_format(head) or not git.check_ref_format(base):
+                raise pr_outbox.ManifestError("invalid destination head or base")
+            bindings = BranchPrMap(incus, full)
+            entries = bindings.read()
+            entry = entries.get(head)
+            number = manifest.pr if manifest.pr is not None else (entry.pr if entry else None)
+            target = pr.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote, repo=repo) if number is not None else None
+            if target is not None and target.state != "OPEN":
+                if manifest.pr is not None:
+                    raise pr.PrError(f"PR #{number} is {target.state.lower()}")
+                bindings.drop(head)
+                target = None
+            if target is not None:
+                if target.is_cross_repository:
+                    owner = target.head_repo_owner or "unknown"
+                    raise pr.PrError(f"head lives in {owner}/{repo.split('/', 1)[-1]}; push to it from that repository")
+                own = {str(item.pr) for item in entries.values()}
+                for label in (pr_flow.PR_LABEL_PREFIX, pr_flow.STACKED_LABEL_PREFIX):
+                    value = incus.config_get_checked(full, label)
+                    if value:
+                        own.add(value)
+                if str(target.number) not in own and not confirm(f"PR #{target.number} is not bound to container {short}: check that this is the PR you mean to publish to"):
+                    return 1
+                head, base = target.head_ref, target.base_ref
+                if not git.check_ref_format(head) or not git.check_ref_format(base):
+                    raise pr.PrError("PR has an invalid head or base")
+            host_ref = sync.fetch_ref_from_container(cfg, incus, short, manifest.source, manifest.source_sha)
+            count = git.count_commits_between(cfg.repo_root, f"refs/remotes/{cfg.upstream_remote}/{base}", host_ref)
+            if count is None:
+                raise git.GitError(f"Cannot count commits against {base}")
+            info_plain(f"source {manifest.source} @ {manifest.source_sha[:7]} → {head} (base {base}, {count} commits)")
+            if not yes and not confirm("Publish?"):
+                return 1
+
+            def validate() -> None:
+                fresh = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
+                if fresh.identity != snapshot.identity or fresh.files != snapshot.files or fresh.rejected:
+                    raise OutboxChanged("source snapshot changed; refresh required")
+
+            validate()
+            remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
+            if remote_sha is None or remote_sha.lower() != manifest.source_sha:
+                if target is not None and sync.is_fast_forward(cfg, host_ref, head) is False and not force:
+                    error_plain(f"non-fast-forward update of {head}; run: jailbee pr push {short} --source-manifest {manifest_name} --force")
+                    return 1
+                sync.push_ref_to_remote(cfg, host_ref, head, force=force, expected_sha=manifest.source_sha, on_before_push=validate)
+            validate()
+            if target is None:
+                title, body = pr_flow.resolve_create_text(scope, ai_on=False, ai_text=None,
+                    title=action.title if action else None, body=action.body if action else None,
+                    fallback_ref=host_ref, publish_name=head, origin_label=f"container '{short}'")
+                created = pr.create_pr(cfg.repo_root, head=head, base=base, title=title, body=body,
+                                       remote=cfg.upstream_remote, repo=repo)
+                number, url = created.number, created.url
+                authored = not created.already_existed
+            else:
+                number = target.number
+                url = f"https://github.com/{repo}/pull/{number}"
+                if action is not None:
+                    pr.edit_pr(cfg.repo_root, number, title=action.title, body=action.body, repo=repo)
+                authored = False
+            validate()
+            bindings.put(BranchPr(head, number, base, manifest.source, manifest.source_sha, authored, not authored))
+            pr_outbox.consume_manifest(incus, full, manifest_name, url, uid=cfg.container_user.uid,
+                                       preview=snapshot, management=manager)
+            return 0
+    except (IncusError, JournalError, OutboxReadError, OutboxError, pr_outbox.ManifestError,
+            pr_outbox.FinalizeError, pr.PrError, git.GitError, git.GitFetchError, sync.SyncError) as exc:
+        error_plain(str(exc))
+        return 1
 
 
 @dataclass(frozen=True)
