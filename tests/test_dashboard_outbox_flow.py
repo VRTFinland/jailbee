@@ -128,6 +128,9 @@ class FakeRunner:
         self.calls.append(("start", list(argv)))
         self.jobs.append((key, list(argv), on_done))
 
+    def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]:
+        return self.hand_off(argv), None
+
     def hand_off(self, argv: Sequence[str]) -> int | None:
         self.calls.append(("hand_off", list(argv)))
         return 0
@@ -926,3 +929,25 @@ def test_source_push_and_publish_hint():
     assert not [c for c in runner.calls if c[0] == "hand_off"]
     ctl.intent("create-pr", _key())
     assert ("hand_off", ["pr", "push", C, "--source-manifest", "a.json"]) in runner.calls
+
+
+def test_source_handoff_diagnostic_survives_refresh():
+    row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
+    runner = FakeRunner(_listing(row))
+    message = "non-fast-forward update of topic; run: jailbee pr push alpha-x --source-manifest a.json --force"
+    runner.hand_off_diagnostic = lambda argv: (1, message)
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("create-pr", _key())
+    assert ctl.state.status == (message,)
+
+
+def test_source_handoff_missing_or_failure_gets_status():
+    row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
+    for result, expected in [((None, None), "source push did not run"), ((2, None), "source push exited 2")]:
+        runner = FakeRunner(_listing(row))
+        runner.hand_off_diagnostic = lambda argv: result
+        ctl = _controller(runner)
+        ctl.load()
+        ctl.intent("create-pr", _key())
+        assert ctl.state.status == (expected,)

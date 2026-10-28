@@ -7481,3 +7481,33 @@ def test_gather_rows_runner_profiles_follow_litellm_config(tmp_path, mocker, mak
         assert "mine" in group.runner_profiles
     else:
         assert group.runner_profiles == ()
+
+
+def test_foreground_diagnostic_channel_preserves_terminal_streams(mocker, tmp_path):
+    from jailbee.tui import DIAGNOSTIC_TEXT_ENV, error_plain
+
+    message = "non-fast-forward update of topic; run: jailbee pr push c --source-manifest a.json --force"
+    path = tmp_path / "diagnostic"
+    def run(argv, **kwargs):
+        assert kwargs["env"][DIAGNOSTIC_TEXT_ENV] == str(path)
+        assert not any(k in kwargs for k in ("stdin", "stdout", "stderr", "capture_output"))
+        mocker.patch.dict("os.environ", {DIAGNOSTIC_TEXT_ENV: str(path)})
+        error_plain(message)
+        return mocker.Mock(returncode=1)
+    mocker.patch.object(ddispatch.subprocess, "run", side_effect=run)
+    patch_pause(mocker)
+    assert ddispatch._run_cli_foreground(_target(tmp_path), ["pr", "push", "c"], style="output", diagnostic_path=path) == 1
+    assert path.read_text().strip() == message
+
+
+def test_session_outbox_runner_reads_diagnostic(mocker):
+    from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
+
+    message = "non-fast-forward update of topic; run: jailbee pr push c --source-manifest a.json --force"
+    session = mocker.Mock()
+    def handoff(container, kind, argv, *, diagnostic_path):
+        diagnostic_path.write_text(message)
+        return 1
+    session.run_dashboard_command.side_effect = handoff
+    runner = SessionOutboxRunner(session, "c")
+    assert runner.hand_off_diagnostic(["pr", "push", "c", "--source-manifest", "a.json"]) == (1, message)

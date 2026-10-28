@@ -35,6 +35,7 @@ hint_console = Console(stderr=True)
 #: a caller that runs jailbee as a child and wants to know whether it warned:
 #: the dashboard keeps a command's output on screen only then.
 DIAGNOSTICS_ENV = "JAILBEE_DIAGNOSTICS_FILE"
+DIAGNOSTIC_TEXT_ENV = "JAILBEE_DIAGNOSTIC_TEXT_FILE"
 
 
 def _record_diagnostic(kind: Literal["warn", "error"]) -> None:
@@ -231,6 +232,13 @@ def error_plain(msg: str) -> None:
     The console's own ``bold red`` style still applies to the whole line.
     """
     err_console.print(Text(f"✗ {msg}"), highlight=False)
+    path = os.environ.get(DIAGNOSTIC_TEXT_ENV)
+    if path:
+        try:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+        except OSError:
+            pass
     _record_diagnostic("error")
 
 

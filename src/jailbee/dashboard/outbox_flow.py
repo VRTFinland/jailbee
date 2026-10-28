@@ -85,6 +85,8 @@ class OutboxRunner(Protocol):
 
     def hand_off(self, argv: Sequence[str]) -> int | None: ...
 
+    def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]: ...
+
     def changed(self) -> None: ...
 
 
@@ -719,8 +721,16 @@ class OutboxController:
             self._set(replace(state, status=(*state.status, unavailable)))
             return
         self.state = state
-        self.runner.hand_off(argv)
-        self._after_mutation(())
+        if listed.state == "awaiting-push":
+            rc, diagnostic = self.runner.hand_off_diagnostic(argv)
+            status = (diagnostic,) if diagnostic and rc != 0 else (
+                ("source push did not run",) if rc is None else
+                (f"source push exited {rc}",) if rc else ()
+            )
+            self._after_mutation(status)
+        else:
+            self.runner.hand_off(argv)
+            self._after_mutation(())
 
     # -- clear --------------------------------------------------------------
 

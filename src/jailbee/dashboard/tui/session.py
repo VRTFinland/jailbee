@@ -1026,6 +1026,7 @@ class DashboardSession:
         argv: list[str],
         *,
         style: DispatchStyle = "output",
+        diagnostic_path: Path | None = None,
     ) -> int | None:
         """Hand the terminal to one dashboard-built `jailbee` command; notice a failure.
 
@@ -1054,6 +1055,7 @@ class DashboardSession:
                     remote=self.remote,
                     over_ssh=self.over_ssh,
                     ssh_policy=self.ssh_policy,
+                    **({"diagnostic_path": diagnostic_path} if diagnostic_path is not None else {}),
                 )
             )
         except RouteError as exc:

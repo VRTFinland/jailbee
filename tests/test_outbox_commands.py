@@ -539,6 +539,8 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
     row = json.loads(capsys.readouterr().out)["containers"][0]["proposals"][0]
     assert row["create_scope"] == {"kind": "source", "manifest": "002.json"}
     scopes.assert_not_called()
+    incus.config_get.assert_not_called()
+    publisher = mocker.patch("jailbee.outbox.commands.publish_selected")
     with pytest.raises(OutboxError, match=r"jailbee pr push .* --source-manifest 002.json"):
         apply_selected(
             cfg,
@@ -549,3 +551,4 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
             journal_store=journals,
             confirm=lambda _: True,
         )
+    publisher.assert_not_called()

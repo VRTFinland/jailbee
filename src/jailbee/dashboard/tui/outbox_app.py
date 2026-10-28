@@ -152,6 +152,30 @@ class LocalOutboxRunner:
         except (RouteError, OSError):
             return None
 
+    def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]:
+        import tempfile
+        from pathlib import Path
+
+        if self._refusal(argv) is not None:
+            return None, None
+        name = _handed_container(argv)
+        repo = self.target if name is None else self._repo_of(name)
+        if repo is None:
+            return None, None
+        with tempfile.TemporaryDirectory(prefix="jailbee-outbox-") as tmp:
+            path = Path(tmp) / "diagnostic"
+            try:
+                rc = self.suspend(
+                    lambda: _run_cli_foreground(repo, list(argv), style="output", diagnostic_path=path)
+                )
+            except (RouteError, OSError):
+                return None, None
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                text = ""
+            return rc, text or None
+
     def changed(self) -> None:
         """Nothing else shows the outbox here."""
 

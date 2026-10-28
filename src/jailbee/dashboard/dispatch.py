@@ -260,6 +260,7 @@ def _run_cli_foreground(
     remote: bool = False,
     over_ssh: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
+    diagnostic_path: Path | None = None,
 ) -> int:
     """Run a dashboard-built ``jailbee <argv>`` against ``target``; return its exit code.
 
@@ -295,7 +296,15 @@ def _run_cli_foreground(
                 log.debug("pager %s failed: %s", pager, exc)
     if style == "report":
         return _run_reporting(full, target.cwd())
-    rc = subprocess.run(full, check=False, cwd=target.cwd()).returncode
+    env = None
+    if diagnostic_path is not None:
+        from jailbee.tui import DIAGNOSTIC_TEXT_ENV
+
+        env = {**os.environ, DIAGNOSTIC_TEXT_ENV: str(diagnostic_path)}
+    if env is None:
+        rc = subprocess.run(full, check=False, cwd=target.cwd()).returncode
+    else:
+        rc = subprocess.run(full, check=False, cwd=target.cwd(), env=env).returncode
     if style != "plain":
         _wait_for_return()
     return rc
