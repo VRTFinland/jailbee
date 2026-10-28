@@ -76,6 +76,23 @@ def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     )
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_source_large_escaped_progress_refused_before_publication(source_publisher, existing):
+    from jailbee.pr import PrInfo
+    from jailbee.pr_outbox import parse_manifest
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["actions"][0]["body"] = "\\" * 65536
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    assert parse_manifest("m.json", p["snapshot"].files["m.json"], p["snapshot"].files)
+    if existing:
+        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    assert _publish(p) == 1
+    for key in ("push", "edit", "create", "consume"):
+        p[key].assert_not_called()
+
+
 def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     p = source_publisher
     assert _publish(p) == 0

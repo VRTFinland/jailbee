@@ -1717,6 +1717,55 @@ def _manifest_pr_and_action_count(text: str | None) -> tuple[str, int | None]:
     return pr_field, total
 
 
+# Reserve for a GitHub PR URL, including worst-case JSON escaping in each field.
+SOURCE_RECEIPT_URL_BYTES = 4096
+
+
+def _source_progress_payload(outbox: Outbox, name: str, url: str) -> str:
+    """Build the actual recovery document used both by preflight and consumption."""
+    if outbox.identity is None or outbox.rejected:
+        raise OutboxChanged("source snapshot unavailable; refresh required")
+    if len(json.dumps(url).encode("utf-8")) > SOURCE_RECEIPT_URL_BYTES:
+        raise ManifestError("source publication URL exceeds the recovery receipt limit")
+    manifest = parse_manifest(name, outbox.files[name], outbox.files)
+    if not is_source_manifest(manifest):
+        raise ManifestError(f"{name} is not a source manifest")
+    references = _body_references(outbox.files[name])
+    if references & {"applied.log", f"{name}.progress.json", name}:
+        raise ManifestError("source body conflicts with publication evidence")
+    inputs = {n: outbox.files[n] for n in {name, *references}}
+    digest = hashlib.sha256(
+        json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
+    ).hexdigest()
+    line = (
+        f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
+        f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}"
+    )
+    return json.dumps({
+        "applied": list(range(len(manifest.actions))),
+        "urls": {str(i): url for i in range(len(manifest.actions))},
+        "source": {
+            "identity": [outbox.identity.full_name, outbox.identity.created_at],
+            "inputs": inputs,
+            "cleanup": sorted(_orphaned_body_files(outbox, name)),
+            "url": url,
+            "line": line,
+        },
+    })
+
+
+def preflight_source_progress(outbox: Outbox, name: str) -> None:
+    """Reserve the exact recovery shape and maximum escaped URL before publication."""
+    from jailbee.outbox.io import FILE_LIMIT
+
+    # JSON quotes consume two bytes; all URL occurrences (including the log line)
+    # use the same encoder. This fills the entire escaped URL budget exactly.
+    maximum_url = "x" * (SOURCE_RECEIPT_URL_BYTES - 2)
+    payload = _source_progress_payload(outbox, name, maximum_url)
+    if len(payload.encode("utf-8")) > FILE_LIMIT:
+        raise ManifestError("source publication recovery progress exceeds the outbox file limit")
+
+
 def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | None:
     """Validate snapshot-bound source progress, including partial cleanup inputs."""
     text = outbox.files.get(f"{name}.progress.json")
@@ -1880,34 +1929,9 @@ def consume_manifest(
 
             source = source_publication_receipt(fresh, name)
             if source is None:
-                manifest = parse_manifest(name, fresh.files[name], fresh.files)
-                if not is_source_manifest(manifest):
-                    raise ManifestError(f"{name} is not a source manifest")
-                references = _body_references(fresh.files[name])
-                if references & {"applied.log", f"{name}.progress.json", name}:
-                    raise ManifestError("source body conflicts with publication evidence")
-                inputs = {n: fresh.files[n] for n in {name, *references}}
-                digest = hashlib.sha256(
-                    json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
-                ).hexdigest()
-                line = (
-                    f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-                    f"actions={len(manifest.actions)} urls={_display_url(url)} "
-                    f"source-receipt={digest}"
-                )
-                source = {
-                    "identity": [original.identity.full_name, original.identity.created_at],
-                    "inputs": inputs,
-                    "cleanup": sorted(_orphaned_body_files(fresh, name)),
-                    "url": url,
-                    "line": line,
-                }
-                payload = {
-                    "applied": list(range(len(manifest.actions))),
-                    "urls": {str(i): url for i in range(len(manifest.actions))},
-                    "source": source,
-                }
-                fresh = replace_file(fresh, f"{name}.progress.json", json.dumps(payload))
+                payload = _source_progress_payload(fresh, name, url)
+                source = json.loads(payload)["source"]
+                fresh = replace_file(fresh, f"{name}.progress.json", payload)
             line = source["line"]
             if line not in fresh.files.get("applied.log", "").splitlines():
                 previous = fresh.files.get("applied.log", "")

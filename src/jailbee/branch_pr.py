@@ -138,6 +138,7 @@ def publish_source_manifest(
                 head, base = target.head_ref, target.base_ref
                 if not git.check_ref_format(head) or not git.check_ref_format(base):
                     raise pr.PrError("PR has an invalid head or base")
+            pr_outbox.preflight_source_progress(snapshot, manifest_name)
             host_ref = sync.fetch_ref_from_container(
                 cfg, incus, short, manifest.source, manifest.source_sha
             )
