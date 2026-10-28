@@ -57,6 +57,116 @@ def test_grant_passes_flags(patched):
     assert flags == GrantFlags(children=3, allow=("destroy",), mounts=("data",), loose=False)
 
 
+def test_grant_runner_flags_reach_flags(patched):
+    from jailbee.orchestration.runner_model import Runner
+
+    res = runner.invoke(
+        app,
+        [
+            "orchestrate",
+            "grant",
+            "a",
+            "--runner-agent",
+            "claude-jb",
+            "--runner-profile",
+            "grok",
+            "--runner-model",
+            "sonnet",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert patched.grant.call_args.args[3].runner == Runner(
+        agent="claude-jb", profile="grok", model="sonnet"
+    )
+
+
+def test_grant_runner_profile_without_agent_exits_1(patched):
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--runner-profile", "grok"])
+    assert res.exit_code == 1
+    assert "--runner-agent" in res.output
+    patched.grant.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--runner-model", "haiku"], "--runner-profile and --runner-model require --runner-agent"),
+        (
+            ["--clear-runner", "--runner-profile", "grok"],
+            "--runner-agent and --clear-runner are mutually exclusive; give only one",
+        ),
+        (
+            ["--runner-agent", "claude", "--runner-profile", "grok"],
+            "profile is only valid with agent 'claude-jb'",
+        ),
+        (["--runner-agent", "bogus"], "Input should be 'claude' or 'claude-jb'"),
+    ],
+)
+def test_grant_rejects_invalid_runner(patched, args, message):
+    res = runner.invoke(app, ["orchestrate", "grant", "a", *args])
+    assert res.exit_code == 1
+    assert message in " ".join(res.output.split())
+    patched.grant.assert_not_called()
+
+
+def test_grant_profile_reports_cleared_runner(patched, mocker):
+    from jailbee.orchestration.runner_model import Runner
+
+    def grant_with_previous(*args, on_previous, **kwargs):
+        on_previous(Grant(default_runner=Runner(agent="claude")))
+        return Grant()
+
+    patched.grant.side_effect = grant_with_previous
+    read = mocker.patch("jailbee.orchestration.commands.read_grant")
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--profile", "bugfixer"])
+    assert res.exit_code == 0, res.output
+    assert "container default runner cleared" in " ".join(res.output.split()).lower()
+    read.assert_not_called()
+
+
+def test_grant_profile_without_previous_runner_does_not_report_clearing(patched, mocker):
+    mocker.patch("jailbee.orchestration.commands.read_grant", return_value=Grant())
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--profile", "bugfixer"])
+    assert res.exit_code == 0, res.output
+    assert "cleared" not in res.output.lower()
+
+
+def test_grant_warns_on_unservable_default(patched, mocker):
+    from jailbee.orchestration.runner_model import Runner
+
+    patched.grant.return_value = Grant(default_runner=Runner(agent="claude"))
+    mocker.patch("jailbee.orchestration.runner.runner_problems", return_value=["not available"])
+    mocker.patch("jailbee.cli._load_global")
+    res = runner.invoke(app, ["orchestrate", "grant", "a"])
+    assert res.exit_code == 0, res.output
+    assert "not available" in res.output
+
+
+def test_show_prints_default_runner_source(patched):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    patched.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
+    )
+    patched.show.return_value = GrantRow("a", "myrepo-a", Grant(), None, 0, Grant())
+    res = runner.invoke(app, ["orchestrate", "show", "a"])
+    assert res.exit_code == 0, res.output
+    assert "Default runner: claude haiku (from repo)" in res.output
+
+
+def test_ls_json_has_default_runner(patched):
+    from jailbee.orchestration.runner_model import Runner
+
+    grant = Grant(default_runner=Runner(agent="claude", model="haiku"))
+    patched.list_grants.return_value = [GrantRow("a", "myrepo-a", grant, None, 0, grant)]
+    res = runner.invoke(app, ["orchestrate", "ls", "--json"])
+    assert res.exit_code == 0, res.output
+    row = json.loads(res.output)[0]
+    assert row["default_runner"] == {"agent": "claude", "model": "haiku"}
+    assert row["default_runner_source"] == "container"
+
+
 def test_grant_clear_flags(patched):
     runner.invoke(app, ["orchestrate", "grant", "a", "--clear-mounts", "--clear-egress"])
     f = patched.grant.call_args.args[3]
@@ -149,7 +259,32 @@ def test_ls_table(patched):
         assert header in res.output
     assert "orch" in res.output
     assert "invalid" in res.output
-    assert "not allowed" in res.output
+    operation_cells = [
+        line.split("│")[3] for line in res.output.splitlines() if line.count("│") == 7
+    ]
+    assert "orchestration is not allowed in this repo" in " ".join(
+        " ".join(operation_cells).split()
+    )
+    assert "RUNNER" in res.output
+
+
+def test_ls_malformed_grant_has_unknown_runner(patched):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    patched.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
+    )
+    patched.list_grants.return_value = [GrantRow("bad", "myrepo-bad", None, "invalid", 0, None)]
+    result = runner.invoke(app, ["orchestrate", "ls", "--json"])
+    assert result.exit_code == 0, result.output
+    row = json.loads(result.output)[0]
+    assert row["default_runner"] is None
+    assert row["default_runner_source"] == "unknown"
+    result = runner.invoke(app, ["orchestrate", "ls"])
+    assert result.exit_code == 0, result.output
+    assert "unknown" in result.output
+    assert "haiku" not in result.output
 
 
 def test_ls_json(patched):
@@ -161,6 +296,8 @@ def test_ls_json(patched):
             "grant": json.loads(Grant().to_label()),
             "problem": None,
             "running_children": 1,
+            "default_runner": None,
+            "default_runner_source": None,
         }
     ]
 

@@ -12732,12 +12732,13 @@ app.add_typer(orchestrate_app)
 def _grant_summary(grant: Any) -> str:
     """One line describing a grant: limit, operations, mounts, loose, egress."""
     g = grant.grantable
+    runner = f"; default runner {grant.default_runner.describe()}" if grant.default_runner else ""
     return (
         f"{grant.max_running_children} running children, "
         f"operations {', '.join(grant.operations)}; "
         f"mounts {', '.join(g.mounts) or 'none'}; "
         f"loose {'yes' if g.loose else 'no'}; "
-        f"egress {', '.join(g.egress) or 'none'}"
+        f"egress {', '.join(g.egress) or 'none'}{runner}"
     )
 
 
@@ -12786,6 +12787,10 @@ def orchestrate_grant_cmd(
         bool,
         typer.Option("--clear-egress", help="Remove every egress host children may be allowed."),
     ] = False,
+    runner_agent: Annotated[str | None, typer.Option("--runner-agent")] = None,
+    runner_profile: Annotated[str | None, typer.Option("--runner-profile")] = None,
+    runner_model: Annotated[str | None, typer.Option("--runner-model")] = None,
+    clear_runner: Annotated[bool, typer.Option("--clear-runner")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Grant a container the right to start and manage child containers.
@@ -12793,12 +12798,35 @@ def orchestrate_grant_cmd(
     Fields not given keep their current value (or the profile's, or the
     defaults for a container with no grant).
     """
+    from pydantic import ValidationError
+
     from jailbee.lifecycle import short_name
     from jailbee.orchestration import commands
-    from jailbee.orchestration.grant import GrantError
+    from jailbee.orchestration.grant import Grant, GrantError
+    from jailbee.orchestration.runner import runner_problems
+    from jailbee.orchestration.runner_model import Runner
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
+    try:
+        if clear_runner and (
+            runner_agent is not None or runner_profile is not None or runner_model is not None
+        ):
+            raise GrantError(
+                "--runner-agent and --clear-runner are mutually exclusive; give only one"
+            )
+        if runner_agent is None and (runner_profile is not None or runner_model is not None):
+            raise GrantError("--runner-profile and --runner-model require --runner-agent")
+        selected = (
+            Runner.model_validate(
+                {"agent": runner_agent, "profile": runner_profile, "model": runner_model}
+            )
+            if runner_agent is not None
+            else None
+        )
+    except (GrantError, ValidationError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
     flags = commands.GrantFlags(
         profile=profile,
         children=children,
@@ -12809,13 +12837,33 @@ def orchestrate_grant_cmd(
         loose=loose,
         egress=tuple(egress) if egress else None,
         clear_egress=clear_egress,
+        runner=selected,
+        clear_runner=clear_runner,
     )
+    previous: list[Grant | None] = []
     try:
-        granted = commands.grant(cfg, incus, full, flags, remote=_remote_session_policy())
+        granted = commands.grant(
+            cfg, incus, full, flags, remote=_remote_session_policy(), on_previous=previous.append
+        )
     except GrantError as e:
         error(str(e))
         raise typer.Exit(1) from e
-    success(f"Granted '{short_name(cfg, full)}': {_grant_summary(granted)}")
+    summary = _grant_summary(granted)
+    if (
+        profile is not None
+        and previous
+        and previous[0] is not None
+        and previous[0].default_runner is not None
+        and granted.default_runner is None
+    ):
+        summary += "; container default runner cleared"
+    success(f"Granted '{short_name(cfg, full)}': {summary}")
+    if granted.default_runner is not None:
+        for problem in runner_problems(cfg, incus, _load_global(), granted.default_runner):
+            warn_plain(
+                f"default runner: {problem}; spawns without a runner will be refused "
+                "until this is fixed"
+            )
 
 
 @orchestrate_app.command("revoke")
@@ -12858,6 +12906,14 @@ def orchestrate_show_cmd(
         warn_plain(f"{_ORCH_NOT_ALLOWED}; the grant has no effect.")
     elif row.effective != row.grant:
         info_plain(f"Effective in this repo: {_grant_summary(row.effective)}")
+    from jailbee.orchestration.profiles import default_runner
+
+    selected, source = default_runner(cfg, row.grant)
+    info_plain(
+        f"Default runner: {selected.describe()} (from {source})"
+        if selected
+        else "Default runner: agent default"
+    )
     info_plain(f"Running children: {row.running_children}")
 
 
@@ -12874,6 +12930,7 @@ def orchestrate_ls_cmd(
 
     from jailbee.incus import Incus
     from jailbee.orchestration import commands
+    from jailbee.orchestration.profiles import default_runner
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
@@ -12885,8 +12942,15 @@ def orchestrate_ls_cmd(
                 "grant": json.loads(r.grant.to_label()) if r.grant is not None else None,
                 "problem": r.problem,
                 "running_children": r.running_children,
+                "default_runner": selected.model_dump(mode="json", exclude_none=True)
+                if selected
+                else None,
+                "default_runner_source": source,
             }
             for r in rows
+            for selected, source in [
+                (None, "unknown") if r.problem is not None else default_runner(cfg, r.grant)
+            ]
         ]
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -12894,15 +12958,28 @@ def orchestrate_ls_cmd(
         info("No orchestration grants in this repo.")
         return
     table = Table(show_edge=False, pad_edge=False)
-    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS"):
+    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS", "RUNNER"):
         table.add_column(header)
     for r in rows:
+        selected, _ = default_runner(cfg, r.grant) if r.problem is None else (None, None)
+        runner_label = (
+            "unknown" if r.problem is not None else selected.describe() if selected else "—"
+        )
         if r.problem is not None:
             table.add_row(
-                r.short, "-", str(r.running_children), f"invalid: {r.problem}", "", "", ""
+                r.short,
+                "-",
+                str(r.running_children),
+                f"invalid: {r.problem}",
+                "",
+                "",
+                "",
+                runner_label,
             )
         elif r.grant is not None and r.effective is None:
-            table.add_row(r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "")
+            table.add_row(
+                r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "", runner_label
+            )
         elif r.grant is not None:
             g = r.grant.grantable
             table.add_row(
@@ -12913,6 +12990,7 @@ def orchestrate_ls_cmd(
                 ", ".join(g.mounts) or "-",
                 "yes" if g.loose else "no",
                 ", ".join(g.egress) or "-",
+                runner_label,
             )
     console.print(table)
 

@@ -5,6 +5,7 @@ Pure logic over `Config` and the `Incus` wrapper; the CLI only parses flags.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,7 @@ from jailbee.orchestration.grant import (
     effective_grant,
 )
 from jailbee.orchestration.profiles import default_grant, profile_grant, repo_cap
+from jailbee.orchestration.runner_model import Runner
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -51,6 +53,8 @@ class GrantFlags:
     loose: bool | None = None
     egress: tuple[str, ...] | None = None
     clear_egress: bool = False
+    runner: Runner | None = None
+    clear_runner: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,8 @@ def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
         raise GrantError("--mount and --clear-mounts are mutually exclusive; give only one")
     if flags.egress is not None and flags.clear_egress:
         raise GrantError("--egress and --clear-egress are mutually exclusive; give only one")
+    if flags.runner is not None and flags.clear_runner:
+        raise GrantError("--runner-agent and --clear-runner are mutually exclusive; give only one")
     _check_ops(flags.allow)
     _check_ops(flags.deny)
     if any(op in IMPLIED_OPERATIONS for op in flags.deny):
@@ -161,7 +167,7 @@ def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
             max_running_children=children,
             operations=cast("tuple[Operation, ...]", tuple(sorted(ops))),
             grantable=Grantable(mounts=mounts, loose=loose, egress=egress),
-            default_runner=base.default_runner,
+            default_runner=None if flags.clear_runner else (flags.runner or base.default_runner),
         )
     except ValidationError as e:
         raise GrantError(f"invalid grant: {e}") from e
@@ -179,6 +185,7 @@ def grant(
     flags: GrantFlags,
     *,
     remote: RemoteSSHConfig | None = None,
+    on_previous: Callable[[Grant | None], None] | None = None,
 ) -> Grant:
     """Validate and store a grant on `full`; nothing is written on refusal.
 
@@ -200,6 +207,8 @@ def grant(
     if excess:
         raise GrantError("; ".join(excess))
     _write(incus, full, new)
+    if on_previous is not None:
+        on_previous(current)
     return new
 
 

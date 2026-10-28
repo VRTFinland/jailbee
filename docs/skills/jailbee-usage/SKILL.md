@@ -1027,7 +1027,10 @@ import, stop and destroy children, within the grant and the repo's caps.
   egress). Flags: `--profile P`, `--children N`, `--allow OP`/`--deny OP`
   (`spawn`, `message`, `import`, `restart`, `stop`, `destroy`),
   `--mount M`/`--clear-mounts`, `--loose`/`--no-loose`,
-  `--egress HOST`/`--clear-egress`. Fields not given come from `--profile`
+  `--egress HOST`/`--clear-egress`, `--runner-agent` (`claude` or `claude-jb`),
+  `--runner-profile`, `--runner-model`, and `--clear-runner`. The runner is a
+  preference, not a right; profile and model require the runner agent. Applying
+  `--profile` clears the container runner unless another is specified. Fields not given come from `--profile`
   if named, else the container's current grant, else `default_profile`,
   else the built-in defaults.
 - `spawn` and `message` are always part of a grant: `--deny spawn|message` is

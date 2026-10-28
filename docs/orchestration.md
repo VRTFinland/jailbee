@@ -180,8 +180,17 @@ agent's environment.
 A `spawn` or `restart` manifest may carry an optional `runner`: `agent`
 (`claude` or `claude-jb`), `profile` (a LiteLLM profile, `claude-jb` only) and
 `model` (`fable`, `opus`, `sonnet` or `haiku`). It rewrites the Claude
-command of the repo's `agents.claude.command` for that child. Omitted, the
-child runs the repo's primary agent as configured. On `restart`, an absent
+command of the repo's `agents.claude.command` for that child. When omitted on
+spawn, the container default applies, then the local, repo, or global
+`orchestration.default_runner`, in that order; without any default the child
+runs the repo's primary agent as configured. Set the container preference with
+`jb orchestrate grant bugs --runner-agent claude-jb --runner-profile grok --runner-model sonnet`;
+`--runner-profile` and `--runner-model` require `--runner-agent`. Use
+`--clear-runner` to remove the container preference and fall back to config.
+Reapplying `--profile` also clears the container preference unless a runner is
+specified. `jb orchestrate show` and `ls` display the effective preference;
+the dashboard offers a default runner entry. This preference grants no rights.
+On `restart`, an absent
 `runner` keeps the child's previous one and `"runner": null` clears it. The
 runner is stored on the child as a label and shown on its dashboard card.
 

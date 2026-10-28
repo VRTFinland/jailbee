@@ -105,6 +105,18 @@ def ensure(mocker):
     return mocker.patch("jailbee.orchestration.service.ensure_running")
 
 
+def test_grant_reports_same_prior_grant_with_single_read(cfg, incus, ensure, mocker):
+    old = Grant(default_runner=Runner(agent="claude"))
+    read = mocker.patch("jailbee.orchestration.commands.read_grant", return_value=old)
+    received = []
+    result = commands.grant(
+        cfg, incus, "myrepo-a", GrantFlags(profile="bugfixer"), on_previous=received.append
+    )
+    assert result.default_runner is None
+    assert received == [old]
+    read.assert_called_once_with(incus, "myrepo-a")
+
+
 def test_grant_writes_label_and_starts_broker(cfg, incus, ensure):
     g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(children=3, allow=("destroy",)))
     incus.config_set.assert_called_once_with("myrepo-a", labels.GRANT, g.to_label())
@@ -180,6 +192,32 @@ def test_unflagged_grant_keeps_current_default_runner(cfg):
     current = Grant(default_runner=runner)
     updated = commands.build_grant(cfg, current, GrantFlags())
     assert updated.default_runner == runner
+
+
+def test_build_grant_sets_runner(cfg):
+    selection = Runner(agent="claude", model="haiku")
+    assert (
+        commands.build_grant(cfg, Grant(), GrantFlags(runner=selection)).default_runner == selection
+    )
+
+
+def test_build_grant_clear_runner(cfg):
+    current = Grant(default_runner=Runner(agent="claude"))
+    assert commands.build_grant(cfg, current, GrantFlags(clear_runner=True)).default_runner is None
+
+
+def test_build_grant_profile_clears_runner(cfg):
+    current = Grant(default_runner=Runner(agent="claude"))
+    assert commands.build_grant(cfg, current, GrantFlags(profile="bugfixer")).default_runner is None
+
+
+def test_build_grant_runner_and_clear_conflict(cfg):
+    with pytest.raises(
+        GrantError, match="--runner-agent and --clear-runner are mutually exclusive"
+    ):
+        commands.build_grant(
+            cfg, None, GrantFlags(runner=Runner(agent="claude"), clear_runner=True)
+        )
 
 
 def test_new_grant_starts_from_default_profile(cfg_with_profile_bugfixer_default):
