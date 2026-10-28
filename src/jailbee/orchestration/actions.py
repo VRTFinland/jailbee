@@ -640,7 +640,8 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
             branch=req.branch,
             commit=req.commit,
             base_branch=(
-                req.fork_base if req.fork_base_pinned
+                req.fork_base
+                if req.fork_base_pinned
                 else ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None
             ),
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),

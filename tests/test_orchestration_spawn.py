@@ -120,7 +120,9 @@ def test_explicit_ref_is_forwarded_to_fork_preparation(
     assert actions.handle_spawn(ctx, manifest).state == "started"
     assert prepare.call_args.kwargs["ref"] == ref
     fork = started.call_args.kwargs["fork"]
-    opts = actions.child_options(ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork)
+    opts = actions.child_options(
+        ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork
+    )
     assert opts.clone_commit == "a" * 40
     assert opts.inherited_labels is None
 
@@ -150,7 +152,9 @@ def test_queued_explicit_ref_does_not_inherit_pr_labels(
     assert actions._start_spawn(ctx, req).state == "started"
     fork = started.call_args.kwargs["fork"]
     assert fork.commit == "b" * 40
-    opts = actions.child_options(ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork)
+    opts = actions.child_options(
+        ctx.cfg, started.call_args.args[1], orchestrator_full=ctx.sender.full, fork=fork
+    )
     assert opts.inherited_labels is None
     assert opts.clone_commit == "b" * 40
     assert opts.base_branch_label == "original"
