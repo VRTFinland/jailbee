@@ -13,8 +13,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.dashboard import system
-from jailbee.dashboard.system import SystemReader, level, pool_names
+from jailbee.dashboard.system import SystemReader, level, load_level, pool_names
 from jailbee.incus import IncusError
+from jailbee.sysstat import LoadStatus
 
 MEMINFO = "MemTotal: 1000 kB\nMemAvailable: 400 kB\nCached: 100 kB\n"
 
@@ -32,6 +33,7 @@ def proc(tmp_path: Path) -> Path:
     root = tmp_path / "proc"
     root.mkdir()
     (root / "meminfo").write_text(MEMINFO)
+    (root / "loadavg").write_text("0.50 0.40 0.30 1/100 42\n")
     return root
 
 
@@ -50,6 +52,31 @@ def _incus(source: str = "/dev/nvme1n1", pools: list[str] | None = None) -> Magi
 
 def _reader(proc: Path, clock: Clock, root: Path, interval: float = 10) -> SystemReader:
     return SystemReader(interval=interval, clock=clock, proc_root=proc, root=root)
+
+
+def test_reader_reports_load(proc: Path, tmp_path: Path) -> None:
+    status = _reader(proc, Clock(), tmp_path).read(_incus(), ["fast"])
+    assert status.load is not None and status.load.load1 == 0.5
+
+
+def test_reader_without_loadavg_has_no_load(proc: Path, tmp_path: Path) -> None:
+    (proc / "loadavg").unlink()
+    assert _reader(proc, Clock(), tmp_path).read(_incus(), ["fast"]).load is None
+
+
+def test_reader_rereads_load_each_call(proc: Path, tmp_path: Path) -> None:
+    reader = _reader(proc, Clock(), tmp_path)
+    reader.read(_incus(), ["fast"])
+    (proc / "loadavg").write_text("2.00 0.40 0.30 1/100 42\n")
+    status = reader.read(_incus(), ["fast"])
+    assert status.load is not None and status.load.load1 == 2.0
+
+
+def test_load_level_thresholds() -> None:
+    assert load_level(LoadStatus(load1=0.69, cpus=1)) == "ok"
+    assert load_level(LoadStatus(load1=2.8, cpus=4)) == "warn"
+    assert load_level(LoadStatus(load1=0.99, cpus=1)) == "warn"
+    assert load_level(LoadStatus(load1=4.0, cpus=4)) == "crit"
 
 
 def test_level_thresholds() -> None:

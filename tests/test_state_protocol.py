@@ -264,7 +264,8 @@ def test_garbage_is_a_protocol_error(line):
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
-    assert PROTOCOL == 13
+    # 14 added SystemStatus.load.
+    assert PROTOCOL == 14
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
@@ -298,14 +299,27 @@ def test_snapshot_round_trips_top_processes():
 
 def test_snapshot_round_trips_system_status():
     from jailbee.dashboard.system import PoolStatus, SystemStatus
-    from jailbee.sysstat import DiskStatus, MemoryStatus
+    from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 
     system = SystemStatus(
         memory=MemoryStatus(total=16 << 30, available=4 << 30, cache=1 << 30),
         pools=(PoolStatus("default", DiskStatus(total=100, available=40)),),
         root=DiskStatus(total=50, available=10),
+        load=LoadStatus(load1=1.25, cpus=8),
     )
     snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[], system=system)
 
     assert decode(encode(snapshot)) == snapshot
     assert decode(encode(snapshot)).system == system
+
+
+def test_a_snapshot_without_load_decodes_to_none():
+    from jailbee.dashboard.system import SystemStatus
+
+    snapshot = Snapshot(
+        seq=1, gathered_at=T0, git_enabled=False, groups=[], system=SystemStatus(None, (), None)
+    )
+    line = encode(snapshot)
+    assert b',"load":null' in line
+    restored = decode(line.replace(b',"load":null', b'', 1))
+    assert restored.system is not None and restored.system.load is None

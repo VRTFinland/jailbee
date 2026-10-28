@@ -25,7 +25,7 @@ from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
-from jailbee.sysstat import DiskStatus, MemoryStatus
+from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 from jailbee.update_check import UpdateNotice
 
 # Bumped on any change a client of another version could misread. 8 added
@@ -35,7 +35,8 @@ from jailbee.update_check import UpdateNotice
 # 11 added the orchestration fields: ContainerInfo grant/child/children counts,
 # GitStatus inbox/outbox counts, RepoGroup.orchestration_profiles. 12 added
 # ChildView.runner. 13 adds default runner and profile fields to the dashboard.
-PROTOCOL = 13
+# 14 added SystemStatus.load.
+PROTOCOL = 14
 
 
 class ProtocolError(ValueError):
@@ -123,6 +124,7 @@ _NAMESPACE: dict[str, Any] = {
         DiskStatus,
         GitStatus,
         GrantView,
+        LoadStatus,
         MemoryStatus,
         Path,
         PoolStatus,

@@ -1,9 +1,9 @@
-"""Host-wide memory and filesystem readings.
+"""Host-wide memory, load average and filesystem readings.
 
 The host-wide counterpart of ``procstat.py``: where that module reads one
 container's processes, this one reads the whole host's memory from
-``/proc/meminfo`` and the free space of a filesystem via ``os.statvfs``. It
-runs no process and holds no state, and every reader returns None rather
+``/proc/meminfo``, load from ``/proc/loadavg`` and filesystem free space via
+``os.statvfs``. It runs no process and holds no state, and every reader returns None rather
 than raising, so a dashboard gather never fails over a missing figure.
 
 The module imports nothing from ``jailbee`` and takes its /proc root as a
@@ -44,6 +44,29 @@ class MemoryStatus:
     @property
     def swap_free_ratio(self) -> float:
         return self.swap_free / self.swap_total if self.swap_total else 0.0
+
+
+@dataclass(frozen=True)
+class LoadStatus:
+    """One-minute host load and the host's CPU count."""
+
+    load1: float
+    cpus: int
+
+    @property
+    def per_cpu(self) -> float:
+        return self.load1 / self.cpus
+
+
+def read_load(*, proc_root: Path = PROC_ROOT, cpus: int | None = None) -> LoadStatus | None:
+    """Read the one-minute load average, or None if unavailable or malformed."""
+    try:
+        fields = (proc_root / "loadavg").read_text(encoding="utf-8", errors="replace").split()
+        load1 = float(fields[0])
+    except (OSError, IndexError, ValueError):
+        return None
+    count = (os.cpu_count() or 1) if cpus is None else cpus
+    return LoadStatus(load1=load1, cpus=max(1, count))
 
 
 @dataclass(frozen=True)

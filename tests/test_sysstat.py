@@ -13,8 +13,10 @@ import pytest
 
 from jailbee.sysstat import (
     DiskStatus,
+    LoadStatus,
     MemoryStatus,
     read_disk,
+    read_load,
     read_memory,
     same_filesystem,
 )
@@ -30,6 +32,37 @@ Shmem:            400000 kB
 SwapTotal:       2000000 kB
 SwapFree:        1500000 kB
 """
+
+
+def test_read_load_takes_the_one_minute_figure(tmp_path: Path) -> None:
+    (tmp_path / "loadavg").write_text("2.34 1.50 0.80 3/812 12345\n")
+    assert read_load(proc_root=tmp_path, cpus=8) == LoadStatus(load1=2.34, cpus=8)
+
+
+def test_read_load_defaults_cpus_to_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "loadavg").write_text("1.00 1.00 1.00 1/1 1\n")
+    monkeypatch.setattr("jailbee.sysstat.os.cpu_count", lambda: None)
+    assert read_load(proc_root=tmp_path) == LoadStatus(load1=1.0, cpus=1)
+
+
+@pytest.mark.parametrize("cpus", [0, -1])
+def test_read_load_clamps_cpu_count(tmp_path: Path, cpus: int) -> None:
+    (tmp_path / "loadavg").write_text("1.00 1.00 1.00 1/1 1\n")
+    assert read_load(proc_root=tmp_path, cpus=cpus) == LoadStatus(load1=1.0, cpus=1)
+
+
+@pytest.mark.parametrize("text", ["", "abc 1 2", "\n"])
+def test_read_load_malformed_is_none(tmp_path: Path, text: str) -> None:
+    (tmp_path / "loadavg").write_text(text)
+    assert read_load(proc_root=tmp_path, cpus=4) is None
+
+
+def test_read_load_missing_is_none(tmp_path: Path) -> None:
+    assert read_load(proc_root=tmp_path, cpus=4) is None
+
+
+def test_load_per_cpu() -> None:
+    assert LoadStatus(load1=3.0, cpus=4).per_cpu == 0.75
 
 
 def _write_meminfo(proc_root: Path, text: str) -> Path:

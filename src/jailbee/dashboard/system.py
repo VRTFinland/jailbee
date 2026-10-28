@@ -1,6 +1,6 @@
-"""Host memory, storage pool and root filesystem status for the dashboards.
+"""Host memory, load, storage pool and root filesystem status for the dashboards.
 
-`SystemReader` is held by the gatherer. Memory and the root filesystem are
+`SystemReader` is held by the gatherer. Memory, load and the root filesystem are
 cheap local reads, taken on every call. Pool usage costs Incus calls, so it
 is re-read at most once per ``interval`` (or when the set of pools in use
 changes) and the last good reading is carried forward in between and when
@@ -22,8 +22,10 @@ import yaml
 from jailbee.sysstat import (
     PROC_ROOT,
     DiskStatus,
+    LoadStatus,
     MemoryStatus,
     read_disk,
+    read_load,
     read_memory,
     same_filesystem,
 )
@@ -36,6 +38,17 @@ log = logging.getLogger(__name__)
 
 WARN_FREE = 0.15
 CRIT_FREE = 0.05
+WARN_LOAD = 0.7
+CRIT_LOAD = 1.0
+
+
+def load_level(load: LoadStatus) -> Literal["ok", "warn", "crit"]:
+    """Severity of the one-minute load per CPU."""
+    if load.per_cpu >= CRIT_LOAD:
+        return "crit"
+    if load.per_cpu >= WARN_LOAD:
+        return "warn"
+    return "ok"
 
 
 def level(free_ratio: float) -> Literal["ok", "warn", "crit"]:
@@ -59,6 +72,7 @@ class SystemStatus:
     pools: tuple[PoolStatus, ...]
     # None when unreadable or when it shares a filesystem with a pool.
     root: DiskStatus | None
+    load: LoadStatus | None = None
 
 
 def pool_names(groups: Sequence[RepoGroup]) -> tuple[str, ...]:
@@ -102,6 +116,7 @@ class SystemReader:
             memory=read_memory(proc_root=self._proc_root),
             pools=self._pools,
             root=self._root_status(),
+            load=read_load(proc_root=self._proc_root),
         )
 
     def _refresh(self, incus: Incus, names: tuple[str, ...]) -> None:
