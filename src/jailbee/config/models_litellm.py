@@ -35,6 +35,7 @@ from pydantic import (
 )
 
 from jailbee.egress import parse_egress_entry
+from jailbee.profile_names import PROFILE_NAME_RE as PROFILE_NAME_RE
 
 PINNED_LITELLM_VERSION = "1.106.0"
 """The version `provision/litellm/requirements.lock` was compiled for."""
@@ -52,12 +53,6 @@ ROUTE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 host's routes, `jb-<prefix>.<route>` for a repo override's. Neither a route name
 nor a container prefix may hold a `.`, so a host alias never contains one and a
 repo alias contains exactly one: no two aliases can be equal."""
-
-PROFILE_NAME_RE = ROUTE_NAME_RE
-"""A profile name becomes part of its tiers' proxy model names:
-`jb.<profile>.<level>` for the host's profiles, `jb-<prefix>.<profile>.<level>`
-for a repo override's. Without a `.` in it, a tier alias holds exactly two and
-never equals a route alias."""
 
 REPO_REFUSED_KEYS: tuple[str, ...] = ("enabled", "version", "accounts", "egress", "extra")
 """`litellm:` keys a repo's `repos/<prefix>.yaml` may not set: they describe the

@@ -894,9 +894,18 @@ def _tagged_blocks(skill: str) -> list[tuple[str, str]]:
     return blocks
 
 
+def _validate_grant_json(data: dict) -> None:
+    from jailbee.orchestration.grant import Grant
+
+    grant_data = data.copy()
+    source = grant_data.pop("default_runner_source")
+    assert source in (None, "container", "local", "repo", "global")
+    grant = Grant.model_validate(grant_data)
+    assert (source is None) == (grant.default_runner is None)
+
+
 @pytest.mark.parametrize("skill", [ORCH, CHILD])
 def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
-    from jailbee.orchestration.grant import Grant
     from jailbee.orchestration.protocol import (
         InboxMessage,
         InboxStatus,
@@ -917,7 +926,25 @@ def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
             model = InboxStatus if data["type"] == "status" else InboxMessage
             model.model_validate(data)
         else:
-            Grant.model_validate(data)
+            _validate_grant_json(data)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"default_runner_source": "unknown"},
+        {"default_runner_source": None},
+        {"unexpected": True},
+        {"default_runner": {"agent": "invalid"}},
+    ],
+)
+def test_grant_json_example_validation_rejects_invalid_fields(changes: dict) -> None:
+    from pydantic import ValidationError
+
+    data = {"default_runner": {"agent": "claude"}, "default_runner_source": "repo"}
+    data.update(changes)
+    with pytest.raises((AssertionError, ValidationError)):
+        _validate_grant_json(data)
 
 
 def test_protocol_block_tag_check_rejects_an_untagged_block(monkeypatch) -> None:

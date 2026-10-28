@@ -124,10 +124,51 @@ def test_grant_profile_reports_cleared_runner(patched, mocker):
     read.assert_not_called()
 
 
-def test_grant_profile_without_previous_runner_does_not_report_clearing(patched, mocker):
-    mocker.patch("jailbee.orchestration.commands.read_grant", return_value=Grant())
+def test_grant_profile_without_previous_runner_does_not_report_clearing(patched):
+    def grant_with_previous(*args, on_previous, **kwargs):
+        on_previous(Grant())
+        return Grant()
+
+    patched.grant.side_effect = grant_with_previous
     res = runner.invoke(app, ["orchestrate", "grant", "a", "--profile", "bugfixer"])
     assert res.exit_code == 0, res.output
+    assert "cleared" not in res.output.lower()
+
+
+def test_grant_clear_runner_passes_flag(patched):
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--clear-runner"])
+    assert res.exit_code == 0, res.output
+    assert patched.grant.call_args.args[3].clear_runner is True
+
+
+def test_grant_profile_with_explicit_runner_does_not_report_clearing(patched):
+    from jailbee.orchestration.runner_model import Runner
+
+    selected = Runner(agent="claude-jb", profile="grok", model="sonnet")
+
+    def grant_with_previous(*args, on_previous, **kwargs):
+        on_previous(Grant(default_runner=Runner(agent="claude")))
+        return Grant(default_runner=selected)
+
+    patched.grant.side_effect = grant_with_previous
+    res = runner.invoke(
+        app,
+        [
+            "orchestrate",
+            "grant",
+            "a",
+            "--profile",
+            "bugfixer",
+            "--runner-agent",
+            "claude-jb",
+            "--runner-profile",
+            "grok",
+            "--runner-model",
+            "sonnet",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert patched.grant.call_args.args[3].runner == selected
     assert "cleared" not in res.output.lower()
 
 

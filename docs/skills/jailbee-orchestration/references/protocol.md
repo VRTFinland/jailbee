@@ -63,9 +63,12 @@ CLI: `--on-done destroy|keep`.
 Optional `runner` (spawn and restart): `{"agent": "claude" | "claude-jb",
 "profile": <LiteLLM profile, claude-jb only>, "model": "fable" | "opus" |
 "sonnet" | "haiku"}`; only `agent` is required, unknown keys are refused.
-Omit it unless the user asked for a specific agent, profile or model (or their
-instructions name one); omitting uses the effective default runner in `grant.json`.
-If none is configured, it starts the repo's default agent.
+On spawn, omitting it uses the effective default runner in `grant.json`, or the
+repo's default agent if none is configured. Choose a cheaper or stronger tier
+when appropriate for the task, following the user's model guidance; when in
+doubt use the default. Keep the default agent and profile unless guidance says
+otherwise. On restart, omission keeps the child's runner; `null` selects the
+current effective default, or clears the runner when no default is configured.
 
 <!-- kind: outbox -->
 ```json

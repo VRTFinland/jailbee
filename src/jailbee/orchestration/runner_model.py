@@ -7,7 +7,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from jailbee.config.models_litellm import PROFILE_NAME_RE
+from jailbee.profile_names import PROFILE_NAME_RE
 
 DefaultRunnerSource = Literal["container", "local", "repo", "global"]
 

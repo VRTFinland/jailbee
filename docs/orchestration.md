@@ -190,9 +190,10 @@ runs the repo's primary agent as configured. Set the container preference with
 Reapplying `--profile` also clears the container preference unless a runner is
 specified. `jb orchestrate show` and `ls` display the effective preference;
 the dashboard offers a default runner entry. This preference grants no rights.
-On `restart`, an absent
-`runner` keeps the child's previous one and `"runner": null` clears it. The
-runner is stored on the child as a label and shown on its dashboard card.
+On `restart`, an absent `runner` keeps the child's previous one, while
+`"runner": null` selects the current effective default, or clears the runner
+if no default is configured. The runner is stored on the child as a label and
+shown on its dashboard card.
 
 A runner that cannot be honoured (Claude not enabled, no `prompt_args`, a
 command that is not `claude`/`claude-jb`, LiteLLM disabled, an unserved

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +24,18 @@ from jailbee.orchestration.protocol import (
     restart_sets_runner,
 )
 from jailbee.orchestration.runner import Runner
+
+
+@pytest.mark.parametrize("module", ["runner_model", "grant", "view", "protocol"])
+def test_orchestration_modules_cold_import(module: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", f"import jailbee.orchestration.{module}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
 
 RIGHTS = {"version": 1, "mounts": [], "loose": False, "egress": []}
 
