@@ -352,7 +352,7 @@ def publish_selected(
             if options.dry_run:
                 info_plain("Dry run: nothing was published.")
                 return 0
-            total = sum(a.status == "pending" for m in batch.manifests for a in m.actions)
+            total = issue_outbox.pending_action_count(batch)
             # One question under the plan: when it reaches foreign repositories
             # interactively, the publish question names them and is the consent.
             combined = (
@@ -397,9 +397,16 @@ def publish_selected(
                 revision,
                 raise_errors=raise_errors,
             )
-            report = issue_outbox.apply_batch(
-                batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store
-            )
+            from jailbee.publish_progress import reporting
+
+            with reporting(total) as tick:
+                report = issue_outbox.apply_batch(
+                    batch,
+                    incus=incus,
+                    uid=cfg.container_user.uid,
+                    journal_store=journal_store,
+                    before_action=tick,
+                )
             print_issue_outcome(batch, report)
             if raise_errors and report.failure is not None:
                 if report.failure.kind == "validation":

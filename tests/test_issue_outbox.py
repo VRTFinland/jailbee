@@ -1315,6 +1315,75 @@ def test_apply_executes_manifests_and_refs_in_displayed_order(execution):
     ]
 
 
+def test_apply_batch_calls_before_action_per_executed_action(execution):
+    from jailbee import issue_outbox
+    from jailbee.issue_github import MutationReceipt
+
+    actions = [_labels(issue=7), _labels(issue=8), _labels(issue=9)]
+    batch = execution["batch"]({"a.json": actions})
+    _seed_execution(execution, batch)
+    batch = execution["batch"]({"a.json": actions})
+    events = []
+
+    def mutation(root, repo, number, **kwargs):
+        events.append("post")
+        return MutationReceipt(number, f"https://github.com/{repo}/issues/{number}")
+
+    execution["mutations"]["replace_labels"].side_effect = mutation
+    report = issue_outbox.apply_batch(
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
+        before_action=lambda: events.append("hook"),
+    )
+    assert report.failure is None
+    assert events == ["hook", "post", "hook", "post"]
+
+
+def test_before_action_failure_does_not_leave_uncertain_receipt(execution):
+    from jailbee import issue_outbox
+
+    batch = execution["batch"]({"a.json": [_labels()]})
+
+    def fail():
+        raise RuntimeError("progress failed")
+
+    with pytest.raises(RuntimeError, match="progress failed"):
+        issue_outbox.apply_batch(
+            batch,
+            incus=execution["incus"],
+            uid=1000,
+            journal_store=execution["store"],
+            before_action=fail,
+        )
+    assert execution["mutations"]["replace_labels"].call_count == 0
+    report = _apply(execution, batch)
+    assert report.failure is None
+    assert len(report.applied) == 1
+    assert execution["mutations"]["replace_labels"].call_count == 1
+
+
+def test_pending_action_count_matches_apply_batch_attempts(execution):
+    from jailbee import issue_outbox
+
+    actions = [_labels(issue=7), _labels(issue=8)]
+    batch = execution["batch"]({"a.json": actions})
+    _seed_execution(execution, batch)
+    batch = execution["batch"]({"a.json": actions})
+    count = issue_outbox.pending_action_count(batch)
+    events = []
+    report = issue_outbox.apply_batch(
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
+        before_action=lambda: events.append("hook"),
+    )
+    assert report.failure is None
+    assert count == 1 == len(events)
+
+
 @pytest.mark.parametrize(
     "action, payload",
     [

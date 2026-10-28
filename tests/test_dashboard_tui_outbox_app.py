@@ -35,7 +35,7 @@ class FakeJobs:
         self._pending: list[tuple[Callable[[Any], None], Any]] = []
         FakeJobs.instances.append(self)
 
-    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False):  # type: ignore[no-untyped-def]
+    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False, on_progress=None):  # type: ignore[no-untyped-def]
         self.started.append(list(argv))
         stdout = _plan() if "--dry-run" in argv else "published 2 action(s)"
         self._pending.append((on_done, JobResult(0, "", stdout)))

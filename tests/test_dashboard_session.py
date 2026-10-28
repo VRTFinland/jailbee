@@ -262,7 +262,7 @@ class _HeldJobs:
         self.started: list[tuple[str, list[str], object]] = []
         self.calls: list[object] = []
 
-    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False):  # type: ignore[no-untyped-def]  # test double
+    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False, on_progress=None):  # type: ignore[no-untyped-def]  # test double
         assert capture_stdout
         self.started.append((key, list(argv), on_done))
 

@@ -14442,9 +14442,16 @@ def issue_apply_cmd(
         error_plain(str(e))
         raise typer.Exit(1) from e
 
-    report = issue_outbox.apply_batch(
-        batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store
-    )
+    from jailbee.publish_progress import reporting
+
+    with reporting(issue_outbox.pending_action_count(batch)) as tick:
+        report = issue_outbox.apply_batch(
+            batch,
+            incus=incus,
+            uid=cfg.container_user.uid,
+            journal_store=journal_store,
+            before_action=tick,
+        )
     _report_issue_apply_outcome(batch, report)
     if report.failure is not None:
         raise typer.Exit(1)

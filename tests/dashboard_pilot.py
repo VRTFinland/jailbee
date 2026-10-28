@@ -55,7 +55,7 @@ class SyncJobs(JobRunner):
     `poll()`, exactly as the real runner delivers it.
     """
 
-    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False):  # type: ignore[no-untyped-def]  # test double
+    def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False, on_progress=None):  # type: ignore[no-untyped-def]  # test double
         proc = subprocess.run(argv, check=False, cwd=cwd)
         self._labels[key] = label
         stderr = proc.stderr if isinstance(proc.stderr, str) else ""

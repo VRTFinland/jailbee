@@ -978,6 +978,13 @@ def pending_indices(manifest: Manifest, progress: Progress) -> list[int]:
     return [i for i in range(len(manifest.actions)) if i not in progress.applied]
 
 
+def planned_action_count(
+    manifest: Manifest, progress: Progress, indices: frozenset[int] | None
+) -> int:
+    """Count pending actions selected for publication."""
+    return sum(indices is None or index in indices for index in pending_indices(manifest, progress))
+
+
 @dataclass(frozen=True)
 class DraftPreview:
     pr: int
@@ -1226,8 +1233,11 @@ def apply_manifest(
     uid: int | None,
     indices: frozenset[int] | None = None,
     draft: bool = False,
+    before_action: Callable[[], None] | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
+
+    Call `before_action` immediately before each attempted action, if provided.
 
     Order: the review (if any) first — one atomic call carrying every line
     comment — then replies and general comments in manifest order, then the
@@ -1294,6 +1304,8 @@ def apply_manifest(
         if index in progress.applied or (indices is not None and index not in indices):
             continue
         try:
+            if before_action is not None:
+                before_action()
             url = _apply_one(target, manifest.actions[index], session)
         except pr.PrError as e:
             failure = str(e)
@@ -2849,35 +2861,54 @@ def _offer_locked(
     plans = refreshed_plans
     outbox = Outbox(fresh_store.as_dict(), fresh_store.rejected, identity)
     failures = len(refusals)
-    for position, (target, progress, idx) in enumerate(plans):
-        outcome = apply_manifest(
-            cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft
-        )
-        _print_receipts(target, outcome)
-        stop = False
-        try:
-            finalize(incus, container, outbox, target, outcome, uid=uid)
-        except FinalizeError as e:
-            # The GitHub side is settled but the container could not be told.
-            # Publishing the next manifest would post more that nothing can
-            # record — the very thing the sidecar exists to prevent.
-            if raise_errors:
-                raise OutboxExecutionError(str(e)) from e
-            error_plain(str(e))
-            stop = True
-        if outcome.failure is not None:
-            if raise_errors:
+    from contextlib import ExitStack
+
+    from jailbee.publish_progress import reporting
+
+    total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
+    with ExitStack() as stack:
+        tick = stack.enter_context(reporting(total))
+        for position, (target, progress, idx) in enumerate(plans):
+            outcome = apply_manifest(
+                cfg,
+                incus,
+                container,
+                target,
+                progress,
+                uid=uid,
+                indices=idx,
+                draft=draft,
+                before_action=tick,
+            )
+            _print_receipts(target, outcome)
+            stop = False
+            try:
+                finalize(incus, container, outbox, target, outcome, uid=uid)
+            except FinalizeError as e:
+                stack.close()
+                # The GitHub side is settled but the container could not be told.
+                # Publishing the next manifest would post more that nothing can
+                # record — the very thing the sidecar exists to prevent.
+                if raise_errors:
+                    raise OutboxExecutionError(str(e)) from e
+                error_plain(str(e))
+                stop = True
+            if outcome.failure is not None:
+                stack.close()
+                if raise_errors:
+                    warn_plain(
+                        f"{target.manifest.name} is still pending; re-running skips what landed."
+                    )
+                    raise OutboxExecutionError(f"{target.manifest.name}: {outcome.failure}")
+                error_plain(f"{target.manifest.name}: {outcome.failure}")
                 warn_plain(
                     f"{target.manifest.name} is still pending; re-running skips what landed."
                 )
-                raise OutboxExecutionError(f"{target.manifest.name}: {outcome.failure}")
-            error_plain(f"{target.manifest.name}: {outcome.failure}")
-            warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
-            stop = True
-        if stop:
-            failures += 1
-            left = [t.manifest.name for t, _, _ in plans[position + 1 :]]
-            if left:
-                warn_plain(f"Stopped here; still pending: {', '.join(left)}")
-            break
+                stop = True
+            if stop:
+                failures += 1
+                left = [t.manifest.name for t, _, _ in plans[position + 1 :]]
+                if left:
+                    warn_plain(f"Stopped here; still pending: {', '.join(left)}")
+                break
     return failures

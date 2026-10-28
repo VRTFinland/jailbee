@@ -1636,6 +1636,80 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
     assert calls["comment"].call_args.args[2] == "two"
 
 
+def test_apply_manifest_calls_before_action_once_per_attempt(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    events = []
+    calls["comment"].side_effect = lambda *args, **kwargs: events.append("post") or "url"
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body": str(i)} for i in range(3)]),
+        {},
+    )
+    target = Target(
+        manifest=manifest,
+        pr=_pr_info(),
+        stale=False,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        target,
+        Progress(frozenset({0}), {}),
+        uid=1000,
+        before_action=lambda: events.append("hook"),
+    )
+    assert outcome.applied == (1, 2)
+    assert events == ["hook", "post", "hook", "post"]
+
+
+def test_apply_manifest_hook_stops_with_the_failure(mocker, make_cfg, tmp_path):
+    from jailbee.pr import PrReviewError
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    calls["comment"].side_effect = ["url", PrReviewError("HTTP 500")]
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body": str(i)} for i in range(3)]),
+        {},
+    )
+    target = Target(
+        manifest=manifest,
+        pr=_pr_info(),
+        stale=False,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
+    events = []
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        target,
+        Progress(frozenset(), {}),
+        uid=1000,
+        before_action=lambda: events.append("hook"),
+    )
+    assert outcome.failure is not None
+    assert events == ["hook", "hook"]
+
+
+def test_planned_action_count_skips_applied_and_unselected():
+    from jailbee.pr_outbox import Progress, parse_manifest, planned_action_count
+
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(actions=[{"type": "comment", "body": str(i)} for i in range(5)]),
+        {},
+    )
+    assert (
+        planned_action_count(manifest, Progress(frozenset({0, 1}), {}), frozenset({1, 2, 3})) == 2
+    )
+
+
 def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg, tmp_path):
     from jailbee.pr import PrReviewError
     from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
@@ -3180,6 +3254,33 @@ def _selected_offer(cfg, incus, **kwargs):
         confirm=kwargs.pop("confirm", lambda count: True),
         **kwargs,
     )
+
+
+def test_offer_reports_progress_across_manifests(mocker, make_cfg, tmp_path, monkeypatch, capsys):
+    from jailbee.pr_outbox import offer_pending_comments
+
+    actions = [{"type": "comment", "body": "First"}, {"type": "comment", "body": "Second"}]
+    files = {"one.json": _manifest_text(actions=actions), "two.json": _manifest_text()}
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
+    assert (
+        offer_pending_comments(
+            cfg,
+            incus,
+            "c",
+            "feature",
+            pr_number=None,
+            manifest_names=("one.json", "two.json"),
+            confirm=lambda _: True,
+        )
+        == 0
+    )
+    lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("jailbee-progress:")
+    ]
+    assert lines == ["jailbee-progress: 1/3", "jailbee-progress: 2/3", "jailbee-progress: 3/3"]
 
 
 def _draft_offer_setup(mocker, make_cfg, tmp_path, *, extra=False):

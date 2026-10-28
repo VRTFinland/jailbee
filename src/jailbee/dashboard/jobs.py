@@ -13,12 +13,15 @@ result is lost.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
+
+from jailbee.publish_progress import PROGRESS_ENV, parse_progress
 
 _T = TypeVar("_T")
 
@@ -64,6 +67,7 @@ class JobRunner:
         # Each finished job: its key, its callback and what the callback gets
         # (a `JobResult` from `start`, the function's value from `call`).
         self._finished: list[tuple[str, Callable[[Any], None], Any]] = []
+        self._progress: dict[str, tuple[Callable[[int, int], None], int, int]] = {}
 
     def busy(self, key: str) -> bool:
         """Whether ``key`` has a job that has not been delivered by ``poll`` yet."""
@@ -84,6 +88,7 @@ class JobRunner:
         on_done: Callable[[JobResult], None],
         *,
         capture_stdout: bool = False,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         """Spawn ``argv``; ``on_done`` gets the result from a later ``poll``.
 
@@ -104,6 +109,7 @@ class JobRunner:
                 errors="replace",
                 cwd=cwd,
                 start_new_session=True,
+                env={**os.environ, PROGRESS_ENV: "1"} if on_progress is not None else None,
             )
         except OSError:
             with self._lock:
@@ -111,7 +117,34 @@ class JobRunner:
             raise
 
         def wait() -> None:
-            stdout, stderr = proc.communicate()
+            if on_progress is None:
+                stdout, stderr = proc.communicate()
+            else:
+                output: list[str] = []
+
+                def read_stdout() -> None:
+                    assert proc.stdout is not None
+                    with proc.stdout:
+                        output.append(proc.stdout.read())
+
+                reader = None
+                if proc.stdout is not None:
+                    reader = threading.Thread(target=read_stdout, daemon=True)
+                    reader.start()
+                lines: list[str] = []
+                assert proc.stderr is not None
+                with proc.stderr:
+                    for line in proc.stderr:
+                        progress = parse_progress(line)
+                        if progress is None:
+                            lines.append(line)
+                        else:
+                            with self._lock:
+                                self._progress[key] = (on_progress, *progress)
+                proc.wait()
+                if reader is not None:
+                    reader.join()
+                stdout, stderr = "".join(output), "".join(lines)
             result = JobResult(proc.returncode, stderr or "", stdout or "")
             with self._lock:
                 self._finished.append((key, on_done, result))
@@ -142,6 +175,9 @@ class JobRunner:
         """Deliver every finished job's result to its callback."""
         with self._lock:
             finished, self._finished = self._finished, []
+            progress, self._progress = self._progress, {}
+        for callback, n, total in progress.values():
+            callback(n, total)
         for key, on_done, result in finished:
             with self._lock:
                 self._labels.pop(key, None)

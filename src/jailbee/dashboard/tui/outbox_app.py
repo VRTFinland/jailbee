@@ -128,7 +128,12 @@ class LocalOutboxRunner:
         self.jobs.call(key, label, lambda: self.run_quiet(argv), on_done)
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None]
+        self,
+        key: str,
+        label: str,
+        argv: Sequence[str],
+        on_done: Callable[[JobResult], None],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         """A detached job; OSError/ValueError (no cwd, running, refused) reach the controller."""
         refusal = self._refusal(argv)
@@ -136,7 +141,7 @@ class LocalOutboxRunner:
             raise ValueError(refusal)
         self.jobs.start(
             key, label, ["jailbee", *self._full(argv)], self.target.cwd(), on_done,
-            capture_stdout=True,
+            capture_stdout=True, on_progress=on_progress,
         )  # fmt: skip
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
