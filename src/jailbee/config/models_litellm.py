@@ -85,6 +85,7 @@ An `oauth: true` route needs it besides `PROVIDER_HOSTS["xai"]`."""
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6-astra": 272_000,
     "chatgpt/gpt-6.1-sol": 272_000,
+    "chatgpt/gpt-6.1-terra": 272_000,
     "chatgpt/gpt-6-luna": 272_000,
 }
 """Window Claude Code manages per model. Claude Code compacts a fixed reserve
@@ -95,6 +96,7 @@ subscription backend's input limit, not the API's 1.05M."""
 KNOWN_MAX_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6-astra": 1_050_000,
     "chatgpt/gpt-6.1-sol": 1_050_000,
+    "chatgpt/gpt-6.1-terra": 1_050_000,
     "chatgpt/gpt-6-luna": 1_050_000,
 }
 """The most `claude-jb --context` may raise a model's window to: the API's
@@ -146,13 +148,14 @@ _BUILTIN_ROUTES: dict[str, dict[str, object]] = {
     "astra": {"model": "chatgpt/gpt-6-astra", "effort": "high"},
     "sol-high": {"model": "chatgpt/gpt-6.1-sol", "effort": "high"},
     "sol-medium": {"model": "chatgpt/gpt-6.1-sol", "effort": "medium"},
+    "terra-high": {"model": "chatgpt/gpt-6.1-terra", "effort": "high"},
     "luna-high": {"model": "chatgpt/gpt-6-luna", "effort": "high"},
 }
 _BUILTIN_PROFILES: dict[str, dict[str, object]] = {
     "codex": {
         "fable": "astra",
         "opus": "sol-high",
-        "sonnet": "sol-medium",
+        "sonnet": "terra-high",
         "haiku": "luna-high",
     },
 }
@@ -272,8 +275,8 @@ class LiteLLMRoute(BaseModel):
             "published to the proxy as the model's `max_input_tokens`. Claude Code takes "
             "one window per session, so `claude-jb` passes the smallest among the "
             "profile's routes as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
-            "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` and "
-            "`chatgpt/gpt-6-luna`; required for any other model."
+            "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol`, "
+            "`chatgpt/gpt-6.1-terra` and `chatgpt/gpt-6-luna`; required for any other model."
         ),
     )
     max_context_window: int | None = Field(
@@ -282,9 +285,9 @@ class LiteLLMRoute(BaseModel):
         description=(
             "The largest window `claude-jb --context` may select for this route, in tokens "
             "(never below `context_window`). A profile's ceiling is the smallest among its "
-            "routes'. Defaults to 1050000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` "
-            "and `chatgpt/gpt-6-luna`, and otherwise to `context_window`: such a route "
-            "cannot be raised."
+            "routes'. Defaults to 1050000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol`, "
+            "`chatgpt/gpt-6.1-terra` and `chatgpt/gpt-6-luna`, and otherwise to "
+            "`context_window`: such a route cannot be raised."
         ),
     )
     api_key: str | None = Field(
@@ -565,7 +568,7 @@ class LiteLLMConfig(BaseModel):
         default_factory=dict,
         description=(
             "Named models. An entry named like a built-in route (`astra`, "
-            "`sol-high`, `sol-medium`, `luna-high`) overrides it field by field."
+            "`sol-high`, `sol-medium`, `terra-high`, `luna-high`) overrides it field by field."
         ),
     )
     profiles: dict[str, LiteLLMProfile] = Field(

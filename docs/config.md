@@ -2975,12 +2975,12 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 | `accounts` | `[default]` | Logins (ChatGPT or xAI), one proxy instance each. The built-in `codex` profile uses `default`. |
 | `egress` | `[]` | Extra `host[:port]` the proxy may reach, for `extra` deployments. Changing it needs `jailbee litellm up`; `jailbee apply` does not apply an egress-only edit. |
 | `extra` | none | Path to a raw LiteLLM config fragment merged into every instance last. |
-| `routes` | four built-in routes | Named models; same-name entries overlay the built-in route field by field. |
+| `routes` | five built-in routes | Named models; same-name entries overlay the built-in route field by field. |
 | `profiles` | built-in `codex` | Named maps of `fable`, `opus`, `sonnet`, `haiku` tiers to routes; same-name entries overlay individual tiers. |
 
 Routes accept `model` (required for new routes), `effort` (fixed),
 `min_effort` (floor; mutually exclusive with `effort`), `context_window`
-(required for unknown models, default `272000` for `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
+(required for unknown models, default `272000` for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
 `max_context_window` (the most `claude-jb --context` may select; default `1050000` for those three models, otherwise `context_window`; never below it),
 `oauth` (true: use the account's xAI subscription login, only on `xai/` routes),
 `api_key` (name of a variable in `~/.config/jailbee/litellm/secrets.env`, never

@@ -74,6 +74,12 @@ before editing `## Unreleased`.
   characters (was 1000). HTML is shown as written and terminal controls are
   dropped, as in `jailbee outbox show`; history entries and the Qt tooltip stay
   one line.
+- **`claude-jb`: the `codex` profile's Sonnet tier runs on GPT-6.1 Terra.** It
+  maps to the new built-in route `terra-high` (`chatgpt/gpt-6.1-terra`, fixed
+  `high`, 272,000-token window) instead of `sol-medium`, which stays built in
+  for profiles that name it. To keep the old mapping, set
+  `litellm.profiles.codex.sonnet: sol-medium`. Run `jailbee apply` to
+  reload a running proxy.
 
 ### Fixed
 
