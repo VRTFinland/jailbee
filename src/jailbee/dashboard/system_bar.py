@@ -42,7 +42,10 @@ class _Segment:
 
 
 def format_load(value: float) -> str:
-    """Format the load in five cells where its magnitude permits."""
+    """Format the load in five cells where its magnitude permits.
+
+    Extreme integer results can exceed five cells; the format width is a minimum.
+    """
     if round(value, 2) < 100:
         return f"{value:5.2f}"
     if round(value, 1) < 1000:

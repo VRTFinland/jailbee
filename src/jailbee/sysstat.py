@@ -12,6 +12,7 @@ parameter, so the tests drive it against ``tmp_path`` rather than the host.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,8 @@ def read_load(*, proc_root: Path = PROC_ROOT, cpus: int | None = None) -> LoadSt
         fields = (proc_root / "loadavg").read_text(encoding="utf-8", errors="replace").split()
         load1 = float(fields[0])
     except (OSError, IndexError, ValueError):
+        return None
+    if not math.isfinite(load1) or load1 < 0:
         return None
     count = (os.cpu_count() or 1) if cpus is None else cpus
     return LoadStatus(load1=load1, cpus=max(1, count))

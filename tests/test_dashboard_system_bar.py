@@ -69,6 +69,10 @@ def test_format_load_is_five_wide(value: float, text: str) -> None:
     assert format_load(value) == text
 
 
+def test_format_load_extreme_integer_can_exceed_five_cells() -> None:
+    assert format_load(99999.5) == "100000"
+
+
 def test_load_sits_after_swap_before_pools() -> None:
     status = _status(memory=_mem(swap_total=100, swap_free=50), load=LoadStatus(1.5, 8))
     plain = system_line(status, 160).plain
@@ -82,7 +86,8 @@ def test_load_alone_has_no_padding() -> None:
 
 
 def test_no_load_segment_when_unread() -> None:
-    assert system_line(_status(), 120).plain == system_line(_status(load=None), 120).plain
+    status = SystemStatus(memory=None, pools=(), root=None, load=None)
+    assert system_line(status, 120).plain == ""
 
 
 @pytest.mark.parametrize(("load1", "style"), [(2.0, ""), (2.8, "bold yellow"), (4.0, "bold red")])
@@ -146,13 +151,26 @@ def test_tiny_widths_do_not_crash(width: int) -> None:
 
 
 @pytest.mark.parametrize("width", [80, 120, 121, 122, 300])
-def test_bars_stretch_to_fill_the_width_sharing_it_equally(width: int) -> None:
-    line = system_line(_status(), width)
+@pytest.mark.parametrize("load", [None, LoadStatus(1.0, 4)])
+def test_bars_stretch_to_fill_the_width_sharing_it_equally(
+    width: int, load: LoadStatus | None
+) -> None:
+    line = system_line(_status(load=load), width)
+    if load is not None:
+        assert line.plain.index("[Mem") < line.plain.index(" 1.00") < line.plain.index("[Pool")
     assert line.cell_len == width
     bars = [seg.split("]")[0] for seg in line.plain.split("[")[1:]]
     assert len(bars) == 3
     widths = [len(b) for b in bars]
     assert max(widths) - min(widths) <= 1
+
+
+def test_load_keeps_order_when_only_root_is_compact() -> None:
+    line = system_line(_status(load=LoadStatus(1.0, 4)), 54)
+    assert line.cell_len == 54
+    assert line.plain.index("[Mem") < line.plain.index(" 1.00") < line.plain.index("[Pool")
+    assert line.plain.endswith("  / 50%")
+    assert "[/" not in line.plain
 
 
 def test_bars_stretch_when_the_root_is_compact() -> None:

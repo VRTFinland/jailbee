@@ -59,10 +59,15 @@ def test_read_load_clamps_cpu_count(tmp_path: Path, cpus: int) -> None:
     assert read_load(proc_root=tmp_path, cpus=cpus) == LoadStatus(load1=1.0, cpus=1)
 
 
-@pytest.mark.parametrize("text", ["", "abc 1 2", "\n"])
+@pytest.mark.parametrize("text", ["", "abc 1 2", "\n", "nan", "inf", "-inf", "-1.00", "1e999"])
 def test_read_load_malformed_is_none(tmp_path: Path, text: str) -> None:
     (tmp_path / "loadavg").write_text(text)
     assert read_load(proc_root=tmp_path, cpus=4) is None
+
+
+def test_read_load_accepts_zero(tmp_path: Path) -> None:
+    (tmp_path / "loadavg").write_text("0.00 0.00 0.00 0/1 1\n")
+    assert read_load(proc_root=tmp_path, cpus=4) == LoadStatus(load1=0.0, cpus=4)
 
 
 def test_read_load_missing_is_none(tmp_path: Path) -> None:
