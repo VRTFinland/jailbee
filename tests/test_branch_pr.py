@@ -39,7 +39,7 @@ def source_publisher(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/widgets")
     mocker.patch("jailbee.git.check_ref_format", return_value=True)
     base_fetch = mocker.patch("jailbee.pr.fetch_base_ref", return_value="c" * 40)
-    mocker.patch("jailbee.git.count_commits_between", return_value="3")
+    count = mocker.patch("jailbee.git.count_commits_between", return_value="3")
     remote = mocker.patch("jailbee.git.remote_branch_sha_strict", return_value=None)
     fetch = mocker.patch("jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/host/source")
     ff = mocker.patch("jailbee.sync.is_fast_forward", return_value=True)
@@ -64,6 +64,8 @@ def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     assert "(base main, 3 commits)" in " ".join(capsys.readouterr().out.split())
     p["push"].assert_called_once()
     assert p["push"].call_args.kwargs["expected_sha"] == "a" * 40
+    p["base_fetch"].assert_called_once_with(p["cfg"].repo_root, "main", remote=p["cfg"].upstream_remote)
+    p["count"].assert_called_once_with(p["cfg"].repo_root, "c" * 40, "refs/jailbee/host/source")
     assert p["create"].call_args.kwargs["head"] == "feature/a"
     assert p["create"].call_args.kwargs["base"] == "main"
     saved = json.loads(p["incus"].config_set.call_args.args[2])
@@ -118,6 +120,18 @@ def test_source_foreign_consent_before_fetch_even_with_yes(source_publisher):
     p["snapshot"].files["m.json"] = json.dumps(data)
     p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
     assert _publish(p, confirm=lambda _: False) == 1
+    p["fetch"].assert_not_called()
+    p["push"].assert_not_called()
+
+
+@pytest.mark.parametrize("label", ["user.jailbee.pr", "user.jailbee.stacked_pr"])
+def test_null_source_rejects_container_own_pr_collision(source_publisher, label):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["incus"].config_get_checked.side_effect = lambda full, key: "77" if key == label else None
+    p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
+    assert _publish(p) == 1
     p["fetch"].assert_not_called()
     p["push"].assert_not_called()
 

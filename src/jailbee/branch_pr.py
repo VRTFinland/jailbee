@@ -88,6 +88,8 @@ def publish_source_manifest(
                 for label in (pr_flow.PR_LABEL_PREFIX, pr_flow.STACKED_LABEL_PREFIX):
                     value = incus.config_get_checked(full, label)
                     if value:
+                        if manifest.pr is None and value == str(target.number):
+                            raise pr.PrError(f"source manifest collides with container PR #{target.number}; specify the PR explicitly")
                         own.add(value)
                 if str(target.number) not in own and not confirm(f"PR #{target.number} is not bound to container {short}: check that this is the PR you mean to publish to"):
                     return 1
