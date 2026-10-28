@@ -9567,3 +9567,74 @@ def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp
             sync.sync_refs_from_container(cfg, incus, "feat-foo")
         else:
             _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
+
+
+@pytest.mark.parametrize("actual", ["a" * 40, "b" * 40])
+def test_fetch_pinned_ref_checks_sha(mocker, make_cfg, tmp_path, actual):
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    mocker.patch("jailbee.git.rev_parse", return_value=actual)
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    host_ref = "refs/jailbee/feat-foo/source/heads/topic"
+    if actual == "a" * 40:
+        assert sync.fetch_ref_from_container(cfg, incus, "feat-foo", "refs/heads/topic", "a" * 40) == host_ref
+    else:
+        with pytest.raises(sync.SyncError, match="bbbbbbb.*aaaaaaa.*re-stage"):
+            sync.fetch_ref_from_container(cfg, incus, "feat-foo", "refs/heads/topic", "a" * 40)
+    assert fetch.call_args.args[2] == f"+refs/heads/topic:{host_ref}"
+
+
+@pytest.mark.parametrize("ref,sha", [("refs/heads/a..b", "a" * 40), ("refs/heads/good", "bad"), ("HEAD", "a" * 40)])
+def test_fetch_pinned_ref_rejects_invalid_input_before_transport(mocker, make_cfg, tmp_path, ref, sha):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    transport = mocker.patch("jailbee.sync.assert_container_publishable")
+    with pytest.raises(sync.SyncError):
+        sync.fetch_ref_from_container(cfg, incus, "feat-foo", ref, sha)
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_push_pinned_ref_uses_lease_only_when_forced(mocker, make_cfg, tmp_path, force):
+    cfg = make_cfg(tmp_path)
+    remote = mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    push = mocker.patch("jailbee.git.push_to_remote")
+    hook = mocker.Mock()
+    sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=force, on_before_push=hook)
+    push.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, "refs/jailbee/feat/source/heads/topic", "topic", force_with_lease="b" * 40 if force else None)
+    assert remote.call_count == int(force)
+    hook.assert_called_once_with()
+
+
+def test_pinned_ref_fast_forward_missing_remote(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.remote_branch_sha", return_value=None)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    assert sync.is_fast_forward(cfg, "refs/jailbee/feat/source/heads/topic", "topic") is None
+
+
+@pytest.mark.parametrize("relation", [True, False, None])
+def test_pinned_ref_fast_forward_checks_remote_ancestry(mocker, make_cfg, tmp_path, relation):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=relation)
+    ref = "refs/jailbee/feat/source/heads/topic"
+    if relation is None:
+        with pytest.raises(sync.SyncError, match="Cannot determine"):
+            sync.is_fast_forward(cfg, ref, "topic")
+    else:
+        assert sync.is_fast_forward(cfg, ref, "topic") is relation
+    ancestor.assert_called_once_with(cfg.repo_root, "b" * 40, ref)
+
+
+def test_push_pinned_ref_retries_with_original_lease(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    remote = mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    push = mocker.patch("jailbee.git.push_to_remote", side_effect=[sync.git.GitError("failed"), None])
+    mocker.patch("jailbee.sync.confirm_retry_quiet", return_value=True)
+    sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
+    remote.assert_called_once()
+    assert push.call_count == 2
+    assert all(call.kwargs["force_with_lease"] == "b" * 40 for call in push.call_args_list)
