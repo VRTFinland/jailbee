@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.model import RepoAdvisory
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.orchestration.runner_model import Runner
 
 Leaf = tuple[str, str]
 """A menu entry, ``(label, verb)``. The verbs below are handled by `run()` itself."""
@@ -229,6 +230,8 @@ def orchestrate_grant_argv(
     mounts: Sequence[str] | None = None,
     loose: bool | None = None,
     egress: Sequence[str] | None = None,
+    runner: Runner | None = None,
+    clear_runner: bool = False,
 ) -> list[str]:
     """`jailbee orchestrate grant`: options before the separator, in signature order.
 
@@ -250,6 +253,14 @@ def orchestrate_grant_argv(
         options.append("--loose" if loose else "--no-loose")
     if egress is not None:
         options += [item for h in egress for item in ("--egress", h)] or ["--clear-egress"]
+    if runner is not None:
+        options += ["--runner-agent", runner.agent]
+        if runner.profile is not None:
+            options += ["--runner-profile", runner.profile]
+        if runner.model is not None:
+            options += ["--runner-model", runner.model]
+    if clear_runner:
+        options.append("--clear-runner")
     return ["orchestrate", "grant", *options, "--", name]
 
 

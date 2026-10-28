@@ -424,6 +424,7 @@ def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
             head,
             f"[dim]may:[/dim] {', '.join(escape(o) for o in g.operations)}",
             rights("may grant:", g.mounts, g.loose, g.egress),
+            f"[dim]default runner:[/dim] {escape(g.default_runner or 'inherit')}",
         )
     if c.child is not None:
         ch = c.child

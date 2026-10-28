@@ -1130,6 +1130,11 @@ class DashboardSession:
                 entries.append(PickerEntry(f"Grant mount {kind}: {state}", f"mount:{kind}"))
             listed = ", ".join(grant.egress) or "—"
             entries.append(PickerEntry(f"Egress for children: {listed}…", "egress"))
+            inherited = group.default_runner or "agent default"
+            if group.default_runner_source:
+                inherited += f" from {group.default_runner_source}"
+            runner_label = grant.default_runner or f"inherit ({inherited})"
+            entries.append(PickerEntry(f"Default runner: {runner_label}…", "runner"))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
             if revoke_ok:
@@ -1179,6 +1184,10 @@ class DashboardSession:
         if found is None or not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
+        if picker.purpose == "container-orchestration-runner":
+            return self._submit_runner(container, entry.value)
+        if entry.value == "runner":
+            return self._runner_picker(container)
         if entry.value in ("limit", "egress"):
             return self._orchestration_prompt(container, found[1], entry.value)
         if entry.value.startswith(("op:", "mount:")) or entry.value == "loose":
@@ -1191,6 +1200,65 @@ class DashboardSession:
         self._grant_patches.pop(container, None)
         self.run_quiet_cli(repo, argv)
         return None
+
+    def _runner_picker(self, container: str) -> Picker | None:
+        from jailbee.orchestration.runner_model import RUNNER_TIERS
+
+        found = self._listed_container(container)
+        if found is None or found[1].grant is None or not self._orchestration_editable(found[1]):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        group, info = found
+        inherited = group.default_runner or "agent default"
+        if group.default_runner_source:
+            inherited += f" from {group.default_runner_source}"
+        entries = [
+            PickerEntry(f"Inherit ({inherited})", "inherit"),
+            PickerEntry("claude (agent default)", "claude::"),
+        ]
+        entries.extend(PickerEntry(f"claude {tier}", f"claude::{tier}") for tier in RUNNER_TIERS)
+        for profile in group.runner_profiles:
+            entries.append(
+                PickerEntry(f"claude-jb -P {profile} (profile default)", f"claude-jb:{profile}:")
+            )
+            entries.extend(
+                PickerEntry(f"claude-jb -P {profile} {tier}", f"claude-jb:{profile}:{tier}")
+                for tier in RUNNER_TIERS
+            )
+        return Picker(
+            "container-orchestration-runner",
+            f"Default runner for '{info.display_name}'",
+            tuple(entries),
+            target=container,
+            back=self.open_orchestration(container),
+        )
+
+    def _submit_runner(self, container: str, value: str) -> Picker | None:
+        from jailbee.orchestration.runner_model import Runner
+
+        found = self._listed_container(container)
+        repo = self.repo_for(container, "container")
+        if (
+            found is None
+            or repo is None
+            or found[1].grant is None
+            or not self._orchestration_editable(found[1])
+        ):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        runner = None
+        if value != "inherit":
+            agent, profile, model = value.split(":")
+            runner = Runner.model_validate(
+                {"agent": agent, "profile": profile or None, "model": model or None}
+            )
+        argv = dact.orchestrate_grant_argv(container, runner=runner, clear_runner=runner is None)
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        self._patch_grant(
+            container, replace(found[1].grant, default_runner=runner.describe() if runner else None)
+        )
+        return self._reopen_orchestration(container, "runner")
 
     def _orchestration_editable(self, info: ContainerInfo) -> bool:
         """Whether the menu applies to ``info`` and `orchestrate grant` may run for it."""
@@ -2091,7 +2159,11 @@ class DashboardSession:
         if picker.purpose == "outbox-clear-preparing":
             self.set_notice("Cancelled")
             return None
-        if picker.purpose in ("container-orchestration", "container-orchestration-revoke"):
+        if picker.purpose in (
+            "container-orchestration",
+            "container-orchestration-revoke",
+            "container-orchestration-runner",
+        ):
             return self.submit_orchestration(picker, entry)
         if picker.purpose == "container-mounts":
             repo = self.repo_for(picker.target, "container")

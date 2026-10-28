@@ -34,8 +34,8 @@ from jailbee.update_check import UpdateNotice
 # and ContainerInfo.memory_override, needed for safe memory-limit editing.
 # 11 added the orchestration fields: ContainerInfo grant/child/children counts,
 # GitStatus inbox/outbox counts, RepoGroup.orchestration_profiles. 12 added
-# ChildView.runner.
-PROTOCOL = 12
+# ChildView.runner. 13 adds default runner and profile fields to the dashboard.
+PROTOCOL = 13
 
 
 class ProtocolError(ValueError):

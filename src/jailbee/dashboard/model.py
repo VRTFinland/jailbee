@@ -206,6 +206,9 @@ class RepoGroup:
     advisories: tuple[RepoAdvisory, ...] = ()
     memory_default: str = "16GiB"
     orchestration_profiles: tuple[str, ...] = ()
+    default_runner: str | None = None
+    default_runner_source: str | None = None
+    runner_profiles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -497,6 +500,9 @@ def _gather_rows(
         for c in containers:
             c.configured_mounts = tuple(cfg.optional_mounts)
         covered.add(cfg.container_prefix)
+        orch_view = cfg.orchestration_view()
+        runner = orch_view.default_runner
+        litellm_config = cfg.litellm_view().config
         groups.append(
             RepoGroup(
                 cfg.container_prefix,
@@ -522,7 +528,12 @@ def _gather_rows(
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
                 memory_default=cfg.defaults.memory,
-                orchestration_profiles=tuple(sorted(cfg.orchestration_view().profiles)),
+                orchestration_profiles=tuple(sorted(orch_view.profiles)),
+                default_runner=runner.describe() if runner else None,
+                default_runner_source=orch_view.default_runner_source,
+                runner_profiles=tuple(sorted(litellm_config.effective_profiles()))
+                if litellm_config.enabled
+                else (),
             )
         )
 

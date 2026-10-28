@@ -7446,3 +7446,38 @@ def test_role_cell_styling():
     assert dfmt.dashboard_cell(spec, ok, now) == "child"
     assert dfmt.dashboard_cell(spec, _orch_ci(as_orch=True), now) == "[bold]orch[/bold]"
     assert dfmt.dashboard_cell(spec, _orch_ci(), now) == ""
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_gather_rows_runner_profiles_follow_litellm_config(tmp_path, mocker, make_cfg, enabled):
+    from jailbee.config.models_litellm import LiteLLMConfig, LiteLLMRepoView
+    from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
+    from jailbee.orchestration.runner_model import Runner
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    config = LiteLLMConfig.model_validate(
+        {
+            "enabled": enabled,
+            "routes": {"custom": {"model": "chatgpt/gpt-6.1-sol"}},
+            "profiles": {"mine": {"opus": "custom"}},
+        }
+    )
+    cfg._litellm_view = LiteLLMRepoView(config=config)
+    cfg._orchestration_view = OrchestrationView(
+        profiles={},
+        default_profile=None,
+        repo=RepoOrchestration(),
+        default_runner=Runner(agent="claude", model="haiku"),
+        default_runner_source="repo",
+    )
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+    group = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)[0]
+    assert group.default_runner == "claude haiku"
+    assert group.default_runner_source == "repo"
+    if enabled:
+        assert "codex" in group.runner_profiles
+        assert "mine" in group.runner_profiles
+    else:
+        assert group.runner_profiles == ()

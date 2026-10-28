@@ -119,7 +119,7 @@ class Picker:
     entries: tuple[PickerEntry, ...]
     target: str = ""
     carry: tuple[str, ...] = ()
-    back: EgressState | AccountsState | None = None
+    back: Picker | EgressState | AccountsState | None = None
     detail: tuple[str, ...] = ()
     start_index: int = 0  # the entry the cursor starts on (not part of the picker's identity)
 

@@ -117,3 +117,11 @@ def test_child_view_corrupt_runner_is_none(raw):
     v = parse_child_view("alpha-orch", "done", None, raw)
     assert v is not None
     assert v.runner is None
+
+
+def test_parse_grant_view_default_runner():
+    import json
+
+    data = json.loads(GRANT)
+    data["default_runner"] = {"agent": "claude", "model": "opus"}
+    assert parse_grant_view(json.dumps(data)).default_runner == "claude opus"

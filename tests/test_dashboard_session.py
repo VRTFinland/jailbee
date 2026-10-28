@@ -688,6 +688,7 @@ def test_orchestration_edit_entries_labels(mocker, tmp_path):
         ("Grant mount data: on", "mount:data"),
         ("Grant mount docs: off", "mount:docs"),
         ("Egress for children: pypi.org…", "egress"),
+        ("Default runner: inherit (agent default)…", "runner"),
         ("Re-apply profile 'bugfixer'", "profile:bugfixer"),
         ("Revoke…", "revoke"),
     ]
@@ -1139,6 +1140,62 @@ def test_menu_locally_unchanged(mocker, tmp_path):
         "loose",
         "mount:data",
         "egress",
+        "runner",
         "profile:bugfixer",
         "revoke",
     ]
+
+
+def test_default_runner_picker_and_submit(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    group = session.groups[0]
+    group.default_runner = "claude haiku"
+    group.default_runner_source = "repo"
+    group.runner_profiles = ("grok",)
+    picker = session.open_orchestration("alpha-one")
+    assert ("Default runner: inherit (claude haiku from repo)…", "runner") in [
+        (e.label, e.value) for e in picker.entries
+    ]
+    runner = session.submit_picker(picker, PickerEntry("", "runner"))
+    assert "claude-jb:grok:sonnet" in [e.value for e in runner.entries]
+    assert "inherit" in [e.value for e in runner.entries]
+    result = session.submit_picker(runner, PickerEntry("", "claude::opus"))
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--runner-agent",
+        "claude",
+        "--runner-model",
+        "opus",
+        "--",
+        "alpha-one",
+    ]
+    assert result.entries[result.start_index].value == "runner"
+    assert session.groups[0].containers[0].grant.default_runner == "claude opus"
+    runner = session.submit_picker(result, PickerEntry("", "runner"))
+    session.submit_picker(runner, PickerEntry("", "inherit"))
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--clear-runner", "--", "alpha-one"]
+    assert session.groups[0].containers[0].grant.default_runner is None
+
+
+def test_runner_picker_escape_returns_to_orchestration(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    picker = session.open_orchestration("alpha-one")
+    session.overlay = session.submit_picker(picker, PickerEntry("", "runner"))
+    session.overlay_cancel()
+    assert session.overlay.purpose == "container-orchestration"
+
+
+def test_runner_picker_failure_does_not_patch(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    picker = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "runner")
+    )
+    assert session.submit_picker(picker, PickerEntry("", "claude::opus")) is None
+    assert session.groups[0].containers[0].grant.default_runner is None
+
+
+def test_runner_entry_absent_if_grant_forbidden(mocker, tmp_path):
+    session = _ssh_orchestration_session(mocker, tmp_path, level="off")
+    assert "runner" not in [e.value for e in session.open_orchestration("alpha-one").entries]

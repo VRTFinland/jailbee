@@ -566,3 +566,28 @@ def test_orchestration_grant_permitted_needs_the_setting_over_ssh():
     assert not dact.orchestration_grant_permitted(info, off, over_ssh=True)
     assert dact.orchestration_grant_permitted(info, ssh, over_ssh=True)
     assert dact.orchestration_grant_permitted(info, off, over_ssh=False)
+
+
+def test_orchestrate_grant_runner_options():
+    from jailbee.orchestration.runner_model import Runner
+
+    runner = Runner(agent="claude-jb", profile="grok", model="sonnet")
+    assert dact.orchestrate_grant_argv("x", runner=runner) == [
+        "orchestrate",
+        "grant",
+        "--runner-agent",
+        "claude-jb",
+        "--runner-profile",
+        "grok",
+        "--runner-model",
+        "sonnet",
+        "--",
+        "x",
+    ]
+    assert dact.orchestrate_grant_argv("x", clear_runner=True) == [
+        "orchestrate",
+        "grant",
+        "--clear-runner",
+        "--",
+        "x",
+    ]

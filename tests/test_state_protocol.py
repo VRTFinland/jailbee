@@ -139,7 +139,7 @@ def _full_snapshot() -> Snapshot:
             egress_extra=("api.example.com",),
             alias="login",
             fork_of="alpha-y",
-            grant=GrantView(4, ("message", "spawn"), ("data",), True, ("pypi.org",)),
+            grant=GrantView(4, ("message", "spawn"), ("data",), True, ("pypi.org",), "claude opus"),
             child=ChildView("alpha-orch", "done", ("data",), True, ("pypi.org",), "claude-jb opus"),
             running_children=2,
             queued_children=3,
@@ -157,6 +157,9 @@ def _full_snapshot() -> Snapshot:
             loose_ttl_default="30m",
             memory_default="8GiB",
             orchestration_profiles=("bugfixer",),
+            default_runner="claude haiku",
+            default_runner_source="repo",
+            runner_profiles=("grok",),
             push_action_default="merge",
             push_source_default="branch",
             column_notice="note",
@@ -261,7 +264,7 @@ def test_garbage_is_a_protocol_error(line):
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
-    assert PROTOCOL == 12
+    assert PROTOCOL == 13
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.

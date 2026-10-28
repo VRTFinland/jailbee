@@ -1290,6 +1290,7 @@ def test_orchestrator_card_lines() -> None:
         "orchestrator · children 2/4 · 1 queued",
         "[dim]may:[/dim] spawn, stop",
         "[dim]may grant:[/dim] mounts data · loose no · egress —",
+        "[dim]default runner:[/dim] inherit",
     )
 
 
@@ -1333,7 +1334,8 @@ def test_panel_lines_draw_orchestration_after_exceptions() -> None:
     assert body[row + 1].startswith("orchestrator ·")
     assert "may:" in body[row + 2]
     assert "may grant:" in body[row + 3]
-    assert body[row + 4] == "⚠ behind"
+    assert body[row + 4] == "default runner: inherit"
+    assert body[row + 5] == "⚠ behind"
 
 
 def test_child_of_unknown_orchestrator_state_is_not_marked_stopped() -> None:

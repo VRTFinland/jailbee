@@ -34,6 +34,7 @@ class GrantView:
     mounts: tuple[str, ...]
     loose: bool
     egress: tuple[str, ...]
+    default_runner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def parse_grant_view(raw: object) -> GrantView | None:
         g.grantable.mounts,
         g.grantable.loose,
         g.grantable.egress,
+        g.default_runner.describe() if g.default_runner else None,
     )
 
 
