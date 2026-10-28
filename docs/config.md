@@ -2683,6 +2683,10 @@ a local profile replaces a global one of the same name):
 ```yaml
 orchestration:
   default_profile: worker        # applied by `jailbee new`; must name a profile
+  default_runner:                # optional preference for spawned children
+    agent: claude-jb             # claude or claude-jb
+    profile: grok                # optional; only with claude-jb
+    model: haiku                 # optional: fable, opus, sonnet or haiku
   profiles:
     worker:
       max_running_children: 4    # 1-64, default 4
@@ -2702,7 +2706,13 @@ It is applied by `jailbee new` to the new container, except for
 mount-mode containers, children, and when the repo's caps (`allowed` or an
 excess) would refuse the grant.
 
-**Per repo** (`.jailbee/config.yaml`): a repo may only narrow.
+`default_runner` has the shape `{agent, profile?, model?}`. Runner selection
+prefers an explicit runner, then the container's runner, then a non-null
+host-local default, the repo default, and finally the global default. It is a
+preference, not a right, and does not grant orchestration permissions.
+
+**Per repo** (`.jailbee/config.yaml`): rights may only be narrowed; the repo
+may set `default_runner` freely.
 
 | Key | Default | Effect |
 |---|---|---|
@@ -2711,6 +2721,7 @@ excess) would refuse the grant.
 | `mounts` | none | Mounts children may be given; others are dropped |
 | `egress` | none | Egress entries children may be given |
 | `loose` | none | `false` forbids handing loose network to children |
+| `default_runner` | none | Preferred runner, with the same `{agent, profile?, model?}` shape as the host setting |
 
 `profiles` and `default_profile` are refused in a repo's config. A profile
 grants rights, and a repo file arrives with the repo (a clone, a pull

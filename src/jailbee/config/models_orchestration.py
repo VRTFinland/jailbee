@@ -16,6 +16,7 @@ from jailbee.orchestration.grant import (
     IMPLIED_OPERATIONS,
     OPERATIONS,
 )
+from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
 PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
@@ -97,6 +98,10 @@ class OrchestrationHostConfig(BaseModel):
         default=None, description="Profile applied when none is named; must be a key of `profiles`."
     )
 
+    default_runner: Runner | None = Field(
+        default=None, description="Preferred runner for spawned children."
+    )
+
     @field_validator("profiles")
     @classmethod
     def _names_valid(cls, v: dict[str, OrchestrationProfile]) -> dict[str, OrchestrationProfile]:
@@ -141,6 +146,10 @@ class RepoOrchestration(BaseModel):
         default=None, description="`false` forbids handing loose network to children in this repo."
     )
 
+    default_runner: Runner | None = Field(
+        default=None, description="Preferred runner for spawned children of this repo."
+    )
+
     @field_validator("egress")
     @classmethod
     def _egress_valid(cls, v: list[str] | None) -> list[str] | None:
@@ -154,6 +163,8 @@ class OrchestrationView:
     profiles: Mapping[str, OrchestrationProfile] = field(default_factory=dict)
     default_profile: str | None = None
     repo: RepoOrchestration = field(default_factory=lambda: RepoOrchestration())
+    default_runner: Runner | None = None
+    default_runner_source: DefaultRunnerSource | None = None
 
 
 def build_view(
@@ -173,4 +184,18 @@ def build_view(
             default = local.default_profile
     if default is not None and default not in profiles:
         raise ValueError(f"default_profile {default!r} is not in `profiles`")
-    return OrchestrationView(profiles=profiles, default_profile=default, repo=repo)
+    runner: Runner | None = None
+    source: DefaultRunnerSource | None = None
+    if local is not None and "default_runner" in local.model_fields_set and local.default_runner:
+        runner, source = local.default_runner, "local"
+    elif repo.default_runner is not None:
+        runner, source = repo.default_runner, "repo"
+    elif host.default_runner is not None:
+        runner, source = host.default_runner, "global"
+    return OrchestrationView(
+        profiles=profiles,
+        default_profile=default,
+        repo=repo,
+        default_runner=runner,
+        default_runner_source=source,
+    )

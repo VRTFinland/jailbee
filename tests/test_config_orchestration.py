@@ -12,8 +12,10 @@ from jailbee.config.models_orchestration import (
     OrchestrationProfile,
     OrchestrationView,
     RepoOrchestration,
+    build_view,
 )
 from jailbee.global_config import GlobalConfig
+from jailbee.orchestration.runner import Runner
 from tests.conftest import make_cfg
 
 
@@ -232,3 +234,105 @@ def test_local_file_rejects_repo_narrowing_keys(repo_and_global):
 def test_hand_built_config_has_empty_view(tmp_path):
     view = make_cfg(tmp_path).orchestration_view()
     assert view.profiles == {} and view.default_profile is None and view.repo.allowed is True
+
+
+def test_view_default_runner_none_by_default():
+    view = build_view(OrchestrationHostConfig(), None, RepoOrchestration())
+    assert view.default_runner is None and view.default_runner_source is None
+
+
+def test_view_default_runner_global():
+    runner = Runner(agent="claude", model="sonnet")
+    view = build_view(OrchestrationHostConfig(default_runner=runner), None, RepoOrchestration())
+    assert view.default_runner == runner and view.default_runner_source == "global"
+
+
+def test_view_default_runner_repo_beats_global():
+    host = OrchestrationHostConfig(default_runner=Runner(agent="claude", model="sonnet"))
+    runner = Runner(agent="claude-jb", profile="grok", model="haiku")
+    view = build_view(host, None, RepoOrchestration(default_runner=runner))
+    assert view.default_runner == runner and view.default_runner_source == "repo"
+
+
+def test_view_default_runner_local_beats_repo():
+    runner = Runner(agent="claude", model="opus")
+    local = OrchestrationHostConfig(default_runner=runner)
+    repo = RepoOrchestration(default_runner=Runner(agent="claude", model="haiku"))
+    view = build_view(OrchestrationHostConfig(), local, repo)
+    assert view.default_runner == runner and view.default_runner_source == "local"
+
+
+@pytest.mark.parametrize("local", [{}, {"default_runner": None}])
+def test_empty_local_runner_does_not_override_repo(local):
+    runner = Runner(agent="claude", model="haiku")
+    view = build_view(
+        OrchestrationHostConfig(),
+        OrchestrationHostConfig.model_validate(local),
+        RepoOrchestration(default_runner=runner),
+    )
+    assert view.default_runner == runner and view.default_runner_source == "repo"
+
+
+def test_repo_block_accepts_default_runner(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {"orchestration": {"default_runner": {"agent": "claude", "model": "haiku"}}})
+    view = load_config(repo_path).orchestration_view()
+    assert view.default_runner == Runner(agent="claude", model="haiku")
+    assert view.default_runner_source == "repo"
+
+
+def test_loaded_repo_default_runner_beats_global(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(
+        global_path, {"orchestration": {"default_runner": {"agent": "claude", "model": "sonnet"}}}
+    )
+    _write(repo_path, {"orchestration": {"default_runner": {"agent": "claude", "model": "haiku"}}})
+    view = load_config(repo_path).orchestration_view()
+    assert view.default_runner == Runner(agent="claude", model="haiku")
+    assert view.default_runner_source == "repo"
+
+
+def test_loaded_global_default_runner_fallback(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(
+        global_path, {"orchestration": {"default_runner": {"agent": "claude", "model": "sonnet"}}}
+    )
+    _write(repo_path, {})
+    view = load_config(repo_path).orchestration_view()
+    assert view.default_runner == Runner(agent="claude", model="sonnet")
+    assert view.default_runner_source == "global"
+
+
+def test_loaded_local_default_runner_beats_repo_and_global(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(
+        global_path, {"orchestration": {"default_runner": {"agent": "claude", "model": "sonnet"}}}
+    )
+    _write(
+        repo_path,
+        {
+            "container_prefix": "myrepo",
+            "orchestration": {"default_runner": {"agent": "claude", "model": "haiku"}},
+        },
+    )
+    _write(
+        local_config_path("myrepo"),
+        {"orchestration": {"default_runner": {"agent": "claude", "model": "opus"}}},
+    )
+    view = load_config(repo_path).orchestration_view()
+    assert view.default_runner == Runner(agent="claude", model="opus")
+    assert view.default_runner_source == "local"
+
+
+def test_default_runner_profile_needs_claude_jb_at_load():
+    with pytest.raises(ValidationError, match="profile is only valid with agent 'claude-jb'"):
+        RepoOrchestration.model_validate({"default_runner": {"agent": "claude", "profile": "grok"}})
+
+
+def test_default_runner_unknown_tier_rejected():
+    with pytest.raises(ValidationError) as exc:
+        RepoOrchestration.model_validate({"default_runner": {"agent": "claude", "model": "gpt5"}})
+    errors = exc.value.errors()
+    assert len(errors) == 1
+    assert errors[0]["loc"] == ("default_runner", "model")
+    assert errors[0]["type"] == "literal_error"
