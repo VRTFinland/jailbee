@@ -161,6 +161,7 @@ def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
             max_running_children=children,
             operations=cast("tuple[Operation, ...]", tuple(sorted(ops))),
             grantable=Grantable(mounts=mounts, loose=loose, egress=egress),
+            default_runner=base.default_runner,
         )
     except ValidationError as e:
         raise GrantError(f"invalid grant: {e}") from e

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 from jailbee.config.models_orchestration import OrchestrationProfile
 from jailbee.orchestration.grant import Grant, Grantable, GrantError, Operation, RepoCap
+from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -43,6 +44,16 @@ def default_grant(cfg: Config) -> Grant | None:
     if view.default_profile is None:
         return None
     return profile_grant(cfg, view.default_profile)
+
+
+def default_runner(
+    cfg: Config, grant: Grant | None
+) -> tuple[Runner | None, DefaultRunnerSource | None]:
+    """Resolve the container's runner before falling back to the config view."""
+    if grant is not None and grant.default_runner is not None:
+        return grant.default_runner, "container"
+    view = cfg.orchestration_view()
+    return view.default_runner, view.default_runner_source
 
 
 def repo_cap(cfg: Config) -> RepoCap:

@@ -10,6 +10,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jailbee.egress import WildcardSpec, validate_allow_entry
+from jailbee.orchestration.runner_model import Runner
 
 Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy"]
 
@@ -87,6 +88,7 @@ class Grant(_Label):
     )
     operations: tuple[Operation, ...] = DEFAULT_OPERATIONS
     grantable: Grantable = Grantable()
+    default_runner: Runner | None = None
 
     @field_validator("operations")
     @classmethod

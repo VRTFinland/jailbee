@@ -20,6 +20,7 @@ from jailbee.orchestration.grant import (
     effective_grant,
     egress_covered,
 )
+from jailbee.orchestration.runner_model import Runner
 
 
 def test_label_keys_match_spec() -> None:
@@ -37,7 +38,21 @@ def test_default_grant_label_is_the_spec_shape() -> None:
         "max_running_children": 4,
         "operations": ["destroy", "import", "message", "restart", "spawn", "stop"],
         "grantable": {"mounts": [], "loose": False, "egress": []},
+        "default_runner": None,
     }
+
+
+def test_grant_label_without_default_runner_loads() -> None:
+    raw = (
+        '{"version":1,"max_running_children":2,"operations":["message","spawn"],'
+        '"grantable":{"mounts":[],"loose":false,"egress":[]}}'
+    )
+    assert Grant.from_label(raw).default_runner is None
+
+
+def test_grant_default_runner_round_trips() -> None:
+    grant = Grant(default_runner=Runner(agent="claude-jb", profile="grok", model="sonnet"))
+    assert Grant.from_label(grant.to_label()) == grant
 
 
 def test_operations_are_sorted_and_deduped() -> None:
@@ -164,6 +179,14 @@ def test_no_cap_means_no_excess_and_identity() -> None:
     g = Grant(grantable=Grantable(mounts=("data",)))
     assert cap_excess(g, RepoCap()) == []
     assert effective_grant(g, RepoCap()) == g
+
+
+def test_effective_grant_keeps_default_runner() -> None:
+    runner = Runner(agent="claude-jb", profile="grok", model="sonnet")
+    grant = Grant(default_runner=runner)
+    effective = effective_grant(grant, RepoCap(max_running_children=1))
+    assert effective is not None
+    assert effective.default_runner == runner
 
 
 def test_effective_grant_intersects() -> None:

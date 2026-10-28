@@ -17,6 +17,7 @@ from jailbee.config.models_orchestration import (
 from jailbee.orchestration import commands, labels
 from jailbee.orchestration.commands import GrantFlags
 from jailbee.orchestration.grant import Grant, Grantable, GrantError
+from jailbee.orchestration.runner_model import Runner
 
 PROFILES = {
     "bugfixer": OrchestrationProfile(
@@ -165,6 +166,20 @@ def test_invalid_egress_entry_is_grant_error(cfg):
 def test_flags_start_from_current_grant_without_profile(cfg):
     cur = Grant(max_running_children=7)
     assert commands.build_grant(cfg, cur, GrantFlags(loose=True)).max_running_children == 7
+
+
+def test_unflagged_edit_keeps_current_default_runner(cfg):
+    runner = Runner(agent="claude", model="sonnet")
+    current = Grant(default_runner=runner)
+    updated = commands.build_grant(cfg, current, GrantFlags(children=2))
+    assert updated.default_runner == runner
+
+
+def test_unflagged_grant_keeps_current_default_runner(cfg):
+    runner = Runner(agent="claude", model="haiku")
+    current = Grant(default_runner=runner)
+    updated = commands.build_grant(cfg, current, GrantFlags())
+    assert updated.default_runner == runner
 
 
 def test_new_grant_starts_from_default_profile(cfg_with_profile_bugfixer_default):
