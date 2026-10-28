@@ -92,11 +92,9 @@ class SessionOutboxRunner:
             rc = self.session.run_dashboard_command(
                 self.container, "container", list(argv), diagnostic_path=path
             )
-            try:
-                text = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                text = ""
-            return rc, text or None
+            from jailbee.dashboard.dispatch import read_diagnostic_text
+
+            return rc, read_diagnostic_text(path)
 
     def changed(self) -> None:
         self.session.client.refresh()

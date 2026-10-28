@@ -113,6 +113,20 @@ def _noting_env(marker: Path) -> dict[str, str]:
     return {**os.environ, DIAGNOSTICS_ENV: str(marker)}
 
 
+def read_diagnostic_text(path: Path) -> str | None:
+    """Read bounded child diagnostic text without trusting its encoding."""
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(4097)
+    except OSError:
+        return None
+    truncated = len(data) > 4096
+    text = data[:4096].decode("utf-8", errors="replace").strip()
+    if truncated:
+        text += " [truncated]"
+    return text or None
+
+
 def _run_reporting(argv: list[str], cwd: Path) -> int:
     """Run ``argv``; pause only when it failed or printed a warning or error."""
     with _diagnostics_marker() as marker:

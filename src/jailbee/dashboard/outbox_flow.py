@@ -319,8 +319,10 @@ class OutboxController:
             return replace(self.state, status=(*status, fetched)), False
         return self._listed(fetched, cursor=cursor, status=status), True
 
-    def _after_mutation(self, status: tuple[str, ...]) -> None:
-        state, _ = self._reloaded(status=status)
+    def _after_mutation(self, status: tuple[str, ...], *, prioritize: bool = False) -> None:
+        state, ok = self._reloaded(status=status)
+        if prioritize and not ok and status:
+            state = replace(state, status=(*state.status[len(status):], *status))
         self._set(state)
         self.runner.changed()
 
@@ -734,7 +736,7 @@ class OutboxController:
                     else ()
                 )
             )
-            self._after_mutation(status)
+            self._after_mutation(status, prioritize=True)
         else:
             self.runner.hand_off(argv)
             self._after_mutation(())

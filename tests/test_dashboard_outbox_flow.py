@@ -957,3 +957,14 @@ def test_source_handoff_missing_or_failure_gets_status():
         ctl.load()
         ctl.intent("create-pr", _key())
         assert ctl.state.status == (expected,)
+
+
+def test_source_failure_diagnostic_prioritized_when_refresh_fails():
+    row = _proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
+    runner = FakeRunner(_listing(row), _listing(row), CliResult(False, "listing failed"))
+    message = "non-fast-forward update; run: jailbee pr push c --source-manifest a.json --force"
+    runner.hand_off_diagnostic = lambda argv: (1, message)
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("create-pr", _key())
+    assert ctl.state.status[-1] == message

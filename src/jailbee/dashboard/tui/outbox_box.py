@@ -141,6 +141,9 @@ class OutboxBox(OverlayBox):
         height: 1; width: 1fr; background: ansi_default; color: ansi_default;
         text-wrap: nowrap; text-overflow: ellipsis;
     }
+    OutboxBox > #outbox-status {
+        height: auto; max-height: 4; text-wrap: wrap; text-overflow: clip;
+    }
     OutboxBox #outbox-right { height: 1fr; background: ansi_default; }
     OutboxBox #outbox-question { height: auto; max-height: 8; }
     """
@@ -287,7 +290,7 @@ class OutboxBox(OverlayBox):
             line.auto_refresh = 1 / 12  # what animates it
         else:
             line.auto_refresh = None
-            line.update(_line(_safe(panel.status[-1] if panel.status else ""), "dim"))
+            line.update(Text(_safe(panel.status[-1] if panel.status else ""), style="dim"))
         if self.standalone:
             self.query_one("#outbox-hint", Static).update(
                 _line(outbox_hint(panel, standalone=True), "dim")
