@@ -9596,19 +9596,19 @@ def test_fetch_pinned_ref_rejects_invalid_input_before_transport(mocker, make_cf
 @pytest.mark.parametrize("force", [False, True])
 def test_push_pinned_ref_uses_lease_only_when_forced(mocker, make_cfg, tmp_path, force):
     cfg = make_cfg(tmp_path)
-    remote = mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    remote = mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
     mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
     push = mocker.patch("jailbee.git.push_to_remote")
     hook = mocker.Mock()
     sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=force, on_before_push=hook)
-    push.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, "refs/jailbee/feat/source/heads/topic", "topic", force_with_lease="b" * 40 if force else None)
+    push.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, "a" * 40, "topic", force_with_lease="b" * 40 if force else None)
     assert remote.call_count == int(force)
     hook.assert_called_once_with()
 
 
 def test_pinned_ref_fast_forward_missing_remote(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
-    mocker.patch("jailbee.git.remote_branch_sha", return_value=None)
+    mocker.patch("jailbee.git.remote_branch_sha_strict", return_value=None)
     mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
     assert sync.is_fast_forward(cfg, "refs/jailbee/feat/source/heads/topic", "topic") is None
 
@@ -9617,7 +9617,7 @@ def test_pinned_ref_fast_forward_missing_remote(mocker, make_cfg, tmp_path):
 def test_pinned_ref_fast_forward_checks_remote_ancestry(mocker, make_cfg, tmp_path, relation):
     cfg = make_cfg(tmp_path)
     mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
-    mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
     ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=relation)
     ref = "refs/jailbee/feat/source/heads/topic"
     if relation is None:
@@ -9625,16 +9625,59 @@ def test_pinned_ref_fast_forward_checks_remote_ancestry(mocker, make_cfg, tmp_pa
             sync.is_fast_forward(cfg, ref, "topic")
     else:
         assert sync.is_fast_forward(cfg, ref, "topic") is relation
-    ancestor.assert_called_once_with(cfg.repo_root, "b" * 40, ref)
+    ancestor.assert_called_once_with(cfg.repo_root, "b" * 40, "a" * 40)
 
 
 def test_push_pinned_ref_retries_with_original_lease(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
-    remote = mocker.patch("jailbee.git.remote_branch_sha", return_value="b" * 40)
+    remote = mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
     push = mocker.patch("jailbee.git.push_to_remote", side_effect=[sync.git.GitError("failed"), None])
     mocker.patch("jailbee.sync.confirm_retry_quiet", return_value=True)
     sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
     remote.assert_called_once()
     assert push.call_count == 2
     assert all(call.kwargs["force_with_lease"] == "b" * 40 for call in push.call_args_list)
+    assert all(call.args[2] == "a" * 40 for call in push.call_args_list)
+    sync.git.rev_parse.assert_called_once_with(cfg.repo_root, "refs/jailbee/feat/source/heads/topic")
+
+
+def test_pinned_push_rejects_changed_manifest_pin_before_remote(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="b" * 40)
+    remote = mocker.patch("jailbee.git.remote_branch_sha_strict")
+    push = mocker.patch("jailbee.git.push_to_remote")
+    with pytest.raises(sync.SyncError, match="re-stage"):
+        sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True, expected_sha="a" * 40)
+    remote.assert_not_called()
+    push.assert_not_called()
+
+
+def test_pinned_push_stops_on_remote_lookup_failure(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    mocker.patch("jailbee.git.remote_branch_sha_strict", side_effect=sync.git.GitError("offline"))
+    push = mocker.patch("jailbee.git.push_to_remote")
+    with pytest.raises(sync.SyncError, match="offline"):
+        sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
+    push.assert_not_called()
+
+
+def test_fast_forward_fetches_missing_remote_object(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", side_effect=["a" * 40, None, "b" * 40])
+    mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="b" * 40)
+    fetch = mocker.patch("jailbee.git.fetch_remote_ref")
+    ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=True)
+    assert sync.is_fast_forward(cfg, "refs/jailbee/feat/source/heads/topic", "topic") is True
+    fetch.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, "refs/heads/topic")
+    ancestor.assert_called_once_with(cfg.repo_root, "b" * 40, "a" * 40)
+
+
+def test_forced_pinned_push_leases_absent_remote(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    mocker.patch("jailbee.git.remote_branch_sha_strict", return_value=None)
+    push = mocker.patch("jailbee.git.push_to_remote")
+    sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
+    assert push.call_args.kwargs["force_with_lease"] == ""

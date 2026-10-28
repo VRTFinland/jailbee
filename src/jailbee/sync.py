@@ -1376,21 +1376,30 @@ def fetch_ref_from_container(
 def push_ref_to_remote(
     cfg: Config, host_ref: str, head: str, *, force: bool,
     on_before_push: Callable[[], None] | None = None,
+    expected_sha: str | None = None,
 ) -> None:
-    """Push a fetched ref, preserving the lease across retries."""
+    """Push a fetched ref, preserving the source and lease across retries."""
     if not host_ref.startswith("refs/") or not git.check_ref_format(host_ref):
         raise SyncError(f"Invalid source ref: {host_ref}")
     if not git.check_ref_format(head):
         raise SyncError(f"Invalid destination branch: {head}")
-    if git.rev_parse(cfg.repo_root, host_ref) is None:
+    if expected_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha):
+        raise SyncError("Invalid expected SHA")
+    source_sha = git.rev_parse(cfg.repo_root, host_ref)
+    if source_sha is None:
         raise SyncError(f"Source ref does not resolve: {host_ref}")
+    if expected_sha is not None and source_sha.lower() != expected_sha.lower():
+        raise SyncError(f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest")
     remote = cfg.upstream_remote
-    lease = git.remote_branch_sha(cfg.repo_root, remote, head) if force else None
+    try:
+        lease = (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "") if force else None
+    except git.GitError as exc:
+        raise SyncError(str(exc)) from exc
     if on_before_push is not None:
         on_before_push()
     try:
         with_remote_retry(
-            lambda: git.push_to_remote(cfg.repo_root, remote, host_ref, head, force_with_lease=lease),
+            lambda: git.push_to_remote(cfg.repo_root, remote, source_sha, head, force_with_lease=lease),
             label=f"pushing '{head}' to {remote}",
             catch=git.GitError,
             confirm=confirm_retry_quiet,
@@ -1405,12 +1414,20 @@ def is_fast_forward(cfg: Config, host_ref: str, head: str) -> bool | None:
         raise SyncError(f"Invalid source ref: {host_ref}")
     if not git.check_ref_format(head):
         raise SyncError(f"Invalid destination branch: {head}")
-    if git.rev_parse(cfg.repo_root, host_ref) is None:
+    source_sha = git.rev_parse(cfg.repo_root, host_ref)
+    if source_sha is None:
         raise SyncError(f"Source ref does not resolve: {host_ref}")
-    remote_sha = git.remote_branch_sha(cfg.repo_root, cfg.upstream_remote, head)
-    if remote_sha is None:
-        return None
-    result = git.is_ancestor(cfg.repo_root, remote_sha, host_ref)
+    try:
+        remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
+        if remote_sha is None:
+            return None
+        if git.rev_parse(cfg.repo_root, remote_sha) is None:
+            git.fetch_remote_ref(cfg.repo_root, cfg.upstream_remote, f"refs/heads/{head}")
+            if git.rev_parse(cfg.repo_root, remote_sha) is None:
+                raise SyncError(f"Remote head {remote_sha} is unavailable after fetching '{head}'")
+    except (git.GitError, git.GitFetchError) as exc:
+        raise SyncError(f"Cannot inspect remote head '{head}': {exc}") from exc
+    result = git.is_ancestor(cfg.repo_root, remote_sha, source_sha)
     if result is None:
         raise SyncError(f"Cannot determine whether '{head}' is a fast-forward")
     return result
