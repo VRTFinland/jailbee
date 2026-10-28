@@ -385,7 +385,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"base_build"}),
         reason=(
             "the golden image ships `jailbee-inbox`, the helper agents use to wait for "
-            "and send container-orchestration messages, with inotify-tools"
+            "and send container-orchestration messages, with inotify-tools and spawn "
+            "support for explicit refs and pull requests"
         ),
     ),
     UpgradeNote(

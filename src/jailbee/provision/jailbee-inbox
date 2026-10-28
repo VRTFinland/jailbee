@@ -31,8 +31,11 @@ Usage: jailbee-inbox wait [--timeout DUR]
          (stdin); at most 65536 bytes, not empty.
            message  [--to C] [--kind note|question|done|blocked]
                     [--reply-to ID] + text
-           spawn    --branch B [--new [--base B]] [--mount M]... [--loose]
-                    [--egress H]... [--note T] [--on-done destroy|keep] [runner] + text
+           spawn    [--branch B] [--new [--base B] | --ref REF | --pr N]
+                    [--mount M]... [--loose] [--egress H]... [--note T]
+                    [--on-done destroy|keep] [runner] + text
+                    --branch is required except for --pr; the broker derives
+                    the branch from the PR and ignores any supplied branch.
            restart  --child C [--on-done destroy|keep] [runner | --default-runner] + text
            import | update | stop   --child C
            destroy  --child C [--force]
@@ -362,7 +365,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout=""
+    local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=()
     local opt_val
@@ -375,7 +378,7 @@ cmd_send() {
             --force) force=1; shift; continue ;;
             --default-runner) default_runner=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -392,6 +395,8 @@ cmd_send() {
             --reply-to) reply_to="$opt_val" ;;
             --branch) branch="$opt_val" ;;
             --base) base_branch="$opt_val" ;;
+            --ref) ref="$opt_val" ;;
+            --pr) pr="$opt_val" ;;
             --mount) mounts+=("$opt_val") ;;
             --egress) egress+=("$opt_val") ;;
             --note) note="$opt_val" ;;
@@ -426,7 +431,7 @@ cmd_send() {
         bad_usage "--to, --kind and --reply-to only apply to message"
     fi
     if [ "$type" != "spawn" ] && {
-        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ "$loose" -eq 1 ] \
+        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ -n "$ref" ] || [ -n "$pr" ] || [ "$loose" -eq 1 ] \
             || [ -n "$note" ] || [ "${#mounts[@]}" -gt 0 ] || [ "${#egress[@]}" -gt 0 ]; }; then
         bad_usage "--branch, --new, --base, --mount, --loose, --egress and --note only apply to spawn"
     fi
@@ -477,6 +482,12 @@ cmd_send() {
         *) [ -z "$child" ] || bad_usage "--child does not apply to $type" ;;
     esac
     if [ "$type" = "spawn" ]; then
+        [ -z "$ref" ] || { [ -z "$pr" ] && [ "$new" -eq 0 ]; } || bad_usage "--ref cannot be combined with --pr or --new"
+        if [ -n "$pr" ]; then
+            [ "$new" -eq 0 ] && [ -z "$base_branch" ] || bad_usage "--pr cannot be combined with --new or --base"
+            [[ "$pr" =~ ^[1-9][0-9]*$ ]] || bad_usage "--pr must be a positive integer"
+            [ -n "$branch" ] || branch="pr-placeholder"
+        fi
         [ -n "$branch" ] || bad_usage "spawn needs --branch"
         [ -z "$base_branch" ] || [ "$new" -eq 1 ] || bad_usage "--base needs --new"
     fi
@@ -533,13 +544,15 @@ cmd_send() {
             mounts_json="$(jq -nc '$ARGS.positional' --args "${mounts[@]}")"
             egress_json="$(jq -nc '$ARGS.positional' --args "${egress[@]}")"
             jq -n --arg id "$id" --arg pf "$body_name" --arg branch "$branch" \
-                --arg base "$base_branch" --arg note "$note" --argjson new "$new" \
+                --arg base "$base_branch" --arg ref "$ref" --arg pr "$pr" --arg note "$note" --argjson new "$new" \
                 --argjson loose "$loose" --argjson mounts "$mounts_json" \
                 --argjson egress "$egress_json" --argjson runner "$runner_json" \
-                '{version: 1, id: $id, type: "spawn", kind: (if $new == 1 then "new" else "fork" end),
+                '{version: 2, id: $id, type: "spawn", kind: (if $pr != "" then "pr" elif $new == 1 then "new" else "fork" end),
                   branch: $branch, prompt_file: $pf,
                   rights: {version: 1, mounts: $mounts, loose: ($loose == 1), egress: $egress}}
                  + (if $base != "" then {base: $base} else {} end)
+                 + (if $ref != "" then {ref: $ref} else {} end)
+                 + (if $pr != "" then {pr: ($pr | tonumber)} else {} end)
                  + (if $note != "" then {note: $note} else {} end) + $runner' > "$json_tmp" ;;
         restart)
             jq -n --arg id "$id" --arg pf "$body_name" --arg child "$child" \

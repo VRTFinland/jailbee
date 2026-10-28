@@ -622,6 +622,28 @@ def test_send_message_minimal_and_to(script, base, tmp_path):
     assert m == {"version": 1, "id": mid, "type": "message", "to": "c1", "body_file": f"{mid}.md"}
 
 
+@pytest.mark.parametrize("args,kind,key,value", [
+    (["--branch", "b", "--ref", "refs/heads/main"], "fork", "ref", "refs/heads/main"),
+    (["--pr", "42"], "pr", "pr", 42),
+])
+def test_send_spawn_v2_modes(script, base, tmp_path, args, kind, key, value):
+    _, m = manifest_of(base, send(script, base, tmp_path, "spawn", *args, "--text", "go"))
+    assert m["version"] == 2 and m["kind"] == kind and m[key] == value
+    assert m["branch"]
+
+
+@pytest.mark.parametrize("args", [
+    ["--branch", "b", "--ref", "refs/heads/a", "--pr", "1"],
+    ["--pr", "1", "--base", "main"],
+    ["--branch", "b", "--ref", "refs/heads/a", "--new"],
+    ["--pr", "1", "--new"],
+    ["--pr", "0"], ["--pr", "1.5"], ["--pr", "-1"],
+])
+def test_send_spawn_rejects_invalid_modes(script, base, tmp_path, args):
+    r = send(script, base, tmp_path, "spawn", *args, "--text", "go")
+    assert r.returncode == 2
+
+
 def test_send_spawn_fork_with_rights(script, base, tmp_path):
     prompt = tmp_path / "prompt.md"
     prompt.write_text("do it\n")

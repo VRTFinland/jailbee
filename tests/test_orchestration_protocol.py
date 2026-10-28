@@ -54,6 +54,38 @@ def _spawn(name: str = "a", **over: Any) -> str:
     return json.dumps({k: v for k, v in d.items() if v is not None})
 
 
+@pytest.mark.parametrize("ref", ["refs/heads/main", "a" * 40])
+def test_spawn_v2_accepts_pinned_ref(ref: str) -> None:
+    m = parse_manifest("a.json", _spawn(version=2, ref=ref), {})
+    assert isinstance(m, SpawnManifest) and m.ref == ref
+
+
+@pytest.mark.parametrize("fields", [
+    {"version": 1, "ref": "refs/heads/main"},
+    {"version": 1, "kind": "pr", "pr": 1},
+    {"version": 2, "ref": "main"},
+    {"version": 2, "ref": "refs/heads/../bad"},
+    {"version": 2, "kind": "new", "ref": "a" * 40},
+    {"version": 2, "kind": "pr"},
+    {"version": 2, "kind": "pr", "pr": True},
+    {"version": 2, "kind": "pr", "pr": "1"},
+    {"version": 2, "kind": "pr", "pr": 0},
+    {"version": 2, "kind": "pr", "pr": 1, "base": "main"},
+    {"version": 2, "kind": "pr", "pr": 1, "ref": "a" * 40},
+    {"version": 2, "pr": 1},
+])
+def test_spawn_rejects_invalid_new_fields(fields: dict[str, Any]) -> None:
+    with pytest.raises(ManifestError):
+        parse_manifest("a.json", _spawn(**fields), {})
+
+
+def test_spawn_v2_pr_and_legacy_versions() -> None:
+    m = parse_manifest("a.json", _spawn(version=2, kind="pr", pr=42), {})
+    assert isinstance(m, SpawnManifest) and m.pr == 42
+    for kind in ("fork", "new"):
+        assert parse_manifest("a.json", _spawn(kind=kind), {}).version == 1
+
+
 def test_update_manifest_parses() -> None:
     m = parse_manifest(
         "a.json", json.dumps({"version": 1, "id": "a", "type": "update", "child": "c"}), {}
