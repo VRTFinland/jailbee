@@ -2414,57 +2414,15 @@ def new_cmd(
         from jailbee import pr as pr_module
 
         try:
-            pr_info = pr_module.resolve_pr(cfg.repo_root, pr, remote=cfg.upstream_remote)
+            prepared = pr_module.prepare_pr(
+                cfg.repo_root, pr, remote=cfg.upstream_remote, no_fetch=no_fetch,
+                info=info, warn=warn,
+            )
         except pr_module.PrError as e:
             error(str(e))
             raise typer.Exit(2) from e
-
-        if pr_info.state == "CLOSED":
-            warn(f"PR #{pr} is CLOSED (not merged). Continuing.")
-        elif pr_info.state == "MERGED":
-            warn(f"PR #{pr} is already MERGED. Continuing.")
-
-        if no_fetch:
-            try:
-                pr_clone_commit = pr_module.resolve_pr_head_sha(cfg.repo_root, pr_info)
-            except pr_module.PrError as e:
-                error(str(e))
-                raise typer.Exit(2) from e
-            info(
-                f"PR #{pr} '{pr_info.head_ref}' at {pr_clone_commit[:12]} "
-                f"(--no-fetch: using the host's copy)"
-            )
-        else:
-            try:
-                fetch_result = pr_module.fetch_pr_head(
-                    cfg.repo_root, pr_info, remote=cfg.upstream_remote
-                )
-            except pr_module.PrError as e:
-                error(str(e))
-                raise typer.Exit(2) from e
-            pr_clone_commit = fetch_result.new_sha
-            if fetch_result.updated:
-                info(f"PR #{pr} '{pr_info.head_ref}' fetched ({fetch_result.new_sha[:12]})")
-            else:
-                info(f"PR #{pr} '{pr_info.head_ref}' already at {fetch_result.new_sha[:12]}")
-
-            # Refresh the PR's base branch too. `new_container` seeds the
-            # container's `refs/jailbee/base/<base>` from the host's
-            # `refs/remotes/origin/<base>`, and a stale tip there inflates
-            # `jailbee ls` AHEAD by every base-branch commit made since the host
-            # last fetched. Best-effort: a base branch deleted upstream must
-            # not block the container.
-            base_sha = pr_module.fetch_base_ref(
-                cfg.repo_root, pr_info.base_ref, remote=cfg.upstream_remote
-            )
-            if base_sha is None:
-                warn(
-                    f"Could not fetch PR base branch '{pr_info.base_ref}' from origin; "
-                    f"AHEAD numbers in `jailbee ls` may be inflated."
-                )
-            else:
-                info(f"PR #{pr} base '{pr_info.base_ref}' at {base_sha[:12]}")
-
+        pr_info = prepared.info
+        pr_clone_commit = prepared.commit
         container_branch = pr_info.head_ref
 
     if current:

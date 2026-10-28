@@ -206,7 +206,7 @@ def child_preamble(orchestrator_short: str) -> str:
 @dataclass(frozen=True)
 class SpawnPlan:
     child_full: str
-    kind: Literal["fork", "new"]
+    kind: Literal["fork", "new", "pr"]
     branch: str
     base: str | None
     prompt: str
@@ -214,6 +214,9 @@ class SpawnPlan:
     runner: Runner | None = None
     on_done: Literal["destroy", "keep"] = "destroy"
     ref: str | None = None
+    pr: int | None = None
+    clone_commit: str | None = None
+    pr_base: str | None = None
 
 
 def plan_spawn(
@@ -223,8 +226,6 @@ def plan_spawn(
     grant = ctx.raw_grant()
     if grant is None:
         return refused(NOT_ALLOWED)
-    if m.kind == "pr":
-        return refused("PR spawning is not yet supported")
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
@@ -233,8 +234,26 @@ def plan_spawn(
         problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
     if problems:
         return refused("; ".join(problems))
+    branch = m.branch
+    commit = None
+    pr_base = None
+    if m.kind == "pr":
+        from jailbee import pr
+
+        if m.pr is None:
+            return refused("PR number is required")
+        try:
+            prepared = pr.prepare_pr(
+                ctx.cfg.repo_root, m.pr, remote=ctx.cfg.upstream_remote,
+                info=log.info, warn=log.warning,
+            )
+        except pr.PrError as exc:
+            return refused(str(exc))
+        branch = prepared.info.head_ref
+        commit = prepared.commit
+        pr_base = prepared.info.base_ref
     try:
-        full = lifecycle.derive_container_name(ctx.cfg, m.branch)
+        full = lifecycle.derive_container_name(ctx.cfg, branch)
     except ValueError as exc:
         return refused(str(exc))
     short = lifecycle.short_name(ctx.cfg, full)
@@ -251,7 +270,8 @@ def plan_spawn(
         return refused("on_done destroy needs the `destroy` operation in this container's grant")
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, runner, policy, m.ref)
+    return SpawnPlan(full, m.kind, branch, m.base, prompt, m.rights, runner, policy,
+                     m.ref, m.pr, commit, pr_base)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -280,10 +300,11 @@ def child_options(
         from_base=cfg.golden.alias,
         clone=True,
         base=None if fork is not None else plan.base,
-        clone_commit=fork.commit if fork is not None else None,
+        clone_commit=fork.commit if fork is not None else plan.clone_commit,
+        pr=plan.pr,
         fork_of=fork.full_name if fork is not None else None,
         inherited_labels=(fork.pr_labels or None) if fork else None,
-        base_branch_label=fork.base_branch if fork is not None else None,
+        base_branch_label=fork.base_branch if fork is not None else plan.pr_base,
         untrusted_head=True,
         initial_prompt=plan.prompt,
         spawned_by=orchestrator_full,
@@ -463,6 +484,12 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             forking.pin_fork_commit(ctx.cfg, plan.child_full, fork.commit)
         except (ForkError, git.GitError) as e:
             return refused(str(e))
+    if plan.kind == "pr":
+        try:
+            assert plan.clone_commit is not None
+            forking.pin_fork_commit(ctx.cfg, plan.child_full, plan.clone_commit)
+        except git.GitError as e:
+            return refused(str(e))
     # A non-empty queue goes first: a new spawn never overtakes it.
     counts = count_breakdown(ctx)
     if not queued and counts[-1] < grant.max_running_children:
@@ -475,7 +502,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             manifest_id=m.id,
             child_full=plan.child_full,
             kind=plan.kind,
-            commit=fork.commit if fork is not None else None,
+            commit=fork.commit if fork is not None else plan.clone_commit,
             queued_at=ctx.now.isoformat(),
             branch=plan.branch,
             base=plan.base,
@@ -485,6 +512,8 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             runner_set=plan.runner is not None,
             on_done=plan.on_done,
             ref=plan.ref,
+            pr=plan.pr,
+            pr_base=plan.pr_base,
         )
     )
     _store(ctx, queued)
@@ -580,12 +609,16 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     grant = ctx.grant()
     plan = SpawnPlan(
         child_full=req.child_full,
-        kind="fork" if req.kind == "fork" else "new",
+        kind=req.kind if req.kind != "restart" else "new",
         branch=req.branch,
         base=req.base,
         prompt=req.prompt,
         rights=rights,
         runner=runner,
+        ref=req.ref,
+        pr=req.pr,
+        clone_commit=req.commit if req.kind == "pr" else None,
+        pr_base=req.pr_base,
         on_done=(
             "destroy"
             if req.on_done == "destroy" and grant is not None and "destroy" in grant.operations

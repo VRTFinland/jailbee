@@ -167,11 +167,49 @@ def test_unresolved_ref_refuses_without_starting(
     started.assert_not_called()
 
 
-def test_pr_spawn_is_refused_until_supported(tmp_path: Path) -> None:
+@pytest.mark.parametrize("queued", [False, True])
+def test_pr_spawn_preserves_prepared_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, queued: bool
+) -> None:
+    from jailbee import pr
+    from jailbee.orchestration.state import load_queue
+
+    ctx = _ctx(tmp_path, {"max_running_children": 1})
+    prepared = pr.PreparedPr(pr.PrInfo(12, "real-head", "a" * 40, "OPEN", "target"), "a" * 40)
+    monkeypatch.setattr(pr, "prepare_pr", MagicMock(return_value=prepared))
+    pin = MagicMock()
+    monkeypatch.setattr(actions.forking, "pin_fork_commit", pin)
+    monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, int(queued)))
+    captured = []
+    def start(ctx, plan, *, fork):
+        captured.append(actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork))
+        return Outcome("started", "ok")
+    monkeypatch.setattr(actions, "start_child", start)
     manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
-    result = actions.handle_spawn(_ctx(tmp_path), manifest)
-    assert result.state == "refused"
-    assert "PR" in result.detail
+    result = actions.handle_spawn(ctx, manifest)
+    if queued:
+        assert result.state == "queued"
+        req = load_queue(ctx.root)[ctx.sender.full][0]
+        assert actions._start_spawn(ctx, req).state == "started"
+    else:
+        assert result.state == "started"
+    opts = captured[0]
+    assert opts.container_branch == "real-head"
+    assert opts.name == "proj-real-head"
+    assert opts.pr == 12 and opts.clone_commit == "a" * 40
+    assert opts.base_branch_label == "target" and opts.untrusted_head
+    pin.assert_called_once_with(ctx.cfg, "proj-real-head", "a" * 40)
+
+
+def test_pr_derived_name_is_checked_against_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee import pr
+
+    prepared = pr.PreparedPr(pr.PrInfo(12, "actual", "a" * 40, "OPEN", "main"), "a" * 40)
+    monkeypatch.setattr(pr, "prepare_pr", MagicMock(return_value=prepared))
+    manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
+    outcome = plan_spawn(_ctx(tmp_path), manifest, queued_names={"proj-actual"})
+    assert isinstance(outcome, Outcome) and outcome.state == "refused"
+    assert "already queued" in outcome.detail
 
 
 def test_plan_spawn_prepends_preamble(tmp_path: Path) -> None:

@@ -31,7 +31,7 @@ class QueuedRequest:
 
     manifest_id: str
     child_full: str
-    kind: Literal["fork", "new", "restart"]
+    kind: Literal["fork", "new", "pr", "restart"]
     commit: str | None
     queued_at: str
     branch: str
@@ -43,6 +43,8 @@ class QueuedRequest:
     runner_set: bool = False
     on_done: str | None = None
     ref: str | None = None
+    pr: int | None = None
+    pr_base: str | None = None
 
 
 @dataclass(frozen=True)

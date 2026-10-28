@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Never
@@ -61,6 +62,47 @@ class FetchResult:
     prev_sha: str | None  # None when jailbee had not fetched this head before
     new_sha: str
     ref: str  # the host ref the head now lives in
+
+
+@dataclass(frozen=True)
+class PreparedPr:
+    info: PrInfo
+    commit: str
+
+
+def prepare_pr(
+    repo_root: Path,
+    number: int,
+    *,
+    remote: str,
+    no_fetch: bool = False,
+    info: Callable[[str], object],
+    warn: Callable[[str], object],
+) -> PreparedPr:
+    """Resolve and pin a PR head, refreshing its base when fetching."""
+    resolved = resolve_pr(repo_root, number, remote=remote)
+    if resolved.state == "CLOSED":
+        warn(f"PR #{number} is CLOSED (not merged). Continuing.")
+    elif resolved.state == "MERGED":
+        warn(f"PR #{number} is already MERGED. Continuing.")
+    if no_fetch:
+        commit = resolve_pr_head_sha(repo_root, resolved)
+        info(f"PR #{number} '{resolved.head_ref}' at {commit[:12]} "
+             "(--no-fetch: using the host's copy)")
+    else:
+        result = fetch_pr_head(repo_root, resolved, remote=remote)
+        commit = result.new_sha
+        if result.updated:
+            info(f"PR #{number} '{resolved.head_ref}' fetched ({commit[:12]})")
+        else:
+            info(f"PR #{number} '{resolved.head_ref}' already at {commit[:12]}")
+        base_sha = fetch_base_ref(repo_root, resolved.base_ref, remote=remote)
+        if base_sha is None:
+            warn(f"Could not fetch PR base branch '{resolved.base_ref}' from origin; "
+                 "AHEAD numbers in `jailbee ls` may be inflated.")
+        else:
+            info(f"PR #{number} base '{resolved.base_ref}' at {base_sha[:12]}")
+    return PreparedPr(resolved, commit)
 
 
 @dataclass(frozen=True)
