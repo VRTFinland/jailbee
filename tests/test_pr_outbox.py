@@ -3229,6 +3229,18 @@ def _selected_offer(cfg, incus, **kwargs):
     )
 
 
+def test_offer_reports_progress_across_manifests(mocker, make_cfg, tmp_path, monkeypatch, capsys):
+    from jailbee.pr_outbox import offer_pending_comments
+
+    actions = [{"type": "comment", "body": "First"}, {"type": "comment", "body": "Second"}]
+    files = {"one.json": _manifest_text(actions=actions), "two.json": _manifest_text()}
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files=files)
+    monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
+    assert offer_pending_comments(cfg, incus, "c", "feature", pr_number=None, manifest_names=("one.json", "two.json"), confirm=lambda _: True) == 0
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("jailbee-progress:")]
+    assert lines == ["jailbee-progress: 1/3", "jailbee-progress: 2/3", "jailbee-progress: 3/3"]
+
+
 def _draft_offer_setup(mocker, make_cfg, tmp_path, *, extra=False):
     from jailbee.pr_outbox import ApplyOutcome
 

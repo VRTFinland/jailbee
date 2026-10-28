@@ -361,6 +361,19 @@ def selected(
     )
 
 
+def test_issue_publish_reports_progress(env, monkeypatch, capsys):
+    monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
+    assert selected(env, "issue") == 0
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("jailbee-progress:")]
+    assert lines == ["jailbee-progress: 1/3", "jailbee-progress: 2/3", "jailbee-progress: 3/3"]
+
+
+def test_dry_run_reports_no_progress(env, monkeypatch, capsys):
+    monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
+    assert selected(env, "issue", dry_run=True) == 0
+    assert "jailbee-progress:" not in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 @pytest.mark.parametrize("late", [False, True])
 def test_typed_publication_preserves_validation_error(env, kind, late):

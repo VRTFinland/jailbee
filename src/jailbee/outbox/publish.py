@@ -397,9 +397,13 @@ def publish_selected(
                 revision,
                 raise_errors=raise_errors,
             )
-            report = issue_outbox.apply_batch(
-                batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store
-            )
+            from jailbee.publish_progress import reporting
+
+            with reporting(total) as tick:
+                report = issue_outbox.apply_batch(
+                    batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store,
+                    before_action=tick,
+                )
             print_issue_outcome(batch, report)
             if raise_errors and report.failure is not None:
                 if report.failure.kind == "validation":

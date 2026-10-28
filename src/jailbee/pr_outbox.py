@@ -2861,35 +2861,44 @@ def _offer_locked(
     plans = refreshed_plans
     outbox = Outbox(fresh_store.as_dict(), fresh_store.rejected, identity)
     failures = len(refusals)
-    for position, (target, progress, idx) in enumerate(plans):
-        outcome = apply_manifest(
-            cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft
-        )
-        _print_receipts(target, outcome)
-        stop = False
-        try:
-            finalize(incus, container, outbox, target, outcome, uid=uid)
-        except FinalizeError as e:
-            # The GitHub side is settled but the container could not be told.
-            # Publishing the next manifest would post more that nothing can
-            # record — the very thing the sidecar exists to prevent.
-            if raise_errors:
-                raise OutboxExecutionError(str(e)) from e
-            error_plain(str(e))
-            stop = True
-        if outcome.failure is not None:
-            if raise_errors:
-                warn_plain(
-                    f"{target.manifest.name} is still pending; re-running skips what landed."
-                )
-                raise OutboxExecutionError(f"{target.manifest.name}: {outcome.failure}")
-            error_plain(f"{target.manifest.name}: {outcome.failure}")
-            warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
-            stop = True
-        if stop:
-            failures += 1
-            left = [t.manifest.name for t, _, _ in plans[position + 1 :]]
-            if left:
-                warn_plain(f"Stopped here; still pending: {', '.join(left)}")
-            break
+    from contextlib import ExitStack
+
+    from jailbee.publish_progress import reporting
+
+    total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
+    with ExitStack() as stack:
+        tick = stack.enter_context(reporting(total))
+        for position, (target, progress, idx) in enumerate(plans):
+            outcome = apply_manifest(
+                cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft, before_action=tick
+            )
+            _print_receipts(target, outcome)
+            stop = False
+            try:
+                finalize(incus, container, outbox, target, outcome, uid=uid)
+            except FinalizeError as e:
+                stack.close()
+                # The GitHub side is settled but the container could not be told.
+                # Publishing the next manifest would post more that nothing can
+                # record — the very thing the sidecar exists to prevent.
+                if raise_errors:
+                    raise OutboxExecutionError(str(e)) from e
+                error_plain(str(e))
+                stop = True
+            if outcome.failure is not None:
+                stack.close()
+                if raise_errors:
+                    warn_plain(
+                        f"{target.manifest.name} is still pending; re-running skips what landed."
+                    )
+                    raise OutboxExecutionError(f"{target.manifest.name}: {outcome.failure}")
+                error_plain(f"{target.manifest.name}: {outcome.failure}")
+                warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
+                stop = True
+            if stop:
+                failures += 1
+                left = [t.manifest.name for t, _, _ in plans[position + 1 :]]
+                if left:
+                    warn_plain(f"Stopped here; still pending: {', '.join(left)}")
+                break
     return failures
