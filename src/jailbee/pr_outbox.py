@@ -20,6 +20,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -136,6 +137,14 @@ class Manifest:
     pr: int | None
     head_sha: str | None
     actions: tuple[Action, ...] = field(default_factory=tuple)
+    source: str | None = None
+    source_sha: str | None = None
+    base: str | None = None
+
+
+def is_source_manifest(manifest: Manifest) -> bool:
+    """Whether `manifest` was produced from an imported source branch."""
+    return manifest.source is not None
 
 
 def _require_int(name: str, index: int, value: Any, field_name: str) -> int:
@@ -312,12 +321,17 @@ def _parse_description(
 
 
 def _parse_actions(
-    name: str, raw: dict[str, Any], bodies: Mapping[str, str], pr: int | None
+    name: str,
+    raw: dict[str, Any],
+    bodies: Mapping[str, str],
+    pr: int | None,
+    *,
+    source: str | None,
 ) -> tuple[Action, ...]:
     actions_val = raw.get("actions")
     if not isinstance(actions_val, list):
         raise ManifestError(f"{name}: actions must be a list")
-    if len(actions_val) == 0:
+    if len(actions_val) == 0 and not (source is not None and pr is not None):
         raise ManifestError(f"{name} has no actions")
     if len(actions_val) > MAX_ACTIONS:
         raise ManifestError(
@@ -354,6 +368,10 @@ def _parse_actions(
 
     if pr is None and (len(parsed) != 1 or not isinstance(parsed[0], DescriptionAction)):
         raise ManifestError(f"{name} has pr: null, so it may only carry a description")
+    if source is not None and pr is not None and any(
+        not isinstance(action, DescriptionAction) for action in parsed
+    ):
+        raise ManifestError(f"{name}: source manifests may only carry a description")
 
     return tuple(parsed)
 
@@ -397,9 +415,49 @@ def parse_manifest(name: str, text: str, bodies: Mapping[str, str]) -> Manifest:
     if head_sha_val is not None and not isinstance(head_sha_val, str):
         raise ManifestError(f"{name}: head_sha must be a string or null")
 
-    actions = _parse_actions(name, raw, bodies, pr)
+    source_val = raw.get("source")
+    source: str | None = None
+    if "source" in raw:
+        if not isinstance(source_val, str) or not source_val.startswith("refs/"):
+            raise ManifestError(f"{name}: source must start with refs/ and be a string")
+        if not git.check_ref_format(source_val):
+            raise ManifestError(f"{name}: source is not a valid ref")
+        source = source_val
 
-    return Manifest(name=name, repo=repo_val, pr=pr, head_sha=head_sha_val, actions=actions)
+    source_sha_val = raw.get("source_sha")
+    source_sha: str | None = None
+    if "source_sha" in raw:
+        if source is None:
+            raise ManifestError(f"{name}: source_sha requires source")
+        if not isinstance(source_sha_val, str) or re.fullmatch(
+            r"[0-9a-f]{40}", source_sha_val
+        ) is None:
+            raise ManifestError(f"{name}: source_sha must be 40 lowercase hex characters")
+        source_sha = source_sha_val
+    elif source is not None:
+        raise ManifestError(f"{name}: source_sha is required with source")
+
+    base_val = raw.get("base")
+    base: str | None = None
+    if "base" in raw:
+        if source is None:
+            raise ManifestError(f"{name}: base requires source")
+        if not isinstance(base_val, str) or not git.check_ref_format(base_val):
+            raise ManifestError(f"{name}: base is not a valid branch name")
+        base = base_val
+
+    actions = _parse_actions(name, raw, bodies, pr, source=source)
+
+    return Manifest(
+        name=name,
+        repo=repo_val,
+        pr=pr,
+        head_sha=head_sha_val,
+        actions=actions,
+        source=source,
+        source_sha=source_sha,
+        base=base,
+    )
 
 
 @dataclass(frozen=True)

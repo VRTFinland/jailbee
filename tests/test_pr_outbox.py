@@ -185,6 +185,84 @@ def test_parse_rejects_body_file_escaping_the_outbox():
         parse_manifest("001-x.json", text, {"../secrets.md": "leak"})
 
 
+def test_parse_manifest_source_fields_and_classification(mocker):
+    from jailbee.pr_outbox import DescriptionAction, is_source_manifest, parse_manifest
+
+    mocker.patch("jailbee.pr_outbox.git.check_ref_format", return_value=True)
+    source = "refs/heads/imported/topic"
+    source_sha = "a" * 40
+    description = {"type": "description", "body": "Imported PR"}
+
+    unnumbered = parse_manifest(
+        "001-source.json",
+        _manifest_text(
+            pr=None,
+            head_sha=None,
+            source=source,
+            source_sha=source_sha,
+            base="main",
+            actions=[description],
+        ),
+        {},
+    )
+    numbered = parse_manifest(
+        "002-source.json",
+        _manifest_text(
+            pr=7, source=source, source_sha=source_sha, actions=[]
+        ),
+        {},
+    )
+
+    assert (unnumbered.source, unnumbered.source_sha, unnumbered.base) == (
+        source,
+        source_sha,
+        "main",
+    )
+    assert unnumbered.actions == (DescriptionAction(body="Imported PR"),)
+    assert is_source_manifest(unnumbered)
+    assert (numbered.source, numbered.source_sha, numbered.base) == (source, source_sha, None)
+    assert numbered.actions == ()
+    assert is_source_manifest(numbered)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"source": "refs/heads/topic"}, "source_sha is required"),
+        ({"source": None}, "source must start with refs/"),
+        ({"source_sha": None}, "source_sha requires source"),
+        ({"base": None}, "base requires source"),
+        ({"source_sha": "a" * 40}, "source_sha requires source"),
+        (
+            {"source": "refs/heads/topic", "source_sha": "abc"},
+            "source_sha must be 40 lowercase hex",
+        ),
+        ({"source": "feature", "source_sha": "a" * 40}, "source must start with refs/"),
+        ({"source": "refs/heads/a..b", "source_sha": "a" * 40}, "source is not a valid ref"),
+        ({"base": "main"}, "base requires source"),
+        (
+            {
+                "pr": 7,
+                "source": "refs/heads/topic",
+                "source_sha": "a" * 40,
+                "actions": [{"type": "comment", "body": "not allowed"}],
+            },
+            "source manifests may only carry a description",
+        ),
+        ({"pr": 7, "actions": []}, "has no actions"),
+    ],
+)
+def test_parse_manifest_source_rejects_invalid_fields(mocker, overrides, error):
+    from jailbee.pr_outbox import ManifestError, parse_manifest
+
+    mocker.patch(
+        "jailbee.pr_outbox.git.check_ref_format",
+        side_effect=lambda ref: ".." not in ref,
+    )
+    with pytest.raises(ManifestError, match=error):
+        parse_manifest("003-source.json", _manifest_text(**overrides), {})
+
+
 def test_parse_null_pr_allows_only_a_description():
     from jailbee.pr_outbox import ManifestError, parse_manifest
 
