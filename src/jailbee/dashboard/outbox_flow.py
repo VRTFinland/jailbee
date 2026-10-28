@@ -80,7 +80,11 @@ class OutboxRunner(Protocol):
         ...
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None],
+        self,
+        key: str,
+        label: str,
+        argv: Sequence[str],
+        on_done: Callable[[JobResult], None],
         on_progress: Callable[[int, int], None] | None = None,
     ) -> None: ...
 
@@ -325,7 +329,12 @@ class OutboxController:
         self.runner.changed()
 
     def _start(
-        self, busy: str, key: str, label: str, argv: list[str], done: Callable[[JobResult], None],
+        self,
+        busy: str,
+        key: str,
+        label: str,
+        argv: list[str],
+        done: Callable[[JobResult], None],
         on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         self.state = replace(self.state, busy=busy, question=None, status=())
@@ -698,7 +707,11 @@ class OutboxController:
             self._after_mutation(_lines(result.stdout, result.stderr) or ("published",))
 
         self._start(
-            current_busy, f"outbox-apply:{name}:{pid}", f"publishing {_safe(pid)}…", argv, done,
+            current_busy,
+            f"outbox-apply:{name}:{pid}",
+            f"publishing {_safe(pid)}…",
+            argv,
+            done,
             on_progress=progress,
         )
 

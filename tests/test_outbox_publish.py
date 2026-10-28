@@ -364,7 +364,11 @@ def selected(
 def test_issue_publish_reports_progress(env, monkeypatch, capsys):
     monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
     assert selected(env, "issue") == 0
-    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("jailbee-progress:")]
+    lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("jailbee-progress:")
+    ]
     assert lines == ["jailbee-progress: 1/3", "jailbee-progress: 2/3", "jailbee-progress: 3/3"]
 
 

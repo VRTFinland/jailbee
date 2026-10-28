@@ -401,7 +401,10 @@ def publish_selected(
 
             with reporting(total) as tick:
                 report = issue_outbox.apply_batch(
-                    batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store,
+                    batch,
+                    incus=incus,
+                    uid=cfg.container_user.uid,
+                    journal_store=journal_store,
                     before_action=tick,
                 )
             print_issue_outcome(batch, report)

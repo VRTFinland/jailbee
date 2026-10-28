@@ -35,6 +35,7 @@ def reporting(
         return
     n = 0
     if PROGRESS_ENV in (os.environ if env is None else env):
+
         def line_tick() -> None:
             nonlocal n
             n += 1
@@ -77,6 +78,7 @@ def reporting(
         if isinstance(stderr, FileProxy):
             sys.stderr = ConsoleProxy(stderr)
         try:
+
             def status_tick() -> None:
                 nonlocal n
                 n += 1

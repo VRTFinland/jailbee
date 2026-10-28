@@ -121,6 +121,7 @@ class JobRunner:
                 stdout, stderr = proc.communicate()
             else:
                 output: list[str] = []
+
                 def read_stdout() -> None:
                     assert proc.stdout is not None
                     with proc.stdout:

@@ -1331,7 +1331,10 @@ def test_apply_batch_calls_before_action_per_executed_action(execution):
 
     execution["mutations"]["replace_labels"].side_effect = mutation
     report = issue_outbox.apply_batch(
-        batch, incus=execution["incus"], uid=1000, journal_store=execution["store"],
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
         before_action=lambda: events.append("hook"),
     )
     assert report.failure is None
@@ -1348,7 +1351,10 @@ def test_before_action_failure_does_not_leave_uncertain_receipt(execution):
 
     with pytest.raises(RuntimeError, match="progress failed"):
         issue_outbox.apply_batch(
-            batch, incus=execution["incus"], uid=1000, journal_store=execution["store"],
+            batch,
+            incus=execution["incus"],
+            uid=1000,
+            journal_store=execution["store"],
             before_action=fail,
         )
     assert execution["mutations"]["replace_labels"].call_count == 0
@@ -1368,7 +1374,10 @@ def test_pending_action_count_matches_apply_batch_attempts(execution):
     count = issue_outbox.pending_action_count(batch)
     events = []
     report = issue_outbox.apply_batch(
-        batch, incus=execution["incus"], uid=1000, journal_store=execution["store"],
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
         before_action=lambda: events.append("hook"),
     )
     assert report.failure is None

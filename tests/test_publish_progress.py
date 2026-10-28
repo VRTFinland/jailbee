@@ -12,7 +12,16 @@ def test_progress_line_and_parse_round_trip():
     assert parse_progress("jailbee-progress: 3/12\n") == (3, 12)
 
 
-@pytest.mark.parametrize("line", ["error: jailbee-progress: 1/2", "jailbee-progress: x/2", "jailbee-progress: 1", "", "jailbee-progress: 1/2 extra"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "error: jailbee-progress: 1/2",
+        "jailbee-progress: x/2",
+        "jailbee-progress: 1",
+        "",
+        "jailbee-progress: 1/2 extra",
+    ],
+)
 def test_parse_rejects_non_progress(line):
     assert parse_progress(line) is None
 
@@ -21,7 +30,10 @@ def test_reporting_lines_mode_writes_each_tick(capsys):
     with reporting(3, env={PROGRESS_ENV: "1"}) as tick:
         for _ in range(3):
             tick()
-    assert capsys.readouterr().err == "jailbee-progress: 1/3\njailbee-progress: 2/3\njailbee-progress: 3/3\n"
+    assert (
+        capsys.readouterr().err
+        == "jailbee-progress: 1/3\njailbee-progress: 2/3\njailbee-progress: 3/3\n"
+    )
 
 
 def test_reporting_silent_when_not_a_terminal(capsys):

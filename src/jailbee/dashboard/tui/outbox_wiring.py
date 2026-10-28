@@ -65,7 +65,11 @@ class SessionOutboxRunner:
         self.session.jobs.call(key, label, lambda: self.run_quiet(argv), on_done)
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None],
+        self,
+        key: str,
+        label: str,
+        argv: Sequence[str],
+        on_done: Callable[[JobResult], None],
         on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         """Start a detached job; a refused or unaddressable argv raises ValueError, unstarted.
@@ -78,7 +82,12 @@ class SessionOutboxRunner:
         except RouteError as exc:
             raise ValueError(str(exc)) from None
         self.session.jobs.start(
-            key, label, ["jailbee", *full], repo.cwd(), on_done, capture_stdout=True,
+            key,
+            label,
+            ["jailbee", *full],
+            repo.cwd(),
+            on_done,
+            capture_stdout=True,
             on_progress=on_progress,
         )
 

@@ -122,7 +122,11 @@ class FakeRunner:
             deliver()
 
     def start(
-        self, key: str, label: str, argv: Sequence[str], on_done: Callable[[JobResult], None],
+        self,
+        key: str,
+        label: str,
+        argv: Sequence[str],
+        on_done: Callable[[JobResult], None],
         on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         if self.start_error is not None:

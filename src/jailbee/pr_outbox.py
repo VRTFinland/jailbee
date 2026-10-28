@@ -2870,7 +2870,15 @@ def _offer_locked(
         tick = stack.enter_context(reporting(total))
         for position, (target, progress, idx) in enumerate(plans):
             outcome = apply_manifest(
-                cfg, incus, container, target, progress, uid=uid, indices=idx, draft=draft, before_action=tick
+                cfg,
+                incus,
+                container,
+                target,
+                progress,
+                uid=uid,
+                indices=idx,
+                draft=draft,
+                before_action=tick,
             )
             _print_receipts(target, outcome)
             stop = False
@@ -2893,7 +2901,9 @@ def _offer_locked(
                     )
                     raise OutboxExecutionError(f"{target.manifest.name}: {outcome.failure}")
                 error_plain(f"{target.manifest.name}: {outcome.failure}")
-                warn_plain(f"{target.manifest.name} is still pending; re-running skips what landed.")
+                warn_plain(
+                    f"{target.manifest.name} is still pending; re-running skips what landed."
+                )
                 stop = True
             if stop:
                 failures += 1

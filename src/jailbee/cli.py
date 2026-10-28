@@ -14446,7 +14446,10 @@ def issue_apply_cmd(
 
     with reporting(issue_outbox.pending_action_count(batch)) as tick:
         report = issue_outbox.apply_batch(
-            batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store,
+            batch,
+            incus=incus,
+            uid=cfg.container_user.uid,
+            journal_store=journal_store,
             before_action=tick,
         )
     _report_issue_apply_outcome(batch, report)

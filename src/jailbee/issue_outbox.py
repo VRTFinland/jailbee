@@ -1231,7 +1231,9 @@ def apply_batch(
                             try:
                                 journal_store.clear_prepared(key, resolved.index)
                             except JournalError as cleanup_error:
-                                exc.add_note(f"Could not clear prepared journal marker: {cleanup_error}")
+                                exc.add_note(
+                                    f"Could not clear prepared journal marker: {cleanup_error}"
+                                )
                             raise
                     try:
                         receipt = _execute_one(

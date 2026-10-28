@@ -58,9 +58,14 @@ def test_job_runner_delivers_progress_and_strips_it(tmp_path: Path) -> None:
         "prefix jailbee-progress: 9/9\\njailbee-progress: 2/2\\n'); sys.stderr.flush()"
     )
     runner.start(
-        "k", "publish", _py(code), tmp_path,
+        "k",
+        "publish",
+        _py(code),
+        tmp_path,
         lambda result: events.append(("done", result)),
-        on_progress=lambda n, total: events.append(("progress", n, total, threading.current_thread())),
+        on_progress=lambda n, total: events.append(
+            ("progress", n, total, threading.current_thread())
+        ),
     )
     _drain(runner)
     assert events[-2] == ("progress", 2, 2, threading.current_thread())
@@ -72,10 +77,18 @@ def test_job_runner_delivers_progress_and_strips_it(tmp_path: Path) -> None:
 def test_job_runner_progress_does_not_deadlock_on_stdout(tmp_path: Path) -> None:
     results = []
     runner = JobRunner()
-    code = "import sys; sys.stdout.write('x' * (1 << 20)); sys.stderr.write('jailbee-progress: 1/1\\n')"
+    code = (
+        "import sys; sys.stdout.write('x' * (1 << 20)); "
+        "sys.stderr.write('jailbee-progress: 1/1\\n')"
+    )
     runner.start(
-        "k", "publish", _py(code), tmp_path, results.append,
-        capture_stdout=True, on_progress=lambda n, total: None,
+        "k",
+        "publish",
+        _py(code),
+        tmp_path,
+        results.append,
+        capture_stdout=True,
+        on_progress=lambda n, total: None,
     )
     _drain(runner)
     assert results and len(results[0].stdout) == 1 << 20
