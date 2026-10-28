@@ -368,8 +368,10 @@ def _parse_actions(
 
     if pr is None and (len(parsed) != 1 or not isinstance(parsed[0], DescriptionAction)):
         raise ManifestError(f"{name} has pr: null, so it may only carry a description")
-    if source is not None and pr is not None and any(
-        not isinstance(action, DescriptionAction) for action in parsed
+    if (
+        source is not None
+        and pr is not None
+        and any(not isinstance(action, DescriptionAction) for action in parsed)
     ):
         raise ManifestError(f"{name}: source manifests may only carry a description")
 
@@ -429,9 +431,10 @@ def parse_manifest(name: str, text: str, bodies: Mapping[str, str]) -> Manifest:
     if "source_sha" in raw:
         if source is None:
             raise ManifestError(f"{name}: source_sha requires source")
-        if not isinstance(source_sha_val, str) or re.fullmatch(
-            r"[0-9a-f]{40}", source_sha_val
-        ) is None:
+        if (
+            not isinstance(source_sha_val, str)
+            or re.fullmatch(r"[0-9a-f]{40}", source_sha_val) is None
+        ):
             raise ManifestError(f"{name}: source_sha must be 40 lowercase hex characters")
         source_sha = source_sha_val
     elif source is not None:
@@ -1726,23 +1729,43 @@ def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | No
         if set(progress) != {"applied", "urls", "source"}:
             raise ValueError("invalid source progress schema")
         source = progress["source"]
-        if not isinstance(source, dict) or set(source) != {"identity", "inputs", "cleanup", "url", "line"}:
+        if not isinstance(source, dict) or set(source) != {
+            "identity",
+            "inputs",
+            "cleanup",
+            "url",
+            "line",
+        }:
             raise ValueError("invalid source receipt schema")
         identity, inputs, cleanup = source["identity"], source["inputs"], source["cleanup"]
-        if (not isinstance(identity, list) or len(identity) != 2
-                or any(not isinstance(v, str) or not v for v in identity)):
+        if (
+            not isinstance(identity, list)
+            or len(identity) != 2
+            or any(not isinstance(v, str) or not v for v in identity)
+        ):
             raise ValueError("invalid source identity")
-        if outbox.identity is not None and identity != [outbox.identity.full_name, outbox.identity.created_at]:
+        if outbox.identity is not None and identity != [
+            outbox.identity.full_name,
+            outbox.identity.created_at,
+        ]:
             raise ValueError("source receipt belongs to another container")
-        if not isinstance(inputs, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in inputs.items()):
+        if not isinstance(inputs, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in inputs.items()
+        ):
             raise ValueError("invalid source inputs")
         manifest = parse_manifest(name, inputs[name], inputs)
         references = _body_references(inputs[name])
-        if (not is_source_manifest(manifest) or set(inputs) != {name, *references}
-                or references & {"applied.log", f"{name}.progress.json", name}):
+        if (
+            not is_source_manifest(manifest)
+            or set(inputs) != {name, *references}
+            or references & {"applied.log", f"{name}.progress.json", name}
+        ):
             raise ValueError("invalid source input scope")
-        if (not isinstance(cleanup, list) or len(set(cleanup)) != len(cleanup)
-                or any(n not in inputs or n == name for n in cleanup)):
+        if (
+            not isinstance(cleanup, list)
+            or len(set(cleanup)) != len(cleanup)
+            or any(n not in inputs or n == name for n in cleanup)
+        ):
             raise ValueError("invalid source cleanup scope")
         for member, original in inputs.items():
             if member in outbox.files:
@@ -1753,9 +1776,13 @@ def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | No
         url, line = source["url"], source["line"]
         if not isinstance(url, str) or not isinstance(line, str) or "\n" in line or "\r" in line:
             raise ValueError("invalid source publication receipt")
-        digest = hashlib.sha256(json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()).hexdigest()
-        suffix = (f" {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-                  f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}")
+        digest = hashlib.sha256(
+            json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
+        ).hexdigest()
+        suffix = (
+            f" {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
+            f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}"
+        )
         if not line.endswith(suffix) or len(line) != 20 + len(suffix):
             raise ValueError("invalid source receipt record")
         indices = list(range(len(manifest.actions)))
@@ -1769,7 +1796,13 @@ def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | No
 
 
 def _source_cleanup(
-    incus: Incus, container: str, outbox: Outbox, name: str, source: dict[str, Any], *, uid: int | None
+    incus: Incus,
+    container: str,
+    outbox: Outbox,
+    name: str,
+    source: dict[str, Any],
+    *,
+    uid: int | None,
 ) -> None:
     """Keep the recovery sidecar until every acknowledged cleanup target is gone."""
     from jailbee.outbox import io as store_io
@@ -1783,9 +1816,17 @@ def _source_cleanup(
     if outbox.identity is None:
         raise OutboxChanged("source cleanup identity unavailable")
     _same_identity(incus, container, outbox.identity)
-    store_io.mutate_store(incus, container, "pr", uid=uid, expected=outbox.files,
-                          new_manifest=None, delete_names=tuple(names), forbidden_progress=None,
-                          rejected_names=outbox.rejected)
+    store_io.mutate_store(
+        incus,
+        container,
+        "pr",
+        uid=uid,
+        expected=outbox.files,
+        new_manifest=None,
+        delete_names=tuple(names),
+        forbidden_progress=None,
+        rejected_names=outbox.rejected,
+    )
 
 
 def consume_manifest(
@@ -1802,12 +1843,18 @@ def consume_manifest(
     manager = management if management is not None else PrManagement()
     try:
         ProposalId("pr", name)
-        original = preview if preview is not None else read_outbox(incus, container, uid=uid, strict=True)
+        original = (
+            preview if preview is not None else read_outbox(incus, container, uid=uid, strict=True)
+        )
         if original.identity is None or original.rejected:
             raise OutboxChanged("source snapshot unavailable; refresh required")
         with manager.lock(original.identity):
             fresh = read_outbox(incus, container, uid=uid, strict=True)
-            if fresh.identity != original.identity or fresh.files != original.files or fresh.rejected:
+            if (
+                fresh.identity != original.identity
+                or fresh.files != original.files
+                or fresh.rejected
+            ):
                 raise OutboxChanged("source snapshot changed; refresh required")
             from jailbee.outbox import io as store_io
 
@@ -1815,8 +1862,16 @@ def consume_manifest(
 
             def replace_file(current: Outbox, member: str, text: str) -> Outbox:
                 _same_identity(incus, container, identity)
-                store_io.mutate_store(incus, container, "pr", uid=uid, expected=current.files,
-                                      new_manifest=(member, text), delete_names=(), forbidden_progress=None)
+                store_io.mutate_store(
+                    incus,
+                    container,
+                    "pr",
+                    uid=uid,
+                    expected=current.files,
+                    new_manifest=(member, text),
+                    delete_names=(),
+                    forbidden_progress=None,
+                )
                 expected = current.files | {member: text}
                 after = read_outbox(incus, container, uid=uid, strict=True)
                 if after.identity != original.identity or after.rejected or after.files != expected:
@@ -1832,14 +1887,26 @@ def consume_manifest(
                 if references & {"applied.log", f"{name}.progress.json", name}:
                     raise ManifestError("source body conflicts with publication evidence")
                 inputs = {n: fresh.files[n] for n in {name, *references}}
-                digest = hashlib.sha256(json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()).hexdigest()
-                line = (f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-                        f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}")
-                source = {"identity": [original.identity.full_name, original.identity.created_at],
-                          "inputs": inputs, "cleanup": sorted(_orphaned_body_files(fresh, name)),
-                          "url": url, "line": line}
-                payload = {"applied": list(range(len(manifest.actions))),
-                           "urls": {str(i): url for i in range(len(manifest.actions))}, "source": source}
+                digest = hashlib.sha256(
+                    json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
+                ).hexdigest()
+                line = (
+                    f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
+                    f"actions={len(manifest.actions)} urls={_display_url(url)} "
+                    f"source-receipt={digest}"
+                )
+                source = {
+                    "identity": [original.identity.full_name, original.identity.created_at],
+                    "inputs": inputs,
+                    "cleanup": sorted(_orphaned_body_files(fresh, name)),
+                    "url": url,
+                    "line": line,
+                }
+                payload = {
+                    "applied": list(range(len(manifest.actions))),
+                    "urls": {str(i): url for i in range(len(manifest.actions))},
+                    "source": source,
+                }
                 fresh = replace_file(fresh, f"{name}.progress.json", json.dumps(payload))
             line = source["line"]
             if line not in fresh.files.get("applied.log", "").splitlines():
@@ -1850,9 +1917,19 @@ def consume_manifest(
             if line not in fresh.files.get("applied.log", "").splitlines():
                 raise OutboxChanged("source publication receipt unavailable; cleanup refused")
             _source_cleanup(incus, container, fresh, name, source, uid=uid)
-    except (IncusError, JournalError, OutboxError, OutboxExecutionError, OutboxReadError,
-            ManifestError, KeyError, ValueError) as exc:
-        raise FinalizeError(f"manifest {name} could not be consumed ({exc}); it may remain pending") from exc
+    except (
+        IncusError,
+        JournalError,
+        OutboxError,
+        OutboxExecutionError,
+        OutboxReadError,
+        ManifestError,
+        KeyError,
+        ValueError,
+    ) as exc:
+        raise FinalizeError(
+            f"manifest {name} could not be consumed ({exc}); it may remain pending"
+        ) from exc
 
 
 def record_consumed(

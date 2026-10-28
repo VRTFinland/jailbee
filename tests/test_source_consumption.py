@@ -15,9 +15,17 @@ from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
 @pytest.fixture
 def source_store(mocker, tmp_path):
     identity = ContainerIdentity("c", "created")
-    raw = json.dumps({"version": 1, "repo": "acme/widgets", "pr": 42,
-                      "head_sha": None, "source": "refs/heads/topic", "source_sha": "a" * 40,
-                      "actions": [{"type": "description", "body_file": "body.md"}]})
+    raw = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 42,
+            "head_sha": None,
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "body_file": "body.md"}],
+        }
+    )
     files = {"m.json": raw, "body.md": "original"}
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "c", "created_at": "created"}]
@@ -97,7 +105,9 @@ def test_receipt_write_requires_exact_readback_before_delete(source_store, damag
 @pytest.mark.parametrize("bad", [None, [], {"identity": []}, {"inputs": []}])
 def test_malformed_source_progress_is_refused(source_store, bad):
     incus, files, read, _, mutation, _ = source_store
-    files["m.json.progress.json"] = json.dumps({"applied": [0], "urls": {"0": "url"}, "source": bad})
+    files["m.json.progress.json"] = json.dumps(
+        {"applied": [0], "urls": {"0": "url"}, "source": bad}
+    )
     with pytest.raises(FinalizeError):
         consume_manifest(incus, "c", "m.json", "url", uid=1000, preview=read())
     mutation.assert_not_called()
@@ -176,7 +186,9 @@ def test_cleanup_recovery_never_deletes_changed_or_shared_inputs(source_store, c
         files["m.json"] += " "
     elif change == "identity":
         original_read = read
-        read = lambda: replace(original_read(), identity=ContainerIdentity("c", "replacement"))
+
+        def read():
+            return replace(original_read(), identity=ContainerIdentity("c", "replacement"))
     else:
         neighbor = json.loads(files["m.json"])
         neighbor.pop("source")

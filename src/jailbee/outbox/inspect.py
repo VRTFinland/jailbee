@@ -58,18 +58,27 @@ def pr_progress_evidence(
     try:
         value = json.loads(files.get(sidecar, "null"))
         if isinstance(value, dict) and "source" in value:
-            source = prs.source_publication_receipt(prs.Outbox(files, store.rejected, identity), name)
+            source = prs.source_publication_receipt(
+                prs.Outbox(files, store.rejected, identity), name
+            )
             if store.rejected:
                 raise OutboxError("source publication evidence was rejected")
             assert source is not None
             indices = frozenset(value["applied"])
-            return ProgressEvidence(indices, tuple((i, source["url"]) for i in sorted(indices)),
-                                    "recorded publication evidence prevents editing", None,
-                                    ((sidecar, files[sidecar]), ("applied.log", files.get("applied.log"))),
-                                    tuple(store.rejected), True)
+            return ProgressEvidence(
+                indices,
+                tuple((i, source["url"]) for i in sorted(indices)),
+                "recorded publication evidence prevents editing",
+                None,
+                ((sidecar, files[sidecar]), ("applied.log", files.get("applied.log"))),
+                tuple(store.rejected),
+                True,
+            )
     except (ValueError, TypeError, RecursionError, OutboxError) as exc:
         if isinstance(exc, OutboxError):
-            return ProgressEvidence(error=str(exc), edit_block="unusable source publication evidence")
+            return ProgressEvidence(
+                error=str(exc), edit_block="unusable source publication evidence"
+            )
     rejected = tuple(sorted(n for n in store.rejected if n in (sidecar, "applied.log")))
     inputs: list[tuple[str, str | None]] = [(sidecar, files.get(sidecar))]
     error = "publication evidence was rejected" if rejected else None
@@ -246,7 +255,9 @@ def _build_view(
             source_progress = pr_progress_evidence(store, name, None, identity=identity)
             parse_files = files
             if source_progress.source_published:
-                source = prs.source_publication_receipt(prs.Outbox(files, store.rejected, identity), name)
+                source = prs.source_publication_receipt(
+                    prs.Outbox(files, store.rejected, identity), name
+                )
                 assert source is not None
                 parse_files = files | source["inputs"]
             raw = parse_files.get(name, raw)
@@ -263,7 +274,9 @@ def _build_view(
     except (prs.ManifestError, issues.IssueManifestError, OutboxError) as exc:
         error, state = str(exc), "invalid"
     if store.kind == "pr":
-        progress = pr_progress_evidence(store, name, len(actions) if state != "invalid" else None, identity=identity)
+        progress = pr_progress_evidence(
+            store, name, len(actions) if state != "invalid" else None, identity=identity
+        )
         evidence = asdict(progress) | {"applied": sorted(progress.applied)}
         block = progress.edit_block
         if progress.error:

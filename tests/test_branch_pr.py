@@ -29,9 +29,16 @@ def source_publisher(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
     incus.config_get_checked.return_value = None
-    data = {"version": 1, "repo": "acme/widgets", "pr": None, "head_sha": None,
-            "source": "refs/jailbee/from/child/feature/a", "source_sha": "a" * 40,
-            "base": "main", "actions": [{"type": "description", "title": "Title", "body": "Body"}]}
+    data = {
+        "version": 1,
+        "repo": "acme/widgets",
+        "pr": None,
+        "head_sha": None,
+        "source": "refs/jailbee/from/child/feature/a",
+        "source_sha": "a" * 40,
+        "base": "main",
+        "actions": [{"type": "description", "title": "Title", "body": "Body"}],
+    }
     snapshot = Outbox({"m.json": json.dumps(data)}, identity=ContainerIdentity("full", "created"))
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="full")
     mocker.patch("jailbee.pr_flow.outbox_publication_guard", return_value=nullcontext())
@@ -41,23 +48,32 @@ def source_publisher(mocker, make_cfg, tmp_path):
     base_fetch = mocker.patch("jailbee.pr.fetch_base_ref", return_value="c" * 40)
     count = mocker.patch("jailbee.git.count_commits_between", return_value="3")
     remote = mocker.patch("jailbee.git.remote_branch_sha_strict", return_value=None)
-    fetch = mocker.patch("jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/host/source")
+    fetch = mocker.patch(
+        "jailbee.sync.fetch_ref_from_container", return_value="refs/jailbee/host/source"
+    )
     ff = mocker.patch("jailbee.sync.is_fast_forward", return_value=True)
     push = mocker.patch("jailbee.sync.push_ref_to_remote")
-    create = mocker.patch("jailbee.pr.create_pr", return_value=PrCreated(42, "https://github.com/acme/widgets/pull/42", False))
+    create = mocker.patch(
+        "jailbee.pr.create_pr",
+        return_value=PrCreated(42, "https://github.com/acme/widgets/pull/42", False),
+    )
     edit = mocker.patch("jailbee.pr.edit_pr")
     resolve = mocker.patch("jailbee.pr.resolve_pr")
-    discover = mocker.patch("jailbee.pr.find_open_pr_for_branch_strict", create=True, return_value=None)
+    discover = mocker.patch(
+        "jailbee.pr.find_open_pr_for_branch_strict", create=True, return_value=None
+    )
     from jailbee.pr_outbox import consume_manifest as real_consume
 
     consume = mocker.patch("jailbee.pr_outbox.consume_manifest", create=True)
-    return locals()
+    return locals() | {"real_consume": real_consume}
 
 
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 
-    return publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=force, yes=yes, confirm=confirm)
+    return publish_source_manifest(
+        p["cfg"], p["incus"], "c", "m.json", force=force, yes=yes, confirm=confirm
+    )
 
 
 def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
@@ -66,7 +82,9 @@ def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     assert "(base main, 3 commits)" in " ".join(capsys.readouterr().out.split())
     p["push"].assert_called_once()
     assert p["push"].call_args.kwargs["expected_sha"] == "a" * 40
-    p["base_fetch"].assert_called_once_with(p["cfg"].repo_root, "main", remote=p["cfg"].upstream_remote)
+    p["base_fetch"].assert_called_once_with(
+        p["cfg"].repo_root, "main", remote=p["cfg"].upstream_remote
+    )
     p["count"].assert_called_once_with(p["cfg"].repo_root, "c" * 40, "refs/jailbee/host/source")
     assert p["create"].call_args.kwargs["head"] == "feature/a"
     assert p["create"].call_args.kwargs["base"] == "main"
@@ -153,9 +171,18 @@ def test_closed_binding_discovers_new_open_pr_before_push(source_publisher):
     from jailbee.pr import PrInfo
 
     p = source_publisher
-    binding = {"feature/a": {"head": "feature/a", "pr": 41, "base": "main",
-                              "source": "refs/heads/x", "source_sha": "a" * 40}}
-    p["incus"].config_get_checked.side_effect = lambda full, key: json.dumps(binding) if key == BRANCH_PRS_LABEL else None
+    binding = {
+        "feature/a": {
+            "head": "feature/a",
+            "pr": 41,
+            "base": "main",
+            "source": "refs/heads/x",
+            "source_sha": "a" * 40,
+        }
+    }
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        json.dumps(binding) if key == BRANCH_PRS_LABEL else None
+    )
     p["resolve"].return_value = PrInfo(41, "feature/a", "b" * 40, "MERGED", "main")
     p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
     assert _publish(p, confirm=lambda _: False) == 1
@@ -278,7 +305,9 @@ def test_source_cross_repository_refused(source_publisher):
     data = json.loads(p["snapshot"].files["m.json"])
     data["pr"] = 42
     p["snapshot"].files["m.json"] = json.dumps(data)
-    p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main", is_cross_repository=True)
+    p["resolve"].return_value = PrInfo(
+        42, "head", "b" * 40, "OPEN", "main", is_cross_repository=True
+    )
     assert _publish(p) == 1
     p["fetch"].assert_not_called()
 
@@ -290,12 +319,16 @@ def test_source_nonfastforward_requires_force(source_publisher, capsys):
     data = json.loads(p["snapshot"].files["m.json"])
     data["pr"] = 42
     p["snapshot"].files["m.json"] = json.dumps(data)
-    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        "42" if key == "user.jailbee.pr" else None
+    )
     p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
     p["remote"].return_value = "b" * 40
     p["ff"].return_value = False
     assert _publish(p) == 1
-    assert "jailbee pr push c --source-manifest m.json --force" in " ".join(capsys.readouterr().err.split())
+    assert "jailbee pr push c --source-manifest m.json --force" in " ".join(
+        capsys.readouterr().err.split()
+    )
     p["push"].assert_not_called()
 
 
@@ -306,7 +339,9 @@ def test_source_force_allows_nonfastforward_with_pin(source_publisher):
     data = json.loads(p["snapshot"].files["m.json"])
     data["pr"] = 42
     p["snapshot"].files["m.json"] = json.dumps(data)
-    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        "42" if key == "user.jailbee.pr" else None
+    )
     p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
     p["remote"].return_value = "b" * 40
     p["ff"].return_value = False
@@ -349,7 +384,9 @@ def test_source_zero_actions_updates_without_edit(source_publisher):
     data = json.loads(p["snapshot"].files["m.json"])
     data.update(pr=42, actions=[])
     p["snapshot"].files["m.json"] = json.dumps(data)
-    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        "42" if key == "user.jailbee.pr" else None
+    )
     p["resolve"].return_value = PrInfo(42, "head", "b" * 40, "OPEN", "main")
     assert _publish(p) == 0
     p["push"].assert_called_once()
@@ -373,14 +410,28 @@ def test_list_pr_bindings_removes_merged_and_shows_own(mocker, make_cfg, tmp_pat
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
-    entries = {"topic": {"head": "topic", "pr": 42, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40}}
-    incus.config_get_checked.side_effect = lambda full, key: json.dumps(entries) if key == BRANCH_PRS_LABEL else ("10" if key == "user.jailbee.pr" else None)
+    entries = {
+        "topic": {
+            "head": "topic",
+            "pr": 42,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+        }
+    }
+    incus.config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entries)
+        if key == BRANCH_PRS_LABEL
+        else ("10" if key == "user.jailbee.pr" else None)
+    )
     from types import SimpleNamespace
 
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[SimpleNamespace(name="full")])
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
     mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/widgets")
-    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(42, "topic", "a" * 40, "MERGED", "main"))
+    mocker.patch(
+        "jailbee.pr.resolve_pr", return_value=PrInfo(42, "topic", "a" * 40, "MERGED", "main")
+    )
     assert list_pr_bindings(cfg, incus) == 0
     output = capsys.readouterr()
     assert "#10" in output.out
@@ -396,12 +447,24 @@ def test_list_pr_bindings_shows_open_source(mocker, make_cfg, tmp_path, capsys):
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
-    entries = {"topic": {"head": "topic", "pr": 42, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40}}
-    incus.config_get_checked.side_effect = lambda full, key: json.dumps(entries) if key == BRANCH_PRS_LABEL else None
+    entries = {
+        "topic": {
+            "head": "topic",
+            "pr": 42,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+        }
+    }
+    incus.config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entries) if key == BRANCH_PRS_LABEL else None
+    )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[SimpleNamespace(name="full")])
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
     mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/widgets")
-    mocker.patch("jailbee.pr.resolve_pr", return_value=PrInfo(42, "topic", "a" * 40, "OPEN", "main"))
+    mocker.patch(
+        "jailbee.pr.resolve_pr", return_value=PrInfo(42, "topic", "a" * 40, "OPEN", "main")
+    )
     assert list_pr_bindings(cfg, incus) == 0
     assert "c  #42  topic ← refs/heads/topic" in capsys.readouterr().out
     incus.config_unset_checked.assert_not_called()
@@ -445,10 +508,12 @@ def test_malformed_entries_are_skipped():
     from jailbee.branch_pr import BranchPrMap
 
     incus = MagicMock()
-    incus.config_get_checked.return_value = json.dumps({
-        "ok": {"head": "ok", "pr": 42, "base": "main", "source": "s", "source_sha": "x"},
-        "bad": {"head": "bad", "pr": True, "base": "main", "source": "s", "source_sha": "x"},
-    })
+    incus.config_get_checked.return_value = json.dumps(
+        {
+            "ok": {"head": "ok", "pr": 42, "base": "main", "source": "s", "source_sha": "x"},
+            "bad": {"head": "bad", "pr": True, "base": "main", "source": "s", "source_sha": "x"},
+        }
+    )
     assert list(BranchPrMap(incus, "c").read()) == ["ok"]
 
 

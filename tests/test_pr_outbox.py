@@ -207,9 +207,7 @@ def test_parse_manifest_source_fields_and_classification(mocker):
     )
     numbered = parse_manifest(
         "002-source.json",
-        _manifest_text(
-            pr=7, source=source, source_sha=source_sha, actions=[]
-        ),
+        _manifest_text(pr=7, source=source, source_sha=source_sha, actions=[]),
         {},
     )
 
@@ -240,7 +238,10 @@ def test_parse_manifest_source_fields_and_classification(mocker):
         ({"source": "feature", "source_sha": "a" * 40}, "source must start with refs/"),
         ({"source": "refs/heads/a..b", "source_sha": "a" * 40}, "source is not a valid ref"),
         ({"base": "main"}, "base requires source"),
-        ({"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "a..b"}, "base is not a valid branch name"),
+        (
+            {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "a..b"},
+            "base is not a valid branch name",
+        ),
         (
             {
                 "pr": 7,
@@ -2515,9 +2516,10 @@ def test_consume_source_retries_delete_without_duplicate_receipt(mocker, tmp_pat
         return Outbox(store.as_dict(), store.rejected, original.identity)
 
     mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
-    delete = mocker.patch("jailbee.pr_outbox._source_cleanup", side_effect=[
-        store_io.MutationExecutionError("failed"), None
-    ])
+    delete = mocker.patch(
+        "jailbee.pr_outbox._source_cleanup",
+        side_effect=[store_io.MutationExecutionError("failed"), None],
+    )
     with pytest.raises(FinalizeError):
         consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=original)
     retry = read_snapshot()
@@ -2533,8 +2535,12 @@ def test_consume_source_preserves_shared_body(mocker, tmp_path):
     from jailbee.outbox_io import container_identity
     from jailbee.pr_outbox import Outbox, consume_manifest
 
-    source = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40,
-                            actions=[{"type": "description", "body_file": "shared.md"}])
+    source = _manifest_text(
+        pr=42,
+        source="refs/heads/topic",
+        source_sha="a" * 40,
+        actions=[{"type": "description", "body_file": "shared.md"}],
+    )
     neighbor = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
     outbox = Outbox({"001-x.json": source, "002-y.json": neighbor, "shared.md": "text"})
     incus = _drop_setup(mocker, outbox, tmp_path)
@@ -4588,8 +4594,12 @@ def test_branch_binding_owns_numbered_manifest(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import Manifest, resolve_target
 
     binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
-    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(42))
-    target = resolve_target(make_cfg(tmp_path), incus, "c", Manifest("m", "acme/widgets", 42, None), force=False)
+    incus = _target_setup(
+        mocker, tmp_path, labels={"user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(42)
+    )
+    target = resolve_target(
+        make_cfg(tmp_path), incus, "c", Manifest("m", "acme/widgets", 42, None), force=False
+    )
     assert target.pr.number == 42 and not target.foreign
 
 
@@ -4597,16 +4607,29 @@ def test_branch_binding_does_not_change_legacy_null_resolution(mocker, make_cfg,
     from jailbee.pr_outbox import resolve_target
 
     binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
-    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(10))
-    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr.number == 10
+    incus = _target_setup(
+        mocker,
+        tmp_path,
+        labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)},
+        pr=_pr_info(10),
+    )
+    assert (
+        resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr.number
+        == 10
+    )
 
 
 def test_source_null_manifest_does_not_resolve_own_pr(mocker, make_cfg, tmp_path):
     from dataclasses import replace
+
     from jailbee.pr_outbox import resolve_target
 
     binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
-    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)})
+    incus = _target_setup(
+        mocker,
+        tmp_path,
+        labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)},
+    )
     manifest = replace(_null_pr_manifest(), source="topic", source_sha="a" * 40, base="main")
     assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
     from jailbee import pr
