@@ -530,14 +530,18 @@ def test_grant_json_written_once_per_change(rig: Rig) -> None:
     assert rig.write_grant.call_count == 1
     full, text = rig.write_grant.call_args.args[1:3]
     assert full == "proj-orch"
-    assert Grant.model_validate_json(text) == GRANT
+    data = json.loads(text)
+    assert data.pop("default_runner_source") is None
+    assert Grant.model_validate(data) == GRANT
 
     wider = Grant.model_validate({"max_running_children": 3, "operations": ["message", "spawn"]})
     rig.incus.list_containers.return_value = [_orch(grant=wider)]
     rig.tick(memory)
     rig.tick(memory)
     assert rig.write_grant.call_count == 2
-    assert Grant.model_validate_json(rig.write_grant.call_args.args[2]) == wider
+    data = json.loads(rig.write_grant.call_args.args[2])
+    assert data.pop("default_runner_source") is None
+    assert Grant.model_validate(data) == wider
 
 
 def test_grant_json_not_written_into_children(rig: Rig) -> None:
@@ -1473,3 +1477,46 @@ def test_tick_survives_orphaned_finish_failure(rig: Rig) -> None:
     rig.incus.config_unset_checked.side_effect = IncusError("deleted meanwhile")
     rig.tick()
     assert path.exists()
+
+
+def test_grant_json_tracks_effective_default(rig):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    rig.incus.list_containers.return_value = [_orch()]
+    memory = broker.BrokerMemory()
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
+    )
+    rig.tick(memory)
+    data = json.loads(rig.write_grant.call_args.args[2])
+    assert data["default_runner"] == {"agent": "claude", "model": "haiku"}
+    assert data["default_runner_source"] == "repo"
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="opus"), default_runner_source="repo"
+    )
+    rig.tick(memory)
+    assert rig.write_grant.call_count == 2
+
+
+def test_grant_json_rewritten_when_only_source_changes(rig):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    runner = Runner(agent="claude", model="haiku")
+    rig.incus.list_containers.return_value = [_orch()]
+    memory = broker.BrokerMemory()
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="repo"
+    )
+    rig.tick(memory)
+    first = json.loads(rig.write_grant.call_args.args[2])
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="local"
+    )
+    rig.tick(memory)
+    second = json.loads(rig.write_grant.call_args.args[2])
+    assert rig.write_grant.call_count == 2
+    assert first["default_runner"] == second["default_runner"]
+    assert first["default_runner_source"] == "repo"
+    assert second["default_runner_source"] == "local"

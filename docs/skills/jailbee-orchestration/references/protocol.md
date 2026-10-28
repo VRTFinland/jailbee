@@ -64,7 +64,8 @@ Optional `runner` (spawn and restart): `{"agent": "claude" | "claude-jb",
 "profile": <LiteLLM profile, claude-jb only>, "model": "fable" | "opus" |
 "sonnet" | "haiku"}`; only `agent` is required, unknown keys are refused.
 Omit it unless the user asked for a specific agent, profile or model (or their
-instructions name one); omitting starts the repo's default agent.
+instructions name one); omitting uses the effective default runner in `grant.json`.
+If none is configured, it starts the repo's default agent.
 
 <!-- kind: outbox -->
 ```json
@@ -158,7 +159,9 @@ Status: `done` ("child `x` restarted") when it runs at once; `queued` when
 no slot is free, then `started` when it is later started.
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
-`"runner": null` clears it (the default agent again); an object replaces it.
+`"runner": null` selects the current effective default (clearing the label if
+none is configured); an object replaces it. Queued requests retain the runner
+resolved when accepted.
 The refusals are the spawn ones above. `on_done: "destroy" | "keep"`
 changes the policy; absent or null keeps it. Explicit destroy requires the
 `destroy` operation. Restart clears any pending cleanup and stop-time dirty
@@ -320,9 +323,15 @@ refused ("`x` is not a child of this orchestrator"); after a revoked grant,
 ```json
 {"version": 1, "max_running_children": 2,
  "operations": ["destroy", "import", "message", "restart", "spawn", "stop"],
- "grantable": {"mounts": [], "loose": false, "egress": []}}
+ "grantable": {"mounts": [], "loose": false, "egress": []},
+ "default_runner": {"agent": "claude", "model": "sonnet"},
+ "default_runner_source": "repo"}
 ```
 
+- `default_runner`: the effective runner for an omitted spawn runner, or null
+  when no runner default is configured. It is a preference, not a right.
+- `default_runner_source`: `container`, `local`, `repo`, or `global`, or null when none
+  is configured.
 - `max_running_children`: how many children may run at once. A spawn beyond
   it is `queued` until a slot frees. During creation, a child counts from
   the `started` reply until it is running and its create has finished, or

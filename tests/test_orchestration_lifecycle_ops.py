@@ -606,3 +606,55 @@ def test_restart_with_null_runner_does_not_check_the_old_label(
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: _KEPT})
     assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
     check.assert_not_called()
+
+
+def test_restart_null_uses_current_default(tmp_path, seams, monkeypatch):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    runner = Runner(agent="claude", model="haiku")
+    rig = Rig(tmp_path, config={labels.RUNNER: Runner(agent="claude", model="opus").to_label()})
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="repo"
+    )
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    rig.incus.config_set.assert_any_call(rig.child.full, labels.RUNNER, runner.to_label())
+
+
+def test_restart_omitted_runner_keeps_label_despite_different_default(tmp_path, seams, monkeypatch):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    old = Runner(agent="claude", model="opus")
+    default = Runner(agent="claude", model="haiku")
+    rig = Rig(tmp_path, config={labels.RUNNER: old.to_label()})
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=default, default_runner_source="repo"
+    )
+    check = MagicMock(return_value=[])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    check.assert_called_once_with(rig.cfg, rig.incus, rig.ctx().gcfg, old)
+    assert _runner_calls(rig) == []
+    seams["boot"].assert_called_once()
+
+
+def test_restart_null_refuses_invalid_default(tmp_path, seams, monkeypatch):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    runner = Runner(agent="claude-jb", profile="grok")
+    rig = Rig(tmp_path, config={labels.RUNNER: Runner(agent="claude", model="opus").to_label()})
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="repo"
+    )
+    detail = "LiteLLM profile `grok` is not served"
+    check = MagicMock(return_value=[detail])
+    monkeypatch.setattr(actions, "runner_problems", check)
+    out = actions.handle_restart(rig.ctx(), _restart_with(runner=None))
+    assert out == Outcome("refused", detail)
+    assert check.call_args.args[3] == runner
+    assert _runner_calls(rig) == []
+    seams["boot"].assert_not_called()
+    assert load_queue(tmp_path).get("proj-orch", []) == []

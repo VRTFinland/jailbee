@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.resources
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,7 +23,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from jailbee.incus import Incus
+    from jailbee.orchestration.grant import Grant
     from jailbee.orchestration.protocol import InboxItem, InboxMessage
+    from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
 _BASE = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration"
 OUTBOX_DIR = f"{_BASE}/outbox"
@@ -239,6 +242,13 @@ def flush_pending(
             path.unlink()
         delivered += 1
     return delivered
+
+
+def grant_json_text(grant: Grant, runner: Runner | None, source: DefaultRunnerSource | None) -> str:
+    data = json.loads(grant.to_label())
+    data["default_runner"] = runner.model_dump(mode="json", exclude_none=True) if runner else None
+    data["default_runner_source"] = source
+    return json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def write_grant_json(incus: Incus, full: str, grant_json: str, *, uid: int | None) -> None:

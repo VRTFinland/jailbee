@@ -776,3 +776,52 @@ def test_queued_restart_carries_runner_and_rechecks_it(
     assert "LiteLLM profile `grok` is not served" in out.detail
     rig.incus.config_set.assert_not_called()
     rig.incus.config_unset_checked.assert_not_called()
+
+
+@pytest.mark.parametrize("initial", ["haiku", None])
+def test_queued_spawn_pins_default(tmp_path, seams, monkeypatch, initial):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    rig = Rig(tmp_path, running=1)
+    runner = Runner(agent="claude", model=initial) if initial else None
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="repo" if runner else None
+    )
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "queued"
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="opus"), default_runner_source="repo"
+    )
+    rig.children.clear()
+    actions.drain_queue(rig.ctx())
+    assert seams["start"].call_args.args[1].runner == runner
+
+
+@pytest.mark.parametrize("initial", ["haiku", None])
+def test_queued_null_restart_pins_default(tmp_path, seams, monkeypatch, initial):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.protocol import RestartManifest
+    from jailbee.orchestration.runner_model import Runner
+
+    rig = Rig(tmp_path, running=1)
+    child = Node("proj-c1", "c1", False, {labels.SPAWNED_BY: "proj-orch"})
+    rig.children.append(child)
+    runner = Runner(agent="claude", model=initial) if initial else None
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=runner, default_runner_source="repo" if runner else None
+    )
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
+    boot = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "_boot", boot)
+    m = RestartManifest.model_validate(
+        {"version": 1, "id": "r1", "type": "restart", "child": "c1", "prompt": "go", "runner": None}
+    )
+    assert actions.handle_restart(rig.ctx(), m).state == "queued"
+    rig.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="opus"), default_runner_source="repo"
+    )
+    rig.children = [child]
+    actions.drain_queue(rig.ctx())
+    assert boot.call_args.kwargs["runner"] == runner
+    assert boot.call_args.kwargs["set_runner"] is True

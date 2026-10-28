@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
+    from jailbee.orchestration.runner_model import DefaultRunnerSource
 
 Role = Literal["orchestrator", "child", "none"]
 
@@ -141,6 +142,9 @@ class ActionContext:
             return None
         return effective_grant(raw, profiles.repo_cap(self.cfg))
 
+    def default_runner(self) -> tuple[Runner | None, DefaultRunnerSource | None]:
+        return profiles.default_runner(self.cfg, self.raw_grant())
+
     def children(self) -> list[Node]:
         return [
             n for n in self.nodes.values() if n.config.get(labels.SPAWNED_BY) == self.sender.full
@@ -221,8 +225,9 @@ def plan_spawn(
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
-    if m.runner is not None:
-        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, m.runner)
+    runner = m.runner if m.runner is not None else ctx.default_runner()[0]
+    if runner is not None:
+        problems += runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, runner)
     if problems:
         return refused("; ".join(problems))
     try:
@@ -243,7 +248,7 @@ def plan_spawn(
         return refused("on_done destroy needs the `destroy` operation in this container's grant")
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, m.runner, policy)
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, runner, policy)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -731,7 +736,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     set_runner = restart_sets_runner(m)
     # A restart that names no runner keeps the child's label; that kept runner
     # must still be launchable, so it is checked like a named one.
-    effective = m.runner if set_runner else parse_runner_label(child.config.get(labels.RUNNER))
+    runner = ctx.default_runner()[0] if set_runner and m.runner is None else m.runner
+    effective = runner if set_runner else parse_runner_label(child.config.get(labels.RUNNER))
     if effective is not None:
         problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
@@ -746,7 +752,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             child,
             prompt,
             started=False,
-            runner=m.runner,
+            runner=runner,
             set_runner=set_runner,
             on_done=m.on_done,
         )
@@ -761,7 +767,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             base=None,
             prompt=prompt,
             rights={},
-            runner=m.runner.model_dump(mode="json") if m.runner else None,
+            runner=runner.model_dump(mode="json") if runner else None,
             runner_set=set_runner,
             on_done=m.on_done,
         )

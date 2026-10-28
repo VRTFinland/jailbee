@@ -39,6 +39,7 @@ from jailbee.orchestration.outbox import (
     deliver,
     ensure_orchestration_env,
     flush_pending,
+    grant_json_text,
     has_pending,
     read_outbox,
     write_grant_json,
@@ -279,7 +280,7 @@ def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
     if grant is None:
         memory.grant_written.pop(ctx.sender.full, None)
         return
-    text = grant.to_label() + "\n"
+    text = grant_json_text(grant, *ctx.default_runner())
     if memory.grant_written.get(ctx.sender.full) == text:
         return
     write_grant_json(ctx.incus, ctx.sender.full, text, uid=ctx.cfg.container_user.uid)

@@ -377,3 +377,40 @@ def test_spawn_refusal_joins_rights_and_runner_problems(tmp_path: Path) -> None:
     out = plan_spawn(_ctx(tmp_path), m, queued_names=())
     assert isinstance(out, Outcome) and out.state == "refused"
     assert "loose network mode is not grantable; agent `claude` is not enabled" in out.detail
+
+
+@pytest.mark.parametrize(
+    "explicit,container,expected",
+    [
+        (None, None, "haiku"),
+        ("opus", None, "opus"),
+        (None, "sonnet", "sonnet"),
+    ],
+)
+def test_spawn_resolves_default_runner(tmp_path, monkeypatch, explicit, container, expected):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    grant = {"default_runner": {"agent": "claude", "model": container}} if container else None
+    ctx = _ctx(tmp_path, grant)
+    ctx.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
+    )
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
+    m = _runner_m(Runner(agent="claude", model=explicit)) if explicit else _m()
+    plan = plan_spawn(ctx, m, queued_names=())
+    assert isinstance(plan, actions.SpawnPlan)
+    opts = actions.child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=None)
+    assert opts.runner == Runner(agent="claude", model=expected)
+
+
+def test_spawn_refuses_unserved_default(tmp_path, monkeypatch):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    ctx = _ctx(tmp_path)
+    ctx.cfg._orchestration_view = OrchestrationView(
+        default_runner=Runner(agent="claude-jb", profile="grok"), default_runner_source="repo"
+    )
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: ["profile not served"])
+    assert plan_spawn(ctx, _m(), queued_names=()) == Outcome("refused", "profile not served")
