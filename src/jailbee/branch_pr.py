@@ -79,6 +79,8 @@ def publish_source_manifest(
                 entries.pop(head, None)
                 target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
             if target is not None:
+                if action is not None and action.branch is not None and action.branch != target.head_ref:
+                    raise pr.PrError(f"manifest branch {action.branch} conflicts with PR head {target.head_ref}")
                 if target.is_cross_repository:
                     owner = target.head_repo_owner or "unknown"
                     raise pr.PrError(f"head lives in {owner}/{repo.split('/', 1)[-1]}; push to it from that repository")
@@ -93,7 +95,10 @@ def publish_source_manifest(
                 if not git.check_ref_format(head) or not git.check_ref_format(base):
                     raise pr.PrError("PR has an invalid head or base")
             host_ref = sync.fetch_ref_from_container(cfg, incus, short, manifest.source, manifest.source_sha)
-            count = git.count_commits_between(cfg.repo_root, f"refs/remotes/{cfg.upstream_remote}/{base}", host_ref)
+            base_sha = pr.fetch_base_ref(cfg.repo_root, base, remote=cfg.upstream_remote)
+            if base_sha is None:
+                raise pr.PrError(f"Cannot refresh base branch {base} from {cfg.upstream_remote}")
+            count = git.count_commits_between(cfg.repo_root, base_sha, host_ref)
             if count is None:
                 raise git.GitError(f"Cannot count commits against {base}")
             info_plain(f"source {manifest.source} @ {manifest.source_sha[:7]} → {head} (base {base}, {count} commits)")
@@ -136,6 +141,57 @@ def publish_source_manifest(
             return 0
     except (IncusError, JournalError, OutboxReadError, OutboxError, pr_outbox.ManifestError,
             pr_outbox.FinalizeError, pr.PrError, git.GitError, git.GitFetchError, sync.SyncError) as exc:
+        error_plain(str(exc))
+        return 1
+
+
+def unbind_head(
+    incus: Incus, full: str, head: str, *, yes: bool, confirm: Callable[[str], bool]
+) -> int:
+    from jailbee.incus import IncusError
+    from jailbee.tui import error_plain, info_plain
+
+    try:
+        bindings = BranchPrMap(incus, full)
+        if bindings.get(head) is None:
+            error_plain(f"No PR binding for head {head}")
+            return 1
+        if not yes and not confirm(f"Forget PR binding for {head}?"):
+            return 1
+        bindings.drop(head)
+        info_plain(f"Forgot PR binding for {head}")
+        return 0
+    except IncusError as exc:
+        error_plain(str(exc))
+        return 1
+
+
+def list_pr_bindings(cfg: Config, incus: Incus) -> int:
+    from jailbee import lifecycle, pr, pr_flow, pr_outbox
+    from jailbee.incus import IncusError
+    from jailbee.tui import error_plain, info_plain
+
+    try:
+        repo = pr_outbox.scope_slug(pr_flow.PrScope.for_repo(cfg))
+        if repo is None:
+            raise pr.PrError("Cannot resolve the GitHub repository for PR bindings")
+        for container in lifecycle.list_containers(cfg, incus, fast=True):
+            full = container.name
+            short = lifecycle.short_name(cfg, full)
+            for label in (pr_flow.PR_LABEL_PREFIX, pr_flow.STACKED_LABEL_PREFIX):
+                number = incus.config_get_checked(full, label)
+                if number:
+                    info_plain(f"{short}  #{number}  {'stacked' if label == pr_flow.STACKED_LABEL_PREFIX else 'own'}")
+            bindings = BranchPrMap(incus, full)
+            for head, entry in bindings.read().items():
+                target = pr.resolve_pr(cfg.repo_root, entry.pr, remote=cfg.upstream_remote, repo=repo)
+                if target.state != "OPEN":
+                    bindings.drop(head)
+                    info_plain(f"{short}  #{entry.pr}  {head}: removed {target.state.lower()} binding")
+                else:
+                    info_plain(f"{short}  #{entry.pr}  {head} ← {entry.source}")
+        return 0
+    except (IncusError, pr.PrError) as exc:
         error_plain(str(exc))
         return 1
 

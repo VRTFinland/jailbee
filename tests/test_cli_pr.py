@@ -106,6 +106,55 @@ def _setup(mocker, tmp_path, labels=None):
     return cfg_mock, incus_mock
 
 
+def test_source_manifest_cli_delegates(mocker, tmp_path):
+    cfg, incus = _setup(mocker, tmp_path)
+    publish = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", "--yes"])
+    assert result.exit_code == 0
+    assert publish.call_args.args == (cfg, incus, "feat-foo", "m.json")
+    assert publish.call_args.kwargs["yes"] is True
+
+
+@pytest.mark.parametrize("options", [["--title", "x"], ["--base", "main"], ["--body", "x"],
+                                     ["--as", "x"], ["--pr", "42"], ["--stacked"]])
+def test_source_manifest_cli_rejects_conflicting_options(options):
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", *options])
+    assert result.exit_code == 2
+
+
+def test_source_manifest_cli_propagates_publisher_failure(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=1)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "m.json"])
+    assert result.exit_code == 1
+
+
+def test_source_manifest_force_requires_explicit_container():
+    result = CliRunner().invoke(app, ["pr", "push", "--source-manifest", "m.json", "--force"])
+    assert result.exit_code == 2
+
+
+def test_pr_unbind_head_removes_only_mapping(mocker, tmp_path):
+    from jailbee.branch_pr import BRANCH_PRS_LABEL
+    import json
+
+    _, incus = _setup(mocker, tmp_path)
+    entry = {"head": "topic", "pr": 42, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40}
+    incus.config_get_checked.return_value = json.dumps({"topic": entry})
+    result = CliRunner().invoke(app, ["pr", "unbind", "feat-foo", "--head", "topic", "--yes"])
+    assert result.exit_code == 0, result.output
+    incus.config_unset_checked.assert_called_once_with("sampleapp-feat-foo", BRANCH_PRS_LABEL)
+
+
+def test_pr_ls_delegates(mocker, tmp_path):
+    cfg, incus = _setup(mocker, tmp_path)
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    listing = mocker.patch("jailbee.branch_pr.list_pr_bindings", create=True, return_value=0)
+    result = CliRunner().invoke(app, ["pr", "ls"])
+    assert result.exit_code == 0, result.output
+    listing.assert_called_once_with(cfg, incus)
+
+
 def test_pr_offer_fixture_has_identity_and_strict_snapshot(mocker, tmp_path):
     from jailbee.outbox import io as outbox_io
     from jailbee.outbox.inspect import pr_progress_evidence
