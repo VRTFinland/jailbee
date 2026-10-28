@@ -16,6 +16,17 @@ def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def test_strict_open_branch_lookup_distinguishes_missing_and_failure(tmp_path, mocker):
+    from jailbee.pr import PrResolveError, find_open_pr_for_branch_strict
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout="[]"))
+    assert find_open_pr_for_branch_strict(tmp_path, "feature/a", repo="acme/widgets") is None
+    assert "acme/widgets" in run.call_args.args[0]
+    run.return_value = _completed(stderr="network error", returncode=1)
+    with pytest.raises(PrResolveError):
+        find_open_pr_for_branch_strict(tmp_path, "feature/a", repo="acme/widgets")
+
+
 def test_pr_info_is_frozen_dataclass():
     from jailbee.pr import PrInfo
 

@@ -46,6 +46,7 @@ def source_publisher(mocker, make_cfg, tmp_path):
     create = mocker.patch("jailbee.pr.create_pr", return_value=PrCreated(42, "https://github.com/acme/widgets/pull/42", False))
     edit = mocker.patch("jailbee.pr.edit_pr")
     resolve = mocker.patch("jailbee.pr.resolve_pr")
+    discover = mocker.patch("jailbee.pr.find_open_pr_for_branch_strict", create=True, return_value=None)
     consume = mocker.patch("jailbee.pr_outbox.consume_manifest", create=True)
     return locals()
 
@@ -99,11 +100,88 @@ def test_source_foreign_consent_before_fetch_even_with_yes(source_publisher):
     p["push"].assert_not_called()
 
 
+def test_unbound_existing_pr_requires_consent_before_fetch(source_publisher):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "develop")
+    assert _publish(p, confirm=lambda _: False) == 1
+    p["fetch"].assert_not_called()
+    p["push"].assert_not_called()
+
+
+def test_closed_binding_discovers_new_open_pr_before_push(source_publisher):
+    from jailbee.branch_pr import BRANCH_PRS_LABEL
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    binding = {"feature/a": {"head": "feature/a", "pr": 41, "base": "main",
+                              "source": "refs/heads/x", "source_sha": "a" * 40}}
+    p["incus"].config_get_checked.side_effect = lambda full, key: json.dumps(binding) if key == BRANCH_PRS_LABEL else None
+    p["resolve"].return_value = PrInfo(41, "feature/a", "b" * 40, "MERGED", "main")
+    p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
+    assert _publish(p, confirm=lambda _: False) == 1
+    p["fetch"].assert_not_called()
+
+
+def test_unbound_discovered_pr_uses_authoritative_base(source_publisher, capsys):
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "develop")
+    assert _publish(p) == 0
+    assert "base develop" in capsys.readouterr().out
+    p["create"].assert_not_called()
+    p["edit"].assert_called_once()
+
+
+def test_source_success_then_missing_manifest_does_not_repush(source_publisher):
+    p = source_publisher
+    p["consume"].side_effect = lambda *args, **kwargs: p["snapshot"].files.clear()
+    assert _publish(p) == 0
+    assert _publish(p) == 0
+    assert p["push"].call_count == 1
+
+
+def test_source_failed_push_can_retry(source_publisher):
+    from jailbee.sync import SyncError
+
+    p = source_publisher
+    p["push"].side_effect = [SyncError("push failed"), None]
+    assert _publish(p) == 1
+    p["consume"].assert_not_called()
+    assert _publish(p) == 0
+    assert p["push"].call_count == 2
+
+
+def test_source_failed_consumption_retry_does_not_repush(source_publisher):
+    from jailbee.pr import PrInfo
+    from jailbee.pr_outbox import FinalizeError
+
+    p = source_publisher
+    p["consume"].side_effect = [FinalizeError("failed"), None]
+    assert _publish(p) == 1
+    p["discover"].return_value = PrInfo(42, "feature/a", "a" * 40, "OPEN", "main")
+    p["remote"].return_value = "a" * 40
+    assert _publish(p) == 0
+    assert p["push"].call_count == 1
+
+
 def test_source_missing_manifest_is_idempotent(source_publisher):
     p = source_publisher
     p["snapshot"].files.clear()
     assert _publish(p) == 0
     p["push"].assert_not_called()
+
+
+def test_source_unexpected_existing_pr_create_does_not_bind_or_consume(source_publisher):
+    from jailbee.pr import PrCreated
+
+    p = source_publisher
+    p["create"].return_value = PrCreated(99, "https://github.com/acme/widgets/pull/99", True)
+    assert _publish(p) == 1
+    p["incus"].config_set.assert_not_called()
+    p["consume"].assert_not_called()
 
 
 def test_source_sha_mismatch_stops_before_push(source_publisher, capsys):

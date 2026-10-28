@@ -140,6 +140,26 @@ def _pr_info_from_json(stdout: str) -> PrInfo:
     )
 
 
+def find_open_pr_for_branch_strict(repo_root: Path, branch: str, *, repo: str) -> PrInfo | None:
+    """Find an open same-repository head, failing closed on lookup errors."""
+    cmd = ["gh", "pr", "list", "--repo", repo, "--state", "open", "--head", branch,
+           "--json", GH_PR_VIEW_JSON_FIELDS, "--limit", "100"]
+    try:
+        proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
+        if proc.returncode:
+            raise PrResolveError(f"Cannot inspect existing PRs for {branch}: {proc.stderr.strip()}")
+        data = json.loads(proc.stdout)
+        if not isinstance(data, list):
+            raise ValueError("expected a PR list")
+        matches = [_pr_info_from_json(json.dumps(item)) for item in data]
+        matches = [item for item in matches if item.head_ref == branch]
+        if len(matches) > 1:
+            raise PrResolveError(f"Multiple open PRs match head {branch}; specify a PR")
+        return matches[0] if matches else None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise PrResolveError(f"Cannot inspect existing PRs for {branch}: {exc}") from exc
+
+
 def find_pr_for_branch(repo_root: Path, branch: str, *, repo: str | None = None) -> PrInfo | None:
     """Return the PR whose head is `branch`, or None when there is none.
 

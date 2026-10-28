@@ -70,11 +70,14 @@ def publish_source_manifest(
             entry = entries.get(head)
             number = manifest.pr if manifest.pr is not None else (entry.pr if entry else None)
             target = pr.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote, repo=repo) if number is not None else None
+            if number is None:
+                target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
             if target is not None and target.state != "OPEN":
                 if manifest.pr is not None:
                     raise pr.PrError(f"PR #{number} is {target.state.lower()}")
                 bindings.drop(head)
-                target = None
+                entries.pop(head, None)
+                target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
             if target is not None:
                 if target.is_cross_repository:
                     owner = target.head_repo_owner or "unknown"
@@ -116,8 +119,10 @@ def publish_source_manifest(
                     fallback_ref=host_ref, publish_name=head, origin_label=f"container '{short}'")
                 created = pr.create_pr(cfg.repo_root, head=head, base=base, title=title, body=body,
                                        remote=cfg.upstream_remote, repo=repo)
+                if created.already_existed:
+                    raise pr.PrError("A PR appeared during publication; rerun to inspect and confirm it")
                 number, url = created.number, created.url
-                authored = not created.already_existed
+                authored = True
             else:
                 number = target.number
                 url = f"https://github.com/{repo}/pull/{number}"

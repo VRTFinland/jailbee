@@ -1738,9 +1738,14 @@ def consume_manifest(
             manifest = parse_manifest(name, fresh.files[name], fresh.files)
             if not is_source_manifest(manifest):
                 raise ManifestError(f"{name} is not a source manifest")
+            references = _body_references(fresh.files[name])
+            evidence = [(name, fresh.files[name]), *sorted((n, fresh.files[n]) for n in references)]
+            digest = hashlib.sha256(json.dumps(evidence, ensure_ascii=True).encode()).hexdigest()
+            receipt = f"source-receipt={digest}"
             line = (f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-                    f"actions={len(manifest.actions)} urls={_display_url(url)}")
-            _append_log_line(incus, container, line, uid=uid)
+                    f"actions={len(manifest.actions)} urls={_display_url(url)} {receipt}")
+            if not any(receipt in row.split() for row in fresh.files.get("applied.log", "").splitlines()):
+                _append_log_line(incus, container, line, uid=uid)
             after_log = read_outbox(incus, container, uid=uid, strict=True)
             before_files = {k: v for k, v in fresh.files.items() if k != "applied.log"}
             after_files = {k: v for k, v in after_log.files.items() if k != "applied.log"}
@@ -1748,8 +1753,9 @@ def consume_manifest(
                 raise OutboxChanged("source snapshot changed; refresh required")
             _delete_from_outbox(incus, container, after_log, name, uid=uid,
                                 with_sidecar=f"{name}.progress.json" in after_log.files)
-    except (IncusError, JournalError, OutboxError, OutboxReadError, ManifestError, KeyError) as exc:
-        raise FinalizeError(f"manifest {name} could not be consumed ({exc}); it remains pending") from exc
+    except (IncusError, JournalError, OutboxError, OutboxExecutionError, OutboxReadError,
+            ManifestError, KeyError, ValueError) as exc:
+        raise FinalizeError(f"manifest {name} could not be consumed ({exc}); it may remain pending") from exc
 
 
 def record_consumed(

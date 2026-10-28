@@ -2498,6 +2498,58 @@ def test_consume_source_manifest_logs_and_deletes(mocker, tmp_path):
     assert "actions=0" in (tmp_path / "pr-transport" / "applied.log").read_text()
 
 
+def test_consume_source_retries_delete_without_duplicate_receipt(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox import io as store_io
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    original = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, original, tmp_path)
+    original = replace(original, identity=container_identity(incus, "c"))
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, original.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    delete = mocker.patch("jailbee.pr_outbox._delete_from_outbox", side_effect=[
+        store_io.MutationExecutionError("failed"), None
+    ])
+    with pytest.raises(FinalizeError):
+        consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=original)
+    retry = read_snapshot()
+    consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=retry)
+    assert (tmp_path / "pr-transport" / "applied.log").read_text().count("001-x.json") == 1
+    assert delete.call_count == 2
+
+
+def test_consume_source_preserves_shared_body(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox import io as store_io
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import Outbox, consume_manifest
+
+    source = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40,
+                            actions=[{"type": "description", "body_file": "shared.md"}])
+    neighbor = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
+    outbox = Outbox({"001-x.json": source, "002-y.json": neighbor, "shared.md": "text"})
+    incus = _drop_setup(mocker, outbox, tmp_path)
+    outbox = replace(outbox, identity=container_identity(incus, "c"))
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, outbox.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=outbox)
+    assert (tmp_path / "pr-transport" / "shared.md").read_text() == "text"
+    assert (tmp_path / "pr-transport" / "002-y.json").exists()
+
+
 def test_consume_source_refuses_changed_snapshot(mocker, tmp_path):
     from dataclasses import replace
 
