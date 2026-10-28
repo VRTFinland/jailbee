@@ -45,6 +45,12 @@ def test_read_load_defaults_cpus_to_the_host(tmp_path: Path, monkeypatch: pytest
     assert read_load(proc_root=tmp_path) == LoadStatus(load1=1.0, cpus=1)
 
 
+def test_read_load_uses_host_cpu_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "loadavg").write_text("2.00 1.00 1.00 1/1 1\n")
+    monkeypatch.setattr("jailbee.sysstat.os.cpu_count", lambda: 8)
+    assert read_load(proc_root=tmp_path) == LoadStatus(load1=2.0, cpus=8)
+
+
 @pytest.mark.parametrize("cpus", [0, -1])
 def test_read_load_clamps_cpu_count(tmp_path: Path, cpus: int) -> None:
     (tmp_path / "loadavg").write_text("1.00 1.00 1.00 1/1 1\n")
