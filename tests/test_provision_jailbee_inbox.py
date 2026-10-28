@@ -917,6 +917,74 @@ def _runners_env(
     return env
 
 
+def test_runners_shows_configured_default(script, base, tmp_path):
+    (base / "grant.json").write_text(
+        json.dumps(
+            {
+                "default_runner": {"agent": "claude-jb", "profile": "grok", "model": "sonnet"},
+                "default_runner_source": "repo",
+            }
+        )
+    )
+    result = run(script, "runners", env=_runners_env(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "default: claude-jb -P grok sonnet (from repo)"
+
+
+def test_runners_json_carries_default_and_source(script, base, tmp_path):
+    (base / "grant.json").write_text(
+        json.dumps(
+            {
+                "default_runner": {"agent": "claude-jb", "profile": "grok", "model": "sonnet"},
+                "default_runner_source": "repo",
+            }
+        )
+    )
+    result = run(script, "runners", "--json", env=_runners_env(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)[0] == {
+        "runner": {"agent": "claude-jb", "profile": "grok", "model": "sonnet"},
+        "default": True,
+        "agent": "claude-jb",
+        "source": "repo",
+    }
+
+
+def test_runners_old_grant_json_keeps_omit_line(script, base, tmp_path):
+    (base / "grant.json").write_text("{}")
+    env = _runners_env(base, tmp_path)
+    env["JAILBEE_DEFAULT_AGENT"] = "claude"
+    result = run(script, "runners", env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "default: omit runner (claude)"
+
+
+def test_runners_default_neutralises_control_characters(script, base, tmp_path):
+    (base / "grant.json").write_text(
+        json.dumps(
+            {
+                "default_runner": {"agent": "claude-jb", "profile": "g\u0007", "model": "sonnet"},
+                "default_runner_source": "repo",
+            }
+        )
+    )
+    result = run(script, "runners", env=_runners_env(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "default: claude-jb -P g? sonnet (from repo)"
+
+
+def test_runners_invalid_grant_falls_back(script, base, tmp_path):
+    (base / "grant.json").write_text("{broken")
+    result = run(script, "runners", "--json", env=_runners_env(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)[0] == {
+        "runner": None,
+        "default": True,
+        "agent": "claude-jb",
+        "source": None,
+    }
+
+
 def test_runners_lists_default_claude_and_profiles(script, base, tmp_path):
     env = _runners_env(base, tmp_path, config=_litellm_config(tmp_path))
     r = run(script, "runners", env=env)
@@ -942,7 +1010,7 @@ def test_runners_json_shape(script, base, tmp_path):
     r = run(script, "runners", "--json", env=env)
     assert r.returncode == 0, r.stderr
     data = json.loads(r.stdout)
-    assert data[0] == {"runner": None, "default": True, "agent": "claude-jb"}
+    assert data[0] == {"runner": None, "default": True, "agent": "claude-jb", "source": None}
     assert data[1] == {
         "runner": {"agent": "claude"},
         "models": ["fable", "opus", "sonnet", "haiku"],
@@ -974,7 +1042,7 @@ def test_runners_without_claude_binary_lists_only_default(script, base, tmp_path
     assert r.returncode == 0, r.stderr
     assert r.stdout == "default: omit runner (claude-jb)\n"
     assert json.loads(run(script, "runners", "--json", env=env).stdout) == [
-        {"runner": None, "default": True, "agent": "claude-jb"}
+        {"runner": None, "default": True, "agent": "claude-jb", "source": None}
     ]
 
 
@@ -985,7 +1053,7 @@ def test_runners_reports_unknown_default_when_variable_unset(script, base, tmp_p
     assert r.returncode == 0, r.stderr
     assert r.stdout == "default: omit runner (unknown)\n"
     assert json.loads(run(script, "runners", "--json", env=env).stdout) == [
-        {"runner": None, "default": True, "agent": "unknown"}
+        {"runner": None, "default": True, "agent": "unknown", "source": None}
     ]
 
 

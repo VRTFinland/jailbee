@@ -392,8 +392,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 8, 0),
         actions=frozenset({"apply"}),
         reason=(
-            "the `jailbee-orchestration` and `jailbee-orchestration-child` skills are "
-            "new and `jailbee apply` syncs them into the shared skills mount"
+            "`jailbee apply` syncs the new `jailbee-orchestration` and "
+            "`jailbee-orchestration-child` skills, including default runner and model "
+            "selection guidance, into the shared skills mount"
         ),
     ),
     UpgradeNote(

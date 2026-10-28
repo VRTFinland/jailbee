@@ -197,12 +197,16 @@ runner is stored on the child as a label and shown on its dashboard card.
 A runner that cannot be honoured (Claude not enabled, no `prompt_args`, a
 command that is not `claude`/`claude-jb`, LiteLLM disabled, an unserved
 profile or a tier the profile lacks) is refused with the reason; it never falls
-back to the default. Orchestrators discover the options with
-`jailbee-inbox runners`, and are told to omit `runner` unless the user (or
-the user's own instructions) asked for a specific agent, profile or model.
-The default agent is reported only when it is known (it is set at agent launch
-in a container holding a grant); otherwise `jailbee-inbox runners` prints
-`default: omit runner (unknown)` and the orchestrator simply omits `runner`.
+back to the default. Orchestrators run `jailbee-inbox runners` first to see
+the configured default and available profiles and tiers. Omitting `runner` on
+spawn starts the default. They may choose a cheaper tier for routine,
+well-specified work or a stronger tier for hard or open-ended work, following
+the user's model guidance; when in doubt they use the default. They keep the
+default's agent and profile unless the guidance says otherwise. A restart
+without `runner` keeps the child's runner; `--default-runner` selects the
+current default. A refusal is reported to the human, not retried with another
+model. Without a configured default, the command shows `default: omit runner`
+and the launch agent, or `unknown` when that agent is not known.
 
 ## The broker
 

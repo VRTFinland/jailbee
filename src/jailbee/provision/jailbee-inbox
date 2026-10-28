@@ -21,9 +21,8 @@ Usage: jailbee-inbox wait [--timeout DUR]
   read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
          it in place); exit 1 if no unread message has that id.
 
-  runners  List the runners a spawn or restart may name (--agent/--profile/
-         --model of send), and what omitting the runner starts. --json prints
-         one array.
+  runners  List the default runner and the runners a spawn or restart may name
+         (--agent/--profile/--model of send). --json prints one array.
 
   send   Write a manifest for the orchestrator's host into outbox/ and print
          its id. --wait [--timeout DUR] waits for its status (default 30m):
@@ -231,7 +230,10 @@ cmd_ls() {
 # jq escapes C0 itself in JSON output, and the text form cleans C0 as well).
 runners_json() {
     local config="${JAILBEE_LITELLM_CONFIG:-/etc/jailbee/litellm.json}"
-    local cfg=null have_claude=0
+    local cfg=null grant=null have_claude=0
+    if [ -r "$base/grant.json" ]; then
+        grant="$(jq -sc 'if length == 1 then .[0] else null end' "$base/grant.json" 2>/dev/null)" || grant=null
+    fi
     if [ -r "$config" ]; then
         cfg="$(jq -c . "$config" 2>/dev/null)" || {
             printf 'jailbee-inbox: cannot read %s (not valid JSON); no claude-jb runners listed\n' "$config" >&2
@@ -239,11 +241,18 @@ runners_json() {
         }
     fi
     command -v claude >/dev/null 2>&1 && have_claude=1
-    jq -n --argjson cfg "$cfg" --argjson have "$have_claude" \
+    jq -n --argjson cfg "$cfg" --argjson grant "$grant" --argjson have "$have_claude" \
         --arg agent "${JAILBEE_DEFAULT_AGENT:-unknown}" '
         def clean: gsub("[\\x{80}-\\x{9f}]"; "?");
         def tiers: ["fable", "opus", "sonnet", "haiku"];
-        [{runner: null, default: true, agent: ($agent | clean)}]
+        (if ($grant | type) == "object" and ($grant.default_runner | type) == "object"
+            and ($grant.default_runner.agent | type) == "string"
+            and ($grant.default_runner_source | type) == "string"
+            and ([$grant.default_runner.profile, $grant.default_runner.model] | all(. == null or type == "string"))
+         then $grant.default_runner | with_entries(.value |= if type == "string" then clean else . end)
+         else null end) as $runner
+        | [{runner: $runner, default: true, agent: ($agent | clean),
+            source: (if $runner == null then null else $grant.default_runner_source | clean end)}]
         + (if $have == 1 then
             [{runner: {agent: "claude"}, models: tiers}]
             + [ ($cfg.profiles // {}) | to_entries | sort_by(.key)[]
@@ -278,7 +287,11 @@ cmd_runners() {
                else "claude-jb -P \(.runner.profile | clean)" + (if .default_profile then " (default)" else "" end)
                end)) ) as $labels
         | ([$labels[] | length] | max // 0) as $w
-        | "default: omit runner (\($default))",
+        | (if .[0].runner == null then "default: omit runner (\($default))"
+           else .[0] | "default: \(.runner.agent | clean)"
+             + (if .runner.profile != null then " -P \(.runner.profile | clean)" else "" end)
+             + (if .runner.model != null then " \(.runner.model | clean)" else "" end)
+             + " (from \(.source | clean))" end),
           ([range($rest | length)] | map(
               . as $i | $rest[$i] as $r
               | ($labels[$i] | pad($w)) + "  models: "

@@ -118,21 +118,23 @@ keeps the current value.
 
 ## Choosing the child's agent (`runner`)
 
-By default a child runs the repo's usual agent with its usual model. A spawn
-may name a different one in its optional `runner` field: `agent` (`claude` or
-`claude-jb`), `profile` (LiteLLM profile, `claude-jb` only) and `model` (tier
-`fable`, `opus`, `sonnet` or `haiku`). The child's own agent is not yours to
-tune, so the rule is **default first**:
+A spawn may name an optional `runner`: `agent` (`claude` or `claude-jb`),
+`profile` (LiteLLM profile, `claude-jb` only) and `model` (tier `fable`,
+`opus`, `sonnet` or `haiku`).
 
-- Omit `runner` unless the user asked for a specific agent, profile or model,
-  or the user's own instructions (CLAUDE.md, the task prompt) name one.
-- Never pick a cheaper or stronger model on your own initiative, whatever the
-  task looks like.
-- A `restart` without `runner` keeps the child's previous runner; `"runner":
-  null` clears it, so the child runs the default again.
+- Run `jailbee-inbox runners` first to see the user's default and the profiles
+  and tiers you may name.
+- Omit `runner` to start the default. Choose per task: use a cheaper tier for
+  routine, well-specified work and a stronger one for hard or open-ended work.
+  Follow the user's guidance on model choice (CLAUDE.md or the task prompt)
+  whenever it exists; when in doubt, use the default.
+- Keep the default's agent and profile unless the user's guidance says
+  otherwise; vary the `model` tier.
+- A `restart` without `runner` keeps the child's previous runner;
+  `--default-runner` puts it on the current default.
+- If a runner is refused, tell the human; do not retry with another model.
 
-List what you may name, and what omitting it starts (the default agent shows
-as `unknown` when it is not known; then just omit `runner`):
+Examples:
 
 ```bash
 jailbee-inbox runners          # or --json
