@@ -213,6 +213,7 @@ class SpawnPlan:
     rights: ChildRights
     runner: Runner | None = None
     on_done: Literal["destroy", "keep"] = "destroy"
+    ref: str | None = None
 
 
 def plan_spawn(
@@ -222,6 +223,8 @@ def plan_spawn(
     grant = ctx.raw_grant()
     if grant is None:
         return refused(NOT_ALLOWED)
+    if m.kind == "pr":
+        return refused("PR spawning is not yet supported")
     problems = check_rights(
         grant, profiles.repo_cap(ctx.cfg), m.rights, ctx.cfg.optional_mounts.keys()
     )
@@ -248,7 +251,7 @@ def plan_spawn(
         return refused("on_done destroy needs the `destroy` operation in this container's grant")
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, runner, policy)
+    return SpawnPlan(full, m.kind, m.branch, m.base, prompt, m.rights, runner, policy, m.ref)
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
@@ -453,7 +456,10 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
     fork: ForkSource | None = None
     if plan.kind == "fork":
         try:
-            fork = forking.prepare_fork(ctx.cfg, ctx.incus, ctx.sender.short)
+            if plan.ref is None:
+                fork = forking.prepare_fork(ctx.cfg, ctx.incus, ctx.sender.short)
+            else:
+                fork = forking.prepare_fork(ctx.cfg, ctx.incus, ctx.sender.short, ref=plan.ref)
             forking.pin_fork_commit(ctx.cfg, plan.child_full, fork.commit)
         except (ForkError, git.GitError) as e:
             return refused(str(e))
@@ -478,6 +484,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             runner=plan.runner.model_dump(mode="json") if plan.runner else None,
             runner_set=plan.runner is not None,
             on_done=plan.on_done,
+            ref=plan.ref,
         )
     )
     _store(ctx, queued)
@@ -595,7 +602,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
             commit=req.commit,
             base_branch=ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None,
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
-            pr_labels=forking.inherited_pr_labels(ctx.incus, ctx.sender.full),
+            pr_labels=(
+                {} if req.ref is not None else forking.inherited_pr_labels(ctx.incus, ctx.sender.full)
+            ),
         )
     return start_child(ctx, plan, fork=fork)
 

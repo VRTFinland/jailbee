@@ -104,6 +104,72 @@ def test_child_instance_config_writes_on_done(tmp_path: Path) -> None:
     assert lifecycle._child_instance_config(opts)[labels.ON_DONE] == "destroy"
 
 
+def test_explicit_ref_is_forwarded_to_fork_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.forking import ForkSource
+
+    ctx = _ctx(tmp_path)
+    ref = "refs/heads/feature"
+    prepare = MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "a" * 40, None, True, {}))
+    monkeypatch.setattr(actions.forking, "prepare_fork", prepare)
+    monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
+    started = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "start_child", started)
+    manifest = _m().model_copy(update={"version": 2, "ref": ref})
+    assert actions.handle_spawn(ctx, manifest).state == "started"
+    assert prepare.call_args.kwargs["ref"] == ref
+    assert started.call_args.kwargs["fork"].pr_labels == {}
+
+
+def test_queued_explicit_ref_does_not_inherit_pr_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.forking import ForkSource
+    from jailbee.orchestration.state import load_queue
+
+    ctx = _ctx(tmp_path, {"max_running_children": 1})
+    monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 1))
+    monkeypatch.setattr(actions.forking, "inherited_pr_labels", lambda *args: {"user.jailbee.pr": "12"})
+    monkeypatch.setattr(actions.forking, "prepare_fork", MagicMock(return_value=ForkSource(
+        ctx.sender.full, "orch", "b" * 40, None, True, {}
+    )))
+    monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
+    started = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "start_child", started)
+    manifest = _m().model_copy(update={"version": 2, "ref": "refs/heads/topic"})
+    assert actions.handle_spawn(ctx, manifest).state == "queued"
+    req = load_queue(ctx.root)[ctx.sender.full][0]
+    assert actions._start_spawn(ctx, req).state == "started"
+    fork = started.call_args.kwargs["fork"]
+    assert fork.commit == "b" * 40
+    assert fork.pr_labels == {}
+
+
+def test_unresolved_ref_refuses_without_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.forking import ForkError
+
+    ctx = _ctx(tmp_path)
+    prepare = MagicMock(side_effect=ForkError("cannot resolve refs/heads/missing"))
+    monkeypatch.setattr(actions.forking, "prepare_fork", prepare)
+    started = MagicMock()
+    monkeypatch.setattr(actions, "start_child", started)
+    manifest = _m().model_copy(update={"version": 2, "ref": "refs/heads/missing"})
+    result = actions.handle_spawn(ctx, manifest)
+    assert result.state == "refused"
+    assert "refs/heads/missing" in result.detail
+    started.assert_not_called()
+
+
+def test_pr_spawn_is_refused_until_supported(tmp_path: Path) -> None:
+    manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
+    result = actions.handle_spawn(_ctx(tmp_path), manifest)
+    assert result.state == "refused"
+    assert "PR" in result.detail
+
+
 def test_plan_spawn_prepends_preamble(tmp_path: Path) -> None:
     plan = plan_spawn(_ctx(tmp_path), _m(), queued_names=())
     assert not isinstance(plan, Outcome)
