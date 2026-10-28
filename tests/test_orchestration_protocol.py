@@ -60,20 +60,23 @@ def test_spawn_v2_accepts_pinned_ref(ref: str) -> None:
     assert isinstance(m, SpawnManifest) and m.ref == ref
 
 
-@pytest.mark.parametrize("fields", [
-    {"version": 1, "ref": "refs/heads/main"},
-    {"version": 1, "kind": "pr", "pr": 1},
-    {"version": 2, "ref": "main"},
-    {"version": 2, "ref": "refs/heads/../bad"},
-    {"version": 2, "kind": "new", "ref": "a" * 40},
-    {"version": 2, "kind": "pr"},
-    {"version": 2, "kind": "pr", "pr": True},
-    {"version": 2, "kind": "pr", "pr": "1"},
-    {"version": 2, "kind": "pr", "pr": 0},
-    {"version": 2, "kind": "pr", "pr": 1, "base": "main"},
-    {"version": 2, "kind": "pr", "pr": 1, "ref": "a" * 40},
-    {"version": 2, "pr": 1},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"version": 1, "ref": "refs/heads/main"},
+        {"version": 1, "kind": "pr", "pr": 1},
+        {"version": 2, "ref": "main"},
+        {"version": 2, "ref": "refs/heads/../bad"},
+        {"version": 2, "kind": "new", "ref": "a" * 40},
+        {"version": 2, "kind": "pr"},
+        {"version": 2, "kind": "pr", "pr": True},
+        {"version": 2, "kind": "pr", "pr": "1"},
+        {"version": 2, "kind": "pr", "pr": 0},
+        {"version": 2, "kind": "pr", "pr": 1, "base": "main"},
+        {"version": 2, "kind": "pr", "pr": 1, "ref": "a" * 40},
+        {"version": 2, "pr": 1},
+    ],
+)
 def test_spawn_rejects_invalid_new_fields(fields: dict[str, Any]) -> None:
     with pytest.raises(ManifestError):
         parse_manifest("a.json", _spawn(**fields), {})
