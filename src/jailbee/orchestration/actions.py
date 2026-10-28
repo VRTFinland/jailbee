@@ -603,7 +603,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
             base_branch=ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None,
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
             pr_labels=(
-                {} if req.ref is not None else forking.inherited_pr_labels(ctx.incus, ctx.sender.full)
+                {}
+                if req.ref is not None
+                else forking.inherited_pr_labels(ctx.incus, ctx.sender.full)
             ),
         )
     return start_child(ctx, plan, fork=fork)

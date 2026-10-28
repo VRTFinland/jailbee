@@ -130,10 +130,14 @@ def test_queued_explicit_ref_does_not_inherit_pr_labels(
 
     ctx = _ctx(tmp_path, {"max_running_children": 1})
     monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 1))
-    monkeypatch.setattr(actions.forking, "inherited_pr_labels", lambda *args: {"user.jailbee.pr": "12"})
-    monkeypatch.setattr(actions.forking, "prepare_fork", MagicMock(return_value=ForkSource(
-        ctx.sender.full, "orch", "b" * 40, None, True, {}
-    )))
+    monkeypatch.setattr(
+        actions.forking, "inherited_pr_labels", lambda *args: {"user.jailbee.pr": "12"}
+    )
+    monkeypatch.setattr(
+        actions.forking,
+        "prepare_fork",
+        MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "b" * 40, None, True, {})),
+    )
     monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
     started = MagicMock(return_value=Outcome("started", "ok"))
     monkeypatch.setattr(actions, "start_child", started)
