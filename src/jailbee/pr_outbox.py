@@ -978,6 +978,13 @@ def pending_indices(manifest: Manifest, progress: Progress) -> list[int]:
     return [i for i in range(len(manifest.actions)) if i not in progress.applied]
 
 
+def planned_action_count(
+    manifest: Manifest, progress: Progress, indices: frozenset[int] | None
+) -> int:
+    """Count pending actions selected for publication."""
+    return sum(indices is None or index in indices for index in pending_indices(manifest, progress))
+
+
 @dataclass(frozen=True)
 class DraftPreview:
     pr: int
@@ -1226,8 +1233,11 @@ def apply_manifest(
     uid: int | None,
     indices: frozenset[int] | None = None,
     draft: bool = False,
+    before_action: Callable[[], None] | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
+
+    Call `before_action` immediately before each attempted action, if provided.
 
     Order: the review (if any) first — one atomic call carrying every line
     comment — then replies and general comments in manifest order, then the
@@ -1294,6 +1304,8 @@ def apply_manifest(
         if index in progress.applied or (indices is not None and index not in indices):
             continue
         try:
+            if before_action is not None:
+                before_action()
             url = _apply_one(target, manifest.actions[index], session)
         except pr.PrError as e:
             failure = str(e)

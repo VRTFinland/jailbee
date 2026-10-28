@@ -1062,10 +1062,22 @@ def _cleanup_manifest(
     return None
 
 
+def pending_action_count(batch: PreparedBatch) -> int:
+    """Count pending actions in the prepared batch."""
+    return sum(a.status == "pending" for m in batch.manifests for a in m.actions)
+
+
 def apply_batch(
-    batch: PreparedBatch, *, incus: Incus, uid: int | None, journal_store: JournalStore
+    batch: PreparedBatch,
+    *,
+    incus: Incus,
+    uid: int | None,
+    journal_store: JournalStore,
+    before_action: Callable[[], None] | None = None,
 ) -> ApplyReport:
     """Apply every pending action of `batch`, in the exact order it was shown.
+
+    Call `before_action` immediately before each attempted action, if provided.
 
     Two passes. The first re-verifies every manifest — the container's
     identity, each manifest's exact text (by recomputed digest), and its
@@ -1213,6 +1225,8 @@ def apply_batch(
                     except JournalError as exc:
                         return failed(name, resolved.index, False, str(exc))
                     try:
+                        if before_action is not None:
+                            before_action()
                         receipt = _execute_one(
                             batch.host_repo_root, resolved, created_issue_numbers
                         )

@@ -352,7 +352,7 @@ def publish_selected(
             if options.dry_run:
                 info_plain("Dry run: nothing was published.")
                 return 0
-            total = sum(a.status == "pending" for m in batch.manifests for a in m.actions)
+            total = issue_outbox.pending_action_count(batch)
             # One question under the plan: when it reaches foreign repositories
             # interactively, the publish question names them and is the consent.
             combined = (
