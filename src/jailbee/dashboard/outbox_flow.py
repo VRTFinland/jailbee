@@ -322,7 +322,7 @@ class OutboxController:
     def _after_mutation(self, status: tuple[str, ...], *, prioritize: bool = False) -> None:
         state, ok = self._reloaded(status=status)
         if prioritize and not ok and status:
-            state = replace(state, status=(*state.status[len(status):], *status))
+            state = replace(state, status=(*state.status[len(status) :], *status))
         self._set(state)
         self.runner.changed()
 

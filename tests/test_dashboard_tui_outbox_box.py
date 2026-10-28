@@ -408,9 +408,14 @@ def test_double_click_row_posts_toggle_and_click_choice_posts_answer():
 
 
 def test_source_refusal_command_visible_at_normal_width():
-    message = "non-fast-forward update of topic; run: jailbee pr push alpha-x --source-manifest a.json --force"
+    message = (
+        "non-fast-forward update of topic; run: jailbee pr push alpha-x "
+        "--source-manifest a.json --force"
+    )
+
     async def scenario(app, box, pilot):
         return screen_text(app)
+
     rendered = run(state2(status=(message,)), scenario, size=(80, 30), standalone=True)
     assert "non-fast-forward update" in rendered
     assert "--source-manifest a.json --force" in rendered
@@ -418,17 +423,26 @@ def test_source_refusal_command_visible_at_normal_width():
 
 def test_refresh_failure_keeps_source_hint_visible():
     from jailbee.dashboard.accounts import CliResult
-    from tests.test_dashboard_outbox_flow import FakeRunner, _controller, _key as flow_key, _listing, _proposal as flow_proposal
+    from tests.test_dashboard_outbox_flow import FakeRunner, _controller, _listing
+    from tests.test_dashboard_outbox_flow import _key as flow_key
+    from tests.test_dashboard_outbox_flow import _proposal as flow_proposal
 
-    row = flow_proposal(state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"})
+    row = flow_proposal(
+        state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"}
+    )
     runner = FakeRunner(_listing(row), _listing(row), CliResult(False, "listing failed"))
-    message = "non-fast-forward update of topic; run: jailbee pr push alpha-x --source-manifest a.json --force"
+    message = (
+        "non-fast-forward update of topic; run: jailbee pr push alpha-x "
+        "--source-manifest a.json --force"
+    )
     runner.hand_off_diagnostic = lambda argv: (1, message)
     controller = _controller(runner)
     controller.load()
     controller.intent("create-pr", flow_key())
+
     async def scenario(app, box, pilot):
         return screen_text(app)
+
     rendered = run(controller.state, scenario, size=(80, 30), standalone=True)
     assert "non-fast-forward update" in rendered
     assert "--source-manifest a.json --force" in rendered

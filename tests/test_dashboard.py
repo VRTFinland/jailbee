@@ -7531,10 +7531,13 @@ def test_session_outbox_runner_reads_diagnostic(mocker):
 
 def test_session_outbox_diagnostic_handles_invalid_and_large_bytes(mocker):
     from jailbee.dashboard.tui.outbox_wiring import SessionOutboxRunner
+
     session = mocker.Mock()
+
     def handoff(container, kind, argv, *, diagnostic_path):
         diagnostic_path.write_bytes(b"bad\xff" + b"x" * 1000000)
         return 1
+
     session.run_dashboard_command.side_effect = handoff
     rc, text = SessionOutboxRunner(session, "c").hand_off_diagnostic(["pr", "push", "c"])
     assert rc == 1 and text is not None and text.startswith("bad\ufffd")

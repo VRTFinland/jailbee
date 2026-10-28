@@ -386,6 +386,7 @@ def test_local_outbox_diagnostic_handles_invalid_and_large_bytes(mocker):
     def run(repo, argv, *, style, diagnostic_path):
         diagnostic_path.write_bytes(b"bad\xff" + b"x" * 1000000)
         return 1
+
     mocker.patch.object(outbox_app, "_run_cli_foreground", side_effect=run)
     runner = LocalOutboxRunner(TARGET, read_only=False, suspend=lambda fn: fn())
     rc, text = runner.hand_off_diagnostic(["pr", "push", "alpha-x"])
