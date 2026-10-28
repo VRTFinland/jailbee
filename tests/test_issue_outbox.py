@@ -1338,6 +1338,26 @@ def test_apply_batch_calls_before_action_per_executed_action(execution):
     assert events == ["hook", "post", "hook", "post"]
 
 
+def test_before_action_failure_does_not_leave_uncertain_receipt(execution):
+    from jailbee import issue_outbox
+
+    batch = execution["batch"]({"a.json": [_labels()]})
+
+    def fail():
+        raise RuntimeError("progress failed")
+
+    with pytest.raises(RuntimeError, match="progress failed"):
+        issue_outbox.apply_batch(
+            batch, incus=execution["incus"], uid=1000, journal_store=execution["store"],
+            before_action=fail,
+        )
+    assert execution["mutations"]["replace_labels"].call_count == 0
+    report = _apply(execution, batch)
+    assert report.failure is None
+    assert len(report.applied) == 1
+    assert execution["mutations"]["replace_labels"].call_count == 1
+
+
 def test_pending_action_count_matches_apply_batch_attempts(execution):
     from jailbee import issue_outbox
 

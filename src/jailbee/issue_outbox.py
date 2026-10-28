@@ -1224,9 +1224,16 @@ def apply_batch(
                         journal_store.mark_prepared(key, resolved.index, repo=resolved.repo.slug)
                     except JournalError as exc:
                         return failed(name, resolved.index, False, str(exc))
-                    try:
-                        if before_action is not None:
+                    if before_action is not None:
+                        try:
                             before_action()
+                        except BaseException as exc:
+                            try:
+                                journal_store.clear_prepared(key, resolved.index)
+                            except JournalError as cleanup_error:
+                                exc.add_note(f"Could not clear prepared journal marker: {cleanup_error}")
+                            raise
+                    try:
                         receipt = _execute_one(
                             batch.host_repo_root, resolved, created_issue_numbers
                         )
