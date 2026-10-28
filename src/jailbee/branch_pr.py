@@ -46,6 +46,11 @@ def publish_source_manifest(
                 raise OutboxChanged("outbox snapshot incomplete; refresh required")
             if manager.identity is not None and snapshot.identity != manager.identity:
                 raise OutboxChanged("container changed; refresh required")
+            receipt = pr_outbox.source_publication_receipt(snapshot, manifest_name)
+            if receipt is not None:
+                pr_outbox.consume_manifest(incus, full, manifest_name, receipt["url"],
+                                           uid=cfg.container_user.uid, preview=snapshot, management=manager)
+                return 0
             if manifest_name not in snapshot.files:
                 info_plain(f"{manifest_name}: nothing pending")
                 return 0

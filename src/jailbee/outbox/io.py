@@ -331,7 +331,11 @@ validate() {
 work() {
     validate || return 1
     if [[ -n "$target" ]]; then
-        regular "$store/$target" || return 1
+        if [[ ${inventory["$target"]+yes} ]]; then
+            regular "$store/$target" || return 1
+        else
+            [[ ! -e "$store/$target" && ! -L "$store/$target" ]] || return 1
+        fi
         tmp=$(mktemp -- "$store/.outbox-XXXXXXXX.tmp") || return 1
         regular "$tmp" || return 1
         dd of="$tmp" oflag=nofollow iflag=fullblock status=none bs=262145 count=1 || return 1
@@ -403,7 +407,7 @@ def mutate_store(
     target, text = new_manifest if new_manifest is not None else ("", "")
     if new_manifest is not None:
         _member_name(target)
-        if target not in expected or len(text.encode("utf-8")) > FILE_LIMIT:
+        if target in rejected_names or len(text.encode("utf-8")) > FILE_LIMIT:
             raise MutationExecutionError("invalid replacement scope or size")
     if not set(delete_names) <= set(expected):
         raise MutationExecutionError("missing or rejected deletion input")

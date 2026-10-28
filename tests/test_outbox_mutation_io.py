@@ -51,6 +51,20 @@ def mutate(
     )
 
 
+def test_atomic_create_preserves_inventory_and_never_follows_late_symlink(mocker, tmp_path):
+    env = local_mutator(mocker, tmp_path)
+    (env[2] / "001.json").write_text("proposal")
+    mutate(env, {"001.json": "proposal"}, ("applied.log", "receipt\n"), progress=None)
+    assert (env[2] / "applied.log").read_text() == "receipt\n"
+    (env[2] / "applied.log").unlink()
+    outside = tmp_path / "outside"
+    outside.write_text("untouched")
+    (env[2] / "applied.log").symlink_to(outside)
+    with pytest.raises(OutboxExecutionError):
+        mutate(env, {"001.json": "proposal"}, ("applied.log", "receipt\n"), progress=None)
+    assert outside.read_text() == "untouched"
+
+
 def test_large_stdin_is_not_silently_truncated(mocker, tmp_path):
     env = local_mutator(mocker, tmp_path)
     (env[2] / "001.json").write_text("old")

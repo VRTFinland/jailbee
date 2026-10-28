@@ -48,6 +48,8 @@ def source_publisher(mocker, make_cfg, tmp_path):
     edit = mocker.patch("jailbee.pr.edit_pr")
     resolve = mocker.patch("jailbee.pr.resolve_pr")
     discover = mocker.patch("jailbee.pr.find_open_pr_for_branch_strict", create=True, return_value=None)
+    from jailbee.pr_outbox import consume_manifest as real_consume
+
     consume = mocker.patch("jailbee.pr_outbox.consume_manifest", create=True)
     return locals()
 
@@ -201,6 +203,45 @@ def test_source_failed_consumption_retry_does_not_repush(source_publisher):
     p["remote"].return_value = "a" * 40
     assert _publish(p) == 0
     assert p["push"].call_count == 1
+
+
+@pytest.mark.parametrize("remove_manifest", [False, True])
+@pytest.mark.parametrize("existing", [False, True])
+def test_source_published_retry_only_cleans_up(source_publisher, mocker, remove_manifest, existing):
+    from jailbee.outbox.io import MutationExecutionError
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["consume"].side_effect = p["real_consume"]
+    if existing:
+        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    p["incus"].list_containers.return_value = [{"name": "full", "created_at": "created"}]
+    files = p["snapshot"].files
+    failed = False
+
+    def mutate(*args, expected, new_manifest, delete_names, **kwargs):
+        nonlocal failed
+        assert expected == files
+        if new_manifest:
+            files[new_manifest[0]] = new_manifest[1]
+        if delete_names and not failed:
+            failed = True
+            if remove_manifest:
+                del files["m.json"]
+            raise MutationExecutionError("delete failed")
+        for name in delete_names:
+            del files[name]
+        return delete_names
+
+    mocker.patch("jailbee.outbox.io.mutate_store", side_effect=mutate)
+    assert _publish(p) == 1
+    # A published retry must not even query/fetch the remote, let alone edit it.
+    for key in ("push", "fetch", "remote", "base_fetch", "create", "edit", "discover"):
+        p[key].reset_mock()
+    assert _publish(p) == 0
+    for key in ("push", "fetch", "remote", "base_fetch", "create", "edit", "discover"):
+        p[key].assert_not_called()
+    assert set(files) == {"applied.log"}
 
 
 def test_source_missing_manifest_is_idempotent(source_publisher):

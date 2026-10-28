@@ -2515,7 +2515,7 @@ def test_consume_source_retries_delete_without_duplicate_receipt(mocker, tmp_pat
         return Outbox(store.as_dict(), store.rejected, original.identity)
 
     mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
-    delete = mocker.patch("jailbee.pr_outbox._delete_from_outbox", side_effect=[
+    delete = mocker.patch("jailbee.pr_outbox._source_cleanup", side_effect=[
         store_io.MutationExecutionError("failed"), None
     ])
     with pytest.raises(FinalizeError):
