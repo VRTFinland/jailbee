@@ -1204,6 +1204,18 @@ container from `feat/a` to `main`.
 
 ### `jailbee pr push [NAME]`
 
+For a pinned imported source use `jailbee pr push NAME --source-manifest
+FILE.json`. It publishes that ref at its recorded SHA independently of the
+container's own PR. An existing PR supplies its actual head and base; a
+conflicting manifest branch is refused. `--title`, `--body`, `--base`,
+`--as`, `--pr` and `--stacked` cannot be combined with this option.
+Non-fast-forward updates require `--force`. Pending source rows show
+`awaiting-push` and `create_scope`; `outbox apply` exits 2 with a PR push
+hint, while the outbox `c` action starts PR push. An already-published
+source awaiting cleanup can remain `applied`; retry the same source push.
+`jailbee pr ls` includes source branch binding rows; `jailbee pr unbind
+NAME --head BRANCH` removes one such binding.
+
 Create or update the container's GitHub PR. Publishes the
 container's branch to the GitHub `origin` by **fetching it to the host, then
 fast-forward pushing under the host's credentials** — so, unlike `jailbee git push

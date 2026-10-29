@@ -2630,8 +2630,21 @@ def _clone_repo_in_container(
             pass
 
     if cfg.new.submodules:
-        from jailbee.submodules import init_submodules_in_container
+        from jailbee.submodules import (
+            init_submodules_in_container,
+            transport_submodules_to_container,
+        )
 
+        if checkout_commit is not None:
+            transport_submodules_to_container(
+                cfg,
+                incus,
+                container,
+                repo_dir=repo_target,
+                commit=checkout_commit,
+                base_commit=base_sha,
+                pin_commits=True,
+            )
         init_submodules_in_container(
             incus,
             container,
@@ -2640,6 +2653,7 @@ def _clone_repo_in_container(
             gid=gid,
             branch=branch,
             base_branch=base_branch,
+            preseeded=checkout_commit is not None,
         )
 
 

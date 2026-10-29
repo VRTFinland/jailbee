@@ -27,7 +27,7 @@ replace your agent's own subagents:
   result straight to you.
 - **Child containers** are heavy: each is a new container with its own
   checkout, branch, environment and long-running agent session, and its
-  work comes back only through `import` and a merge. Use them only when
+  work comes back through `import`, followed by a merge or a separate PR. Use them only when
   the user asks for child containers (or names this workflow), for example
   to work a backlog of separate issues each on its own branch.
 
@@ -36,7 +36,7 @@ with a grant.
 
 One child takes one whole unit of work: a ticket, or a whole plan. Never
 split a plan's tasks across children; the child runs them itself, with its
-own subagents. When plans depend on each other, spawn a dependent plan only
+own subagents. In the merged-fork workflow, when plans depend on each other, spawn a dependent plan only
 after its prerequisites are imported, merged and committed, as a `fork`, so
 it starts from the merged work. If it is unclear which the user means, ask before spawning.
 
@@ -115,6 +115,24 @@ New children default to `on_done: destroy`: after importing and delivering
 children. Without the `destroy` operation the default is `keep`; explicitly
 requesting `destroy` is refused. Restart may change the policy; omission
 keeps the current value.
+
+## One PR per child
+
+For independent PRs, spawn each child with `--new --base main` (replace
+`main` with the upstream base), not a fork of your work. This keeps
+orchestrator commits out of the child PR. On `done`, use `imported_ref` and
+`imported_sha` to stage one source manifest in your PR outbox; do **not**
+merge the import. See the [source examples](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
+The host publishes each with `jb pr push <orchestrator> --source-manifest
+<file>`. Let `on_done: destroy` clean up after import.
+
+For rework, spawn with `--ref refs/jailbee/from/<child>/<branch>` or a local
+branch as `--ref refs/heads/<name>`, or use `--pr N`. Import the result and
+stage a numbered `pr: N` source manifest. A `--pr` child's own outbox is
+lost on destroy; use `--on-done keep` to preserve it. Before reusing an
+imported ref, publish its source manifest or preserve the commit under a
+separate persistent ref and use that ref in the manifest. Staging alone does
+not retain the ref; a later import can move it.
 
 ## Choosing the child's agent (`runner`)
 
@@ -240,11 +258,12 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
    `import_error`, fix the cause and send `import --child C --wait` to retry.
    `on_done_reason` is not an error: the import succeeded, but the child was
    kept instead of destroyed for that reason.
-2. `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself.
+2. In the merged-fork workflow, `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself. For one PR per child, stage the source manifest instead and do not merge.
    Submodule commits are already local; run `git submodule update` after
    merging so the working trees match their gitlinks.
-   Merge an imported `refs/jailbee/from/<child>/<branch>` before spawning
-   another child with the same branch name: that child's `done` overwrites the ref.
+   Before reusing an imported `refs/jailbee/from/<child>/<branch>`, merge it
+   in the merged-fork workflow or publish its source manifest in the per-child
+   PR workflow: the next child's `done` overwrites the ref.
 3. `on_done: destroy` schedules automatic cleanup after delivery. A done
    `keep` child needs only `jailbee-inbox send destroy --child C --wait`, not
    a separate stop. Destroy refuses new commits, uncommitted changes and an
@@ -253,7 +272,7 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 
 ## Rework
 
-Prefer a fresh fork for rework: it starts from your latest merged state.
+For merged work, prefer a fresh fork for rework: it starts from your latest merged state. For independent PRs, use the ref or PR workflow above.
 For an existing `keep` child, `jailbee-inbox send update --child C --wait`
 transports your branch and tells the child which ref to merge. The broker
 never merges it. To launch another session, stop then restart the child

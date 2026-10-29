@@ -902,6 +902,11 @@ class Incus:
         value = result.stdout.strip()
         return value or None
 
+    def config_get_checked(self, name: str, key: str) -> str | None:
+        """Return a config value or None when unset; propagate command failures."""
+        result = self._run(["config", "get", name, key])
+        return result.stdout.strip() or None
+
     def config_device_get(self, name: str, device: str, key: str) -> str | None:
         """Return one key of an instance-local device, or None.
 

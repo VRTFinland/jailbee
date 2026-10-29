@@ -113,6 +113,20 @@ def _noting_env(marker: Path) -> dict[str, str]:
     return {**os.environ, DIAGNOSTICS_ENV: str(marker)}
 
 
+def read_diagnostic_text(path: Path) -> str | None:
+    """Read bounded child diagnostic text without trusting its encoding."""
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(4097)
+    except OSError:
+        return None
+    truncated = len(data) > 4096
+    text = data[:4096].decode("utf-8", errors="replace").strip()
+    if truncated:
+        text += " [truncated]"
+    return text or None
+
+
 def _run_reporting(argv: list[str], cwd: Path) -> int:
     """Run ``argv``; pause only when it failed or printed a warning or error."""
     with _diagnostics_marker() as marker:
@@ -260,6 +274,7 @@ def _run_cli_foreground(
     remote: bool = False,
     over_ssh: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
+    diagnostic_path: Path | None = None,
 ) -> int:
     """Run a dashboard-built ``jailbee <argv>`` against ``target``; return its exit code.
 
@@ -295,7 +310,15 @@ def _run_cli_foreground(
                 log.debug("pager %s failed: %s", pager, exc)
     if style == "report":
         return _run_reporting(full, target.cwd())
-    rc = subprocess.run(full, check=False, cwd=target.cwd()).returncode
+    env = None
+    if diagnostic_path is not None:
+        from jailbee.tui import DIAGNOSTIC_TEXT_ENV
+
+        env = {**os.environ, DIAGNOSTIC_TEXT_ENV: str(diagnostic_path)}
+    if env is None:
+        rc = subprocess.run(full, check=False, cwd=target.cwd()).returncode
+    else:
+        rc = subprocess.run(full, check=False, cwd=target.cwd(), env=env).returncode
     if style != "plain":
         _wait_for_return()
     return rc

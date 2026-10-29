@@ -805,6 +805,24 @@ def remote_branch_sha(repo_root: Path, remote: str, branch: str) -> str | None:
     return line.split("\t", 1)[0] if line else None
 
 
+def remote_branch_sha_strict(repo_root: Path, remote: str, branch: str) -> str | None:
+    """Return the remote head SHA, distinguishing a missing head from failure."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", remote, f"refs/heads/{branch}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise GitError(f"Cannot query remote {remote}: {exc}") from exc
+    if result.returncode != 0:
+        raise GitError(f"Cannot query remote {remote}: {result.stderr.strip()}")
+    line = result.stdout.strip()
+    return line.split("\t", 1)[0] if line else None
+
+
 def rename_branch(repo_root: Path, old: str, new: str) -> None:
     """Rename local branch `old` to `new` (`git branch -m`). Raises GitError."""
     returncode = subprocess.call(["git", "branch", "-m", old, new], cwd=repo_root)
@@ -902,6 +920,21 @@ def rev_parse(repo_root: Path, ref: str) -> str | None:
         return None
     oid = result.stdout.strip()
     return oid or None
+
+
+def commit_object_exists(repo_root: Path, sha: str) -> bool:
+    """Verify that the object exists locally and resolves to a commit."""
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
 
 
 def is_ancestor(repo_root: Path, old: str, new: str) -> bool | None:

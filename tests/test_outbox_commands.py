@@ -512,3 +512,43 @@ def test_listing_never_fetches_instance_state(env):
     discover(cfg, incus, None, all_repos=False, journal_store=journals)
     calls = incus.list_containers.call_args_list
     assert calls and all(call.kwargs.get("fast") is True for call in calls)
+
+
+def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
+    from jailbee.outbox.commands import apply_selected, show_overview
+    from jailbee.outbox.models import OutboxError, ProposalId
+    from jailbee.outbox.publish import PublishOptions
+
+    cfg, incus, _, reader, _, journals = env
+    raw = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/main",
+            "pr": 7,
+            "head_sha": None,
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "actions": [],
+        }
+    )
+    reader.side_effect = lambda i, c, k, **kw: store(k, {"002.json": raw} if k == "pr" else {})
+    scopes = mocker.patch("jailbee.pr_flow.candidate_scopes")
+    assert (
+        show_overview(cfg, incus, None, all_repos=False, output="json", journal_store=journals) == 0
+    )
+    row = json.loads(capsys.readouterr().out)["containers"][0]["proposals"][0]
+    assert row["create_scope"] == {"kind": "source", "manifest": "002.json"}
+    scopes.assert_not_called()
+    incus.config_get.assert_not_called()
+    publisher = mocker.patch("jailbee.outbox.commands.publish_selected")
+    with pytest.raises(OutboxError, match=r"jailbee pr push .* --source-manifest 002.json"):
+        apply_selected(
+            cfg,
+            incus,
+            "feature",
+            ProposalId("pr", "002.json"),
+            options=PublishOptions(),
+            journal_store=journals,
+            confirm=lambda _: True,
+        )
+    publisher.assert_not_called()

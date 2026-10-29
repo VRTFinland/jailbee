@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Never
@@ -61,6 +62,51 @@ class FetchResult:
     prev_sha: str | None  # None when jailbee had not fetched this head before
     new_sha: str
     ref: str  # the host ref the head now lives in
+
+
+@dataclass(frozen=True)
+class PreparedPr:
+    info: PrInfo
+    commit: str
+
+
+def prepare_pr(
+    repo_root: Path,
+    number: int,
+    *,
+    remote: str,
+    no_fetch: bool = False,
+    info: Callable[[str], object],
+    warn: Callable[[str], object],
+) -> PreparedPr:
+    """Resolve and pin a PR head, refreshing its base when fetching."""
+    resolved = resolve_pr(repo_root, number, remote=remote)
+    if resolved.state == "CLOSED":
+        warn(f"PR #{number} is CLOSED (not merged). Continuing.")
+    elif resolved.state == "MERGED":
+        warn(f"PR #{number} is already MERGED. Continuing.")
+    if no_fetch:
+        commit = resolve_pr_head_sha(repo_root, resolved)
+        info(
+            f"PR #{number} '{resolved.head_ref}' at {commit[:12]} "
+            "(--no-fetch: using the host's copy)"
+        )
+    else:
+        result = fetch_pr_head(repo_root, resolved, remote=remote)
+        commit = result.new_sha
+        if result.updated:
+            info(f"PR #{number} '{resolved.head_ref}' fetched ({commit[:12]})")
+        else:
+            info(f"PR #{number} '{resolved.head_ref}' already at {commit[:12]}")
+        base_sha = fetch_base_ref(repo_root, resolved.base_ref, remote=remote)
+        if base_sha is None:
+            warn(
+                f"Could not fetch PR base branch '{resolved.base_ref}' from origin; "
+                "AHEAD numbers in `jailbee ls` may be inflated."
+            )
+        else:
+            info(f"PR #{number} base '{resolved.base_ref}' at {base_sha[:12]}")
+    return PreparedPr(resolved, commit)
 
 
 @dataclass(frozen=True)
@@ -138,6 +184,39 @@ def _pr_info_from_json(stdout: str) -> PrInfo:
         is_cross_repository=bool(data.get("isCrossRepository")),
         head_repo_owner=(data.get("headRepositoryOwner") or {}).get("login"),
     )
+
+
+def find_open_pr_for_branch_strict(repo_root: Path, branch: str, *, repo: str) -> PrInfo | None:
+    """Find an open same-repository head, failing closed on lookup errors."""
+    cmd = [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--head",
+        branch,
+        "--json",
+        GH_PR_VIEW_JSON_FIELDS,
+        "--limit",
+        "100",
+    ]
+    try:
+        proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
+        if proc.returncode:
+            raise PrResolveError(f"Cannot inspect existing PRs for {branch}: {proc.stderr.strip()}")
+        data = json.loads(proc.stdout)
+        if not isinstance(data, list):
+            raise ValueError("expected a PR list")
+        matches = [_pr_info_from_json(json.dumps(item)) for item in data]
+        matches = [item for item in matches if item.head_ref == branch]
+        if len(matches) > 1:
+            raise PrResolveError(f"Multiple open PRs match head {branch}; specify a PR")
+        return matches[0] if matches else None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise PrResolveError(f"Cannot inspect existing PRs for {branch}: {exc}") from exc
 
 
 def find_pr_for_branch(repo_root: Path, branch: str, *, repo: str | None = None) -> PrInfo | None:

@@ -2650,3 +2650,355 @@ def test_transport_to_container_forwards_a_timeout(mocker, tmp_path):
     )
 
     assert push.call_args.kwargs["timeout"] == 90
+
+
+@pytest.fixture
+def historical_repos(tmp_path, mocker):
+    """Retained objects with neither host nor source submodule worktrees."""
+    cfg = _cfg_repo(tmp_path)
+    common = tmp_path / "outside-source" / "worktrees" / "host"
+    common.mkdir(parents=True)
+    (tmp_path / ".git").write_text(f"gitdir: {common}\n")
+    parent = common / "modules" / "custom name"
+    nested = parent / "modules" / "inner-name"
+    for directory in (parent, nested):
+        directory.mkdir(parents=True)
+        (directory / "HEAD").write_text("ref: refs/heads/main\n")
+    top_sha, sub_sha, nested_sha = "a" * 40, "b" * 40, "c" * 40
+    roots = {
+        str(tmp_path): (top_sha, "custom name", "old c++ % path", sub_sha),
+        str(parent): (sub_sha, "inner-name", "nested lib", nested_sha),
+    }
+
+    def host_git(cwd, args):
+        if args[:2] == ["config", "--file"]:
+            return (False, "") if "--get" in args else (True, "")
+        entry = roots.get(str(cwd))
+        if args[:1] == ["ls-tree"]:
+            if not entry:
+                return True, ""
+            at, name, path, sha = entry
+            assert at in args
+            if args[-1] == ".gitmodules":
+                return True, "100644 blob dead\t.gitmodules\n"
+            assert args[-1] == path
+            return True, f"160000 commit {sha}\t{path}\n"
+        if args[:3] == ["config", "--null", "--blob"]:
+            at, name, path, _ = roots[str(cwd)]
+            assert args[3] == f"{at}:.gitmodules"
+            return True, f"submodule.{name}.path\n{path}\0"
+        if args[:2] == ["config", "--blob"]:
+            return True, "../historical.git\n"
+        raise AssertionError((cwd, args))
+
+    mocker.patch("jailbee.git.run_capture", side_effect=host_git)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    return cfg, parent, nested, top_sha, sub_sha, nested_sha
+
+
+def test_historical_transport_prefers_retained_host_objects(historical_repos, mocker):
+    cfg, parent, nested, top, child, grandchild = historical_repos
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    capture = mocker.patch("jailbee.git.update_ref")
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    incus = MagicMock()
+    incus.exec.side_effect = AssertionError("source is gone; retained host objects suffice")
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, incus, "source", "src", repo_dir="/repo", commit=top
+    )
+    fetch.assert_not_called()
+    assert [call.args for call in capture.call_args_list] == [
+        (parent, f"refs/jailbee-sub/src/commits/{child}", child),
+        (nested, f"refs/jailbee-sub/src/commits/{grandchild}", grandchild),
+    ]
+    assert not (cfg.repo_root / "old c++ % path").exists()
+
+
+def test_historical_transport_reads_removed_source_gitdirs(historical_repos, mocker):
+    cfg, parent, nested, top, child, grandchild = historical_repos
+    mocker.patch("jailbee.git.has_commit", return_value=False)
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    mocker.patch("jailbee.git.rev_parse", side_effect=[child, grandchild])
+    source_parent = "/outside/source.git/modules/custom name"
+    source_nested = source_parent + "/modules/inner-name"
+    seen = []
+
+    def source_exec(_container, cmd, **kwargs):
+        seen.append(cmd)
+        if cmd == ["git", "-C", "/repo", "rev-parse", "--absolute-git-dir"]:
+            return "/outside/source.git\n"
+        if "--resolve-git-dir" in cmd:
+            assert cmd[-1] in (source_parent, source_nested)
+            return cmd[-1] + "\n"
+        if cmd[-3:] == ["config", "--get", "remote.origin.url"]:
+            return "https://example.org/resolved/historical.git\n"
+        raise AssertionError(cmd)
+
+    incus = MagicMock()
+    incus.exec.side_effect = source_exec
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, incus, "source", "src", repo_dir="/repo", commit=top
+    )
+    assert [call.args[0] for call in fetch.call_args_list] == [parent, nested]
+    assert (
+        fetch.call_args_list[0]
+        .args[1]
+        .endswith("-- git -c core.worktree=/ upload-pack /outside/source.git/modules/custom% name")
+    )
+    assert (
+        fetch.call_args_list[1]
+        .args[1]
+        .endswith("/outside/source.git/modules/custom% name/modules/inner-name")
+    )
+    assert [call.args[2] for call in fetch.call_args_list] == [
+        f"+{child}:refs/jailbee-sub/src/commits/{child}",
+        f"+{grandchild}:refs/jailbee-sub/src/commits/{grandchild}",
+    ]
+    assert not any("/repo/old" in str(cmd) for cmd in seen)
+
+
+def test_historical_child_initialization_uses_transported_repos(historical_repos, mocker):
+    cfg, parent, nested, top, child, grandchild = historical_repos
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://example.org/lib.git")
+    push = mocker.patch("jailbee.git.push_url_multi")
+    incus = MagicMock()
+    commands = []
+    initialized = set()
+
+    def child_exec(_container, cmd, **kwargs):
+        commands.append(cmd)
+        if cmd[:2] == ["test", "-e"]:
+            assert not cmd[-1].startswith("/mnt/host-source"), "host has no worktrees"
+            if cmd[-1] not in initialized:
+                raise IncusError("not initialized")
+        if cmd[:3] == ["git", "init", "-q"]:
+            initialized.add(cmd[-1] + "/.git")
+        if "--get-regexp" in cmd:
+            level = cmd[2]
+            if level == "/child":
+                return "submodule.custom name.path\nold c++ % path\0"
+            if level == "/child/old c++ % path":
+                return "submodule.inner-name.path\nnested lib\0"
+        return ""
+
+    incus.exec.side_effect = child_exec
+    submodules.transport_submodules_to_container(
+        cfg, incus, "child", repo_dir="/child", commit=top, pin_commits=True
+    )
+    submodules.init_submodules_in_container(
+        incus, "child", repo_dir="/child", uid=1000, gid=1000, preseeded=True
+    )
+    assert [call.args[0] for call in push.call_args_list] == [parent, nested]
+    assert [call.args[2] for call in push.call_args_list] == [
+        [f"+{child}:refs/jailbee-sub/commits/{child}"],
+        [f"+{grandchild}:refs/jailbee-sub/commits/{grandchild}"],
+    ]
+    assert "old% c++% %%25" not in push.call_args_list[0].args[1]
+    assert push.call_args_list[0].args[1].endswith("/child/old% c++% %%% path")
+    updates = [cmd for cmd in commands if "update" in cmd]
+    assert len(updates) == 2
+    assert all("--no-fetch" in cmd and "protocol.allow=never" in cmd for cmd in updates)
+    assert sum("absorbgitdirs" in cmd for cmd in commands) == 2
+
+
+def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    selected, base, selected_sub, base_sub = (char * 40 for char in "abcd")
+    repo = submodules.HostSubRepo("lib", tmp_path / ".git/modules/lib", None)
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at",
+        return_value=[submodules.CommitSubmodule("lib", "lib", selected_sub, None, repo)],
+    )
+
+    def gitlink(run, root, at, path):
+        assert (root, at, path) in {
+            (str(tmp_path), base, "lib"),
+            ("/child", "refs/jailbee/base/main", "lib"),
+        }
+        return base_sub
+
+    mocker.patch("jailbee.submodules._gitlink_at", side_effect=gitlink)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://example.org/lib.git")
+    objects = set()
+    anchors = {}
+
+    def push(root, url, specs, **kwargs):
+        assert root == repo.root
+        objects.update(spec.split(":")[0].lstrip("+") for spec in specs)
+
+    mocker.patch("jailbee.git.push_url_multi", side_effect=push)
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.transport_submodules_to_container(
+        cfg,
+        incus,
+        "child",
+        repo_dir="/child",
+        commit=selected,
+        base_commit=base,
+        pin_commits=True,
+    )
+
+    def run(cwd, args):
+        if args[0] == "update-ref":
+            if args[-1] not in objects:
+                return False, "missing object"
+            anchors[(cwd, args[1])] = args[-1]
+        return True, ""
+
+    mocker.patch("jailbee.submodules._gitmodules_paths", side_effect=[[("lib", "lib")], []])
+    mocker.patch("jailbee.submodules._detect_submodule_default", return_value=None)
+    submodules.seed_submodule_base_anchors(
+        run, "/child", base_branch="main", container_branch="child"
+    )
+    assert objects == {selected_sub, base_sub}
+    assert anchors[("/child/lib", "refs/jailbee/base/main")] == base_sub
+
+
+def test_nested_pinned_transport_tracks_declaring_base_repository(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    selected, base, parent_selected, parent_base, leaf_selected, leaf_base = (
+        char * 40 for char in "abcdef"
+    )
+    parent = submodules.HostSubRepo("libs/a", tmp_path / ".git/modules/parent", None)
+    leaf = submodules.HostSubRepo("libs/a/nested/b", parent.root / "modules/leaf", None)
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at",
+        return_value=[
+            submodules.CommitSubmodule("libs/a", "parent", parent_selected, None, parent),
+            submodules.CommitSubmodule("libs/a/nested/b", "leaf", leaf_selected, None, leaf),
+        ],
+    )
+    expected_links = {
+        (str(tmp_path), base, "libs/a"): parent_base,
+        (str(parent.root), parent_base, "nested/b"): leaf_base,
+        ("/child", "refs/jailbee/base/main", "libs/a"): parent_base,
+        ("/child/libs/a", parent_base, "nested/b"): leaf_base,
+    }
+    lookups = []
+
+    def gitlink(run, root, at, path):
+        key = (root, at, path)
+        lookups.append(key)
+        return expected_links[key]
+
+    mocker.patch("jailbee.submodules._gitlink_at", side_effect=gitlink)
+    push = mocker.patch("jailbee.git.push_url_multi")
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.transport_submodules_to_container(
+        cfg,
+        incus,
+        "child",
+        repo_dir="/child",
+        commit=selected,
+        base_commit=base,
+        pin_commits=True,
+    )
+    assert [call.args[0] for call in push.call_args_list] == [parent.root, leaf.root]
+    assert [call.args[2] for call in push.call_args_list] == [
+        [f"+{sha}:refs/jailbee-sub/commits/{sha}" for sha in (parent_selected, parent_base)],
+        [f"+{sha}:refs/jailbee-sub/commits/{sha}" for sha in (leaf_selected, leaf_base)],
+    ]
+    anchors = {}
+
+    def run(cwd, args):
+        if args[0] == "update-ref":
+            anchors[(cwd, args[1])] = args[-1]
+        return True, ""
+
+    mocker.patch(
+        "jailbee.submodules._gitmodules_paths",
+        side_effect=[
+            [("parent", "libs/a")],
+            [("leaf", "nested/b")],
+            [],
+        ],
+    )
+    mocker.patch("jailbee.submodules._detect_submodule_default", return_value=None)
+    submodules.seed_submodule_base_anchors(
+        run, "/child", base_branch="main", container_branch="child"
+    )
+    assert anchors[("/child/libs/a", "refs/jailbee/base/main")] == parent_base
+    assert anchors[("/child/libs/a/nested/b", "refs/jailbee/base/main")] == leaf_base
+    assert set(lookups) == set(expected_links)
+
+
+def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_repos, mocker):
+    cfg, _parent, _nested, top, child, grandchild = historical_repos
+    mocker.patch("jailbee.git.has_commit", return_value=False)
+    mocker.patch("jailbee.git.rev_parse", side_effect=[child, grandchild])
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    incus = MagicMock()
+
+    def execute(_container, cmd, **kwargs):
+        if cmd == ["git", "-C", "/repo", "rev-parse", "--absolute-git-dir"]:
+            return "/repo/.git\n"
+        if "--resolve-git-dir" in cmd:
+            if cmd[-1].endswith("/modules/inner-name"):
+                raise IncusError("legacy nested repo")
+            return cmd[-1] + "\n"
+        if cmd == [
+            "git",
+            "-C",
+            "/repo/old c++ % path/nested lib",
+            "rev-parse",
+            "--absolute-git-dir",
+        ]:
+            return "/repo/old c++ % path/nested lib/.git\n"
+        raise AssertionError(cmd)
+
+    incus.exec.side_effect = execute
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, incus, "source", "src", repo_dir="/repo", commit=top
+    )
+    assert fetch.call_args_list[1].args[1].endswith("/repo/old% c++% %%% path/nested% lib/.git")
+
+
+def test_historical_new_gitdir_keeps_resolved_relative_upstream(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    sha, child = "a" * 40, "b" * 40
+    mocker.patch("jailbee.submodules._gitmodules_paths_at", side_effect=[[("named", "lib")], []])
+    mocker.patch("jailbee.submodules._gitlink_at", return_value=child)
+    mocker.patch("jailbee.submodules._gitmodules_url_at", return_value="../lib.git")
+    mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=None)
+    mocker.patch("jailbee.git.init_subrepo_gitdir")
+    mocker.patch("jailbee.git.remove_origin")
+    mocker.patch("jailbee.git.has_commit", return_value=False)
+    mocker.patch("jailbee.git.fetch_url")
+    mocker.patch("jailbee.git.rev_parse", return_value=child)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    origin = mocker.patch("jailbee.git.set_origin_url")
+    incus = MagicMock()
+
+    def execute(_container, cmd, **kwargs):
+        if cmd[-1] == "--absolute-git-dir":
+            return "/repo/.git\n"
+        if "--resolve-git-dir" in cmd:
+            return "/repo/.git/modules/named\n"
+        if cmd[-3:] == ["config", "--get", "remote.origin.url"]:
+            return "https://example.org/acme/lib.git\n"
+        raise AssertionError(cmd)
+
+    incus.exec.side_effect = execute
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, incus, "source", "src", repo_dir="/repo", commit=sha
+    )
+    origin.assert_called_once_with(
+        cfg.repo_root / ".git/modules/named", "https://example.org/acme/lib.git"
+    )
+
+
+@pytest.mark.parametrize(
+    "value,encoded", [("c++/lib", "c++/lib"), ("lib %s", "lib% %%s"), ("ä/lib", "ä/lib")]
+)
+def test_ext_transport_encodes_arguments_without_shell_quoting(value, encoded):
+    from types import SimpleNamespace
+
+    cfg = SimpleNamespace(container_user=SimpleNamespace(uid=1000))
+    assert submodules._sub_upload_pack_url(cfg, "c", "/repo", value).endswith("/repo/" + encoded)

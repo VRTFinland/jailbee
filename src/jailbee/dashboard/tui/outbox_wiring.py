@@ -94,5 +94,18 @@ class SessionOutboxRunner:
     def hand_off(self, argv: Sequence[str]) -> int | None:
         return self.session.run_dashboard_command(self.container, "container", list(argv))
 
+    def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory(prefix="jailbee-outbox-") as tmp:
+            path = Path(tmp) / "diagnostic"
+            rc = self.session.run_dashboard_command(
+                self.container, "container", list(argv), diagnostic_path=path
+            )
+            from jailbee.dashboard.dispatch import read_diagnostic_text
+
+            return rc, read_diagnostic_text(path)
+
     def changed(self) -> None:
         self.session.client.refresh()

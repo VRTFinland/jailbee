@@ -648,3 +648,24 @@ def test_overview_json_action_delete_scope(tmp_path):
     for action in proposal["actions"]:
         assert action["delete_scope"] is None
         assert action["delete_block"] == views[0].edit_block
+
+
+@pytest.mark.parametrize(
+    "number,actions",
+    [
+        (None, [{"type": "description", "body": "text"}]),
+        (7, []),
+        (7, [{"type": "description", "body": "text"}]),
+    ],
+)
+def test_source_awaits_push_without_inheriting_recorded_pr(tmp_path, number, actions):
+    payload = json.loads(pr_files()["001.json"])
+    payload.update(pr=number, source="refs/heads/topic", source_sha="a" * 40, actions=actions)
+    view = build_views(
+        IDENTITY,
+        (store("pr", {"001.json": json.dumps(payload)}),),
+        journal_store=JournalStore(tmp_path),
+        recorded_pr=73,
+    )[0]
+    assert view.state == "awaiting-push"
+    assert all(a.target == (str(number) if number else "") for a in view.actions)

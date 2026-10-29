@@ -385,7 +385,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"base_build"}),
         reason=(
             "the golden image ships `jailbee-inbox`, the helper agents use to wait for "
-            "and send container-orchestration messages, with inotify-tools"
+            "and send container-orchestration messages, with inotify-tools and spawn "
+            "support for explicit refs and pull requests"
         ),
     ),
     UpgradeNote(
@@ -394,7 +395,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason=(
             "`jailbee apply` syncs the new `jailbee-orchestration` and "
             "`jailbee-orchestration-child` skills, including default runner and model "
-            "selection guidance, into the shared skills mount"
+            "selection guidance, and the updated `jailbee-pr-review` skill into the "
+            "shared skills mount"
         ),
     ),
     UpgradeNote(

@@ -93,7 +93,6 @@ def _checked_text(v: str) -> str:
 class _Manifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: Literal[1]
     id: str
 
     @field_validator("id")
@@ -103,10 +102,14 @@ class _Manifest(BaseModel):
 
 
 class SpawnManifest(_Manifest):
+    # Only spawn changed in v2; v1 remains valid for legacy fork/new requests.
+    version: Literal[1, 2]
     type: Literal["spawn"]
-    kind: Literal["fork", "new"]
+    kind: Literal["fork", "new", "pr"]
     branch: str
     base: str | None = None
+    ref: str | None = None
+    pr: Annotated[int, Field(strict=True, gt=0)] | None = None
     prompt: str
     rights: ChildRights
     runner: Runner | None = None
@@ -123,14 +126,30 @@ class SpawnManifest(_Manifest):
     def _ref(cls, v: str | None) -> str | None:
         return None if v is None else _checked_ref(v)
 
+    @field_validator("ref")
+    @classmethod
+    def _source_ref(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", v):
+            if not v.startswith("refs/"):
+                raise ValueError("ref must be a full refs/ name or 40-hex commit")
+            _checked_ref(v)
+        return v
+
     @model_validator(mode="after")
-    def _base_only_for_new(self) -> Self:
+    def _spawn_fields(self) -> Self:
+        if self.version == 1 and (self.kind == "pr" or {"ref", "pr"} & self.model_fields_set):
+            raise ValueError("ref and pr require spawn version 2")
         if self.base is not None and self.kind != "new":
             raise ValueError("base is only valid for kind 'new'")
+        if self.ref is not None and self.kind != "fork":
+            raise ValueError("ref is only valid for kind 'fork'")
+        if (self.pr is not None) != (self.kind == "pr"):
+            raise ValueError("pr is required only for kind 'pr'")
         return self
 
 
 class MessageManifest(_Manifest):
+    version: Literal[1]
     type: Literal["message"]
     to: str | None = None
     body: str
@@ -150,16 +169,19 @@ class MessageManifest(_Manifest):
 
 
 class ImportManifest(_Manifest):
+    version: Literal[1]
     type: Literal["import"]
     child: str
 
 
 class UpdateManifest(_Manifest):
+    version: Literal[1]
     type: Literal["update"]
     child: str
 
 
 class RestartManifest(_Manifest):
+    version: Literal[1]
     type: Literal["restart"]
     child: str
     prompt: str
@@ -180,11 +202,13 @@ def restart_sets_runner(m: RestartManifest) -> bool:
 
 
 class StopManifest(_Manifest):
+    version: Literal[1]
     type: Literal["stop"]
     child: str
 
 
 class DestroyManifest(_Manifest):
+    version: Literal[1]
     type: Literal["destroy"]
     child: str
     force: bool = False

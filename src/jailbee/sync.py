@@ -8,6 +8,7 @@ persistent remote) and `git branch -r` is uncluttered.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1347,6 +1348,117 @@ def fetch_from_container(
         base_oid=base_oid,
         commits_added=commits_added,
     )
+
+
+def fetch_ref_from_container(
+    cfg: Config, incus: Incus, short: str, ref: str, expected_sha: str
+) -> str:
+    """Fetch a validated container ref and verify its manifest pin."""
+    if not ref.startswith("refs/") or not git.check_ref_format(ref):
+        raise SyncError(f"Invalid source ref: {ref}")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha):
+        raise SyncError("Invalid source SHA: expected a full 40-character hexadecimal SHA")
+    host_ref = f"refs/jailbee/{short}/source/{ref[5:]}"
+    if not git.check_ref_format(host_ref):
+        raise SyncError(f"Invalid host ref: {host_ref}")
+
+    full_name = assert_container_publishable(cfg, incus, short)
+    url = _build_ext_url(cfg, incus, full_name)
+    git.fetch_url(cfg.repo_root, url, f"+{ref}:{host_ref}", tags="none")
+    actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
+    if actual is None:
+        raise SyncError(f"fetch succeeded but {host_ref} did not resolve")
+    if actual.lower() != expected_sha.lower():
+        raise SyncError(
+            f"{ref} is at {actual[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest"
+        )
+    return host_ref
+
+
+def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) -> str:
+    """Fetch a verified commit object into a source-specific host ref."""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise SyncError("Invalid source SHA: expected a full 40-character hexadecimal SHA")
+    host_ref = f"refs/jailbee/{short}/source/commits/{sha.lower()}"
+    if not git.check_ref_format(host_ref):
+        raise SyncError(f"Invalid host ref: {host_ref}")
+    full = assert_container_publishable(cfg, incus, short)
+    git.fetch_url(
+        cfg.repo_root, _build_ext_url(cfg, incus, full), f"+{sha}:{host_ref}", tags="none"
+    )
+    actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
+    if actual is None or actual.lower() != sha.lower():
+        raise SyncError(f"Fetched source SHA {sha} does not resolve to the expected commit")
+    return host_ref
+
+
+def push_ref_to_remote(
+    cfg: Config,
+    host_ref: str,
+    head: str,
+    *,
+    force: bool,
+    on_before_push: Callable[[], None] | None = None,
+    expected_sha: str | None = None,
+) -> None:
+    """Push a fetched ref, preserving the source and lease across retries."""
+    if not host_ref.startswith("refs/") or not git.check_ref_format(host_ref):
+        raise SyncError(f"Invalid source ref: {host_ref}")
+    if not git.check_ref_format(head):
+        raise SyncError(f"Invalid destination branch: {head}")
+    if expected_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha):
+        raise SyncError("Invalid expected SHA")
+    source_sha = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
+    if source_sha is None:
+        raise SyncError(f"Source ref does not resolve: {host_ref}")
+    if expected_sha is not None and source_sha.lower() != expected_sha.lower():
+        raise SyncError(
+            f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; "
+            "re-stage the manifest"
+        )
+    remote = cfg.upstream_remote
+    try:
+        lease = (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "") if force else None
+    except git.GitError as exc:
+        raise SyncError(str(exc)) from exc
+    if on_before_push is not None:
+        on_before_push()
+    try:
+        with_remote_retry(
+            lambda: git.push_to_remote(
+                cfg.repo_root, remote, source_sha, head, force_with_lease=lease
+            ),
+            label=f"pushing '{head}' to {remote}",
+            catch=git.GitError,
+            confirm=confirm_retry_quiet,
+        )
+    except git.GitError as exc:
+        raise SyncError(f"Pushing '{head}' to {remote} failed: {exc}") from exc
+
+
+def is_fast_forward(cfg: Config, host_ref: str, head: str) -> bool | None:
+    """Return the ancestry relation, or None for a missing remote head."""
+    if not host_ref.startswith("refs/") or not git.check_ref_format(host_ref):
+        raise SyncError(f"Invalid source ref: {host_ref}")
+    if not git.check_ref_format(head):
+        raise SyncError(f"Invalid destination branch: {head}")
+    source_sha = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
+    if source_sha is None:
+        raise SyncError(f"Source ref does not resolve: {host_ref}")
+    try:
+        remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
+        if remote_sha is None:
+            return None
+        if not git.commit_object_exists(cfg.repo_root, remote_sha):
+            git.fetch_remote_ref(cfg.repo_root, cfg.upstream_remote, f"refs/heads/{head}")
+            if not git.commit_object_exists(cfg.repo_root, remote_sha):
+                raise SyncError(f"Remote head {remote_sha} is unavailable after fetching '{head}'")
+    except (git.GitError, git.GitFetchError) as exc:
+        raise SyncError(f"Cannot inspect remote head '{head}': {exc}") from exc
+    result = git.is_ancestor(cfg.repo_root, remote_sha, source_sha)
+    if result is None:
+        raise SyncError(f"Cannot determine whether '{head}' is a fast-forward")
+    return result
 
 
 def _container_pr_branch(incus: Incus, full_name: str) -> str | None:

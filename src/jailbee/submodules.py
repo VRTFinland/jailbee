@@ -17,6 +17,7 @@ chooses loud failure over silent drift.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -806,6 +807,7 @@ def init_submodules_in_container(
     gid: int,
     branch: str | None = None,
     base_branch: str | None = None,
+    preseeded: bool = False,
 ) -> None:
     """Recursively init the container clone's submodules offline.
 
@@ -814,6 +816,10 @@ def init_submodules_in_container(
     `submodule sync` to repoint origin at the real upstream. Recurses into
     each initialized submodule. Raises `SubmoduleError` if the host has not
     initialized a submodule it declares.
+
+    With ``preseeded``, the commit transport has already created every child
+    repo at its gitlink. Register and absorb those repos without consulting the
+    host-source mount or permitting a fetch.
 
     Then places every submodule on ``branch`` (the container branch) and, when
     ``base_branch`` is also given, seeds each submodule's base anchors at the
@@ -827,6 +833,7 @@ def init_submodules_in_container(
         host_source=HOST_SOURCE,
         uid=uid,
         gid=gid,
+        preseeded=preseeded,
     )
     run = _container_runner(incus, container, uid=uid, gid=gid)
     _place_submodule_branches(run, repo_dir, branch)
@@ -843,8 +850,63 @@ def _init_level(
     host_source: str,
     uid: int,
     gid: int,
+    preseeded: bool = False,
 ) -> None:
     for name, path in _list_gitmodules(incus, container, level_dir, uid=uid):
+        path = _normalize_declared_path(path)
+        _normalize_declared_path(name)
+        if preseeded:
+            # Objects and a detached HEAD already exist; register the standalone
+            # repo before updating, never cloning/fetching from a live upstream.
+            incus.exec(container, ["test", "-e", f"{level_dir}/{path}/.git"], uid=uid)
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "init", "--", path],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "absorbgitdirs", "--", path],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                [
+                    "git",
+                    "-C",
+                    level_dir,
+                    "-c",
+                    "protocol.allow=never",
+                    "submodule",
+                    "update",
+                    "--init",
+                    "--checkout",
+                    "--no-fetch",
+                    "--",
+                    path,
+                ],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "sync", "--", path],
+                uid=uid,
+                gid=gid,
+            )
+            _init_level(
+                incus,
+                container,
+                repo_dir=repo_dir,
+                level_dir=f"{level_dir}/{path}",
+                host_source=host_source,
+                uid=uid,
+                gid=gid,
+                preseeded=True,
+            )
+            continue
         local_source = f"{host_source}/{path}"
         try:
             incus.exec(container, ["test", "-e", f"{local_source}/.git"], uid=uid)
@@ -1248,17 +1310,42 @@ def prune_vanished_worktrees(
     return kept
 
 
+def _ext_url(args: list[str]) -> str:
+    """Encode argv for remote-ext, which interprets percent escapes, not a shell."""
+    if any(any(char in arg for char in "\0\r\n\t") for arg in args):
+        raise SubmoduleError("Invalid control character in submodule transport argument")
+    return "ext::" + " ".join(arg.replace("%", "%%").replace(" ", "% ") for arg in args)
+
+
 def _sub_upload_pack_url(cfg: Config, container: str, repo_dir: str, subpath: str) -> str:
-    return (
-        f"ext::incus exec --user {cfg.container_user.uid} {container} "
-        f"-- git upload-pack {repo_dir}/{subpath}"
+    return _ext_url(
+        [
+            "incus",
+            "exec",
+            "--user",
+            str(cfg.container_user.uid),
+            container,
+            "--",
+            "git",
+            "upload-pack",
+            f"{repo_dir}/{subpath}",
+        ]
     )
 
 
 def _sub_receive_pack_url(cfg: Config, container: str, repo_dir: str, subpath: str) -> str:
-    return (
-        f"ext::incus exec --user {cfg.container_user.uid} {container} "
-        f"-- git receive-pack {repo_dir}/{subpath}"
+    return _ext_url(
+        [
+            "incus",
+            "exec",
+            "--user",
+            str(cfg.container_user.uid),
+            container,
+            "--",
+            "git",
+            "receive-pack",
+            f"{repo_dir}/{subpath}",
+        ]
     )
 
 
@@ -1704,10 +1791,23 @@ def _repoint_cloned_subrepo(
         at_head=at_head,
         name=name,
     )
-    if not url or url.startswith(("./", "../")):
-        # Git already resolves relative declarations when initializing the source.
-        candidate = _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
-        url = candidate if candidate and not candidate.startswith(("ext::", "./", "../")) else None
+    url = _resolved_subrepo_upstream(
+        url, lambda: _container_subrepo_origin_url(incus, container, repo_dir, subpath, uid=uid)
+    )
+    _set_cloned_subrepo_origin(host_sub, subpath, url)
+
+
+def _resolved_subrepo_upstream(
+    declared: str | None, source_origin: Callable[[], str | None]
+) -> str | None:
+    if declared and not declared.startswith(("ext::", "./", "../")):
+        return declared
+    # Git already resolves relative declarations when initializing the source.
+    candidate = source_origin()
+    return candidate if candidate and not candidate.startswith(("ext::", "./", "../")) else None
+
+
+def _set_cloned_subrepo_origin(host_sub: Path, subpath: str, url: str | None) -> None:
     if url:
         try:
             git.set_origin_url(host_sub, url)
@@ -1724,6 +1824,112 @@ def _repoint_cloned_subrepo(
         f"origin was removed. Set one with: "
         f"git -C {subpath} remote add origin <url>"
     )
+
+
+def transport_submodules_to_host_at_commit(
+    cfg: Config, incus: Incus, container: str, short: str, *, repo_dir: str, commit: str
+) -> None:
+    """Fetch each gitlink from the selected tree, including nested gitlinks."""
+
+    uid = cfg.container_user.uid
+    run = _container_runner(incus, container, uid=uid)
+    source_root: str | None = None
+
+    def source_gitdir(ancestry: tuple[tuple[str, str], ...]) -> str:
+        nonlocal source_root
+        if source_root is None:
+            source_root = _require_git(run, repo_dir, ["rev-parse", "--absolute-git-dir"]).strip()
+            if not source_root.startswith("/"):
+                raise SubmoduleError("Source repository did not resolve to an absolute gitdir")
+        parent = source_root
+        worktree: str | None = repo_dir
+        for name, leaf in ancestry:
+            name = _normalize_declared_path(name)
+            worktree = posixpath.join(worktree, leaf) if worktree is not None else None
+            candidate = posixpath.join(parent, "modules", name)
+            ok, resolved = run(repo_dir, ["rev-parse", "--resolve-git-dir", candidate])
+            if ok and resolved.strip() == candidate:
+                parent = candidate
+                continue
+            # Legacy standalone submodules have a .git directory in their worktree.
+            if worktree is None:
+                raise SubmoduleError(f"Source submodule gitdir '{candidate}' is unavailable")
+            parent = _require_git(run, worktree, ["rev-parse", "--absolute-git-dir"]).strip()
+            if parent != f"{worktree}/.git":
+                raise SubmoduleError(f"Source submodule '{worktree}' has no retained gitdir")
+        return parent
+
+    def walk(parent: HostSubRepo, at: str, ancestry: tuple[tuple[str, str], ...]) -> None:
+        root = str(parent.root)
+        for name, raw_path in _gitmodules_paths_at(git.run_capture, root, at, strict=True):
+            leaf = _normalize_declared_path(raw_path)
+            _normalize_declared_path(name)
+            sha = _gitlink_at(git.run_capture, root, at, leaf, strict=True)
+            if sha is None:
+                continue
+            path = posixpath.join(parent.path, leaf) if parent.path else leaf
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+                raise SubmoduleError(f"Invalid submodule gitlink: {path}")
+            child_ancestry = (*ancestry, (name, leaf))
+            sub = locate_host_subrepo(parent, leaf, name)
+            pin = f"refs/jailbee-sub/{short}/commits/{sha}"
+            if not git.check_ref_format(pin):
+                raise SubmoduleError(f"Invalid submodule pin: {pin}")
+            if sub is not None and git.has_commit(sub.root, sha):
+                if not git.update_ref(sub.root, pin, sha):
+                    raise SubmoduleError(f"Cannot retain submodule '{path}' commit {sha}")
+                walk(sub, sha, child_ancestry)
+                continue
+            source = source_gitdir(child_ancestry)
+            # Override stale core.worktree without changing the source config.
+            url = _ext_url(
+                [
+                    "incus",
+                    "exec",
+                    "--user",
+                    str(uid),
+                    container,
+                    "--",
+                    "git",
+                    "-c",
+                    "core.worktree=/",
+                    "upload-pack",
+                    source,
+                ]
+            )
+            created = sub is None
+            if sub is None:
+                target = _safe_subrepo_target(parent, leaf, name)
+                git.init_subrepo_gitdir(target, url)
+                sub = HostSubRepo(path=path, gitdir=target, worktree=None)
+            git.fetch_url(sub.root, url, f"+{sha}:{pin}", tags="none")
+            actual = git.rev_parse(sub.root, f"{pin}^{{commit}}")
+            if actual is None or actual.lower() != sha.lower():
+                raise SubmoduleError(f"Submodule '{path}' commit {sha} could not be fetched")
+            if created:
+                declared = _gitmodules_url_at(git.run_capture, root, at, name)
+
+                def origin(source: str = source) -> str | None:
+                    ok, value = run(
+                        repo_dir,
+                        [
+                            "--git-dir",
+                            source,
+                            "-c",
+                            "core.worktree=/",
+                            "config",
+                            "--get",
+                            "remote.origin.url",
+                        ],
+                    )
+                    return value.strip() if ok else None
+
+                _set_cloned_subrepo_origin(
+                    sub.root, path, _resolved_subrepo_upstream(declared, origin)
+                )
+            walk(sub, sha, child_ancestry)
+
+    walk(superproject_subrepo(Path(cfg.repo_root)), commit, ())
 
 
 def transport_submodules_to_host(
@@ -1915,6 +2121,8 @@ def transport_submodules_to_container(
     mode: Literal["host", "relay"] = "host",
     host_repos: dict[str, HostSubRepo] | None = None,
     timeout: float | None = None,
+    pin_commits: bool = False,
+    base_commit: str | None = None,
 ) -> None:
     """Push submodule objects into `container`'s matching sub-repos.
 
@@ -1923,6 +2131,10 @@ def transport_submodules_to_container(
     `mode="host"` enumerates the pushed commit's trees recursively and
     pushes its pinned gitlinks, not the host worktree's current HEADs.
     Every source repo and commit is validated before any target is created.
+    ``pin_commits`` sends the gitlink to a path-independent ref, for a new
+    child whose historical paths need not be valid refname components. With
+    ``base_commit``, also sends each selected module's base gitlink so base
+    anchors work even when the selected history does not contain that commit.
 
     `mode="relay"` relays another container's work, even if its name is "host". Those
     objects were fetched into the host sub-repos under
@@ -1953,6 +2165,9 @@ def transport_submodules_to_container(
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
     entries: list[tuple[str, Path, str | None, str | None]]
+    base_gitlinks: dict[str, str] = {}
+    if base_commit is not None and (mode != "host" or not pin_commits):
+        raise ValueError("base_commit requires pinned host transport")
     if mode == "host":
         if commit is None:
             raise ValueError("transport_submodules_to_container: commit is required for 'host'")
@@ -1976,6 +2191,36 @@ def transport_submodules_to_container(
             for sub in subs
             if sub.repo is not None and sub.gitlink is not None
         ]
+        if base_commit is not None:
+            # Follow the selected declaration hierarchy, just like _seed_level:
+            # base-only modules need no worktree in this child.
+            base_at = {"": base_commit}
+            selected_by_path = {sub.path: sub for sub in subs}
+            for sub in subs:
+                parent_path = max(
+                    (
+                        path
+                        for path in ["", *selected_by_path]
+                        if not path or sub.path.startswith(f"{path}/")
+                    ),
+                    key=len,
+                )
+                if parent_path not in base_at:
+                    continue
+                parent = selected_by_path.get(parent_path)
+                parent_root = parent.repo.root if parent and parent.repo else repo_root
+                leaf = sub.path[len(parent_path) + 1 :] if parent_path else sub.path
+                sha = _gitlink_at(git.run_capture, str(parent_root), base_at[parent_path], leaf)
+                if sha is None or sub.repo is None:
+                    continue
+                if not re.fullmatch(r"[0-9a-fA-F]{40}", sha) or not git.has_commit(
+                    sub.repo.root, sha
+                ):
+                    raise SubmoduleError(
+                        f"Submodule '{sub.path}' base commit '{sha}' is not on the host"
+                    )
+                base_at[sub.path] = sha
+                base_gitlinks[sub.path] = sha
     else:
         if host_repos is not None:
             missing = [path for path in (paths or []) if path not in host_repos]
@@ -2010,7 +2255,15 @@ def transport_submodules_to_container(
             )
         ns = f"refs/jailbee-sub/{source_ns}/{path}"
         head_ref = f"{ns}/HEAD"
-        if mode == "host":
+        if pin_commits:
+            if mode != "host" or gitlink is None or not re.fullmatch(r"[0-9a-fA-F]{40}", gitlink):
+                raise SubmoduleError(f"Invalid pinned submodule gitlink for '{path}'")
+            head_ref = f"refs/jailbee-sub/commits/{gitlink}"
+            refspecs = [f"+{gitlink}:{head_ref}"]
+            base_sha = base_gitlinks.get(path)
+            if base_sha is not None and base_sha != gitlink:
+                refspecs.append(f"+{base_sha}:refs/jailbee-sub/commits/{base_sha}")
+        elif mode == "host":
             refspecs = [
                 f"+{gitlink}:{head_ref}",
                 f"+refs/heads/*:{ns}/heads/*",

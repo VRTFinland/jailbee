@@ -53,6 +53,10 @@ def _scope(value: object) -> dict[str, str] | None:
         path = value.get("path")
         if isinstance(path, str) and path and path not in (".", ".."):
             return {"kind": "submodule", "path": path}
+    if set(value) == {"kind", "manifest"} and value.get("kind") == "source":
+        manifest = value.get("manifest")
+        if isinstance(manifest, str) and manifest:
+            return {"kind": "source", "manifest": manifest}
     return None
 
 
@@ -61,6 +65,8 @@ def create_pr_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
         return ["pr", "push", name]
     if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
         return ["submodule", "pr", "push", name, scope["path"]]
+    if scope is not None and scope.get("kind") == "source" and scope.get("manifest"):
+        return ["pr", "push", name, "--source-manifest", scope["manifest"]]
     return None
 
 
@@ -122,7 +128,10 @@ class ProposalItem:
 
     @property
     def creatable(self) -> bool:
-        return self.state == "awaiting-pr" and self.create_scope is not None
+        return self.create_scope is not None and (
+            self.state == "awaiting-pr"
+            or (self.state == "awaiting-push" and self.create_scope.get("kind") == "source")
+        )
 
 
 @dataclass(frozen=True)

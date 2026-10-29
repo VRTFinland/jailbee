@@ -125,6 +125,13 @@ This does not retroactively create them in older containers; idempotent
 `mkdir -p ~/.jailbee/pr-outbox ~/.jailbee/issue-outbox` is permitted when
 staging there. Inspection never bootstraps missing stores.
 
+## Imported branches
+
+For one PR per imported child, stage a pinned source manifest rather than
+merging the child. The [schema](references/manifest-schema.md#source-publication-examples)
+has new-PR and numbered rework examples; the host publishes each explicitly
+with `jb pr push --source-manifest`.
+
 ## Human inspection and approval
 
 Tell the human they can inspect on the **host** with `jb outbox <container>`

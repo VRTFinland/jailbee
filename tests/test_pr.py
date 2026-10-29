@@ -16,6 +16,50 @@ def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def test_strict_open_branch_lookup_distinguishes_missing_and_failure(tmp_path, mocker):
+    from jailbee.pr import PrResolveError, find_open_pr_for_branch_strict
+
+    run = mocker.patch("subprocess.run", return_value=_completed(stdout="[]"))
+    assert find_open_pr_for_branch_strict(tmp_path, "feature/a", repo="acme/widgets") is None
+    assert "acme/widgets" in run.call_args.args[0]
+    run.return_value = _completed(stderr="network error", returncode=1)
+    with pytest.raises(PrResolveError):
+        find_open_pr_for_branch_strict(tmp_path, "feature/a", repo="acme/widgets")
+
+
+def test_strict_open_branch_lookup_parses_matching_pr(tmp_path, mocker):
+    from jailbee.pr import find_open_pr_for_branch_strict
+
+    payload = json.loads((FIXTURES / "gh_pr_view_open.json").read_text())
+    mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps([payload])))
+    result = find_open_pr_for_branch_strict(tmp_path, "feat/foo", repo="acme/widgets")
+    assert result is not None
+    assert (result.number, result.head_ref, result.base_ref) == (1234, "feat/foo", "main")
+
+
+@pytest.mark.parametrize("payload", ["{}", "[{}]", "not-json"])
+def test_strict_open_branch_lookup_rejects_malformed_results(tmp_path, mocker, payload):
+    from jailbee.pr import PrResolveError, find_open_pr_for_branch_strict
+
+    mocker.patch("subprocess.run", return_value=_completed(stdout=payload))
+    with pytest.raises(PrResolveError):
+        find_open_pr_for_branch_strict(tmp_path, "feat/foo", repo="acme/widgets")
+
+
+def test_strict_open_branch_lookup_rejects_ambiguous_forks(tmp_path, mocker):
+    from jailbee.pr import PrResolveError, find_open_pr_for_branch_strict
+
+    payload = json.loads((FIXTURES / "gh_pr_view_open.json").read_text())
+    fork = payload | {
+        "number": 99,
+        "isCrossRepository": True,
+        "headRepositoryOwner": {"login": "fork"},
+    }
+    mocker.patch("subprocess.run", return_value=_completed(stdout=json.dumps([payload, fork])))
+    with pytest.raises(PrResolveError):
+        find_open_pr_for_branch_strict(tmp_path, "feat/foo", repo="acme/widgets")
+
+
 def test_pr_info_is_frozen_dataclass():
     from jailbee.pr import PrInfo
 

@@ -2082,3 +2082,29 @@ def test_url_transports_pass_no_timeout_by_default(mocker, tmp_path, func):
     refspec = "+HEAD:refs/x/HEAD"
     getattr(git, func)(tmp_path, "ext::url", [refspec] if "multi" in func else refspec)
     assert "timeout" not in call.call_args.kwargs
+
+
+@pytest.mark.parametrize("returncode,stdout,raises", [(0, "", False), (1, "", True)])
+def test_remote_branch_sha_strict_distinguishes_failure(
+    mocker, tmp_path, returncode, stdout, raises
+):
+    from jailbee import git
+
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=mocker.Mock(returncode=returncode, stdout=stdout, stderr="offline"),
+    )
+    if raises:
+        with pytest.raises(git.GitError, match="offline"):
+            git.remote_branch_sha_strict(tmp_path, "origin", "topic")
+    else:
+        assert git.remote_branch_sha_strict(tmp_path, "origin", "topic") is None
+
+
+@pytest.mark.parametrize("status,expected", [(0, True), (1, False)])
+def test_commit_object_exists_verifies_actual_commit(mocker, tmp_path, status, expected):
+    from jailbee import git
+
+    run = mocker.patch("jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=status))
+    assert git.commit_object_exists(tmp_path, "b" * 40) is expected
+    assert run.call_args.args[0] == ["git", "cat-file", "-e", "b" * 40 + "^{commit}"]

@@ -185,6 +185,86 @@ def test_parse_rejects_body_file_escaping_the_outbox():
         parse_manifest("001-x.json", text, {"../secrets.md": "leak"})
 
 
+def test_parse_manifest_source_fields_and_classification(mocker):
+    from jailbee.pr_outbox import DescriptionAction, is_source_manifest, parse_manifest
+
+    mocker.patch("jailbee.pr_outbox.git.check_ref_format", return_value=True)
+    source = "refs/heads/imported/topic"
+    source_sha = "a" * 40
+    description = {"type": "description", "body": "Imported PR"}
+
+    unnumbered = parse_manifest(
+        "001-source.json",
+        _manifest_text(
+            pr=None,
+            head_sha=None,
+            source=source,
+            source_sha=source_sha,
+            base="main",
+            actions=[description],
+        ),
+        {},
+    )
+    numbered = parse_manifest(
+        "002-source.json",
+        _manifest_text(pr=7, source=source, source_sha=source_sha, actions=[]),
+        {},
+    )
+
+    assert (unnumbered.source, unnumbered.source_sha, unnumbered.base) == (
+        source,
+        source_sha,
+        "main",
+    )
+    assert unnumbered.actions == (DescriptionAction(body="Imported PR"),)
+    assert is_source_manifest(unnumbered)
+    assert (numbered.source, numbered.source_sha, numbered.base) == (source, source_sha, None)
+    assert numbered.actions == ()
+    assert is_source_manifest(numbered)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"source": "refs/heads/topic"}, "source_sha is required"),
+        ({"source": None}, "source must start with refs/"),
+        ({"source_sha": None}, "source_sha requires source"),
+        ({"base": None}, "base requires source"),
+        ({"source_sha": "a" * 40}, "source_sha requires source"),
+        (
+            {"source": "refs/heads/topic", "source_sha": "abc"},
+            "source_sha must be 40 lowercase hex",
+        ),
+        ({"source": "feature", "source_sha": "a" * 40}, "source must start with refs/"),
+        ({"source": "refs/heads/a..b", "source_sha": "a" * 40}, "source is not a valid ref"),
+        ({"base": "main"}, "base requires source"),
+        (
+            {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "a..b"},
+            "base is not a valid branch name",
+        ),
+        (
+            {
+                "pr": 7,
+                "source": "refs/heads/topic",
+                "source_sha": "a" * 40,
+                "actions": [{"type": "comment", "body": "not allowed"}],
+            },
+            "source manifests may only carry a description",
+        ),
+        ({"pr": 7, "actions": []}, "has no actions"),
+    ],
+)
+def test_parse_manifest_source_rejects_invalid_fields(mocker, overrides, error):
+    from jailbee.pr_outbox import ManifestError, parse_manifest
+
+    mocker.patch(
+        "jailbee.pr_outbox.git.check_ref_format",
+        side_effect=lambda ref: ".." not in ref,
+    )
+    with pytest.raises(ManifestError, match=error):
+        parse_manifest("003-source.json", _manifest_text(**overrides), {})
+
+
 def test_parse_null_pr_allows_only_a_description():
     from jailbee.pr_outbox import ManifestError, parse_manifest
 
@@ -590,6 +670,7 @@ def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
     incus = mocker.MagicMock()
     label_map = labels if labels is not None else {"user.jailbee.pr": "1234"}
     incus.config_get.side_effect = lambda name, key: label_map.get(key)
+    incus.config_get_checked.side_effect = incus.config_get.side_effect
     return incus
 
 
@@ -1467,6 +1548,80 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
             draft=True,
         )
     calls["comment"].assert_not_called()
+
+
+@pytest.mark.parametrize("number,zero", [(None, False), (1234, False), (1234, True)])
+@pytest.mark.parametrize(
+    "comments_only,raise_errors", [(False, False), (True, False), (False, True)]
+)
+def test_source_gate_precedes_resolution_and_progress(
+    mocker, make_cfg, tmp_path, number, zero, comments_only, raise_errors
+):
+    from jailbee.pr_outbox import Outbox, OutboxError, _gate_manifests
+
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    text = _manifest_text(
+        pr=number,
+        head_sha=None,
+        source="refs/heads/topic",
+        source_sha="a" * 40,
+        actions=[] if zero else [{"type": "description", "body": "new body"}],
+    )
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
+    progress = mocker.patch("jailbee.pr_outbox._publication_progress")
+    hint = "Use jailbee pr push topic --source-manifest source.json"
+
+    def gate():
+        return _gate_manifests(
+            make_cfg(tmp_path),
+            mocker.MagicMock(),
+            "c",
+            Outbox({"source.json": text}),
+            "topic",
+            force=False,
+            comments_only=comments_only,
+            raise_errors=raise_errors,
+        )
+
+    if raise_errors:
+        with pytest.raises(OutboxError, match=hint):
+            gate()
+    else:
+        targets, refusals, notes = gate()
+        assert targets == []
+        assert notes == ([hint] if comments_only else [])
+        assert [refusal.text for refusal in refusals] == ([] if comments_only else [hint])
+    resolve.assert_not_called()
+    progress.assert_not_called()
+
+
+@pytest.mark.parametrize("number,zero", [(None, False), (1234, False), (1234, True)])
+def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number, zero):
+    from jailbee.pr_outbox import OutboxError, Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    progress = mocker.patch("jailbee.pr_outbox._write_sidecar")
+    push = mocker.patch("jailbee.sync.push_ref_to_remote")
+    incus = mocker.MagicMock()
+    manifest = parse_manifest(
+        "source.json",
+        _manifest_text(
+            pr=number,
+            head_sha=None,
+            source="refs/heads/topic",
+            source_sha="a" * 40,
+            actions=[] if zero else [{"type": "description", "body": "new body"}],
+        ),
+        {},
+    )
+    target = Target(
+        manifest, _pr_info() if number else None, False, PrScope(tmp_path, "origin", "", None)
+    )
+    with pytest.raises(OutboxError, match=r"jailbee pr push c --source-manifest source\.json"):
+        apply_manifest(make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000)
+    for effect in (*calls.values(), progress, push, incus.exec):
+        effect.assert_not_called()
 
 
 def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
@@ -2470,6 +2625,102 @@ def test_drop_fixture_keeps_invalid_text_without_losing_identity(mocker, tmp_pat
     incus.exec.assert_not_called()
 
 
+def test_consume_source_manifest_logs_and_deletes(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    outbox = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, outbox, tmp_path)
+    outbox = replace(outbox, identity=container_identity(incus, "c"))
+    from jailbee.outbox import io as store_io
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, outbox.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    consume_manifest(incus, "c", "001-x.json", "https://example/42", uid=1000, preview=outbox)
+    assert not (tmp_path / "pr-transport" / "001-x.json").exists()
+    assert "actions=0" in (tmp_path / "pr-transport" / "applied.log").read_text()
+
+
+def test_consume_source_retries_delete_without_duplicate_receipt(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox import io as store_io
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    original = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, original, tmp_path)
+    original = replace(original, identity=container_identity(incus, "c"))
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, original.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    delete = mocker.patch(
+        "jailbee.pr_outbox._source_cleanup",
+        side_effect=[store_io.MutationExecutionError("failed"), None],
+    )
+    with pytest.raises(FinalizeError):
+        consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=original)
+    retry = read_snapshot()
+    consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=retry)
+    assert (tmp_path / "pr-transport" / "applied.log").read_text().count("001-x.json") == 1
+    assert delete.call_count == 2
+
+
+def test_consume_source_preserves_shared_body(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox import io as store_io
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import Outbox, consume_manifest
+
+    source = _manifest_text(
+        pr=42,
+        source="refs/heads/topic",
+        source_sha="a" * 40,
+        actions=[{"type": "description", "body_file": "shared.md"}],
+    )
+    neighbor = _manifest_text(actions=[{"type": "comment", "body_file": "shared.md"}])
+    outbox = Outbox({"001-x.json": source, "002-y.json": neighbor, "shared.md": "text"})
+    incus = _drop_setup(mocker, outbox, tmp_path)
+    outbox = replace(outbox, identity=container_identity(incus, "c"))
+
+    def read_snapshot(*args, **kwargs):
+        store = store_io.read_store(incus, "c", "pr", uid=1000)
+        return Outbox(store.as_dict(), store.rejected, outbox.identity)
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_snapshot)
+    consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=outbox)
+    assert (tmp_path / "pr-transport" / "shared.md").read_text() == "text"
+    assert (tmp_path / "pr-transport" / "002-y.json").exists()
+
+
+def test_consume_source_refuses_changed_snapshot(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.outbox_io import container_identity
+    from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
+
+    text = _manifest_text(pr=42, source="refs/heads/topic", source_sha="a" * 40, actions=[])
+    original = Outbox(files={"001-x.json": text})
+    incus = _drop_setup(mocker, original, tmp_path)
+    original = replace(original, identity=container_identity(incus, "c"))
+    changed = replace(original, files={"001-x.json": text + " "})
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=changed)
+    with pytest.raises(FinalizeError, match="changed"):
+        consume_manifest(incus, "c", "001-x.json", "url", uid=1000, preview=original)
+    incus.exec_with_input.assert_not_called()
+
+
 def test_drop_manifest_deletes_it_with_its_sidecar_and_own_bodies(mocker, tmp_path):
     from jailbee.pr_outbox import Outbox, drop_manifest
 
@@ -2675,6 +2926,17 @@ def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, t
     assert found.text == PrText(title="feat: x", body="Body.", branch="feat/x")
     assert found.manifest == "002-d.json"
     assert found.index == 0
+
+
+@pytest.mark.parametrize("pr", [None, 1234])
+def test_pending_pr_text_excludes_source_manifests(mocker, make_cfg, tmp_path, pr):
+    from jailbee.pr_outbox import Outbox
+
+    _host_repo(mocker)
+    text = _description_manifest(pr=pr, source="refs/heads/topic", source_sha="a" * 40)
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"source.json": text}))
+
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), for_pr=pr) is None
 
 
 def test_pending_pr_text_is_none_without_a_description(mocker, make_cfg, tmp_path):
@@ -4501,3 +4763,59 @@ def test_plan_json_applied_review_is_already_published_in_a_draft(mocker, make_c
         ("already_published", "already_published"),
         ("publish", "draft"),
     ]
+
+
+def test_branch_binding_owns_numbered_manifest(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Manifest, resolve_target
+
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(
+        mocker, tmp_path, labels={"user.jailbee.branch_prs": json.dumps(binding)}, pr=_pr_info(42)
+    )
+    target = resolve_target(
+        make_cfg(tmp_path), incus, "c", Manifest("m", "acme/widgets", 42, None), force=False
+    )
+    assert target.pr.number == 42 and not target.foreign
+
+
+def test_branch_binding_does_not_change_legacy_null_resolution(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import resolve_target
+
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(
+        mocker,
+        tmp_path,
+        labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)},
+        pr=_pr_info(10),
+    )
+    assert (
+        resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr.number
+        == 10
+    )
+
+
+def test_source_null_manifest_does_not_resolve_own_pr(mocker, make_cfg, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.pr_outbox import resolve_target
+
+    binding = {"a": {"head": "a", "pr": 42, "base": "main", "source": "s", "source_sha": "x"}}
+    incus = _target_setup(
+        mocker,
+        tmp_path,
+        labels={"user.jailbee.pr": "10", "user.jailbee.branch_prs": json.dumps(binding)},
+    )
+    manifest = replace(_null_pr_manifest(), source="topic", source_sha="a" * 40, base="main")
+    assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
+    from jailbee import pr
+
+    pr.resolve_pr.assert_not_called()
+
+
+def test_source_manifest_refuses_submodule_scope(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Manifest, ManifestError, resolve_target
+
+    cfg, incus, _, _ = _submodule_gate_setup(mocker, make_cfg, tmp_path)
+    manifest = Manifest("m", "acme/library", None, None, source="topic")
+    with pytest.raises(ManifestError, match="source manifests are not supported for submodules"):
+        resolve_target(cfg, incus, "c", manifest, force=False)

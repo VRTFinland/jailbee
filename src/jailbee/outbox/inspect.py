@@ -42,16 +42,43 @@ class ProgressEvidence:
     error: str | None = None
     inputs: tuple[tuple[str, str | None], ...] = ()
     rejected: tuple[str, ...] = ()
+    source_published: bool = False
 
 
 def pr_progress_evidence(
     store: StoreSnapshot,
     name: str,
     action_count: int | None,
+    *,
+    identity: ContainerIdentity | None = None,
 ) -> ProgressEvidence:
     """Never coerce malformed/skipped sidecars or logs to empty progress."""
     files = store.as_dict()
     sidecar = f"{name}.progress.json"
+    try:
+        value = json.loads(files.get(sidecar, "null"))
+        if isinstance(value, dict) and "source" in value:
+            source = prs.source_publication_receipt(
+                prs.Outbox(files, store.rejected, identity), name
+            )
+            if store.rejected:
+                raise OutboxError("source publication evidence was rejected")
+            assert source is not None
+            indices = frozenset(value["applied"])
+            return ProgressEvidence(
+                indices,
+                tuple((i, source["url"]) for i in sorted(indices)),
+                "recorded publication evidence prevents editing",
+                None,
+                ((sidecar, files[sidecar]), ("applied.log", files.get("applied.log"))),
+                tuple(store.rejected),
+                True,
+            )
+    except (ValueError, TypeError, RecursionError, OutboxError) as exc:
+        if isinstance(exc, OutboxError):
+            return ProgressEvidence(
+                error=str(exc), edit_block="unusable source publication evidence"
+            )
     rejected = tuple(sorted(n for n in store.rejected if n in (sidecar, "applied.log")))
     inputs: list[tuple[str, str | None]] = [(sidecar, files.get(sidecar))]
     error = "publication evidence was rejected" if rejected else None
@@ -225,9 +252,20 @@ def _build_view(
         if name in store.rejected:
             raise OutboxError("manifest was rejected by the bounded text reader")
         if store.kind == "pr":
-            manifest = prs.parse_manifest(name, raw, files)
-            actions = _pr_actions(manifest, recorded_pr)
-            if manifest.pr is None and recorded_pr is None:
+            source_progress = pr_progress_evidence(store, name, None, identity=identity)
+            parse_files = files
+            if source_progress.source_published:
+                source = prs.source_publication_receipt(
+                    prs.Outbox(files, store.rejected, identity), name
+                )
+                assert source is not None
+                parse_files = files | source["inputs"]
+            raw = parse_files.get(name, raw)
+            manifest = prs.parse_manifest(name, raw, parse_files)
+            actions = _pr_actions(manifest, None if manifest.source else recorded_pr)
+            if manifest.source is not None:
+                state = "awaiting-push"
+            elif manifest.pr is None and recorded_pr is None:
                 state = "awaiting-pr"
         else:
             issue = issues.parse_manifest(name, raw, files)
@@ -238,7 +276,9 @@ def _build_view(
     except (prs.ManifestError, issues.IssueManifestError, OutboxError) as exc:
         error, state = str(exc), "invalid"
     if store.kind == "pr":
-        progress = pr_progress_evidence(store, name, len(actions) if state != "invalid" else None)
+        progress = pr_progress_evidence(
+            store, name, len(actions) if state != "invalid" else None, identity=identity
+        )
         evidence = asdict(progress) | {"applied": sorted(progress.applied)}
         block = progress.edit_block
         if progress.error:
@@ -255,7 +295,9 @@ def _build_view(
                 )
                 for a in actions
             )
-            if progress.applied:
+            if progress.source_published:
+                state = "applied"
+            elif progress.applied:
                 state = _state(actions)
     else:
         key = journal_key(identity, name)
@@ -335,6 +377,12 @@ def build_views(
     views = []
     for store in stores:
         names = set(store.as_dict()) | set(store.rejected)
+        if store.kind == "pr":
+            for member in store.as_dict():
+                if member.endswith(".progress.json"):
+                    name = member.removesuffix(".progress.json")
+                    if pr_progress_evidence(store, name, None, identity=identity).source_published:
+                        names.add(name)
         for name in sorted(
             n for n in names if n.endswith(".json") and not n.endswith(".progress.json")
         ):
@@ -429,7 +477,15 @@ def _proposal_json(
 def _container_json(container: ContainerView) -> dict[str, object]:
     counts = {
         state: sum(p.state == state for p in container.proposals)
-        for state in ("pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr")
+        for state in (
+            "pending",
+            "partial",
+            "applied",
+            "uncertain",
+            "invalid",
+            "awaiting-pr",
+            "awaiting-push",
+        )
     }
     return {
         "name": container.name,

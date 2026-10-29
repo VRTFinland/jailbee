@@ -72,6 +72,28 @@ def _fetch_result(updated=True, prev=None, new="newsha", ref="refs/jailbee/pr/12
     return FetchResult(updated=updated, prev_sha=prev, new_sha=new, ref=ref)
 
 
+def test_prepare_pr_shares_fetched_head_and_base(tmp_path, mocker):
+    from jailbee import pr
+
+    info = _open_pr_info()
+    mocker.patch("jailbee.pr.resolve_pr", return_value=info)
+    mocker.patch("jailbee.pr.fetch_pr_head", return_value=_fetch_result())
+    base = mocker.patch("jailbee.pr.fetch_base_ref", return_value=None)
+    warnings = []
+    prepared = pr.prepare_pr(
+        tmp_path,
+        1234,
+        remote="origin",
+        no_fetch=False,
+        info=lambda message: None,
+        warn=warnings.append,
+    )
+    assert prepared.info == info
+    assert prepared.commit == "newsha"
+    base.assert_called_once()
+    assert "main" in warnings[0]
+
+
 def test_new_pr_happy_path_delegates_to_new_container(tmp_path, mocker):
     _, new_container = _setup(tmp_path, mocker)
     resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_open_pr_info())

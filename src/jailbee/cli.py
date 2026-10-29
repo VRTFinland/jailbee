@@ -2414,57 +2414,19 @@ def new_cmd(
         from jailbee import pr as pr_module
 
         try:
-            pr_info = pr_module.resolve_pr(cfg.repo_root, pr, remote=cfg.upstream_remote)
+            prepared = pr_module.prepare_pr(
+                cfg.repo_root,
+                pr,
+                remote=cfg.upstream_remote,
+                no_fetch=no_fetch,
+                info=info,
+                warn=warn,
+            )
         except pr_module.PrError as e:
             error(str(e))
             raise typer.Exit(2) from e
-
-        if pr_info.state == "CLOSED":
-            warn(f"PR #{pr} is CLOSED (not merged). Continuing.")
-        elif pr_info.state == "MERGED":
-            warn(f"PR #{pr} is already MERGED. Continuing.")
-
-        if no_fetch:
-            try:
-                pr_clone_commit = pr_module.resolve_pr_head_sha(cfg.repo_root, pr_info)
-            except pr_module.PrError as e:
-                error(str(e))
-                raise typer.Exit(2) from e
-            info(
-                f"PR #{pr} '{pr_info.head_ref}' at {pr_clone_commit[:12]} "
-                f"(--no-fetch: using the host's copy)"
-            )
-        else:
-            try:
-                fetch_result = pr_module.fetch_pr_head(
-                    cfg.repo_root, pr_info, remote=cfg.upstream_remote
-                )
-            except pr_module.PrError as e:
-                error(str(e))
-                raise typer.Exit(2) from e
-            pr_clone_commit = fetch_result.new_sha
-            if fetch_result.updated:
-                info(f"PR #{pr} '{pr_info.head_ref}' fetched ({fetch_result.new_sha[:12]})")
-            else:
-                info(f"PR #{pr} '{pr_info.head_ref}' already at {fetch_result.new_sha[:12]}")
-
-            # Refresh the PR's base branch too. `new_container` seeds the
-            # container's `refs/jailbee/base/<base>` from the host's
-            # `refs/remotes/origin/<base>`, and a stale tip there inflates
-            # `jailbee ls` AHEAD by every base-branch commit made since the host
-            # last fetched. Best-effort: a base branch deleted upstream must
-            # not block the container.
-            base_sha = pr_module.fetch_base_ref(
-                cfg.repo_root, pr_info.base_ref, remote=cfg.upstream_remote
-            )
-            if base_sha is None:
-                warn(
-                    f"Could not fetch PR base branch '{pr_info.base_ref}' from origin; "
-                    f"AHEAD numbers in `jailbee ls` may be inflated."
-                )
-            else:
-                info(f"PR #{pr} base '{pr_info.base_ref}' at {base_sha[:12]}")
-
+        pr_info = prepared.info
+        pr_clone_commit = prepared.commit
         container_branch = pr_info.head_ref
 
     if current:
@@ -8419,6 +8381,9 @@ def pr_push_cmd(
             ),
         ),
     ] = None,
+    source_manifest: Annotated[
+        str | None, typer.Option("--source-manifest", help="Publish a pinned source manifest")
+    ] = None,
     no_submodules: Annotated[
         bool,
         typer.Option(
@@ -8496,6 +8461,39 @@ def pr_push_cmd(
     if force and name is None:
         error("--force requires an explicit container name (no interactive picker).")
         raise typer.Exit(2)
+
+    if source_manifest is not None:
+        if any(
+            (
+                title is not None,
+                body is not None,
+                base is not None,
+                as_name is not None,
+                pr_number is not None,
+                stacked,
+            )
+        ):
+            error(
+                "--source-manifest cannot be combined with --title, --body, --base, "
+                "--as, --pr or --stacked."
+            )
+            raise typer.Exit(2)
+        from jailbee import branch_pr, prompting
+
+        cfg = _load_or_exit(config)
+        incus, full = _resolve_existing(cfg, name)
+        result = branch_pr.publish_source_manifest(
+            cfg,
+            incus,
+            short_name(cfg, full),
+            source_manifest,
+            force=force,
+            yes=yes,
+            confirm=lambda question: prompting.confirm(question, default=False),
+        )
+        if result:
+            raise typer.Exit(result)
+        return
 
     if pr_number is not None and as_name is not None:
         error(
@@ -8939,6 +8937,9 @@ def pr_bind_cmd(
 @pr_app.command("unbind")
 def pr_unbind_cmd(
     name: ContainerArg = None,
+    head: Annotated[
+        str | None, typer.Option("--head", help="Forget one source branch binding")
+    ] = None,
     stacked: Annotated[
         bool, typer.Option("--stacked", help="Forget the stacked PR binding")
     ] = False,
@@ -8949,11 +8950,38 @@ def pr_unbind_cmd(
     from jailbee import pr_flow
     from jailbee.lifecycle import short_name
 
+    if head is not None and stacked:
+        error("--head and --stacked cannot be combined.")
+        raise typer.Exit(2)
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name, always_prompt=True)
+    if head is not None:
+        from jailbee import branch_pr, prompting
+
+        result = branch_pr.unbind_head(
+            incus,
+            full,
+            head,
+            yes=yes,
+            confirm=lambda question: prompting.confirm(question, default=False),
+        )
+        if result:
+            raise typer.Exit(result)
+        return
     pr_flow.unbind_container_pr(
         cfg, incus, full, short=short_name(cfg, full), stacked=stacked, yes=yes
     )
+
+
+@pr_app.command("ls")
+def pr_ls_cmd(config: ConfigOption = None) -> None:
+    """List container PR bindings."""
+    from jailbee import branch_pr
+    from jailbee.incus import Incus
+
+    result = branch_pr.list_pr_bindings(_load_or_exit(config), Incus())
+    if result:
+        raise typer.Exit(result)
 
 
 @pr_app.command("open")

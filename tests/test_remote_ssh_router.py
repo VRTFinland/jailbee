@@ -251,6 +251,19 @@ def test_command_path_rejects_options_before_the_leaf() -> None:
         command_path(("--verbose", "ls"))
 
 
+def test_pr_ls_routes_only_to_permitted_repository(engine, repo) -> None:
+    cfg = RemoteSSHConfig(
+        exec=True,
+        commands=RemoteCommandPolicy(mode="full"),
+        excluded_repos=["secret"],
+    )
+    result = route("pr ls --repo project", cfg, engine=engine)
+    assert result.repo_prefix == "project"
+    assert result.repo_root == repo
+    with pytest.raises(RouteError):
+        route("pr ls --repo secret", cfg, engine=engine)
+
+
 def test_exclusions_fail_closed_for_unclassified_command_but_allow_scoped_aggregate() -> None:
     policy = RemoteCommandPolicy(mode="full")
     with pytest.raises(RouteError, match="unavailable when SSH repository exclusions"):
