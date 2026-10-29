@@ -38,13 +38,22 @@ Every manifest has `"version": 1`, `"id"` and `"type"`. The type is one of
 
 ### `spawn`
 
+Spawn requests support version 2; legacy version 1 remains valid for fork/new
+without `ref` or `pr`. Other messages, inbox, grant and finish envelopes
+remain version 1.
+
 Create a child container. `kind` is `fork` (the child starts from your
 committed HEAD; a dirty tree is refused) or `new` (a fresh checkout from
 `base`, which is only valid with `kind: "new"`). `branch` is the child's
 branch. `rights` must be within `grantable` (see below). `note` is optional.
 `on_done` is optional: `"destroy"` (default) or `"keep"`. If the grant lacks
 `destroy`, omission defaults to `keep` and explicit `destroy` is refused.
-CLI: `--on-done destroy|keep`.
+CLI: `--on-done destroy|keep`. Version 2 also permits `kind: "fork"`
+with `ref` (a full `refs/` name or 40-hex commit), or `kind: "pr"` with
+a positive integer `pr`. `base` is only for `new`; `ref` is only for
+`fork`. Use `refs/heads/<name>` for a local branch, not a bare name.
+Explicit-ref forks do not inherit PR bindings. A PR child's own outbox is
+lost when destroyed; use `--on-done keep` to preserve it.
 
 <!-- kind: outbox -->
 ```json
@@ -96,8 +105,8 @@ the default). Details:
 - ``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm up`)``
 - ``LiteLLM profile `P` has no `M` tier``
 
-CLI: `jailbee-inbox send spawn --branch fix/issue-12 [--new [--base main]]
-[--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P] [--model M]] -` with the prompt on
+CLI: `jailbee-inbox send spawn [--branch fix/issue-12]
+[--new [--base main] | --ref REF | --pr N] [--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P] [--model M]] -` with the prompt on
 stdin (or `--text T`; `--file` only with an absolute path outside the repo).
 `--profile` and `--model` need `--agent`, and `--profile` needs
 `--agent claude-jb`. `jailbee-inbox runners [--json]` lists the runners you may name and what
@@ -110,6 +119,14 @@ Never leave prompt files in the repo work tree: untracked files make a
 The short name is derived from the branch: lowercased, characters outside
 `[a-z0-9-]` become `-`, runs of `-` collapse. A taken name is refused
 ("already exists").
+
+### One PR per child
+
+Spawn `--new --base main` from the upstream base, not the orchestrator's
+HEAD. On done, stage a source manifest with `source` = `imported_ref`
+and `source_sha` = `imported_sha`, without merging. For rework use `--ref`
+or `--pr N`, then import and stage `pr: N` with the new source. See the
+[source examples](../../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
 
 ### `message`
 
@@ -263,7 +280,7 @@ but the child is kept anyway (the grant lost `destroy`, or the destroy marker
 could not be set), the report has `on_done: keep` and `on_done_reason` says
 why, and no re-import is needed. Update
 messages carry the parent's ref and SHA. `ls` marks imported/failed reports;
-`read` shows all fields. Merge `imported_ref` after done, or retry `import`
+`read` shows all fields. Merge `imported_ref` in the merged-fork workflow, or stage a source manifest without merging for one PR per child; retry `import`
 after fixing `import_error`.
 
 `send --wait [--timeout DUR]` consumes only the status for that manifest:

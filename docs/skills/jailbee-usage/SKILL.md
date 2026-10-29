@@ -1384,6 +1384,14 @@ jailbee pr push feat-foo --ready    # open (or flip) it ready-for-review
 jailbee pr push feat-foo --web      # …and open it in the browser
 ```
 
+For an imported branch, publish its pinned source manifest explicitly:
+`jailbee pr push <container> --source-manifest <file.json>`. Pending source
+proposals show `awaiting-push`; `outbox apply` refuses them with a push hint,
+while the outbox `c` action invokes PR push. `jailbee pr ls` includes source
+branch binding rows; `jailbee pr unbind <container> --head <branch>` removes
+one such row without removing the ordinary binding. See the
+[source schema](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
+
 To manage bindings without publishing, run `jailbee pr bind <container> N`
 and `jailbee pr unbind <container>` on the host. Use `--stacked` on
 `unbind` to remove a stacked binding. For a submodule use
