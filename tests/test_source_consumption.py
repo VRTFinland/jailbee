@@ -131,6 +131,34 @@ def test_source_progress_preflight_exact_boundary_and_maximum_url(source_store):
         preflight_source_progress(read(), "m.json")
 
 
+@pytest.mark.parametrize("terminated", [False, True])
+def test_source_log_preflight_exact_boundary_and_consumption(source_store, mocker, terminated):
+    from jailbee.pr_outbox import (
+        SOURCE_RECEIPT_URL_BYTES, ManifestError, _source_progress_payload,
+        preflight_source_progress,
+    )
+
+    incus, files, read, _, _, _ = source_store
+    mocker.patch("jailbee.pr_outbox._now_iso", return_value="2026-10-29T12:00:00Z")
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    maximum_url = "x" * (SOURCE_RECEIPT_URL_BYTES - 2)
+    line = json.loads(_source_progress_payload(read(), "m.json", maximum_url))["source"]["line"]
+    # Non-ASCII history must be budgeted as UTF-8 bytes, including a missing newline.
+    available = store_io.FILE_LIMIT - len((line + "\n").encode()) - 1
+    previous = "é" + "h" * (available - 2)
+    if terminated:
+        previous += "\n"
+    files["applied.log"] = "h" + previous
+    with pytest.raises(ManifestError, match="applied.log exceeds"):
+        preflight_source_progress(read(), "m.json")
+    files["applied.log"] = previous
+    preflight_source_progress(read(), "m.json")
+    consume_manifest(incus, "c", "m.json", maximum_url, uid=1000, preview=read())
+    assert len(files["applied.log"].encode()) == store_io.FILE_LIMIT
+    assert files["applied.log"] == previous + ("" if terminated else "\n") + line + "\n"
+    assert set(files) == {"applied.log"}
+
+
 @pytest.mark.parametrize("bad", [None, [], {"identity": []}, {"inputs": []}])
 def test_malformed_source_progress_is_refused(source_store, bad):
     incus, files, read, _, mutation, _ = source_store

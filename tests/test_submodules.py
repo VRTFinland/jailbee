@@ -2859,6 +2859,61 @@ def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocke
     assert anchors[("/child/lib", "refs/jailbee/base/main")] == base_sub
 
 
+def test_nested_pinned_transport_tracks_declaring_base_repository(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    selected, base, parent_selected, parent_base, leaf_selected, leaf_base = (
+        char * 40 for char in "abcdef"
+    )
+    parent = submodules.HostSubRepo("libs/a", tmp_path / ".git/modules/parent", None)
+    leaf = submodules.HostSubRepo("libs/a/nested/b", parent.root / "modules/leaf", None)
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_submodules_at", return_value=[
+        submodules.CommitSubmodule("libs/a", "parent", parent_selected, None, parent),
+        submodules.CommitSubmodule("libs/a/nested/b", "leaf", leaf_selected, None, leaf),
+    ])
+    expected_links = {
+        (str(tmp_path), base, "libs/a"): parent_base,
+        (str(parent.root), parent_base, "nested/b"): leaf_base,
+        ("/child", "refs/jailbee/base/main", "libs/a"): parent_base,
+        ("/child/libs/a", parent_base, "nested/b"): leaf_base,
+    }
+    lookups = []
+
+    def gitlink(run, root, at, path):
+        key = (root, at, path)
+        lookups.append(key)
+        return expected_links[key]
+
+    mocker.patch("jailbee.submodules._gitlink_at", side_effect=gitlink)
+    push = mocker.patch("jailbee.git.push_url_multi")
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.transport_submodules_to_container(
+        cfg, incus, "child", repo_dir="/child", commit=selected,
+        base_commit=base, pin_commits=True,
+    )
+    assert [call.args[0] for call in push.call_args_list] == [parent.root, leaf.root]
+    assert [call.args[2] for call in push.call_args_list] == [
+        [f"+{sha}:refs/jailbee-sub/commits/{sha}" for sha in (parent_selected, parent_base)],
+        [f"+{sha}:refs/jailbee-sub/commits/{sha}" for sha in (leaf_selected, leaf_base)],
+    ]
+    anchors = {}
+
+    def run(cwd, args):
+        if args[0] == "update-ref":
+            anchors[(cwd, args[1])] = args[-1]
+        return True, ""
+
+    mocker.patch("jailbee.submodules._gitmodules_paths", side_effect=[
+        [("parent", "libs/a")], [("leaf", "nested/b")], [],
+    ])
+    mocker.patch("jailbee.submodules._detect_submodule_default", return_value=None)
+    submodules.seed_submodule_base_anchors(run, "/child", base_branch="main", container_branch="child")
+    assert anchors[("/child/libs/a", "refs/jailbee/base/main")] == parent_base
+    assert anchors[("/child/libs/a/nested/b", "refs/jailbee/base/main")] == leaf_base
+    assert set(lookups) == set(expected_links)
+
+
 def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_repos, mocker):
     cfg, _parent, _nested, top, child, grandchild = historical_repos
     mocker.patch("jailbee.git.has_commit", return_value=False)

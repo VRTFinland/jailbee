@@ -93,6 +93,20 @@ def test_source_large_escaped_progress_refused_before_publication(source_publish
         p[key].assert_not_called()
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_source_near_full_log_refused_before_remote_effects(source_publisher, existing):
+    from jailbee.outbox.io import FILE_LIMIT
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["snapshot"].files["applied.log"] = "h" * (FILE_LIMIT - 1)
+    if existing:
+        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    assert _publish(p) == 1
+    for key in ("fetch", "push", "edit", "create", "consume"):
+        p[key].assert_not_called()
+
+
 def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     p = source_publisher
     assert _publish(p) == 0
@@ -108,6 +122,48 @@ def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     saved = json.loads(p["incus"].config_set.call_args.args[2])
     assert saved["feature/a"]["pr"] == 42
     p["consume"].assert_called_once()
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_source_publish_consent_shows_base_range_count(source_publisher, capsys, consent):
+    p = source_publisher
+    # The range includes orchestrator commits not reachable from the refreshed base.
+    p["count"].return_value = "7"
+    questions = []
+
+    def confirm(question):
+        questions.append(question)
+        assert "(base main, 7 commits)" in " ".join(capsys.readouterr().out.split())
+        p["count"].assert_called_once_with(
+            p["cfg"].repo_root, "c" * 40, "refs/jailbee/host/source"
+        )
+        p["push"].assert_not_called()
+        return consent
+
+    assert _publish(p, yes=False, confirm=confirm) == (0 if consent else 1)
+    assert questions == ["Publish?"]
+    for key in ("push", "create", "consume"):
+        assert p[key].call_count == int(consent)
+
+
+def test_null_source_creates_independent_binding_without_own_label_writes(source_publisher):
+    from jailbee.branch_pr import BRANCH_PRS_LABEL
+
+    p = source_publisher
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        "10" if key == "user.jailbee.pr" else None
+    )
+    assert _publish(p) == 0
+    p["resolve"].assert_not_called()
+    p["create"].assert_called_once()
+    writes = p["incus"].config_set.call_args_list
+    assert len(writes) == 1
+    assert writes[0].args[:2] == ("full", BRANCH_PRS_LABEL)
+    saved = json.loads(writes[0].args[2])
+    assert saved["feature/a"]["pr"] == 42
+    assert saved["feature/a"]["source_sha"] == "a" * 40
+    p["incus"].config_unset.assert_not_called()
+    p["edit"].assert_not_called()
 
 
 def test_source_explicit_branch_conflicting_with_pr_is_refused(source_publisher):

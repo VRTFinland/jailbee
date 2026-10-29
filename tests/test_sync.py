@@ -9612,6 +9612,28 @@ def test_fetch_pinned_ref_rejects_invalid_input_before_transport(
     transport.assert_not_called()
 
 
+@pytest.mark.parametrize("operation", ["push", "ancestry"])
+def test_annotated_tag_source_uses_peeled_commit(mocker, make_cfg, tmp_path, operation):
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    host_ref = "refs/jailbee/feat-foo/source/tags/release"
+    commit, tag = "a" * 40, "b" * 40
+    mocker.patch("jailbee.git.fetch_url")
+    mocker.patch("jailbee.git.rev_parse", side_effect=lambda repo, ref:
+                 commit if ref == f"{host_ref}^{{commit}}" else tag)
+    mocker.patch("jailbee.git.remote_branch_sha_strict", return_value="c" * 40)
+    mocker.patch("jailbee.git.commit_object_exists", return_value=True)
+    ancestor = mocker.patch("jailbee.git.is_ancestor", return_value=True)
+    push = mocker.patch("jailbee.git.push_to_remote")
+    assert sync.fetch_ref_from_container(cfg, incus, "feat-foo", "refs/tags/release", commit) == host_ref
+    if operation == "push":
+        sync.push_ref_to_remote(cfg, host_ref, "release", force=False, expected_sha=commit)
+        push.assert_called_once_with(cfg.repo_root, cfg.upstream_remote, commit, "release", force_with_lease=None)
+    else:
+        assert sync.is_fast_forward(cfg, host_ref, "release") is True
+        ancestor.assert_called_once_with(cfg.repo_root, "c" * 40, commit)
+
+
 @pytest.mark.parametrize("force", [False, True])
 def test_push_pinned_ref_uses_lease_only_when_forced(mocker, make_cfg, tmp_path, force):
     cfg = make_cfg(tmp_path)
@@ -9670,7 +9692,7 @@ def test_push_pinned_ref_retries_with_original_lease(mocker, make_cfg, tmp_path)
     assert all(call.kwargs["force_with_lease"] == "b" * 40 for call in push.call_args_list)
     assert all(call.args[2] == "a" * 40 for call in push.call_args_list)
     sync.git.rev_parse.assert_called_once_with(
-        cfg.repo_root, "refs/jailbee/feat/source/heads/topic"
+        cfg.repo_root, "refs/jailbee/feat/source/heads/topic^{commit}"
     )
 
 

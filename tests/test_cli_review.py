@@ -270,6 +270,29 @@ def test_apply_submodule_repo_manifest_without_an_extra_option(mocker, tmp_path)
     )
 
 
+@pytest.mark.parametrize("zero", [False, True])
+def test_apply_refuses_numbered_source_without_ordinary_effects(mocker, tmp_path, zero):
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    text = _manifest_text(
+        source="refs/heads/topic",
+        source_sha="a" * 40,
+        head_sha=None,
+        actions=[] if zero else [{"type": "description", "body": "new body"}],
+    )
+    _setup(mocker, tmp_path, files={"source.json": text})
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(name="source.json", text=text))
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    push = mocker.patch("jailbee.sync.push_ref_to_remote")
+    progress = mocker.patch("jailbee.pr_outbox._write_sidecar")
+    finalize = mocker.patch("jailbee.pr_outbox.finalize")
+    mutate = mocker.patch("jailbee.outbox.io.mutate_store")
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
+    assert result.exit_code == 1, result.output
+    assert "jailbee pr push feat-foo --source-manifest source.json" in " ".join(result.output.split())
+    for effect in (resolve, edit, push, progress, finalize, mutate):
+        effect.assert_not_called()
+
+
 def test_apply_reports_nothing_pending(mocker, tmp_path):
     _setup(mocker, tmp_path)
 

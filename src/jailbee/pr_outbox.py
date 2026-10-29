@@ -1339,6 +1339,10 @@ def apply_manifest(
     no further action is attempted once the run can no longer record what
     it just did.
     """
+    if is_source_manifest(target.manifest):
+        raise OutboxError(
+            f"Use jailbee pr push {container} --source-manifest {target.manifest.name}"
+        )
     if target.pr is None:
         raise ValueError(
             f"apply_manifest requires a resolved PR (manifest {target.manifest.name!r} "
@@ -1756,6 +1760,12 @@ def _source_progress_payload(outbox: Outbox, name: str, url: str) -> str:
     )
 
 
+def _source_receipt_log(previous: str, line: str) -> str:
+    """Frame a receipt without joining it to an unterminated history entry."""
+    separator = "\n" if previous and not previous.endswith("\n") else ""
+    return previous + separator + line + "\n"
+
+
 def preflight_source_progress(outbox: Outbox, name: str) -> None:
     """Reserve the exact recovery shape and maximum escaped URL before publication."""
     from jailbee.outbox.io import FILE_LIMIT
@@ -1766,6 +1776,10 @@ def preflight_source_progress(outbox: Outbox, name: str) -> None:
     payload = _source_progress_payload(outbox, name, maximum_url)
     if len(payload.encode("utf-8")) > FILE_LIMIT:
         raise ManifestError("source publication recovery progress exceeds the outbox file limit")
+    line = json.loads(payload)["source"]["line"]
+    log = _source_receipt_log(outbox.files.get("applied.log", ""), line)
+    if len(log.encode("utf-8")) > FILE_LIMIT:
+        raise ManifestError("source publication applied.log exceeds the outbox file limit")
 
 
 def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | None:
@@ -1937,8 +1951,7 @@ def consume_manifest(
             line = source["line"]
             if line not in fresh.files.get("applied.log", "").splitlines():
                 previous = fresh.files.get("applied.log", "")
-                separator = "\n" if previous and not previous.endswith("\n") else ""
-                fresh = replace_file(fresh, "applied.log", previous + separator + line + "\n")
+                fresh = replace_file(fresh, "applied.log", _source_receipt_log(previous, line))
             # Exact full receipt (not just its digest token) must survive readback.
             if line not in fresh.files.get("applied.log", "").splitlines():
                 raise OutboxChanged("source publication receipt unavailable; cleanup refused")
@@ -2550,6 +2563,15 @@ def _gate_manifests(
                 notes.append(f"Ignoring outbox manifest {name}: {e}")
             else:
                 refusals.append(PlanRefusal(str(e)))
+            continue
+        if is_source_manifest(manifest):
+            hint = f"Use jailbee pr push {short} --source-manifest {name}"
+            if raise_errors:
+                raise OutboxError(hint)
+            if comments_only:
+                notes.append(hint)
+            else:
+                refusals.append(PlanRefusal(hint))
             continue
         if comments_only:
             progress = _publication_progress(outbox, name, len(manifest.actions))

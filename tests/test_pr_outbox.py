@@ -1550,6 +1550,61 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
     calls["comment"].assert_not_called()
 
 
+@pytest.mark.parametrize("number,zero", [(None, False), (1234, False), (1234, True)])
+@pytest.mark.parametrize("comments_only,raise_errors", [(False, False), (True, False), (False, True)])
+def test_source_gate_precedes_resolution_and_progress(
+    mocker, make_cfg, tmp_path, number, zero, comments_only, raise_errors
+):
+    from jailbee.pr_outbox import Outbox, OutboxError, _gate_manifests
+
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    text = _manifest_text(
+        pr=number, head_sha=None, source="refs/heads/topic", source_sha="a" * 40,
+        actions=[] if zero else [{"type": "description", "body": "new body"}],
+    )
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
+    progress = mocker.patch("jailbee.pr_outbox._publication_progress")
+    hint = "Use jailbee pr push topic --source-manifest source.json"
+
+    def gate():
+        return _gate_manifests(
+            make_cfg(tmp_path), mocker.MagicMock(), "c", Outbox({"source.json": text}), "topic",
+            force=False, comments_only=comments_only, raise_errors=raise_errors,
+        )
+
+    if raise_errors:
+        with pytest.raises(OutboxError, match=hint):
+            gate()
+    else:
+        targets, refusals, notes = gate()
+        assert targets == []
+        assert notes == ([hint] if comments_only else [])
+        assert [refusal.text for refusal in refusals] == ([] if comments_only else [hint])
+    resolve.assert_not_called()
+    progress.assert_not_called()
+
+
+@pytest.mark.parametrize("number,zero", [(None, False), (1234, False), (1234, True)])
+def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number, zero):
+    from jailbee.pr_outbox import OutboxError, Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    progress = mocker.patch("jailbee.pr_outbox._write_sidecar")
+    push = mocker.patch("jailbee.sync.push_ref_to_remote")
+    incus = mocker.MagicMock()
+    manifest = parse_manifest("source.json", _manifest_text(
+        pr=number, head_sha=None, source="refs/heads/topic", source_sha="a" * 40,
+        actions=[] if zero else [{"type": "description", "body": "new body"}],
+    ), {})
+    target = Target(manifest, _pr_info() if number else None, False,
+                    PrScope(tmp_path, "origin", "", None))
+    with pytest.raises(OutboxError, match="jailbee pr push c --source-manifest source.json"):
+        apply_manifest(make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000)
+    for effect in (*calls.values(), progress, push, incus.exec):
+        effect.assert_not_called()
+
+
 def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
     mocker, make_cfg, tmp_path
 ):

@@ -1408,7 +1408,7 @@ def push_ref_to_remote(
         raise SyncError(f"Invalid destination branch: {head}")
     if expected_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha):
         raise SyncError("Invalid expected SHA")
-    source_sha = git.rev_parse(cfg.repo_root, host_ref)
+    source_sha = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if source_sha is None:
         raise SyncError(f"Source ref does not resolve: {host_ref}")
     if expected_sha is not None and source_sha.lower() != expected_sha.lower():
@@ -1442,7 +1442,7 @@ def is_fast_forward(cfg: Config, host_ref: str, head: str) -> bool | None:
         raise SyncError(f"Invalid source ref: {host_ref}")
     if not git.check_ref_format(head):
         raise SyncError(f"Invalid destination branch: {head}")
-    source_sha = git.rev_parse(cfg.repo_root, host_ref)
+    source_sha = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if source_sha is None:
         raise SyncError(f"Source ref does not resolve: {host_ref}")
     try:
