@@ -2697,8 +2697,9 @@ def historical_repos(tmp_path, mocker):
 
 
 def test_historical_transport_prefers_retained_host_objects(historical_repos, mocker):
-    cfg, _parent, _nested, top, _, _ = historical_repos
+    cfg, parent, nested, top, child, grandchild = historical_repos
     mocker.patch("jailbee.git.has_commit", return_value=True)
+    capture = mocker.patch("jailbee.git.update_ref")
     fetch = mocker.patch("jailbee.git.fetch_url")
     incus = MagicMock()
     incus.exec.side_effect = AssertionError("source is gone; retained host objects suffice")
@@ -2706,6 +2707,10 @@ def test_historical_transport_prefers_retained_host_objects(historical_repos, mo
         cfg, incus, "source", "src", repo_dir="/repo", commit=top
     )
     fetch.assert_not_called()
+    assert [call.args for call in capture.call_args_list] == [
+        (parent, f"refs/jailbee-sub/src/commits/{child}", child),
+        (nested, f"refs/jailbee-sub/src/commits/{grandchild}", grandchild),
+    ]
     assert not (cfg.repo_root / "old c++ % path").exists()
 
 
@@ -2796,6 +2801,82 @@ def test_historical_child_initialization_uses_transported_repos(historical_repos
     assert len(updates) == 2
     assert all("--no-fetch" in cmd and "protocol.allow=never" in cmd for cmd in updates)
     assert sum("absorbgitdirs" in cmd for cmd in commands) == 2
+
+
+def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocker, tmp_path):
+    cfg = _cfg_repo(tmp_path)
+    selected, base, selected_sub, base_sub = (char * 40 for char in "abcd")
+    repo = submodules.HostSubRepo("lib", tmp_path / ".git/modules/lib", None)
+    mocker.patch("jailbee.git.has_commit", return_value=True)
+    mocker.patch("jailbee.submodules.host_submodules_at", return_value=[
+        submodules.CommitSubmodule("lib", "lib", selected_sub, None, repo)
+    ])
+    def gitlink(run, root, at, path):
+        assert (root, at, path) in {
+            (str(tmp_path), base, "lib"),
+            ("/child", "refs/jailbee/base/main", "lib"),
+        }
+        return base_sub
+
+    mocker.patch("jailbee.submodules._gitlink_at", side_effect=gitlink)
+    mocker.patch("jailbee.git.detect_upstream_remote", return_value="origin")
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://example.org/lib.git")
+    objects = set()
+    anchors = {}
+
+    def push(root, url, specs, **kwargs):
+        assert root == repo.root
+        objects.update(spec.split(":")[0].lstrip("+") for spec in specs)
+
+    mocker.patch("jailbee.git.push_url_multi", side_effect=push)
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.transport_submodules_to_container(
+        cfg, incus, "child", repo_dir="/child", commit=selected,
+        base_commit=base, pin_commits=True,
+    )
+
+    def run(cwd, args):
+        if args[0] == "update-ref":
+            if args[-1] not in objects:
+                return False, "missing object"
+            anchors[(cwd, args[1])] = args[-1]
+        return True, ""
+
+    mocker.patch("jailbee.submodules._gitmodules_paths", side_effect=[[("lib", "lib")], []])
+    mocker.patch("jailbee.submodules._detect_submodule_default", return_value=None)
+    submodules.seed_submodule_base_anchors(
+        run, "/child", base_branch="main", container_branch="child"
+    )
+    assert objects == {selected_sub, base_sub}
+    assert anchors[("/child/lib", "refs/jailbee/base/main")] == base_sub
+
+
+def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_repos, mocker):
+    cfg, parent, nested, top, child, grandchild = historical_repos
+    mocker.patch("jailbee.git.has_commit", return_value=False)
+    mocker.patch("jailbee.git.rev_parse", side_effect=[child, grandchild])
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    incus = MagicMock()
+
+    def execute(_container, cmd, **kwargs):
+        if cmd == ["git", "-C", "/repo", "rev-parse", "--absolute-git-dir"]:
+            return "/repo/.git\n"
+        if "--resolve-git-dir" in cmd:
+            if cmd[-1].endswith("/modules/inner-name"):
+                raise IncusError("legacy nested repo")
+            return cmd[-1] + "\n"
+        if cmd == ["git", "-C", "/repo/old c++ % path/nested lib", "rev-parse", "--absolute-git-dir"]:
+            return "/repo/old c++ % path/nested lib/.git\n"
+        raise AssertionError(cmd)
+
+    incus.exec.side_effect = execute
+    submodules.transport_submodules_to_host_at_commit(
+        cfg, incus, "source", "src", repo_dir="/repo", commit=top
+    )
+    assert fetch.call_args_list[1].args[1].endswith(
+        "/repo/old% c++% %%% path/nested% lib/.git"
+    )
 
 
 def test_historical_new_gitdir_keeps_resolved_relative_upstream(mocker, tmp_path):

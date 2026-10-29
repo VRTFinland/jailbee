@@ -2642,6 +2642,7 @@ def _clone_repo_in_container(
                 container,
                 repo_dir=repo_target,
                 commit=checkout_commit,
+                base_commit=base_sha,
                 pin_commits=True,
             )
         init_submodules_in_container(

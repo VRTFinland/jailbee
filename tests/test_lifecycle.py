@@ -8035,7 +8035,8 @@ def test_clone_commit_transports_submodules_before_offline_initialization(
     cfg = make_cfg(tmp_path)
     incus = mocker.MagicMock()
     mocker.patch("jailbee.lifecycle._wire_origin_and_tracking")
-    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    base = "b" * 40
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=base)
     mocker.patch("jailbee.lifecycle.rev_parse", return_value=None)
     order = mocker.Mock()
     transport = mocker.patch("jailbee.submodules.transport_submodules_to_container")
@@ -8056,7 +8057,7 @@ def test_clone_commit_transports_submodules_before_offline_initialization(
     )
     assert [call[0] for call in order.mock_calls] == ["transport", "init"]
     transport.assert_called_once_with(
-        cfg, incus, "child", repo_dir="/child", commit=sha, pin_commits=True
+        cfg, incus, "child", repo_dir="/child", commit=sha, base_commit=base, pin_commits=True
     )
     assert init.call_args.kwargs["preseeded"] is True
 

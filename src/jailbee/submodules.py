@@ -1845,16 +1845,15 @@ def transport_submodules_to_host_at_commit(
         worktree: str | None = repo_dir
         for name, leaf in ancestry:
             name = _normalize_declared_path(name)
+            worktree = posixpath.join(worktree, leaf) if worktree is not None else None
             candidate = posixpath.join(parent, "modules", name)
             ok, resolved = run(repo_dir, ["rev-parse", "--resolve-git-dir", candidate])
             if ok and resolved.strip() == candidate:
                 parent = candidate
-                worktree = None
                 continue
             # Legacy standalone submodules have a .git directory in their worktree.
             if worktree is None:
                 raise SubmoduleError(f"Source submodule gitdir '{candidate}' is unavailable")
-            worktree = posixpath.join(worktree, leaf)
             parent = _require_git(run, worktree, ["rev-parse", "--absolute-git-dir"]).strip()
             if parent != f"{worktree}/.git":
                 raise SubmoduleError(f"Source submodule '{worktree}' has no retained gitdir")
@@ -1873,7 +1872,12 @@ def transport_submodules_to_host_at_commit(
                 raise SubmoduleError(f"Invalid submodule gitlink: {path}")
             child_ancestry = (*ancestry, (name, leaf))
             sub = locate_host_subrepo(parent, leaf, name)
+            pin = f"refs/jailbee-sub/{short}/commits/{sha}"
+            if not git.check_ref_format(pin):
+                raise SubmoduleError(f"Invalid submodule pin: {pin}")
             if sub is not None and git.has_commit(sub.root, sha):
+                if not git.update_ref(sub.root, pin, sha):
+                    raise SubmoduleError(f"Cannot retain submodule '{path}' commit {sha}")
                 walk(sub, sha, child_ancestry)
                 continue
             source = source_gitdir(child_ancestry)
@@ -1898,9 +1902,6 @@ def transport_submodules_to_host_at_commit(
                 target = _safe_subrepo_target(parent, leaf, name)
                 git.init_subrepo_gitdir(target, url)
                 sub = HostSubRepo(path=path, gitdir=target, worktree=None)
-            pin = f"refs/jailbee-sub/{short}/commits/{sha}"
-            if not git.check_ref_format(pin):
-                raise SubmoduleError(f"Invalid submodule pin: {pin}")
             git.fetch_url(sub.root, url, f"+{sha}:{pin}", tags="none")
             actual = git.rev_parse(sub.root, f"{pin}^{{commit}}")
             if actual is None or actual.lower() != sha.lower():
@@ -2121,6 +2122,7 @@ def transport_submodules_to_container(
     host_repos: dict[str, HostSubRepo] | None = None,
     timeout: float | None = None,
     pin_commits: bool = False,
+    base_commit: str | None = None,
 ) -> None:
     """Push submodule objects into `container`'s matching sub-repos.
 
@@ -2129,8 +2131,10 @@ def transport_submodules_to_container(
     `mode="host"` enumerates the pushed commit's trees recursively and
     pushes its pinned gitlinks, not the host worktree's current HEADs.
     Every source repo and commit is validated before any target is created.
-    ``pin_commits`` sends only the gitlink to a path-independent ref, for a new
-    child whose historical paths need not be valid refname components.
+    ``pin_commits`` sends the gitlink to a path-independent ref, for a new
+    child whose historical paths need not be valid refname components. With
+    ``base_commit``, also sends each selected module's base gitlink so base
+    anchors work even when the selected history does not contain that commit.
 
     `mode="relay"` relays another container's work, even if its name is "host". Those
     objects were fetched into the host sub-repos under
@@ -2161,6 +2165,9 @@ def transport_submodules_to_container(
     repo_root = Path(cfg.repo_root)
     uid = cfg.container_user.uid
     entries: list[tuple[str, Path, str | None, str | None]]
+    base_gitlinks: dict[str, str] = {}
+    if base_commit is not None and (mode != "host" or not pin_commits):
+        raise ValueError("base_commit requires pinned host transport")
     if mode == "host":
         if commit is None:
             raise ValueError("transport_submodules_to_container: commit is required for 'host'")
@@ -2184,6 +2191,28 @@ def transport_submodules_to_container(
             for sub in subs
             if sub.repo is not None and sub.gitlink is not None
         ]
+        if base_commit is not None:
+            # Follow the selected declaration hierarchy, just like _seed_level:
+            # base-only modules need no worktree in this child.
+            base_at = {"": base_commit}
+            selected_by_path = {sub.path: sub for sub in subs}
+            for sub in subs:
+                parent_path = max(
+                    (path for path in ["", *selected_by_path] if not path or sub.path.startswith(f"{path}/")),
+                    key=len,
+                )
+                if parent_path not in base_at:
+                    continue
+                parent = selected_by_path.get(parent_path)
+                parent_root = parent.repo.root if parent and parent.repo else repo_root
+                leaf = sub.path[len(parent_path) + 1:] if parent_path else sub.path
+                sha = _gitlink_at(git.run_capture, str(parent_root), base_at[parent_path], leaf)
+                if sha is None or sub.repo is None:
+                    continue
+                if not re.fullmatch(r"[0-9a-fA-F]{40}", sha) or not git.has_commit(sub.repo.root, sha):
+                    raise SubmoduleError(f"Submodule '{sub.path}' base commit '{sha}' is not on the host")
+                base_at[sub.path] = sha
+                base_gitlinks[sub.path] = sha
     else:
         if host_repos is not None:
             missing = [path for path in (paths or []) if path not in host_repos]
@@ -2223,6 +2252,9 @@ def transport_submodules_to_container(
                 raise SubmoduleError(f"Invalid pinned submodule gitlink for '{path}'")
             head_ref = f"refs/jailbee-sub/commits/{gitlink}"
             refspecs = [f"+{gitlink}:{head_ref}"]
+            base_sha = base_gitlinks.get(path)
+            if base_sha is not None and base_sha != gitlink:
+                refspecs.append(f"+{base_sha}:refs/jailbee-sub/commits/{base_sha}")
         elif mode == "host":
             refspecs = [
                 f"+{gitlink}:{head_ref}",
