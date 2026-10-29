@@ -2198,19 +2198,27 @@ def transport_submodules_to_container(
             selected_by_path = {sub.path: sub for sub in subs}
             for sub in subs:
                 parent_path = max(
-                    (path for path in ["", *selected_by_path] if not path or sub.path.startswith(f"{path}/")),
+                    (
+                        path
+                        for path in ["", *selected_by_path]
+                        if not path or sub.path.startswith(f"{path}/")
+                    ),
                     key=len,
                 )
                 if parent_path not in base_at:
                     continue
                 parent = selected_by_path.get(parent_path)
                 parent_root = parent.repo.root if parent and parent.repo else repo_root
-                leaf = sub.path[len(parent_path) + 1:] if parent_path else sub.path
+                leaf = sub.path[len(parent_path) + 1 :] if parent_path else sub.path
                 sha = _gitlink_at(git.run_capture, str(parent_root), base_at[parent_path], leaf)
                 if sha is None or sub.repo is None:
                     continue
-                if not re.fullmatch(r"[0-9a-fA-F]{40}", sha) or not git.has_commit(sub.repo.root, sha):
-                    raise SubmoduleError(f"Submodule '{sub.path}' base commit '{sha}' is not on the host")
+                if not re.fullmatch(r"[0-9a-fA-F]{40}", sha) or not git.has_commit(
+                    sub.repo.root, sha
+                ):
+                    raise SubmoduleError(
+                        f"Submodule '{sub.path}' base commit '{sha}' is not on the host"
+                    )
                 base_at[sub.path] = sha
                 base_gitlinks[sub.path] = sha
     else:

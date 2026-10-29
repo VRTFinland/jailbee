@@ -2808,9 +2808,11 @@ def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocke
     selected, base, selected_sub, base_sub = (char * 40 for char in "abcd")
     repo = submodules.HostSubRepo("lib", tmp_path / ".git/modules/lib", None)
     mocker.patch("jailbee.git.has_commit", return_value=True)
-    mocker.patch("jailbee.submodules.host_submodules_at", return_value=[
-        submodules.CommitSubmodule("lib", "lib", selected_sub, None, repo)
-    ])
+    mocker.patch(
+        "jailbee.submodules.host_submodules_at",
+        return_value=[submodules.CommitSubmodule("lib", "lib", selected_sub, None, repo)],
+    )
+
     def gitlink(run, root, at, path):
         assert (root, at, path) in {
             (str(tmp_path), base, "lib"),
@@ -2832,8 +2834,13 @@ def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocke
     incus = MagicMock()
     incus.exec.return_value = ""
     submodules.transport_submodules_to_container(
-        cfg, incus, "child", repo_dir="/child", commit=selected,
-        base_commit=base, pin_commits=True,
+        cfg,
+        incus,
+        "child",
+        repo_dir="/child",
+        commit=selected,
+        base_commit=base,
+        pin_commits=True,
     )
 
     def run(cwd, args):
@@ -2853,7 +2860,7 @@ def test_pinned_transport_includes_unrelated_base_gitlink_and_seeds_anchor(mocke
 
 
 def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_repos, mocker):
-    cfg, parent, nested, top, child, grandchild = historical_repos
+    cfg, _parent, _nested, top, child, grandchild = historical_repos
     mocker.patch("jailbee.git.has_commit", return_value=False)
     mocker.patch("jailbee.git.rev_parse", side_effect=[child, grandchild])
     fetch = mocker.patch("jailbee.git.fetch_url")
@@ -2866,7 +2873,13 @@ def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_re
             if cmd[-1].endswith("/modules/inner-name"):
                 raise IncusError("legacy nested repo")
             return cmd[-1] + "\n"
-        if cmd == ["git", "-C", "/repo/old c++ % path/nested lib", "rev-parse", "--absolute-git-dir"]:
+        if cmd == [
+            "git",
+            "-C",
+            "/repo/old c++ % path/nested lib",
+            "rev-parse",
+            "--absolute-git-dir",
+        ]:
             return "/repo/old c++ % path/nested lib/.git\n"
         raise AssertionError(cmd)
 
@@ -2874,9 +2887,7 @@ def test_historical_mixed_retained_parent_and_legacy_nested_source(historical_re
     submodules.transport_submodules_to_host_at_commit(
         cfg, incus, "source", "src", repo_dir="/repo", commit=top
     )
-    assert fetch.call_args_list[1].args[1].endswith(
-        "/repo/old% c++% %%% path/nested% lib/.git"
-    )
+    assert fetch.call_args_list[1].args[1].endswith("/repo/old% c++% %%% path/nested% lib/.git")
 
 
 def test_historical_new_gitdir_keeps_resolved_relative_upstream(mocker, tmp_path):
