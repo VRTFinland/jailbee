@@ -13,7 +13,10 @@ before editing `## Unreleased`.
 - **PR bindings.** `jailbee pr bind` / `unbind` and their submodule equivalents
   manage existing PR targets without pushing; both dashboards offer binding and
   unbinding. Forks inherit PR bindings, and PR creation offers targets named
-  by pending outbox manifests.
+  by pending outbox manifests. `jailbee pr ls` lists bindings, and
+  `jailbee pr push --source-manifest <file>` publishes a pinned branch and
+  commit from a PR outbox manifest as its own PR, independently of the
+  container's own PR.
 - **Container orchestration.** Grant a container bounded rights to spawn and
   manage child containers, exchange messages and import their commits through
   a host-side broker. Named profiles, repo-level restrictions, runner
@@ -24,8 +27,13 @@ before editing `## Unreleased`.
   their children; `jailbee base build` bakes it into new images. Run
   `jailbee apply` for the skills. A child's `done` imports its work into the
   orchestrator and, unless spawned with `on_done: keep`, destroys the finished
-  child; `update` brings the orchestrator's branch into a child. The broker
-  restarts itself when another jailbee version is installed.
+  child; `update` brings the orchestrator's branch into a child. Children can
+  be spawned from a pull request or an explicit commit, and an imported branch
+  can be staged for publication as its own PR. `orchestration.default_runner`
+  (global, repo or local config) and `jailbee orchestrate grant --runner-agent
+  … [--runner-profile …] [--runner-model …]` set the runner children start
+  with when the orchestrator names none. The broker restarts itself when
+  another jailbee version is installed.
 - **Any terminal works in containers.** `jailbee shell` and `jailbee tmux`
   teach the container the host's `$TERM` from the host's terminfo, and fall
   back to `xterm-256color` when that is not possible; before, a terminal the
@@ -44,7 +52,7 @@ before editing `## Unreleased`.
 - **Bulk cleanup.** `jailbee destroy --stopped` removes the repo's stopped
   containers after one confirmation. The terminal dashboard offers
   **Destroy orphans…** for marked orphan rows.
-- **Outbox manager.** `jailbee outbox` and the terminal dashboard's Outbox entry open one list-based manager instead of the old picker chain: one-line summaries, expandable actions and comments, a rendered preview, deleting proposals/actions/comments with one confirmation, publishing (or publishing as a draft review) and clearing without leaving the dashboard. `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo. `outbox apply --dry-run -o json` prints the plan.
+- **Outbox manager.** `jailbee outbox` and the terminal dashboard's Outbox entry open one list-based manager instead of the old picker chain: one-line summaries, expandable actions and comments, a rendered preview, deleting proposals/actions/comments with one confirmation, publishing (or publishing as a draft review) and clearing without leaving the dashboard, with a `Publishing n/total` indicator while actions are published. `jailbee outbox browse --all-repos` (or `a` in the manager) covers every registered repo. `outbox apply --dry-run -o json` prints the plan.
 - **Draft PR review publication.** `jailbee outbox apply` and `jailbee review apply` can stage review comments and replies in an unsubmitted GitHub review for the host user to inspect and submit on GitHub; general comments stay in the outbox. Summaries are supported when creating a review. Existing pending reviews accept empty-summary inline comments and replies, but refuse nonempty summaries before adding that action's comments to avoid public edits after concurrent submission; add the summary in GitHub or stage an empty summary.
 - **`jailbee outbox clear`** deletes eligible unpublished proposals in one or
   more containers' PR and issue outboxes, with a dry-run preview and protection
@@ -65,7 +73,8 @@ before editing `## Unreleased`.
   `+`/`-`, reset it with `=`, or drag its top border; the height is remembered.
   Forks stay indented under their source regardless of sorting. MOUNT shows
   one letter per optional mount, coloured by attachment and remaining time;
-  details list every available mount.
+  details list every available mount. The system line shows the host's load
+  average.
 - `jailbee review ls|show|drop` and `jailbee issue ls|show|drop` are deprecated in favour of `jailbee outbox ls|show|drop`; they still work and print a hint.
 - **Dashboard: the agent's last message is rendered as Markdown.** The details
   panel keeps the message's line breaks and lays out its lists, headings,
