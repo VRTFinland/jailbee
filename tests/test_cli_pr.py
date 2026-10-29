@@ -109,16 +109,29 @@ def _setup(mocker, tmp_path, labels=None):
 def test_source_manifest_cli_delegates(mocker, tmp_path):
     cfg, incus = _setup(mocker, tmp_path)
     publish = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", "--yes"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", "--yes"]
+    )
     assert result.exit_code == 0
     assert publish.call_args.args == (cfg, incus, "feat-foo", "m.json")
     assert publish.call_args.kwargs["yes"] is True
 
 
-@pytest.mark.parametrize("options", [["--title", "x"], ["--base", "main"], ["--body", "x"],
-                                     ["--as", "x"], ["--pr", "42"], ["--stacked"]])
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--title", "x"],
+        ["--base", "main"],
+        ["--body", "x"],
+        ["--as", "x"],
+        ["--pr", "42"],
+        ["--stacked"],
+    ],
+)
 def test_source_manifest_cli_rejects_conflicting_options(options):
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", *options])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--source-manifest", "m.json", *options]
+    )
     assert result.exit_code == 2
 
 
@@ -135,11 +148,18 @@ def test_source_manifest_force_requires_explicit_container():
 
 
 def test_pr_unbind_head_removes_only_mapping(mocker, tmp_path):
-    from jailbee.branch_pr import BRANCH_PRS_LABEL
     import json
 
+    from jailbee.branch_pr import BRANCH_PRS_LABEL
+
     _, incus = _setup(mocker, tmp_path)
-    entry = {"head": "topic", "pr": 42, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40}
+    entry = {
+        "head": "topic",
+        "pr": 42,
+        "base": "main",
+        "source": "refs/heads/topic",
+        "source_sha": "a" * 40,
+    }
     incus.config_get_checked.return_value = json.dumps({"topic": entry})
     result = CliRunner().invoke(app, ["pr", "unbind", "feat-foo", "--head", "topic", "--yes"])
     assert result.exit_code == 0, result.output

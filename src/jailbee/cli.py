@@ -8463,16 +8463,32 @@ def pr_push_cmd(
         raise typer.Exit(2)
 
     if source_manifest is not None:
-        if any((title is not None, body is not None, base is not None, as_name is not None,
-                pr_number is not None, stacked)):
-            error("--source-manifest cannot be combined with --title, --body, --base, --as, --pr or --stacked.")
+        if any(
+            (
+                title is not None,
+                body is not None,
+                base is not None,
+                as_name is not None,
+                pr_number is not None,
+                stacked,
+            )
+        ):
+            error(
+                "--source-manifest cannot be combined with --title, --body, --base, "
+                "--as, --pr or --stacked."
+            )
             raise typer.Exit(2)
         from jailbee import branch_pr, prompting
 
         cfg = _load_or_exit(config)
         incus, full = _resolve_existing(cfg, name)
         result = branch_pr.publish_source_manifest(
-            cfg, incus, short_name(cfg, full), source_manifest, force=force, yes=yes,
+            cfg,
+            incus,
+            short_name(cfg, full),
+            source_manifest,
+            force=force,
+            yes=yes,
             confirm=lambda question: prompting.confirm(question, default=False),
         )
         if result:
@@ -8921,7 +8937,9 @@ def pr_bind_cmd(
 @pr_app.command("unbind")
 def pr_unbind_cmd(
     name: ContainerArg = None,
-    head: Annotated[str | None, typer.Option("--head", help="Forget one source branch binding")] = None,
+    head: Annotated[
+        str | None, typer.Option("--head", help="Forget one source branch binding")
+    ] = None,
     stacked: Annotated[
         bool, typer.Option("--stacked", help="Forget the stacked PR binding")
     ] = False,
@@ -8940,8 +8958,13 @@ def pr_unbind_cmd(
     if head is not None:
         from jailbee import branch_pr, prompting
 
-        result = branch_pr.unbind_head(incus, full, head, yes=yes,
-                                       confirm=lambda question: prompting.confirm(question, default=False))
+        result = branch_pr.unbind_head(
+            incus,
+            full,
+            head,
+            yes=yes,
+            confirm=lambda question: prompting.confirm(question, default=False),
+        )
         if result:
             raise typer.Exit(result)
         return

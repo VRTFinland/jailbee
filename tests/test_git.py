@@ -2085,10 +2085,15 @@ def test_url_transports_pass_no_timeout_by_default(mocker, tmp_path, func):
 
 
 @pytest.mark.parametrize("returncode,stdout,raises", [(0, "", False), (1, "", True)])
-def test_remote_branch_sha_strict_distinguishes_failure(mocker, tmp_path, returncode, stdout, raises):
+def test_remote_branch_sha_strict_distinguishes_failure(
+    mocker, tmp_path, returncode, stdout, raises
+):
     from jailbee import git
 
-    mocker.patch("jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=returncode, stdout=stdout, stderr="offline"))
+    mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=mocker.Mock(returncode=returncode, stdout=stdout, stderr="offline"),
+    )
     if raises:
         with pytest.raises(git.GitError, match="offline"):
             git.remote_branch_sha_strict(tmp_path, "origin", "topic")

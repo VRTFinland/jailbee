@@ -188,8 +188,21 @@ def _pr_info_from_json(stdout: str) -> PrInfo:
 
 def find_open_pr_for_branch_strict(repo_root: Path, branch: str, *, repo: str) -> PrInfo | None:
     """Find an open same-repository head, failing closed on lookup errors."""
-    cmd = ["gh", "pr", "list", "--repo", repo, "--state", "open", "--head", branch,
-           "--json", GH_PR_VIEW_JSON_FIELDS, "--limit", "100"]
+    cmd = [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--head",
+        branch,
+        "--json",
+        GH_PR_VIEW_JSON_FIELDS,
+        "--limit",
+        "100",
+    ]
     try:
         proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
         if proc.returncode:

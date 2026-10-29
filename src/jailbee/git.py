@@ -810,7 +810,10 @@ def remote_branch_sha_strict(repo_root: Path, remote: str, branch: str) -> str |
     try:
         result = subprocess.run(
             ["git", "ls-remote", remote, f"refs/heads/{branch}"],
-            cwd=repo_root, capture_output=True, text=True, check=False,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError as exc:
         raise GitError(f"Cannot query remote {remote}: {exc}") from exc
@@ -924,7 +927,10 @@ def commit_object_exists(repo_root: Path, sha: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-            cwd=repo_root, capture_output=True, text=True, check=False,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError:
         return False

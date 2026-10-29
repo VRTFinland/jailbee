@@ -1413,7 +1413,8 @@ def push_ref_to_remote(
         raise SyncError(f"Source ref does not resolve: {host_ref}")
     if expected_sha is not None and source_sha.lower() != expected_sha.lower():
         raise SyncError(
-            f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; re-stage the manifest"
+            f"{host_ref} is at {source_sha[:7]}, the manifest pins {expected_sha[:7]}; "
+            "re-stage the manifest"
         )
     remote = cfg.upstream_remote
     try:
