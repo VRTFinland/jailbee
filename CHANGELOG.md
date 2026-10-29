@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.0 - 2026-10-29
+
 ### Added
 
 - **PR bindings.** `jailbee pr bind` / `unbind` and their submodule equivalents
