@@ -317,6 +317,7 @@ def test_lifecycle_inheritance_failure_blocks_next_publication(
     incus.config_set.side_effect = set_label
     incus.config_unset_checked.side_effect = unset
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
     mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     opts = NewContainerOptions(

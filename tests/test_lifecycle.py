@@ -6907,6 +6907,7 @@ def _new_opts(**overrides):
 
 
 def _patch_new_container_deps(mocker):
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
     mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
     mocker.patch("jailbee.lifecycle.fetch_remote_ref")
