@@ -35,7 +35,7 @@ manifest by hand, follow it exactly rather than guessing from the examples.
 |---|---|
 | `version` | Must be `1`. Anything else is refused by name ("manifest version 2 needs a newer JailBee"). |
 | `repo` | `owner/name`. Checked against the GitHub remotes of the host's superproject and submodules (gate 1). Another GitHub repository is published only through `jb outbox apply` (or a dashboard's Outbox entry), with `pr` set, after the human is warned it is not this container's repository — name one only when the user asked for it. |
-| `pr` | Integer, normally the container's own PR (gate 2). Another PR of the same repo is allowed, but the human publishing it is warned that the container does not own it and must consent — so name such a PR only when the user asked for it. Or `null`, meaning a PR to create from this container or its pinned `source`. A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. **Name the number whenever the PR already exists** (`gh pr view --json number`): on a PR JailBee did not open — including the user's own, bound with `jb pr bind <container> N` — `jb pr push` uses only a description that names the PR it is updating. |
+| `pr` | Integer, normally the container's own PR (gate 2). Another PR of the same repo is allowed, but the human publishing it is warned that the container does not own it and must consent — so name such a PR only when the user asked for it. Or `null`: without `source`, outbox target resolution uses the container's own recorded bindings only when exactly one PR number is bound, otherwise it defers to PR creation. With `source`, PR push instead checks the source head's branch map and open PR, or creates a new PR; it does not resolve through the container's own bindings. A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. **Name the number whenever the PR already exists** (`gh pr view --json number`): on a PR JailBee did not open — including the user's own, bound with `jb pr bind <container> N` — `jb pr push` uses only a description that names the PR it is updating. |
 | `head_sha` | Full sha as GitHub reports `headRefOid`. Checked for staleness (gate 3), which applies only to `review` actions. `null` is allowed on a `pr: null` manifest. |
 | `actions` | Applied in order; non-empty except for a numbered source manifest. Source manifests allow only a description. |
 | `source` | Optional valid full Git ref beginning `refs/`, resolved in the container; requires `source_sha`. |
@@ -151,10 +151,10 @@ command consumes the manifest:
 - `jb review apply` (existing PR only): a missing or `null` title leaves the
   current title unchanged. It does not derive a title from the body.
 
-`branch` is the proposed head branch name and is used **only** on the `jb pr push`
-create path — `jb review apply` ignores it, because renaming the head of an
-existing PR is not a description edit. At most one `description` action per
-manifest.
+`branch` is the proposed head branch name on the `jb pr push` create path.
+For a source update, an explicit `branch` must match the existing PR's actual
+head or publication is refused; it does not rename that head. `jb review apply`
+ignores it. At most one `description` action per manifest.
 
 ## Caps (refusal, not truncation)
 

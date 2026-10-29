@@ -31,7 +31,8 @@ names** (the branch-level name, never one prefixed with the repo).
 
 ## Envelope
 
-Every manifest has `"version": 1`, `"id"` and `"type"`. The type is one of
+Every manifest has `"version"`, `"id"` and `"type"`. Version is `1`, except
+spawn also supports version `2`. The type is one of
 `spawn`, `message`, `import`, `update`, `restart`, `stop`, `destroy`.
 
 ## Orchestrator manifests

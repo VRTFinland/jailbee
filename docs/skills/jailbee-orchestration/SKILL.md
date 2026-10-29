@@ -129,8 +129,10 @@ The host publishes each with `jb pr push <orchestrator> --source-manifest
 For rework, spawn with `--ref refs/jailbee/from/<child>/<branch>` or a local
 branch as `--ref refs/heads/<name>`, or use `--pr N`. Import the result and
 stage a numbered `pr: N` source manifest. A `--pr` child's own outbox is
-lost on destroy; use `--on-done keep` to preserve it. Stage imports before
-reusing an imported ref: a later import can move it.
+lost on destroy; use `--on-done keep` to preserve it. Before reusing an
+imported ref, publish its source manifest or preserve the commit under a
+separate persistent ref and use that ref in the manifest. Staging alone does
+not retain the ref; a later import can move it.
 
 ## Choosing the child's agent (`runner`)
 
