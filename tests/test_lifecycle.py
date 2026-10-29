@@ -36,6 +36,12 @@ FIXTURES = Path(__file__).parent / "fixtures"
 _EMPTY_PLAN = AutostartPlan(blocking=[], detached=[])
 
 
+@pytest.fixture(autouse=True)
+def _mock_submodule_object_transport(mocker):
+    # Lifecycle tests exercise orchestration, not host Git object availability.
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
+
+
 def test_format_bytes():
     from jailbee.lifecycle import _format_bytes
 
@@ -8019,6 +8025,31 @@ def test_clone_seed_swallows_missing_origin_base(mocker, make_cfg, tmp_path):
         repo_target="/home/dev/repo",
         base_branch="main",
     )
+
+
+def test_clone_commit_transports_submodules_before_offline_initialization(mocker, make_cfg, tmp_path):
+    from jailbee.lifecycle import _clone_repo_in_container
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.lifecycle._wire_origin_and_tracking")
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
+    mocker.patch("jailbee.lifecycle.rev_parse", return_value=None)
+    order = mocker.Mock()
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    init = mocker.patch("jailbee.submodules.init_submodules_in_container")
+    order.attach_mock(transport, "transport")
+    order.attach_mock(init, "init")
+    sha = "a" * 40
+    _clone_repo_in_container(
+        cfg, incus, "child", "child", source_branch="main", create_new_branch=True,
+        repo_target="/child", base_branch="main", checkout_commit=sha,
+    )
+    assert [call[0] for call in order.mock_calls] == ["transport", "init"]
+    transport.assert_called_once_with(
+        cfg, incus, "child", repo_dir="/child", commit=sha, pin_commits=True
+    )
+    assert init.call_args.kwargs["preseeded"] is True
 
 
 # ---- submodule sub-rows (Task 3) ----

@@ -303,9 +303,12 @@ def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
     sub = submodules.HostSubRepo("lib", cfg.repo_root / "lib.git", None)
     mocker.patch("jailbee.submodules.locate_host_subrepo", return_value=sub)
     mocker.patch("jailbee.git.check_ref_format", return_value=True)
+    mocker.patch("jailbee.git.has_commit", return_value=False)
+    incus = MagicMock()
+    incus.exec.side_effect = ["/source/.git\n", "/source/.git/modules/lib\n"]
     fetch = mocker.patch("jailbee.git.fetch_url")
     mocker.patch("jailbee.git.rev_parse", return_value=child_sha)
     submodules.transport_submodules_to_host_at_commit(
-        cfg, MagicMock(), "myrepo-src", "src", repo_dir="/repo", commit=sha
+        cfg, incus, "myrepo-src", "src", repo_dir="/repo", commit=sha
     )
-    assert fetch.call_args.args[2] == f"+{child_sha}:refs/jailbee-sub/src/lib/commits/{child_sha}"
+    assert fetch.call_args.args[2] == f"+{child_sha}:refs/jailbee-sub/src/commits/{child_sha}"
