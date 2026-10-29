@@ -1551,7 +1551,9 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
 
 
 @pytest.mark.parametrize("number,zero", [(None, False), (1234, False), (1234, True)])
-@pytest.mark.parametrize("comments_only,raise_errors", [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize(
+    "comments_only,raise_errors", [(False, False), (True, False), (False, True)]
+)
 def test_source_gate_precedes_resolution_and_progress(
     mocker, make_cfg, tmp_path, number, zero, comments_only, raise_errors
 ):
@@ -1559,7 +1561,10 @@ def test_source_gate_precedes_resolution_and_progress(
 
     mocker.patch("jailbee.git.check_ref_format", return_value=True)
     text = _manifest_text(
-        pr=number, head_sha=None, source="refs/heads/topic", source_sha="a" * 40,
+        pr=number,
+        head_sha=None,
+        source="refs/heads/topic",
+        source_sha="a" * 40,
         actions=[] if zero else [{"type": "description", "body": "new body"}],
     )
     resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
@@ -1568,8 +1573,14 @@ def test_source_gate_precedes_resolution_and_progress(
 
     def gate():
         return _gate_manifests(
-            make_cfg(tmp_path), mocker.MagicMock(), "c", Outbox({"source.json": text}), "topic",
-            force=False, comments_only=comments_only, raise_errors=raise_errors,
+            make_cfg(tmp_path),
+            mocker.MagicMock(),
+            "c",
+            Outbox({"source.json": text}),
+            "topic",
+            force=False,
+            comments_only=comments_only,
+            raise_errors=raise_errors,
         )
 
     if raise_errors:
@@ -1593,13 +1604,21 @@ def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number
     progress = mocker.patch("jailbee.pr_outbox._write_sidecar")
     push = mocker.patch("jailbee.sync.push_ref_to_remote")
     incus = mocker.MagicMock()
-    manifest = parse_manifest("source.json", _manifest_text(
-        pr=number, head_sha=None, source="refs/heads/topic", source_sha="a" * 40,
-        actions=[] if zero else [{"type": "description", "body": "new body"}],
-    ), {})
-    target = Target(manifest, _pr_info() if number else None, False,
-                    PrScope(tmp_path, "origin", "", None))
-    with pytest.raises(OutboxError, match="jailbee pr push c --source-manifest source.json"):
+    manifest = parse_manifest(
+        "source.json",
+        _manifest_text(
+            pr=number,
+            head_sha=None,
+            source="refs/heads/topic",
+            source_sha="a" * 40,
+            actions=[] if zero else [{"type": "description", "body": "new body"}],
+        ),
+        {},
+    )
+    target = Target(
+        manifest, _pr_info() if number else None, False, PrScope(tmp_path, "origin", "", None)
+    )
+    with pytest.raises(OutboxError, match=r"jailbee pr push c --source-manifest source\.json"):
         apply_manifest(make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000)
     for effect in (*calls.values(), progress, push, incus.exec):
         effect.assert_not_called()

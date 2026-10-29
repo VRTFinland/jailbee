@@ -134,9 +134,7 @@ def test_source_publish_consent_shows_base_range_count(source_publisher, capsys,
     def confirm(question):
         questions.append(question)
         assert "(base main, 7 commits)" in " ".join(capsys.readouterr().out.split())
-        p["count"].assert_called_once_with(
-            p["cfg"].repo_root, "c" * 40, "refs/jailbee/host/source"
-        )
+        p["count"].assert_called_once_with(p["cfg"].repo_root, "c" * 40, "refs/jailbee/host/source")
         p["push"].assert_not_called()
         return consent
 

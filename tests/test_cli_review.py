@@ -280,7 +280,9 @@ def test_apply_refuses_numbered_source_without_ordinary_effects(mocker, tmp_path
         actions=[] if zero else [{"type": "description", "body": "new body"}],
     )
     _setup(mocker, tmp_path, files={"source.json": text})
-    resolve = mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(name="source.json", text=text))
+    resolve = mocker.patch(
+        "jailbee.pr_outbox.resolve_target", return_value=_a_target(name="source.json", text=text)
+    )
     edit = mocker.patch("jailbee.pr.edit_pr")
     push = mocker.patch("jailbee.sync.push_ref_to_remote")
     progress = mocker.patch("jailbee.pr_outbox._write_sidecar")
@@ -288,7 +290,9 @@ def test_apply_refuses_numbered_source_without_ordinary_effects(mocker, tmp_path
     mutate = mocker.patch("jailbee.outbox.io.mutate_store")
     result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
     assert result.exit_code == 1, result.output
-    assert "jailbee pr push feat-foo --source-manifest source.json" in " ".join(result.output.split())
+    assert "jailbee pr push feat-foo --source-manifest source.json" in " ".join(
+        result.output.split()
+    )
     for effect in (resolve, edit, push, progress, finalize, mutate):
         effect.assert_not_called()
 

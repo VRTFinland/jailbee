@@ -134,7 +134,9 @@ def test_source_progress_preflight_exact_boundary_and_maximum_url(source_store):
 @pytest.mark.parametrize("terminated", [False, True])
 def test_source_log_preflight_exact_boundary_and_consumption(source_store, mocker, terminated):
     from jailbee.pr_outbox import (
-        SOURCE_RECEIPT_URL_BYTES, ManifestError, _source_progress_payload,
+        SOURCE_RECEIPT_URL_BYTES,
+        ManifestError,
+        _source_progress_payload,
         preflight_source_progress,
     )
 
@@ -149,7 +151,7 @@ def test_source_log_preflight_exact_boundary_and_consumption(source_store, mocke
     if terminated:
         previous += "\n"
     files["applied.log"] = "h" + previous
-    with pytest.raises(ManifestError, match="applied.log exceeds"):
+    with pytest.raises(ManifestError, match=r"applied\.log exceeds"):
         preflight_source_progress(read(), "m.json")
     files["applied.log"] = previous
     preflight_source_progress(read(), "m.json")

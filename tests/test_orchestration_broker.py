@@ -367,17 +367,23 @@ def test_spawn_ref_refused_by_broker_without_creation(rig: Rig, mocker, monkeypa
     data = json.loads(raw.text)
     data.update(version=2, kind="fork", ref=ref)
     text = json.dumps(data)
-    rig.outboxes["proj-orch"] = [RawManifest(raw.file_name, text, raw.files | {raw.file_name: text})]
+    rig.outboxes["proj-orch"] = [
+        RawManifest(raw.file_name, text, raw.files | {raw.file_name: text})
+    ]
     rig.incus.list_containers.return_value = [_orch()]
     monkeypatch.setattr(broker, "dispatch", actions.dispatch)
-    mocker.patch("jailbee.orchestration.actions.profiles.repo_cap", return_value=RepoCap(allowed=True))
+    mocker.patch(
+        "jailbee.orchestration.actions.profiles.repo_cap", return_value=RepoCap(allowed=True)
+    )
     mocker.patch("jailbee.orchestration.actions.profiles.default_runner", return_value=(None, None))
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
     mocker.patch("jailbee.sync.assert_container_publishable", return_value="proj-orch")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     rig.incus.exec.side_effect = IncusError("unknown revision")
     # Git's syntax probe is the only host subprocess this path may request.
-    run = mocker.patch("jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=int(".." in ref)))
+    run = mocker.patch(
+        "jailbee.git.subprocess.run", return_value=mocker.Mock(returncode=int(".." in ref))
+    )
     fetch = mocker.patch("jailbee.sync.fetch_ref_from_container")
     fetch_sha = mocker.patch("jailbee.sync.fetch_sha_from_container")
     pin = mocker.patch("jailbee.forking.pin_fork_commit")
@@ -389,7 +395,8 @@ def test_spawn_ref_refused_by_broker_without_creation(rig: Rig, mocker, monkeypa
     if ref == "refs/heads/missing":
         assert ref in status.detail and "resolve" in status.detail
         rig.incus.exec.assert_called_once_with(
-            "proj-orch", ["git", "-C", "/repo", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+            "proj-orch",
+            ["git", "-C", "/repo", "rev-parse", "--verify", f"{ref}^{{commit}}"],
             uid=rig.cfg.container_user.uid,
         )
     else:
