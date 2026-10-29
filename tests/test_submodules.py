@@ -2665,8 +2665,10 @@ def historical_repos(tmp_path, mocker):
         directory.mkdir(parents=True)
         (directory / "HEAD").write_text("ref: refs/heads/main\n")
     top_sha, sub_sha, nested_sha = "a" * 40, "b" * 40, "c" * 40
-    roots = {str(tmp_path): (top_sha, "custom name", "old c++ % path", sub_sha),
-             str(parent): (sub_sha, "inner-name", "nested lib", nested_sha)}
+    roots = {
+        str(tmp_path): (top_sha, "custom name", "old c++ % path", sub_sha),
+        str(parent): (sub_sha, "inner-name", "nested lib", nested_sha),
+    }
 
     def host_git(cwd, args):
         if args[:2] == ["config", "--file"]:
@@ -2695,7 +2697,7 @@ def historical_repos(tmp_path, mocker):
 
 
 def test_historical_transport_prefers_retained_host_objects(historical_repos, mocker):
-    cfg, parent, nested, top, _, _ = historical_repos
+    cfg, _parent, _nested, top, _, _ = historical_repos
     mocker.patch("jailbee.git.has_commit", return_value=True)
     fetch = mocker.patch("jailbee.git.fetch_url")
     incus = MagicMock()
@@ -2733,11 +2735,15 @@ def test_historical_transport_reads_removed_source_gitdirs(historical_repos, moc
         cfg, incus, "source", "src", repo_dir="/repo", commit=top
     )
     assert [call.args[0] for call in fetch.call_args_list] == [parent, nested]
-    assert fetch.call_args_list[0].args[1].endswith(
-        "-- git -c core.worktree=/ upload-pack /outside/source.git/modules/custom% name"
+    assert (
+        fetch.call_args_list[0]
+        .args[1]
+        .endswith("-- git -c core.worktree=/ upload-pack /outside/source.git/modules/custom% name")
     )
-    assert fetch.call_args_list[1].args[1].endswith(
-        "/outside/source.git/modules/custom% name/modules/inner-name"
+    assert (
+        fetch.call_args_list[1]
+        .args[1]
+        .endswith("/outside/source.git/modules/custom% name/modules/inner-name")
     )
     assert [call.args[2] for call in fetch.call_args_list] == [
         f"+{child}:refs/jailbee-sub/src/commits/{child}",
@@ -2826,7 +2832,9 @@ def test_historical_new_gitdir_keeps_resolved_relative_upstream(mocker, tmp_path
     )
 
 
-@pytest.mark.parametrize("value,encoded", [("c++/lib", "c++/lib"), ("lib %s", "lib% %%s"), ("ä/lib", "ä/lib")])
+@pytest.mark.parametrize(
+    "value,encoded", [("c++/lib", "c++/lib"), ("lib %s", "lib% %%s"), ("ä/lib", "ä/lib")]
+)
 def test_ext_transport_encodes_arguments_without_shell_quoting(value, encoded):
     from types import SimpleNamespace
 

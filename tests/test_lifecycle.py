@@ -8027,7 +8027,9 @@ def test_clone_seed_swallows_missing_origin_base(mocker, make_cfg, tmp_path):
     )
 
 
-def test_clone_commit_transports_submodules_before_offline_initialization(mocker, make_cfg, tmp_path):
+def test_clone_commit_transports_submodules_before_offline_initialization(
+    mocker, make_cfg, tmp_path
+):
     from jailbee.lifecycle import _clone_repo_in_container
 
     cfg = make_cfg(tmp_path)
@@ -8042,8 +8044,15 @@ def test_clone_commit_transports_submodules_before_offline_initialization(mocker
     order.attach_mock(init, "init")
     sha = "a" * 40
     _clone_repo_in_container(
-        cfg, incus, "child", "child", source_branch="main", create_new_branch=True,
-        repo_target="/child", base_branch="main", checkout_commit=sha,
+        cfg,
+        incus,
+        "child",
+        "child",
+        source_branch="main",
+        create_new_branch=True,
+        repo_target="/child",
+        base_branch="main",
+        checkout_commit=sha,
     )
     assert [call[0] for call in order.mock_calls] == ["transport", "init"]
     transport.assert_called_once_with(

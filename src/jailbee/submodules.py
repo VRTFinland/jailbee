@@ -859,16 +859,52 @@ def _init_level(
             # Objects and a detached HEAD already exist; register the standalone
             # repo before updating, never cloning/fetching from a live upstream.
             incus.exec(container, ["test", "-e", f"{level_dir}/{path}/.git"], uid=uid)
-            incus.exec(container, ["git", "-C", level_dir, "submodule", "init", "--", path], uid=uid, gid=gid)
-            incus.exec(container, ["git", "-C", level_dir, "submodule", "absorbgitdirs", "--", path], uid=uid, gid=gid)
-            incus.exec(container, [
-                "git", "-C", level_dir, "-c", "protocol.allow=never", "submodule",
-                "update", "--init", "--checkout", "--no-fetch", "--", path,
-            ], uid=uid, gid=gid)
-            incus.exec(container, ["git", "-C", level_dir, "submodule", "sync", "--", path], uid=uid, gid=gid)
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "init", "--", path],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "absorbgitdirs", "--", path],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                [
+                    "git",
+                    "-C",
+                    level_dir,
+                    "-c",
+                    "protocol.allow=never",
+                    "submodule",
+                    "update",
+                    "--init",
+                    "--checkout",
+                    "--no-fetch",
+                    "--",
+                    path,
+                ],
+                uid=uid,
+                gid=gid,
+            )
+            incus.exec(
+                container,
+                ["git", "-C", level_dir, "submodule", "sync", "--", path],
+                uid=uid,
+                gid=gid,
+            )
             _init_level(
-                incus, container, repo_dir=repo_dir, level_dir=f"{level_dir}/{path}",
-                host_source=host_source, uid=uid, gid=gid, preseeded=True,
+                incus,
+                container,
+                repo_dir=repo_dir,
+                level_dir=f"{level_dir}/{path}",
+                host_source=host_source,
+                uid=uid,
+                gid=gid,
+                preseeded=True,
             )
             continue
         local_source = f"{host_source}/{path}"
@@ -1278,23 +1314,39 @@ def _ext_url(args: list[str]) -> str:
     """Encode argv for remote-ext, which interprets percent escapes, not a shell."""
     if any(any(char in arg for char in "\0\r\n\t") for arg in args):
         raise SubmoduleError("Invalid control character in submodule transport argument")
-    return "ext::" + " ".join(
-        arg.replace("%", "%%").replace(" ", "% ") for arg in args
-    )
+    return "ext::" + " ".join(arg.replace("%", "%%").replace(" ", "% ") for arg in args)
 
 
 def _sub_upload_pack_url(cfg: Config, container: str, repo_dir: str, subpath: str) -> str:
-    return _ext_url([
-        "incus", "exec", "--user", str(cfg.container_user.uid), container,
-        "--", "git", "upload-pack", f"{repo_dir}/{subpath}",
-    ])
+    return _ext_url(
+        [
+            "incus",
+            "exec",
+            "--user",
+            str(cfg.container_user.uid),
+            container,
+            "--",
+            "git",
+            "upload-pack",
+            f"{repo_dir}/{subpath}",
+        ]
+    )
 
 
 def _sub_receive_pack_url(cfg: Config, container: str, repo_dir: str, subpath: str) -> str:
-    return _ext_url([
-        "incus", "exec", "--user", str(cfg.container_user.uid), container,
-        "--", "git", "receive-pack", f"{repo_dir}/{subpath}",
-    ])
+    return _ext_url(
+        [
+            "incus",
+            "exec",
+            "--user",
+            str(cfg.container_user.uid),
+            container,
+            "--",
+            "git",
+            "receive-pack",
+            f"{repo_dir}/{subpath}",
+        ]
+    )
 
 
 def _container_submodule_paths(
@@ -1826,10 +1878,21 @@ def transport_submodules_to_host_at_commit(
                 continue
             source = source_gitdir(child_ancestry)
             # Override stale core.worktree without changing the source config.
-            url = _ext_url([
-                "incus", "exec", "--user", str(uid), container, "--", "git",
-                "-c", "core.worktree=/", "upload-pack", source,
-            ])
+            url = _ext_url(
+                [
+                    "incus",
+                    "exec",
+                    "--user",
+                    str(uid),
+                    container,
+                    "--",
+                    "git",
+                    "-c",
+                    "core.worktree=/",
+                    "upload-pack",
+                    source,
+                ]
+            )
             created = sub is None
             if sub is None:
                 target = _safe_subrepo_target(parent, leaf, name)
@@ -1845,14 +1908,24 @@ def transport_submodules_to_host_at_commit(
             if created:
                 declared = _gitmodules_url_at(git.run_capture, root, at, name)
 
-                def origin() -> str | None:
-                    ok, value = run(repo_dir, [
-                        "--git-dir", source, "-c", "core.worktree=/",
-                        "config", "--get", "remote.origin.url",
-                    ])
+                def origin(source: str = source) -> str | None:
+                    ok, value = run(
+                        repo_dir,
+                        [
+                            "--git-dir",
+                            source,
+                            "-c",
+                            "core.worktree=/",
+                            "config",
+                            "--get",
+                            "remote.origin.url",
+                        ],
+                    )
                     return value.strip() if ok else None
 
-                _set_cloned_subrepo_origin(sub.root, path, _resolved_subrepo_upstream(declared, origin))
+                _set_cloned_subrepo_origin(
+                    sub.root, path, _resolved_subrepo_upstream(declared, origin)
+                )
             walk(sub, sha, child_ancestry)
 
     walk(superproject_subrepo(Path(cfg.repo_root)), commit, ())
