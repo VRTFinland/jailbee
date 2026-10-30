@@ -217,12 +217,27 @@ class SpawnPlan:
     pr: int | None = None
     clone_commit: str | None = None
     pr_base: str | None = None
+    autostart_profile: str | None = None
+
+
+def _profile_problem(cfg: Config, name: str | None) -> str | None:
+    from jailbee.autostart_profiles import ProfileError, validate_profile_name
+
+    if name is not None:
+        try:
+            validate_profile_name(cfg.autostart, name)
+        except ProfileError:
+            return f"autostart profile `{name}` is not defined"
+    return None
 
 
 def plan_spawn(
     ctx: ActionContext, m: SpawnManifest, *, queued_names: Collection[str]
 ) -> SpawnPlan | Outcome:
     """Validate a spawn request; `queued_names` are full names of queued spawns."""
+    problem = _profile_problem(ctx.cfg, m.autostart_profile)
+    if problem is not None:
+        return refused(problem)
     grant = ctx.raw_grant()
     if grant is None:
         return refused(NOT_ALLOWED)
@@ -274,7 +289,8 @@ def plan_spawn(
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     return SpawnPlan(
-        full, m.kind, branch, m.base, prompt, m.rights, runner, policy, m.ref, m.pr, commit, pr_base
+        full, m.kind, branch, m.base, prompt, m.rights, runner, policy, m.ref, m.pr, commit, pr_base,
+        m.autostart_profile,
     )
 
 
@@ -315,6 +331,7 @@ def child_options(
         rights=plan.rights,
         runner=plan.runner,
         on_done=plan.on_done,
+        autostart_profile=plan.autostart_profile,
         assume_yes=False,
     )
 
@@ -515,6 +532,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             runner=plan.runner.model_dump(mode="json") if plan.runner else None,
             runner_set=plan.runner is not None,
             on_done=plan.on_done,
+        autostart_profile=plan.autostart_profile,
             ref=plan.ref,
             pr=plan.pr,
             pr_base=plan.pr_base,
@@ -548,7 +566,11 @@ def _boot(
     runner: Runner | None = None,
     set_runner: bool = False,
     on_done: str | None = None,
+    autostart_profile: str | None = None,
 ) -> Outcome:
+    problem = _profile_problem(ctx.cfg, autostart_profile)
+    if problem is not None:
+        return refused(problem)
     # Before the boot: a restarted child commits anew, so a HEAD recorded at
     # its last stop (or its last `done`) no longer describes it, and it is
     # `working` again (absent STATE = working). Clearing first means a running
@@ -569,12 +591,20 @@ def _boot(
                 ctx.incus.config_unset_checked(child.full, labels.RUNNER)
         if on_done is not None:
             ctx.incus.config_set(child.full, labels.ON_DONE, on_done)
+        if autostart_profile is not None:
+            from jailbee.autostart_profiles import PROFILE_KEY
+
+            ctx.incus.config_set(child.full, PROFILE_KEY, autostart_profile)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
         lifecycle.boot_container(
             ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt
         )
+        if ctx.cfg.autostart.profiles:
+            from jailbee.autostart_profiles import run_profile_start
+
+            run_profile_start(ctx.cfg, ctx.incus, child.full)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     detail = f"child `{child.short}` restarted"
@@ -596,6 +626,9 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
     revoked = _still_granted(ctx, "spawn")
     if revoked is not None:
         return revoked
+    problem = _profile_problem(ctx.cfg, req.autostart_profile)
+    if problem is not None:
+        return refused(problem)
     rights = ChildRights.model_validate(req.rights)
     # Spec 5.2: the grant and the repo cap apply at every broker check, so
     # rights accepted at queue time are checked again against today's.
@@ -625,6 +658,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         pr=req.pr,
         clone_commit=req.commit if req.kind == "pr" else None,
         pr_base=req.pr_base,
+        autostart_profile=req.autostart_profile,
         on_done=(
             "destroy"
             if req.on_done == "destroy" and grant is not None and "destroy" in grant.operations
@@ -684,6 +718,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         runner=runner,
         set_runner=req.runner_set,
         on_done=policy,
+        autostart_profile=req.autostart_profile,
     )
 
 
@@ -776,6 +811,9 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
     if not isinstance(m, RestartManifest):
         return refused("not a restart manifest")
+    problem = _profile_problem(ctx.cfg, m.autostart_profile)
+    if problem is not None:
+        return refused(problem)
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
@@ -810,6 +848,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             runner=runner,
             set_runner=set_runner,
             on_done=m.on_done,
+            autostart_profile=m.autostart_profile,
         )
     queued.append(
         QueuedRequest(
@@ -825,6 +864,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             runner=runner.model_dump(mode="json") if runner else None,
             runner_set=set_runner,
             on_done=m.on_done,
+            autostart_profile=m.autostart_profile,
         )
     )
     _store(ctx, queued)

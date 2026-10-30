@@ -109,6 +109,16 @@ def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
     )
 
 
+@pytest.mark.parametrize("kind", ["spawn", "restart"])
+def test_inbox_helper_send_spawn_autostart_profile(script, base, tmp_path, kind):
+    env = env_for(base, tmp_path)
+    args = ["--branch", "fix/x", "--new"] if kind == "spawn" else ["--child", "x"]
+    result = run(script, "send", kind, *args, "--autostart-profile", "light", "--text", "do it", env=env)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
+    assert manifest["autostart_profile"] == "light"
+
+
 def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
 

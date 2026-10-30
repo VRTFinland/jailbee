@@ -407,6 +407,11 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "terminal works in containers instead of tmux refusing to start"
         ),
     ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"base_build"}),
+        reason="the golden image's jailbee-inbox supports named autostart profiles for spawn and restart",
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

@@ -33,10 +33,11 @@ Usage: jailbee-inbox wait [--timeout DUR]
                     [--reply-to ID] + text
            spawn    [--branch B] [--new [--base B] | --ref REF | --pr N]
                     [--mount M]... [--loose] [--egress H]... [--note T]
-                    [--on-done destroy|keep] [runner] + text
+                    [--on-done destroy|keep] [--autostart-profile NAME] [runner] + text
                     --branch is required except for --pr; the broker derives
                     the branch from the PR and ignores any supplied branch.
-           restart  --child C [--on-done destroy|keep] [runner | --default-runner] + text
+           restart  --child C [--on-done destroy|keep] [--autostart-profile NAME]
+                    [runner | --default-runner] + text
            import | update | stop   --child C
            destroy  --child C [--force]
          runner = --agent claude|claude-jb [--profile P (claude-jb only)]
@@ -365,6 +366,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
+    local autostart_profile=""
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=()
@@ -378,7 +380,7 @@ cmd_send() {
             --force) force=1; shift; continue ;;
             --default-runner) default_runner=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--autostart-profile)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -405,6 +407,7 @@ cmd_send() {
             --profile) profile="$opt_val" ;;
             --model) model="$opt_val" ;;
             --on-done) on_done="$opt_val" ;;
+            --autostart-profile) autostart_profile="$opt_val" ;;
             --timeout) timeout="$opt_val" ;;
         esac
         shift 2
@@ -472,6 +475,10 @@ cmd_send() {
                 + (if $m != "" then {model: $m} else {} end))}')"
     elif [ "$default_runner" -eq 1 ]; then
         runner_json='{"runner": null}'
+    fi
+    if [ -n "$autostart_profile" ]; then
+        [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--autostart-profile only applies to spawn and restart"
+        runner_json="$(jq -c --arg p "$autostart_profile" '. + {autostart_profile: $p}' <<<"$runner_json")"
     fi
     if [ -n "$on_done" ]; then
         runner_json="$(jq -c --arg p "$on_done" '. + {on_done: $p}' <<<"$runner_json")"

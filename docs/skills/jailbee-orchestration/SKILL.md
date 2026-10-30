@@ -134,6 +134,9 @@ imported ref, publish its source manifest or preserve the commit under a
 separate persistent ref and use that ref in the manifest. Staging alone does
 not retain the ref; a later import can move it.
 
+Spawn and restart may also name `--autostart-profile NAME` to select the repo's
+startup stages; this is separate from the runner's LiteLLM `--profile`.
+
 ## Choosing the child's agent (`runner`)
 
 A spawn may name an optional `runner`: `agent` (`claude` or `claude-jb`),

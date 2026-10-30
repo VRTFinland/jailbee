@@ -69,6 +69,22 @@ def missing_on_create(cfg: Config, incus: Incus, container: str, profile: str | 
     return selected.model_copy(update={"on_create": stages, "on_start": []})
 
 
+def run_profile_start(cfg: Config, incus: Incus, container: str) -> None:
+    """Foreground boot continuation for the broker (which has no CLI post-boot hook)."""
+    from jailbee.autostart import run_autostart
+    from jailbee.autostart_plan import AutostartTrigger
+    from jailbee.lifecycle import container_repo_dir
+
+    profile = resolve_profile(cfg, incus, container)
+    missing = missing_on_create(cfg, incus, container, profile)
+    repo_dir = container_repo_dir(cfg, incus, container)
+    if missing.on_create:
+        run_autostart(cfg.model_copy(update={"autostart": missing}), incus, container,
+                      AutostartTrigger.ON_CREATE, repo_dir, override="wait")
+    run_autostart(profiled_config(cfg, profile), incus, container,
+                  AutostartTrigger.ON_START, repo_dir, override="wait")
+
+
 def show_profile(cfg: Config, incus: Incus, container: str) -> None:
     from jailbee.tui import info
 

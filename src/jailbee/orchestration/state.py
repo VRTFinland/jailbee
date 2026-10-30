@@ -42,6 +42,7 @@ class QueuedRequest:
     runner: dict[str, object] | None = None
     runner_set: bool = False
     on_done: str | None = None
+    autostart_profile: str | None = None
     ref: str | None = None
     pr: int | None = None
     pr_base: str | None = None

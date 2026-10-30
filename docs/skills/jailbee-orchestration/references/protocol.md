@@ -39,6 +39,14 @@ spawn also supports version `2`. The type is one of
 
 ### `spawn`
 
+`spawn` and `restart` accept optional `autostart_profile: "NAME"`
+(helper: `--autostart-profile NAME`), independent of the runner's `profile`.
+The broker validates against the host repo's `autostart.profiles`; an unknown
+name is refused with ``autostart profile `NAME` is not defined``. Spawn uses
+the named profile for creation. Restart stores it before booting and runs
+missing one-shot setup before the profile's `on_start` stages. Omission keeps
+the normal default on spawn and the child's stored selection on restart.
+
 Spawn requests support version 2; legacy version 1 remains valid for fork/new
 without `ref` or `pr`. Other messages, inbox, grant and finish envelopes
 remain version 1.
