@@ -286,3 +286,27 @@ def test_never_grant_does_not_take_over_human_timed_mount(rig):
     attach.assert_not_called()
     assert ChildRights.from_label(store[("c", labels.RIGHTS)]) == ChildRights()
     assert ("c", labels.TIMED) not in store
+
+
+@pytest.mark.parametrize("body", [{"grant": {"loose": True, "for": "5m"}}, {"revoke": {"loose": True}}])
+def test_rights_refused_while_autostart_runs(rig, mocker, body):
+    ctx, store, switch, *_ = rig
+    mocker.patch("jailbee.autostart_status.live_run", return_value=object())
+    result = actions.dispatch(ctx, manifest(**body))
+    assert result.state == "refused"
+    assert "autostart is running in `c`; send rights again when it finishes" in result.detail
+    switch.assert_not_called()
+    assert (("c", labels.TIMED)) not in store
+
+
+def test_rights_refused_for_child_sender_while_autostart_runs(rig, mocker):
+    ctx, *_ = rig
+    child = ctx.nodes["c"]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=object())
+    ctx2 = ActionContext(ctx.cfg, ctx.gcfg, ctx.incus, ctx.root, child, ctx.nodes, ctx.now)
+    m = RightsManifest.model_validate(
+        {"version": 1, "type": "rights", "id": "r", "revoke": {"loose": True}}
+    )
+    result = actions.dispatch(ctx2, m)
+    assert result.state == "refused"
+    assert "autostart is running" in result.detail
