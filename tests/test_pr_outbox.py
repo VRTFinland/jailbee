@@ -393,13 +393,12 @@ def test_parse_rejects_too_many_comments():
         parse_manifest("001-x.json", text, {})
 
 
-def test_parse_rejects_too_many_actions():
+def test_parse_accepts_more_than_fifty_actions():
     actions = [{"type": "comment", "body": "x"} for _ in range(51)]
-    from jailbee.pr_outbox import ManifestError, parse_manifest
+    from jailbee.pr_outbox import parse_manifest
 
     text = _manifest_text(actions=actions)
-    with pytest.raises(ManifestError, match="more than the cap of 50"):
-        parse_manifest("001-x.json", text, {})
+    assert len(parse_manifest("001-x.json", text, {}).actions) == 51
 
 
 def test_parse_rejects_body_over_64kb():

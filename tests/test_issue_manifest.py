@@ -407,9 +407,9 @@ def test_rejects_invalid_local_references(actions: list[object], match: str) -> 
         parse_manifest("001-work.json", _manifest(*actions), {})
 
 
-def test_rejects_more_than_fifty_actions() -> None:
-    with pytest.raises(IssueManifestError, match="50"):
-        parse_manifest("001-work.json", _manifest(*[_comment() for _ in range(51)]), {})
+def test_accepts_more_than_fifty_actions() -> None:
+    manifest = parse_manifest("001-work.json", _manifest(*[_comment() for _ in range(51)]), {})
+    assert len(manifest.actions) == 51
 
 
 @pytest.mark.parametrize(
