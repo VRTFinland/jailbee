@@ -1028,3 +1028,14 @@ def test_upgrade_note_announces_orchestration_skills() -> None:
     notes = [n for n in UPGRADE_NOTES if "jailbee-orchestration" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
+
+
+def test_runtime_rights_upgrade_notes_one_per_reason():
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    rights = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "send rights" in n.reason]
+    assert len(rights) == 1
+    assert rights[0].actions == frozenset({"base_build"})
+    skills = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "skills" in n.reason]
+    assert len(skills) == 1
+    assert skills[0].actions == frozenset({"apply"})

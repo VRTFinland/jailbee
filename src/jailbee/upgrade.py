@@ -415,6 +415,23 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "for spawn and restart"
         ),
     ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox gains `send rights`, so an agent can "
+            "grant or revoke a child's loose network, mounts and egress at runtime"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs the updated orchestration, usage "
+            "and repo-setup skills (runtime rights and "
+            "autostart profiles) into the shared skills mount"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
