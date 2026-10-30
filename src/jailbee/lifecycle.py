@@ -2024,9 +2024,8 @@ def _new_container(
 
         for kind in opts.rights.mounts:
             mounts.attach(cfg, incus, name, kind, until=None)
-        if opts.rights.egress:
-            egress_scope.set_container_extras(incus, name, list(opts.rights.egress))
-            egress_scope.apply_container_acl(cfg, incus, name, mode=opts.network)
+        for entry in opts.rights.egress:
+            egress_scope.add_container_entry(cfg, incus, name, entry)
 
     # Repo source bind (RO). Per-container rather than in the
     # `<prefix>-binds` profile so multiple clones of the same upstream

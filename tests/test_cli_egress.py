@@ -31,7 +31,7 @@ def _repo(tmp_path, mocker, *, egress_allow=None, extras=None):
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat"))
     mocker.patch("jailbee.egress_scope.container_extras", return_value=list(extras or []))
     mocker.patch("jailbee.egress_scope.apply_container_acl")
-    mocker.patch("jailbee.cli._repin_hosts_quietly")
+    mocker.patch("jailbee.egress_scope._repin_hosts_quietly")
     return cfg, incus
 
 
@@ -358,7 +358,7 @@ def test_add_to_a_loose_container_stores_the_label_without_a_local_eth0(tmp_path
     incus.config_get.return_value = json.dumps(["nexus.corp:443"])
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat"))
-    mocker.patch("jailbee.cli._repin_hosts_quietly")
+    mocker.patch("jailbee.egress_scope._repin_hosts_quietly")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -1064,7 +1064,7 @@ def test_rm_on_a_container_syncs_the_proxy_after_the_removal(tmp_path, mocker):
     cfg, incus = _repo(tmp_path, mocker, extras=["*.example.com"])
     for target in _work_container(cfg, incus, "loose"):
         mocker.patch(target)
-    mocker.patch("jailbee.cli._egress_container_mode", return_value="loose")
+    mocker.patch("jailbee.egress_scope._egress_container_mode", return_value="loose")
     order: list[str] = []
     mocker.patch(
         "jailbee.egress_scope.set_container_extras", side_effect=lambda *_a: order.append("store")
@@ -1104,7 +1104,7 @@ def test_rm_says_open_a_new_shell_only_when_the_env_changed(tmp_path, mocker, ch
     cfg, incus = _repo(tmp_path, mocker, extras=["*.example.com"])
     for target in _work_container(cfg, incus, "loose"):
         mocker.patch(target)
-    mocker.patch("jailbee.cli._egress_container_mode", return_value="loose")
+    mocker.patch("jailbee.egress_scope._egress_container_mode", return_value="loose")
     mocker.patch("jailbee.egress_scope.set_container_extras")
     mocker.patch.object(egress_proxy, "sync_container", return_value=changed)
 

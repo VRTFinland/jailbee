@@ -957,3 +957,40 @@ def test_resolve_entries_tolerant_skips_wildcards(mocker):
     out = egress_scope._resolve_entries_tolerant("ct", ["*.vendor.com", "a.com"])
     rws.assert_called_once_with(["a.com"])
     assert [e.description for e in out] == ["a.com"]
+
+
+@pytest.mark.parametrize("work", [False, True])
+def test_container_entry_full_path(tmp_path, mocker, work):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [{"name": "c"}]
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    legacy = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    acl = mocker.patch("jailbee.work_acl.apply_work_container_acl")
+    reconcile = mocker.patch("jailbee.work_acl.reconcile_work_acl")
+    repin = mocker.patch("jailbee.egress_scope._repin_hosts_quietly", create=True)
+    proxy = mocker.patch("jailbee.egress_proxy.sync_container", return_value=False)
+    assert not egress_scope.add_container_entry(cfg, incus, "c", "pypi.org")
+    incus.config_set.assert_any_call("c", egress_scope.EGRESS_EXTRA_KEY, '["pypi.org"]')
+    assert acl.called == work
+    assert reconcile.called == work
+    assert legacy.called != work
+    repin.assert_called_once_with(cfg, incus, "c")
+    proxy.assert_called_once_with(cfg, incus, "c", "strict")
+
+
+def test_container_wildcard_requires_work_network(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.config_get.return_value = None
+    incus.list_containers.return_value = []
+    with pytest.raises(ValueError, match="container-scope wildcards need the work network"):
+        egress_scope.add_container_entry(cfg, incus, "c", "*.example.com")
+    incus.config_set.assert_not_called()

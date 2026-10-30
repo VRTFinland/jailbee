@@ -195,6 +195,92 @@ def _warn_bad_label(name: str, reason: str) -> None:
     )
 
 
+class ContainerEntryError(ValueError):
+    """A container override cannot be applied; exit_code preserves CLI policy."""
+
+    def __init__(self, message: str, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _egress_container_mode(cfg: Config, incus: Incus, name: str) -> str:
+    from jailbee.lifecycle import current_network_mode
+
+    return current_network_mode(cfg, incus, name) or "strict"
+
+
+def _repin_hosts_quietly(cfg: Config, incus: Incus, name: str) -> None:
+    from jailbee.hosts import apply_hosts
+    from jailbee.incus import IncusError
+    from jailbee.net_switch import mirror_endpoint_or_none
+
+    try:
+        apply_hosts(cfg, incus, name, mirror_endpoint=mirror_endpoint_or_none(cfg, incus))
+    except IncusError:
+        # Stopped containers are pinned by their next start.
+        pass
+
+
+def _sync_container_entry(cfg: Config, incus: Incus, name: str) -> bool:
+    from jailbee import egress_proxy
+    from jailbee.network_generation import generation_of
+
+    raw = next((item for item in incus.list_containers() if item.get("name") == name), {})
+    mode = _egress_container_mode(cfg, incus, name)
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+        from jailbee.work_network import work_network_lock
+
+        with work_network_lock():
+            apply_work_container_acl(cfg, incus, name)
+            reconcile_work_acl(cfg, incus)
+    else:
+        apply_container_acl(cfg, incus, name, mode=mode)
+    _repin_hosts_quietly(cfg, incus, name)
+    return egress_proxy.sync_container(cfg, incus, name, mode)
+
+
+def add_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> bool:
+    """Store and materialise an override; return whether proxy env changed."""
+    from jailbee import egress_proxy
+    from jailbee.egress import is_wildcard_entry, validate_allow_entry
+    from jailbee.network_generation import generation_of
+
+    validate_allow_entry(entry)
+    extras = container_extras(incus, name)
+    if entry in extras or entry in cfg.effective_egress_allow():
+        return False
+    wildcard = is_wildcard_entry(entry)
+    raw = next((item for item in incus.list_containers() if item.get("name") == name), {})
+    if wildcard and generation_of(cfg, raw) != "work":
+        raise ContainerEntryError(
+            "container-scope wildcards need the work network "
+            "(run `jailbee net migrate`), or add it with --repo", 2
+        )
+    if not wildcard:
+        resolve_entries([entry])
+    set_container_extras(incus, name, [*extras, entry])
+    proxy_ok = not wildcard or egress_proxy.proxy_up_or_warn(
+        incus, storage_pool=cfg.service_storage_pool()
+    )
+    changed = _sync_container_entry(cfg, incus, name)
+    if not proxy_ok:
+        raise ContainerEntryError(
+            f"Stored '{entry}' on '{name}', but it is not reachable until the "
+            "egress proxy runs: run `jailbee apply`."
+        )
+    return changed
+
+
+def remove_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> bool:
+    """Remove a container override and materialise the remaining rights."""
+    extras = container_extras(incus, name)
+    if entry not in extras:
+        return False
+    set_container_extras(incus, name, [e for e in extras if e != entry])
+    return _sync_container_entry(cfg, incus, name)
+
+
 # ---- naming --------------------------------------------------------------
 
 

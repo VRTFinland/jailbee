@@ -9575,35 +9575,6 @@ def _egress_container_name(
     return container_option if container_option is not None else name
 
 
-def _repin_hosts_quietly(cfg: "Config", incus: "IncusType", name: str) -> None:
-    """Best-effort /etc/hosts re-pin after an override change.
-
-    A stopped container has no /etc/hosts to write; an exec failure must not
-    make the override itself look like it failed, because it did not.
-    """
-    from jailbee.hosts import apply_hosts
-    from jailbee.incus import IncusError
-
-    try:
-        apply_hosts(cfg, incus, name, mirror_endpoint=_mirror_endpoint_or_none(cfg, incus))
-    except IncusError as e:
-        warn(f"Override stored, but /etc/hosts was not re-pinned on '{name}': {e}")
-
-
-def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
-    """The mode to materialise a container's extra ACL under.
-
-    `apply_container_acl` owns a container-local `eth0` device, and a
-    container-local device SHADOWS the assigned network profile. Hardcoding
-    `mode="strict"` here would silently pin a currently-loose container back
-    to `incusbr0` with the strict allowlist enforced, while `jailbee ls`
-    still reported it loose. Same fallback `snapshots.restore_snapshot` uses.
-    """
-    from jailbee.lifecycle import current_network_mode
-
-    return current_network_mode(cfg, incus, name) or "strict"
-
-
 @egress_app.command("add")
 def egress_add_cmd(
     entry: Annotated[
@@ -9705,46 +9676,14 @@ def egress_add_cmd(
         return
 
     assert container is not None
-    extras = egress_scope.container_extras(incus, container)
-    if entry in extras:
+    if entry in egress_scope.container_extras(incus, container):
         info(f"'{entry}' is already an override on '{container}' — nothing to do.")
         return
-    from jailbee.network_generation import generation_of
-
-    raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
-    is_work = generation_of(cfg, raw) == "work"
-    if is_wildcard_entry(entry) and not is_work:
-        error(
-            "container-scope wildcards need the work network "
-            "(run `jailbee net migrate`), or add it with --repo"
-        )
-        raise typer.Exit(2)
-    egress_scope.set_container_extras(incus, container, [*extras, entry])
-    mode = _egress_container_mode(cfg, incus, container)
-    if is_work:
-        from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
-        from jailbee.work_network import work_network_lock
-
-        with work_network_lock():
-            apply_work_container_acl(cfg, incus, container)
-            reconcile_work_acl(cfg, incus)
-    else:
-        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
-    _repin_hosts_quietly(cfg, incus, container)
-    # A literal IP or CIDR can change a non-always-on container's NO_PROXY (an
-    # always-on one's never moves), so the sync is unconditional; only a
-    # wildcard needs Squid itself.
-    proxy_ok = True
-    if is_wildcard_entry(entry):
-        # Squid first, so the sync finds an endpoint to point the environment at.
-        proxy_ok = egress_proxy.proxy_up_or_warn(incus, storage_pool=cfg.service_storage_pool())
-    env_changed = egress_proxy.sync_container(cfg, incus, container, mode)
-    if not proxy_ok:
-        error(
-            f"Stored '{entry}' on '{container}', but it is not reachable until the "
-            "egress proxy runs: run `jailbee apply`."
-        )
-        raise typer.Exit(1)
+    try:
+        env_changed = egress_scope.add_container_entry(cfg, incus, container, entry)
+    except egress_scope.ContainerEntryError as exc:
+        error(str(exc))
+        raise typer.Exit(exc.exit_code) from exc
     if env_changed:
         info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' may now reach {entry}.")
@@ -9871,24 +9810,8 @@ def egress_rm_cmd(
             else:
                 error(f"'{entry}' is not an override on '{container}'.")
             raise typer.Exit(1)
-        egress_scope.set_container_extras(incus, container, [e for e in extras if e != entry])
-        mode = _egress_container_mode(cfg, incus, container)
-        from jailbee.network_generation import generation_of
-
-        raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
-        if generation_of(cfg, raw) == "work":
-            from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
-            from jailbee.work_network import work_network_lock
-
-            with work_network_lock():
-                apply_work_container_acl(cfg, incus, container)
-                reconcile_work_acl(cfg, incus)
-        else:
-            egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
-    _repin_hosts_quietly(cfg, incus, container)
-    from jailbee import egress_proxy
-
-    if egress_proxy.sync_container(cfg, incus, container, mode):
+        env_changed = egress_scope.remove_container_entry(cfg, incus, container, entry)
+    if env_changed:
         info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' can no longer reach {entry}.")
 
@@ -10174,24 +10097,21 @@ def _switch(
     cannot reach that branch (``net strict``) need not resolve it — and no
     caller pays for a global-config read it does not use.
     """
-    from jailbee.lifecycle import (
-        current_network_mode,
-        short_name,
-        switch_network,
-    )
+    from jailbee.lifecycle import short_name
+    from jailbee.net_switch import switch_mode
 
     incus, resolved = _resolve_existing(cfg, name)
     _warn_if_autostart_runs(cfg, resolved)
-    # Both directions: loose keeps the mirror's /etc/hosts row too, since
-    # only jailbee-loose's dnsmasq knows the name (see `hosts.sync_hosts`).
-    mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
-    if mode == "strict" and mirror_endpoint is None:
-        # `_mirror_endpoint_or_none` stays silent — it is also the `start` /
-        # `restart` path, where the pin is incidental. Here it is not: going
-        # strict removes the container's direct route to Docker Hub, so a repo
-        # that wants the mirror and cannot reach it ends up with a dockerd
-        # proxying to a host it can no longer resolve. `jailbee new --network
-        # loose` with the mirror down is a legitimate way to reach this state.
+    chosen = None
+    if mode == "loose" and not no_revert:
+        chosen = ttl.duration if ttl is not None else policy.duration() if policy else None
+    until = _now() + chosen if chosen is not None else None
+    try:
+        result = switch_mode(cfg, incus, resolved, mode, until=until)
+    except ValueError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    if mode == "strict" and not result.mirror_available:
         from jailbee.docker_daemon import mirror_wanted
 
         if mirror_wanted(cfg, _load_global()):
@@ -10200,53 +10120,6 @@ def _switch(
                 "/etc/hosts pin for it, so `docker pull` inside it will fail. "
                 "Fix with 'jailbee registry up && jailbee apply'."
             )
-
-    # Capture pre-switch mode for ``loose_revert_to``. None means no
-    # recognised jailbee net profile attached — default to "strict" as the
-    # safest fallback.
-    pre_mode = current_network_mode(cfg, incus, resolved)
-
-    try:
-        switch_network(cfg, incus, resolved, mode, mirror_endpoint=mirror_endpoint)
-    except ValueError as e:
-        error(str(e))
-        raise typer.Exit(1) from e
-
-    # Label lifecycle. Only ``loose`` may set labels; everything else
-    # clears them so the timer never operates on stale state.
-    if mode == "loose":
-        if ttl is not None:
-            chosen = ttl.duration
-        elif no_revert:
-            # --no-revert never needs the policy's TTL, so its .duration()
-            # must stay unevaluated: a malformed loose_auto_revert.after
-            # (e.g. unparseable or >24h) must not break --no-revert.
-            chosen = None
-        else:
-            # `net_loose` has already parsed this policy's `after` — it is the
-            # only caller that passes one, and it refuses the command outright
-            # when the value is malformed rather than switching first and
-            # failing here, with the container already in loose.
-            chosen = policy.duration() if policy is not None else None
-        if no_revert or chosen is None:
-            incus.config_unset(resolved, "user.jailbee.loose_until")
-            incus.config_unset(resolved, "user.jailbee.loose_revert_to")
-        else:
-            until = _now() + chosen
-            # Preserve revert_to if already loose; otherwise capture pre_mode.
-            if pre_mode == "loose":
-                existing = incus.config_get(resolved, "user.jailbee.loose_revert_to")
-                revert_to = existing or "strict"
-            else:
-                # Only strict remains as a revert target; a pre_mode of None
-                # (no recognised net profile attached) lands here too.
-                revert_to = "strict"
-            incus.config_set(resolved, "user.jailbee.loose_revert_to", revert_to)
-            incus.config_set(resolved, "user.jailbee.loose_until", until.isoformat())
-    else:
-        incus.config_unset(resolved, "user.jailbee.loose_until")
-        incus.config_unset(resolved, "user.jailbee.loose_revert_to")
-
     success(f"Container '{short_name(cfg, resolved)}' is now on network: {mode}")
 
 

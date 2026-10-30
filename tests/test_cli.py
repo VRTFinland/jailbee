@@ -5973,7 +5973,7 @@ def _setup_net_test(tmp_path, mocker, *, cfg_overrides=None, gcfg=None, pre_mode
         "_resolve_existing",
         return_value=(incus, f"{cfg.container_prefix}-feat-x"),
     )
-    mocker.patch.object(cli, "_mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.net_switch.mirror_endpoint_or_none", return_value=None)
     mocker.patch(
         "jailbee.lifecycle.current_network_mode",
         return_value=pre_mode,
@@ -6055,7 +6055,7 @@ def test_net_loose_keeps_the_mirror_endpoint(tmp_path, mocker):
     if it is handed the endpoint: with None it clears the whole block, and a
     work-network container's dockerd can no longer resolve its HTTPS_PROXY."""
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=("10.42.0.7", 3128))
+    mocker.patch("jailbee.net_switch.mirror_endpoint_or_none", return_value=("10.42.0.7", 3128))
     switch = mocker.patch("jailbee.lifecycle.switch_network")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
