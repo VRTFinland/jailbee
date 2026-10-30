@@ -187,8 +187,9 @@ Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
 Status: `done` ("child `x` restarted") for a synchronous restart; repositories
 with autostart profiles return `started` after handing boot and setup to a
 background worker (see the log in the detail). `queued` means no slot is free,
-then `started` when launched later. A later restart/setup failure is recorded
-in the background job and log, not a second manifest status.
+then `started` when launched later. A later restart/setup failure is recorded in the background job and log
+and also arrives as a second status, `failed`, for the same ref (``restart of child
+`<child>` failed: <reason>``).
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
 `"runner": null` selects the current effective default (clearing the label if
@@ -373,7 +374,7 @@ A spawn's final status is `done` or `failed`:
 ```
 
 `failed` is final and also reports runtime rights application failures; a restart reports `done` or
-`started` and no final status. Other details: ``creation of child `<child>`
+`started`, then `failed` for the same ref if its boot or setup fails later. Other details: ``creation of child `<child>`
 stopped unexpectedly during <phase>``, ``creation of child `<child>` ended
 without a container``; a missing error reads `see the worker log`.
 

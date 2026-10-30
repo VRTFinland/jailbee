@@ -10,7 +10,7 @@ from unittest.mock import ANY, MagicMock
 import pytest
 
 from jailbee import background
-from jailbee.db.models import JOB_CREATE
+from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
@@ -1568,3 +1568,24 @@ def test_grant_json_rewritten_when_only_source_changes(rig):
     assert first["default_runner"] == second["default_runner"]
     assert first["default_runner_source"] == "repo"
     assert second["default_runner_source"] == "local"
+
+
+def test_failed_profile_restart_boot_reports_failed_for_the_same_ref(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restart answers `started`; its boot worker failing later adds `failed` for that ref."""
+    monkeypatch.setattr(broker, "live_job_kind", lambda name: "boot")
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
+    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.dispatch.return_value = Outcome("started", "child `kid` restarting")
+    rig.tick()
+    assert [s.state for _, s in rig.statuses()] == ["started"]
+
+    failed_boot = watch.JobSnapshot("failed", 7, JOB_BOOT, "setup failed after boot", NOW)
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-kid": failed_boot})
+    rig.outboxes["proj-orch"] = []
+    rig.tick()
+    final = [(s.ref, s.detail) for _, s in rig.statuses() if s.state == "failed"]
+    assert final == [("r1", "restart of child `kid` failed: setup failed after boot")]
+    assert _watches(rig) == []
