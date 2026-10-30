@@ -213,6 +213,18 @@ def test_switch_refused_during_live_detached_run_stores_nothing(make_cfg, tmp_pa
     assert not state
 
 
+def test_background_new_rejects_unknown_profile_before_launch(make_cfg, tmp_path, mocker):
+    from jailbee.create_flow import preflight_background, Interaction, CreateError
+    from jailbee.lifecycle import BranchAutostartAssessment
+    from tests.test_lifecycle_autostart_detach import _opts
+    cfg = profile_cfg(make_cfg, tmp_path)
+    mocker.patch("jailbee.lifecycle.resolve_clone_ref")
+    mocker.patch("jailbee.lifecycle.assess_branch_autostart", return_value=BranchAutostartAssessment(ref=None, effective_cfg=cfg, verdict=None))
+    with pytest.raises(CreateError, match="autostart profile `bad` is not defined") as exc:
+        preflight_background(cfg, _opts(autostart_profile="bad"), interaction=Interaction.none())
+    assert exc.value.exit_code == 2
+
+
 def test_new_no_autostart_records_all_profile_on_create(make_cfg, tmp_path, mocker):
     from jailbee.lifecycle import new_container
     from jailbee.autostart_profiles import CREATED_KEY

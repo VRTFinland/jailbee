@@ -421,6 +421,10 @@ def preflight_background(
     try:
         clone_ref = resolve_clone_ref(cfg, opts, autofetch=autofetch)
         assessment = assess_branch_autostart(cfg, opts, clone_ref)
+        if opts.autostart_profile is not None:
+            from jailbee.autostart_profiles import validate_profile_name
+
+            validate_profile_name(assessment.effective_cfg.autostart, opts.autostart_profile)
     except ValueError as e:
         # Same failures `new_container` raises for a bad ref or a failed
         # fetch — better here, in the terminal, than in a worker log.
