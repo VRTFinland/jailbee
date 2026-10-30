@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 
 from jailbee.dashboard import outbox as dob
@@ -66,6 +66,21 @@ _NO_ABILITIES = dob.Abilities(False, False, False, False, False, False)
 # the remote-SSH policy judges the command shape, not the names.
 _ANY_PROPOSAL = "pr/proposal.json"
 _ANY_REVISION = "0"
+
+_DRAFT_CHOICE = ("Publish as draft review — only you see it until you submit it on GitHub", "draft")
+_MARK_PROPOSAL = "publishing works on whole proposals: mark the proposal row"
+
+# A proposal a batch publishes: container, proposal id, revision, foreign.
+_BatchTarget = tuple[str, str, str, bool]
+
+
+@dataclass(frozen=True)
+class _Plan:
+    """A publication plan as the question shows it."""
+
+    lines: tuple[str, ...]
+    foreign: bool
+    draftable: bool
 
 
 class OutboxRunner(Protocol):
@@ -235,6 +250,58 @@ def _block_reason(state: dob.OutboxState, key: dob.RowKey) -> str | None:
     return action.delete_block or "cannot be deleted"
 
 
+def _unpublishable_reason(proposal: dob.ProposalItem) -> str | None:
+    """None when ``proposal`` may be planned for publishing, else today's status line."""
+    pid = _safe(proposal.id)
+    if proposal.state == "awaiting-push":
+        return f"{pid}: use c to push this source and open/update its PR"
+    if proposal.state == "awaiting-pr":
+        return f"{pid} awaits its PR: press c to create it"
+    if not proposal.publishable:
+        if proposal.error:
+            return f"{pid}: {_safe(proposal.error)}"
+        return f"{pid} is {_safe(proposal.state)}: nothing to publish"
+    return None
+
+
+def _plan_lines(result: JobResult, pid: str, revision: str) -> _Plan | tuple[str, ...]:
+    """The plan a dry run printed, or the status lines saying why there is none."""
+    try:
+        plan = json.loads(result.stdout)
+    except ValueError:
+        plan = None
+    if not isinstance(plan, dict):
+        return (_safe(result.failure_line()) or "could not read the publication plan",)
+    if plan.get("schema") != 1 or plan.get("proposal") != pid:
+        return (_BAD_PLAN,)
+    refusals = [r for r in plan.get("refusals") or () if isinstance(r, dict)]
+    if refusals:
+        refused = [line for r in refusals for line in _lines(_safe(r.get("reason", "")))]
+        if any(r.get("stale") is True for r in refusals):
+            refused.append(_STALE_HINT)
+        return tuple(refused or ["publication refused"])
+    if not _well_formed(plan, revision):
+        return (_BAD_PLAN,)
+    lines = []
+    for action in plan["actions"]:
+        line = (
+            f"action {_safe(action.get('index'))} {_safe(action.get('kind', ''))} → "
+            f"{_safe(action.get('target', ''))}: {_safe(action.get('will', ''))}"
+        )
+        if action.get("will_draft") is not None:
+            line += f" / draft: {_safe(action['will_draft'])}"
+        lines.append(line)
+    lines.extend(line for note in plan.get("notes") or () for line in _lines(_safe(note)))
+    lines.append(f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)")
+    warnings = [line for w in plan["warnings"] for line in _lines(_safe(w))]
+    lines.extend(f"⚠ {line}" for line in warnings)
+    if plan["foreign"] and not any(
+        marker in line.casefold() for line in warnings for marker in _FOREIGN_MARKERS
+    ):
+        lines.append(_FOREIGN_FALLBACK)
+    return _Plan(tuple(lines), plan["foreign"] is True, plan.get("draftable") is True)
+
+
 def _well_formed(plan: dict[str, object], revision: str) -> bool:
     """A publishable plan for the revision asked about, with every field the question uses."""
     actions, warnings, notes = plan.get("actions"), plan.get("warnings"), plan.get("notes", [])
@@ -278,6 +345,10 @@ class OutboxController:
         self.on_change = on_change
         self.state = dob.OutboxState(title, (), prefix=prefix, scope_name=container)
         self._publish_token: object | None = None
+        # The batch being planned; dropped by a reload or a cancel, so late plans do nothing.
+        self._batch_token: object | None = None
+        # The proposals the batch question showed: exactly these are published.
+        self._pending_publish: tuple[_BatchTarget, ...] | None = None
         # The keys asked about and the listing the question showed them from.
         self._pending_delete: (
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]] | None
@@ -398,9 +469,11 @@ class OutboxController:
         withdrawn (with its carry and any pending delete): the user asks again.
         The flows' own re-lists between steps do not come through here.
         """
-        if self.state.question is not None:
+        if self.state.question is not None or self._batch_token is not None:
             self.state = replace(self.state, question=None)
             self._pending_delete = None
+            self._pending_publish = None
+            self._batch_token = None
             status = (_ASK_AGAIN, *status)
         state, ok = self._reloaded(cursor=cursor, status=status)
         self._set(state)
@@ -424,6 +497,7 @@ class OutboxController:
         status: tuple[str, ...] = ()
         if self.state.question is not None:
             self._pending_delete = None
+            self._pending_publish = None
             status = (_ASK_AGAIN,)
         self.state = replace(self.state, busy=_LOADING, question=None, status=())
         argv = self._ls_argv()
@@ -636,24 +710,21 @@ class OutboxController:
     # -- publish ------------------------------------------------------------
 
     def _publish(self, key: dob.RowKey | None) -> None:
+        if self.state.marks:
+            self._publish_marked()
+        else:
+            self._publish_one(key)
+
+    def _publish_one(self, key: dob.RowKey | None) -> None:
         found = dob.find_proposal(self.state, key)
         if found is None:
             self._status("Nothing to publish here.")
             return
         container, proposal = found
         pid = _safe(proposal.id)
-        if proposal.state == "awaiting-push":
-            self._status(f"{pid}: use c to push this source and open/update its PR")
-            return
-        if proposal.state == "awaiting-pr":
-            self._status(f"{pid} awaits its PR: press c to create it")
-            return
-        if not proposal.publishable:
-            self._status(
-                f"{pid}: {_safe(proposal.error)}"
-                if proposal.error
-                else f"{pid} is {_safe(proposal.state)}: nothing to publish"
-            )
+        reason = _unpublishable_reason(proposal)
+        if reason is not None:
+            self._status(reason)
             return
         name, revision = container.name, proposal.revision
         if self.state.abilities.publish:
@@ -673,62 +744,24 @@ class OutboxController:
 
     def _planned(self, name: str, pid: str, revision: str, result: JobResult) -> None:
         self.state = replace(self.state, busy=None)
-        try:
-            plan = json.loads(result.stdout)
-        except ValueError:
-            plan = None
-        if not isinstance(plan, dict):
-            self._status(_safe(result.failure_line()) or "could not read the publication plan")
+        plan = _plan_lines(result, pid, revision)
+        if not isinstance(plan, _Plan):
+            self._status(*plan)
             return
-        if plan.get("schema") != 1 or plan.get("proposal") != pid:
-            self._status(_BAD_PLAN)
-            return
-        refusals = [r for r in plan.get("refusals") or () if isinstance(r, dict)]
-        if refusals:
-            lines = [line for r in refusals for line in _lines(_safe(r.get("reason", "")))]
-            if any(r.get("stale") is True for r in refusals):
-                lines.append(_STALE_HINT)
-            self._status(*(lines or ["publication refused"]))
-            return
-        if not _well_formed(plan, revision):
-            self._status(_BAD_PLAN)
-            return
-        lines = []
-        for action in plan["actions"]:
-            line = (
-                f"action {_safe(action.get('index'))} {_safe(action.get('kind', ''))} → "
-                f"{_safe(action.get('target', ''))}: {_safe(action.get('will', ''))}"
-            )
-            if action.get("will_draft") is not None:
-                line += f" / draft: {_safe(action['will_draft'])}"
-            lines.append(line)
-        lines.extend(line for note in plan.get("notes") or () for line in _lines(_safe(note)))
-        lines.append(
-            f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)"
-        )
-        warnings = [line for w in plan["warnings"] for line in _lines(_safe(w))]
-        lines.extend(f"⚠ {line}" for line in warnings)
-        if plan["foreign"] and not any(
-            marker in line.casefold() for line in warnings for marker in _FOREIGN_MARKERS
-        ):
-            lines.append(_FOREIGN_FALLBACK)
         choices: list[tuple[str, str]] = [("Publish", "publish")]
-        if plan.get("draftable") is True:
-            choices.append(
-                ("Publish as draft review — only you see it until you submit it on GitHub", "draft")
-            )
+        if plan.draftable:
+            choices.append(_DRAFT_CHOICE)
         choices.append(("Cancel", "cancel"))
-        foreign = "foreign" if plan.get("foreign") is True else ""
         self._set(
             replace(
                 self.state,
                 question=dob.Question(
                     "publish",
                     f"Publish {_safe(pid)}?",
-                    tuple(lines),
+                    plan.lines,
                     tuple(choices),
                     default="cancel",
-                    carry=(name, pid, revision, foreign),
+                    carry=(name, pid, revision, "foreign" if plan.foreign else ""),
                 ),
                 status=(),
             )
@@ -765,6 +798,168 @@ class OutboxController:
             done,
             on_progress=progress,
         )
+
+    # -- publish the marked proposals ---------------------------------------
+
+    def _publish_marked(self) -> None:
+        """Plan every marked proposal one at a time, then ask once about them all."""
+        targets = [
+            (container, proposal)
+            for container in self.state.containers
+            for proposal in container.proposals
+            if (container.name, proposal.id, None, None) in self.state.marks
+        ]
+        if not targets:
+            self._status(_MARK_PROPOSAL)
+            return
+        abilities = self.state.abilities
+        if not (abilities.publish or abilities.publish_hand_off):
+            self._status("publishing is not available here")
+            return
+        skipped: list[str] = []
+        chosen: list[_BatchTarget] = []
+        for container, proposal in targets:
+            reason = _unpublishable_reason(proposal)
+            if reason is not None:
+                skipped.append(f"⚠ {reason}")
+            else:
+                chosen.append((container.name, proposal.id, proposal.revision, False))
+        if not chosen:
+            self._status(*(line.removeprefix("⚠ ") for line in skipped))
+            return
+        if abilities.publish:
+            self._plan_batch(tuple(chosen), skipped)
+        else:
+            self._hand_off_batch(tuple(chosen), skipped)
+
+    def _hand_off_batch(self, targets: tuple[_BatchTarget, ...], skipped: list[str]) -> None:
+        # Over SSH `-y` is refused: each interactive apply asks under its own plan.
+        status = [line.removeprefix("⚠ ") for line in skipped]
+        for name, pid, revision, _ in targets:
+            rc = self.runner.hand_off(dob.outbox_apply_argv(name, pid, revision, yes=False))
+            if rc is None:
+                status.append(f"{_safe(pid)}: outbox apply did not run")
+        self.state = replace(self.state, marks=self._unmarked(targets))
+        self._after_mutation(tuple(status))
+
+    def _unmarked(self, targets: Iterable[_BatchTarget]) -> frozenset[dob.RowKey]:
+        marks = set(self.state.marks)
+        for name, pid, _, _ in targets:
+            marks -= _subtree(self.state.containers, (name, pid, None, None))
+        return frozenset(marks)
+
+    def _plan_batch(self, targets: tuple[_BatchTarget, ...], excluded: list[str]) -> None:
+        token = object()
+        self._batch_token = token
+        planned: list[tuple[_BatchTarget, _Plan]] = []
+        total = len(targets)
+
+        def plan(i: int) -> None:
+            name, pid, revision, _ = targets[i]
+
+            def done(result: JobResult) -> None:
+                self.state = replace(self.state, busy=None)
+                if self._batch_token is not token:
+                    self._set(self.state)  # withdrawn by a reload or a cancel
+                    return
+                parsed = _plan_lines(result, pid, revision)
+                if isinstance(parsed, _Plan):
+                    planned.append(((name, pid, revision, parsed.foreign), parsed))
+                else:
+                    excluded.extend(f"⚠ {_safe(pid)}: {line}" for line in parsed)
+                if i + 1 < total:
+                    plan(i + 1)
+                else:
+                    self._batch_token = None
+                    self._ask_batch(planned, excluded)
+
+            self._start(
+                f"planning {i + 1}/{total}…",
+                f"outbox-plan:{name}:{pid}",
+                f"planning {_safe(pid)}…",
+                dob.outbox_plan_argv(name, pid, revision),
+                done,
+            )
+            if self.state.busy is None:  # the job did not start
+                self._batch_token = None
+
+        plan(0)
+
+    def _ask_batch(self, planned: list[tuple[_BatchTarget, _Plan]], excluded: list[str]) -> None:
+        if not planned:
+            self._status(*(line.removeprefix("⚠ ") for line in excluded))
+            return
+        many = len(self.state.containers) > 1
+        lines: list[str] = []
+        for (name, pid, _, _), plan in planned:
+            lines.append(f"{_safe(name)}: {_safe(pid)}" if many else _safe(pid))
+            lines.extend(plan.lines)
+        lines.extend(excluded)
+        choices: list[tuple[str, str]] = [("Publish", "publish")]
+        if all(plan.draftable for _, plan in planned):
+            choices.append(_DRAFT_CHOICE)
+        choices.append(("Cancel", "cancel"))
+        self._pending_publish = tuple(target for target, _ in planned)
+        self._set(
+            replace(
+                self.state,
+                question=dob.Question(
+                    "publish-batch",
+                    f"Publish {len(planned)} proposal{'s' if len(planned) > 1 else ''}?",
+                    tuple(lines),
+                    tuple(choices),
+                    default="cancel",
+                ),
+                status=(),
+            )
+        )
+
+    def _run_publish_batch(self, value: str) -> None:
+        targets, self._pending_publish = self._pending_publish or (), None
+        if not targets:
+            self._set(replace(self.state, question=None, status=("Nothing published.",)))
+            return
+        token = object()
+        self._publish_token = token
+        results: list[str] = []
+        total = len(targets)
+
+        def apply(k: int) -> None:
+            name, pid, revision, foreign = targets[k]
+            argv = dob.outbox_apply_argv(
+                name, pid, revision, yes=True, draft=value == "draft", foreign=foreign
+            )
+            current_busy = f"publishing {k + 1}/{total} {_safe(pid)}…"
+
+            def progress(n: int, of: int) -> None:
+                nonlocal current_busy
+                if self._publish_token is not token or self.state.busy != current_busy:
+                    return
+                current_busy = f"publishing {k + 1}/{total} {_safe(pid)} {n}/{of}…"
+                self._set(replace(self.state, busy=current_busy))
+
+            def done(result: JobResult) -> None:
+                self.state = replace(self.state, busy=None)
+                summary = _lines(result.stdout, result.stderr) or ("published",)
+                results.extend(f"{_safe(pid)}: {line}" for line in summary)
+                if k + 1 < total:
+                    apply(k + 1)
+                    return
+                if self._publish_token is token:
+                    self._publish_token = None
+                self.state = replace(self.state, marks=self._unmarked(targets))
+                self._after_mutation(tuple(results))
+
+            self._start(
+                current_busy,
+                f"outbox-apply:{name}:{pid}",
+                f"publishing {_safe(pid)}…",
+                argv,
+                done,
+                on_progress=progress,
+            )
+
+        apply(0)
 
     # -- create PR ----------------------------------------------------------
 
@@ -900,6 +1095,8 @@ class OutboxController:
             self._run_delete()
         elif question.purpose == "publish" and value in ("publish", "draft"):
             self._run_publish(question, value)
+        elif question.purpose == "publish-batch" and value in ("publish", "draft"):
+            self._run_publish_batch(value)
         elif question.purpose == "clear" and value == "yes":
             self._run_clear(question)
         else:
@@ -908,8 +1105,11 @@ class OutboxController:
     def _cancel(self) -> None:
         question = self.state.question
         self._pending_delete = None
+        self._pending_publish = None
+        self._batch_token = None
         message = {
             "publish": "Nothing published.",
+            "publish-batch": "Nothing published.",
             "delete": "Nothing deleted.",
             "clear": "Nothing cleared.",
         }.get(question.purpose if question else "")

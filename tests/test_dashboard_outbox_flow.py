@@ -1064,3 +1064,251 @@ def test_source_failure_diagnostic_prioritized_when_refresh_fails():
     ctl.load()
     ctl.intent("create-pr", _key())
     assert ctl.state.status[-1] == message
+
+
+# --- publish the marked proposals --------------------------------------------
+
+
+def _batch(
+    *pids: str, plans: dict[str, str], runner: FakeRunner | None = None, **proposal: object
+) -> tuple[FakeRunner, OutboxController]:
+    runner = runner or FakeRunner(_listing(*(_proposal(pid, **proposal) for pid in pids)))
+    ctl = _controller(runner)
+    ctl.load()
+    for pid in pids:
+        ctl.intent("mark", _key(pid))
+    ctl.intent("publish", None)
+    for pid in pids:
+        if pid in plans:
+            runner.finish(JobResult(0, "", plans[pid]))
+    return runner, ctl
+
+
+def _two_plans(**over: object) -> dict[str, str]:
+    return {
+        "pr/a.json": _plan(proposal="pr/a.json", **over),
+        "issue/b.json": _plan(proposal="issue/b.json", **over),
+    }
+
+
+def _plan_jobs(runner: FakeRunner) -> list[list[str]]:
+    return [argv for key, argv, _ in runner.jobs if key.startswith("outbox-plan:")]
+
+
+def _apply_jobs(runner: FakeRunner) -> list[list[str]]:
+    return [argv for key, argv, _ in runner.jobs if key.startswith("outbox-apply:")]
+
+
+def test_publish_marked_plans_each_then_one_question():
+    runner, ctl = _batch("pr/a.json", "issue/b.json", plans=_two_plans())
+    assert _plan_jobs(runner) == [
+        dob.outbox_plan_argv(C, "pr/a.json", "r1"),
+        dob.outbox_plan_argv(C, "issue/b.json", "r1"),
+    ]
+    q = ctl.state.question
+    assert q is not None
+    assert q.purpose == "publish-batch" and q.title == "Publish 2 proposals?"
+    assert q.lines[0] == "pr/a.json" and "issue/b.json" in q.lines
+    assert q.lines[1] == "action 0 review → o/r#42: publish / draft: draft"
+    assert q.default == "cancel"
+    assert ctl.state.busy is None
+
+
+def test_publish_batch_planning_is_sequential_with_counter():
+    runner = FakeRunner(_listing(_proposal("pr/a.json"), _proposal("issue/b.json")))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key("pr/a.json"))
+    ctl.intent("mark", _key("issue/b.json"))
+    ctl.intent("publish", None)
+    assert len(runner.jobs) == 1 and ctl.state.busy == "planning 1/2…"
+    runner.finish(JobResult(0, "", _plan(proposal="pr/a.json")))
+    assert len(runner.jobs) == 2 and ctl.state.busy == "planning 2/2…"
+    assert ctl.state.question is None
+
+
+def test_publish_batch_applies_each_and_clears_marks():
+    runner, ctl = _batch(
+        "pr/a.json",
+        "issue/b.json",
+        plans={
+            "pr/a.json": _plan(proposal="pr/a.json", foreign=True),
+            "issue/b.json": _plan(proposal="issue/b.json"),
+        },
+    )
+    ctl.intent("answer", None, "publish")
+    assert ctl.state.busy == "publishing 1/2 pr/a.json…"
+    progress = runner.progress[-1]
+    assert progress is not None
+    progress(1, 2)
+    assert ctl.state.busy == "publishing 1/2 pr/a.json 1/2…"
+    runner.finish(JobResult(1, "boom\n"))
+    assert ctl.state.busy == "publishing 2/2 issue/b.json…"
+    runner.finish(JobResult(0, "", "published 2 actions\n"))
+    assert _apply_jobs(runner) == [
+        dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=True, foreign=True),
+        dob.outbox_apply_argv(C, "issue/b.json", "r1", yes=True, foreign=False),
+    ]
+    assert ctl.state.marks == frozenset()
+    assert ctl.state.busy is None
+    assert ctl.state.status == ("pr/a.json: boom", "issue/b.json: published 2 actions")
+    assert runner.changes == 1
+
+
+def test_publish_batch_draft_only_when_all_draftable():
+    _, ctl = _batch(
+        "pr/a.json",
+        "issue/b.json",
+        plans={
+            "pr/a.json": _plan(proposal="pr/a.json"),
+            "issue/b.json": _plan(proposal="issue/b.json", draftable=False),
+        },
+    )
+    assert ctl.state.question is not None
+    assert tuple(v for _, v in ctl.state.question.choices) == ("publish", "cancel")
+    runner, ctl = _batch("pr/a.json", "issue/b.json", plans=_two_plans())
+    assert ctl.state.question is not None
+    assert tuple(v for _, v in ctl.state.question.choices) == ("publish", "draft", "cancel")
+    ctl.intent("answer", None, "draft")
+    runner.finish(JobResult(0, "", "ok"))
+    runner.finish(JobResult(0, "", "ok"))
+    assert _apply_jobs(runner) == [
+        dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=True, draft=True),
+        dob.outbox_apply_argv(C, "issue/b.json", "r1", yes=True, draft=True),
+    ]
+
+
+def test_publish_batch_skips_unpublishable_and_refused():
+    runner = FakeRunner(
+        _listing(
+            _proposal("pr/a.json"),
+            _proposal("issue/b.json"),
+            _proposal("issue/c.json", state="awaiting-pr"),
+        )
+    )
+    runner, ctl = _batch(
+        "pr/a.json",
+        "issue/b.json",
+        "issue/c.json",
+        runner=runner,
+        plans={
+            "pr/a.json": _plan(proposal="pr/a.json"),
+            "issue/b.json": _plan(
+                proposal="issue/b.json", refusals=[{"reason": "nope"}], actions=[]
+            ),
+        },
+    )
+    assert _plan_jobs(runner) == [
+        dob.outbox_plan_argv(C, "pr/a.json", "r1"),
+        dob.outbox_plan_argv(C, "issue/b.json", "r1"),
+    ]
+    q = ctl.state.question
+    assert q is not None and q.title == "Publish 1 proposal?"
+    assert "⚠ issue/c.json awaits its PR: press c to create it" in q.lines
+    assert "⚠ issue/b.json: nope" in q.lines
+    ctl.intent("answer", None, "publish")
+    runner.finish(JobResult(0, "", "ok"))
+    assert _apply_jobs(runner) == [dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=True)]
+
+
+def test_publish_batch_all_excluded_is_status_only():
+    runner = FakeRunner(
+        _listing(_proposal("pr/a.json"), _proposal("issue/c.json", state="awaiting-pr"))
+    )
+    _, ctl = _batch(
+        "pr/a.json",
+        "issue/c.json",
+        runner=runner,
+        plans={"pr/a.json": _plan(proposal="pr/a.json", refusals=[{"reason": "nope"}])},
+    )
+    assert ctl.state.question is None and ctl.state.busy is None
+    assert ctl.state.status == (
+        "issue/c.json awaits its PR: press c to create it",
+        "pr/a.json: nope",
+    )
+    runner = FakeRunner(_listing(_proposal("issue/c.json", state="awaiting-pr")))
+    _, ctl = _batch("issue/c.json", runner=runner, plans={})
+    assert runner.jobs == [] and ctl.state.question is None
+    assert ctl.state.status == ("issue/c.json awaits its PR: press c to create it",)
+
+
+def test_publish_marks_without_proposal_level_key():
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key(action=1))
+    ctl.intent("publish", _key())
+    assert ctl.state.status == ("publishing works on whole proposals: mark the proposal row",)
+    assert runner.jobs == []
+
+
+def test_publish_batch_reload_during_planning_drops_stale_plans():
+    runner = FakeRunner(_listing(_proposal("pr/a.json"), _proposal("issue/b.json")))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key("pr/a.json"))
+    ctl.intent("mark", _key("issue/b.json"))
+    ctl.intent("publish", None)
+    ctl.load()
+    assert ctl.state.status == ("outbox refreshed; ask again",)
+    seen = ctl.seen  # type: ignore[attr-defined]
+    before = len(seen)
+    runner.finish(JobResult(0, "", _plan(proposal="pr/a.json")))
+    assert len(seen) == before + 1
+    assert ctl.state.question is None and ctl.state.busy is None
+    assert len(runner.jobs) == 1
+
+
+def test_publish_batch_cancel_publishes_nothing():
+    runner, ctl = _batch("pr/a.json", "issue/b.json", plans=_two_plans())
+    marks = ctl.state.marks
+    ctl.intent("cancel", None)
+    assert ctl.state.status == ("Nothing published.",)
+    assert _apply_jobs(runner) == []
+    assert ctl.state.marks == marks
+
+
+def test_publish_batch_over_ssh_hands_off_each():
+    runner = FakeRunner(
+        _listing(_proposal("pr/a.json"), _proposal("issue/b.json")),
+        allow=lambda argv: not (argv[1] == "apply" and "-y" in argv),
+    )
+    runner, ctl = _batch("pr/a.json", "issue/b.json", runner=runner, plans={})
+    assert runner.jobs == []
+    assert [argv for kind, argv in runner.calls if kind == "hand_off"] == [
+        dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False),
+        dob.outbox_apply_argv(C, "issue/b.json", "r1", yes=False),
+    ]
+    assert ctl.state.marks == frozenset()
+    assert runner.changes == 1
+
+
+def test_publish_batch_across_containers_prefixes_headers():
+    listing = json.dumps(
+        {
+            "schema": 1,
+            "containers": [
+                {"name": name, "available": True, "error": None, "stores": [],
+                 "proposals": [_proposal(pid)]}
+                for name, pid in (("alpha-x", "pr/a.json"), ("beta-y", "pr/b.json"))
+            ],
+        }
+    )  # fmt: skip
+    runner = FakeRunner(listing)
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", ("alpha-x", "pr/a.json", None, None))
+    ctl.intent("mark", ("beta-y", "pr/b.json", None, None))
+    ctl.intent("publish", None)
+    runner.finish(JobResult(0, "", _plan(proposal="pr/a.json")))
+    runner.finish(JobResult(0, "", _plan(proposal="pr/b.json")))
+    q = ctl.state.question
+    assert q is not None
+    assert "alpha-x: pr/a.json" in q.lines and "beta-y: pr/b.json" in q.lines
+    ctl.intent("answer", None, "publish")
+    runner.finish(JobResult(0, "", "ok"))
+    runner.finish(JobResult(0, "", "ok"))
+    assert _apply_jobs(runner) == [
+        dob.outbox_apply_argv("alpha-x", "pr/a.json", "r1", yes=True),
+        dob.outbox_apply_argv("beta-y", "pr/b.json", "r1", yes=True),
+    ]
