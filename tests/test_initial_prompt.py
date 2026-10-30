@@ -101,7 +101,9 @@ def _run_reporting(tmp_path, monkeypatch, rc: int, *, prompt: bool):
     )
     inbox.chmod(0o755)
     agent = tmp_path / "agent"
-    agent.write_text("#!/bin/sh\nexit $STUB_RC\n")
+    agent.write_text(
+        '#!/bin/sh\nif [ "$STUB_RC" -lt 0 ]; then kill -"${STUB_RC#-}" $$; fi\nexit $STUB_RC\n'
+    )
     agent.chmod(0o755)
     monkeypatch.setattr(ip, "AGENT_PID_PATH", str(tmp_path / "agent.json"))
     monkeypatch.setattr(ip, "AGENT_EXIT_PATH", str(tmp_path / "agent.exit"))
@@ -128,6 +130,14 @@ def test_prompted_run_report_exit_runs_bash(tmp_path, monkeypatch, rc) -> None:
     assert runtime["start"]
     assert runtime["boot"]
     assert runtime["agent"] == "claude"
+
+
+@pytest.mark.parametrize("sig", [9, 15])
+def test_wrapper_records_actual_agent_signal(tmp_path, monkeypatch, sig) -> None:
+    proc, sent = _run_reporting(tmp_path, monkeypatch, -sig, prompt=True)
+    assert proc.returncode == 128 + sig
+    assert (tmp_path / "agent.exit").read_text().strip() == str(128 + sig)
+    assert sent == []
 
 
 def test_prompted_run_report_exit_without_prompt_file_execs_plain(tmp_path, monkeypatch) -> None:

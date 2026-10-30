@@ -109,6 +109,15 @@ def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
     atomic_write_text(root / WATCH_FILE, json.dumps(payload, indent=2) + "\n")
 
 
+def register(root: Path, orchestrator: str, entry: WatchEntry) -> None:
+    """Persist before launching: a run must never start without durable supervision."""
+    watches = load_watch(root)
+    entries = [e for e in watches.get(orchestrator, []) if e.child_full != entry.child_full]
+    entries.append(entry)
+    watches[orchestrator] = entries
+    save_watch(root, watches)
+
+
 def cancel(root: Path, orchestrator: str, child_full: str) -> None:
     """A successful broker stop/destroy intentionally ends this run."""
     watches = load_watch(root)

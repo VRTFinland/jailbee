@@ -79,6 +79,22 @@ def test_spawn_records_on_done_destroy_by_default(
     assert out.detail.endswith("on done: destroy")
 
 
+def test_spawn_registers_actual_child_before_launch_and_refuses_on_persistence_failure(tmp_path, monkeypatch) -> None:
+    from jailbee.orchestration import watch
+    ctx = _ctx(tmp_path)
+    plan = plan_spawn(ctx, _m(), queued_names=())
+    from jailbee.create_flow import CreateStarted
+    create = MagicMock(return_value=CreateStarted(plan.child_full, 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "start_create", create)
+    save = MagicMock(side_effect=OSError("disk unavailable"))
+    monkeypatch.setattr(watch, "save_watch", save)
+    with pytest.raises(OSError, match="disk unavailable"):
+        actions.start_child(ctx, plan, fork=None)
+    create.assert_not_called()
+    assert save.call_args.args[1][ctx.sender.full][0].child_full == plan.child_full
+    assert save.call_args.args[1][ctx.sender.full][0].ref == "a1"
+
+
 def test_spawn_without_destroy_operation_defaults_to_keep(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, {"operations": ["spawn", "message", "import"]})
     plan = plan_spawn(ctx, _m(), queued_names=())
@@ -175,6 +191,24 @@ def test_unresolved_ref_refuses_without_starting(
     assert result.state == "refused"
     assert "refs/heads/missing" in result.detail
     started.assert_not_called()
+
+
+def test_pr_watch_uses_resolved_name_through_broker_tracking(tmp_path, monkeypatch) -> None:
+    from jailbee import pr
+    from jailbee.create_flow import CreateStarted
+    from jailbee.orchestration import broker, watch
+    ctx = _ctx(tmp_path, {"max_running_children": 2})
+    prepared = pr.PreparedPr(pr.PrInfo(12, "real-head", "a" * 40, "OPEN", "target"), "a" * 40)
+    monkeypatch.setattr(pr, "prepare_pr", lambda *a, **k: prepared)
+    monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
+    monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 0, 0))
+    monkeypatch.setattr(actions, "start_create", lambda *a, **k: CreateStarted("proj-real-head", 777, tmp_path / "log"))
+    manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
+    outcome = actions.handle_spawn(ctx, manifest)
+    assert outcome.state == "started"
+    broker._watch_manifest(ctx, manifest, manifest.id, outcome)
+    entries = watch.load_watch(ctx.root)[ctx.sender.full]
+    assert [(e.ref, e.child_full) for e in entries] == [(manifest.id, "proj-real-head")]
 
 
 @pytest.mark.parametrize("queued", [False, True])

@@ -212,6 +212,8 @@ def _track(
     only after that, so a genuine failure is never mistaken for a stale row.
     """
     watches = watch.load_watch(ctx.root)
+    if any(e.ref == ref for e in watches.get(ctx.sender.full, [])):
+        return  # Actions registered the resolved name durably before launch.
     mine = [e for e in watches.get(ctx.sender.full, []) if e.child_full != child_full]
     mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat(), supervise=True))
     watches[ctx.sender.full] = mine
@@ -292,7 +294,12 @@ def _settle_agent_watch(
         entries.remove(entry)  # Never monitor another orchestrator's namesake.
         watch.save_watch(ctx.root, watches)
         return
-    if child is not None and child.config.get(labels.STATE) == labels.STATE_DONE:
+    if child is not None and (
+        child.config.get(labels.STATE) == labels.STATE_DONE
+        or (child.config.get(labels.STATE) == labels.STATE_IMPORTED
+            and child.config.get(labels.DONE_SHA)
+            and child.config.get(labels.DONE_SHA) == child.config.get(labels.LAST_IMPORT))
+    ):
         entries.remove(entry)
         watch.save_watch(ctx.root, watches)
         return
@@ -672,6 +679,13 @@ def tick(
                 save_queue(root, current)
         except Exception:
             log.exception("broker: queue of %s failed", full)
+    # Queue launches can finish before watch settlement; the earlier snapshot
+    # may still say Stopped even though the agent is already running.
+    if orchestrators and any(watch.load_watch(root).values()):
+        nodes = _nodes(incus.list_containers(), configs)
+        for ctx in orchestrators:
+            ctx.nodes = nodes
+            ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
     _settle_all_watches(root, orchestrators, present, memory)
     return active
 

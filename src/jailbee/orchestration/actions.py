@@ -236,6 +236,7 @@ class SpawnPlan:
     clone_commit: str | None = None
     pr_base: str | None = None
     autostart_profile: str | None = None
+    manifest_id: str = ""
 
 
 def _profile_problem(cfg: Config, name: str | None) -> str | None:
@@ -320,6 +321,7 @@ def plan_spawn(
         commit,
         pr_base,
         m.autostart_profile,
+        m.id,
     )
 
 
@@ -367,6 +369,11 @@ def child_options(
 
 def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None) -> Outcome:
     """Start the background create of a planned child; refusals become outcomes."""
+    from jailbee.orchestration.watch import WatchEntry, register
+
+    register(ctx.root, ctx.sender.full, WatchEntry(
+        plan.manifest_id, plan.child_full, "spawn", ctx.now.isoformat(), supervise=True
+    ))
     opts = child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork)
     interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
     try:
@@ -596,6 +603,7 @@ def _boot(
     set_runner: bool = False,
     on_done: str | None = None,
     autostart_profile: str | None = None,
+    manifest_id: str = "",
 ) -> Outcome:
     problem = _profile_problem(ctx.cfg, autostart_profile)
     if problem is not None:
@@ -631,6 +639,11 @@ def _boot(
         # The full worker is required for unprofiled containers too.
         from jailbee.create_flow import launch_boot_background
 
+        from jailbee.orchestration.watch import WatchEntry, register
+
+        register(ctx.root, ctx.sender.full, WatchEntry(
+            manifest_id, child.full, "restart", ctx.now.isoformat(), supervise=True
+        ))
         worker = launch_boot_background(
             ctx.cfg, container_name=child.full, initial_prompt=prompt, config_path=None
         )
@@ -695,6 +708,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         clone_commit=req.commit if req.kind == "pr" else None,
         pr_base=req.pr_base,
         autostart_profile=req.autostart_profile,
+        manifest_id=req.manifest_id,
         on_done=(
             "destroy"
             if req.on_done == "destroy" and grant is not None and "destroy" in grant.operations
@@ -755,6 +769,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         set_runner=req.runner_set,
         on_done=policy,
         autostart_profile=req.autostart_profile,
+        manifest_id=req.manifest_id,
     )
 
 
@@ -888,6 +903,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             set_runner=set_runner,
             on_done=m.on_done,
             autostart_profile=m.autostart_profile,
+            manifest_id=m.id,
         )
     queued.append(
         QueuedRequest(
