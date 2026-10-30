@@ -1,0 +1,97 @@
+"""Probe a prompted agent, independently of its shell wrapper's survival."""
+
+from __future__ import annotations
+
+import json
+import shlex
+import signal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from jailbee.incus import IncusError
+from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
+
+if TYPE_CHECKING:
+    from jailbee.incus import Incus
+
+
+@dataclass(frozen=True)
+class AgentStatus:
+    alive: bool
+    agent: str = "agent"
+    rc: int | None = None
+
+
+# Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
+_PROBE = r"""
+import json, pathlib, sys
+runtime, exit_path = map(pathlib.Path, sys.argv[1:])
+result = dict(alive=False, agent='agent', rc=None)
+try:
+    data = json.loads(runtime.read_text())
+    result['agent'] = data['agent']
+    pid = int(data['pid'])
+    stat = pathlib.Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
+    boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    result['alive'] = pid > 1 and stat[0] not in ('Z', 'X') and stat[19] == data['start'] and boot == data['boot']
+except (OSError, ValueError, KeyError, TypeError, IndexError):
+    pass
+try:
+    result['rc'] = int(exit_path.read_text())
+    result['alive'] = False
+except (OSError, ValueError):
+    pass
+print(json.dumps(result))
+"""
+
+
+def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
+    """Return None for a transport/protocol error, not a false death report."""
+    try:
+        raw = incus.exec(
+            name,
+            ["python3", "-c", _PROBE, AGENT_PID_PATH, AGENT_EXIT_PATH],
+            uid=uid,
+            timeout=15,
+        )
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not isinstance(data.get("alive"), bool):
+            return None
+        agent = data.get("agent", "agent")
+        rc = data.get("rc")
+        if not isinstance(agent, str) or (rc is not None and (type(rc) is not int or not 0 <= rc <= 255)):
+            return None
+        return AgentStatus(data["alive"], agent, rc)
+    except (IncusError, ValueError, TypeError):
+        return None
+
+
+def describe(status: AgentStatus) -> str:
+    """Include the shell status and the conventional signal interpretation."""
+    reason = "exit status unknown (process disappeared or never started)"
+    if status.rc is not None:
+        reason = f"exited with status {status.rc}"
+        if status.rc > 128:
+            number = status.rc - 128
+            try:
+                sig = signal.Signals(number).name
+            except ValueError:
+                sig = f"signal {number}"
+            reason += f" ({sig})"
+    return f"[jailbee] the agent `{status.agent}` {reason} without accepted done"
+
+
+def output_tail(incus: Incus, name: str, agent: str, *, uid: int) -> str:
+    """Best effort: interactive output stays in tmux, never piped through tee."""
+    from jailbee.tmux import SESSION_NAME, window_for
+
+    target = shlex.quote(f"{SESSION_NAME}:={window_for(agent)}")
+    try:
+        return incus.exec(
+            name,
+            ["bash", "-lc", f"tmux capture-pane -p -S -30 -t {target}"],
+            uid=uid,
+            timeout=15,
+        )[-4096:].strip()
+    except IncusError:
+        return ""

@@ -103,6 +103,8 @@ def _run_reporting(tmp_path, monkeypatch, rc: int, *, prompt: bool):
     agent = tmp_path / "agent"
     agent.write_text("#!/bin/sh\nexit $STUB_RC\n")
     agent.chmod(0o755)
+    monkeypatch.setattr(ip, "AGENT_PID_PATH", str(tmp_path / "agent.json"))
+    monkeypatch.setattr(ip, "AGENT_EXIT_PATH", str(tmp_path / "agent.exit"))
     run = ip.prompted_run(str(agent), "ARG", report_exit=True, agent="claude")
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "STUB_RC": str(rc)}
     proc = subprocess.run(
@@ -112,25 +114,20 @@ def _run_reporting(tmp_path, monkeypatch, rc: int, *, prompt: bool):
     return proc, sent
 
 
-@pytest.mark.parametrize(
-    ("rc", "reported"),
-    [(3, True), (127, True), (1, True), (0, False), (143, False), (129, False), (128, False)],
-)
-def test_prompted_run_report_exit_runs_bash(tmp_path, monkeypatch, rc, reported) -> None:
+@pytest.mark.parametrize("rc", [0, 1, 3, 127, 128, 137, 143])
+def test_prompted_run_report_exit_runs_bash(tmp_path, monkeypatch, rc) -> None:
+    import json
+
     proc, sent = _run_reporting(tmp_path, monkeypatch, rc, prompt=True)
     assert proc.returncode == rc
     assert proc.stdout == ""
-    if reported:
-        assert sent == [
-            "send",
-            "message",
-            "--kind",
-            "blocked",
-            "--text",
-            f"[jailbee] the agent `claude` exited with status {rc}",
-        ]
-    else:
-        assert sent == []
+    assert sent == []  # The broker owns delivery and intentional-stop suppression.
+    assert (tmp_path / "agent.exit").read_text().strip() == str(rc)
+    runtime = json.loads((tmp_path / "agent.json").read_text())
+    assert runtime["pid"] > 1
+    assert runtime["start"]
+    assert runtime["boot"]
+    assert runtime["agent"] == "claude"
 
 
 def test_prompted_run_report_exit_without_prompt_file_execs_plain(tmp_path, monkeypatch) -> None:
@@ -139,10 +136,9 @@ def test_prompted_run_report_exit_without_prompt_file_execs_plain(tmp_path, monk
     assert sent == []
 
 
-def test_prompted_run_report_exit_guards_rc_range_and_ignores_helper_failure() -> None:
+def test_prompted_run_report_exit_preserves_terminal_input(tmp_path, monkeypatch) -> None:
     run = prompted_run("c", "P", report_exit=True, agent="claude")
-    assert '[ "$rc" -ge 1 ] && [ "$rc" -le 127 ]' in run
-    assert ">/dev/null 2>&1 || true" in run
+    assert "&" not in run.replace("&&", "")
     assert 'exit "$rc"' in run
 
 

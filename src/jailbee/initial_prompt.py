@@ -29,6 +29,8 @@ PROMPT_PATH = f"{_DIR}/initial-prompt.md"
 CONSUMED_PATH = f"{_DIR}/initial-prompt.consumed.md"
 PROMPT_ENV = "JAILBEE_INITIAL_PROMPT_FILE"
 MAX_PROMPT_BYTES = 65536
+AGENT_PID_PATH = f"{_DIR}/prompted-agent.json"
+AGENT_EXIT_PATH = f"{_DIR}/prompted-agent.exit"
 
 
 class PromptError(ValueError):
@@ -71,25 +73,33 @@ def prompted_run(
 ) -> str:
     """Step `run` string: consume the prompt file once, else launch plain.
 
-    With ``report_exit`` the prompted launch is not `exec`'d: on an exit status
-    of 1-127 the child tells its orchestrator through ``jailbee-inbox`` (status
-    above 128 is a signal, e.g. tmux or the container stopping, and stays
-    silent), then exits with the agent's own status. `agent` only names the
-    agent in that message.
+    With ``report_exit`` a foreground subshell records its process identity
+    before exec, and the parent records every exit status. The broker owns
+    reporting, including loss of this wrapper, and suppresses intentional stops.
     """
     if not report_exit:
         return (
             f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
             f"exec {command} {prompt_args}; fi; exec {command}"
         )
-    name = shlex.quote(agent)
-    text = f'"[jailbee] the agent \\`{name}\\` exited with status $rc"'
+    record = (
+        "import json, pathlib, sys; "
+        "p = pathlib.Path('/proc') / sys.argv[1]; "
+        "d = dict(pid=int(sys.argv[1]), "
+        "start=(p / 'stat').read_text().rsplit(')', 1)[1].split()[19], "
+        "boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(), "
+        "agent=sys.argv[3]); "
+        "f = pathlib.Path(sys.argv[2]); "
+        "t = f.with_suffix('.tmp'); t.write_text(json.dumps(d)); t.replace(f)"
+    )
     return (
         f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
-        f"{{ {command} {prompt_args}; rc=$?; "
-        f'if [ "$rc" -ge 1 ] && [ "$rc" -le 127 ]; then '
-        f"jailbee-inbox send message --kind blocked --text {text} >/dev/null 2>&1 || true; "
-        f'fi; exit "$rc"; }}; fi; exec {command}'
+        f"{{ umask 077; ( python3 -c {shlex.quote(record)} "
+        f'"$BASHPID" {shlex.quote(AGENT_PID_PATH)} {shlex.quote(agent)}; '
+        f"exec {command} {prompt_args} ); rc=$?; "
+        f'printf "%s\\n" "$rc" > {shlex.quote(AGENT_EXIT_PATH)}.tmp; '
+        f"mv -f {shlex.quote(AGENT_EXIT_PATH)}.tmp {shlex.quote(AGENT_EXIT_PATH)}; "
+        f'exit "$rc"; }}; fi; exec {command}'
     )
 
 
@@ -100,7 +110,9 @@ def write_prompt(incus: Incus, name: str, text: str, *, uid: int, gid: int) -> N
         [
             "bash",
             "-c",
-            'umask 077; mkdir -p "$(dirname "$1")" && cat > "$1.tmp" && mv -f "$1.tmp" "$1"',
+            f'umask 077; mkdir -p "$(dirname "$1")" && '
+            f"rm -f {shlex.quote(AGENT_PID_PATH)} {shlex.quote(AGENT_EXIT_PATH)} && "
+            'cat > "$1.tmp" && mv -f "$1.tmp" "$1"',
             "bash",
             PROMPT_PATH,
         ],
