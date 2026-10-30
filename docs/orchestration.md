@@ -175,6 +175,18 @@ prepends a short fixed preamble naming its orchestrator and the child skill,
 and sets `JAILBEE_ROLE=child` and `JAILBEE_ORCHESTRATOR=<name>` in the
 agent's environment.
 
+## Autostart stage selection
+
+`spawn` and `restart` accept optional `autostart_profile: "NAME"`, also
+available as `jailbee-inbox send spawn|restart --autostart-profile NAME`.
+Names are validated against the host repo's [autostart profiles](config.md#profiles).
+Spawn passes the choice to creation; restart stores it before booting, runs
+missing one-shot stages, then the selected start stages. Queued requests
+remember the selection and revalidate it before starting. An unknown name is
+refused with ``autostart profile `NAME` is not defined``. This field selects
+stages, not the agent or its LiteLLM profile; omit it to use the creation
+default or keep a child's existing choice on restart.
+
 ## Runner: which agent a child runs
 
 A `spawn` or `restart` manifest may carry an optional `runner`: `agent`

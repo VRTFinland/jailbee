@@ -1796,6 +1796,60 @@ Top-level keys:
 | `step_timeout` | int | `600` | Default per-step timeout in seconds (overridable per step). |
 | `env` | map | `{}` | Global env merged into every step (per-step `env` wins on key collisions). |
 
+#### Profiles
+
+Named profiles select stages without changing their order or settings:
+
+```yaml
+autostart:
+  default_profile: full
+  profiles:
+    full: all
+    frontend:
+      stages: [deps, frontend-dev]
+  on_create:
+    - stage: deps
+      steps: [{name: install, run: "pnpm install"}]
+    - stage: docker-images
+      steps: [{name: images, run: "docker compose pull"}]
+  on_start:
+    - stage: backend
+      steps: [{name: backend, run: "docker compose up -d"}]
+    - stage: frontend-dev
+      steps: [{name: frontend, run: "pnpm dev", background: true}]
+```
+
+A profile is the literal `all` or a nonempty `stages` list. Stage names select
+from **both** triggers, in config order; the reserved `agents` stage always
+stays selected, even when not listed. Profiles require stage-form triggers,
+a defined `default_profile`, and known stage names. The profile name `all`
+is reserved. Without `profiles`, `default_profile` is invalid and autostart
+behaves exactly as before.
+
+`jailbee new --autostart-profile frontend` remembers the selection for later
+starts and restarts. An absent selection uses the default; a stored name
+removed from config warns and falls back to the default. Creation uses the
+target branch's autostart block; later commands use the host config.
+
+`jailbee autostart profile <container>` shows the current/default profiles
+and attempted one-shot stages. Add a profile name to switch. On a running
+container this starts missing `on_create` stages, then newly selected
+`on_start` stages, in the foreground; lighter profiles stop nothing.
+Stopped containers and `--no-run` only store the selection. The next start
+runs any missing one-shot stages before `on_start`. A live detached run
+must be cancelled before switching.
+
+One-shot stages are recorded as **attempted**, even after failure, so they
+are never retried automatically. Containers predating this tracking count
+all one-shot stages as attempted. `new --no-autostart` marks the selected
+profile's one-shot stages attempted without running them. Profiles do not
+control agent, IDE, browser or app autostart settings.
+
+The terminal dashboard offers **Lifecycle → Autostart profile…**; the
+optional `autostart_profile` / **PROFILE** column is off by default.
+Orchestration spawn/restart manifests accept `autostart_profile`, or
+`jailbee-inbox send spawn|restart --autostart-profile NAME`.
+
 #### Stages and chains
 
 A **stage** is one milestone of a run. Stages execute in list order, waiting

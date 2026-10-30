@@ -454,6 +454,17 @@ IDE and browser launches are controlled by `jetbrains.autostart` /
 not here. The `autostart` block describes the in-container shell work, as
 **stages** of **chains** of **steps**.
 
+Optional `profiles` maps names to `all` or `{stages: [NAME, ...]}`;
+`default_profile` is required with profiles and invalid without them.
+Profiles require stage-form triggers, nonempty lists and known stage names
+(`agents` is always allowed and never filtered); `all` is not a legal profile
+name. A name selects that stage in both triggers in config order.
+`new --autostart-profile NAME` stores a selection; `autostart profile C NAME`
+switches it later, starting missing one-shot stages and newly selected start
+stages on a running container. Attempted one-shot stages are never rerun,
+even on failure; a lighter profile stops nothing. Agent/app autostart stays
+independent. Repos without profiles behave as before.
+
 ```yaml
 autostart:
   on_create: []         # list of Stage (or, legacy, list of Step — do not mix)
