@@ -3177,6 +3177,9 @@ def _destroy_worker(
 @app.command("_boot-worker", hidden=True)
 def _boot_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to boot.")],
+    initial_prompt: Annotated[
+        str | None, typer.Option("--initial-prompt", help="Fresh orchestrator prompt.")
+    ] = None,
     restart: Annotated[
         bool,
         typer.Option("--restart", help="Reboot a running container instead of starting it."),
@@ -3217,7 +3220,7 @@ def _boot_worker(
     engine = _job_engine()
 
     try:
-        boot_container(cfg, incus, name, restart=restart)
+        boot_container(cfg, incus, name, restart=restart, initial_prompt=initial_prompt)
         # Only once the container is up, and only when there is an autostart
         # run to report: with --no-autostart the rest is a hosts pin and a
         # token write, and `starting` stays the honest phase for those.

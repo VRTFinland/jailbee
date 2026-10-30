@@ -184,8 +184,11 @@ CLI: `jailbee-inbox send update --child C --wait`.
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
-Status: `done` ("child `x` restarted") when it runs at once; `queued` when
-no slot is free, then `started` when it is later started.
+Status: `done` ("child `x` restarted") for a synchronous restart; repositories
+with autostart profiles return `started` after handing boot and setup to a
+background worker (see the log in the detail). `queued` means no slot is free,
+then `started` when launched later. A later restart/setup failure is recorded
+in the background job and log, not a second manifest status.
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
 `"runner": null` selects the current effective default (clearing the label if

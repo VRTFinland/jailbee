@@ -352,6 +352,17 @@ def test_boot_worker_without_restart_starts_the_container(tmp_path, mocker):
     assert boot.call_args.kwargs["restart"] is False
 
 
+def test_boot_worker_forwards_orchestrator_prompt(tmp_path, mocker):
+    _worker_setup(tmp_path, mocker)
+    boot = mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.cli._post_start_actions")
+    _insert_job(os.getpid(), "starting")
+    result = runner.invoke(app, ["_boot-worker", "--name", "myrepo-feat-a",
+                                 "--initial-prompt", "resume work"])
+    assert result.exit_code == 0, result.output
+    assert boot.call_args.kwargs["initial_prompt"] == "resume work"
+
+
 def test_boot_worker_passes_the_override_to_post_start_actions(tmp_path, mocker):
     """The last leg of the `--no-wait` hand-off: the worker's own autostart
     run has to split where the operator asked, not where the config says."""

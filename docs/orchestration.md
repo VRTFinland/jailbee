@@ -181,7 +181,11 @@ agent's environment.
 available as `jailbee-inbox send spawn|restart --autostart-profile NAME`.
 Names are validated against the host repo's [autostart profiles](config.md#profiles).
 Spawn passes the choice to creation; restart stores it before booting, runs
-missing one-shot stages, then the selected start stages. Queued requests
+missing one-shot stages, then the selected start stages in a background boot
+worker. Profile-enabled restarts return `started` with a log path, keeping the
+broker responsive and reserving the child's capacity while it boots. A later
+setup failure stays in the job/log; it does not free a running child's slot.
+Queued requests
 remember the selection and revalidate it before starting. An unknown name is
 refused with ``autostart profile `NAME` is not defined``. This field selects
 stages, not the agent or its LiteLLM profile; omit it to use the creation

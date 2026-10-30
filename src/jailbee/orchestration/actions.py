@@ -609,13 +609,25 @@ def _boot(
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
+        if ctx.cfg.autostart.profiles:
+            from jailbee.create_flow import launch_boot_background
+
+            worker = launch_boot_background(
+                ctx.cfg, container_name=child.full, initial_prompt=prompt, config_path=None
+            )
+            reservations = load_reservations(ctx.root)
+            entries = [r for r in reservations.get(ctx.sender.full, [])
+                       if r.child_full != child.full]
+            entries.append(Reservation(child.full, worker.pid, ctx.now.isoformat()))
+            reservations[ctx.sender.full] = entries
+            try:
+                save_reservations(ctx.root, reservations)
+            except OSError as exc:
+                log.warning("could not reserve booting child %s: %s", child.full, exc)
+            return Outcome("started", f"child `{child.short}` restarting; log: {worker.log_path}")
         lifecycle.boot_container(
             ctx.cfg, ctx.incus, child.full, restart=False, initial_prompt=prompt
         )
-        if ctx.cfg.autostart.profiles:
-            from jailbee.autostart_profiles import run_profile_start
-
-            run_profile_start(ctx.cfg, ctx.incus, child.full)
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     detail = f"child `{child.short}` restarted"

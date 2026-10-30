@@ -543,6 +543,44 @@ def launch_background(
     return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
 
 
+def launch_boot_background(
+    cfg: Config,
+    *,
+    container_name: str,
+    initial_prompt: str,
+    config_path: Path | None,
+) -> CreateStarted:
+    """Hand a broker restart to the existing detached boot worker."""
+    from datetime import datetime as _dt
+
+    from jailbee import background as bg
+    from jailbee.db import state_dir
+    from jailbee.db.models import JOB_BOOT
+
+    log_dir = state_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"{container_name}-boot-{stamp}.log"
+    argv = [sys.executable, "-m", "jailbee", "_boot-worker", "--name", container_name,
+            "--initial-prompt", initial_prompt,
+            *(["--config", str(config_path)] if config_path is not None else [])]
+    with open(log_path, "w") as log_fh:
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=log_fh, stderr=subprocess.STDOUT,
+            start_new_session=True, cwd=str(cfg.repo_root),
+        )
+    bg.track_job(
+        bg.job_engine(),
+        lambda s: bg.start_job(
+            s, container_name=container_name, container_prefix=cfg.container_prefix,
+            branch=None, pid=proc.pid, log_path=str(log_path),
+            now=_dt.now().astimezone(), op_kind=JOB_BOOT,
+        ),
+        f"record the boot job row for {container_name}",
+    )
+    return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
+
+
 # ---------------------------------------------------------------------------
 # All in one
 # ---------------------------------------------------------------------------
