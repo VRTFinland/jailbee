@@ -231,7 +231,9 @@ def test_load_prunes_expanded_and_marks_that_disappeared():
     ctl.intent("mark", _key())
     ctl.load()
     assert ctl.state.expanded == frozenset()
-    assert ctl.state.marks == frozenset({_key("pr/b.json")})
+    assert ctl.state.marks == frozenset(
+        {_key("pr/b.json"), _key("pr/b.json", 0), _key("pr/b.json", 1)}
+    )
 
 
 def test_unavailable_container_has_no_mutation_abilities():
@@ -246,24 +248,86 @@ def test_unavailable_container_has_no_mutation_abilities():
 # --- marks -----------------------------------------------------------------
 
 
-def test_mark_refuses_blocked_row_with_reason():
-    runner = FakeRunner(
-        _listing(_proposal(deletable=False, delete_block="publication evidence recorded"))
-    )
-    ctl = _controller(runner)
-    ctl.load()
-    ctl.intent("mark", _key())
-    assert ctl.state.marks == frozenset()
-    assert ctl.state.status == ("pr/a.json: publication evidence recorded",)
-
-
 def test_mark_toggles_markable_row():
     ctl = _controller(FakeRunner(_listing(_proposal())))
     ctl.load()
     ctl.intent("mark", _key())
-    assert ctl.state.marks == frozenset({_key()})
+    assert ctl.state.marks == frozenset({_key(), _key(action=0), _key(action=1)})
     ctl.intent("mark", _key())
     assert ctl.state.marks == frozenset()
+
+
+def test_mark_proposal_marks_whole_subtree():
+    ctl = _controller(FakeRunner(_listing(_tree())))
+    ctl.load()
+    ctl.intent("mark", _key())
+    assert ctl.state.marks == {
+        _key(),
+        _key(action=0),
+        _key(action=1),
+        _key(action=2),
+        *(_key(action=0, comment=i) for i in range(4)),
+    }
+    ctl.intent("mark", _key())
+    assert ctl.state.marks == frozenset()
+
+
+def test_mark_action_marks_its_comments():
+    ctl = _controller(FakeRunner(_listing(_tree())))
+    ctl.load()
+    ctl.intent("mark", _key(action=0))
+    assert ctl.state.marks == {_key(action=0), *(_key(action=0, comment=i) for i in range(4))}
+
+
+def test_unmark_child_unmarks_ancestors_only():
+    ctl = _controller(FakeRunner(_listing(_tree())))
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.intent("mark", _key(action=0, comment=2))
+    assert _key() not in ctl.state.marks and _key(action=0) not in ctl.state.marks
+    assert _key(action=0, comment=2) not in ctl.state.marks
+    assert _key(action=0, comment=1) in ctl.state.marks and _key(action=1) in ctl.state.marks
+
+
+def test_mark_allows_non_deletable_row_and_delete_refuses_it():
+    ctl = _controller(
+        FakeRunner(
+            _listing(_proposal(deletable=False, delete_block="publication evidence recorded"))
+        )
+    )
+    ctl.load()
+    ctl.intent("mark", _key())
+    assert _key() in ctl.state.marks
+    ctl.intent("delete", None)
+    assert ctl.state.question is None
+    assert ctl.state.status == ("pr/a.json: publication evidence recorded",)
+
+
+def test_delete_of_marked_proposal_is_one_whole_drop():
+    # child actions with delete_scope=None would refuse if checked one by one
+    runner = FakeRunner(
+        _listing(_proposal(actions=[_action(0, delete_scope=None, delete_block="x")]))
+    )
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.intent("delete", None)
+    q = ctl.state.question
+    assert q is not None and q.lines == dob.delete_scope_lines(ctl.state, [_key()])
+    ctl.intent("answer", None, "yes")
+    assert runner.argvs("drop") == [dob.outbox_drop_argv(C, "pr/a.json", "r1")]
+
+
+def test_relist_cascades_mark_onto_new_children():
+    runner = FakeRunner(
+        _listing(_proposal()),
+        _listing(_proposal(actions=[_action(0), _action(1), _action(2)])),
+    )
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.load()
+    assert _key(action=2) in ctl.state.marks
 
 
 # --- delete ----------------------------------------------------------------
@@ -398,8 +462,7 @@ def test_delete_whole_settled_issue_archives_journal():
     runner = FakeRunner(_listing(issue))
     ctl = _controller(runner)
     ctl.load()
-    ctl.intent("mark", _key("issue/i.json"))
-    ctl.intent("mark", _key("issue/i.json", 1))  # a child of a whole mark is folded away
+    ctl.intent("mark", _key("issue/i.json"))  # its cascaded children fold into the whole
     ctl.intent("delete", None)
     ctl.intent("answer", None, "yes")
     assert runner.argvs("drop") == [

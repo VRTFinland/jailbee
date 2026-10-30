@@ -119,6 +119,42 @@ def _keys_of(containers: Iterable[dob.ContainerListing]) -> set[dob.RowKey]:
     return keys
 
 
+def _subtree(containers: Iterable[dob.ContainerListing], key: dob.RowKey) -> set[dob.RowKey]:
+    """``key`` and every listed row under it, collapsed or not."""
+    keys = {key}
+    if key[3] is not None:
+        return keys
+    for container in containers:
+        if container.name != key[0]:
+            continue
+        for proposal in container.proposals:
+            if proposal.id != key[1]:
+                continue
+            for action in proposal.actions:
+                if key[2] is not None and action.index != key[2]:
+                    continue
+                keys.add((container.name, proposal.id, action.index, None))
+                for comment in action.comments:
+                    keys.add((container.name, proposal.id, action.index, comment.index))
+    return keys
+
+
+def _ancestors(key: dob.RowKey) -> set[dob.RowKey]:
+    """The proposal and action rows above ``key``, not ``key`` itself."""
+    above: set[dob.RowKey] = set()
+    if key[2] is not None:
+        above.add((key[0], key[1], None, None))
+    if key[3] is not None:
+        above.add((key[0], key[1], key[2], None))
+    return above
+
+
+def _covered(keys: Iterable[dob.RowKey]) -> set[dob.RowKey]:
+    """``keys`` without those whose ancestor is also chosen: the whole covers its parts."""
+    chosen = set(keys)
+    return {k for k in chosen if not _ancestors(k) & chosen}
+
+
 def _find(
     containers: Sequence[dob.ContainerListing], name: str, pid: str
 ) -> dob.ProposalItem | None:
@@ -184,7 +220,7 @@ def _scope_was_shown(listed: dob.ProposalItem, fresh: dob.ProposalItem, index: i
 
 
 def _block_reason(state: dob.OutboxState, key: dob.RowKey) -> str | None:
-    """None when ``key`` may be marked for deletion, else why not."""
+    """None when ``key`` may be deleted, else why not."""
     found = dob.find_proposal(state, key)
     if found is None:
         return "not listed"
@@ -307,11 +343,15 @@ class OutboxController:
                 candidates += [(key[0], key[1], key[2], None), (key[0], key[1], None, None)]
         first = next(((c.name, p.id, None, None) for c in containers for p in c.proposals), None)
         chosen = next((k for k in candidates if k is not None and k in keys), first)
+        marks = {k for k in self.state.marks if k in keys}
+        # A marked proposal or action also covers the rows listed under it since.
+        for key in [k for k in marks if k[3] is None]:
+            marks |= _subtree(containers, key)
         return replace(
             self.state,
             containers=containers,
             expanded=frozenset(k for k in self.state.expanded if k in keys),
-            marks=frozenset(k for k in self.state.marks if k in keys),
+            marks=frozenset(marks),
             cursor=chosen,
             status=status,
             abilities=self._abilities(containers),
@@ -476,11 +516,15 @@ class OutboxController:
         if key is None:
             self._set(self.state)
             return
-        reason = _block_reason(self.state, key)
-        if reason is not None:
-            self._status(f"{_safe(key[1])}: {_safe(reason)}")
+        # Marks serve publish too: deletability is checked when `d` is pressed.
+        if key not in _keys_of(self.state.containers):
+            self._status(f"{_safe(key[1])}: not listed")
             return
-        self._set(replace(self.state, marks=self.state.marks ^ {key}, status=()))
+        if key in self.state.marks:
+            marks = self.state.marks - _subtree(self.state.containers, key) - _ancestors(key)
+        else:
+            marks = self.state.marks | _subtree(self.state.containers, key)
+        self._set(replace(self.state, marks=marks, status=()))
 
     # -- delete -------------------------------------------------------------
 
@@ -488,7 +532,7 @@ class OutboxController:
         if not self.state.abilities.delete:
             self._status("deleting is not available here")
             return
-        keys = set(self.state.marks) or ({key} if key is not None else set())
+        keys = _covered(self.state.marks) or ({key} if key is not None else set())
         if not keys:
             self._status("Nothing to delete.")
             return
