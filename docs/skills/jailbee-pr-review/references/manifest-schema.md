@@ -161,7 +161,6 @@ ignores it. At most one `description` action per manifest.
 - Manifest file: ≤ 256 KB
 - Any single body (`body` or the file behind `body_file`): ≤ 64 KB
 - `comments[]`: ≤ 100 entries
-- `actions`: ≤ 50 entries
 - Pending manifests per container: ≤ 20
 
 The caps exist so a runaway agent cannot produce a plan no human can read or

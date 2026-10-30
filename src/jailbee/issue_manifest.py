@@ -11,7 +11,6 @@ from jailbee.github_repo import is_github_slug
 
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
-MAX_ACTIONS = 50
 MAX_MANIFESTS = 20
 MAX_OFFER_ACTIONS = 100
 
@@ -472,8 +471,6 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
     raw_actions = root.get("actions")
     if not isinstance(raw_actions, list) or not raw_actions:
         raise IssueManifestError(f"{name}: actions must be a non-empty list")
-    if len(raw_actions) > MAX_ACTIONS:
-        raise IssueManifestError(f"{name}: manifest contains more than 50 actions")
 
     actions: list[IssueAction] = []
     body_files: set[str] = set()

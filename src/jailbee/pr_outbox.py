@@ -67,7 +67,6 @@ OUTBOX_SUBPATH = ".jailbee/pr-outbox"
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
 MAX_LINE_COMMENTS = 100
-MAX_ACTIONS = 50
 MAX_MANIFESTS = 20
 
 # A description action's title is optional, so it can be derived from the body's
@@ -333,10 +332,6 @@ def _parse_actions(
         raise ManifestError(f"{name}: actions must be a list")
     if len(actions_val) == 0 and not (source is not None and pr is not None):
         raise ManifestError(f"{name} has no actions")
-    if len(actions_val) > MAX_ACTIONS:
-        raise ManifestError(
-            f"{name} has {len(actions_val)} actions, more than the cap of {MAX_ACTIONS}"
-        )
 
     parsed: list[Action] = []
     seen_review = False
@@ -1413,8 +1408,6 @@ def _body_references(text: str) -> set[str]:
         raise ValueError("invalid manifest reference scope")
     result: set[str] = set()
     actions = raw["actions"]
-    if len(actions) > MAX_ACTIONS:
-        raise ValueError("invalid manifest reference scope")
     for action in actions:
         if not isinstance(action, dict) or action.get("type") not in (
             "review",

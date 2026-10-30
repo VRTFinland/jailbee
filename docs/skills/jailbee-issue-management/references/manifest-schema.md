@@ -31,7 +31,7 @@ any number of declared submodules.
 | Field | Rule |
 |---|---|
 | `version` | Must be `1`. Anything else is refused by name. |
-| `actions` | Non-empty list, applied in order. At most 50 entries per manifest. |
+| `actions` | Non-empty list, applied in order. |
 
 No other top-level field is allowed; an unknown key is refused, naming it.
 
@@ -148,7 +148,6 @@ actions across manifests, or fold the change into a single action, instead.
 - Manifest file: ≤ 256 KiB
 - Any single body (`body` or the file behind `body_file`, including
   `expected.body`): ≤ 64 KiB
-- `actions`: ≤ 50 entries per manifest
 - Pending manifests per container: ≤ 20
 - Selected manifests offered to one `jb issue apply` run: ≤ 100 actions
   total, across every manifest selected
