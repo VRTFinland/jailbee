@@ -1311,8 +1311,10 @@ line narrows it to that one, and `--all-repos` widens it to every registered
 repository. Without a TTY the same command prints the overview table instead
 (`--all-repos` widens that too). The terminal dashboard's **Outbox** entry
 opens the same manager under the table, for its container. Keys, also shown
-in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark, `d`
-delete the marked rows (or the highlighted one), `p` publish, `c` create PR,
+in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark a row
+and everything under it (unmarking a row also unmarks the rows above it), `d`
+delete the marked rows (or the highlighted one), `p` publish the marked
+proposals (or the highlighted one), `c` create PR,
 `X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
 in `jb outbox`, `a` switches between this repository and all registered ones
 and `q` or Esc quits, while in the dashboard Esc goes back to the container
@@ -1329,7 +1331,13 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   proposal has a pending review) and **Cancel**; the publish then runs in the
   background, pinned to the listed revision, and its outcome lines appear in
   the box. A stale-head refusal says to use `--force` from a terminal; the box
-  never forces.
+  never forces. With proposals marked, `p` plans each of them in turn and asks
+  once, the plans grouped under a line per proposal; one that cannot be
+  published, or whose plan is refused, is listed with the reason and left
+  out. The draft choice appears only when every plan offers it. The
+  proposals then publish one after another, a failure not stopping the rest.
+  Publishing works on whole proposals: with only actions or comments marked,
+  `p` says to mark the proposal row.
 - **Create PR** (a description awaiting its PR) re-reads the listing and,
   if the proposal is unchanged, hands the terminal to `jb pr push` or
   `jb submodule pr push` for the resolved scope, with that command's own checks.

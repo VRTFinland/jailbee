@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Outbox: publish several proposals at once.** In the Outbox box and
+  `jailbee outbox`, `Space` marks a row together with everything under it,
+  and `p` publishes every marked proposal after one question showing each
+  publication plan. Without marks `p` publishes the proposal under the cursor
+  as before.
+
 ## 1.8.0 - 2026-10-29
 
 ### Added

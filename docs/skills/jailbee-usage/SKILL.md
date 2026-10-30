@@ -1618,9 +1618,10 @@ On the host, start with `jailbee outbox`: on a terminal it opens the
 full-screen **outbox manager** over the PR **and** issue proposals of every
 container in the current repo (`jailbee outbox CONTAINER` narrows it to one,
 `jailbee outbox browse --all-repos` — or `a` inside — widens it to every
-registered repo). The proposals form a tree beside a preview: `Space` marks,
-`d` deletes after one "No"-first question, `p` shows the publication plan and
-publishes on a choice, `c` creates the PR a staged description awaits, `X`
+registered repo). The proposals form a tree beside a preview: `Space` marks
+a row and everything under it, `d` deletes the marked after one "No"-first
+question, `p` publishes the marked proposals (or the one under the cursor)
+after one question showing each publication plan, `c` creates the PR a staged description awaits, `X`
 clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
 refreshes, `q` quits. On a narrow terminal Enter on a leaf row (a description,
 a reply, a comment) shows the preview in the list's place; Esc goes back. Off a terminal it prints the overview table. The

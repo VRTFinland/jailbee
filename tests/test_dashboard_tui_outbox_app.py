@@ -37,7 +37,7 @@ class FakeJobs:
 
     def start(self, key, label, argv, cwd, on_done, *, capture_stdout=False, on_progress=None):  # type: ignore[no-untyped-def]
         self.started.append(list(argv))
-        stdout = _plan() if "--dry-run" in argv else "published 2 action(s)"
+        stdout = _plan(proposal=argv[4]) if "--dry-run" in argv else "published 2 action(s)"
         self._pending.append((on_done, JobResult(0, "", stdout)))
 
     def call(self, key, label, fn, on_done):  # type: ignore[no-untyped-def]
@@ -202,6 +202,30 @@ def test_publish_job_polled_and_status_shown(quiet, jobs):
     assert "-y" in apply_argv and "--dry-run" not in apply_argv
     assert "published 2 action(s)" in text
     assert app.controller.state.question is None
+
+
+def test_marked_proposals_publish_together(quiet, jobs):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("space", "down", "space", "p")
+        await pilot.pause(0.4)  # the first plan
+        await pilot.pause(0.4)  # the second plan
+        asked = app.controller.state.question
+        await pilot.press("up", "up", "enter")  # Cancel is the default; Publish is first
+        await pilot.pause(0.4)
+        await pilot.pause(0.4)
+        return asked
+
+    asked = drive(app, scenario)
+    assert asked is not None and asked.title == "Publish 2 proposals?"
+    (runner_jobs,) = jobs
+    plans, applies = runner_jobs.started[:2], runner_jobs.started[2:]
+    assert [argv[4] for argv in plans] == ["pr/a.json", "issue/b.json"]
+    assert all("--dry-run" in argv for argv in plans)
+    assert [argv[4] for argv in applies] == ["pr/a.json", "issue/b.json"]
+    assert all("-y" in argv and "--dry-run" not in argv for argv in applies)
+    assert app.controller.state.marks == frozenset()
 
 
 def test_hand_off_runs_in_the_foreground_through_suspend(mocker):
