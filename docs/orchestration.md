@@ -308,6 +308,39 @@ messages already present return immediately. Use `send --wait` for spawn,
 update and destroy, and always for a child's done report: it consumes only
 that manifest's status, returning 0 for done/queued/started, 1 for
 refused/failed, 2 for usage errors and 3 for timeout (default 30m).
+For lower-noise orchestration, use the helper directly, not a wrapper that
+reads and discards progress notes:
+
+```bash
+jailbee-inbox wait --wake-on done,question,blocked,failed,refused --quiet-after 60m --timeout 30m
+```
+
+`--wake-on` accepts comma-separated message kinds (`note`, `question`, `done`,
+`blocked`) and status states (`queued`, `started`, `done`, `failed`, `refused`).
+It returns the oldest matching unread path; **nothing is marked read**, even
+when it does not match. Omit the filter for any unread message. The first
+message from a child after each spawn/restart always wakes, regardless of
+kind; read history prevents later notes from counting as first again.
+After waking, list and handle all unread messages, including filtered notes.
+
+`--quiet-after` returns exit 0 with `quiet-child CHILD` instead of a path when
+a running child has sent nothing for that duration. Read and unread reports
+both count; with no reports, time is measured from the child's start. Stop or
+restart resets monitoring, and an overdue child keeps waking until activity
+or a lifecycle change. The broker publishes read-only `children.json` with
+running children and start times. Requested quiet monitoring exits 2 if the
+snapshot is absent, malformed or older than 60 seconds; check the broker.
+Without quiet monitoring, filtering still works if that snapshot is missing,
+but the first-report override needs fresh child state.
+
+One ordinary waiter per container is enforced with a process lock (a second
+exits 2). It may overlap `send --wait`: the sender reserves its status ref
+before publishing the manifest, and ordinary wait skips those statuses while
+the sender lives. Locks release on exit/crash/timeout; leftover lock files do
+not reserve anything. `ls` and explicit `read` remain administrative operations:
+do not read a pending sender's reply in another session. Ordinary wait never
+consumes a reply. After a send timeout, a late reply is eligible again.
+
 For multi-session work, spawn with `--on-done keep`; `update --child C`
 brings the parent's latest committed branch into the existing child.
 Prefer a fresh fork for rework so it starts from the latest merged state.

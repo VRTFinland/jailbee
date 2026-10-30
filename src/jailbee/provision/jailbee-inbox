@@ -6,7 +6,7 @@ die() { printf 'jailbee-inbox: %s\n' "$1" >&2; exit 2; }
 
 usage() {
     cat <<'USAGE'
-Usage: jailbee-inbox wait [--timeout DUR]
+Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
        jailbee-inbox ls
        jailbee-inbox read <id> [--keep]
        jailbee-inbox runners [--json]
@@ -16,6 +16,13 @@ Usage: jailbee-inbox wait [--timeout DUR]
          DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1
          on timeout. --timeout 0 checks once. After an arrival, wait briefly
          for the burst to settle; then use ls to handle every unread message.
+         --wake-on LIST filters comma-separated message kinds/status states
+         (note,question,done,blocked,queued,started,failed,refused). A child's
+         first message after each start always wakes. Nothing is marked read.
+         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running
+         child is silent that long; needs fresh broker children.json (<=60s).
+         Only one wait may run; a second exits 2. Concurrent send --wait is
+         safe: wait skips its reserved statuses until that sender exits.
   ls     One line per unread message, oldest first:
          <id> <type> <from or ref> <kind or state> <first 60 chars of text>
   read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves
@@ -136,26 +143,160 @@ settle_inbox() {
     done
 }
 
+# Selection is read-only, including inbox/read history. Keep it embedded so
+# golden builds and broker refreshes still deliver one standalone helper.
+select_wakeup() {
+    python3 -I - "$base" "$wake_on" "$quiet_after" <<'PY'
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import stat
+import sys
+import time
+
+base = Path(sys.argv[1])
+wake = set(sys.argv[2].split(",")) if sys.argv[2] else None
+quiet = int(sys.argv[3])
+now = time.time()
+
+def load(path):
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        value = json.loads(path.read_text())
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+def number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+snapshot = load(base / "children.json")
+children = {}
+try:
+    assert snapshot and snapshot["version"] == 1
+    assert number(snapshot["updated_at"]) and -5 <= now - snapshot["updated_at"] <= 60
+    assert isinstance(snapshot["children"], list)
+    for c in snapshot["children"]:
+        assert isinstance(c["name"], str) and isinstance(c["running"], bool)
+        assert number(c["started_at"]) and c["started_at"] <= now + 5
+        if c["running"]:
+            children[c["name"]] = c["started_at"]
+except (AssertionError, KeyError, TypeError):
+    if quiet:
+        print("jailbee-inbox: --quiet-after needs a fresh broker children.json (at most 60s old)", file=sys.stderr)
+        sys.exit(2)
+    children = {}
+
+records = []
+for directory in (base / "inbox", base / "inbox/read"):
+    for path in directory.glob("*.json"):
+        if path.name.startswith("."):
+            continue
+        data = load(path)
+        if data is None:
+            continue
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        records.append((path, data, stamp))
+
+first = {}
+latest = dict(children)
+for path, data, stamp in sorted(records, key=lambda r: (r[2], r[0].name)):
+    name = data.get("from")
+    if data.get("type") == "message" and isinstance(name, str) and name in children:
+        if stamp / 1e9 >= children[name]:
+            first.setdefault(name, path)
+            latest[name] = max(latest[name], stamp / 1e9)
+
+def reserved(ref):
+    if not isinstance(ref, str) or not ref or "/" in ref or ref in (".", ".."):
+        return False
+    path = base / "status-waits" / (ref + ".lock")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        return False
+    finally:
+        os.close(fd)
+
+for path, data, _ in sorted(records, key=lambda r: r[0].name):
+    if path.parent != base / "inbox":
+        continue
+    is_status = data.get("type") == "status"
+    if is_status and reserved(data.get("ref")):
+        continue
+    token = data.get("state") if is_status else data.get("kind")
+    name = data.get("from")
+    is_first = isinstance(name, str) and first.get(name) == path
+    if wake is None or (isinstance(token, str) and token in wake) or is_first:
+        print(path)
+        sys.exit(0)
+if quiet:
+    for name in sorted(latest, key=lambda n: (latest[n], n)):
+        if now - latest[name] >= quiet:
+            clean = "".join("?" if ord(c) < 32 or 127 <= ord(c) <= 159 else c for c in name)
+            print("quiet-child " + clean)
+            break
+PY
+}
+
 cmd_wait() {
     local timeout=1800 first waited=0 status_ref="${wait_status_ref:-}"
+    local wake_on="" quiet_after=0 wait_fd token
     while [ $# -gt 0 ]; do
         case "$1" in
             --timeout)
                 [ $# -ge 2 ] || die "--timeout needs a value"
                 timeout="$(parse_duration "$2")"
                 shift 2 ;;
+            --wake-on)
+                [ $# -ge 2 ] || die "--wake-on needs a value"
+                wake_on="$2"
+                [[ "$wake_on" =~ ^(note|question|done|blocked|queued|started|refused|failed)(,(note|question|done|blocked|queued|started|refused|failed))*$ ]] \
+                    || die "--wake-on needs comma-separated message kinds or status states"
+                shift 2 ;;
+            --quiet-after)
+                [ $# -ge 2 ] || die "--quiet-after needs a value"
+                quiet_after="$(parse_duration "$2")"
+                [ "$quiet_after" -gt 0 ] || die "--quiet-after must be positive"
+                shift 2 ;;
             *) die "unknown argument '$1' (see --help)" ;;
         esac
     done
     mkdir -p "$inbox"
-    local deadline_ms remaining_ms remaining rc slice
+    if [ -z "$status_ref" ]; then
+        exec {wait_fd}>"$base/wait.lock"
+        flock -n "$wait_fd" || die "another process is already waiting in this container"
+    fi
+    local deadline_ms remaining_ms remaining rc slice sleep_for
     deadline_ms=$(( $(now_ms) + timeout * 1000 ))
     while :; do
-        if [ -n "$status_ref" ]; then first="$(find_status "$status_ref")"; else first="$(oldest)"; fi
+        if [ -n "$status_ref" ]; then
+            first="$(find_status "$status_ref")"
+        else
+            rc=0
+            first="$(select_wakeup)" || rc=$?
+            [ "$rc" -eq 0 ] || return "$rc"
+        fi
         if [ -n "$first" ]; then
             if [ "$waited" -eq 1 ] && [ -z "$status_ref" ]; then
                 settle_inbox "$deadline_ms"
-                first="$(oldest)"
+                rc=0
+                first="$(select_wakeup)" || rc=$?
+                [ "$rc" -eq 0 ] || return "$rc"
                 [ -n "$first" ] || continue
             fi
             printf '%s\n' "$first"
@@ -164,6 +305,14 @@ cmd_wait() {
         remaining_ms=$((deadline_ms - $(now_ms)))
         [ "$remaining_ms" -gt 0 ] || return 1
         remaining=$(( (remaining_ms + 999) / 1000 ))
+        # No inbox event is needed for a watchdog deadline or a stopped child.
+        # A one-second watchdog slice also notices broker state refreshes.
+        if [ "$quiet_after" -gt 0 ] && [ "$remaining_ms" -gt 1000 ]; then
+            remaining_ms=1000
+            remaining=1
+        fi
+        sleep_for="$(jq -nr --arg p "$poll" --argjson ms "$remaining_ms" \
+            '[($p | tonumber), ($ms / 1000)] | min')"
         waited=1
         if command -v inotifywait >/dev/null 2>&1; then
             # inotifywait only sees events after it has set its watch, so a
@@ -175,9 +324,9 @@ cmd_wait() {
             rc=0
             inotifywait -q -t "$slice" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
             # Exit 0 = event, 2 = timeout; anything else = the watch failed.
-            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then sleep "$poll"; fi
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then sleep "$sleep_for"; fi
         else
-            sleep "$poll"
+            sleep "$sleep_for"
         fi
     done
 }
@@ -618,6 +767,15 @@ cmd_send() {
             jq -n --arg id "$id" --arg type "$type" --arg child "$child" \
                 '{version: 1, id: $id, type: $type, child: $child}' > "$json_tmp" ;;
     esac
+
+    # Reserve before publication: a concurrent generic wait must not select
+    # this reply. Stale lock files are harmless; only a live flock reserves.
+    local status_fd
+    if [ "$wait" -eq 1 ]; then
+        mkdir -p "$base/status-waits"
+        exec {status_fd}>"$base/status-waits/$id.lock"
+        flock -n "$status_fd" || die "status ref is already reserved"
+    fi
 
     # Body first: the broker reads it only once the manifest names it.
     if [ "$has_body" -eq 1 ]; then

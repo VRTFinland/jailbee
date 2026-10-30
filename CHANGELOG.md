@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee-inbox wait --wake-on` filters wakeups without marking any message
+  read; a child's first report after spawn/restart always wakes. The
+  `--quiet-after` watchdog names silent running children. Concurrent
+  `send --wait` replies are reserved for their sender, and a second ordinary
+  waiter is rejected.
+
 - Orchestrators can grant and revoke a child's network, optional mounts and
   egress rights at runtime, timed or permanent; children can relinquish their
   own access. Loose permission includes narrower egress within the repo cap.

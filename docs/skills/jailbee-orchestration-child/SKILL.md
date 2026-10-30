@@ -111,6 +111,16 @@ your orchestrator as the answer. Its `in_reply_to` is informational only: the
 host gives relayed messages new ids, so it need not equal the id of your
 message.
 
+`wait` never marks anything read. Optional `--wake-on` filters message kinds
+and status states, leaving nonmatches unread; children normally omit it so
+no orchestrator instruction is missed. Only one ordinary waiter may run
+(another exits 2). A concurrent `send --wait` reserves its status ref before
+publishing: ordinary wait skips those replies while the sender lives. Do not
+explicitly read a pending sender's reply in another session. On sender exit
+or timeout the reservation is released automatically; late statuses remain
+visible. The orchestrator's `--quiet-after` watchdog uses broker child state;
+it is not needed by a child waiting for its parent.
+
 ## Checking the inbox while working
 
 At natural checkpoints (a finished step), run `jailbee-inbox ls`. The

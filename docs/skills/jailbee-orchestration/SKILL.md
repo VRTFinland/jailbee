@@ -207,7 +207,7 @@ seconds. Do not hand-roll the protocol. If they stay missing, tell the
 human; the broker may not be running (`jailbee orchestrate status` on the host).
 
 ```bash
-jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
+jailbee-inbox wait --wake-on done,question,blocked,failed,refused --quiet-after 60m --timeout 30m
 ```
 
 It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
@@ -218,9 +218,28 @@ prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 After `wait` returns, run `jailbee-inbox ls` and handle **every** unread
 message before waiting again: replies to several manifests arrive as a burst.
 
-`wait` does not consume anything: while any message is unread it returns at
-once, with the oldest one. Mark every message read (by its id, `h-<hex>`, not
-its file name) before you wait again, or the loop spins on the same message.
+Use `--wake-on`, not home-made wrappers that read/log notes or statuses:
+**wait never consumes anything**, including nonmatches. It returns the oldest
+matching unread path; without a filter any unread message matches. Message
+kinds and status states share the filter vocabulary. A child's first message
+after spawn/restart overrides the filter even if it is a note; read history
+prevents later notes from overriding again. Explicitly read messages by id,
+not filename, or a matching unread message keeps waking you.
+
+`--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
+when a running child has sent nothing for an hour. Check that child; the
+watchdog repeats until activity, stop or restart. Both read and unread reports
+count as activity; a child with no reports is timed from its start. The broker
+refreshes `children.json`; missing, corrupt or more than 60s-old state makes
+this watchdog exit 2, so check the host broker instead of assuming all is well.
+
+Only one ordinary `wait` may run per container; another exits 2. Concurrent
+`send --wait` is supported: it reserves its status ref before publishing and
+ordinary `wait` skips that ref while the sender lives. Reservations disappear
+on process exit, including crashes/timeouts; stale lock files do not hide
+replies. Do not explicitly `read` a pending sender's status from another
+session. After a wake, handle all other unread messages, including filtered
+notes, but leave reserved replies to their sender.
 
 ## Status messages
 

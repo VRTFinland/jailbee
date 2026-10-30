@@ -89,6 +89,8 @@ def env_for(base: Path, tmp_path: Path, path: str | None = None) -> dict[str, st
         "tr",
         "wc",
         "rm",
+        "flock",
+        "python3",
     ):
         found = shutil.which(tool)
         assert found
@@ -1268,3 +1270,162 @@ def test_help_documents_send_rights(script, base, tmp_path):
         "--revoke-egress",
     ):
         assert text in out
+
+
+def child_snapshot(base, *, started=None, running=True, updated=None):
+    (base / "children.json").write_text(json.dumps({
+        "version": 1, "updated_at": time.time() if updated is None else updated,
+        "children": [{"name": "kid", "running": running,
+                      "started_at": time.time() - 120 if started is None else started}],
+    }))
+
+
+def test_wait_filter_leaves_nonmatches_unread(script, base, tmp_path):
+    note = write_inbox(base, FIRST, {**message("n"), "kind": "note"})
+    done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})
+    r = run(script, "wait", "--wake-on", "done,failed", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(done)
+    assert note.exists() and done.exists()
+    assert not (base / "inbox/read").exists()
+
+
+@pytest.mark.parametrize("value", ["", "done,", "done,nope", ",note", "done,,note"])
+def test_wait_bad_wake_filter(script, base, tmp_path, value):
+    r = run(script, "wait", "--wake-on", value, "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert "wake-on" in r.stderr
+
+
+def test_wait_first_child_report_overrides_once_per_start(script, base, tmp_path):
+    child_snapshot(base)
+    first = write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
+    args = ("wait", "--wake-on", "done", "--timeout", "0")
+    env = env_for(base, tmp_path)
+    assert run(script, *args, env=env).stdout.strip() == str(first)
+    assert first.exists()
+    run(script, "read", "first", env=env)
+    second = write_inbox(base, SECOND, {**message("second"), "from": "kid", "kind": "note"})
+    assert run(script, *args, env=env).returncode == 1
+    child_snapshot(base, started=time.time() - 0.01)
+    os.utime(second, None)
+    assert run(script, *args, env=env).stdout.strip() == str(second)
+
+
+@pytest.mark.parametrize("read", [False, True])
+def test_wait_quiet_child_counts_all_activity(script, base, tmp_path, read):
+    child_snapshot(base)
+    args = ("wait", "--wake-on", "done", "--quiet-after", "60s", "--timeout", "0")
+    env = env_for(base, tmp_path)
+    r = run(script, *args, env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "quiet-child kid"
+    p = write_inbox(base, FIRST, {**message("n"), "from": "kid", "kind": "note"})
+    if read:
+        run(script, "read", "n", env=env)
+    # First report may wake, but the watchdog must not report quiet.
+    assert "quiet-child" not in run(script, *args, env=env).stdout
+    p = base / "inbox/read" / FIRST if read else p
+    os.utime(p, (time.time() - 90, time.time() - 90))
+    if not read:
+        run(script, "read", "n", env=env)
+    assert run(script, *args, env=env).stdout.strip() == "quiet-child kid"
+    child_snapshot(base, running=False)
+    assert run(script, *args, env=env).returncode == 1
+
+
+@pytest.mark.parametrize("state", [None, "bad", "stale"])
+def test_wait_quiet_requires_fresh_state(script, base, tmp_path, state):
+    if state == "stale":
+        child_snapshot(base, updated=time.time() - 120)
+    elif state == "bad":
+        (base / "children.json").write_text("{}")
+    r = run(script, "wait", "--quiet-after", "1m", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert "children.json" in r.stderr
+
+
+def test_wait_single_waiter_lock(script, base, tmp_path):
+    env = env_for(base, tmp_path)
+    with subprocess.Popen(["bash", str(script), "wait", "--timeout", "5"], env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        try:
+            time.sleep(0.3)
+            r = run(script, "wait", "--timeout", "0", env=env)
+            assert r.returncode == 2
+            assert "already waiting" in r.stderr
+        finally:
+            proc.terminate()
+            proc.communicate(timeout=5)
+    assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
+
+
+def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
+    import fcntl
+
+    env = env_for(base, tmp_path)
+    (base / "status-waits").mkdir()
+    path = write_inbox(base, FIRST, status("reply", ref="pending"))
+    with (base / "status-waits/pending.lock").open("w") as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
+        assert path.exists()
+    assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == str(path)
+
+
+def test_wait_watchdog_without_new_inbox_event(script, base, tmp_path):
+    child_snapshot(base, started=time.time())
+    env = env_for(base, tmp_path)
+    env["JAILBEE_INBOX_POLL"] = "5"
+    started = time.monotonic()
+    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "3", env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "quiet-child kid"
+    assert time.monotonic() - started < 2.5
+
+
+def test_wait_poll_respects_timeout(script, base, tmp_path):
+    env = env_for(base, tmp_path)
+    env["JAILBEE_INBOX_POLL"] = "5"
+    started = time.monotonic()
+    r = run(script, "wait", "--timeout", "1", env=env)
+    assert r.returncode == 1
+    assert time.monotonic() - started < 2.5
+
+
+def test_wait_filter_matches_status_state(script, base, tmp_path):
+    write_inbox(base, FIRST, status("ignored"))
+    expected = write_inbox(base, SECOND, {**status("failed"), "state": "failed"})
+    r = run(script, "wait", "--wake-on", "failed,refused", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.stdout.strip() == str(expected)
+    assert len(list((base / "inbox").glob("*.json"))) == 2
+
+
+def test_send_reserves_status_before_publishing(script, base, tmp_path):
+    import fcntl
+
+    env = env_for(base, tmp_path)
+    with subprocess.Popen(["bash", str(script), "send", "message", "--text", "go",
+                           "--wait", "--timeout", "5"], env=env, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        try:
+            deadline = time.monotonic() + 3
+            manifests = []
+            while time.monotonic() < deadline:
+                manifests = list((base / "outbox").glob("*.json"))
+                if manifests:
+                    break
+                time.sleep(0.01)
+            assert manifests
+            mid = json.loads(manifests[0].read_text())["id"]
+            with (base / "status-waits" / (mid + ".lock")).open("a") as lock:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            write_inbox(base, FIRST, status("s", ref=mid))
+            stdout, stderr = proc.communicate(timeout=5)
+            assert proc.returncode == 0, (stdout, stderr)
+            assert (base / "inbox/read" / FIRST).exists()
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.communicate(timeout=5)
