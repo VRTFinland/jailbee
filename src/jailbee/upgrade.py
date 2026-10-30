@@ -408,7 +408,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"base_build"}),
         reason=(
             "the golden image's jailbee-inbox supports named autostart profiles "
@@ -416,7 +416,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"base_build"}),
         reason=(
             "the golden image's jailbee-inbox gains `send rights`, so an agent can "
@@ -424,7 +424,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs the updated orchestration, usage "
@@ -433,7 +433,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills describing verified agent "
@@ -441,7 +441,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"base_build"}),
         reason=(
             "the golden image's jailbee-inbox gains `wait --wake-on` and "
@@ -449,11 +449,11 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 9, 0),
+        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills describing wake filters "
-            "and the quiet-child watchdog for `jailbee-inbox wait`"
+            "and the quiet-child watchdog for inbox waits"
         ),
     ),
 )

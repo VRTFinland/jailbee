@@ -988,7 +988,7 @@ def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
     owed = pending("1.8.0", {"base_build": Watermark((1, 7, 8), observed=True)})
     notes = [n for n in UPGRADE_NOTES if "jailbee-inbox" in n.reason]
     assert notes and all(n.actions == frozenset({"base_build"}) for n in notes)
-    assert any(n.version == (1, 9, 0) and "autostart profiles" in n.reason for n in notes)
+    assert any(n.version == (1, 8, 1) and "autostart profiles" in n.reason for n in notes)
     assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
     apply_owed = pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
     assert not any(
@@ -1033,14 +1033,14 @@ def test_upgrade_note_announces_orchestration_skills() -> None:
 def test_runtime_rights_upgrade_notes_one_per_reason():
     from jailbee.upgrade import UPGRADE_NOTES
 
-    rights = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "send rights" in n.reason]
+    rights = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1) and "send rights" in n.reason]
     assert len(rights) == 1
     assert rights[0].actions == frozenset({"base_build"})
-    skills = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "runtime rights" in n.reason]
+    skills = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1) and "runtime rights" in n.reason]
     assert len(skills) == 1
     assert skills[0].actions == frozenset({"apply"})
     supervision = [
-        n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "prompted-agent exit" in n.reason
+        n for n in UPGRADE_NOTES if n.version == (1, 8, 1) and "prompted-agent exit" in n.reason
     ]
     assert len(supervision) == 1
     assert supervision[0].actions == frozenset({"apply"})
