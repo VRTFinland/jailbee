@@ -294,14 +294,7 @@ def _settle_agent_watch(
         entries.remove(entry)  # Never monitor another orchestrator's namesake.
         watch.save_watch(ctx.root, watches)
         return
-    if child is not None and (
-        child.config.get(labels.STATE) == labels.STATE_DONE
-        or (
-            child.config.get(labels.STATE) == labels.STATE_IMPORTED
-            and child.config.get(labels.DONE_SHA)
-            and child.config.get(labels.DONE_SHA) == child.config.get(labels.LAST_IMPORT)
-        )
-    ):
+    if child is not None and labels.is_finished(child.config):
         entries.remove(entry)
         watch.save_watch(ctx.root, watches)
         return

@@ -227,7 +227,7 @@ prevents later notes from overriding again. Explicitly read messages by id,
 not filename, or a matching unread message keeps waking you.
 
 `--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
-when a running child has sent nothing for an hour. Check that child; the
+when a running child that has not reported done has sent nothing for an hour. Check that child; the
 watchdog repeats until activity, stop or restart. Both read and unread reports
 count as activity; a child with no reports is timed from its start. The broker
 refreshes `children.json`; missing, corrupt or more than 60s-old state makes

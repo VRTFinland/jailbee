@@ -45,6 +45,15 @@ STATE_DONE = "done"
 STATE_IMPORTED = "imported"
 
 
+def is_finished(config: Mapping[str, str]) -> bool:
+    """True once the child reported done, or its done commit was imported."""
+    state = config.get(STATE)
+    if state == STATE_DONE:
+        return True
+    done_sha = config.get(DONE_SHA)
+    return state == STATE_IMPORTED and bool(done_sha) and done_sha == config.get(LAST_IMPORT)
+
+
 def child_env(cfg: Config, incus: Incus, full: str) -> dict[str, str]:
     """Role env for a spawned child's agent steps; ``{}`` for any other container."""
     from jailbee.lifecycle import short_name

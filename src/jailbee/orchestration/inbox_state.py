@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from jailbee.orchestration import labels
 from jailbee.orchestration.outbox import _BASE, _atomic_write
 from jailbee.orchestration.state import atomic_write_text
 
@@ -33,9 +34,15 @@ def sync_children(ctx: ActionContext) -> None:
                 value = old.get("started_at")
                 if isinstance(value, (int, float)):
                     started = value
-        item = {"name": child.short, "running": child.running, "started_at": started}
+        # A finished child may keep running until import/destroy; it must not
+        # trip the helper's quiet watchdog, so it is published as not running.
+        item = {
+            "name": child.short,
+            "running": child.running and not labels.is_finished(child.config),
+            "started_at": started,
+        }
         children.append(item)
-        durable.append({**item, "full": child.full, "key": child.key})
+        durable.append({**item, "running": child.running, "full": child.full, "key": child.key})
     atomic_write_text(path, json.dumps({"owner": ctx.sender.key, "children": durable}))
     text = json.dumps({"version": 1, "updated_at": ctx.now.timestamp(), "children": children})
     _atomic_write(

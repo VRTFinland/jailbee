@@ -94,3 +94,52 @@ def test_snapshot_failed_write_can_retry(tmp_path):
     ctx.incus.exec_with_input.side_effect = None
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp() - 5
+
+
+def _kid_with(ctx, config):
+    ctx.nodes = {
+        "p-orch": ctx.sender,
+        "p-kid": Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", **config}),
+    }
+
+
+@pytest.mark.parametrize(
+    ("config", "published"),
+    [
+        ({labels.STATE: labels.STATE_DONE}, False),
+        (
+            {
+                labels.STATE: labels.STATE_IMPORTED,
+                labels.DONE_SHA: "a" * 40,
+                labels.LAST_IMPORT: "a" * 40,
+            },
+            False,
+        ),
+        (
+            {
+                labels.STATE: labels.STATE_IMPORTED,
+                labels.DONE_SHA: "a" * 40,
+                labels.LAST_IMPORT: "b" * 40,
+            },
+            True,
+        ),
+        ({labels.STATE: "working"}, True),
+    ],
+)
+def test_snapshot_finished_child_is_not_published_running(tmp_path, config, published):
+    ctx = context(tmp_path)
+    _kid_with(ctx, config)
+    inbox_state.sync_children(ctx)
+    assert delivered(ctx)["children"][0]["running"] is published
+
+
+def test_snapshot_finished_child_keeps_start_time(tmp_path):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx)
+    start = ctx.now.timestamp()
+    ctx.now += timedelta(minutes=5)
+    _kid_with(ctx, {labels.STATE: labels.STATE_DONE})
+    inbox_state.sync_children(ctx)
+    ctx.now += timedelta(minutes=5)
+    inbox_state.sync_children(ctx)
+    assert delivered(ctx)["children"][0]["started_at"] == start
