@@ -47,6 +47,14 @@ def test_profiled_config_carries_filtered_block(make_cfg, tmp_path):
     assert [s.stage for s in cfg.autostart.on_create] == ["deps", "images"]
 
 
+def test_created_empty_key_is_not_a_legacy_container(mocker):
+    from jailbee.autostart_profiles import created_stages
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None  # Incus wrapper collapses empty stdout
+    incus.config_show.return_value = 'config:\n  user.jailbee.autostart_created: ""\n'
+    assert created_stages(incus, "c") == frozenset()
+
+
 def test_record_created_idempotent_order_preserved(mocker):
     from jailbee.autostart_profiles import record_created, CREATED_KEY
     incus, state = state_incus(mocker, {CREATED_KEY: "deps"})
