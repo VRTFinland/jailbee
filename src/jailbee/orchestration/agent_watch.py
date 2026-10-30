@@ -39,7 +39,9 @@ def advance(
         if entry.live_since is None:
             return replace(entry, live_since=now.isoformat()), None
         if (now - datetime.fromisoformat(entry.live_since)).total_seconds() >= 2:
-            return replace(entry, confirmed=True), done(f"child `{child.short}` is ready; agent is alive")
+            return replace(entry, confirmed=True), done(
+                f"child `{child.short}` is ready; agent is alive"
+            )
         return entry, None
     assert entry.ready_since is not None
     expired = (now - datetime.fromisoformat(entry.ready_since)).total_seconds() >= 120
@@ -66,7 +68,8 @@ try:
     pid = int(data['pid'])
     stat = pathlib.Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
     boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-    result['alive'] = pid > 1 and stat[0] not in ('Z', 'X') and stat[19] == data['start'] and boot == data['boot']
+    result['alive'] = (pid > 1 and stat[0] not in ('Z', 'X')
+                       and stat[19] == data['start'] and boot == data['boot'])
 except (OSError, ValueError, KeyError, TypeError, IndexError):
     pass
 try:
@@ -92,7 +95,9 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
             return None
         agent = data.get("agent", "agent")
         rc = data.get("rc")
-        if not isinstance(agent, str) or (rc is not None and (type(rc) is not int or not 0 <= rc <= 255)):
+        if not isinstance(agent, str) or (
+            rc is not None and (type(rc) is not int or not 0 <= rc <= 255)
+        ):
             return None
         return AgentStatus(data["alive"], agent, rc)
     except (IncusError, ValueError, TypeError):

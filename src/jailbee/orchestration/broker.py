@@ -29,7 +29,6 @@ from jailbee.orchestration.actions import (
     dispatch,
     drain_queue,
     drop_queue,
-    live_job_kind,
     prune_reservations,
     refused,
 )
@@ -284,8 +283,8 @@ def _settle_agent_watch(
     entries: list[watch.WatchEntry],
     entry: watch.WatchEntry,
 ) -> None:
-    from jailbee.orchestration import agent_watch
     from jailbee.lifecycle import short_name
+    from jailbee.orchestration import agent_watch
 
     child = ctx.nodes.get(entry.child_full)
     status = None
@@ -299,9 +298,12 @@ def _settle_agent_watch(
         return
     if not entry.confirmed:
         boot = watch.verdict(
-            entry, jobs.get(entry.child_full), child,
+            entry,
+            jobs.get(entry.child_full),
+            child,
             orchestrator_full=ctx.sender.full,
-            short=short_name(ctx.cfg, entry.child_full), now=ctx.now,
+            short=short_name(ctx.cfg, entry.child_full),
+            now=ctx.now,
         )
         if boot is None:
             return
@@ -316,19 +318,35 @@ def _settle_agent_watch(
     if outcome is not None:
         if outcome.state == "failed" and child is not None and child.running:
             tail = agent_watch.output_tail(
-                ctx.incus, child.full, status.agent if status else "agent", uid=ctx.cfg.container_user.uid
+                ctx.incus,
+                child.full,
+                status.agent if status else "agent",
+                uid=ctx.cfg.container_user.uid,
             )
             if tail:
                 outcome = replace(outcome, detail=f"{outcome.detail}\nLast agent output:\n{tail}")
         if entry.confirmed:
-            message = InboxMessage.model_validate({
-                "version": 1, "id": new_host_id(), "type": "message",
-                "from": child.short if child else entry.child_full,
-                "kind": "blocked", "body": outcome.detail, "in_reply_to": entry.ref,
-            })
-            deliver(ctx.incus, ctx.root, ctx.sender.full, message,
-                    running=ctx.sender.running, uid=ctx.cfg.container_user.uid,
-                    now=ctx.now, seq=next(memory.seq))
+            message = InboxMessage.model_validate(
+                {
+                    "version": 1,
+                    "id": new_host_id(),
+                    "type": "message",
+                    "from": child.short if child else entry.child_full,
+                    "kind": "blocked",
+                    "body": outcome.detail,
+                    "in_reply_to": entry.ref,
+                }
+            )
+            deliver(
+                ctx.incus,
+                ctx.root,
+                ctx.sender.full,
+                message,
+                running=ctx.sender.running,
+                uid=ctx.cfg.container_user.uid,
+                now=ctx.now,
+                seq=next(memory.seq),
+            )
         else:
             _reply(ctx, entry.ref, outcome, memory)
     index = entries.index(entry)

@@ -1039,6 +1039,8 @@ def test_runtime_rights_upgrade_notes_one_per_reason():
     skills = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "runtime rights" in n.reason]
     assert len(skills) == 1
     assert skills[0].actions == frozenset({"apply"})
-    supervision = [n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "prompted-agent exit" in n.reason]
+    supervision = [
+        n for n in UPGRADE_NOTES if n.version == (1, 9, 0) and "prompted-agent exit" in n.reason
+    ]
     assert len(supervision) == 1
     assert supervision[0].actions == frozenset({"apply"})

@@ -55,7 +55,9 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     m = {
         "jobs": MagicMock(return_value=set()),
         "stop": MagicMock(return_value=False),
-        "boot": MagicMock(return_value=__import__("types").SimpleNamespace(pid=12345, log_path="/tmp/boot.log")),
+        "boot": MagicMock(
+            return_value=__import__("types").SimpleNamespace(pid=12345, log_path="/tmp/boot.log")
+        ),
         "destroy": MagicMock(),
         "head": MagicMock(return_value="aaa"),
     }
@@ -174,14 +176,23 @@ def test_restart_explicit_destroy_needs_grant(tmp_path: Path, seams: dict[str, M
 
 @pytest.mark.parametrize("operation", ["stop", "destroy"])
 @pytest.mark.parametrize("fails", [False, True])
-def test_intentional_shutdown_cancels_watch_only_on_success(tmp_path, seams, operation, fails) -> None:
+def test_intentional_shutdown_cancels_watch_only_on_success(
+    tmp_path, seams, operation, fails
+) -> None:
     from jailbee.orchestration.watch import WatchEntry, load_watch, save_watch
+
     rig = Rig(tmp_path, running=True)
-    entry = WatchEntry("s", rig.child.full, "spawn", rig.ctx().now.isoformat(), supervise=True, confirmed=True)
+    entry = WatchEntry(
+        "s", rig.child.full, "spawn", rig.ctx().now.isoformat(), supervise=True, confirmed=True
+    )
     save_watch(tmp_path, {rig.sender.full: [entry]})
     if fails:
         seams[operation].side_effect = RuntimeError("cannot stop")
-    manifest = StopManifest(version=1, id="s1", type="stop", child="c1") if operation == "stop" else _destroy(force=True)
+    manifest = (
+        StopManifest(version=1, id="s1", type="stop", child="c1")
+        if operation == "stop"
+        else _destroy(force=True)
+    )
     outcome = getattr(actions, f"handle_{operation}")(rig.ctx(), manifest)
     assert outcome.state == ("refused" if fails else "done")
     assert load_watch(tmp_path).get(rig.sender.full, []) == ([entry] if fails else [])
@@ -212,16 +223,21 @@ def test_restart_refuses_running_child(tmp_path: Path, seams: dict[str, MagicMoc
     seams["boot"].assert_not_called()
 
 
-def test_restart_boots_with_preambled_prompt(tmp_path: Path, seams: dict[str, MagicMock], monkeypatch) -> None:
+def test_restart_boots_with_preambled_prompt(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch
+) -> None:
     from types import SimpleNamespace
+
     launch = MagicMock(return_value=SimpleNamespace(pid=12345, log_path="/tmp/boot.log"))
     monkeypatch.setattr("jailbee.create_flow.launch_boot_background", launch)
     rig = Rig(tmp_path, limit=2)
     out = actions.handle_restart(rig.ctx(), _restart())
     assert out.state == "started" and "restarting" in out.detail
     launch.assert_called_once_with(
-        rig.cfg, container_name="proj-c1",
-        initial_prompt=actions.child_preamble("orch") + "\n\ngo on", config_path=None,
+        rig.cfg,
+        container_name="proj-c1",
+        initial_prompt=actions.child_preamble("orch") + "\n\ngo on",
+        config_path=None,
     )
     seams["boot"].assert_not_called()
 
@@ -514,7 +530,9 @@ def test_restart_with_runner_replaces_label(
     order: list[str] = []
     rig.incus.config_set.side_effect = lambda *a, **k: order.append("set")
     rig.incus.config_unset_checked.side_effect = lambda *a, **k: order.append("unset")
-    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[1]
+    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[
+        1
+    ]
     m = _restart_with(runner={"agent": "claude-jb", "profile": "grok"})
     assert actions.handle_restart(rig.ctx(), m).state == "started"
     rig.incus.config_set.assert_called_once_with(
@@ -526,7 +544,9 @@ def test_restart_with_runner_replaces_label(
 def test_restart_with_null_runner_clears_label(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
     order: list[str] = []
-    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[1]
+    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[
+        1
+    ]
     rig.incus.config_unset_checked.side_effect = lambda c, k: order.append(k)
     assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "started"
     assert order[-2:] == [labels.RUNNER, "boot"]

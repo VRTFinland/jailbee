@@ -1114,7 +1114,8 @@ def test_agent_steps_report_exit_only_for_child(tmp_path):
     [child] = agent_autostart_steps(
         cfg, initial_prompt=True, extra_env={"JAILBEE_ROLE": "child", "X": "1"}
     )
-    from jailbee.initial_prompt import AGENT_PID_PATH, AGENT_EXIT_PATH
+    from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
+
     assert AGENT_PID_PATH in child.run and AGENT_EXIT_PATH in child.run
     assert "jailbee-inbox send" not in child.run
     [plain] = agent_autostart_steps(cfg, initial_prompt=True, extra_env={"X": "1"})
