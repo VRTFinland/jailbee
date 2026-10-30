@@ -79,6 +79,7 @@ class Node:
     short: str
     running: bool
     config: Mapping[str, str]
+    started_at: float | None = None
 
     @property
     def key(self) -> str:

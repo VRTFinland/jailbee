@@ -19,7 +19,7 @@ from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import finishing, labels, watch
+from jailbee.orchestration import finishing, inbox_state, labels, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -422,8 +422,18 @@ def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -
         config = {str(k): str(v) for k, v in conf.items()} if isinstance(conf, dict) else {}
         cfg = owner_config(name, config, configs)
         short = short_name(cfg, name) if cfg is not None else name
+        started_at = None
+        last_used = entry.get("last_used_at")
+        if isinstance(last_used, str):
+            try:
+                boot = datetime.fromisoformat(last_used)
+                if boot.year > 1970 and boot.tzinfo is not None:
+                    started_at = boot.timestamp()
+            except ValueError:
+                pass
         nodes[name] = Node(
-            full=name, short=short, running=entry.get("status") == "Running", config=config
+            full=name, short=short, running=entry.get("status") == "Running", config=config,
+            started_at=started_at,
         )
     return nodes
 
@@ -571,6 +581,11 @@ def tick(
             _settle_queue(ctx, memory)
         except Exception:
             log.exception("broker: queue of %s failed", ctx.sender.full)
+        if ctx.sender.running:
+            try:
+                inbox_state.sync_children(ctx)
+            except Exception:
+                log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     for full in queues:
         if full in seen:
             continue
