@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 GRANT = "user.jailbee.orchestration.grant"
 RIGHTS = "user.jailbee.orchestration.rights"
+TIMED = "user.jailbee.orchestration.timed"
 RUNNER = "user.jailbee.orchestration.runner"
 SPAWNED_BY = "user.jailbee.spawned_by"
 STATE = "user.jailbee.orchestration.state"

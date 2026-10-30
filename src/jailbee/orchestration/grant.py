@@ -12,15 +12,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from jailbee.egress import WildcardSpec, validate_allow_entry
 from jailbee.orchestration.runner_model import Runner
 
-Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy"]
+Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights"]
 
-OPERATIONS: tuple[Operation, ...] = ("spawn", "message", "import", "restart", "stop", "destroy")
+OPERATIONS: tuple[Operation, ...] = ("spawn", "message", "import", "restart", "stop", "destroy", "rights")
 IMPLIED_OPERATIONS = frozenset({"spawn", "message"})
 DEFAULT_OPERATIONS: tuple[Operation, ...] = (
     "destroy",
     "import",
     "message",
     "restart",
+    "rights",
     "spawn",
     "stop",
 )
@@ -205,6 +206,14 @@ def effective_grant(grant: Grant, cap: RepoCap) -> Grant | None:
     )
 
 
+def egress_grantable(entry: str, eff: Grant, cap: RepoCap) -> bool:
+    """Loose permission includes narrower egress, still bounded by the repo cap."""
+    return egress_covered(entry, eff.grantable.egress) or (
+        eff.grantable.loose
+        and (cap.egress is None or egress_covered(entry, cap.egress))
+    )
+
+
 def check_rights(
     grant: Grant, cap: RepoCap, rights: ChildRights, optional_mounts: Collection[str]
 ) -> list[str]:
@@ -223,6 +232,6 @@ def check_rights(
     out.extend(
         f"egress {e!r} is not covered by the grant"
         for e in rights.egress
-        if not egress_covered(e, eff.grantable.egress)
+        if not egress_grantable(e, eff, cap)
     )
     return out

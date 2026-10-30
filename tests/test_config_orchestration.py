@@ -23,7 +23,7 @@ def test_profile_defaults_match_grant_defaults():
     p = OrchestrationProfile()
     assert (p.max_running_children, p.operations, p.grantable.mounts) == (
         4,
-        ["destroy", "import", "message", "restart", "spawn", "stop"],
+        ["destroy", "import", "message", "restart", "rights", "spawn", "stop"],
         [],
     )
 

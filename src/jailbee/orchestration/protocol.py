@@ -29,7 +29,7 @@ OnDone = Literal["destroy", "keep"]
 FINISH_SUFFIX = ".finish.json"
 
 ORCHESTRATOR_TYPES = frozenset(
-    {"spawn", "message", "import", "update", "restart", "stop", "destroy"}
+    {"spawn", "message", "import", "update", "restart", "stop", "destroy", "rights"}
 )
 CHILD_TYPES = frozenset({"message"})
 
@@ -168,6 +168,57 @@ class MessageManifest(_Manifest):
         return None if v is None else _checked_id(v)
 
 
+class RightsSet(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    loose: bool = False
+    mounts: tuple[str, ...] = ()
+    egress: tuple[str, ...] = ()
+
+    @field_validator("mounts", "egress")
+    @classmethod
+    def _entries(cls, v: tuple[str, ...], info: Any) -> tuple[str, ...]:
+        rights = ChildRights.model_validate({info.field_name: v})
+        return rights.mounts if info.field_name == "mounts" else rights.egress
+
+    def items(self) -> tuple[str, ...]:
+        return (
+            *(("loose",) if self.loose else ()),
+            *(f"mount:{m}" for m in self.mounts),
+            *(f"egress:{e}" for e in self.egress),
+        )
+
+
+class RightsGrant(RightsSet):
+    for_: str = Field(alias="for")
+
+    @field_validator("for_")
+    @classmethod
+    def _duration(cls, v: str) -> str:
+        from jailbee.config import parse_ttl
+
+        parse_ttl(v)
+        return v
+
+
+class RightsManifest(_Manifest):
+    version: Literal[1]
+    type: Literal["rights"]
+    child: str | None = None
+    grant: RightsGrant | None = None
+    revoke: RightsSet | None = None
+
+    @model_validator(mode="after")
+    def _rights(self) -> Self:
+        granted = set(self.grant.items()) if self.grant else set()
+        revoked = set(self.revoke.items()) if self.revoke else set()
+        if not granted | revoked:
+            raise ValueError("at least one right is required")
+        if granted & revoked:
+            raise ValueError("the same right cannot be granted and revoked")
+        return self
+
+
 class ImportManifest(_Manifest):
     version: Literal[1]
     type: Literal["import"]
@@ -222,6 +273,7 @@ Manifest = (
     | RestartManifest
     | StopManifest
     | DestroyManifest
+    | RightsManifest
 )
 
 _MANIFEST_ADAPTER: TypeAdapter[Manifest] = TypeAdapter(

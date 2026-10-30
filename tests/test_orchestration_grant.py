@@ -36,7 +36,7 @@ def test_default_grant_label_is_the_spec_shape() -> None:
     assert json.loads(Grant().to_label()) == {
         "version": 1,
         "max_running_children": 4,
-        "operations": ["destroy", "import", "message", "restart", "spawn", "stop"],
+        "operations": ["destroy", "import", "message", "restart", "rights", "spawn", "stop"],
         "grantable": {"mounts": [], "loose": False, "egress": []},
         "default_runner": None,
     }
@@ -221,3 +221,24 @@ def test_check_rights_within_grant_is_clean() -> None:
     g = Grant(grantable=Grantable(mounts=("data",), loose=True, egress=("pypi.org",)))
     r = ChildRights(mounts=("data",), loose=True, egress=("pypi.org",))
     assert check_rights(g, RepoCap(), r, {"data"}) == []
+
+
+def test_loose_grant_implies_egress() -> None:
+    grant = Grant(grantable=Grantable(loose=True))
+    assert not check_rights(grant, RepoCap(), ChildRights(egress=("pypi.org",)), ())
+
+
+def test_loose_implies_egress_respects_repo_cap() -> None:
+    grant = Grant(grantable=Grantable(loose=True))
+    cap = RepoCap(egress=("*.example.com",))
+    assert check_rights(grant, cap, ChildRights(egress=("pypi.org",)), ())
+    assert not check_rights(grant, cap, ChildRights(egress=("a.example.com",)), ())
+    assert check_rights(grant, RepoCap(loose=False), ChildRights(egress=("pypi.org",)), ())
+
+
+def test_no_loose_no_egress() -> None:
+    assert check_rights(Grant(), RepoCap(), ChildRights(egress=("pypi.org",)), ())
+
+
+def test_rights_in_default_operations() -> None:
+    assert "rights" in Grant().operations
