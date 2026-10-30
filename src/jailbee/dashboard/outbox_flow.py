@@ -292,7 +292,9 @@ def _plan_lines(result: JobResult, pid: str, revision: str) -> _Plan | tuple[str
             line += f" / draft: {_safe(action['will_draft'])}"
         lines.append(line)
     lines.extend(line for note in plan.get("notes") or () for line in _lines(_safe(note)))
-    lines.append(f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)")
+    lines.append(
+        f"{_safe(plan.get('login', ''))} publishes {_safe(plan.get('total', 0))} action(s)"
+    )
     warnings = [line for w in plan["warnings"] for line in _lines(_safe(w))]
     lines.extend(f"⚠ {line}" for line in warnings)
     if plan["foreign"] and not any(
