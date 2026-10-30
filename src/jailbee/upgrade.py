@@ -440,6 +440,22 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "startup and reporting every unfinished prompted-agent exit"
         ),
     ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox gains `wait --wake-on` and "
+            "`--quiet-after`, and keeps `send --wait` replies from a concurrent `wait`"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing wake filters "
+            "and the quiet-child watchdog for `jailbee-inbox wait`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
