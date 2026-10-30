@@ -44,9 +44,12 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
 def test_snapshot_stop_restart_and_removal(tmp_path):
     ctx = context(tmp_path)
     inbox_state.sync_children(ctx)
+    start = ctx.now.timestamp()
+    ctx.now += timedelta(minutes=1)
     ctx.nodes = {"p-kid": Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})}
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["running"] is False
+    assert delivered(ctx)["children"][0]["started_at"] == start
     ctx.now += timedelta(minutes=1)
     ctx.nodes = context(tmp_path).nodes
     inbox_state.sync_children(ctx)

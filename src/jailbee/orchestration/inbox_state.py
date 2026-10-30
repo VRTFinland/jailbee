@@ -29,7 +29,7 @@ def sync_children(ctx: ActionContext) -> None:
         started = child.started_at
         if started is None:
             started = ctx.now.timestamp()
-            if old.get("key") == child.key and old.get("running") and child.running:
+            if old.get("key") == child.key and (not child.running or old.get("running")):
                 value = old.get("started_at")
                 if isinstance(value, (int, float)):
                     started = value

@@ -175,6 +175,7 @@ def number(value):
 
 snapshot = load(base / "children.json")
 children = {}
+running = set()
 try:
     assert snapshot and snapshot["version"] == 1
     assert number(snapshot["updated_at"]) and -5 <= now - snapshot["updated_at"] <= 60
@@ -182,8 +183,9 @@ try:
     for c in snapshot["children"]:
         assert isinstance(c["name"], str) and isinstance(c["running"], bool)
         assert number(c["started_at"]) and c["started_at"] <= now + 5
+        children[c["name"]] = c["started_at"]
         if c["running"]:
-            children[c["name"]] = c["started_at"]
+            running.add(c["name"])
 except (AssertionError, KeyError, TypeError):
     if quiet:
         print("jailbee-inbox: --quiet-after needs a fresh broker children.json (at most 60s old)", file=sys.stderr)
@@ -205,13 +207,14 @@ for directory in (base / "inbox", base / "inbox/read"):
         records.append((path, data, stamp))
 
 first = {}
-latest = dict(children)
+latest = {name: children[name] for name in running}
 for path, data, stamp in sorted(records, key=lambda r: (r[2], r[0].name)):
     name = data.get("from")
     if data.get("type") == "message" and isinstance(name, str) and name in children:
         if stamp / 1e9 >= children[name]:
             first.setdefault(name, path)
-            latest[name] = max(latest[name], stamp / 1e9)
+            if name in latest:
+                latest[name] = max(latest[name], stamp / 1e9)
 
 def reserved(ref):
     if not isinstance(ref, str) or not ref or "/" in ref or ref in (".", ".."):
@@ -252,6 +255,13 @@ if quiet:
             break
 PY
 }
+
+# Long-lived external watches must not inherit ownership of waiter locks.
+wait_command() (
+    [ -z "${status_fd:-}" ] || exec {status_fd}>&-
+    [ -z "${wait_fd:-}" ] || exec {wait_fd}>&-
+    exec "$@"
+)
 
 cmd_wait() {
     local timeout=1800 first waited=0 status_ref="${wait_status_ref:-}"
@@ -299,7 +309,11 @@ cmd_wait() {
                 [ "$rc" -eq 0 ] || return "$rc"
                 [ -n "$first" ] || continue
             fi
-            printf '%s\n' "$first"
+            if [ -n "$status_ref" ]; then
+                status_path="$first"
+            else
+                printf '%s\n' "$first"
+            fi
             return 0
         fi
         remaining_ms=$((deadline_ms - $(now_ms)))
@@ -322,11 +336,11 @@ cmd_wait() {
             # latency of such a lost wakeup.
             slice=$(( remaining < WATCH_SLICE ? remaining : WATCH_SLICE ))
             rc=0
-            inotifywait -q -t "$slice" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
+            wait_command inotifywait -q -t "$slice" -e close_write,moved_to "$inbox" >/dev/null 2>&1 || rc=$?
             # Exit 0 = event, 2 = timeout; anything else = the watch failed.
-            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then sleep "$sleep_for"; fi
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then wait_command sleep "$sleep_for"; fi
         else
-            sleep "$sleep_for"
+            wait_command sleep "$sleep_for"
         fi
     done
 }
@@ -342,10 +356,12 @@ find_status() {
 }
 
 wait_for_status() {
-    local wait_status_ref="$1" path state id
-    if ! path="$(cmd_wait --timeout "$2")"; then return 3; fi
-    state="$(jq -r '.state' "$path")"
-    id="$(message_id "$path")"
+    local wait_status_ref="$1" status_path="" state id
+    # Stay in the owning shell: a command-substitution waiter would survive
+    # its parent's death and keep the status reservation alive.
+    if ! cmd_wait --timeout "$2"; then return 3; fi
+    state="$(jq -r '.state' "$status_path")"
+    id="$(message_id "$status_path")"
     cmd_read "$id" || return 1
     case "$state" in
         done|queued|started) return 0 ;;

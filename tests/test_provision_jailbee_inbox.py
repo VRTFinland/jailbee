@@ -1451,3 +1451,48 @@ def test_send_reserves_status_before_publishing(script, base, tmp_path):
             if proc.poll() is None:
                 proc.terminate()
                 proc.communicate(timeout=5)
+
+
+def test_wait_first_report_from_stopped_child(script, base, tmp_path):
+    child_snapshot(base, running=False)
+    path = write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
+    r = run(script, "wait", "--wake-on", "done", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(path)
+
+
+@pytest.mark.parametrize("sig", [15, 9])
+def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
+    import signal
+
+    env = env_for(base, tmp_path)
+    env["JAILBEE_INBOX_POLL"] = "0.1"
+    proc = subprocess.Popen(
+        ["bash", str(script), "send", "message", "--text", "go", "--wait", "--timeout", "30"],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 3
+        files = []
+        while time.monotonic() < deadline:
+            files = list((base / "outbox").glob("*.json"))
+            if files:
+                break
+            time.sleep(0.01)
+        assert files
+        mid = json.loads(files[0].read_text())["id"]
+        # Let the sender enter its status wait rather than killing at publication.
+        time.sleep(0.2)
+        proc.send_signal(sig)
+        proc.wait(timeout=3)
+        path = write_inbox(base, FIRST, status("late", ref=mid))
+        r = run(script, "wait", "--timeout", "0", env=env)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == str(path)
+        assert path.exists()
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=3)
