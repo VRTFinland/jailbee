@@ -836,7 +836,10 @@ class AutostartProfile(BaseModel):
     """A named selection of stages, in the triggers' own order."""
 
     model_config = ConfigDict(extra="forbid")
-    stages: list[str] = Field(min_length=1, description="Stage names selected in both autostart triggers; agents always runs.")
+    stages: list[str] = Field(
+        min_length=1,
+        description="Stage names selected in both autostart triggers; agents always runs.",
+    )
 
 
 class Autostart(BaseModel):
@@ -862,8 +865,13 @@ class Autostart(BaseModel):
         ),
     )
 
-    profiles: dict[str, Literal["all"] | AutostartProfile] = Field(default_factory=dict, description="Named stage selections: all, or a nonempty stages list.")
-    default_profile: str | None = Field(default=None, description="Default named autostart profile; required when profiles are defined.")
+    profiles: dict[str, Literal["all"] | AutostartProfile] = Field(
+        default_factory=dict, description="Named stage selections: all, or a nonempty stages list."
+    )
+    default_profile: str | None = Field(
+        default=None,
+        description="Default named autostart profile; required when profiles are defined.",
+    )
 
     @model_validator(mode="after")
     def _validate_profiles(self) -> Self:
@@ -885,7 +893,10 @@ class Autostart(BaseModel):
             if profile != "all":
                 unknown = set(profile.stages) - names
                 if unknown:
-                    raise ValueError(f"autostart profile {name!r} names unknown stages: {', '.join(sorted(unknown))}")
+                    raise ValueError(
+                        f"autostart profile {name!r} names unknown stages: "
+                        f"{', '.join(sorted(unknown))}"
+                    )
         return self
 
     @field_validator("on_create", "on_start", mode="before")

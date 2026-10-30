@@ -7,7 +7,8 @@ from tests.test_autostart_profiles import profile_cfg, state_incus
 
 
 def setup(make_cfg, tmp_path, mocker, current="light"):
-    from jailbee.autostart_profiles import PROFILE_KEY, CREATED_KEY
+    from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
+
     cfg = profile_cfg(make_cfg, tmp_path)
     incus, state = state_incus(mocker, {PROFILE_KEY: current, CREATED_KEY: "deps"})
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]

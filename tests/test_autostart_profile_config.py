@@ -3,15 +3,17 @@
 import pytest
 from pydantic import ValidationError
 
-from jailbee.config import Autostart
 from jailbee.autostart_plan import AutostartTrigger, plan_autostart
+from jailbee.config import Autostart
 
 
 def block(**updates):
     data = {
         "on_create": [{"stage": "deps", "steps": []}],
-        "on_start": [{"stage": "backend", "detach": True, "steps": []},
-                     {"stage": "frontend-dev", "steps": []}],
+        "on_start": [
+            {"stage": "backend", "detach": True, "steps": []},
+            {"stage": "frontend-dev", "steps": []},
+        ],
         "profiles": {"full": "all", "frontend": {"stages": ["frontend-dev", "deps"]}},
         "default_profile": "full",
     }
@@ -59,13 +61,15 @@ def test_profile_may_list_agents_without_explicit_stage():
 
 def test_select_profile_none_and_all_unchanged():
     from jailbee.autostart_plan import select_profile
+
     cfg = block()
     assert select_profile(cfg, None) is cfg
     assert select_profile(cfg, "full") is cfg
 
 
 def test_select_profile_filters_both_triggers_in_config_order():
-    from jailbee.autostart_plan import select_profile, selected_stage_names, profile_names
+    from jailbee.autostart_plan import profile_names, select_profile, selected_stage_names
+
     cfg = block()
     filtered = select_profile(cfg, "frontend")
     assert [s.stage for s in filtered.on_create] == ["deps"]
@@ -76,12 +80,14 @@ def test_select_profile_filters_both_triggers_in_config_order():
 
 def test_select_profile_keeps_agents_stage():
     from jailbee.autostart_plan import select_profile
+
     cfg = block(on_start=[{"stage": "agents"}, {"stage": "frontend-dev", "steps": []}])
     assert [s.stage for s in select_profile(cfg, "frontend").on_start] == ["agents", "frontend-dev"]
 
 
 def test_detach_boundary_computed_on_filtered_block():
     from jailbee.autostart_plan import select_profile
+
     plan = plan_autostart(select_profile(block(), "frontend"), AutostartTrigger.ON_START)
     assert plan.detached == []
     assert [s.stage for s in plan.blocking] == ["frontend-dev"]
@@ -89,6 +95,7 @@ def test_detach_boundary_computed_on_filtered_block():
 
 def test_diff_autostart_reports_profile_changes():
     from jailbee.branch_config import diff_autostart
+
     changed = block(default_profile="frontend", profiles={"frontend": {"stages": ["deps"]}})
     diff = diff_autostart(block(), changed)
     assert {c.name for c in diff.block_changes} == {"profiles", "default_profile"}

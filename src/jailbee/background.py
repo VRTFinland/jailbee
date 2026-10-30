@@ -558,7 +558,6 @@ def autostart_job_to_dict(
 def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
     """Inverse of :func:`autostart_job_to_dict`."""
     from jailbee.config import Autostart
-
     from jailbee.config.models_agents import AutostartProfile
 
     data = dict(raw["autostart"])
@@ -566,10 +565,15 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
     default = data.pop("default_profile", None)
     # The foreground already filtered both triggers. Unselected stage names
     # remain in profile metadata, so validate the executed block separately.
-    block = Autostart.model_validate(data).model_copy(update={
-        "profiles": {k: v if v == "all" else AutostartProfile.model_validate(v) for k, v in profiles.items()},
-        "default_profile": default,
-    })
+    block = Autostart.model_validate(data).model_copy(
+        update={
+            "profiles": {
+                k: v if v == "all" else AutostartProfile.model_validate(v)
+                for k, v in profiles.items()
+            },
+            "default_profile": default,
+        }
+    )
     endpoint = raw.get("mirror_endpoint")
     return AutostartJob(
         container_name=raw["container_name"],

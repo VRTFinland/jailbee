@@ -358,7 +358,9 @@ _JOB_VERBS = frozenset({"job clear", "job log", "job log --follow"})
 
 # Container-menu verbs the terminal dashboard handles itself. They are never in
 # the Qt-shared `menu_actions` list and never passed to `dispatch`.
-TERMINAL_MENU_VERBS: frozenset[str] = frozenset({"credential-group", "autostart-profile", *dact.CONTAINER_VERBS})
+TERMINAL_MENU_VERBS: frozenset[str] = frozenset(
+    {"credential-group", "autostart-profile", *dact.CONTAINER_VERBS}
+)
 
 
 def _insert_before_network(

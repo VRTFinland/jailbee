@@ -410,7 +410,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 9, 0),
         actions=frozenset({"base_build"}),
-        reason="the golden image's jailbee-inbox supports named autostart profiles for spawn and restart",
+        reason=(
+            "the golden image's jailbee-inbox supports named autostart profiles "
+            "for spawn and restart"
+        ),
     ),
 )
 """What each release requires, ascending by version. Maintained by hand.

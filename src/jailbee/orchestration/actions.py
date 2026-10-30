@@ -289,7 +289,18 @@ def plan_spawn(
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     return SpawnPlan(
-        full, m.kind, branch, m.base, prompt, m.rights, runner, policy, m.ref, m.pr, commit, pr_base,
+        full,
+        m.kind,
+        branch,
+        m.base,
+        prompt,
+        m.rights,
+        runner,
+        policy,
+        m.ref,
+        m.pr,
+        commit,
+        pr_base,
         m.autostart_profile,
     )
 
@@ -532,7 +543,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             runner=plan.runner.model_dump(mode="json") if plan.runner else None,
             runner_set=plan.runner is not None,
             on_done=plan.on_done,
-        autostart_profile=plan.autostart_profile,
+            autostart_profile=plan.autostart_profile,
             ref=plan.ref,
             pr=plan.pr,
             pr_base=plan.pr_base,

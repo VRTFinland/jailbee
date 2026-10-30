@@ -2310,7 +2310,11 @@ def _new_container(
 
         assert selected_profile is not None
         incus.config_set(name, PROFILE_KEY, selected_profile)
-        attempted = "" if opts.autostart else ",".join(s.stage for s in normalize_stages(effective_cfg.autostart.on_create))
+        attempted = (
+            ""
+            if opts.autostart
+            else ",".join(s.stage for s in normalize_stages(effective_cfg.autostart.on_create))
+        )
         incus.config_set(name, CREATED_KEY, attempted)
     if opts.autostart:
         _phase("autostart")

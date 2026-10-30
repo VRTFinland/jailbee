@@ -1830,8 +1830,13 @@ class DashboardSession:
         current = container.autostart_profile
         if current not in group.autostart_profiles:
             current = group.autostart_default_profile
-        entries = tuple(PickerEntry(name + (" (current)" if name == current else ""), name) for name in group.autostart_profiles)
-        return Picker("container-autostart-profile", f"Autostart profile — {target}", entries, target=target)
+        entries = tuple(
+            PickerEntry(name + (" (current)" if name == current else ""), name)
+            for name in group.autostart_profiles
+        )
+        return Picker(
+            "container-autostart-profile", f"Autostart profile — {target}", entries, target=target
+        )
 
     def open_group_picker(
         self, purpose: Literal["repo-group", "container-group"], target: str
@@ -2099,7 +2104,9 @@ class DashboardSession:
         None closes the overlay, as in :func:`submit_prompt`.
         """
         if picker.purpose == "container-autostart-profile":
-            self.run_dashboard_command(picker.target, "container", ["autostart", "profile", picker.target, entry.value])
+            self.run_dashboard_command(
+                picker.target, "container", ["autostart", "profile", picker.target, entry.value]
+            )
             return None
         if picker.purpose == "container-memory":
             from jailbee.memory_limit import OTHER_VALUE

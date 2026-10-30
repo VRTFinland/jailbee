@@ -4452,9 +4452,13 @@ def _post_start_actions(
     try:
         if missing is not None and missing.on_create:
             run_autostart(
-                cfg.model_copy(update={"autostart": missing}), incus, name,
-                AutostartTrigger.ON_CREATE, repo_dir=repo_dir,
-                mirror_endpoint=mirror_endpoint, override="wait",
+                cfg.model_copy(update={"autostart": missing}),
+                incus,
+                name,
+                AutostartTrigger.ON_CREATE,
+                repo_dir=repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                override="wait",
             )
         plan = run_autostart(
             cfg,
@@ -11083,8 +11087,12 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 @autostart_app.command("profile")
 def autostart_profile_cmd(
     container: AutostartNameArg = None,
-    profile: Annotated[str | None, typer.Argument(help="Profile name; omit to show current selection.")] = None,
-    no_run: Annotated[bool, typer.Option("--no-run", help="Store without starting stages.")] = False,
+    profile: Annotated[
+        str | None, typer.Argument(help="Profile name; omit to show current selection.")
+    ] = None,
+    no_run: Annotated[
+        bool, typer.Option("--no-run", help="Store without starting stages.")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Show or switch a container's autostart profile."""
@@ -11098,7 +11106,9 @@ def autostart_profile_cmd(
         if not cfg.autostart.profiles:
             raise ProfileError("this repository defines no autostart profiles")
         if profile is None and missing_container:
-            profile = prompting.choose_one("autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles])
+            profile = prompting.choose_one(
+                "autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles]
+            )
         if profile is None:
             show_profile(cfg, incus, full)
             return

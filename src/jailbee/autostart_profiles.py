@@ -34,7 +34,9 @@ def resolve_profile(cfg: Config, incus: Incus, container: str) -> str | None:
     if stored in cfg.autostart.profiles:
         return stored
     if stored:
-        warn(f"autostart profile `{stored}` is not defined; using {cfg.autostart.default_profile!r}")
+        warn(
+            f"autostart profile `{stored}` is not defined; using {cfg.autostart.default_profile!r}"
+        )
     return cfg.autostart.default_profile
 
 
@@ -65,7 +67,11 @@ def record_created(incus: Incus, container: str, stage: str) -> None:
 def missing_on_create(cfg: Config, incus: Incus, container: str, profile: str | None) -> Autostart:
     selected = select_profile(cfg.autostart, profile)
     done = created_stages(incus, container)
-    stages = [] if done is None else [s for s in normalize_stages(selected.on_create) if s.stage not in done]
+    stages = (
+        []
+        if done is None
+        else [s for s in normalize_stages(selected.on_create) if s.stage not in done]
+    )
     return selected.model_copy(update={"on_create": stages, "on_start": []})
 
 
@@ -79,10 +85,22 @@ def run_profile_start(cfg: Config, incus: Incus, container: str) -> None:
     missing = missing_on_create(cfg, incus, container, profile)
     repo_dir = container_repo_dir(cfg, incus, container)
     if missing.on_create:
-        run_autostart(cfg.model_copy(update={"autostart": missing}), incus, container,
-                      AutostartTrigger.ON_CREATE, repo_dir, override="wait")
-    run_autostart(profiled_config(cfg, profile), incus, container,
-                  AutostartTrigger.ON_START, repo_dir, override="wait")
+        run_autostart(
+            cfg.model_copy(update={"autostart": missing}),
+            incus,
+            container,
+            AutostartTrigger.ON_CREATE,
+            repo_dir,
+            override="wait",
+        )
+    run_autostart(
+        profiled_config(cfg, profile),
+        incus,
+        container,
+        AutostartTrigger.ON_START,
+        repo_dir,
+        override="wait",
+    )
 
 
 def show_profile(cfg: Config, incus: Incus, container: str) -> None:
@@ -98,7 +116,10 @@ def show_profile(cfg: Config, incus: Incus, container: str) -> None:
             marks.append("default")
         info(f"  {name}" + (f" ({', '.join(marks)})" if marks else ""))
     done = created_stages(incus, container)
-    info("on_create attempted: " + ("all (legacy container)" if done is None else ", ".join(sorted(done)) or "none"))
+    info(
+        "on_create attempted: "
+        + ("all (legacy container)" if done is None else ", ".join(sorted(done)) or "none")
+    )
 
 
 @dataclass(frozen=True)
@@ -111,7 +132,12 @@ class SwitchResult:
 
 
 def switch_profile(
-    cfg: Config, incus: Incus, container: str, name: str, *, run: bool,
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    name: str,
+    *,
+    run: bool,
     on_progress: Callable[[str, str, str], None] | None = None,
 ) -> SwitchResult:
     from jailbee.autostart import run_autostart
@@ -123,7 +149,9 @@ def switch_profile(
     refuse_while_running(cfg, container)
     previous = resolve_profile(cfg, incus, container)
     incus.config_set(container, PROFILE_KEY, name)
-    running = any(c.get("name") == container and c.get("status") == "Running" for c in incus.list_containers())
+    running = any(
+        c.get("name") == container and c.get("status") == "Running" for c in incus.list_containers()
+    )
     if not run or not running:
         return SwitchResult(previous, name, (), (), True)
     missing = missing_on_create(cfg, incus, container, name)
@@ -134,12 +162,28 @@ def switch_profile(
     starts = tuple(s.stage for s in added)
     if creates or starts:
         repo_dir = container_repo_dir(cfg, incus, container)
-        for trigger, stages in ((AutostartTrigger.ON_CREATE, missing.on_create), (AutostartTrigger.ON_START, added)):
+        for trigger, stages in (
+            (AutostartTrigger.ON_CREATE, missing.on_create),
+            (AutostartTrigger.ON_START, added),
+        ):
             if stages:
-                block = selected.model_copy(update={"on_create": [], "on_start": [], trigger.value: stages})
+                block = selected.model_copy(
+                    update={"on_create": [], "on_start": [], trigger.value: stages}
+                )
                 # In-place switches never launch agents again or detach.
                 # ON_START's generated agents are disabled on this derived copy.
-                agents = {key: value.model_copy(update={"autostart": False}) for key, value in cfg.agents.items()}
+                agents = {
+                    key: value.model_copy(update={"autostart": False})
+                    for key, value in cfg.agents.items()
+                }
                 run_cfg = cfg.model_copy(update={"autostart": block, "agents": agents})
-                run_autostart(run_cfg, incus, container, trigger, repo_dir=repo_dir, override="wait", on_progress=on_progress)
+                run_autostart(
+                    run_cfg,
+                    incus,
+                    container,
+                    trigger,
+                    repo_dir=repo_dir,
+                    override="wait",
+                    on_progress=on_progress,
+                )
     return SwitchResult(previous, name, creates, starts, not (creates or starts))
