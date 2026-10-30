@@ -39,6 +39,11 @@ def sync_children(ctx: ActionContext) -> None:
     atomic_write_text(path, json.dumps({"owner": ctx.sender.key, "children": durable}))
     text = json.dumps({"version": 1, "updated_at": ctx.now.timestamp(), "children": children})
     _atomic_write(
-        ctx.incus, ctx.sender.full, _BASE, "children.json", text + "\n", "0444",
+        ctx.incus,
+        ctx.sender.full,
+        _BASE,
+        "children.json",
+        text + "\n",
+        "0444",
         uid=ctx.cfg.container_user.uid,
     )

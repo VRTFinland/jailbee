@@ -432,7 +432,10 @@ def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -
             except ValueError:
                 pass
         nodes[name] = Node(
-            full=name, short=short, running=entry.get("status") == "Running", config=config,
+            full=name,
+            short=short,
+            running=entry.get("status") == "Running",
+            config=config,
             started_at=started_at,
         )
     return nodes

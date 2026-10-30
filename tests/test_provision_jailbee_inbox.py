@@ -1273,17 +1273,29 @@ def test_help_documents_send_rights(script, base, tmp_path):
 
 
 def child_snapshot(base, *, started=None, running=True, updated=None):
-    (base / "children.json").write_text(json.dumps({
-        "version": 1, "updated_at": time.time() if updated is None else updated,
-        "children": [{"name": "kid", "running": running,
-                      "started_at": time.time() - 120 if started is None else started}],
-    }))
+    (base / "children.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": time.time() if updated is None else updated,
+                "children": [
+                    {
+                        "name": "kid",
+                        "running": running,
+                        "started_at": time.time() - 120 if started is None else started,
+                    }
+                ],
+            }
+        )
+    )
 
 
 def test_wait_filter_leaves_nonmatches_unread(script, base, tmp_path):
     note = write_inbox(base, FIRST, {**message("n"), "kind": "note"})
     done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})
-    r = run(script, "wait", "--wake-on", "done,failed", "--timeout", "0", env=env_for(base, tmp_path))
+    r = run(
+        script, "wait", "--wake-on", "done,failed", "--timeout", "0", env=env_for(base, tmp_path)
+    )
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == str(done)
     assert note.exists() and done.exists()
@@ -1347,8 +1359,12 @@ def test_wait_quiet_requires_fresh_state(script, base, tmp_path, state):
 
 def test_wait_single_waiter_lock(script, base, tmp_path):
     env = env_for(base, tmp_path)
-    with subprocess.Popen(["bash", str(script), "wait", "--timeout", "5"], env=env,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+    with subprocess.Popen(
+        ["bash", str(script), "wait", "--timeout", "5"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as proc:
         try:
             time.sleep(0.3)
             r = run(script, "wait", "--timeout", "0", env=env)
@@ -1396,7 +1412,9 @@ def test_wait_poll_respects_timeout(script, base, tmp_path):
 def test_wait_filter_matches_status_state(script, base, tmp_path):
     write_inbox(base, FIRST, status("ignored"))
     expected = write_inbox(base, SECOND, {**status("failed"), "state": "failed"})
-    r = run(script, "wait", "--wake-on", "failed,refused", "--timeout", "0", env=env_for(base, tmp_path))
+    r = run(
+        script, "wait", "--wake-on", "failed,refused", "--timeout", "0", env=env_for(base, tmp_path)
+    )
     assert r.stdout.strip() == str(expected)
     assert len(list((base / "inbox").glob("*.json"))) == 2
 
@@ -1405,9 +1423,13 @@ def test_send_reserves_status_before_publishing(script, base, tmp_path):
     import fcntl
 
     env = env_for(base, tmp_path)
-    with subprocess.Popen(["bash", str(script), "send", "message", "--text", "go",
-                           "--wait", "--timeout", "5"], env=env, text=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+    with subprocess.Popen(
+        ["bash", str(script), "send", "message", "--text", "go", "--wait", "--timeout", "5"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as proc:
         try:
             deadline = time.monotonic() + 3
             manifests = []

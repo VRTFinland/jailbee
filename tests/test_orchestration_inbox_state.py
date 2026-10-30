@@ -1,5 +1,5 @@
-from datetime import UTC, datetime, timedelta
 import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,8 +14,13 @@ def context(tmp_path):
     parent = Node("p-orch", "orch", True, {})
     child = Node("p-kid", "kid", True, {labels.SPAWNED_BY: parent.full})
     return ActionContext(
-        cfg=MagicMock(), gcfg=MagicMock(), incus=MagicMock(), root=tmp_path,
-        sender=parent, nodes={parent.full: parent, child.full: child}, now=now,
+        cfg=MagicMock(),
+        gcfg=MagicMock(),
+        incus=MagicMock(),
+        root=tmp_path,
+        sender=parent,
+        nodes={parent.full: parent, child.full: child},
+        now=now,
     )
 
 
@@ -27,7 +32,9 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
     ctx = context(tmp_path)
     inbox_state.sync_children(ctx)
     first = delivered(ctx)
-    assert first["children"] == [{"name": "kid", "running": True, "started_at": ctx.now.timestamp()}]
+    assert first["children"] == [
+        {"name": "kid", "running": True, "started_at": ctx.now.timestamp()}
+    ]
     ctx.now += timedelta(minutes=10)
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"] == first["children"]
@@ -55,13 +62,22 @@ def test_snapshot_uses_incus_boot_timestamp_and_new_instance(tmp_path):
 
     ctx = context(tmp_path)
     cfg = make_config(tmp_path).model_copy(update={"container_prefix": "p"})
-    ctx.nodes = _nodes([{
-        "name": "p-kid", "status": "Running", "last_used_at": "2026-10-30T11:00:00Z",
-        "config": {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "one"},
-    }], {"p": cfg})
+    ctx.nodes = _nodes(
+        [
+            {
+                "name": "p-kid",
+                "status": "Running",
+                "last_used_at": "2026-10-30T11:00:00Z",
+                "config": {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "one"},
+            }
+        ],
+        {"p": cfg},
+    )
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp() - 3600
-    ctx.nodes = {"p-kid": Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "two"})}
+    ctx.nodes = {
+        "p-kid": Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "two"})
+    }
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp()
 
