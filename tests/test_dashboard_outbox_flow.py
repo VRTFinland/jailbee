@@ -90,6 +90,8 @@ class FakeRunner:
         self.progress: list[Callable[[int, int], None] | None] = []
         self.drop_results: list[CliResult] = []
         self.start_error: Exception | None = None
+        # Fails only the starts whose job key contains the given text.
+        self.start_errors: dict[str, Exception] = {}
         self.changes = 0
         self.hold_loads = False
         self.held: list[tuple[str, Callable[[], None]]] = []
@@ -131,6 +133,9 @@ class FakeRunner:
     ) -> None:
         if self.start_error is not None:
             raise self.start_error
+        for part, error in self.start_errors.items():
+            if part in key:
+                raise error
         self.calls.append(("start", list(argv)))
         self.jobs.append((key, list(argv), on_done))
         self.progress.append(on_progress)
@@ -1131,11 +1136,15 @@ def test_publish_batch_applies_each_and_clears_marks():
     runner, ctl = _batch(
         "pr/a.json",
         "issue/b.json",
+        runner=FakeRunner(
+            _listing(_proposal("pr/a.json"), _proposal("issue/b.json"), _proposal("other/z.json"))
+        ),
         plans={
             "pr/a.json": _plan(proposal="pr/a.json", foreign=True),
             "issue/b.json": _plan(proposal="issue/b.json"),
         },
     )
+    ctl.intent("mark", _key("other/z.json", 0))
     ctl.intent("answer", None, "publish")
     assert ctl.state.busy == "publishing 1/2 pr/a.json…"
     progress = runner.progress[-1]
@@ -1149,10 +1158,56 @@ def test_publish_batch_applies_each_and_clears_marks():
         dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=True, foreign=True),
         dob.outbox_apply_argv(C, "issue/b.json", "r1", yes=True, foreign=False),
     ]
-    assert ctl.state.marks == frozenset()
+    assert ctl.state.marks == frozenset({_key("other/z.json", 0)})
     assert ctl.state.busy is None
     assert ctl.state.status == ("pr/a.json: boom", "issue/b.json: published 2 actions")
     assert runner.changes == 1
+
+
+def test_publish_batch_apply_start_error_continues():
+    pids = ("pr/a.json", "issue/b.json", "issue/c.json")
+    runner = FakeRunner(_listing(*(_proposal(pid) for pid in (*pids, "other/z.json"))))
+    runner, ctl = _batch(*pids, runner=runner, plans={pid: _plan(proposal=pid) for pid in pids})
+    ctl.intent("mark", _key("other/z.json", 0))
+    runner.start_errors["outbox-apply:" + C + ":issue/b.json"] = ValueError(
+        "job x is already running"
+    )
+    ctl.intent("answer", None, "publish")
+    runner.finish(JobResult(0, "", "ok\n"))
+    assert ctl.state.busy == "publishing 3/3 issue/c.json…"
+    runner.finish(JobResult(0, "", "ok\n"))
+    assert _apply_jobs(runner) == [
+        dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=True),
+        dob.outbox_apply_argv(C, "issue/c.json", "r1", yes=True),
+    ]
+    assert ctl.state.busy is None
+    assert ctl.state.status == (
+        "pr/a.json: ok",
+        "issue/b.json: job x is already running",
+        "issue/c.json: ok",
+    )
+    assert ctl.state.marks == frozenset({_key("other/z.json", 0)})
+    assert ctl._publish_token is None
+    assert runner.changes == 1
+
+
+def test_publish_batch_plan_start_error_excludes_target():
+    pids = ("pr/a.json", "issue/b.json", "issue/c.json")
+    runner = FakeRunner(_listing(*(_proposal(pid) for pid in pids)))
+    runner.start_errors["outbox-plan:" + C + ":issue/b.json"] = OSError("no such file: jailbee")
+    runner, ctl = _batch(
+        *pids,
+        runner=runner,
+        plans={
+            "pr/a.json": _plan(proposal="pr/a.json"),
+            "issue/c.json": _plan(proposal="issue/c.json"),
+        },
+    )
+    q = ctl.state.question
+    assert q is not None and q.title == "Publish 2 proposals?"
+    assert "⚠ issue/b.json: no such file: jailbee" in q.lines
+    assert ctl.state.busy is None
+    assert ctl._batch_token is None
 
 
 def test_publish_batch_draft_only_when_all_draftable():

@@ -453,14 +453,26 @@ class OutboxController:
         argv: list[str],
         done: Callable[[JobResult], None],
         on_progress: Callable[[int, int], None] | None = None,
-    ) -> None:
+        *,
+        chained: bool = False,
+    ) -> str | None:
+        """Start a job; the error text if it did not start, else None.
+
+        A ``chained`` start (a batch step) reports a failure only through the
+        return value: the chain goes on with its next target and ends with the
+        one ``on_change`` of its normal completion.
+        """
         self.state = replace(self.state, busy=busy, question=None, status=())
         try:
             self.runner.start(key, label, argv, done, on_progress=on_progress)
         except (OSError, ValueError) as exc:
-            self._set(replace(self.state, busy=None, status=(str(exc),)))
-            return
+            if chained:
+                self.state = replace(self.state, busy=None, status=())
+            else:
+                self._set(replace(self.state, busy=None, status=(str(exc),)))
+            return str(exc)
         self.on_change(self.state)
+        return None
 
     # -- public API ---------------------------------------------------------
 
@@ -875,15 +887,21 @@ class OutboxController:
                     self._batch_token = None
                     self._ask_batch(planned, excluded)
 
-            self._start(
+            error = self._start(
                 f"planning {i + 1}/{total}…",
                 f"outbox-plan:{name}:{pid}",
                 f"planning {_safe(pid)}…",
                 dob.outbox_plan_argv(name, pid, revision),
                 done,
+                chained=True,
             )
-            if self.state.busy is None:  # the job did not start
-                self._batch_token = None
+            if error is not None:  # the job did not start: this target is excluded
+                excluded.append(f"⚠ {_safe(pid)}: {error}")
+                if i + 1 < total:
+                    plan(i + 1)
+                else:
+                    self._batch_token = None
+                    self._ask_batch(planned, excluded)
 
         plan(0)
 
@@ -940,10 +958,7 @@ class OutboxController:
                 current_busy = f"publishing {k + 1}/{total} {_safe(pid)} {n}/{of}…"
                 self._set(replace(self.state, busy=current_busy))
 
-            def done(result: JobResult) -> None:
-                self.state = replace(self.state, busy=None)
-                summary = _lines(result.stdout, result.stderr) or ("published",)
-                results.extend(f"{_safe(pid)}: {line}" for line in summary)
+            def advance() -> None:
                 if k + 1 < total:
                     apply(k + 1)
                     return
@@ -952,14 +967,24 @@ class OutboxController:
                 self.state = replace(self.state, marks=self._unmarked(targets))
                 self._after_mutation(tuple(results))
 
-            self._start(
+            def done(result: JobResult) -> None:
+                self.state = replace(self.state, busy=None)
+                summary = _lines(result.stdout, result.stderr) or ("published",)
+                results.extend(f"{_safe(pid)}: {line}" for line in summary)
+                advance()
+
+            error = self._start(
                 current_busy,
                 f"outbox-apply:{name}:{pid}",
                 f"publishing {_safe(pid)}…",
                 argv,
                 done,
                 on_progress=progress,
+                chained=True,
             )
+            if error is not None:  # the job did not start: it gets its result line
+                results.append(f"{_safe(pid)}: {error}")
+                advance()
 
         apply(0)
 
