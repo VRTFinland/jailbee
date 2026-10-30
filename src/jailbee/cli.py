@@ -11503,15 +11503,9 @@ def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, in
     should NOT abort the operation if the mirror is unavailable — the pin is
     best-effort.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint, mirror_wanted
+    from jailbee.docker_daemon import mirror_endpoint_or_none
 
-    gcfg = _load_global()
-    if not mirror_wanted(cfg, gcfg):
-        return None
-    try:
-        return compute_mirror_endpoint(incus, gcfg)
-    except ValueError:
-        return None
+    return mirror_endpoint_or_none(cfg, incus, _load_global())
 
 
 egress_proxy_app = typer.Typer(

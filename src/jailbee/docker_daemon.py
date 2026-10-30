@@ -60,6 +60,26 @@ def compute_mirror_endpoint(incus: Incus, gcfg: GlobalConfig) -> tuple[str, int]
     )
 
 
+def mirror_endpoint_or_none(
+    cfg: Config, incus: Incus, gcfg: GlobalConfig | None = None
+) -> tuple[str, int] | None:
+    """Resolve the mirror best-effort without coupling callers to the CLI."""
+    if gcfg is None:
+        from jailbee.global_config import default_global_config_path, load_global_config
+        from jailbee.tui import warn
+
+        path = default_global_config_path()
+        gcfg, warnings = load_global_config(path)
+        for warning in warnings:
+            warn(f"{path}: {warning}")
+    if not mirror_wanted(cfg, gcfg):
+        return None
+    try:
+        return compute_mirror_endpoint(incus, gcfg)
+    except ValueError:
+        return None
+
+
 def render_proxy_conf(host: str, port: int) -> str:
     """Return /etc/systemd/system/docker.service.d/http-proxy.conf content."""
     proxy_url = f"http://{host}:{port}"

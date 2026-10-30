@@ -220,9 +220,12 @@ def test_switch_to_heavier_runs_missing_on_create_then_new_on_start(make_cfg, tm
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
     runs = []
+    mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", create=True,
+                 return_value=("10.0.0.2", 3128))
 
     def execute(c, i, n, trigger, **kwargs):
         runs.extend(s.stage for s in getattr(c.autostart, trigger.value))
+        assert kwargs["mirror_endpoint"] == ("10.0.0.2", 3128)
         assert kwargs["override"] == "wait"
         return AutostartPlan([], [])
 

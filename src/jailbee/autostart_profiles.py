@@ -71,6 +71,9 @@ def run_profile_start(cfg: Config, incus: Incus, container: str) -> None:
     from jailbee.autostart_plan import AutostartTrigger
     from jailbee.lifecycle import container_repo_dir
 
+    from jailbee.docker_daemon import mirror_endpoint_or_none
+
+    mirror_endpoint = mirror_endpoint_or_none(cfg, incus)
     profile = resolve_profile(cfg, incus, container)
     missing = missing_on_create(cfg, incus, container, profile)
     repo_dir = container_repo_dir(cfg, incus, container)
@@ -82,6 +85,7 @@ def run_profile_start(cfg: Config, incus: Incus, container: str) -> None:
             AutostartTrigger.ON_CREATE,
             repo_dir,
             override="wait",
+            mirror_endpoint=mirror_endpoint,
         )
     run_autostart(
         profiled_config(cfg, profile),
@@ -90,6 +94,7 @@ def run_profile_start(cfg: Config, incus: Incus, container: str) -> None:
         AutostartTrigger.ON_START,
         repo_dir,
         override="wait",
+        mirror_endpoint=mirror_endpoint,
     )
 
 
@@ -151,6 +156,9 @@ def switch_profile(
     creates = tuple(s.stage for s in normalize_stages(missing.on_create))
     starts = tuple(s.stage for s in added)
     if creates or starts:
+        from jailbee.docker_daemon import mirror_endpoint_or_none
+
+        mirror_endpoint = mirror_endpoint_or_none(cfg, incus)
         repo_dir = container_repo_dir(cfg, incus, container)
         for trigger, stages in (
             (AutostartTrigger.ON_CREATE, missing.on_create),
@@ -175,5 +183,6 @@ def switch_profile(
                     repo_dir=repo_dir,
                     override="wait",
                     on_progress=on_progress,
+                    mirror_endpoint=mirror_endpoint,
                 )
     return SwitchResult(previous, name, creates, starts, not (creates or starts))
