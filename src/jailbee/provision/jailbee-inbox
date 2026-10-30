@@ -361,13 +361,14 @@ cmd_send() {
     [ $# -ge 1 ] || bad_usage "send needs a type"
     local type="$1"; shift
     case "$type" in
-        message|spawn|import|update|restart|stop|destroy) ;;
+        message|spawn|import|update|restart|stop|destroy|rights) ;;
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
-    local -a mounts=() egress=()
+    local -a mounts=() egress=() revoke_mounts=() revoke_egress=()
+    local duration="" revoke_loose=0
     local opt_val
     while [ $# -gt 0 ]; do
         opt_val=""
@@ -375,10 +376,11 @@ cmd_send() {
             --wait) wait=1; shift; continue ;;
             --new) new=1; shift; continue ;;
             --loose) loose=1; shift; continue ;;
+            --revoke-loose) revoke_loose=1; shift; continue ;;
             --force) force=1; shift; continue ;;
             --default-runner) default_runner=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -397,6 +399,9 @@ cmd_send() {
             --base) base_branch="$opt_val" ;;
             --ref) ref="$opt_val" ;;
             --pr) pr="$opt_val" ;;
+            --for) duration="$opt_val" ;;
+            --revoke-mount) revoke_mounts+=("$opt_val") ;;
+            --revoke-egress) revoke_egress+=("$opt_val") ;;
             --mount) mounts+=("$opt_val") ;;
             --egress) egress+=("$opt_val") ;;
             --note) note="$opt_val" ;;
@@ -431,8 +436,8 @@ cmd_send() {
         bad_usage "--to, --kind and --reply-to only apply to message"
     fi
     if [ "$type" != "spawn" ] && {
-        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ -n "$ref" ] || [ -n "$pr" ] || [ "$loose" -eq 1 ] \
-            || [ -n "$note" ] || [ "${#mounts[@]}" -gt 0 ] || [ "${#egress[@]}" -gt 0 ]; }; then
+        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ -n "$ref" ] || [ -n "$pr" ] || [ -n "$note" ] \
+            || { [ "$type" != "rights" ] && { [ "$loose" -eq 1 ] || [ "${#mounts[@]}" -gt 0 ] || [ "${#egress[@]}" -gt 0 ]; }; }; }; then
         bad_usage "--branch, --new, --base, --mount, --loose, --egress and --note only apply to spawn"
     fi
     if [ "$type" != "destroy" ] && [ "$force" -eq 1 ]; then
@@ -477,10 +482,32 @@ cmd_send() {
         runner_json="$(jq -c --arg p "$on_done" '. + {on_done: $p}' <<<"$runner_json")"
     fi
     case "$type" in
+        rights) ;;
         import|update|stop|destroy|restart)
             [ -n "$child" ] || bad_usage "$type needs --child" ;;
         *) [ -z "$child" ] || bad_usage "--child does not apply to $type" ;;
     esac
+    if [ "$type" = "rights" ]; then
+        local granted=$((loose + ${#mounts[@]} + ${#egress[@]}))
+        local revoked=$((revoke_loose + ${#revoke_mounts[@]} + ${#revoke_egress[@]}))
+        [ $((granted + revoked)) -gt 0 ] || bad_usage "rights needs at least one grant or revoke"
+        [ "$granted" -eq 0 ] || [ -n "$duration" ] || bad_usage "rights grants need --for"
+        [ "$granted" -gt 0 ] || [ -z "$duration" ] || bad_usage "--for needs a grant"
+        [ "$loose" -eq 0 ] || [ "$revoke_loose" -eq 0 ] || bad_usage "cannot grant and revoke loose"
+        local item other
+        for item in "${mounts[@]}"; do
+            for other in "${revoke_mounts[@]}"; do
+                [ "$item" != "$other" ] || bad_usage "cannot grant and revoke mount $item"
+            done
+        done
+        for item in "${egress[@]}"; do
+            for other in "${revoke_egress[@]}"; do
+                [ "$item" != "$other" ] || bad_usage "cannot grant and revoke egress $item"
+            done
+        done
+    elif [ -n "$duration" ] || [ "$revoke_loose" -eq 1 ] || [ "${#revoke_mounts[@]}" -gt 0 ] || [ "${#revoke_egress[@]}" -gt 0 ]; then
+        bad_usage "--for and --revoke-* only apply to rights"
+    fi
     if [ "$type" = "spawn" ]; then
         [ -z "$ref" ] || { [ -z "$pr" ] && [ "$new" -eq 0 ]; } || bad_usage "--ref cannot be combined with --pr or --new"
         if [ -n "$pr" ]; then
@@ -539,6 +566,19 @@ cmd_send() {
                  + (if $to != "" then {to: $to} else {} end)
                  + (if $kind != "" then {kind: $kind} else {} end)
                  + (if $reply != "" then {in_reply_to: $reply} else {} end)' > "$json_tmp" ;;
+        rights)
+            jq -n --arg id "$id" --arg child "$child" --arg duration "$duration" \
+                --argjson loose "$loose" --argjson revoke_loose "$revoke_loose" \
+                --argjson mounts "$(jq -nc '$ARGS.positional' --args "${mounts[@]}")" \
+                --argjson egress "$(jq -nc '$ARGS.positional' --args "${egress[@]}")" \
+                --argjson rm "$(jq -nc '$ARGS.positional' --args "${revoke_mounts[@]}")" \
+                --argjson re "$(jq -nc '$ARGS.positional' --args "${revoke_egress[@]}")" \
+                '{version: 1, id: $id, type: "rights"}
+                 + (if $child != "" then {child: $child} else {} end)
+                 + (if $loose == 1 or ($mounts|length)>0 or ($egress|length)>0 then
+                      {grant: {loose: ($loose == 1), mounts: $mounts, egress: $egress, for: $duration}} else {} end)
+                 + (if $revoke_loose == 1 or ($rm|length)>0 or ($re|length)>0 then
+                      {revoke: {loose: ($revoke_loose == 1), mounts: $rm, egress: $re}} else {} end)' > "$json_tmp" ;;
         spawn)
             local mounts_json egress_json
             mounts_json="$(jq -nc '$ARGS.positional' --args "${mounts[@]}")"
