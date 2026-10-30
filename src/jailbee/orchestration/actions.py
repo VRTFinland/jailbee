@@ -368,6 +368,16 @@ def child_options(
     )
 
 
+def _drop_watch(ctx: ActionContext, child_full: str) -> None:
+    """Forget a watch registered for a launch that was refused: nothing runs to supervise."""
+    from jailbee.orchestration.watch import cancel
+
+    try:
+        cancel(ctx.root, ctx.sender.full, child_full)
+    except OSError as exc:
+        log.warning("could not drop the watch of refused child %s: %s", child_full, exc)
+
+
 def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None) -> Outcome:
     """Start the background create of a planned child; refusals become outcomes."""
     from jailbee.orchestration.watch import WatchEntry, register
@@ -385,10 +395,13 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
             ctx.cfg, ctx.incus, ctx.gcfg, opts, interaction=interaction, config_path=None
         )
     except NeedsOperator as e:
+        _drop_watch(ctx, plan.child_full)
         return refused(e.reason)
     except CreateError as e:
+        _drop_watch(ctx, plan.child_full)
         return refused(e.message)
     except (ForkError, ValueError) as e:
+        _drop_watch(ctx, plan.child_full)
         return refused(str(e))
     reservations = load_reservations(ctx.root)
     entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full]
@@ -661,6 +674,7 @@ def _boot(
             log.warning("could not reserve booting child %s: %s", child.full, exc)
         return Outcome("started", f"child `{child.short}` restarting; log: {worker.log_path}")
     except Exception as e:
+        _drop_watch(ctx, child.full)
         return refused(f"child `{child.short}` could not be restarted: {e}")
 
 

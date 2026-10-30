@@ -233,6 +233,18 @@ def test_restart_does_not_launch_without_durable_watch(tmp_path, seams, monkeypa
     seams["boot"].assert_not_called()
 
 
+def test_restart_refused_launch_drops_the_watch(tmp_path, seams, monkeypatch) -> None:
+    from jailbee.orchestration.watch import load_watch
+
+    monkeypatch.setattr(
+        "jailbee.create_flow.launch_boot_background", MagicMock(side_effect=OSError("no fork"))
+    )
+    rig = Rig(tmp_path, limit=2)
+    out = actions.handle_restart(rig.ctx(), _restart())
+    assert out.state == "refused" and "no fork" in out.detail
+    assert load_watch(tmp_path).get(rig.sender.full, []) == []
+
+
 def test_restart_boots_with_preambled_prompt(
     tmp_path: Path, seams: dict[str, MagicMock], monkeypatch
 ) -> None:

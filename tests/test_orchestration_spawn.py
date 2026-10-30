@@ -460,6 +460,28 @@ def test_start_child_create_error_refused(tmp_path: Path, monkeypatch: pytest.Mo
     assert actions.start_child(ctx, plan, fork=None) == Outcome("refused", "name taken")
 
 
+@pytest.mark.parametrize("kind", ["needs_operator", "create_error", "value_error"])
+def test_start_child_refusal_drops_the_watch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from jailbee.create_flow import CreateError, NeedsOperator
+    from jailbee.orchestration.watch import load_watch
+
+    errors: dict[str, Exception] = {
+        "needs_operator": NeedsOperator("x", reason="key touch"),
+        "create_error": CreateError("name taken"),
+        "value_error": ValueError("bad"),
+    }
+
+    def boom(*a: object, **k: object) -> None:
+        raise errors[kind]
+
+    monkeypatch.setattr(actions, "start_create", boom)
+    ctx, plan = _plan(tmp_path)
+    assert actions.start_child(ctx, plan, fork=None).state == "refused"
+    assert load_watch(ctx.root).get(ctx.sender.full, []) == []
+
+
 def test_start_child_passes_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from jailbee.create_flow import CreateStarted
 
