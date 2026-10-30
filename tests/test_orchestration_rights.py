@@ -240,7 +240,9 @@ def test_revoke_only_ignores_removed_live_grant(rig, mocker):
 
 def test_expired_provenance_does_not_own_human_readded_mount(rig):
     ctx, store, _, _, remove, *_ = rig
-    store[("c", labels.TIMED)] = json.dumps({"mount:aws": (ctx.now-timedelta(minutes=1)).isoformat()})
+    store[("c", labels.TIMED)] = json.dumps(
+        {"mount:aws": (ctx.now - timedelta(minutes=1)).isoformat()}
+    )
     ctx.incus.config_device_get.return_value = "/human/aws"
     result = actions.dispatch(ctx, manifest(revoke={"mounts": ["aws"]}))
     assert result.state == "done" and "was not given by orchestration" in result.detail

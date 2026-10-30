@@ -1008,11 +1008,13 @@ def test_readding_stored_entry_materialises_acl_for_rollback(tmp_path, mocker):
     incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
     incus.config_unset.side_effect = lambda n, k: store.pop(k, None)
     live = {"allowed": True}
+
     def sync(*args):
         live["allowed"] = "pypi.org" in json.loads(store.get(egress_scope.EGRESS_EXTRA_KEY, "[]"))
         if not live["allowed"]:
             raise ValueError("bridge write")
         return False
+
     mocker.patch("jailbee.egress_scope._sync_container_entry", side_effect=sync)
     with pytest.raises(ValueError, match="bridge write"):
         egress_scope.remove_container_entry(cfg, incus, "c", "pypi.org")
@@ -1022,7 +1024,7 @@ def test_readding_stored_entry_materialises_acl_for_rollback(tmp_path, mocker):
 
 @pytest.mark.parametrize("work", [False, True])
 def test_remove_prunes_revoked_acl_even_when_remaining_dns_fails(tmp_path, mocker, work):
-    from jailbee.network import extra_acl_yaml, entries_from_acl_yaml
+    from jailbee.network import entries_from_acl_yaml, extra_acl_yaml
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path)
@@ -1032,18 +1034,28 @@ def test_remove_prunes_revoked_acl_even_when_remaining_dns_fails(tmp_path, mocke
     incus.config_get.side_effect = lambda n, k: store.get(k)
     incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
     acl_name = egress_scope.extra_acl_name(name)
-    live = {acl_name: extra_acl_yaml(acl_name, [
-        EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
-        EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org")])}
+    live = {
+        acl_name: extra_acl_yaml(
+            acl_name,
+            [
+                EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
+                EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org"),
+            ],
+        )
+    }
     incus.network_acl_exists.side_effect = lambda n: n in live
     incus.network_acl_show.side_effect = lambda n: live[n]
     incus.network_acl_set_yaml.side_effect = lambda n, body: live.__setitem__(n, body)
-    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch(
+        "jailbee.network_generation.generation_of", return_value="work" if work else "legacy"
+    )
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     incus.list_containers.return_value = [{"name": name}]
+
     # Reproduce the real materialiser's all-DNS-failed preservation path.
     def preserve(*args, **kwargs):
         return None
+
     mocker.patch("jailbee.egress_scope.apply_container_acl", side_effect=preserve)
     mocker.patch("jailbee.work_acl.apply_work_container_acl", side_effect=preserve)
     mocker.patch("jailbee.work_acl.reconcile_work_acl")
@@ -1055,7 +1067,7 @@ def test_remove_prunes_revoked_acl_even_when_remaining_dns_fails(tmp_path, mocke
 
 @pytest.mark.parametrize("work", [False, True])
 def test_real_acl_removal_with_dns_outage_prunes_nic_and_bridge(tmp_path, mocker, work):
-    from jailbee.network import extra_acl_yaml, entries_from_acl_yaml
+    from jailbee.network import entries_from_acl_yaml, extra_acl_yaml
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path)
@@ -1065,36 +1077,63 @@ def test_real_acl_removal_with_dns_outage_prunes_nic_and_bridge(tmp_path, mocker
     incus.config_get.side_effect = lambda n, k: store.get(k)
     incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
     incus.config_unset.side_effect = lambda n, k: store.pop(k, None)
-    nic = {"type": "nic", "network": "jailbee-work" if work else "incusbr0",
-           "security.ipv4_filtering": "true", "ipv4.address": "10.42.0.2"}
-    profiles = [f"{cfg.container_prefix}-base", f"{cfg.container_prefix}-net-work-strict"] if work else [f"{cfg.container_prefix}-base"]
-    incus.list_containers.return_value = [{"name": name, "profiles": profiles,
-                                          "devices": {"eth0": nic}, "expanded_devices": {"eth0": nic}}]
+    nic = {
+        "type": "nic",
+        "network": "jailbee-work" if work else "incusbr0",
+        "security.ipv4_filtering": "true",
+        "ipv4.address": "10.42.0.2",
+    }
+    profiles = (
+        [f"{cfg.container_prefix}-base", f"{cfg.container_prefix}-net-work-strict"]
+        if work
+        else [f"{cfg.container_prefix}-base"]
+    )
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": profiles,
+            "devices": {"eth0": nic},
+            "expanded_devices": {"eth0": nic},
+        }
+    ]
     acl = egress_scope.extra_acl_name(name)
-    live = {acl: extra_acl_yaml(acl, [
-        EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
-        EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org")])}
+    live = {
+        acl: extra_acl_yaml(
+            acl,
+            [
+                EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
+                EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org"),
+            ],
+        )
+    }
     incus.network_acl_exists.return_value = True
     incus.network_acl_show.side_effect = lambda n: live.get(n, "")
     incus.network_acl_set_yaml.side_effect = lambda n, body: live.__setitem__(n, body)
     mocker.patch("jailbee.egress.resolve_with_status", return_value=({}, {"keep.org": "DNS down"}))
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
-    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch(
+        "jailbee.network_generation.generation_of", return_value="work" if work else "legacy"
+    )
     mocker.patch("jailbee.egress_scope._repin_hosts_quietly")
     mocker.patch("jailbee.egress_proxy.sync_container", return_value=False)
     mocker.patch("jailbee.services_acl.ensure_services_acl")
     if work:
         from jailbee.work_acl import _work_extras_acl_name
+
         bridge = _work_extras_acl_name(cfg)
         mocker.patch("jailbee.work_acl.ensure_services_acl")
-        mocker.patch("jailbee.work_acl._work_occupants", return_value=[
-            {"name": name, "ip": "10.42.0.2", "profiles": profiles, "device": nic}])
+        mocker.patch(
+            "jailbee.work_acl._work_occupants",
+            return_value=[{"name": name, "ip": "10.42.0.2", "profiles": profiles, "device": nic}],
+        )
         mocker.patch("jailbee.work_acl._attached", return_value=[])
         mocker.patch("jailbee.work_acl._write_attached")
     else:
         bridge = egress_scope.bridge_extras_acl_name(cfg.container_prefix)
-        mocker.patch("jailbee.egress_pool._apply_acl_with_nft_quirk",
-                     side_effect=lambda i,n,body: live.__setitem__(n, body))
+        mocker.patch(
+            "jailbee.egress_pool._apply_acl_with_nft_quirk",
+            side_effect=lambda i, n, body: live.__setitem__(n, body),
+        )
         mocker.patch("jailbee.init_command.attach_acl_to_bridge")
     egress_scope.remove_container_entry(cfg, incus, name, "expired.org")
     for key in (acl, bridge):
