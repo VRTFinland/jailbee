@@ -184,7 +184,10 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
         return None
     if role == "child":
         if isinstance(manifest, RightsManifest):
-            if "grant" in manifest.model_fields_set or manifest.child not in (None, ctx.sender.short):
+            if "grant" in manifest.model_fields_set or manifest.child not in (
+                None,
+                ctx.sender.short,
+            ):
                 return refused("children may only revoke their own rights")
         elif manifest.type not in CHILD_TYPES:
             return refused("children may only send messages")

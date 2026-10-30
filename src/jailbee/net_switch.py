@@ -41,7 +41,8 @@ def switch_mode(
     if mode == "loose" and until is not None:
         revert_to = (
             incus.config_get(name, "user.jailbee.loose_revert_to") or "strict"
-            if pre_mode == "loose" else "strict"
+            if pre_mode == "loose"
+            else "strict"
         )
         incus.config_set(name, "user.jailbee.loose_revert_to", revert_to)
         incus.config_set(name, "user.jailbee.loose_until", until.isoformat())

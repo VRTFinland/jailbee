@@ -967,7 +967,9 @@ def test_container_entry_full_path(tmp_path, mocker, work):
     incus = mocker.Mock()
     incus.list_containers.return_value = [{"name": "c"}]
     incus.config_get.return_value = None
-    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch(
+        "jailbee.network_generation.generation_of", return_value="work" if work else "legacy"
+    )
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     legacy = mocker.patch("jailbee.egress_scope.apply_container_acl")

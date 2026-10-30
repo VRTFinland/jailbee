@@ -14,7 +14,15 @@ from jailbee.orchestration.runner_model import Runner
 
 Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights"]
 
-OPERATIONS: tuple[Operation, ...] = ("spawn", "message", "import", "restart", "stop", "destroy", "rights")
+OPERATIONS: tuple[Operation, ...] = (
+    "spawn",
+    "message",
+    "import",
+    "restart",
+    "stop",
+    "destroy",
+    "rights",
+)
 IMPLIED_OPERATIONS = frozenset({"spawn", "message"})
 DEFAULT_OPERATIONS: tuple[Operation, ...] = (
     "destroy",
@@ -209,8 +217,7 @@ def effective_grant(grant: Grant, cap: RepoCap) -> Grant | None:
 def egress_grantable(entry: str, eff: Grant, cap: RepoCap) -> bool:
     """Loose permission includes narrower egress, still bounded by the repo cap."""
     return egress_covered(entry, eff.grantable.egress) or (
-        eff.grantable.loose
-        and (cap.egress is None or egress_covered(entry, cap.egress))
+        eff.grantable.loose and (cap.egress is None or egress_covered(entry, cap.egress))
     )
 
 

@@ -75,17 +75,22 @@ def _held(ctx: ActionContext, child: Node, item: str) -> Held:
         )
     kind, value = item.split(":", 1)
     if kind == "mount":
-        return Held(mounts.is_attached(ctx.incus, name, value),
-                    _deadline(ctx.incus.config_get(name, mounts.until_key(value))))
-    return Held(value in egress_scope.container_extras(ctx.incus, name)
-                or value in ctx.cfg.effective_egress_allow(),
-                _deadline(egress_scope.egress_deadlines(ctx.incus, name).get(value)))
+        return Held(
+            mounts.is_attached(ctx.incus, name, value),
+            _deadline(ctx.incus.config_get(name, mounts.until_key(value))),
+        )
+    return Held(
+        value in egress_scope.container_extras(ctx.incus, name)
+        or value in ctx.cfg.effective_egress_allow(),
+        _deadline(egress_scope.egress_deadlines(ctx.incus, name).get(value)),
+    )
 
 
 def _apply(ctx: ActionContext, child: Node, item: str, held: Held) -> None:
     if item == "loose":
-        net_switch.switch_mode(ctx.cfg, ctx.incus, child.full,
-                               "loose" if held.present else "strict", until=held.until)
+        net_switch.switch_mode(
+            ctx.cfg, ctx.incus, child.full, "loose" if held.present else "strict", until=held.until
+        )
         return
     kind, value = item.split(":", 1)
     if kind == "mount":
@@ -126,7 +131,8 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
         if "rights" not in grant.operations:
             return refused("operation `rights` is not in this container's grant")
         problems = check_rights(
-            grant, profiles.repo_cap(ctx.cfg),
+            grant,
+            profiles.repo_cap(ctx.cfg),
             ChildRights(loose=m.grant.loose, mounts=m.grant.mounts, egress=m.grant.egress),
             ctx.cfg.optional_mounts.keys(),
         )
@@ -135,11 +141,14 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
         try:
             for entry in m.grant.egress:
                 if is_wildcard_entry(entry):
-                    raw_child = next((r for r in ctx.incus.list_containers()
-                                      if r.get("name") == child.full), {})
+                    raw_child = next(
+                        (r for r in ctx.incus.list_containers() if r.get("name") == child.full), {}
+                    )
                     if generation_of(ctx.cfg, raw_child) != "work":
-                        return refused("container-scope wildcards need the work network "
-                                       "(run `jailbee net migrate`), or add it with --repo")
+                        return refused(
+                            "container-scope wildcards need the work network "
+                            "(run `jailbee net migrate`), or add it with --repo"
+                        )
                 else:
                     egress_scope.resolve_entries([entry])
         except ValueError as exc:
@@ -205,7 +214,12 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
     if ctx.role() == "child" and gave_up:
         from jailbee.orchestration.messages import _orchestrator_of, _relay
 
-        notice = MessageManifest(version=1, type="message", id=m.id, kind="note",
-                                 body=f"{child.short} gave up: {', '.join(gave_up)}")
+        notice = MessageManifest(
+            version=1,
+            type="message",
+            id=m.id,
+            kind="note",
+            body=f"{child.short} gave up: {', '.join(gave_up)}",
+        )
         _relay(ctx, _orchestrator_of(ctx), notice)
     return done(f"{child.short}: {'; '.join(changes)}")

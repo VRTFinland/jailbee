@@ -19,9 +19,9 @@ from sqlmodel import Session, select
 from jailbee.config import ConfigError, load_repo_config
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 from jailbee.egress import resolve_with_status
+from jailbee.egress_revert import check_and_revert_egress
 from jailbee.loose_revert import check_and_revert_loose
 from jailbee.mount_revert import check_and_revert_mounts
-from jailbee.egress_revert import check_and_revert_egress
 from jailbee.paths import repo_config_path
 
 if TYPE_CHECKING:

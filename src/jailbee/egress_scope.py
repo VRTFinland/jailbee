@@ -285,7 +285,8 @@ def add_container_entry(
     if wildcard and generation_of(cfg, raw) != "work":
         raise ContainerEntryError(
             "container-scope wildcards need the work network "
-            "(run `jailbee net migrate`), or add it with --repo", 2
+            "(run `jailbee net migrate`), or add it with --repo",
+            2,
         )
     if not wildcard:
         resolve_entries([entry])

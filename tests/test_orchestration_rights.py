@@ -1,5 +1,5 @@
-from datetime import UTC, datetime, timedelta
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,8 +15,10 @@ from tests.conftest import make_cfg
 def rig(tmp_path, mocker):
     cfg = make_cfg(tmp_path)
     grant = Grant(grantable=Grantable(loose=True, mounts=("aws",)))
-    store = {("orch", labels.GRANT): grant.to_label(),
-             ("c", labels.RIGHTS): ChildRights().to_label()}
+    store = {
+        ("orch", labels.GRANT): grant.to_label(),
+        ("c", labels.RIGHTS): ChildRights().to_label(),
+    }
     incus = mocker.Mock()
     incus.config_get.side_effect = lambda name, key: store.get((name, key))
     incus.config_set.side_effect = lambda name, key, value: store.__setitem__((name, key), value)
@@ -26,8 +28,15 @@ def rig(tmp_path, mocker):
     sender = Node("orch", "orch", True, {labels.GRANT: grant.to_label()})
     child = Node("c", "c", True, {labels.SPAWNED_BY: "orch"})
     cfg = cfg.model_copy(update={"optional_mounts": {"aws": object()}})
-    ctx = ActionContext(cfg, GlobalConfig(), incus, tmp_path, sender,
-                        {"orch": sender, "c": child}, datetime(2026, 10, 30, tzinfo=UTC))
+    ctx = ActionContext(
+        cfg,
+        GlobalConfig(),
+        incus,
+        tmp_path,
+        sender,
+        {"orch": sender, "c": child},
+        datetime(2026, 10, 30, tzinfo=UTC),
+    )
     switch = mocker.patch("jailbee.net_switch.switch_mode")
     attach = mocker.patch("jailbee.mounts.attach")
     remove = mocker.patch("jailbee.mounts.remove_optional_mount")
@@ -40,7 +49,9 @@ def rig(tmp_path, mocker):
 
 
 def manifest(**blocks):
-    return RightsManifest.model_validate({"version": 1, "type": "rights", "id": "r", "child": "c", **blocks})
+    return RightsManifest.model_validate(
+        {"version": 1, "type": "rights", "id": "r", "child": "c", **blocks}
+    )
 
 
 def test_grant_loose_timed(rig):
@@ -87,7 +98,9 @@ def test_loose_implies_egress_runtime(rig):
     ctx, store, _, _, _, add, _ = rig
     result = actions.dispatch(ctx, manifest(grant={"egress": ["pypi.org"], "for": "5m"}))
     assert result.state == "done"
-    add.assert_called_once_with(ctx.cfg, ctx.incus, "c", "pypi.org", until=ctx.now + timedelta(minutes=5))
+    add.assert_called_once_with(
+        ctx.cfg, ctx.incus, "c", "pypi.org", until=ctx.now + timedelta(minutes=5)
+    )
     assert "egress:pypi.org" in json.loads(store[("c", labels.TIMED)])
 
 
@@ -103,16 +116,18 @@ def test_timed_grant_does_not_narrow_spawn_loose(rig):
 def test_revoke_human_mount_leaves_it_alone(rig):
     ctx, _, _, _, remove, *_ = rig
     result = actions.dispatch(ctx, manifest(revoke={"mounts": ["aws"]}))
-    assert result.state == "done" and "aws was not given by orchestration; left as is" in result.detail
+    assert (
+        result.state == "done" and "aws was not given by orchestration; left as is" in result.detail
+    )
     remove.assert_not_called()
 
 
 def test_revoke_owned_clears_live_label_and_timed(rig, mocker):
-    ctx, store, switch, _, remove, *_ = rig
+    ctx, store, switch, _, _remove, *_ = rig
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     ctx.incus.config_device_get.return_value = "/host/aws"
     store[("c", labels.RIGHTS)] = ChildRights(loose=True, mounts=("aws",)).to_label()
-    store[("c", labels.TIMED)] = json.dumps({"loose": (ctx.now+timedelta(minutes=5)).isoformat()})
+    store[("c", labels.TIMED)] = json.dumps({"loose": (ctx.now + timedelta(minutes=5)).isoformat()})
     result = actions.dispatch(ctx, manifest(revoke={"loose": True, "mounts": ["aws"]}))
     assert result.state == "done"
     switch.assert_called_once_with(ctx.cfg, ctx.incus, "c", "strict", until=None)
@@ -120,13 +135,17 @@ def test_revoke_owned_clears_live_label_and_timed(rig, mocker):
     assert ("c", labels.TIMED) not in store
 
 
-@pytest.mark.parametrize("blocks", [{"grant": {"loose": True, "for": "5m"}},
-                                    {"child": "sibling", "revoke": {"loose": True}}])
+@pytest.mark.parametrize(
+    "blocks",
+    [{"grant": {"loose": True, "for": "5m"}}, {"child": "sibling", "revoke": {"loose": True}}],
+)
 def test_child_cannot_grant_or_name_sibling(rig, blocks):
     ctx, *_ = rig
     ctx.sender = ctx.nodes["c"]
     result = actions.dispatch(ctx, manifest(**blocks))
-    assert result.state == "refused" and result.detail == "children may only revoke their own rights"
+    assert (
+        result.state == "refused" and result.detail == "children may only revoke their own rights"
+    )
 
 
 def test_child_revoke_notifies_parent(rig, mocker):
@@ -195,13 +214,16 @@ def test_explicit_null_grant_from_child_is_refused(rig):
     ctx, *_ = rig
     ctx.sender = ctx.nodes["c"]
     result = actions.dispatch(ctx, manifest(grant=None, revoke={"loose": True}))
-    assert result.state == "refused" and result.detail == "children may only revoke their own rights"
+    assert (
+        result.state == "refused" and result.detail == "children may only revoke their own rights"
+    )
 
 
 def test_refusal_preflights_unknown_mount_before_revoke(rig):
     ctx, store, switch, *_ = rig
     store[("c", labels.RIGHTS)] = ChildRights(loose=True).to_label()
-    result = actions.dispatch(ctx, manifest(revoke={"loose": True},
-                                           grant={"mounts": ["unknown"], "for": "never"}))
+    result = actions.dispatch(
+        ctx, manifest(revoke={"loose": True}, grant={"mounts": ["unknown"], "for": "never"})
+    )
     assert result.state == "refused" and "not grantable" in result.detail
     switch.assert_not_called()

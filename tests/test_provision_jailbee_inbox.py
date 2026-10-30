@@ -1182,21 +1182,57 @@ def test_send_runner_option_errors(script, base, tmp_path, args):
 def test_send_rights_grant_shape(script, base, tmp_path):
     from jailbee.orchestration.protocol import parse_manifest
 
-    ident, manifest = manifest_of(base, send(script, base, tmp_path, "rights", "--child", "c",
-        "--loose", "--mount", "aws", "--egress", "pypi.org", "--for", "5m"))
-    assert manifest["grant"] == {"loose": True, "mounts": ["aws"], "egress": ["pypi.org"], "for": "5m"}
+    ident, manifest = manifest_of(
+        base,
+        send(
+            script,
+            base,
+            tmp_path,
+            "rights",
+            "--child",
+            "c",
+            "--loose",
+            "--mount",
+            "aws",
+            "--egress",
+            "pypi.org",
+            "--for",
+            "5m",
+        ),
+    )
+    assert manifest["grant"] == {
+        "loose": True,
+        "mounts": ["aws"],
+        "egress": ["pypi.org"],
+        "for": "5m",
+    }
     assert manifest["child"] == "c"
     assert parse_manifest(f"{ident}.json", json.dumps(manifest), {}).type == "rights"
 
 
 def test_send_rights_revoke_own(script, base, tmp_path):
-    _, manifest = manifest_of(base, send(script, base, tmp_path, "rights", "--revoke-loose",
-        "--revoke-mount", "aws", "--revoke-egress", "pypi.org"))
+    _, manifest = manifest_of(
+        base,
+        send(
+            script,
+            base,
+            tmp_path,
+            "rights",
+            "--revoke-loose",
+            "--revoke-mount",
+            "aws",
+            "--revoke-egress",
+            "pypi.org",
+        ),
+    )
     assert "grant" not in manifest and "child" not in manifest
     assert manifest["revoke"] == {"loose": True, "mounts": ["aws"], "egress": ["pypi.org"]}
 
 
-@pytest.mark.parametrize("args", [[], ["--loose"], ["--for", "5m"], ["--revoke-mount", "aws", "--mount", "aws", "--for", "5m"]])
+@pytest.mark.parametrize(
+    "args",
+    [[], ["--loose"], ["--for", "5m"], ["--revoke-mount", "aws", "--mount", "aws", "--for", "5m"]],
+)
 def test_send_rights_usage_errors(script, base, tmp_path, args):
     result = send(script, base, tmp_path, "rights", *args)
     assert result.returncode == 2

@@ -404,21 +404,31 @@ def test_restart_distinguishes_absent_and_null_runner() -> None:
 def test_rights_manifest_roundtrip() -> None:
     from jailbee.orchestration.protocol import RightsManifest
 
-    raw = {"version": 1, "type": "rights", "id": "r", "child": "c",
-           "grant": {"mounts": ["aws", "aws"], "egress": ["pypi.org"], "for": "5m"},
-           "revoke": {"loose": True}}
+    raw = {
+        "version": 1,
+        "type": "rights",
+        "id": "r",
+        "child": "c",
+        "grant": {"mounts": ["aws", "aws"], "egress": ["pypi.org"], "for": "5m"},
+        "revoke": {"loose": True},
+    }
     manifest = parse_manifest("r.json", json.dumps(raw), {})
     assert isinstance(manifest, RightsManifest)
     assert manifest.grant is not None and manifest.grant.mounts == ("aws",)
     assert parse_manifest("r.json", manifest.model_dump_json(by_alias=True), {}) == manifest
 
 
-@pytest.mark.parametrize("blocks", [
-    {}, {"revoke": {}}, {"grant": {"loose": True}},
-    {"grant": {"loose": True, "for": "25h"}},
-    {"grant": {"mounts": ["aws"], "for": "5m"}, "revoke": {"mounts": ["aws"]}},
-    {"grant": {"loose": True, "for": "5m"}, "revoke": {"loose": True}},
-])
+@pytest.mark.parametrize(
+    "blocks",
+    [
+        {},
+        {"revoke": {}},
+        {"grant": {"loose": True}},
+        {"grant": {"loose": True, "for": "25h"}},
+        {"grant": {"mounts": ["aws"], "for": "5m"}, "revoke": {"mounts": ["aws"]}},
+        {"grant": {"loose": True, "for": "5m"}, "revoke": {"loose": True}},
+    ],
+)
 def test_rights_manifest_invalid(blocks: dict[str, Any]) -> None:
     raw = {"version": 1, "type": "rights", "id": "r", **blocks}
     with pytest.raises(ManifestError):
@@ -426,6 +436,11 @@ def test_rights_manifest_invalid(blocks: dict[str, Any]) -> None:
 
 
 def test_rights_grant_for_never() -> None:
-    manifest = parse_manifest("r.json", json.dumps({"version": 1, "type": "rights", "id": "r",
-        "grant": {"loose": True, "for": "never"}}), {})
+    manifest = parse_manifest(
+        "r.json",
+        json.dumps(
+            {"version": 1, "type": "rights", "id": "r", "grant": {"loose": True, "for": "never"}}
+        ),
+        {},
+    )
     assert manifest.model_dump(by_alias=True)["grant"]["for"] == "never"

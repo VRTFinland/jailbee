@@ -9611,15 +9611,22 @@ def egress_add_cmd(
         bool,
         typer.Option("--repo", help="Apply to every container of this repo on this host."),
     ] = False,
-    for_: Annotated[str | None, typer.Option("--for", help="Expire this container override after a duration (max 24h); never keeps it.")] = None,
-    no_revert: Annotated[bool, typer.Option("--no-revert", help="Keep this override without an expiry.")] = False,
+    for_: Annotated[
+        str | None,
+        typer.Option(
+            "--for",
+            help="Expire this container override after a duration (max 24h); never keeps it.",
+        ),
+    ] = None,
+    no_revert: Annotated[
+        bool, typer.Option("--no-revert", help="Keep this override without an expiry.")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
     from jailbee import egress_scope
-    from jailbee.egress import NetworkResolveError, is_wildcard_entry, validate_allow_entry
-
     from jailbee.config import parse_ttl
+    from jailbee.egress import NetworkResolveError, is_wildcard_entry, validate_allow_entry
 
     if for_ is not None and no_revert:
         error("--for and --no-revert are mutually exclusive.")
