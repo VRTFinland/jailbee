@@ -425,9 +425,21 @@ def test_spawn_reports_ready_after_worker_finishes(
         ("sp1", "started", "creation of child `k1` started; on done: destroy")
     ]
 
+    from jailbee.orchestration import agent_watch
+
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     jobs.clear()  # the worker finished and removed its row
     incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})
-    _tick(world, memory, 5)  # round 2
-    assert _statuses(incus, "proj-orch")[-1] == ("sp1", "done", "child `k1` is ready")
-    _tick(world, memory, 10)  # settled: nothing more is said
+    _tick(world, memory, 5)  # first live observation is not readiness
+    assert len(_statuses(incus, "proj-orch")) == 1
+    _tick(world, memory, 10)
+    assert _statuses(incus, "proj-orch")[-1] == (
+        "sp1",
+        "done",
+        "child `k1` is ready; agent is alive",
+    )
+    _tick(world, memory, 15)  # monitoring continues without extra ready messages
     assert len(_statuses(incus, "proj-orch")) == 2
+    assert watch.load_watch(world["root"])["proj-orch"][0].confirmed

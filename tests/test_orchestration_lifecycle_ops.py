@@ -55,13 +55,15 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     m = {
         "jobs": MagicMock(return_value=set()),
         "stop": MagicMock(return_value=False),
-        "boot": MagicMock(),
+        "boot": MagicMock(
+            return_value=__import__("types").SimpleNamespace(pid=12345, log_path="/tmp/boot.log")
+        ),
         "destroy": MagicMock(),
         "head": MagicMock(return_value="aaa"),
     }
     monkeypatch.setattr(actions, "live_create_jobs", m["jobs"])
     monkeypatch.setattr(actions.stopping, "stop_container", m["stop"])
-    monkeypatch.setattr(actions.lifecycle, "boot_container", m["boot"])
+    monkeypatch.setattr("jailbee.create_flow.launch_boot_background", m["boot"])
     monkeypatch.setattr(actions.lifecycle, "destroy_container", m["destroy"])
     monkeypatch.setattr(actions.sync, "_container_head_oid", m["head"])
     monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=False))
@@ -145,7 +147,7 @@ def test_restart_sets_on_done_label_only_when_given(
 ) -> None:
     rig = Rig(tmp_path)
     m = _restart().model_copy(update={"on_done": policy})
-    assert actions.handle_restart(rig.ctx(), m).state == "done"
+    assert actions.handle_restart(rig.ctx(), m).state == "started"
     calls = [c.args for c in rig.incus.config_set.call_args_list if c.args[1] == labels.ON_DONE]
     assert calls == ([] if policy is None else [(rig.child.full, labels.ON_DONE, policy)])
 
@@ -170,6 +172,30 @@ def test_restart_explicit_destroy_needs_grant(tmp_path: Path, seams: dict[str, M
     out = actions.handle_restart(rig.ctx(), _restart().model_copy(update={"on_done": "destroy"}))
     assert out.state == "refused" and "destroy` operation" in out.detail
     seams["boot"].assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["stop", "destroy"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_intentional_shutdown_cancels_watch_only_on_success(
+    tmp_path, seams, operation, fails
+) -> None:
+    from jailbee.orchestration.watch import WatchEntry, load_watch, save_watch
+
+    rig = Rig(tmp_path, running=True)
+    entry = WatchEntry(
+        "s", rig.child.full, "spawn", rig.ctx().now.isoformat(), supervise=True, confirmed=True
+    )
+    save_watch(tmp_path, {rig.sender.full: [entry]})
+    if fails:
+        seams[operation].side_effect = RuntimeError("cannot stop")
+    manifest = (
+        StopManifest(version=1, id="s1", type="stop", child="c1")
+        if operation == "stop"
+        else _destroy(force=True)
+    )
+    outcome = getattr(actions, f"handle_{operation}")(rig.ctx(), manifest)
+    assert outcome.state == ("refused" if fails else "done")
+    assert load_watch(tmp_path).get(rig.sender.full, []) == ([entry] if fails else [])
 
 
 def test_stop_running_child(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
@@ -197,17 +223,33 @@ def test_restart_refuses_running_child(tmp_path: Path, seams: dict[str, MagicMoc
     seams["boot"].assert_not_called()
 
 
-def test_restart_boots_with_preambled_prompt(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+def test_restart_does_not_launch_without_durable_watch(tmp_path, seams, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "jailbee.orchestration.watch.save_watch", MagicMock(side_effect=OSError("disk unavailable"))
+    )
     rig = Rig(tmp_path, limit=2)
     out = actions.handle_restart(rig.ctx(), _restart())
-    assert out == Outcome("done", "child `c1` restarted")
-    seams["boot"].assert_called_once_with(
+    assert out.state == "refused" and "disk unavailable" in out.detail
+    seams["boot"].assert_not_called()
+
+
+def test_restart_boots_with_preambled_prompt(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    launch = MagicMock(return_value=SimpleNamespace(pid=12345, log_path="/tmp/boot.log"))
+    monkeypatch.setattr("jailbee.create_flow.launch_boot_background", launch)
+    rig = Rig(tmp_path, limit=2)
+    out = actions.handle_restart(rig.ctx(), _restart())
+    assert out.state == "started" and "restarting" in out.detail
+    launch.assert_called_once_with(
         rig.cfg,
-        rig.incus,
-        "proj-c1",
-        restart=False,
+        container_name="proj-c1",
         initial_prompt=actions.child_preamble("orch") + "\n\ngo on",
+        config_path=None,
     )
+    seams["boot"].assert_not_called()
 
 
 def test_restart_queues_when_full(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
@@ -358,7 +400,7 @@ def test_stopped_child_commits_after_restart_are_not_lost(
     assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
     assert store.store[labels.STOPPED_HEAD] == x
     rig.child = store.node(rig, running=False)
-    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
     assert labels.STOPPED_HEAD not in store.store
     assert labels.DONE_SHA not in store.store
     rig.child = store.node(rig, running=True)
@@ -459,7 +501,7 @@ def test_restart_clears_state_stopped_head_and_done_sha(
         },
     )
     store = Labels(rig)
-    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
     for key in (labels.STATE, labels.DONE_SHA, labels.STOPPED_HEAD):
         assert key not in store.store
     assert store.store[labels.LAST_IMPORT] == x
@@ -485,7 +527,7 @@ def test_restart_without_runner_keeps_label(
 ) -> None:
     monkeypatch.setattr(actions, "runner_problems", lambda *a, **k: [])
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
-    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
     assert _runner_calls(rig) == []
     seams["boot"].assert_called_once()
 
@@ -498,9 +540,11 @@ def test_restart_with_runner_replaces_label(
     order: list[str] = []
     rig.incus.config_set.side_effect = lambda *a, **k: order.append("set")
     rig.incus.config_unset_checked.side_effect = lambda *a, **k: order.append("unset")
-    seams["boot"].side_effect = lambda *a, **k: order.append("boot")
+    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[
+        1
+    ]
     m = _restart_with(runner={"agent": "claude-jb", "profile": "grok"})
-    assert actions.handle_restart(rig.ctx(), m).state == "done"
+    assert actions.handle_restart(rig.ctx(), m).state == "started"
     rig.incus.config_set.assert_called_once_with(
         "proj-c1", labels.RUNNER, '{"agent":"claude-jb","profile":"grok"}'
     )
@@ -510,9 +554,11 @@ def test_restart_with_runner_replaces_label(
 def test_restart_with_null_runner_clears_label(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: '{"agent":"claude"}'})
     order: list[str] = []
-    seams["boot"].side_effect = lambda *a, **k: order.append("boot")
+    seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[
+        1
+    ]
     rig.incus.config_unset_checked.side_effect = lambda c, k: order.append(k)
-    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "started"
     assert order[-2:] == [labels.RUNNER, "boot"]
     rig.incus.config_set.assert_not_called()
 
@@ -594,7 +640,7 @@ def test_restart_without_label_or_runner_is_not_checked(
     check = MagicMock(return_value=["boom"])
     monkeypatch.setattr(actions, "runner_problems", check)
     rig = Rig(tmp_path, limit=2)
-    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
     check.assert_not_called()
 
 
@@ -604,7 +650,7 @@ def test_restart_with_null_runner_does_not_check_the_old_label(
     check = MagicMock(return_value=["boom"])
     monkeypatch.setattr(actions, "runner_problems", check)
     rig = Rig(tmp_path, limit=2, config={labels.RUNNER: _KEPT})
-    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "started"
     check.assert_not_called()
 
 
@@ -618,7 +664,7 @@ def test_restart_null_uses_current_default(tmp_path, seams, monkeypatch):
         default_runner=runner, default_runner_source="repo"
     )
     monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
-    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "started"
     rig.incus.config_set.assert_any_call(rig.child.full, labels.RUNNER, runner.to_label())
 
 
@@ -634,7 +680,7 @@ def test_restart_omitted_runner_keeps_label_despite_different_default(tmp_path, 
     )
     check = MagicMock(return_value=[])
     monkeypatch.setattr(actions, "runner_problems", check)
-    assert actions.handle_restart(rig.ctx(), _restart()).state == "done"
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
     check.assert_called_once_with(rig.cfg, rig.incus, rig.ctx().gcfg, old)
     assert _runner_calls(rig) == []
     seams["boot"].assert_called_once()

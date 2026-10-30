@@ -68,7 +68,9 @@ before editing `## Unreleased`.
   (global, repo or local config) and `jailbee orchestrate grant --runner-agent
   … [--runner-profile …] [--runner-model …]` set the runner children start
   with when the orchestrator names none. The broker restarts itself when
-  another jailbee version is installed.
+  another jailbee version is installed. Spawn and restart confirm the prompted
+  agent is alive after setup; the broker reports any later exit without accepted
+  `done`, including exit 0 and signals, with status and recent output when available.
 - **Any terminal works in containers.** `jailbee shell` and `jailbee tmux`
   teach the container the host's `$TERM` from the host's terminfo, and fall
   back to `xterm-256color` when that is not possible; before, a terminal the

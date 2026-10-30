@@ -42,6 +42,10 @@ class WatchEntry:
     child_full: str
     kind: Literal["spawn", "restart"]
     since: str  # ISO 8601, UTC
+    supervise: bool = False  # Legacy watches only judged the container/job.
+    ready_since: str | None = None
+    live_since: str | None = None
+    confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,22 @@ def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
         "watches": {k: [asdict(e) for e in v] for k, v in watches.items() if v},
     }
     atomic_write_text(root / WATCH_FILE, json.dumps(payload, indent=2) + "\n")
+
+
+def register(root: Path, orchestrator: str, entry: WatchEntry) -> None:
+    """Persist before launching: a run must never start without durable supervision."""
+    watches = load_watch(root)
+    entries = [e for e in watches.get(orchestrator, []) if e.child_full != entry.child_full]
+    entries.append(entry)
+    watches[orchestrator] = entries
+    save_watch(root, watches)
+
+
+def cancel(root: Path, orchestrator: str, child_full: str) -> None:
+    """A successful broker stop/destroy intentionally ends this run."""
+    watches = load_watch(root)
+    watches[orchestrator] = [e for e in watches.get(orchestrator, []) if e.child_full != child_full]
+    save_watch(root, watches)
 
 
 def read_jobs() -> dict[str, JobSnapshot] | None:

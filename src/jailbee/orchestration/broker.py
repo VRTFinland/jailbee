@@ -8,7 +8,7 @@ import json
 import logging
 import signal
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _metadata_version
@@ -29,7 +29,6 @@ from jailbee.orchestration.actions import (
     dispatch,
     drain_queue,
     drop_queue,
-    live_job_kind,
     prune_reservations,
     refused,
 )
@@ -45,6 +44,7 @@ from jailbee.orchestration.outbox import (
     write_grant_json,
 )
 from jailbee.orchestration.protocol import (
+    InboxMessage,
     InboxStatus,
     ManifestError,
     MessageManifest,
@@ -212,17 +212,17 @@ def _track(
     only after that, so a genuine failure is never mistaken for a stale row.
     """
     watches = watch.load_watch(ctx.root)
+    if any(e.ref == ref for e in watches.get(ctx.sender.full, [])):
+        return  # Actions registered the resolved name durably before launch.
     mine = [e for e in watches.get(ctx.sender.full, []) if e.child_full != child_full]
-    mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat()))
+    mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat(), supervise=True))
     watches[ctx.sender.full] = mine
     watch.save_watch(ctx.root, watches)
 
 
 def _track_restart(ctx: ActionContext, ref: str, child_full: str, outcome: Outcome) -> None:
-    """Watch a restart only when detached work (a boot or autostart job) is still running."""
-    if outcome.state not in ("done", "started"):
-        return
-    if live_job_kind(child_full) is not None:
+    """Every successful restart owes actual agent-liveness confirmation."""
+    if outcome.state in ("done", "started"):
         _track(ctx, ref, child_full, "restart")
 
 
@@ -251,16 +251,19 @@ def _settle_watches(
     Deliver first, then save the shortened list: a crash in between repeats a
     status rather than losing one.
     """
-    if jobs is None:
-        return
     from jailbee.lifecycle import short_name
 
     watches = watch.load_watch(ctx.root)
     entries = watches.get(ctx.sender.full, [])
     for entry in list(entries):
+        if jobs is None and not entry.confirmed:
+            continue
+        if entry.supervise:
+            _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
+            continue
         outcome = watch.verdict(
             entry,
-            jobs.get(entry.child_full),
+            (jobs or {}).get(entry.child_full),
             ctx.nodes.get(entry.child_full),
             orchestrator_full=ctx.sender.full,
             short=short_name(ctx.cfg, entry.child_full),
@@ -272,6 +275,95 @@ def _settle_watches(
             _reply(ctx, entry.ref, outcome, memory)
         entries.remove(entry)
         watch.save_watch(ctx.root, watches)
+
+
+def _settle_agent_watch(
+    ctx: ActionContext,
+    memory: BrokerMemory,
+    jobs: dict[str, JobSnapshot],
+    watches: dict[str, list[watch.WatchEntry]],
+    entries: list[watch.WatchEntry],
+    entry: watch.WatchEntry,
+) -> None:
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import agent_watch
+
+    child = ctx.nodes.get(entry.child_full)
+    status = None
+    if child is not None and child.config.get(labels.SPAWNED_BY) != ctx.sender.full:
+        entries.remove(entry)  # Never monitor another orchestrator's namesake.
+        watch.save_watch(ctx.root, watches)
+        return
+    if child is not None and (
+        child.config.get(labels.STATE) == labels.STATE_DONE
+        or (
+            child.config.get(labels.STATE) == labels.STATE_IMPORTED
+            and child.config.get(labels.DONE_SHA)
+            and child.config.get(labels.DONE_SHA) == child.config.get(labels.LAST_IMPORT)
+        )
+    ):
+        entries.remove(entry)
+        watch.save_watch(ctx.root, watches)
+        return
+    if not entry.confirmed:
+        boot = watch.verdict(
+            entry,
+            jobs.get(entry.child_full),
+            child,
+            orchestrator_full=ctx.sender.full,
+            short=short_name(ctx.cfg, entry.child_full),
+            now=ctx.now,
+        )
+        if boot is None:
+            return
+        if boot.state == "failed":
+            _reply(ctx, entry.ref, boot, memory)
+            entries.remove(entry)
+            watch.save_watch(ctx.root, watches)
+            return
+    if child is not None and child.running:
+        status = agent_watch.probe(ctx.incus, child.full, uid=ctx.cfg.container_user.uid)
+    updated, outcome = agent_watch.advance(entry, child, status, now=ctx.now)
+    if outcome is not None:
+        if outcome.state == "failed" and child is not None and child.running:
+            tail = agent_watch.output_tail(
+                ctx.incus,
+                child.full,
+                status.agent if status else "agent",
+                uid=ctx.cfg.container_user.uid,
+            )
+            if tail:
+                outcome = replace(outcome, detail=f"{outcome.detail}\nLast agent output:\n{tail}")
+        if entry.confirmed:
+            message = InboxMessage.model_validate(
+                {
+                    "version": 1,
+                    "id": new_host_id(),
+                    "type": "message",
+                    "from": child.short if child else entry.child_full,
+                    "kind": "blocked",
+                    "body": outcome.detail,
+                    "in_reply_to": entry.ref,
+                }
+            )
+            deliver(
+                ctx.incus,
+                ctx.root,
+                ctx.sender.full,
+                message,
+                running=ctx.sender.running,
+                uid=ctx.cfg.container_user.uid,
+                now=ctx.now,
+                seq=next(memory.seq),
+            )
+        else:
+            _reply(ctx, entry.ref, outcome, memory)
+    index = entries.index(entry)
+    if updated is None:
+        entries.pop(index)
+    else:
+        entries[index] = updated
+    watch.save_watch(ctx.root, watches)
 
 
 def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
@@ -324,6 +416,8 @@ def _handle_raw(
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
             outcome = refused("broker error")
     if isinstance(manifest, MessageManifest) and manifest.kind == "done" and outcome is not None:
+        if outcome.state in ("done", "queued") and ctx.role() == "child":
+            watch.cancel(ctx.root, ctx.sender.config[labels.SPAWNED_BY], ctx.sender.full)
         from jailbee.orchestration.state import atomic_write_text
 
         atomic_write_text(
@@ -605,6 +699,13 @@ def tick(
                 save_queue(root, current)
         except Exception:
             log.exception("broker: queue of %s failed", full)
+    # Queue launches can finish before watch settlement; the earlier snapshot
+    # may still say Stopped even though the agent is already running.
+    if orchestrators and any(watch.load_watch(root).values()):
+        nodes = _nodes(incus.list_containers(), configs)
+        for ctx in orchestrators:
+            ctx.nodes = nodes
+            ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
     _settle_all_watches(root, orchestrators, present, memory)
     return active
 
@@ -618,7 +719,6 @@ def _settle_all_watches(
         memory.warn_once(
             "watch-db", "broker: job database unreadable; started children are not reported"
         )
-        return
     for ctx in orchestrators:
         try:
             _settle_watches(ctx, memory, jobs)
