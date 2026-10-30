@@ -2315,7 +2315,8 @@ def _new_container(
             if opts.autostart
             else ",".join(s.stage for s in normalize_stages(effective_cfg.autostart.on_create))
         )
-        incus.config_set(name, CREATED_KEY, attempted)
+        # Incus deletes empty values; a delimiter persists an empty attempted set.
+        incus.config_set(name, CREATED_KEY, attempted or ",")
     if opts.autostart:
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart

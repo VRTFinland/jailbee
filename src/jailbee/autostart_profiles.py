@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import yaml
-
 from jailbee.autostart_plan import normalize_stages, select_profile
 from jailbee.config import Autostart, Config
 from jailbee.incus import Incus
@@ -46,14 +44,6 @@ def profiled_config(cfg: Config, profile: str | None) -> Config:
 
 def created_stages(incus: Incus, container: str) -> frozenset[str] | None:
     value = incus.config_get(container, CREATED_KEY)
-    if value is None:
-        # config_get collapses an explicitly empty value into None. Inspect
-        # presence, not truthiness: empty means interrupted/new, absent legacy.
-        raw = incus.config_show(container)
-        if isinstance(raw, str):
-            config = (yaml.safe_load(raw) or {}).get("config", {})
-            if CREATED_KEY in config:
-                value = str(config[CREATED_KEY] or "")
     return None if value is None else frozenset(filter(None, value.split(",")))
 
 

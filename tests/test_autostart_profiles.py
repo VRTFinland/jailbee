@@ -22,7 +22,13 @@ def state_incus(mocker, state=None):
     state = dict(state or {})
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda c, k: state.get(k)
-    incus.config_set.side_effect = lambda c, k, v: state.update({k: v})
+    def set_config(c, k, v):
+        if v:
+            state[k] = v
+        else:
+            state.pop(k, None)  # Incus removes empty config values.
+
+    incus.config_set.side_effect = set_config
     return incus, state
 
 
@@ -53,12 +59,10 @@ def test_profiled_config_carries_filtered_block(make_cfg, tmp_path):
     assert [s.stage for s in cfg.autostart.on_create] == ["deps", "images"]
 
 
-def test_created_empty_key_is_not_a_legacy_container(mocker):
-    from jailbee.autostart_profiles import created_stages
+def test_created_empty_marker_is_not_a_legacy_container(mocker):
+    from jailbee.autostart_profiles import CREATED_KEY, created_stages
 
-    incus = mocker.MagicMock()
-    incus.config_get.return_value = None  # Incus wrapper collapses empty stdout
-    incus.config_show.return_value = 'config:\n  user.jailbee.autostart_created: ""\n'
+    incus, _ = state_incus(mocker, {CREATED_KEY: ","})
     assert created_stages(incus, "c") == frozenset()
 
 
@@ -145,8 +149,8 @@ def test_new_stores_profile_and_seeds_created_empty_first(make_cfg, tmp_path, mo
         for c in incus.config_set.call_args_list
         if c.args[1] in (PROFILE_KEY, CREATED_KEY)
     ]
-    assert writes[:2] == [(PROFILE_KEY, "light"), (CREATED_KEY, "")]
-    assert seen[0][0][CREATED_KEY] == ""
+    assert writes[:2] == [(PROFILE_KEY, "light"), (CREATED_KEY, ",")]
+    assert seen[0][0][CREATED_KEY] == ","
     assert seen[0][1] == ["deps"]
 
 
