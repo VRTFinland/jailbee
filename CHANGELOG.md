@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- `jailbee ls` drops low-priority columns until its default table fits the
+  terminal, with a notice listing hidden columns. Use `--wide` / `-w` to keep
+  every column; explicit `--fields`, configured `ls.fields`, piped output and
+  JSON are unchanged.
+
 ## 1.8.0 - 2026-10-29
 
 ### Added
