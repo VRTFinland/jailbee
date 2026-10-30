@@ -114,6 +114,7 @@ class SpawnManifest(_Manifest):
     rights: ChildRights
     runner: Runner | None = None
     on_done: OnDone | None = None
+    autostart_profile: str | None = None
     note: str | None = None
 
     @field_validator("prompt")
@@ -240,6 +241,7 @@ class RestartManifest(_Manifest):
     # (see `restart_sets_runner`).
     runner: Runner | None = None
     on_done: OnDone | None = None
+    autostart_profile: str | None = None
 
     @field_validator("prompt")
     @classmethod
@@ -295,6 +297,7 @@ class InboxMessage(BaseModel):
     imported_sha: str | None = None
     import_error: str | None = None
     on_done: OnDone | None = None
+    autostart_profile: str | None = None
     on_done_reason: str | None = None
 
 

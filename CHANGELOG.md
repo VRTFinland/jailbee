@@ -15,6 +15,13 @@ before editing `## Unreleased`.
   own access. Loose permission includes narrower egress within the repo cap.
   `jailbee net egress add --for` also schedules per-container egress expiry.
 
+- **Named autostart profiles.** Repos can select startup stages with
+  `autostart.profiles` and `default_profile`; `new --autostart-profile` remembers
+  the choice and `autostart profile` switches it later, starting missing setup
+  and newly selected services without a restart. The terminal dashboard adds
+  a Lifecycle picker and optional PROFILE column; orchestration spawn/restart
+  requests accept the same selection.
+
 - **Outbox: publish several proposals at once.** In the Outbox box and
   `jailbee outbox`, `Space` marks a row together with everything under it,
   and `p` publishes every marked proposal after one question showing each

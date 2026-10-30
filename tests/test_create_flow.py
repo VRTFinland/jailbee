@@ -596,6 +596,26 @@ def test_launch_background_passes_a_config_file(mocker, tmp_path, monkeypatch):
     assert argv[-2:] == ["--config", str(tmp_path / "c.yaml")]
 
 
+def test_launch_boot_background_forwards_prompt_and_tracks(mocker, tmp_path, monkeypatch):
+    from jailbee.create_flow import launch_boot_background
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    popen = mocker.patch("jailbee.create_flow.subprocess.Popen")
+    popen.return_value.pid = 4242
+    mocker.patch("jailbee.background.track_job")
+    started = launch_boot_background(
+        cfg, container_name="p-x", initial_prompt="resume", config_path=None
+    )
+    argv = popen.call_args.args[0]
+    assert argv[1:4] == ["-m", "jailbee", "_boot-worker"]
+    assert argv[argv.index("--initial-prompt") + 1] == "resume"
+    assert "--config" not in argv
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert started.pid == 4242
+    assert started.log_path.is_file()
+
+
 # ---- start_create
 
 

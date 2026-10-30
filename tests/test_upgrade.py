@@ -987,7 +987,8 @@ def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
 
     owed = pending("1.8.0", {"base_build": Watermark((1, 7, 8), observed=True)})
     notes = [n for n in UPGRADE_NOTES if "jailbee-inbox" in n.reason]
-    assert [n.actions for n in notes] == [frozenset({"base_build"})]
+    assert notes and all(n.actions == frozenset({"base_build"}) for n in notes)
+    assert any(n.version == (1, 9, 0) and "autostart profiles" in n.reason for n in notes)
     assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
     apply_owed = pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
     assert not any(

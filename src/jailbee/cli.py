@@ -1766,7 +1766,7 @@ def list_cmd(
                 "cpu, doing, agent, agent_compact, "
                 "wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, "
                 "git_status, "
-                "group, pr, issues, outbox, role, children, inbox."
+                "group, pr, issues, outbox, role, children, inbox, autostart_profile."
             ),
         ),
     ] = None,
@@ -2041,6 +2041,9 @@ def new_cmd(
             ),
         ),
     ] = False,
+    autostart_profile: Annotated[
+        str | None, typer.Option("--autostart-profile", help="Named autostart stage selection.")
+    ] = None,
     mount: Annotated[
         bool,
         typer.Option(
@@ -2617,6 +2620,7 @@ def new_cmd(
             from_base=from_base or cfg.golden.alias,
             clone=False,
             autostart=not no_autostart,
+            autostart_profile=autostart_profile,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
@@ -2638,6 +2642,7 @@ def new_cmd(
             from_base=from_base or cfg.golden.alias,
             clone=not no_clone,
             autostart=not no_autostart,
+            autostart_profile=autostart_profile,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
@@ -2944,6 +2949,7 @@ def fork_cmd(
         from_base=None,
         no_clone=False,
         no_autostart=no_autostart,
+        autostart_profile=None,
         mount=False,
         attach=attach,
         no_attach=no_attach,
@@ -3188,6 +3194,9 @@ def _destroy_worker(
 @app.command("_boot-worker", hidden=True)
 def _boot_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to boot.")],
+    initial_prompt: Annotated[
+        str | None, typer.Option("--initial-prompt", help="Fresh orchestrator prompt.")
+    ] = None,
     restart: Annotated[
         bool,
         typer.Option("--restart", help="Reboot a running container instead of starting it."),
@@ -3228,7 +3237,7 @@ def _boot_worker(
     engine = _job_engine()
 
     try:
-        boot_container(cfg, incus, name, restart=restart)
+        boot_container(cfg, incus, name, restart=restart, initial_prompt=initial_prompt)
         # Only once the container is up, and only when there is an autostart
         # run to report: with --no-autostart the rest is a hosts pin and a
         # token write, and `starting` stays the honest phase for those.
@@ -4452,7 +4461,25 @@ def _post_start_actions(
     if no_autostart:
         return
 
+    from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
+
+    if cfg.autostart.profiles:
+        profile = resolve_profile(cfg, incus, name)
+        missing = missing_on_create(cfg, incus, name, profile)
+        cfg = profiled_config(cfg, profile)
+    else:
+        missing = None
     try:
+        if missing is not None and missing.on_create:
+            run_autostart(
+                cfg.model_copy(update={"autostart": missing}),
+                incus,
+                name,
+                AutostartTrigger.ON_CREATE,
+                repo_dir=repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                override="wait",
+            )
         plan = run_autostart(
             cfg,
             incus,
@@ -10942,19 +10969,13 @@ def _refuse_while_autostart_runs(cfg: "Config", full_name: str) -> None:
     (`background.adopt_autostart`), and that is precisely the case where
     stopping the container would cut off running steps.
     """
-    from jailbee import autostart_status
-    from jailbee.lifecycle import short_name
+    from jailbee.autostart_status import refuse_while_running
 
-    row = autostart_status.live_run(cfg, full_name)
-    if row is None:
-        return
-    short = short_name(cfg, full_name)
-    error(
-        f"Container '{short}' still has autostart stages running "
-        f"({autostart_status.running_label(row)})."
-    )
-    info(f"  Stop them first:  jailbee autostart cancel {short}")
-    raise typer.Exit(1)
+    try:
+        refuse_while_running(cfg, full_name)
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
@@ -10977,6 +10998,45 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
         f"({autostart_status.running_label(row)}) — a stage may switch the "
         "network again while it runs. Your choice stands once it is done."
     )
+
+
+@autostart_app.command("profile")
+def autostart_profile_cmd(
+    container: AutostartNameArg = None,
+    profile: Annotated[
+        str | None, typer.Argument(help="Profile name; omit to show current selection.")
+    ] = None,
+    no_run: Annotated[
+        bool, typer.Option("--no-run", help="Store without starting stages.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Show or switch a container's autostart profile."""
+    from jailbee import prompting
+    from jailbee.autostart_profiles import ProfileError, show_profile, switch_profile
+
+    cfg = _load_or_exit(config)
+    missing_container = container is None
+    incus, full = _resolve_existing(cfg, container)
+    try:
+        if not cfg.autostart.profiles:
+            raise ProfileError("this repository defines no autostart profiles")
+        if profile is None and missing_container:
+            profile = prompting.choose_one(
+                "autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles]
+            )
+        if profile is None:
+            show_profile(cfg, incus, full)
+            return
+        result = switch_profile(cfg, incus, full, profile, run=not no_run)
+        if result.deferred:
+            info("nothing to start; takes effect on the next start")
+    except ProfileError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 @autostart_app.command("status")
@@ -11359,15 +11419,9 @@ def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, in
     should NOT abort the operation if the mirror is unavailable — the pin is
     best-effort.
     """
-    from jailbee.docker_daemon import compute_mirror_endpoint, mirror_wanted
+    from jailbee.docker_daemon import mirror_endpoint_or_none
 
-    gcfg = _load_global()
-    if not mirror_wanted(cfg, gcfg):
-        return None
-    try:
-        return compute_mirror_endpoint(incus, gcfg)
-    except ValueError:
-        return None
+    return mirror_endpoint_or_none(cfg, incus, _load_global())
 
 
 egress_proxy_app = typer.Typer(

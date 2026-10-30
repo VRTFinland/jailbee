@@ -152,6 +152,16 @@ groups remain view-only and cannot create containers.
 
 ## Creating containers — `jailbee new`
 
+Repos may define `autostart.profiles` and `default_profile` to select stages.
+`new --autostart-profile NAME` remembers that choice; later starts/restarts
+run missing one-shot setup before the selected start stages. `autostart
+profile CONTAINER` shows it; append NAME to switch (or `--no-run` to store
+only). A running switch starts missing setup and newly selected start stages,
+never stops existing work, and refuses during a detached run. One-shot stages
+are attempted once even on failure; legacy containers count them all done.
+Agent/app autostart remains independent. The terminal dashboard has a
+Lifecycle picker and an opt-in PROFILE column (`autostart_profile`).
+
 `jailbee new` figures out what to clone from whether `<branch>` already exists
 upstream and whether you pass a `<base>`:
 

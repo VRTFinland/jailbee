@@ -92,6 +92,7 @@ def _full_snapshot() -> Snapshot:
             pr_number=7,
             pr_author=True,
             credential_group="team",
+            autostart_profile="light",
             created_at=T0,
             memory_usage=1024,
             init_pid=4242,
@@ -156,6 +157,8 @@ def _full_snapshot() -> Snapshot:
             apps=[AppMenuEntry("ide", "VS Code")],
             loose_ttl_default="30m",
             memory_default="8GiB",
+            autostart_profiles=("full", "light"),
+            autostart_default_profile="full",
             orchestration_profiles=("bugfixer",),
             default_runner="claude haiku",
             default_runner_source="repo",
@@ -264,8 +267,8 @@ def test_garbage_is_a_protocol_error(line):
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
-    # 14 added SystemStatus.load.
-    assert PROTOCOL == 14
+    # 15 added repo/container autostart profile state.
+    assert PROTOCOL == 15
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.

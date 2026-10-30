@@ -500,6 +500,7 @@ def run_autostart(
             repo_dir,
             mirror_endpoint=mirror_endpoint,
             on_progress=on_progress,
+            trigger=trigger,
         )
         handed_off = bool(plan.detached)
     finally:
@@ -595,6 +596,7 @@ def run_detached(
                         # stage can finish long after the user ran `jailbee net` by
                         # hand, and a blind restore would undo their choice.
                         cas_restore=True,
+                        trigger=trigger,
                     )
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
@@ -639,19 +641,26 @@ def run_stages(
     mirror_endpoint: tuple[str, int] | None = None,
     on_progress: Callable[[str, str, str], None] | None = None,
     cas_restore: bool = False,
+    trigger: AutostartTrigger | None = None,
 ) -> None:
-    """Run ``stages`` in order. A stage starts only when the previous one ends."""
+    """Run ``stages`` in order, recording attempted one-shot setup."""
     for stage in stages:
-        run_stage(
-            cfg,
-            incus,
-            container,
-            stage,
-            repo_dir,
-            mirror_endpoint=mirror_endpoint,
-            on_progress=on_progress,
-            cas_restore=cas_restore,
-        )
+        try:
+            run_stage(
+                cfg,
+                incus,
+                container,
+                stage,
+                repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                on_progress=on_progress,
+                cas_restore=cas_restore,
+            )
+        finally:
+            if trigger is AutostartTrigger.ON_CREATE and cfg.autostart.profiles:
+                from jailbee.autostart_profiles import record_created
+
+                record_created(incus, container, stage.stage)
 
 
 def run_stage(

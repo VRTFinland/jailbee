@@ -473,6 +473,10 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
         )
         block_changes.append(BlockChange(name="env", detail=", ".join(affected)))
 
+    for field in ("profiles", "default_profile"):
+        if getattr(host, field) != getattr(branch, field):
+            block_changes.append(BlockChange(name=field, detail="changed"))
+
     return AutostartDeviation(
         added=tuple(added),
         removed=tuple(removed),

@@ -79,6 +79,7 @@ class ContainerInfo:
     # inherits the repo's group; `accounts.groups.NO_GROUP` means it
     # deliberately shares none.
     credential_group: str | None = None
+    autostart_profile: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
     memory_override: bool = False
@@ -626,6 +627,7 @@ def list_containers(
                 pr_number=pr_number,
                 pr_author=pr_author,
                 credential_group=credential_group_raw or None,
+                autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -1162,6 +1164,7 @@ class NewContainerOptions:
     # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
+    autostart_profile: str | None = None
     # Task text for the primary agent's first launch (`jailbee new --prompt`),
     # written into the container after start and before autostart. MUST be
     # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
@@ -1733,6 +1736,12 @@ def _new_container(
     # `_phase("creating")` below, so declining costs nothing.
     assessment = assess_branch_autostart(cfg, opts, clone_ref)
     effective_cfg = assessment.effective_cfg
+    from jailbee.autostart_profiles import profiled_config, validate_profile_name
+
+    selected_profile = opts.autostart_profile or effective_cfg.autostart.default_profile
+    if selected_profile is not None:
+        validate_profile_name(effective_cfg.autostart, selected_profile)
+        effective_cfg = profiled_config(effective_cfg, selected_profile)
     verdict = assessment.verdict
     if verdict is not None and verdict.prompts:
         from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
@@ -2294,6 +2303,19 @@ def _new_container(
     # From here on the container is complete; an autostart failure leaves it
     # in place (and running) for debugging, child or not.
     progress.provisioned = True
+    if effective_cfg.autostart.profiles:
+        from jailbee.autostart_plan import normalize_stages
+        from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
+
+        assert selected_profile is not None
+        incus.config_set(name, PROFILE_KEY, selected_profile)
+        attempted = (
+            ""
+            if opts.autostart
+            else ",".join(s.stage for s in normalize_stages(effective_cfg.autostart.on_create))
+        )
+        # Incus deletes empty values; a delimiter persists an empty attempted set.
+        incus.config_set(name, CREATED_KEY, attempted or ",")
     if opts.autostart:
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart
@@ -4263,6 +4285,14 @@ def ls_field_specs(
             cell=_inbox_cell,
             json=_inbox_json,
             show_if=lambda rows: any(_is_orchestration(c) and _unread_inbox(c) > 0 for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="autostart_profile",
+            sort=lambda c: _text_key(c.autostart_profile),
+            header="PROFILE",
+            cell=lambda c: c.autostart_profile or "",
+            json=lambda c: c.autostart_profile,
+            default_table=False,
         ),
         table_format.FieldSpec(
             name="group",

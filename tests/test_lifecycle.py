@@ -10988,7 +10988,7 @@ def test_ls_default_table_and_json_sets_are_pinned():
     ]  # fmt: skip
     assert [f.name for f in specs if f.default_json] == [
         "name", "alias", "mode", "base", "state", "created", "network", "ip", "memory_limit",
-        "git_status", "pr", "issues", "role", "children", "inbox", "group",
+        "git_status", "pr", "issues", "role", "children", "inbox", "autostart_profile", "group",
     ]  # fmt: skip
 
 

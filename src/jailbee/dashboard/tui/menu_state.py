@@ -105,6 +105,10 @@ def open_menu(
         over_ssh=over_ssh,
         remote_mountable=group.remote_mountable,
     )
+    if group.autostart_profiles and permitted(
+        ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh
+    ):
+        actions.append(("Autostart profile…", "autostart-profile"))
     actions = _insert_after_job(actions, extras.after_job)
     if extras.before_network:
         actions = _insert_before_network(actions, extras.before_network)

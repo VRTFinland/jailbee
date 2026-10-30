@@ -1819,6 +1819,25 @@ class DashboardSession:
         )
         return Picker(purpose, f"Credential group — {target}", entries, target=target)
 
+    def open_autostart_profile_picker(self, target: str) -> Picker | None:
+        group = _find_group(self.groups, target)
+        if group is None or not group.autostart_profiles:
+            self.set_notice(f"'{target}' is no longer listed or has no autostart profiles")
+            return None
+        container = next((c for c in group.containers if c.name == target), None)
+        if container is None:
+            return None
+        current = container.autostart_profile
+        if current not in group.autostart_profiles:
+            current = group.autostart_default_profile
+        entries = tuple(
+            PickerEntry(name + (" (current)" if name == current else ""), name)
+            for name in group.autostart_profiles
+        )
+        return Picker(
+            "container-autostart-profile", f"Autostart profile — {target}", entries, target=target
+        )
+
     def open_group_picker(
         self, purpose: Literal["repo-group", "container-group"], target: str
     ) -> Picker | None:
@@ -2084,6 +2103,11 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
+        if picker.purpose == "container-autostart-profile":
+            self.run_dashboard_command(
+                picker.target, "container", ["autostart", "profile", picker.target, entry.value]
+            )
+            return None
         if picker.purpose == "container-memory":
             from jailbee.memory_limit import OTHER_VALUE
 
@@ -2631,6 +2655,8 @@ class DashboardSession:
                 owner = _find_group(self.groups, target)
                 self.egress_parent = container_parent
                 self.overlay = self.open_egress(owner.prefix, target) if owner else None
+            elif verb == "autostart-profile":
+                self.overlay = self.open_autostart_profile_picker(target)
             elif verb == "credential-group":
                 # Handled here: it is not a CLI verb to dispatch.
                 self.overlay = self.open_group_picker("container-group", target)

@@ -39,6 +39,14 @@ spawn also supports version `2`. The type is one of
 
 ### `spawn`
 
+`spawn` and `restart` accept optional `autostart_profile: "NAME"`
+(helper: `--autostart-profile NAME`), independent of the runner's `profile`.
+The broker validates against the host repo's `autostart.profiles`; an unknown
+name is refused with ``autostart profile `NAME` is not defined``. Spawn uses
+the named profile for creation. Restart stores it before booting and runs
+missing one-shot setup before the profile's `on_start` stages. Omission keeps
+the normal default on spawn and the child's stored selection on restart.
+
 Spawn requests support version 2; legacy version 1 remains valid for fork/new
 without `ref` or `pr`. Other messages, inbox, grant and finish envelopes
 remain version 1.
@@ -176,8 +184,11 @@ CLI: `jailbee-inbox send update --child C --wait`.
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
-Status: `done` ("child `x` restarted") when it runs at once; `queued` when
-no slot is free, then `started` when it is later started.
+Status: `done` ("child `x` restarted") for a synchronous restart; repositories
+with autostart profiles return `started` after handing boot and setup to a
+background worker (see the log in the detail). `queued` means no slot is free,
+then `started` when launched later. A later restart/setup failure is recorded
+in the background job and log, not a second manifest status.
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
 `"runner": null` selects the current effective default (clearing the label if
