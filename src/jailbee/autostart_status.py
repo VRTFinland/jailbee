@@ -68,6 +68,19 @@ class StepView:
 FieldSpecStep = table_format.FieldSpec[StepView]
 
 
+def refuse_while_running(cfg: Config, name: str) -> None:
+    """Shared lifecycle/profile guard against overlapping detached stages."""
+    from jailbee.lifecycle import short_name
+
+    row = live_run(cfg, name)
+    if row is not None:
+        short = short_name(cfg, name)
+        raise RuntimeError(
+            f"Container '{short}' still has autostart stages running ({running_label(row)}).\n"
+            f"  Stop them first:  jailbee autostart cancel {short}"
+        )
+
+
 def autostart_row(cfg: Config, name: str) -> BackgroundJob | None:
     """The container's autostart job row, live or dead.
 

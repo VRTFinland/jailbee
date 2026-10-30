@@ -165,6 +165,54 @@ def test_new_flag_in_repo_without_profiles_exits_2(make_cfg, tmp_path, mocker):
         new_container(_cfg_for_new(make_cfg, tmp_path), incus, _opts(autostart_profile="bad"))
 
 
+def test_switch_to_heavier_runs_missing_on_create_then_new_on_start(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import switch_profile, PROFILE_KEY, CREATED_KEY
+    from jailbee.autostart_plan import AutostartPlan
+    cfg = profile_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker, {PROFILE_KEY: "light", CREATED_KEY: "deps"})
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    runs = []
+    def execute(c, i, n, trigger, **kwargs):
+        runs.extend(s.stage for s in getattr(c.autostart, trigger.value))
+        assert kwargs["override"] == "wait"
+        return AutostartPlan([], [])
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=execute)
+    result = switch_profile(cfg, incus, "c", "full", run=True)
+    assert runs == ["images", "backend"]
+    assert result.ran_on_create == ("images",)
+    assert result.ran_on_start == ("backend",)
+    assert state[PROFILE_KEY] == "full"
+
+
+@pytest.mark.parametrize("running,run", [(False, True), (True, False)])
+def test_switch_stopped_container_only_stores(make_cfg, tmp_path, mocker, running, run):
+    from jailbee.autostart_profiles import switch_profile, PROFILE_KEY
+    cfg = profile_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running" if running else "Stopped"}]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    execute = mocker.patch("jailbee.autostart.run_autostart")
+    assert switch_profile(cfg, incus, "c", "full", run=run).deferred
+    assert state[PROFILE_KEY] == "full"
+    execute.assert_not_called()
+
+
+def test_switch_no_run_only_stores(make_cfg, tmp_path, mocker):
+    test_switch_stopped_container_only_stores(make_cfg, tmp_path, mocker, True, False)
+
+
+def test_switch_refused_during_live_detached_run_stores_nothing(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import switch_profile
+    cfg = profile_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker)
+    mocker.patch("jailbee.autostart_status.live_run", return_value=mocker.MagicMock())
+    with pytest.raises(RuntimeError, match="autostart stages running"):
+        switch_profile(cfg, incus, "c", "full", run=True)
+    assert not state
+
+
 def test_new_no_autostart_records_all_profile_on_create(make_cfg, tmp_path, mocker):
     from jailbee.lifecycle import new_container
     from jailbee.autostart_profiles import CREATED_KEY

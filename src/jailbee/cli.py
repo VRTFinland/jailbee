@@ -11049,19 +11049,13 @@ def _refuse_while_autostart_runs(cfg: "Config", full_name: str) -> None:
     (`background.adopt_autostart`), and that is precisely the case where
     stopping the container would cut off running steps.
     """
-    from jailbee import autostart_status
-    from jailbee.lifecycle import short_name
+    from jailbee.autostart_status import refuse_while_running
 
-    row = autostart_status.live_run(cfg, full_name)
-    if row is None:
-        return
-    short = short_name(cfg, full_name)
-    error(
-        f"Container '{short}' still has autostart stages running "
-        f"({autostart_status.running_label(row)})."
-    )
-    info(f"  Stop them first:  jailbee autostart cancel {short}")
-    raise typer.Exit(1)
+    try:
+        refuse_while_running(cfg, full_name)
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
@@ -11084,6 +11078,39 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
         f"({autostart_status.running_label(row)}) — a stage may switch the "
         "network again while it runs. Your choice stands once it is done."
     )
+
+
+@autostart_app.command("profile")
+def autostart_profile_cmd(
+    container: AutostartNameArg = None,
+    name: Annotated[str | None, typer.Argument(help="Profile name; omit to show current selection.")] = None,
+    no_run: Annotated[bool, typer.Option("--no-run", help="Store without starting stages.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Show or switch a container's autostart profile."""
+    from jailbee import prompting
+    from jailbee.autostart_profiles import ProfileError, show_profile, switch_profile
+
+    cfg = _load_or_exit(config)
+    missing_container = container is None
+    incus, full = _resolve_existing(cfg, container)
+    try:
+        if not cfg.autostart.profiles:
+            raise ProfileError("this repository defines no autostart profiles")
+        if name is None and missing_container:
+            name = prompting.choose_one("autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles])
+        if name is None:
+            show_profile(cfg, incus, full)
+            return
+        result = switch_profile(cfg, incus, full, name, run=not no_run)
+        if result.deferred:
+            info("nothing to start; takes effect on the next start")
+    except ProfileError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 @autostart_app.command("status")
