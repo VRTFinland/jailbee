@@ -31,7 +31,7 @@ from jailbee.autostart_plan import AutostartTrigger as AutostartTrigger
 from jailbee.autostart_plan import plan_autostart as plan_autostart
 from jailbee.config import AutostartChain, AutostartStage, AutostartStep, Config
 from jailbee.incus import Incus
-from jailbee.mounts import add_optional_mount, remove_optional_mount
+from jailbee.mounts import add_optional_mount, is_attached, remove_optional_mount
 from jailbee.tmux import TmuxStepError
 from jailbee.tui import info, success, warn
 
@@ -702,6 +702,10 @@ def run_stage(
     info(f"  → stage: {stage.stage} [dim](net: {stage.network or entry_mode or 'unknown'})[/dim]")
     try:
         for m in stage.mounts:
+            if is_attached(incus, container, m):
+                # Held by a human, a spawn right or a runtime grant: not ours to
+                # attach (the device add would fail) nor to detach afterwards.
+                continue
             add_optional_mount(cfg, incus, container, m)
             mounted.append(m)
         _run_chains(cfg, incus, container, stage, repo_dir, on_progress=on_progress)

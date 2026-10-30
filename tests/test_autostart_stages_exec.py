@@ -358,6 +358,7 @@ def test_stage_mounts_attach_once_and_detach_in_finally(tmp_path, make_cfg, mock
     runs through `tmux.run_step` — the path every flat config takes."""
     add = mocker.patch("jailbee.autostart.add_optional_mount")
     remove = mocker.patch("jailbee.autostart.remove_optional_mount")
+    mocker.patch("jailbee.autostart.is_attached", return_value=False)
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch(
@@ -759,3 +760,26 @@ def test_run_autostart_forwards_the_cli_overrides_to_the_planner(tmp_path, make_
 
     assert planner.call_args.kwargs["override"] == "no_wait"
     assert planner.call_args.kwargs["already_detached"] is True
+
+
+def test_stage_leaves_an_already_attached_mount_alone(tmp_path, make_cfg, mocker, incus):
+    add = mocker.patch("jailbee.autostart.add_optional_mount")
+    remove = mocker.patch("jailbee.autostart.remove_optional_mount")
+    mocker.patch("jailbee.autostart.is_attached", side_effect=lambda i, c, kind: kind == "aws")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.run_step")
+
+    cfg = make_cfg(
+        tmp_path,
+        optional_mounts={
+            "aws": {"host": str(tmp_path), "container": "/aws"},
+            "gcp": {"host": str(tmp_path), "container": "/gcp"},
+        },
+    )
+    stage = _stage(stage="deps", mounts=["aws", "gcp"], steps=[{"name": "s1", "run": "true"}])
+
+    autostart.run_stage(cfg, incus, "c1", stage, "/home/dev/repo")
+
+    add.assert_called_once_with(cfg, incus, "c1", "gcp")
+    remove.assert_called_once_with(cfg, incus, "c1", "gcp")

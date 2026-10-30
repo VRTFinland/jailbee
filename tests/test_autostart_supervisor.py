@@ -345,6 +345,7 @@ def test_a_cancelled_run_unwinds_the_stage_it_was_on(tmp_path, mocker, make_cfg)
     )
     switch = mocker.patch("jailbee.lifecycle.switch_network")
     mocker.patch("jailbee.autostart.add_optional_mount")
+    mocker.patch("jailbee.autostart.is_attached", return_value=False)
     unmount = mocker.patch("jailbee.autostart.remove_optional_mount")
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.tmux.ensure_session")
@@ -412,6 +413,7 @@ def test_a_cancelled_single_chain_stage_interrupts_its_step_first(tmp_path, mock
         side_effect=lambda *a, **kw: events.append(("net", a[3])),
     )
     mocker.patch("jailbee.autostart.add_optional_mount")
+    mocker.patch("jailbee.autostart.is_attached", return_value=False)
     mocker.patch(
         "jailbee.autostart.remove_optional_mount",
         side_effect=lambda *a: events.append(("unmount", a[3])),
@@ -511,6 +513,7 @@ def test_a_cancellation_during_the_unmount_stops_the_run(tmp_path, mocker, make_
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.autostart.add_optional_mount")
+    mocker.patch("jailbee.autostart.is_attached", return_value=False)
     mocker.patch(
         "jailbee.tmux.run_step", side_effect=lambda _i, _c, *, name, **kw: ran.append(name)
     )
