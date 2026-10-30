@@ -1162,6 +1162,7 @@ class NewContainerOptions:
     # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
+    autostart_profile: str | None = None
     # Task text for the primary agent's first launch (`jailbee new --prompt`),
     # written into the container after start and before autostart. MUST be
     # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
@@ -1733,6 +1734,12 @@ def _new_container(
     # `_phase("creating")` below, so declining costs nothing.
     assessment = assess_branch_autostart(cfg, opts, clone_ref)
     effective_cfg = assessment.effective_cfg
+    from jailbee.autostart_profiles import profiled_config, validate_profile_name
+
+    selected_profile = opts.autostart_profile or effective_cfg.autostart.default_profile
+    if selected_profile is not None:
+        validate_profile_name(effective_cfg.autostart, selected_profile)
+        effective_cfg = profiled_config(effective_cfg, selected_profile)
     verdict = assessment.verdict
     if verdict is not None and verdict.prompts:
         from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
@@ -2295,6 +2302,14 @@ def _new_container(
     # From here on the container is complete; an autostart failure leaves it
     # in place (and running) for debugging, child or not.
     progress.provisioned = True
+    if effective_cfg.autostart.profiles:
+        from jailbee.autostart_plan import normalize_stages
+        from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
+
+        assert selected_profile is not None
+        incus.config_set(name, PROFILE_KEY, selected_profile)
+        attempted = "" if opts.autostart else ",".join(s.stage for s in normalize_stages(effective_cfg.autostart.on_create))
+        incus.config_set(name, CREATED_KEY, attempted)
     if opts.autostart:
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart

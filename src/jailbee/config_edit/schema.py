@@ -222,6 +222,9 @@ def classify(annotation: object) -> Classified:
             arms = [a for a in get_args(value) if a is not type(None)]
             if arms == [str]:
                 return Classified(FieldKind.STR_MAP)
+            models = [a for a in arms if _is_model(a)]
+            if len(models) == 1 and all(_is_model(a) or get_origin(a) is Literal for a in arms):
+                return Classified(FieldKind.MODEL_MAP, item_model=models[0])
         if value is str:
             return Classified(FieldKind.STR_MAP)
         # `dict[str, object]` — `scratch.config`, a free-form overlay with

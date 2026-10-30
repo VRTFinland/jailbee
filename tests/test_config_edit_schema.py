@@ -300,7 +300,8 @@ def test_build_specs_covers_every_config_leaf():
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 112
+    # Named autostart profiles add two repo-level leaves.
+    assert len(build_specs(Config)) == 114
     assert len(build_specs(GlobalConfig)) == 58
 
 

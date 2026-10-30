@@ -424,6 +424,7 @@ def op_to_job(
             "autofetch_done": opts.autofetch_done,
             "credential_group": opts.credential_group,
             "autostart_override": opts.autostart_override,
+            "autostart_profile": opts.autostart_profile,
             "storage_pool": opts.storage_pool,
             "initial_prompt": opts.initial_prompt,
             "spawned_by": opts.spawned_by,
@@ -480,6 +481,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # worker would re-plan with no override and silently lose every
         # stage the operator asked to defer.
         autostart_override=o.get("autostart_override"),
+        autostart_profile=o.get("autostart_profile"),
         # Dropped here (or in `op_to_job`) the worker would create the container
         # on the profile's pool, not the one the operator chose.
         storage_pool=o.get("storage_pool"),
@@ -557,10 +559,21 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
     """Inverse of :func:`autostart_job_to_dict`."""
     from jailbee.config import Autostart
 
+    from jailbee.config.models_agents import AutostartProfile
+
+    data = dict(raw["autostart"])
+    profiles = data.pop("profiles", {})
+    default = data.pop("default_profile", None)
+    # The foreground already filtered both triggers. Unselected stage names
+    # remain in profile metadata, so validate the executed block separately.
+    block = Autostart.model_validate(data).model_copy(update={
+        "profiles": {k: v if v == "all" else AutostartProfile.model_validate(v) for k, v in profiles.items()},
+        "default_profile": default,
+    })
     endpoint = raw.get("mirror_endpoint")
     return AutostartJob(
         container_name=raw["container_name"],
-        autostart=Autostart.model_validate(raw["autostart"]),
+        autostart=block,
         from_trigger=raw["from_trigger"],
         repo_dir=raw["repo_dir"],
         mirror_endpoint=(endpoint[0], int(endpoint[1])) if endpoint else None,

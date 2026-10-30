@@ -2024,6 +2024,9 @@ def new_cmd(
             ),
         ),
     ] = False,
+    autostart_profile: Annotated[
+        str | None, typer.Option("--autostart-profile", help="Named autostart stage selection.")
+    ] = None,
     mount: Annotated[
         bool,
         typer.Option(
@@ -2600,6 +2603,7 @@ def new_cmd(
             from_base=from_base or cfg.golden.alias,
             clone=False,
             autostart=not no_autostart,
+            autostart_profile=autostart_profile,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
@@ -2621,6 +2625,7 @@ def new_cmd(
             from_base=from_base or cfg.golden.alias,
             clone=not no_clone,
             autostart=not no_autostart,
+            autostart_profile=autostart_profile,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
@@ -2927,6 +2932,7 @@ def fork_cmd(
         from_base=None,
         no_clone=False,
         no_autostart=no_autostart,
+        autostart_profile=None,
         mount=False,
         attach=attach,
         no_attach=no_attach,
@@ -4435,7 +4441,21 @@ def _post_start_actions(
     if no_autostart:
         return
 
+    from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
+
+    if cfg.autostart.profiles:
+        profile = resolve_profile(cfg, incus, name)
+        missing = missing_on_create(cfg, incus, name, profile)
+        cfg = profiled_config(cfg, profile)
+    else:
+        missing = None
     try:
+        if missing is not None and missing.on_create:
+            run_autostart(
+                cfg.model_copy(update={"autostart": missing}), incus, name,
+                AutostartTrigger.ON_CREATE, repo_dir=repo_dir,
+                mirror_endpoint=mirror_endpoint, override="wait",
+            )
         plan = run_autostart(
             cfg,
             incus,
