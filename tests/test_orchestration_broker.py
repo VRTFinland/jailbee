@@ -1341,21 +1341,36 @@ def test_only_accepted_done_cancels_supervision(rig: Rig, monkeypatch, accepted)
 
 def test_startup_rechecks_container_after_queue_launch(rig: Rig, monkeypatch) -> None:
     from jailbee.orchestration import agent_watch
+
     entry = watch.WatchEntry("s1", "proj-kid", "restart", NOW.isoformat(), supervise=True)
     watch.save_watch(rig.root, {"proj-orch": [entry]})
-    rig.incus.list_containers.side_effect = [[_orch(), _child(running=False)], [_orch(), _child(running=False)], [_orch(), _child()]]
+    rig.incus.list_containers.side_effect = [
+        [_orch(), _child(running=False)],
+        [_orch(), _child(running=False)],
+        [_orch(), _child()],
+    ]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     rig.tick()
     assert _watches(rig)[0].live_since is not None
     rig.deliver.assert_not_called()
 
 
 def test_imported_done_survives_crash_before_watch_cancel(rig: Rig, monkeypatch) -> None:
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     child = _child(running=False)
-    child["config"].update({labels.STATE: labels.STATE_IMPORTED, labels.DONE_SHA: "a" * 40, labels.LAST_IMPORT: "a" * 40})
+    child["config"].update(
+        {
+            labels.STATE: labels.STATE_IMPORTED,
+            labels.DONE_SHA: "a" * 40,
+            labels.LAST_IMPORT: "a" * 40,
+        }
+    )
     rig.incus.list_containers.return_value = [_orch(), child]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
     rig.tick()

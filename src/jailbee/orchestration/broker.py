@@ -296,9 +296,11 @@ def _settle_agent_watch(
         return
     if child is not None and (
         child.config.get(labels.STATE) == labels.STATE_DONE
-        or (child.config.get(labels.STATE) == labels.STATE_IMPORTED
+        or (
+            child.config.get(labels.STATE) == labels.STATE_IMPORTED
             and child.config.get(labels.DONE_SHA)
-            and child.config.get(labels.DONE_SHA) == child.config.get(labels.LAST_IMPORT))
+            and child.config.get(labels.DONE_SHA) == child.config.get(labels.LAST_IMPORT)
+        )
     ):
         entries.remove(entry)
         watch.save_watch(ctx.root, watches)

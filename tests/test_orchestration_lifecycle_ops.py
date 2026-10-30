@@ -224,7 +224,9 @@ def test_restart_refuses_running_child(tmp_path: Path, seams: dict[str, MagicMoc
 
 
 def test_restart_does_not_launch_without_durable_watch(tmp_path, seams, monkeypatch) -> None:
-    monkeypatch.setattr("jailbee.orchestration.watch.save_watch", MagicMock(side_effect=OSError("disk unavailable")))
+    monkeypatch.setattr(
+        "jailbee.orchestration.watch.save_watch", MagicMock(side_effect=OSError("disk unavailable"))
+    )
     rig = Rig(tmp_path, limit=2)
     out = actions.handle_restart(rig.ctx(), _restart())
     assert out.state == "refused" and "disk unavailable" in out.detail

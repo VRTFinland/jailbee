@@ -371,9 +371,11 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     """Start the background create of a planned child; refusals become outcomes."""
     from jailbee.orchestration.watch import WatchEntry, register
 
-    register(ctx.root, ctx.sender.full, WatchEntry(
-        plan.manifest_id, plan.child_full, "spawn", ctx.now.isoformat(), supervise=True
-    ))
+    register(
+        ctx.root,
+        ctx.sender.full,
+        WatchEntry(plan.manifest_id, plan.child_full, "spawn", ctx.now.isoformat(), supervise=True),
+    )
     opts = child_options(ctx.cfg, plan, orchestrator_full=ctx.sender.full, fork=fork)
     interaction = replace(Interaction.none(), accept_escalation=escalation_policy(plan.rights))
     try:
@@ -638,12 +640,13 @@ def _boot(
         # boot_container alone never runs post-start actions or launches agents.
         # The full worker is required for unprofiled containers too.
         from jailbee.create_flow import launch_boot_background
-
         from jailbee.orchestration.watch import WatchEntry, register
 
-        register(ctx.root, ctx.sender.full, WatchEntry(
-            manifest_id, child.full, "restart", ctx.now.isoformat(), supervise=True
-        ))
+        register(
+            ctx.root,
+            ctx.sender.full,
+            WatchEntry(manifest_id, child.full, "restart", ctx.now.isoformat(), supervise=True),
+        )
         worker = launch_boot_background(
             ctx.cfg, container_name=child.full, initial_prompt=prompt, config_path=None
         )

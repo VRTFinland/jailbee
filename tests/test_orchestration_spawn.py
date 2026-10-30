@@ -79,11 +79,15 @@ def test_spawn_records_on_done_destroy_by_default(
     assert out.detail.endswith("on done: destroy")
 
 
-def test_spawn_registers_actual_child_before_launch_and_refuses_on_persistence_failure(tmp_path, monkeypatch) -> None:
+def test_spawn_registers_actual_child_before_launch_and_refuses_on_persistence_failure(
+    tmp_path, monkeypatch
+) -> None:
     from jailbee.orchestration import watch
+
     ctx = _ctx(tmp_path)
     plan = plan_spawn(ctx, _m(), queued_names=())
     from jailbee.create_flow import CreateStarted
+
     create = MagicMock(return_value=CreateStarted(plan.child_full, 777, tmp_path / "log"))
     monkeypatch.setattr(actions, "start_create", create)
     save = MagicMock(side_effect=OSError("disk unavailable"))
@@ -197,12 +201,17 @@ def test_pr_watch_uses_resolved_name_through_broker_tracking(tmp_path, monkeypat
     from jailbee import pr
     from jailbee.create_flow import CreateStarted
     from jailbee.orchestration import broker, watch
+
     ctx = _ctx(tmp_path, {"max_running_children": 2})
     prepared = pr.PreparedPr(pr.PrInfo(12, "real-head", "a" * 40, "OPEN", "target"), "a" * 40)
     monkeypatch.setattr(pr, "prepare_pr", lambda *a, **k: prepared)
     monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
     monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 0, 0))
-    monkeypatch.setattr(actions, "start_create", lambda *a, **k: CreateStarted("proj-real-head", 777, tmp_path / "log"))
+    monkeypatch.setattr(
+        actions,
+        "start_create",
+        lambda *a, **k: CreateStarted("proj-real-head", 777, tmp_path / "log"),
+    )
     manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
     outcome = actions.handle_spawn(ctx, manifest)
     assert outcome.state == "started"
