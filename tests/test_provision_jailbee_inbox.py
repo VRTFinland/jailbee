@@ -1255,3 +1255,16 @@ def test_send_rights_wait_uses_status_wait(script, base, tmp_path):
     result = send(script, base, tmp_path, "rights", "--revoke-loose", "--wait", "--timeout", "1")
     assert result.returncode == 3
     assert len(list((base / "outbox").glob("*.json"))) == 1
+
+
+def test_help_documents_send_rights(script, base, tmp_path):
+    out = run(script, "--help", env=env_for(base, tmp_path)).stdout
+    for text in (
+        "send rights",
+        "--for",
+        "--loose",
+        "--revoke-loose",
+        "--revoke-mount",
+        "--revoke-egress",
+    ):
+        assert text in out

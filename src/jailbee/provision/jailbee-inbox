@@ -40,6 +40,11 @@ Usage: jailbee-inbox wait [--timeout DUR]
                     [runner | --default-runner] + text
            import | update | stop   --child C
            destroy  --child C [--force]
+           rights   [--child C] [--loose] [--mount M]... [--egress H]... --for DUR
+                    [--revoke-loose] [--revoke-mount M]... [--revoke-egress H]...
+                    `send rights` changes a child's rights at runtime. A grant needs --for DUR (s|m|h); revokes need no duration. A
+                    child may only revoke its own rights; an orchestrator names
+                    --child. Refused while autostart runs in the child.
          runner = --agent claude|claude-jb [--profile P (claude-jb only)]
                   [--model fable|opus|sonnet|haiku]; see `runners`.
                   --default-runner (restart only) clears the child's runner.
