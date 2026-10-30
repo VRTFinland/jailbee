@@ -25,6 +25,7 @@ from jailbee.orchestration.protocol import (
     DestroyManifest,
     Manifest,
     RestartManifest,
+    RightsManifest,
     SpawnManifest,
     StopManifest,
     restart_sets_runner,
@@ -166,6 +167,7 @@ OPERATION_OF: Mapping[str, str] = {
     "restart": "restart",
     "stop": "stop",
     "destroy": "destroy",
+    "rights": "rights",
 }
 
 # Plain module-level registry; later tasks and plan E add handlers.
@@ -181,14 +183,18 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     if role == "none":
         return None
     if role == "child":
-        if manifest.type not in CHILD_TYPES:
+        if isinstance(manifest, RightsManifest):
+            if "grant" in manifest.model_fields_set or manifest.child not in (None, ctx.sender.short):
+                return refused("children may only revoke their own rights")
+        elif manifest.type not in CHILD_TYPES:
             return refused("children may only send messages")
     else:
         grant = ctx.grant()
         if grant is None:
             return refused(NOT_ALLOWED)
         op = OPERATION_OF[manifest.type]
-        if op not in grant.operations:
+        revoke_only = isinstance(manifest, RightsManifest) and manifest.grant is None
+        if op not in grant.operations and not revoke_only:
             return refused(f"operation `{op}` is not in this container's grant")
     handler = HANDLERS.get(manifest.type)
     if handler is None:
@@ -930,3 +936,13 @@ def _handle_update(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 HANDLERS["update"] = _handle_update
+
+
+def _handle_rights(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.rights import handle_rights
+
+    assert isinstance(m, RightsManifest)
+    return handle_rights(ctx, m)
+
+
+HANDLERS["rights"] = _handle_rights
