@@ -832,6 +832,13 @@ class GithubConfig(BaseModel):
         return self.token if self.token is not None else self.api_tokens.get(container_prefix)
 
 
+class AutostartProfile(BaseModel):
+    """A named selection of stages, in the triggers' own order."""
+
+    model_config = ConfigDict(extra="forbid")
+    stages: list[str] = Field(min_length=1)
+
+
 class Autostart(BaseModel):
     """The top-level autostart block: which shell steps run inside a
     container, and when.
@@ -854,6 +861,32 @@ class Autostart(BaseModel):
             "flat list of steps (one implicit stage) or a list of stages."
         ),
     )
+
+    profiles: dict[str, Literal["all"] | AutostartProfile] = Field(default_factory=dict)
+    default_profile: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_profiles(self) -> Self:
+        if not self.profiles:
+            if self.default_profile is not None:
+                raise ValueError("default_profile requires autostart.profiles")
+            return self
+        if "all" in self.profiles:
+            raise ValueError("autostart profile name 'all' is reserved")
+        if self.default_profile not in self.profiles:
+            raise ValueError(f"default_profile {self.default_profile!r} must name a profile")
+        names = {"agents"}
+        for trigger in ("on_create", "on_start"):
+            for entry in getattr(self, trigger):
+                if not isinstance(entry, AutostartStage):
+                    raise ValueError(f"autostart.profiles requires stages in {trigger}")
+                names.add(entry.stage)
+        for name, profile in self.profiles.items():
+            if profile != "all":
+                unknown = set(profile.stages) - names
+                if unknown:
+                    raise ValueError(f"autostart profile {name!r} names unknown stages: {', '.join(sorted(unknown))}")
+        return self
 
     @field_validator("on_create", "on_start", mode="before")
     @classmethod

@@ -99,6 +99,29 @@ def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> lis
     return stages
 
 
+def profile_names(autostart: Autostart) -> tuple[str, ...]:
+    return tuple(autostart.profiles)
+
+
+def select_profile(autostart: Autostart, profile: str | None) -> Autostart:
+    """Filter before planning, preserving agents and config order."""
+    if profile is None or autostart.profiles[profile] == "all":
+        return autostart
+    selection = autostart.profiles[profile]
+    assert selection != "all"
+    names = set(selection.stages) | {AGENTS_STAGE}
+    return autostart.model_copy(update={
+        trigger.value: [s for s in normalize_stages(getattr(autostart, trigger.value)) if s.stage in names]
+        for trigger in TRIGGER_ORDER
+    })
+
+
+def selected_stage_names(
+    autostart: Autostart, profile: str | None, trigger: AutostartTrigger,
+) -> tuple[str, ...]:
+    return tuple(s.stage for s in normalize_stages(getattr(select_profile(autostart, profile), trigger.value)))
+
+
 def _agents_stage(agent_steps: list[AutostartStep]) -> AutostartStage:
     return AutostartStage.model_construct(
         stage=AGENTS_STAGE,
