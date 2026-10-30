@@ -288,7 +288,9 @@ def test_never_grant_does_not_take_over_human_timed_mount(rig):
     assert ("c", labels.TIMED) not in store
 
 
-@pytest.mark.parametrize("body", [{"grant": {"loose": True, "for": "5m"}}, {"revoke": {"loose": True}}])
+@pytest.mark.parametrize(
+    "body", [{"grant": {"loose": True, "for": "5m"}}, {"revoke": {"loose": True}}]
+)
 def test_rights_refused_while_autostart_runs(rig, mocker, body):
     ctx, store, switch, *_ = rig
     mocker.patch("jailbee.autostart_status.live_run", return_value=object())
