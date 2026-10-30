@@ -428,6 +428,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "apps ls",
         "autostart cancel",
         "autostart status",
+        "autostart profile",
         "base usage",
         "branch",
         "config show",

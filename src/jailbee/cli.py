@@ -1766,7 +1766,7 @@ def list_cmd(
                 "cpu, doing, agent, agent_compact, "
                 "wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, "
                 "git_status, "
-                "group, pr, issues, outbox, role, children, inbox."
+                "group, pr, issues, outbox, role, children, inbox, autostart_profile."
             ),
         ),
     ] = None,
@@ -11083,7 +11083,7 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 @autostart_app.command("profile")
 def autostart_profile_cmd(
     container: AutostartNameArg = None,
-    name: Annotated[str | None, typer.Argument(help="Profile name; omit to show current selection.")] = None,
+    profile: Annotated[str | None, typer.Argument(help="Profile name; omit to show current selection.")] = None,
     no_run: Annotated[bool, typer.Option("--no-run", help="Store without starting stages.")] = False,
     config: ConfigOption = None,
 ) -> None:
@@ -11097,12 +11097,12 @@ def autostart_profile_cmd(
     try:
         if not cfg.autostart.profiles:
             raise ProfileError("this repository defines no autostart profiles")
-        if name is None and missing_container:
-            name = prompting.choose_one("autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles])
-        if name is None:
+        if profile is None and missing_container:
+            profile = prompting.choose_one("autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles])
+        if profile is None:
             show_profile(cfg, incus, full)
             return
-        result = switch_profile(cfg, incus, full, name, run=not no_run)
+        result = switch_profile(cfg, incus, full, profile, run=not no_run)
         if result.deferred:
             info("nothing to start; takes effect on the next start")
     except ProfileError as exc:

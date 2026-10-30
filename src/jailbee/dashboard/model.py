@@ -205,6 +205,8 @@ class RepoGroup:
     checkout: str | None = None
     advisories: tuple[RepoAdvisory, ...] = ()
     memory_default: str = "16GiB"
+    autostart_profiles: tuple[str, ...] = ()
+    autostart_default_profile: str | None = None
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
     default_runner_source: str | None = None
@@ -528,6 +530,8 @@ def _gather_rows(
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
                 memory_default=cfg.defaults.memory,
+                autostart_profiles=tuple(cfg.autostart.profiles),
+                autostart_default_profile=cfg.autostart.default_profile,
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,

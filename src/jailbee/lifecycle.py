@@ -79,6 +79,7 @@ class ContainerInfo:
     # inherits the repo's group; `accounts.groups.NO_GROUP` means it
     # deliberately shares none.
     credential_group: str | None = None
+    autostart_profile: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
     memory_override: bool = False
@@ -626,6 +627,7 @@ def list_containers(
                 pr_number=pr_number,
                 pr_author=pr_author,
                 credential_group=credential_group_raw or None,
+                autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -4254,6 +4256,14 @@ def ls_field_specs(
             cell=_inbox_cell,
             json=_inbox_json,
             show_if=lambda rows: any(_is_orchestration(c) and _unread_inbox(c) > 0 for c in rows),
+        ),
+        table_format.FieldSpec(
+            name="autostart_profile",
+            sort=lambda c: _text_key(c.autostart_profile),
+            header="PROFILE",
+            cell=lambda c: c.autostart_profile or "",
+            json=lambda c: c.autostart_profile,
+            default_table=False,
         ),
         table_format.FieldSpec(
             name="group",

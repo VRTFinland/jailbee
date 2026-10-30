@@ -36,7 +36,8 @@ from jailbee.update_check import UpdateNotice
 # GitStatus inbox/outbox counts, RepoGroup.orchestration_profiles. 12 added
 # ChildView.runner. 13 adds default runner and profile fields to the dashboard.
 # 14 added SystemStatus.load.
-PROTOCOL = 14
+# 15 adds repo autostart choices/default and container autostart profile.
+PROTOCOL = 15
 
 
 class ProtocolError(ValueError):
