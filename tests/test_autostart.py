@@ -1114,11 +1114,13 @@ def test_agent_steps_report_exit_only_for_child(tmp_path):
     [child] = agent_autostart_steps(
         cfg, initial_prompt=True, extra_env={"JAILBEE_ROLE": "child", "X": "1"}
     )
-    assert "jailbee-inbox send" in child.run and "\\`claude\\`" in child.run
+    from jailbee.initial_prompt import AGENT_PID_PATH, AGENT_EXIT_PATH
+    assert AGENT_PID_PATH in child.run and AGENT_EXIT_PATH in child.run
+    assert "jailbee-inbox send" not in child.run
     [plain] = agent_autostart_steps(cfg, initial_prompt=True, extra_env={"X": "1"})
-    assert "jailbee-inbox" not in plain.run
+    assert AGENT_PID_PATH not in plain.run
     [none] = agent_autostart_steps(cfg, initial_prompt=True)
-    assert "jailbee-inbox" not in none.run
+    assert AGENT_PID_PATH not in none.run
 
 
 def test_prompt_with_claude_jb(tmp_path):

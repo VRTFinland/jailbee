@@ -76,8 +76,13 @@ body: what changed, tests run, open points:
  "in_reply_to": null}
 ```
 
-If your prompted agent exits non-zero (1 to 127), Jailbee reports it to the
-orchestrator as a `blocked` message for you; do not send your own duplicate.
+If your prompted agent ends without an accepted `done`, Jailbee reports it
+for you: startup failure is `failed`, later death is `blocked`, including
+exit 0, error statuses and signals. It includes status/signal and recent
+output when available; loss of the wrapper/container may leave status
+unknown. Do not send a duplicate. A refused `done` does not silence this
+monitoring. Broker `stop`/`destroy` ends the run intentionally; restart
+begins a fresh monitored run.
 
 Always send `done` with `--wait` and end the session only after exit 0
 (`done` or `queued`). The reply says whether work was imported and whether

@@ -432,6 +432,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "autostart profiles) into the shared skills mount"
         ),
     ),
+    UpgradeNote(
+        version=(1, 9, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing verified agent "
+            "startup and reporting every unfinished prompted-agent exit"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

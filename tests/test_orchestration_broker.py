@@ -1322,11 +1322,62 @@ def _spawn_round(rig: Rig) -> None:
     rig.tick()
 
 
+@pytest.mark.parametrize("accepted", [True, False])
+def test_only_accepted_done_cancels_supervision(rig: Rig, monkeypatch, accepted) -> None:
+    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    text = json.dumps({"version": 1, "id": "done1", "type": "message", "kind": "done", "body": "finished"})
+    rig.outboxes["proj-kid"] = [RawManifest("done1.json", text, {"done1.json": text})]
+    rig.dispatch.return_value = Outcome("done" if accepted else "refused", "result")
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    rig.tick()
+    assert _watches(rig) == ([] if accepted else [entry])
+
+
+def test_confirmed_agent_is_monitored_even_if_job_database_is_unreadable(rig: Rig, monkeypatch) -> None:
+    from jailbee.orchestration import agent_watch
+    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
+    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 0))
+    monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "")
+    rig.tick()
+    assert rig.deliver.call_args.args[3].kind == "blocked"
+    assert _watches(rig) == []
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_supervised_exit_reports_and_survives_delivery_failure(rig: Rig, monkeypatch, confirmed) -> None:
+    from jailbee.orchestration import agent_watch
+    from jailbee.orchestration.protocol import InboxMessage
+    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=confirmed)
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 137))
+    monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "last output")
+    rig.deliver.side_effect = RuntimeError("down")
+    rig.tick()
+    assert _watches(rig) == [entry]
+    rig.deliver.side_effect = None
+    rig.tick()
+    item = rig.deliver.call_args.args[3]
+    assert "SIGKILL" in item.body if confirmed else "SIGKILL" in item.detail
+    assert "last output" in (item.body if confirmed else item.detail)
+    if confirmed:
+        assert isinstance(item, InboxMessage) and item.kind == "blocked"
+    else:
+        assert item.state == "failed"
+    assert _watches(rig) == []
+
+
 def test_started_spawn_is_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-fix-1": _job("clone")})
     monkeypatch.setattr(background, "worker_alive", lambda pid: True)
     _spawn_round(rig)
-    assert _watches(rig) == [watch.WatchEntry("s1", "proj-fix-1", "spawn", NOW.isoformat())]
+    assert _watches(rig) == [watch.WatchEntry("s1", "proj-fix-1", "spawn", NOW.isoformat(), supervise=True)]
 
 
 def test_watch_since_is_not_after_a_row_created_during_dispatch(
@@ -1346,15 +1397,16 @@ def test_refused_spawn_is_not_watched(rig: Rig) -> None:
     assert _watches(rig) == []
 
 
-def test_inline_restart_not_watched_when_no_live_job(
+def test_inline_restart_also_requires_agent_confirmation(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(broker, "live_job_kind", lambda name: None)
+    monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
     rig.outboxes["proj-orch"] = [_restart_raw()]
     rig.dispatch.return_value = Outcome("done", "child `kid` restarted")
     rig.tick()
-    assert _watches(rig) == []
+    assert _watches(rig) == [watch.WatchEntry("r1", "proj-kid", "restart", NOW.isoformat(), supervise=True)]
 
 
 def test_detached_restart_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1364,7 +1416,7 @@ def test_detached_restart_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> 
     rig.outboxes["proj-orch"] = [_restart_raw()]
     rig.dispatch.return_value = Outcome("started", "child `kid` restarting")
     rig.tick()
-    assert _watches(rig) == [watch.WatchEntry("r1", "proj-kid", "restart", NOW.isoformat())]
+    assert _watches(rig) == [watch.WatchEntry("r1", "proj-kid", "restart", NOW.isoformat(), supervise=True)]
 
 
 def test_drained_spawn_is_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1373,7 +1425,7 @@ def test_drained_spawn_is_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> 
     save_queue(rig.root, {"proj-orch": [_req("q1")]})
     rig.drain.return_value = [(_req("q1"), Outcome("started", "ok"))]
     rig.tick()
-    assert _watches(rig) == [watch.WatchEntry("q1", "proj-fix-2", "spawn", NOW.isoformat())]
+    assert _watches(rig) == [watch.WatchEntry("q1", "proj-fix-2", "spawn", NOW.isoformat(), supervise=True)]
 
 
 def _seed(rig: Rig, orchestrator: str = "proj-orch") -> None:

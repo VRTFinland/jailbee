@@ -230,7 +230,7 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
   `spawn` and `restart` alike.
 - `started`: the child is being created, or a queued restart has now begun.
 - `done`: the action completed (the detail says what). A spawn's final
-  `done` reads ``child `<short>` is ready``.
+  `done` reads ``child `<short>` is ready; agent is alive``.
 - `failed`: final. The action was accepted but did not complete. The detail
   says why, for example ``creation of child `<short>` failed: <error>``
   (followed by ` — the child was removed` when the child no longer exists),
@@ -245,18 +245,24 @@ refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m).
 A timeout is not a refusal: read the eventual reply instead of resending.
 The broker is not instant; expect seconds, not milliseconds.
 
-A spawn gets `queued` or `started`, then a final `done` (``child `<short>` is
-ready``) or `failed`. A restart gets `done` or `started` and no later final
-status.
+Spawn and restart get `queued` or `started`, then final `done`
+(``child `<short>` is ready; agent is alive``) or `failed`. `started` is not
+proof the agent is working: the broker checks the real process twice, at
+least two seconds apart, after setup. A never-started agent fails after a
+120-second startup grace; immediate exits and failed setup also fail.
 On `failed`, read the detail and tell the human; respawn under a new id only
 when the cause is fixed. Still do not wait forever: if a `wait` times out
 and a started child has not reported, send it a `message`. A `message` to a
 stopped child is answered `queued` and delivered when it runs again.
 
-A child whose prompted agent exits with status 1 to 127 sends you a
-`blocked` message ``[jailbee] the agent `<agent name>` exited with status
-<rc>``. The agent exited with an error status; it did not report. (A kill, status above 128, is deliberately not reported.) Read the
-child's output, then `restart` it with a new prompt or tell the human.
+After readiness the broker reports any prompted-agent exit without accepted
+`done` as `blocked`: exit 0, errors and signals alike. It includes the exit
+status/signal and a bounded tmux output tail when available; disappearance
+of the wrapper or container is reported with unknown status. Only accepted
+`done` and successful broker `stop`/`destroy` suppress this; a refused `done`
+does not. Read the detail, then `stop` the still-running container and
+`restart` with a new prompt, or tell the human. Restart launches a fresh
+monitored run. A transient probe failure is retried.
 
 ## Answering children
 

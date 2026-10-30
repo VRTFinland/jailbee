@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import shlex
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -13,6 +14,38 @@ from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
     from jailbee.incus import Incus
+    from jailbee.orchestration.actions import Node, Outcome
+    from jailbee.orchestration.watch import WatchEntry
+
+
+def advance(
+    entry: WatchEntry, child: Node | None, status: AgentStatus | None, *, now: datetime
+) -> tuple[WatchEntry | None, Outcome | None]:
+    """Pure durable state transition after boot work has finished."""
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.actions import done, failed
+
+    if child is not None and child.config.get(labels.STATE) == labels.STATE_DONE:
+        return None, None
+    if child is None or not child.running:
+        return None, failed("[jailbee] child stopped or disappeared without accepted done")
+    if status is None:
+        return entry, None  # Transport failure is not evidence of agent death.
+    if entry.ready_since is None:
+        entry = replace(entry, ready_since=now.isoformat())
+    if status.alive:
+        if entry.confirmed:
+            return entry, None
+        if entry.live_since is None:
+            return replace(entry, live_since=now.isoformat()), None
+        if (now - datetime.fromisoformat(entry.live_since)).total_seconds() >= 2:
+            return replace(entry, confirmed=True), done(f"child `{child.short}` is ready; agent is alive")
+        return entry, None
+    assert entry.ready_since is not None
+    expired = (now - datetime.fromisoformat(entry.ready_since)).total_seconds() >= 120
+    if entry.confirmed or status.rc is not None or entry.live_since is not None or expired:
+        return None, failed(describe(status))
+    return entry, None
 
 
 @dataclass(frozen=True)

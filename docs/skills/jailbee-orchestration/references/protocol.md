@@ -184,12 +184,14 @@ CLI: `jailbee-inbox send update --child C --wait`.
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
-Status: `done` ("child `x` restarted") for a synchronous restart; repositories
-with autostart profiles return `started` after handing boot and setup to a
-background worker (see the log in the detail). `queued` means no slot is free,
-then `started` when launched later. A later restart/setup failure is recorded in the background job and log
-and also arrives as a second status, `failed`, for the same ref (``restart of child
-`<child>` failed: <reason>``).
+Status: `started` after handing boot and setup to a background worker (see
+the log in the detail). `queued` means no slot is free, then `started` when
+launched later. The final `done` ("child `x` is ready; agent is alive")
+requires two live process observations at least two seconds apart after
+setup. Failed boot/setup, an immediate exit or no agent within 120 seconds
+after setup yields `failed` for the same ref. Subsequent agent death without
+accepted child `done` yields a `blocked` message, including exit 0 and
+signals. Broker `stop`/`destroy` intentionally ends monitoring.
 
 `runner` is optional. Absent keeps the child's previous runner; an explicit
 `"runner": null` selects the current effective default (clearing the label if

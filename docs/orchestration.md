@@ -221,7 +221,7 @@ available as `jailbee-inbox send spawn|restart --autostart-profile NAME`.
 Names are validated against the host repo's [autostart profiles](config.md#profiles).
 Spawn passes the choice to creation; restart stores it before booting, runs
 missing one-shot stages, then the selected start stages in a background boot
-worker. Profile-enabled restarts return `started` with a log path, keeping the
+worker. All restarts return `started` with a log path, keeping the
 broker responsive and reserving the child's capacity while it boots. A later
 setup failure is also recorded in the job and log and reaches the orchestrator
 as a second status, `failed` (``restart of child `x` failed: ...``), for the same ref;
@@ -282,11 +282,24 @@ exit as a failure until `jb setup` rewrites the unit.
 
 For each manifest the broker validates it, acts on it at most once, deletes
 it, and answers with a `status` message in the sender's inbox: `queued`,
-`started`, `done`, `failed` or `refused`, with a detail. A spawn ends with
-`done` (``child `<short>` is ready``) or `failed`; a restart reports `done` or `started`, and a
-failed boot or setup adds a final `failed` for the same ref. A child whose prompted agent exits 1 to 127
-sends its orchestrator a `blocked` message ``[jailbee] the agent `<name>`
-exited with status <rc>``. At most 32 manifests per
+`started`, `done`, `failed` or `refused`, with a detail. Spawn and restart
+return `started` (or `queued`, then `started`), followed by `done`
+(``child `<short>` is ready; agent is alive``) only after setup finishes and
+the actual prompted process survives two observations at least two seconds
+apart. Failure to start within 120 seconds after setup, an immediate exit,
+or a failed boot/setup returns a final `failed` for the same ref.
+
+The broker continues monitoring that process. Any exit without an accepted
+child `done` sends the orchestrator a `blocked` message, including exit 0,
+nonzero exits and signals. The detail includes the exit status and signal
+name when known, and up to 4096 characters from the last 30 tmux output
+lines when the pane survives. If the wrapper itself or the container dies,
+the broker reports that the process disappeared; an unavailable exit status
+is explicitly unknown. Accepted `done` and successful broker `stop`/`destroy`
+end monitoring; a restart starts a fresh run. External kills/stops are not
+silenced. A refused `done` does not finish the run. Transient probe errors
+are retried, not misreported as death. Existing children need a broker
+restart request to acquire the new supervision. At most 32 manifests per
 container are read per round.
 
 The broker is non-interactive. Anything that would prompt the operator (the

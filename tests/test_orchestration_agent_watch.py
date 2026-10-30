@@ -8,6 +8,60 @@ import pytest
 from jailbee.incus import IncusError
 
 
+from datetime import UTC, datetime, timedelta
+from jailbee.orchestration import labels, watch
+from jailbee.orchestration.actions import Node
+
+NOW = datetime(2026, 10, 30, tzinfo=UTC)
+
+
+def supervised(**kwargs):
+    return watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, **kwargs)
+
+
+def advance(entry, status, *, seconds=0, child=None):
+    from jailbee.orchestration.agent_watch import advance as step
+    if child is None:
+        child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: "proj-orch"})
+    return step(entry, child, status, now=NOW + timedelta(seconds=seconds))
+
+
+def test_alive_requires_two_separated_observations() -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus
+    e, out = advance(supervised(), AgentStatus(True, "claude"))
+    assert out is None and not e.confirmed
+    e, out = advance(e, AgentStatus(True, "claude"), seconds=1)
+    assert out is None
+    e, out = advance(e, AgentStatus(True, "claude"), seconds=3)
+    assert e.confirmed and out.state == "done" and "agent is alive" in out.detail
+    assert advance(e, AgentStatus(True, "claude"), seconds=5)[1] is None
+
+
+@pytest.mark.parametrize("rc", [0, 1, 127, 137, 143])
+def test_early_exit_fails_and_late_exit_blocks(rc) -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus
+    e, out = advance(supervised(), AgentStatus(False, "claude", rc))
+    assert e is None and out.state == "failed" and f"status {rc}" in out.detail
+    e, out = advance(supervised(confirmed=True), AgentStatus(False, "claude", rc))
+    assert e is None and out.state == "failed"  # Broker relays later failure as blocked.
+
+
+def test_never_started_times_out_and_unknown_probe_retries() -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus
+    e, out = advance(supervised(), AgentStatus(False))
+    assert out is None
+    assert advance(e, AgentStatus(False), seconds=121)[1].state == "failed"
+    assert advance(supervised(), None, seconds=200) == (supervised(), None)
+
+
+def test_done_suppresses_but_external_stop_reports() -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus
+    done = Node("proj-kid", "kid", True, {labels.STATE: labels.STATE_DONE})
+    assert advance(supervised(confirmed=True), AgentStatus(False, rc=0), child=done) == (None, None)
+    stopped = Node("proj-kid", "kid", False, {})
+    assert advance(supervised(confirmed=True), None, child=stopped)[1].state == "failed"
+
+
 def test_probe_live_and_exited() -> None:
     from jailbee.orchestration.agent_watch import AgentStatus, probe
 
