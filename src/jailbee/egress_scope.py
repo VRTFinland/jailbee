@@ -23,6 +23,7 @@ import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from jailbee.egress import EgressEntry
     from jailbee.incus import Incus
 
+EGRESS_UNTIL = "user.jailbee.egress_until"
 EGRESS_EXTRA_KEY = "user.jailbee.egress_extra"
 """Container label holding a JSON array of raw egress entries."""
 
@@ -240,7 +242,27 @@ def _sync_container_entry(cfg: Config, incus: Incus, name: str) -> bool:
     return egress_proxy.sync_container(cfg, incus, name, mode)
 
 
-def add_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> bool:
+def egress_deadlines(incus: Incus, name: str) -> dict[str, str]:
+    raw = incus.config_get(name, EGRESS_UNTIL)
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) and raw else {}
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: v for k, v in parsed.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def set_egress_deadlines(incus: Incus, name: str, values: dict[str, str]) -> None:
+    if values:
+        incus.config_set(name, EGRESS_UNTIL, json.dumps(values, sort_keys=True))
+    else:
+        incus.config_unset(name, EGRESS_UNTIL)
+
+
+def add_container_entry(
+    cfg: Config, incus: Incus, name: str, entry: str, *, until: datetime | None = None
+) -> bool:
     """Store and materialise an override; return whether proxy env changed."""
     from jailbee import egress_proxy
     from jailbee.egress import is_wildcard_entry, validate_allow_entry
@@ -248,7 +270,15 @@ def add_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> boo
 
     validate_allow_entry(entry)
     extras = container_extras(incus, name)
-    if entry in extras or entry in cfg.effective_egress_allow():
+    if entry in cfg.effective_egress_allow():
+        return False
+    if entry in extras:
+        deadlines = egress_deadlines(incus, name)
+        if until is not None:
+            deadlines[entry] = until.isoformat()
+        else:
+            deadlines.pop(entry, None)
+        set_egress_deadlines(incus, name, deadlines)
         return False
     wildcard = is_wildcard_entry(entry)
     raw = next((item for item in incus.list_containers() if item.get("name") == name), {})
@@ -260,6 +290,10 @@ def add_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> boo
     if not wildcard:
         resolve_entries([entry])
     set_container_extras(incus, name, [*extras, entry])
+    if until is not None:
+        deadlines = egress_deadlines(incus, name)
+        deadlines[entry] = until.isoformat()
+        set_egress_deadlines(incus, name, deadlines)
     proxy_ok = not wildcard or egress_proxy.proxy_up_or_warn(
         incus, storage_pool=cfg.service_storage_pool()
     )
@@ -275,10 +309,20 @@ def add_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> boo
 def remove_container_entry(cfg: Config, incus: Incus, name: str, entry: str) -> bool:
     """Remove a container override and materialise the remaining rights."""
     extras = container_extras(incus, name)
-    if entry not in extras:
-        return False
-    set_container_extras(incus, name, [e for e in extras if e != entry])
-    return _sync_container_entry(cfg, incus, name)
+    deadlines = egress_deadlines(incus, name)
+    changed = False
+    if entry in extras:
+        set_container_extras(incus, name, [e for e in extras if e != entry])
+        try:
+            changed = _sync_container_entry(cfg, incus, name)
+        except Exception:
+            # Keep both the source and its deadline so the timer can retry.
+            set_container_extras(incus, name, extras)
+            raise
+    if entry in deadlines:
+        deadlines.pop(entry)
+        set_egress_deadlines(incus, name, deadlines)
+    return changed
 
 
 # ---- naming --------------------------------------------------------------

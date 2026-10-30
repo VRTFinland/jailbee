@@ -21,6 +21,7 @@ from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 from jailbee.egress import resolve_with_status
 from jailbee.loose_revert import check_and_revert_loose
 from jailbee.mount_revert import check_and_revert_mounts
+from jailbee.egress_revert import check_and_revert_egress
 from jailbee.paths import repo_config_path
 
 if TYPE_CHECKING:
@@ -822,6 +823,11 @@ def refresh_all(
                 repo.container_prefix,
                 e,
             )
+
+        try:
+            check_and_revert_egress(cfg, incus, now=now)
+        except Exception as e:
+            log.warning("refresh_all: egress_revert failed for %s: %s", repo.container_prefix, e)
 
     session.commit()
     return out

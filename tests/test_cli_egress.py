@@ -1244,3 +1244,20 @@ def test_net_status_proxy_line_honours_the_remote_scope(tmp_path, mocker, capsys
     _print_egress_proxy_status(RemoteRepoScope(frozenset({"myrepo"})))
 
     assert capsys.readouterr().out == ""
+
+
+def test_add_for_writes_expiry(tmp_path, mocker):
+    _cfg, incus = _repo(tmp_path, mocker)
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    result = runner.invoke(app, ["net", "egress", "add", "pypi.org", "c", "--for", "30m"])
+    assert result.exit_code == 0, result.output
+    writes = [c.args for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.egress_until"]
+    assert len(writes) == 1 and "pypi.org" in json.loads(writes[0][2])
+
+
+def test_add_without_for_has_no_expiry(tmp_path, mocker):
+    _cfg, incus = _repo(tmp_path, mocker)
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    result = runner.invoke(app, ["net", "egress", "add", "pypi.org", "c"])
+    assert result.exit_code == 0, result.output
+    assert not any(c.args[1] == "user.jailbee.egress_until" for c in incus.config_set.call_args_list)

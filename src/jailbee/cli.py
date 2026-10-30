@@ -9611,12 +9611,28 @@ def egress_add_cmd(
         bool,
         typer.Option("--repo", help="Apply to every container of this repo on this host."),
     ] = False,
+    for_: Annotated[str | None, typer.Option("--for", help="Expire this container override after a duration (max 24h); never keeps it.")] = None,
+    no_revert: Annotated[bool, typer.Option("--no-revert", help="Keep this override without an expiry.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
     from jailbee import egress_scope
     from jailbee.egress import NetworkResolveError, is_wildcard_entry, validate_allow_entry
 
+    from jailbee.config import parse_ttl
+
+    if for_ is not None and no_revert:
+        error("--for and --no-revert are mutually exclusive.")
+        raise typer.Exit(2)
+    if repo and (for_ is not None or no_revert):
+        error("--for and --no-revert require container scope.")
+        raise typer.Exit(2)
+    try:
+        duration = parse_ttl(for_) if for_ is not None else None
+    except ValueError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    until = _now() + duration if duration is not None else None
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
         from jailbee import prompting
@@ -9676,11 +9692,11 @@ def egress_add_cmd(
         return
 
     assert container is not None
-    if entry in egress_scope.container_extras(incus, container):
+    if entry in egress_scope.container_extras(incus, container) and for_ is None and not no_revert:
         info(f"'{entry}' is already an override on '{container}' — nothing to do.")
         return
     try:
-        env_changed = egress_scope.add_container_entry(cfg, incus, container, entry)
+        env_changed = egress_scope.add_container_entry(cfg, incus, container, entry, until=until)
     except egress_scope.ContainerEntryError as exc:
         error(str(exc))
         raise typer.Exit(exc.exit_code) from exc
