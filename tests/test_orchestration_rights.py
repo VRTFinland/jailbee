@@ -202,7 +202,7 @@ def test_timed_grant_does_not_narrow_human_permanent_right(rig, mocker, right):
         mocker.patch("jailbee.egress_scope.container_extras", return_value=["pypi.org"])
         block = {"egress": ["pypi.org"]}
     result = actions.dispatch(ctx, manifest(grant={**block, "for": "5m"}))
-    assert result.state == "done" and "already held" in result.detail
+    assert result.state == "done" and "held by hand" in result.detail
     switch.assert_not_called()
     attach.assert_not_called()
     add.assert_not_called()
@@ -247,3 +247,42 @@ def test_expired_provenance_does_not_own_human_readded_mount(rig):
     result = actions.dispatch(ctx, manifest(revoke={"mounts": ["aws"]}))
     assert result.state == "done" and "was not given by orchestration" in result.detail
     remove.assert_not_called()
+
+
+@pytest.mark.parametrize("right", ["loose", "egress"])
+def test_human_permanent_change_before_deadline_disowns_timed_right(rig, mocker, right):
+    ctx, store, _, _, _, _, rm_egress = rig
+    switch = rig[2]
+    deadline = (ctx.now + timedelta(minutes=5)).isoformat()
+    if right == "loose":
+        mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+        item, block = "loose", {"loose": True}
+    else:
+        mocker.patch("jailbee.egress_scope.container_extras", return_value=["pypi.org"])
+        item, block = "egress:pypi.org", {"egress": ["pypi.org"]}
+    store[("c", labels.TIMED)] = json.dumps({item: deadline})
+    result = actions.dispatch(ctx, manifest(revoke=block))
+    assert result.state == "done" and "was not given by orchestration" in result.detail
+    switch.assert_not_called()
+    rm_egress.assert_not_called()
+
+
+def test_grant_never_takes_over_human_timed_mount(rig):
+    ctx, store, _, attach, *_ = rig
+    ctx.incus.config_device_get.return_value = "/host/aws"
+    store[("c", "user.jailbee.mount_until.aws")] = (ctx.now + timedelta(hours=2)).isoformat()
+    result = actions.dispatch(ctx, manifest(grant={"mounts": ["aws"], "for": "5m"}))
+    assert result.state == "done" and "held by hand; left as is" in result.detail
+    attach.assert_not_called()
+    assert ("c", labels.TIMED) not in store
+
+
+def test_never_grant_does_not_take_over_human_timed_mount(rig):
+    ctx, store, _, attach, *_ = rig
+    ctx.incus.config_device_get.return_value = "/host/aws"
+    store[("c", "user.jailbee.mount_until.aws")] = (ctx.now + timedelta(hours=2)).isoformat()
+    result = actions.dispatch(ctx, manifest(grant={"mounts": ["aws"], "for": "never"}))
+    assert result.state == "done" and "held by hand; left as is" in result.detail
+    attach.assert_not_called()
+    assert ChildRights.from_label(store[("c", labels.RIGHTS)]) == ChildRights()
+    assert ("c", labels.TIMED) not in store

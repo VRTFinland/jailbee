@@ -87,7 +87,7 @@ The orchestrator's `rights` operation allows grants within its current
 permission and repo cap; revoke-only needs no operation but still an active
 grant. Effective loose permission implies narrower egress within the repo
 cap (or any host if the cap has no egress list), at spawn and runtime alike.
-Every grant has `for` (max 24h or `never`), never shortens an existing right,
+Every grant has `for` (max 24h or `never`), never shortens a right orchestration owns and skips one held by hand,
 and is checked/applied whole with best-effort rollback on failure. A child
 never sends the grant block.
 

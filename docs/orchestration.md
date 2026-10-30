@@ -173,8 +173,10 @@ clock deadlines survive host restarts. Stopped containers keep the changes
 for their next start, and mounts are attached as instance devices.
 
 Revocation touches only rights orchestration gave, not rights a human added
-by hand. A timed grant never shortens a held right: permanent stays permanent,
-the later deadline wins, and `never` removes an expiry. Spawn and permanent
+by hand; a right whose live expiry no longer matches the recorded deadline
+counts as the human's. A grant never touches a right held by hand (it is
+reported as `held by hand; left as is`). A timed grant never shortens a right
+orchestration owns: the later deadline wins, and `never` removes an expiry. Spawn and permanent
 runtime rights live in the child rights label; timed provenance is separate.
 There is no restart-time escalation check. Requests are preflighted before
 changes, revoke before grant, and roll back on application failure (best effort).

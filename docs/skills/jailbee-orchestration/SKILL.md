@@ -76,7 +76,7 @@ permission includes narrower egress within the repo cap. `--mount K` and
 Use `--revoke-loose`, `--revoke-mount K`, `--revoke-egress H` without `--for`
 for revoke-only. Granting needs operation `rights`; revoking needs only your
 active grant. You cannot change your own rights. Rights a human added stay
-untouched; a timed grant never shortens a held right. A child's own revoke
+untouched, and a grant never touches a right a human holds; a timed grant never shortens a right you own. A child's own revoke
 arrives as a note so update your picture of its access.
 
 ## Writing a child prompt

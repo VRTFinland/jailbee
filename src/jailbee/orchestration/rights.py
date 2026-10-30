@@ -162,8 +162,9 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
         before = {item: _held(ctx, child, item) for item in (*revokes, *grants)}
         for item, held in before.items():
             deadline = _deadline(timed.get(item))
-            if deadline is not None and deadline <= ctx.now and held.until != deadline:
-                # The old timed right ended; a later human attachment is not ours.
+            if deadline is not None and held.until != deadline:
+                # The live expiry moved (ended, or a human re-added or changed
+                # the right); what is held now is not ours.
                 timed.pop(item, None)
     except Exception as exc:
         return failed(str(exc))
@@ -191,6 +192,9 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
             assert m.grant is not None
             held = before[item]
             pretty = item.replace(":", " ", 1)
+            if held.present and item not in owned and item not in timed:
+                changes.append(f"{item.split(':', 1)[-1]} is held by hand; left as is")
+                continue
             if item in owned or (held.present and held.until is None):
                 changes.append(f"{pretty} already held permanently")
                 continue
