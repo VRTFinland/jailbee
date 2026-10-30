@@ -9,7 +9,7 @@ description: Use when `JAILBEE_ROLE=child` is set or your first prompt says you 
 
 An orchestrator (`$JAILBEE_ORCHESTRATOR`, with `JAILBEE_ROLE=child` set) gave
 you one task in your first prompt. Do it on your branch. Toward the host you
-can do exactly one thing: message your orchestrator, by writing manifests
+can message your orchestrator or give up your own orchestration rights, by writing manifests
 into `~/.jailbee/orchestration/outbox/`. Never merge into other branches,
 push, open PRs, spawn, stop or destroy containers. Those manifests are
 refused, and that work belongs to the orchestrator. Schemas are in
@@ -20,6 +20,16 @@ or the user; do not change it.
 
 General development practice (style, tests, commits) comes from the project's
 own instructions.
+
+## Give up access
+
+When access is no longer needed, use `jailbee-inbox send rights
+--revoke-loose --revoke-mount aws --revoke-egress pypi.org --wait` (include
+only items to give up). Omit `--child` or name yourself. Never include a
+`grant` block: children may only revoke their own rights. Rights a human
+added are left untouched; the reply says so. Your orchestrator receives a
+note describing the rights you gave up. Ask for more access with a
+`question` message as before, never by granting it yourself.
 
 ## Sending a message
 

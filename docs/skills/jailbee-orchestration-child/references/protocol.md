@@ -29,8 +29,8 @@ host validates every manifest; one that does not match is answered with a
 ## Envelope
 
 Every manifest has `"version": 1`, `"id"` and `"type"`. A child may use only
-the type `message`; any other type is refused ("children may only send
-messages").
+the type `message` or revoke-only `rights` for itself. Other types are
+refused ("children may only send messages").
 
 ## Child `message`
 
@@ -63,6 +63,33 @@ done, and for any message your work depends on. Exit 0 means accepted
 `--timeout` is 30m. It prints and marks only the matching status read. End
 the session only after done returns 0. A timeout needs the original reply,
 not another report. The container may be destroyed after done, so commit first.
+
+## Child `rights`
+
+Give up rights orchestration supplied; ask for additional rights with a
+`question` message, never a grant. `child` must be absent or your own short
+name, and `grant` must be absent (even null is not allowed). Otherwise the
+broker replies `children may only revoke their own rights`.
+
+<!-- kind: child-outbox -->
+```json
+{"version": 1, "id": "rights-1", "type": "rights",
+ "revoke": {"loose": true, "mounts": ["aws"], "egress": ["pypi.org"]}}
+```
+
+At least one item is required. CLI: `jailbee-inbox send rights --revoke-loose
+--revoke-mount aws --revoke-egress pypi.org --wait`. A successful revoke replies
+`done` and sends the parent a `note` such as `fix-12 gave up: loose`.
+Hand-added rights not owned by orchestration are left as is with a detail,
+not an error.
+
+The orchestrator's `rights` operation allows grants within its current
+permission and repo cap; revoke-only needs no operation but still an active
+grant. Effective loose permission implies narrower egress within the repo
+cap (or any host if the cap has no egress list), at spawn and runtime alike.
+Every grant has `for` (max 24h or `never`), never shortens an existing right,
+and is checked/applied whole with best-effort rollback on failure. A child
+never sends the grant block.
 
 ## Inbox
 

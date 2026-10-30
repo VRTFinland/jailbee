@@ -54,7 +54,7 @@ cat ~/.jailbee/orchestration/grant.json
   During creation, a child counts from the `started` reply until it is
   running and its create has finished, or its create has failed.
 - `operations` lists the manifest types you may use. `spawn` and `message`
-  are always there; `import`, `restart`, `stop` and `destroy` may not be.
+  are always there; `import`, `restart`, `stop`, `destroy` and `rights` may not be.
 - `grantable` is the most you may give a child: mounts by name, whether
   `loose` networking is allowed, and egress hosts.
 
@@ -63,6 +63,21 @@ after its first round over your container (a few seconds after the grant),
 so look again once before concluding anything. The file can also outlive a
 revoked grant; a request made after revocation is `refused` with
 "orchestration grant revoked".
+
+## Runtime rights
+
+Ask for the least: prefer an egress host over loose, and a timed grant over
+`never`; revoke when the need ends.
+
+Use `jailbee-inbox send rights --child C --egress pypi.org --for 5m --wait`
+to grant access within your current grant and repo cap. Effective loose
+permission includes narrower egress within the repo cap. `--mount K` and
+`--loose` grant other items; each grant needs `--for` (max 24h or `never`).
+Use `--revoke-loose`, `--revoke-mount K`, `--revoke-egress H` without `--for`
+for revoke-only. Granting needs operation `rights`; revoking needs only your
+active grant. You cannot change your own rights. Rights a human added stay
+untouched; a timed grant never shortens a held right. A child's own revoke
+arrives as a note so update your picture of its access.
 
 ## Writing a child prompt
 

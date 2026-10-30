@@ -43,7 +43,7 @@ cannot widen its own grant. It holds:
 
 ```yaml
 max_running_children: 4
-operations: [spawn, message, import, restart, stop, destroy]
+operations: [spawn, message, import, restart, stop, destroy, rights]
 grantable:
   mounts: [data, docs]                  # names of the repo's optional mounts
   loose: false                          # may set a child to loose network
@@ -54,7 +54,7 @@ grantable:
 `--profile` starts from the configured
 [`orchestration.default_profile`](config.md#orchestration), so the defaults are
 yours to set. Without one, fields you omit default to 4 running children,
-operations `spawn message import restart stop destroy`, nothing grantable.
+operations `spawn message import restart stop destroy rights`, nothing grantable.
 Leave `destroy` out with `--deny destroy`.
 
 ```bash
@@ -138,7 +138,9 @@ grant:
   mounts;
 - `loose` only if `grantable.loose` is true;
 - each egress host must match a `grantable.egress` entry (the same matching as
-  `egress_allow`).
+  `egress_allow`), or effective `grantable.loose` must be true and the entry
+  covered by the repo's egress cap (if one is set). Loose implies narrower
+  egress permission for both spawn and runtime grants.
 
 All of it is also subject to the repo's cap. A child gets exactly these rights
 and nothing else: it inherits only git commits from the orchestrator. Mounts
@@ -149,6 +151,41 @@ contains an [autostart](config.md) step that wants `network: loose` or a
 mount, the spawn is accepted only when the child's rights already include that
 mount, and, for a loose step, `loose`. Otherwise the spawn is refused with the
 reasons, so an orchestrator cannot commit its way to more than its grant.
+
+### Change runtime rights
+
+The `rights` operation (included in new grants by default) lets an orchestrator
+change its own child's rights, never its own. Granting uses the current grant
+and repo cap, just like spawn; revoking requires an active grant but not the
+`rights` operation. A removed grant disables both.
+
+```bash
+jailbee-inbox send rights --child fix-12 --egress pypi.org --for 5m --wait
+jailbee-inbox send rights --child fix-12 --mount aws --for never --wait
+jailbee-inbox send rights --child fix-12 --revoke-mount aws --wait
+```
+
+Every grant requires `--for`: a positive duration, at most 24h, or `never`.
+One duration covers all granted items. Prefer an egress host over loose, a
+bounded duration over `never`, and revoke when the need ends. The existing
+60-second refresh timer takes timed rights back, including timed egress;
+clock deadlines survive host restarts. Stopped containers keep the changes
+for their next start, and mounts are attached as instance devices.
+
+Revocation touches only rights orchestration gave, not rights a human added
+by hand. A timed grant never shortens a held right: permanent stays permanent,
+the later deadline wins, and `never` removes an expiry. Spawn and permanent
+runtime rights live in the child rights label; timed provenance is separate.
+There is no restart-time escalation check. Requests are preflighted before
+changes, revoke before grant, and roll back on application failure (best effort).
+Applied requests are journalled; no human notification is sent. Existing
+network/mount views and `jailbee orchestrate status` reflect the changes.
+
+A child may send a revoke-only `rights` manifest for itself (omit `--child`
+or name itself). It cannot include `grant` or name another child; the refusal
+is `children may only revoke their own rights`. Successful relinquishment
+sends its orchestrator a note. Requests for additional access stay `question`
+messages.
 
 ## Primary agent and initial prompt
 

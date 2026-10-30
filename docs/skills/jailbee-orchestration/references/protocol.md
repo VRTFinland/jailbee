@@ -33,7 +33,7 @@ names** (the branch-level name, never one prefixed with the repo).
 
 Every manifest has `"version"`, `"id"` and `"type"`. Version is `1`, except
 spawn also supports version `2`. The type is one of
-`spawn`, `message`, `import`, `update`, `restart`, `stop`, `destroy`.
+`spawn`, `message`, `import`, `update`, `restart`, `stop`, `destroy`, `rights`.
 
 ## Orchestrator manifests
 
@@ -225,6 +225,41 @@ restarted.
  "child": "fix-issue-12", "force": false}
 ```
 
+### `rights`
+
+Grant or revoke an existing child's rights. Orchestrators must name their own
+child. Children must omit `child` or name themselves, and omit `grant` entirely;
+otherwise: `children may only revoke their own rights`.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "type": "rights", "id": "rights-1", "child": "fix-12",
+ "grant": {"loose": true, "mounts": ["aws"], "egress": ["pypi.org"], "for": "5m"},
+ "revoke": {"loose": false, "mounts": [], "egress": ["old.example.com"]}}
+```
+
+Both blocks are optional; at least one item overall is required. An item
+cannot be in both blocks. `grant.for` is mandatory: a TTL (max 24h) or `never`,
+covering all granted items. Grant items pass the same current grant/repo cap
+checks as spawn. Effective loose permission also permits egress covered by
+the repo cap, or any entry when no repo egress cap is set. Missing operation:
+``operation `rights` is not in this container's grant``. Revoke-only does not
+need the operation, but the orchestrator must still hold a grant.
+
+Revoke only orchestration-owned rights (spawn, permanent or timed grants).
+Hand-added rights are left alone, with `<item> was not given by orchestration;
+left as is`. Timed grants never shorten a permanent right or later expiry;
+`never` clears expiry. Revoke before grant; failure rolls back best effort and
+replies `failed`; validation refusal changes nothing. Success replies `done`
+with details. Timed rights expire on the host's 60-second timer. Every applied
+manifest is journalled. A child's revoke sends its parent a `note`, e.g.
+`fix-12 gave up: loose`. Stopped children take network changes on start and
+mounts as devices. Wildcard egress requires the work network.
+
+CLI: `jailbee-inbox send rights --child C [--loose] [--mount K]...
+[--egress H]... --for T [--revoke-loose] [--revoke-mount K]...
+[--revoke-egress H]... [--wait]`. Revoke-only omits `--for`.
+
 ### Grant operation per type
 
 | Type | Needs grant operation |
@@ -236,6 +271,7 @@ restarted.
 | `restart` | `restart` |
 | `stop` | `stop` |
 | `destroy` | `destroy` |
+| `rights` | `rights` when granting; revoke-only needs an active grant, no operation |
 
 A type whose operation is missing from `grant.json` is refused. The broker
 writes `grant.json` after its first round and the file may remain after a
@@ -243,8 +279,8 @@ revoke.
 
 ## Child manifests
 
-A child may write only `message` manifests, with no `to` (they go to its
-orchestrator).
+A child may write `message` manifests, with no `to` (they go to its
+orchestrator), and revoke-only `rights` for itself.
 
 <!-- kind: child-outbox -->
 ```json
@@ -325,7 +361,7 @@ A spawn's final status is `done` or `failed`:
  "detail": "creation of child `fix-issue-12` failed: the worker stopped during deps — the child was removed"}
 ```
 
-`failed` is final and belongs to spawns; a restart reports `done` or
+`failed` is final and also reports runtime rights application failures; a restart reports `done` or
 `started` and no final status. Other details: ``creation of child `<child>`
 stopped unexpectedly during <phase>``, ``creation of child `<child>` ended
 without a container``; a missing error reads `see the worker log`.
@@ -343,7 +379,7 @@ refused ("`x` is not a child of this orchestrator"); after a revoked grant,
 <!-- kind: grant -->
 ```json
 {"version": 1, "max_running_children": 2,
- "operations": ["destroy", "import", "message", "restart", "spawn", "stop"],
+ "operations": ["destroy", "import", "message", "restart", "rights", "spawn", "stop"],
  "grantable": {"mounts": [], "loose": false, "egress": []},
  "default_runner": {"agent": "claude", "model": "sonnet"},
  "default_runner_source": "repo"}
@@ -367,5 +403,7 @@ The repo may cap the grant further; what you read is what applies.
 
 A spawn's `rights` must be a subset of `grantable`: every mount by name is
 in `grantable.mounts`, `loose` is true only if `grantable.loose` is, and each
-egress host is covered by an entry in `grantable.egress`. Anything else is
+egress host is covered by an entry in `grantable.egress`, or effective loose
+permission allows it within the repo egress cap (if set). This rule applies
+to spawn and runtime grants. Anything else is
 `refused`.

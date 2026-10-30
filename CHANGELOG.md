@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Orchestrators can grant and revoke a child's network, optional mounts and
+  egress rights at runtime, timed or permanent; children can relinquish their
+  own access. Loose permission includes narrower egress within the repo cap.
+  `jailbee net egress add --for` also schedules per-container egress expiry.
+
 - **Outbox: publish several proposals at once.** In the Outbox box and
   `jailbee outbox`, `Space` marks a row together with everything under it,
   and `p` publishes every marked proposal after one question showing each

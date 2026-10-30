@@ -910,6 +910,7 @@ def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
         InboxMessage,
         InboxStatus,
         MessageManifest,
+        RightsManifest,
         parse_manifest,
     )
 
@@ -920,8 +921,12 @@ def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
         if kind in ("outbox", "child-outbox"):
             manifest = parse_manifest(f"{data['id']}.json", body, files)
             if kind == "child-outbox":
-                assert isinstance(manifest, MessageManifest), "a child only sends messages"
-                assert manifest.to is None, "a child message has no `to`"
+                if isinstance(manifest, RightsManifest):
+                    assert "grant" not in manifest.model_fields_set
+                    assert manifest.child is None
+                else:
+                    assert isinstance(manifest, MessageManifest)
+                    assert manifest.to is None, "a child message has no `to`"
         elif kind == "inbox":
             model = InboxStatus if data["type"] == "status" else InboxMessage
             model.model_validate(data)
