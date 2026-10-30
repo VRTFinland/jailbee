@@ -1469,7 +1469,10 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
     env["JAILBEE_INBOX_POLL"] = "0.1"
     proc = subprocess.Popen(
         ["bash", str(script), "send", "message", "--text", "go", "--wait", "--timeout", "30"],
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
     try:
         deadline = time.monotonic() + 3
