@@ -223,6 +223,23 @@ def _repin_hosts_quietly(cfg: Config, incus: Incus, name: str) -> None:
         pass
 
 
+def _prune_stale_acl(incus: Incus, name: str) -> None:
+    """Remove revoked rows even if DNS prevents the normal ACL rebuild."""
+    from jailbee.network import entries_from_acl_yaml, extra_acl_yaml
+
+    acl = extra_acl_name(name)
+    if not incus.network_acl_exists(acl):
+        return
+    body = incus.network_acl_show(acl)
+    if not isinstance(body, str):
+        return
+    allowed = set(container_extras(incus, name))
+    current = entries_from_acl_yaml(body)
+    kept = [entry for entry in current if entry.description in allowed]
+    if len(kept) != len(current):
+        incus.network_acl_set_yaml(acl, extra_acl_yaml(acl, kept))
+
+
 def _sync_container_entry(cfg: Config, incus: Incus, name: str) -> bool:
     from jailbee import egress_proxy
     from jailbee.network_generation import generation_of
@@ -234,9 +251,11 @@ def _sync_container_entry(cfg: Config, incus: Incus, name: str) -> bool:
         from jailbee.work_network import work_network_lock
 
         with work_network_lock():
+            _prune_stale_acl(incus, name)
             apply_work_container_acl(cfg, incus, name)
             reconcile_work_acl(cfg, incus)
     else:
+        _prune_stale_acl(incus, name)
         apply_container_acl(cfg, incus, name, mode=mode)
     _repin_hosts_quietly(cfg, incus, name)
     return egress_proxy.sync_container(cfg, incus, name, mode)
@@ -279,7 +298,7 @@ def add_container_entry(
         else:
             deadlines.pop(entry, None)
         set_egress_deadlines(incus, name, deadlines)
-        return False
+        return _sync_container_entry(cfg, incus, name)
     wildcard = is_wildcard_entry(entry)
     raw = next((item for item in incus.list_containers() if item.get("name") == name), {})
     if wildcard and generation_of(cfg, raw) != "work":

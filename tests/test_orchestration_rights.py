@@ -227,3 +227,21 @@ def test_refusal_preflights_unknown_mount_before_revoke(rig):
     )
     assert result.state == "refused" and "not grantable" in result.detail
     switch.assert_not_called()
+
+
+def test_revoke_only_ignores_removed_live_grant(rig, mocker):
+    ctx, store, switch, *_ = rig
+    store.pop(("orch", labels.GRANT))
+    store[("c", labels.RIGHTS)] = ChildRights(loose=True).to_label()
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    assert actions.dispatch(ctx, manifest(revoke={"loose": True})) is None
+    switch.assert_not_called()
+
+
+def test_expired_provenance_does_not_own_human_readded_mount(rig):
+    ctx, store, _, _, remove, *_ = rig
+    store[("c", labels.TIMED)] = json.dumps({"mount:aws": (ctx.now-timedelta(minutes=1)).isoformat()})
+    ctx.incus.config_device_get.return_value = "/human/aws"
+    result = actions.dispatch(ctx, manifest(revoke={"mounts": ["aws"]}))
+    assert result.state == "done" and "was not given by orchestration" in result.detail
+    remove.assert_not_called()

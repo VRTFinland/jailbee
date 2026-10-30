@@ -192,7 +192,16 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
         elif manifest.type not in CHILD_TYPES:
             return refused("children may only send messages")
     else:
-        grant = ctx.grant()
+        if isinstance(manifest, RightsManifest):
+            raw = ctx.incus.config_get(ctx.sender.full, labels.GRANT)
+            if not raw:
+                return None
+            try:
+                grant = effective_grant(Grant.from_label(raw), profiles.repo_cap(ctx.cfg))
+            except GrantError:
+                return None
+        else:
+            grant = ctx.grant()
         if grant is None:
             return refused(NOT_ALLOWED)
         op = OPERATION_OF[manifest.type]

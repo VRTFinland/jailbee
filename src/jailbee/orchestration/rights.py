@@ -160,6 +160,11 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
         timed = _timed(ctx, child)
         old_owned, old_timed = owned.copy(), timed.copy()
         before = {item: _held(ctx, child, item) for item in (*revokes, *grants)}
+        for item, held in before.items():
+            deadline = _deadline(timed.get(item))
+            if deadline is not None and deadline <= ctx.now and held.until != deadline:
+                # The old timed right ended; a later human attachment is not ours.
+                timed.pop(item, None)
     except Exception as exc:
         return failed(str(exc))
     changes: list[str] = []

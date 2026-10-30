@@ -996,3 +996,106 @@ def test_container_wildcard_requires_work_network(tmp_path, mocker):
     with pytest.raises(ValueError, match="container-scope wildcards need the work network"):
         egress_scope.add_container_entry(cfg, incus, "c", "*.example.com")
     incus.config_set.assert_not_called()
+
+
+def test_readding_stored_entry_materialises_acl_for_rollback(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    store = {egress_scope.EGRESS_EXTRA_KEY: '["pypi.org"]'}
+    incus.config_get.side_effect = lambda n, k: store.get(k)
+    incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
+    incus.config_unset.side_effect = lambda n, k: store.pop(k, None)
+    live = {"allowed": True}
+    def sync(*args):
+        live["allowed"] = "pypi.org" in json.loads(store.get(egress_scope.EGRESS_EXTRA_KEY, "[]"))
+        if not live["allowed"]:
+            raise ValueError("bridge write")
+        return False
+    mocker.patch("jailbee.egress_scope._sync_container_entry", side_effect=sync)
+    with pytest.raises(ValueError, match="bridge write"):
+        egress_scope.remove_container_entry(cfg, incus, "c", "pypi.org")
+    egress_scope.add_container_entry(cfg, incus, "c", "pypi.org")
+    assert live["allowed"]
+
+
+@pytest.mark.parametrize("work", [False, True])
+def test_remove_prunes_revoked_acl_even_when_remaining_dns_fails(tmp_path, mocker, work):
+    from jailbee.network import extra_acl_yaml, entries_from_acl_yaml
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    name = f"{cfg.container_prefix}-c"
+    store = {egress_scope.EGRESS_EXTRA_KEY: '["expired.org", "keep.org"]'}
+    incus.config_get.side_effect = lambda n, k: store.get(k)
+    incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
+    acl_name = egress_scope.extra_acl_name(name)
+    live = {acl_name: extra_acl_yaml(acl_name, [
+        EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
+        EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org")])}
+    incus.network_acl_exists.side_effect = lambda n: n in live
+    incus.network_acl_show.side_effect = lambda n: live[n]
+    incus.network_acl_set_yaml.side_effect = lambda n, body: live.__setitem__(n, body)
+    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    incus.list_containers.return_value = [{"name": name}]
+    # Reproduce the real materialiser's all-DNS-failed preservation path.
+    def preserve(*args, **kwargs):
+        return None
+    mocker.patch("jailbee.egress_scope.apply_container_acl", side_effect=preserve)
+    mocker.patch("jailbee.work_acl.apply_work_container_acl", side_effect=preserve)
+    mocker.patch("jailbee.work_acl.reconcile_work_acl")
+    mocker.patch("jailbee.egress_scope._repin_hosts_quietly")
+    mocker.patch("jailbee.egress_proxy.sync_container", return_value=False)
+    egress_scope.remove_container_entry(cfg, incus, name, "expired.org")
+    assert [e.description for e in entries_from_acl_yaml(live[acl_name])] == ["keep.org"]
+
+
+@pytest.mark.parametrize("work", [False, True])
+def test_real_acl_removal_with_dns_outage_prunes_nic_and_bridge(tmp_path, mocker, work):
+    from jailbee.network import extra_acl_yaml, entries_from_acl_yaml
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    name = f"{cfg.container_prefix}-c"
+    incus = mocker.MagicMock()
+    store = {egress_scope.EGRESS_EXTRA_KEY: '["expired.org", "keep.org"]'}
+    incus.config_get.side_effect = lambda n, k: store.get(k)
+    incus.config_set.side_effect = lambda n, k, v: store.__setitem__(k, v)
+    incus.config_unset.side_effect = lambda n, k: store.pop(k, None)
+    nic = {"type": "nic", "network": "jailbee-work" if work else "incusbr0",
+           "security.ipv4_filtering": "true", "ipv4.address": "10.42.0.2"}
+    profiles = [f"{cfg.container_prefix}-base", f"{cfg.container_prefix}-net-work-strict"] if work else [f"{cfg.container_prefix}-base"]
+    incus.list_containers.return_value = [{"name": name, "profiles": profiles,
+                                          "devices": {"eth0": nic}, "expanded_devices": {"eth0": nic}}]
+    acl = egress_scope.extra_acl_name(name)
+    live = {acl: extra_acl_yaml(acl, [
+        EgressEntry(destinations=["1.2.3.4"], port=None, description="expired.org"),
+        EgressEntry(destinations=["5.6.7.8"], port=None, description="keep.org")])}
+    incus.network_acl_exists.return_value = True
+    incus.network_acl_show.side_effect = lambda n: live.get(n, "")
+    incus.network_acl_set_yaml.side_effect = lambda n, body: live.__setitem__(n, body)
+    mocker.patch("jailbee.egress.resolve_with_status", return_value=({}, {"keep.org": "DNS down"}))
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.network_generation.generation_of", return_value="work" if work else "legacy")
+    mocker.patch("jailbee.egress_scope._repin_hosts_quietly")
+    mocker.patch("jailbee.egress_proxy.sync_container", return_value=False)
+    mocker.patch("jailbee.services_acl.ensure_services_acl")
+    if work:
+        from jailbee.work_acl import _work_extras_acl_name
+        bridge = _work_extras_acl_name(cfg)
+        mocker.patch("jailbee.work_acl.ensure_services_acl")
+        mocker.patch("jailbee.work_acl._work_occupants", return_value=[
+            {"name": name, "ip": "10.42.0.2", "profiles": profiles, "device": nic}])
+        mocker.patch("jailbee.work_acl._attached", return_value=[])
+        mocker.patch("jailbee.work_acl._write_attached")
+    else:
+        bridge = egress_scope.bridge_extras_acl_name(cfg.container_prefix)
+        mocker.patch("jailbee.egress_pool._apply_acl_with_nft_quirk",
+                     side_effect=lambda i,n,body: live.__setitem__(n, body))
+        mocker.patch("jailbee.init_command.attach_acl_to_bridge")
+    egress_scope.remove_container_entry(cfg, incus, name, "expired.org")
+    for key in (acl, bridge):
+        assert [entry.description for entry in entries_from_acl_yaml(live[key])] == ["keep.org"]
