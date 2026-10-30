@@ -357,8 +357,9 @@ def test_boot_worker_forwards_orchestrator_prompt(tmp_path, mocker):
     boot = mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.cli._post_start_actions")
     _insert_job(os.getpid(), "starting")
-    result = runner.invoke(app, ["_boot-worker", "--name", "myrepo-feat-a",
-                                 "--initial-prompt", "resume work"])
+    result = runner.invoke(
+        app, ["_boot-worker", "--name", "myrepo-feat-a", "--initial-prompt", "resume work"]
+    )
     assert result.exit_code == 0, result.output
     assert boot.call_args.kwargs["initial_prompt"] == "resume work"
 

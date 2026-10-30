@@ -604,8 +604,9 @@ def test_launch_boot_background_forwards_prompt_and_tracks(mocker, tmp_path, mon
     popen = mocker.patch("jailbee.create_flow.subprocess.Popen")
     popen.return_value.pid = 4242
     mocker.patch("jailbee.background.track_job")
-    started = launch_boot_background(cfg, container_name="p-x", initial_prompt="resume",
-                                     config_path=None)
+    started = launch_boot_background(
+        cfg, container_name="p-x", initial_prompt="resume", config_path=None
+    )
     argv = popen.call_args.args[0]
     assert argv[1:4] == ["-m", "jailbee", "_boot-worker"]
     assert argv[argv.index("--initial-prompt") + 1] == "resume"

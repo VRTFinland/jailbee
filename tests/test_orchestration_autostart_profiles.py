@@ -61,8 +61,9 @@ def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
         assert kwargs["initial_prompt"].endswith("go on")
         return CreateStarted("proj-c1", 12345, tmp_path / "boot.log")
 
-    launch_mock = mocker.patch("jailbee.create_flow.launch_boot_background", create=True,
-                               side_effect=launch)
+    launch_mock = mocker.patch(
+        "jailbee.create_flow.launch_boot_background", create=True, side_effect=launch
+    )
     boot = mocker.patch("jailbee.lifecycle.boot_container")
     result = actions.handle_restart(
         rig.ctx(), _restart().model_copy(update={"autostart_profile": "full"})
@@ -88,16 +89,35 @@ def test_profile_restart_reserves_queue_slot_before_setup_can_fail(make_cfg, tmp
     ctx.nodes[second.full] = second
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
     mocker.patch("jailbee.lifecycle.boot_container")
-    mocker.patch("jailbee.autostart_profiles.run_profile_start", create=True,
-                 side_effect=RuntimeError("setup failed after boot"))
-    mocker.patch("jailbee.create_flow.launch_boot_background", create=True,
-                 return_value=CreateStarted("proj-c1", 12345, tmp_path / "boot.log"))
-    save_queue(tmp_path, {"proj-orch": [
-        QueuedRequest(manifest_id=f"r{i}", child_full=f"proj-c{i}", kind="restart",
-                      queued_at=ctx.now.isoformat(), prompt="go", rights={},
-                      commit=None, branch=None, base=None)
-        for i in (1, 2)
-    ]})
+    mocker.patch(
+        "jailbee.autostart_profiles.run_profile_start",
+        create=True,
+        side_effect=RuntimeError("setup failed after boot"),
+    )
+    mocker.patch(
+        "jailbee.create_flow.launch_boot_background",
+        create=True,
+        return_value=CreateStarted("proj-c1", 12345, tmp_path / "boot.log"),
+    )
+    save_queue(
+        tmp_path,
+        {
+            "proj-orch": [
+                QueuedRequest(
+                    manifest_id=f"r{i}",
+                    child_full=f"proj-c{i}",
+                    kind="restart",
+                    queued_at=ctx.now.isoformat(),
+                    prompt="go",
+                    rights={},
+                    commit=None,
+                    branch=None,
+                    base=None,
+                )
+                for i in (1, 2)
+            ]
+        },
+    )
     results = actions.drain_queue(ctx)
     assert [(q.child_full, out.state) for q, out in results] == [("proj-c1", "started")]
     assert [q.child_full for q in load_queue(tmp_path)["proj-orch"]] == ["proj-c2"]

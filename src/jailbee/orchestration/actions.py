@@ -616,8 +616,9 @@ def _boot(
                 ctx.cfg, container_name=child.full, initial_prompt=prompt, config_path=None
             )
             reservations = load_reservations(ctx.root)
-            entries = [r for r in reservations.get(ctx.sender.full, [])
-                       if r.child_full != child.full]
+            entries = [
+                r for r in reservations.get(ctx.sender.full, []) if r.child_full != child.full
+            ]
             entries.append(Reservation(child.full, worker.pid, ctx.now.isoformat()))
             reservations[ctx.sender.full] = entries
             try:
