@@ -3412,9 +3412,27 @@ _MERGE_KIND_STYLE: dict[str, str] = {
 
 
 LS_FIT_DROP_ORDER: tuple[str, ...] = (
-    "created", "group", "children", "role", "inbox", "mounts", "ttl", "mode",
-    "issues", "network", "outbox", "target_diff", "base", "conflict",
-    "behind_count", "ahead_count", "pr", "wt", "job", "repo", "state",
+    "created",
+    "group",
+    "children",
+    "role",
+    "inbox",
+    "mounts",
+    "ttl",
+    "mode",
+    "issues",
+    "network",
+    "outbox",
+    "target_diff",
+    "base",
+    "conflict",
+    "behind_count",
+    "ahead_count",
+    "pr",
+    "wt",
+    "job",
+    "repo",
+    "state",
 )
 
 

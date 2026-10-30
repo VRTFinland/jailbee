@@ -1,6 +1,7 @@
 """Smoke tests for CLI invocation."""
 
 import subprocess
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -964,11 +965,11 @@ def test_ls_json_narrow_terminal_no_fit(ls_fit_console):
 
 
 def test_ls_fit_drop_order_names_real_fields():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from jailbee.lifecycle import LS_FIT_DROP_ORDER, ls_field_specs
 
-    fields = ls_field_specs(now=datetime.now(timezone.utc), all_repos=True)
+    fields = ls_field_specs(now=datetime.now(UTC), all_repos=True)
     assert set(LS_FIT_DROP_ORDER) <= {f.name for f in fields}
     assert "name" not in LS_FIT_DROP_ORDER
 

@@ -1780,7 +1780,8 @@ def list_cmd(
     wide: Annotated[
         bool,
         typer.Option(
-            "--wide", "-w",
+            "--wide",
+            "-w",
             help="Show every column, even if the table is wider than the terminal.",
         ),
     ] = False,
