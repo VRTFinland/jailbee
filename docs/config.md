@@ -2455,6 +2455,11 @@ something has one" still applies to a hidden-by-config column, unlike
 `dashboard:` block followed the same rule for its one-time import into
 `view_prefs` (see below).
 
+On terminals, the default `jailbee ls` table drops low-priority columns until
+it fits the width, keeping NAME. Setting `ls.fields` or passing `--fields`
+disables fitting; `--wide` / `-w` also keeps every selected column. Piped
+output and JSON are never fitted. A notice below the table lists hidden columns.
+
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
 DIFF ±, ↑, ↓, MERGE, plus the dynamic columns below when they apply. The

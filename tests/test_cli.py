@@ -1,6 +1,7 @@
 """Smoke tests for CLI invocation."""
 
 import subprocess
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -893,6 +894,84 @@ def _one_container(mocker):
     ]
     incus_mock.return_value.config_get.return_value = None
     return incus_mock
+
+
+@pytest.fixture
+def ls_fit_console(mocker, tmp_path):
+    from io import StringIO
+
+    from rich.console import Console
+
+    repo = _setup_repo_with_columns(tmp_path, "ls: {}\n")
+    mocker.patch("jailbee.cli._resolve_config_path", return_value=repo / ".jailbee/config.yaml")
+    _one_container(mocker)
+    console = Console(file=StringIO(), width=40, force_terminal=True, record=True)
+    mocker.patch("jailbee.tui.console", console)
+    return console, repo
+
+
+def test_ls_fits_narrow_terminal(ls_fit_console):
+    console, _ = ls_fit_console
+    result = CliRunner().invoke(app, ["ls"])
+    assert result.exit_code == 0, result.output
+    assert "column(s) hidden to fit:" in " ".join(console.export_text().split())
+
+
+@pytest.mark.parametrize("flag", ["--wide", "-w"])
+def test_ls_wide_flag_disables_fit(ls_fit_console, flag):
+    console, _ = ls_fit_console
+    result = CliRunner().invoke(app, ["ls", flag])
+    assert result.exit_code == 0, result.output
+    assert "hidden to fit" not in console.export_text()
+
+
+def test_ls_explicit_fields_disable_fit(ls_fit_console):
+    console, _ = ls_fit_console
+    result = CliRunner().invoke(app, ["ls", "--fields", "name,created,base"])
+    assert result.exit_code == 0, result.output
+    text = console.export_text()
+    assert "CREATED" in text and "BASE" in text
+    assert "hidden to fit" not in text
+
+
+def test_ls_configured_fields_disable_fit(ls_fit_console):
+    console, repo = ls_fit_console
+    (repo / ".jailbee/config.yaml").write_text("ls:\n  fields: [name, created, base]\n")
+    result = CliRunner().invoke(app, ["ls"])
+    assert result.exit_code == 0, result.output
+    text = console.export_text()
+    assert "CREATED" in text and "BASE" in text
+    assert "hidden to fit" not in text
+
+
+def test_ls_not_a_terminal_no_fit(ls_fit_console):
+    console, _ = ls_fit_console
+    console._force_terminal = False
+    result = CliRunner().invoke(app, ["ls"])
+    assert result.exit_code == 0, result.output
+    assert "hidden to fit" not in console.export_text()
+
+
+def test_ls_json_narrow_terminal_no_fit(ls_fit_console):
+    import json
+
+    console, _ = ls_fit_console
+    result = CliRunner().invoke(app, ["ls", "-o", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data[0]["name"] == "feat-x"
+    assert "created" in data[0] and "base" in data[0]
+    assert "hidden to fit" not in console.export_text()
+
+
+def test_ls_fit_drop_order_names_real_fields():
+    from datetime import datetime
+
+    from jailbee.lifecycle import LS_FIT_DROP_ORDER, ls_field_specs
+
+    fields = ls_field_specs(now=datetime.now(UTC), all_repos=True)
+    assert set(LS_FIT_DROP_ORDER) <= {f.name for f in fields}
+    assert "name" not in LS_FIT_DROP_ORDER
 
 
 def test_ls_honours_the_configured_field_list(mocker, tmp_path):

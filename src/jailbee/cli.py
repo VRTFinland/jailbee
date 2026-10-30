@@ -1777,12 +1777,21 @@ def list_cmd(
             help="Show per-submodule sub-rows (auto-on in repos with submodules).",
         ),
     ] = True,
+    wide: Annotated[
+        bool,
+        typer.Option(
+            "--wide",
+            "-w",
+            help="Show every column, even if the table is wider than the terminal.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """List managed containers."""
     from jailbee.config import models_columns
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
+        LS_FIT_DROP_ORDER,
         list_containers,
         ls_field_specs,
         repo_has_submodules,
@@ -1867,6 +1876,13 @@ def list_cmd(
         else (columns.fields or () if fmt == "table" else ())
     )
     sample_ls_columns(cfg, containers, requested)
+    fit = (
+        fmt == "table"
+        and fields is None
+        and not columns.fields
+        and console.is_terminal
+        and not wide
+    )
 
     table_format.emit(
         containers,
@@ -1877,6 +1893,7 @@ def list_cmd(
         title="🐝 jailbee containers" if fmt == "table" else None,
         empty_message="[dim](no containers found)[/dim]",
         sub_rows=submodule_sub_rows if show_submodules else None,
+        fit_order=LS_FIT_DROP_ORDER if fit else None,
     )
 
 

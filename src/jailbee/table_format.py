@@ -17,12 +17,14 @@ Conventions:
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import typer
 from rich.console import Console
+from rich.measure import Measurement
 from rich.table import Table
 
 Justify = Literal["default", "left", "center", "right", "full"]
@@ -165,6 +167,25 @@ def apply_column_config[T](
     ]
 
 
+def _build_table[T](
+    visible: Sequence[FieldSpec[T]],
+    rows: Sequence[T],
+    title: str | None,
+    sub_rows: Callable[[T], list[dict[str, str]]] | None,
+) -> Table:
+    has_footer = bool(rows) and any(f.footer is not None for f in visible)
+    table = Table(title=title, show_footer=has_footer)
+    for f in visible:
+        footer_text = f.footer(rows) if (has_footer and f.footer) else ""
+        table.add_column(f.header, justify=f.justify, footer=footer_text)
+    for r in rows:
+        table.add_row(*(f.cell(r) for f in visible))
+        if sub_rows is not None:
+            for sr in sub_rows(r):
+                table.add_row(*(sr.get(f.name, "") for f in visible))
+    return table
+
+
 def emit[T](
     rows: Sequence[T],
     all_fields: Sequence[FieldSpec[T]],
@@ -175,12 +196,17 @@ def emit[T](
     title: str | None = None,
     empty_message: str | None = None,
     sub_rows: Callable[[T], list[dict[str, str]]] | None = None,
+    fit_order: Sequence[str] | None = None,
+    fit_notice: bool = True,
 ) -> None:
     """Render ``rows`` as either a Rich table or JSON.
 
     ``fmt`` must be ``"table"`` or ``"json"``. ``fields``, if given, is
     a comma-separated list of :attr:`FieldSpec.name` values that
     overrides the format-specific defaults and disables ``show_if``.
+    ``fit_order`` opts table output into dropping columns until it fits:
+    unlisted columns drop from the right first, then listed columns in order.
+    The ``name`` column is never dropped; ``fit_notice`` controls the notice.
     """
     if fmt not in ("table", "json"):
         raise typer.BadParameter(f"unknown format {fmt!r}; allowed: table, json")
@@ -199,16 +225,27 @@ def emit[T](
     else:
         visible = list(selected)
 
-    has_footer = bool(rows) and any(f.footer is not None for f in visible)
-    table = Table(title=title, show_footer=has_footer) if title else Table(show_footer=has_footer)
-    for f in visible:
-        footer_text = f.footer(rows) if (has_footer and f.footer) else ""
-        table.add_column(f.header, justify=f.justify, footer=footer_text)
-    for r in rows:
-        table.add_row(*(f.cell(r) for f in visible))
-        if sub_rows is not None:
-            for sr in sub_rows(r):
-                table.add_row(*(sr.get(f.name, "") for f in visible))
+    table = _build_table(visible, rows, title, sub_rows)
+    dropped: list[str] = []
+    if fit_order is not None:
+        ranks = {name: index for index, name in enumerate(fit_order)}
+        candidates = sorted(
+            (f for f in reversed(visible) if f.name != "name"),
+            key=lambda f: ranks.get(f.name, -1),
+        )
+        # Rich clamps measurements to max_width; measure without terminal squeezing.
+        options = console.options.update_width(sys.maxsize)
+        for candidate in candidates:
+            if Measurement.get(console, options, table).maximum <= console.width:
+                break
+            visible.remove(candidate)
+            dropped.append(candidate.header)
+            table = _build_table(visible, rows, title, sub_rows)
     console.print(table)
+    if dropped and fit_notice:
+        console.print(
+            f"[dim]{len(dropped)} column(s) hidden to fit: {', '.join(dropped)}"
+            " — widen the terminal, or use --wide or --fields[/dim]"
+        )
     if not rows and empty_message:
         console.print(empty_message)

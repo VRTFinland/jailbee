@@ -630,7 +630,10 @@ ls:
 `fields`, when set, wins outright and may name a column that's off by
 default (`local_diff`, `local_count`) or would otherwise be hidden by a
 dynamic rule (e.g. `pr` with nothing open) — naming a column is a request
-for exactly that column. `hide` only prunes the *built-in* default set.
+for exactly that column. Setting `ls.fields` also disables automatic terminal
+width fitting, as do `--fields` and `--wide` / `-w`. With default columns,
+`jailbee ls` drops low-priority columns to fit a terminal; piped output and
+JSON are unaffected. `hide` only prunes the *built-in* default set.
 
 Allowed names: `name`, `full_name`, `alias`, `repo`, `mode`, `base`, `state`,
 `created`, `job`, `network`, `ttl`, `loose_until`, `ip`, `memory_limit`,

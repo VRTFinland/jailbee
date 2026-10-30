@@ -3411,6 +3411,31 @@ _MERGE_KIND_STYLE: dict[str, str] = {
 }
 
 
+LS_FIT_DROP_ORDER: tuple[str, ...] = (
+    "created",
+    "group",
+    "children",
+    "role",
+    "inbox",
+    "mounts",
+    "ttl",
+    "mode",
+    "issues",
+    "network",
+    "outbox",
+    "target_diff",
+    "base",
+    "conflict",
+    "behind_count",
+    "ahead_count",
+    "pr",
+    "wt",
+    "job",
+    "repo",
+    "state",
+)
+
+
 def ls_field_specs(
     *, now: datetime, all_repos: bool = False, show_submodules: bool = False
 ) -> list[table_format.FieldSpec[ContainerInfo]]:

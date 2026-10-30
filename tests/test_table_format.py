@@ -57,6 +57,171 @@ FIELDS: list[FieldSpec[Row]] = [
 ]
 
 
+def _fit_fields() -> list[FieldSpec[dict[str, str]]]:
+    return [
+        FieldSpec(name=name, header=name.upper(), cell=lambda r: r["value"], json=lambda r: r)
+        for name in ("name", "a", "b", "c")
+    ]
+
+
+def _fit_console(width: int) -> Console:
+    return Console(file=StringIO(), width=width, force_terminal=True, record=True)
+
+
+def test_fit_drops_in_order_until_it_fits() -> None:
+    console = _fit_console(40)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("b", "a", "c"),
+    )
+    text = console.export_text()
+    headers = text.splitlines()[1]
+    assert [cell.strip() for cell in headers.split("┃")[1:-1]] == ["NAME", "C"]
+    assert "2 column(s) hidden to fit: B, A" in " ".join(text.split())
+
+
+def test_fit_keeps_all_when_wide_enough() -> None:
+    console = _fit_console(200)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("b", "a", "c"),
+    )
+    text = console.export_text()
+    assert [cell.strip() for cell in text.splitlines()[1].split("┃")[1:-1]] == [
+        "NAME",
+        "A",
+        "B",
+        "C",
+    ]
+    assert "hidden to fit" not in text
+
+
+def test_fit_never_drops_name() -> None:
+    console = _fit_console(5)
+    fields = _fit_fields()
+    fields[0] = FieldSpec(name="name", header="NAME", cell=lambda r: "n", json=lambda r: "n")
+    emit(
+        [{"value": "123456789012"}],
+        fields,
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("name", "b", "a", "c"),
+        fit_notice=False,
+    )
+    # Even the header cannot fit at width 5, but the NAME cell survives.
+    assert "n" in console.export_text()
+
+
+def test_fit_unlisted_columns_drop_first() -> None:
+    console = _fit_console(46)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("a",),
+    )
+    text = console.export_text()
+    assert "1 column(s) hidden to fit: C" in " ".join(text.split())
+
+
+def test_no_fit_order_is_unchanged() -> None:
+    console = _fit_console(40)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+    )
+    text = console.export_text()
+    assert [cell.strip() for cell in text.splitlines()[1].split("┃")[1:-1]] == [
+        "NAME",
+        "A",
+        "B",
+        "C",
+    ]
+    assert "hidden to fit" not in text
+
+
+@pytest.mark.parametrize("extra", ["sub_rows", "footer"])
+def test_fit_measures_sub_rows_and_footer(extra: str) -> None:
+    from dataclasses import replace
+
+    console = _fit_console(40)
+    fields = _fit_fields()[:2]
+    if extra == "footer":
+        fields[1] = replace(fields[1], footer=lambda rows: "x" * 40)
+    emit(
+        [{"value": "short"}],
+        fields,
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("a",),
+        sub_rows=(lambda row: [{"name": "child", "a": "x" * 40}]) if extra == "sub_rows" else None,
+    )
+    text = console.export_text()
+    assert "1 column(s) hidden to fit: A" in " ".join(text.split())
+    assert "NAME" in text
+
+
+def test_fit_measures_markup_and_wide_glyphs() -> None:
+    console = _fit_console(22)
+    fields = [
+        FieldSpec(name="name", header="NAME", cell=lambda r: "[bold]界界[/bold]", json=lambda r: r),
+        FieldSpec(
+            name="diff", header="[bold]DIFF ±[/bold]", cell=lambda r: "界界界", json=lambda r: r
+        ),
+        FieldSpec(name="ahead", header="↑", cell=lambda r: "🐝", json=lambda r: r),
+    ]
+    emit([{}], fields, fmt="table", fields=None, console=console, fit_order=("diff", "ahead"))
+    text = console.export_text()
+    # Natural widths are 4 + 6 + 2 + 10 (borders/padding): exactly 22.
+    assert "DIFF ±" in text and "↑" in text
+    assert "hidden to fit" not in text
+    assert "[bold]" not in text
+
+
+def test_fit_empty_order_drops_unlisted_columns_from_right() -> None:
+    console = _fit_console(31)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=(),
+    )
+    assert "2 column(s) hidden to fit: C, B" in " ".join(console.export_text().split())
+
+
+def test_fit_notice_can_be_disabled() -> None:
+    console = _fit_console(31)
+    emit(
+        [{"value": "123456789012"}],
+        _fit_fields(),
+        fmt="table",
+        fields=None,
+        console=console,
+        fit_order=("b", "a", "c"),
+        fit_notice=False,
+    )
+    text = console.export_text()
+    assert [cell.strip() for cell in text.splitlines()[1].split("┃")[1:-1]] == ["NAME", "C"]
+    assert "hidden to fit" not in text
+
+
 def _capture() -> Console:
     return Console(file=StringIO(), force_terminal=False, width=200, no_color=True)
 
