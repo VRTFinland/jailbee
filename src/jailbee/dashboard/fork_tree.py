@@ -1,14 +1,8 @@
-"""Forks under their parent: pure and frontend-agnostic.
+"""Orchestration children under their orchestrator, frontend-agnostically.
 
-Used by ``sorting.sort_groups`` (the row order) and the terminal table (the
-name prefix). A fork is matched to its parent by ``ContainerInfo.fork_of``
-(the parent's full name) against ``ContainerInfo.name``.
-
-A row is a root when ``fork_of`` is ``None``, names no row in ``rows``, names
-itself, or lies on a cycle (its parent chain revisits a row). Roots keep their
-input order, children keep their input order among siblings, and the walk is
-depth-first. Only a ``fork_of`` naming a row that is not in ``rows`` makes a
-row an orphan; a cycle is a root without a marker.
+Rows are matched by ``ContainerInfo.child.orchestrator`` and full name.
+Roots and siblings keep input order; traversal is depth-first. A missing
+orchestrator marks an orphan; self-references and cycles remain unmarked roots.
 """
 
 from __future__ import annotations
@@ -28,8 +22,8 @@ INDENT = "  "
 
 @dataclass(frozen=True)
 class ForkLayout:
-    depth: Mapping[str, int]  # full name -> 0 for roots, n for an n-deep fork
-    orphans: frozenset[str]  # full names of forks whose parent is not in the rows
+    depth: Mapping[str, int]  # full name -> 0 for roots, n for an n-deep child
+    orphans: frozenset[str]  # full names of children whose orchestrator is not in the rows
 
 
 def _chain_cycles(start: str, parent_of: Mapping[str, str | None]) -> bool:
@@ -45,7 +39,7 @@ def _chain_cycles(start: str, parent_of: Mapping[str, str | None]) -> bool:
 
 
 def _walk(rows: Sequence[ContainerInfo]) -> tuple[list[ContainerInfo], dict[str, int], set[str]]:
-    parent_of = {c.name: (c.fork_of or None) for c in rows}
+    parent_of = {c.name: (c.child.orchestrator if c.child is not None else None) for c in rows}
     children: dict[str, list[ContainerInfo]] = {}
     roots: list[ContainerInfo] = []
     orphans: set[str] = set()
@@ -82,7 +76,7 @@ def tree_order(rows: Sequence[ContainerInfo]) -> list[ContainerInfo]:
 
 
 def name_prefix(layout: ForkLayout, name: str) -> str:
-    """The glyphs shown before a container name: indent plus a fork mark."""
+    """The glyphs shown before a container name: indent plus a child mark."""
     if name in layout.orphans:
         return ORPHAN_PREFIX
     d = layout.depth.get(name, 0)

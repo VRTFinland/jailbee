@@ -261,7 +261,7 @@ def command_path(argv: Sequence[str]) -> str:
 #   - widening a container's network: `net loose` and `net egress add`
 #     can open the host's own and its LAN's addresses to it, so both are
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
-#   - widening what a container may do: `orchestrate grant` lets it start
+#   - widening what a container may do: `orchestrate grant` and `orchestrate adopt` let it start
 #     and manage child containers, so it is a host command like `net loose`
 #     unless `remote.ssh.orchestration` unlocks it (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
@@ -300,6 +300,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net loose",
         "orchestrate grant",
         "orchestrate profile save",
+        "orchestrate adopt",
         "registry up",
         "registry down",
         "display up",
@@ -361,9 +362,9 @@ _NETWORK_WIDENING_COMMANDS: frozenset[str] = frozenset({"net loose", "net egress
 _MOUNT_COMMANDS: frozenset[str] = frozenset({"mount"})
 
 
-# The orchestration command that `remote.ssh.orchestration` turns from a host
-# command into a container command. `revoke` is already a container command.
-_ORCHESTRATION_COMMANDS: frozenset[str] = frozenset({"orchestrate grant"})
+# The orchestration commands that `remote.ssh.orchestration` turns from a host
+# command into a container command. `revoke` and `release` are already container commands.
+_ORCHESTRATION_COMMANDS: frozenset[str] = frozenset({"orchestrate grant", "orchestrate adopt"})
 
 
 @dataclass(frozen=True)
@@ -426,6 +427,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "account group ls",
         "orchestrate ls",
         "orchestrate revoke",
+        "orchestrate release",
         "orchestrate show",
         "apps ls",
         "autostart cancel",

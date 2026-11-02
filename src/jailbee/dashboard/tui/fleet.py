@@ -74,7 +74,7 @@ class Entry:
     dim: bool = False
     """Not a merge target while the dashboard picks them: drawn dim."""
     fork_prefix: str = ""
-    """The NAME cell's fork-tree indent, ``fork_tree.name_prefix``."""
+    """The NAME cell's orchestration-tree indent, ``fork_tree.name_prefix``."""
 
 
 @dataclass(frozen=True)

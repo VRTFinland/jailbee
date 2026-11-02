@@ -543,6 +543,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`jailbee apply` syncs orchestration skills describing conflict-checked update merges"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing children "
+            "adopted with `jb orchestrate adopt`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

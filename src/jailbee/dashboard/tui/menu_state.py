@@ -104,6 +104,7 @@ def open_menu(
         ssh_policy,
         over_ssh=over_ssh,
         remote_mountable=group.remote_mountable,
+        rows=group.containers,
     )
     if group.autostart_profiles and permitted(
         ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh

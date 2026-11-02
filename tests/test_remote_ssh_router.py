@@ -1762,7 +1762,7 @@ def test_remote_unlocks_orchestration_unlocks_grant_only() -> None:
     for level in ("ssh", "orchestrator"):
         unlocks = RemoteUnlocks.of(RemoteSSHConfig(orchestration=level))
         assert unlocks.orchestration is True
-        assert unlocks.commands() == frozenset({"orchestrate grant"})
+        assert unlocks.commands() == frozenset({"orchestrate grant", "orchestrate adopt"})
     assert RemoteUnlocks.of(RemoteSSHConfig()).orchestration is True
     assert RemoteUnlocks.of(RemoteSSHConfig(orchestration="off")).orchestration is False
 
@@ -1790,3 +1790,14 @@ def test_orchestrate_grant_unlock_still_respects_an_allowlist() -> None:
             restrict_host=True,
             unlocks=RemoteUnlocks(orchestration=True),
         )
+
+
+def test_orchestrate_adopt_is_a_host_command_unless_the_feature_is_on(monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks, RouteError, policy_allows
+
+    argv = ("orchestrate", "adopt", "box", "child")
+    with pytest.raises(RouteError):
+        policy_allows(argv, FULL)
+    assert (
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(orchestration=True)) == "orchestrate adopt"
+    )

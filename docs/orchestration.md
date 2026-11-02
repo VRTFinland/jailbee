@@ -24,8 +24,9 @@ Roles:
 
 - **Orchestrator**: a container that holds a grant. It may do what the grant
   permits.
-- **Child**: a container the broker created for an orchestrator. It can only
-  send messages to that orchestrator. A child never orchestrates.
+- **Child**: a container the broker created for an orchestrator or the host
+  user adopted into its topology. It can only send messages to that
+  orchestrator. A child never orchestrates.
 - **Ordinary container**: neither. Nothing changes for it.
 
 Child containers are not a substitute for an agent's own subagents. The
@@ -63,6 +64,8 @@ jb orchestrate grant bugs --profile bugfixer     # start from a configured profi
 jb orchestrate show bugs      # the grant, what this repo leaves of it, running children
 jb orchestrate ls             # every container of this repo with a grant (--json)
 jb orchestrate revoke bugs
+jb orchestrate adopt bugs worker1 worker2
+jb orchestrate release worker1
 ```
 
 `grant` takes `--profile`, `--children`, `--allow OP` / `--deny OP`,
@@ -86,6 +89,31 @@ settings off does not narrow stored grants. See
 
 Revoking stops new spawns and other operations and drops queued spawns.
 Existing children are untouched and stay children.
+
+### Adopt running containers
+
+The host user can adopt existing containers into an orchestrator's topology,
+including stopped containers. The orchestrator must hold an effective grant;
+each child must belong to the same repo and must not be mount-mode, hold a
+grant, have children, or already belong to a different orchestrator. Adoption is
+refused if the resulting number of running children exceeds the effective cap.
+An existing child of the same orchestrator is left unchanged.
+
+Adoption clears stale child-state labels, records the parent and sets the
+on-done policy to keep. It sends an `adopted` inbox message to each side, but
+does not create an import baseline or runner, relaunch an agent, or start
+supervision. Destruction therefore requires an import first or `--force`.
+To supervise a hand-started agent, ask the user to close it before using
+`jailbee-inbox send restart --child C --agent-only`; otherwise a second agent
+may be launched. `JAILBEE_ROLE=child` is set on the next agent launch, not in
+the existing session.
+
+`jb orchestrate release` removes the relationship, child-state labels, watch
+and pending state. It revokes orchestrator-owned rights but leaves user-owned
+rights intact, and refuses while an autostart run is live. If no child is
+named, release always prompts and is refused without an interactive terminal.
+Over remote SSH, adoption requires `remote.ssh.orchestration` to be enabled;
+release is allowed as a narrowing action without that setting.
 
 ### Profiles
 

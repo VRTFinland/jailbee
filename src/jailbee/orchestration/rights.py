@@ -15,6 +15,8 @@ from jailbee.orchestration.grant import ChildRights, Grant, check_rights
 from jailbee.orchestration.protocol import MessageManifest, RightsManifest
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
+    from jailbee.incus import Incus
     from jailbee.orchestration.actions import ActionContext, Node
 
 log = logging.getLogger(__name__)
@@ -86,22 +88,41 @@ def _held(ctx: ActionContext, child: Node, item: str) -> Held:
     )
 
 
-def _apply(ctx: ActionContext, child: Node, item: str, held: Held) -> None:
+def _revoke_item(cfg: Config, incus: Incus, full: str, item: str) -> None:
     if item == "loose":
-        net_switch.switch_mode(
-            ctx.cfg, ctx.incus, child.full, "loose" if held.present else "strict", until=held.until
-        )
+        net_switch.switch_mode(cfg, incus, full, "strict", until=None)
+    elif item.startswith("mount:"):
+        value = item.removeprefix("mount:")
+        if mounts.is_attached(incus, full, value):
+            mounts.remove_optional_mount(cfg, incus, full, value)
+    else:
+        egress_scope.remove_container_entry(cfg, incus, full, item.removeprefix("egress:"))
+
+
+def revoke_owned(cfg: Config, incus: Incus, full: str) -> list[str]:
+    from jailbee import autostart_status
+
+    if autostart_status.live_run(cfg, full) is not None:
+        raise ValueError(f"autostart is running in `{full}`")
+    raw = incus.config_get(full, labels.RIGHTS)
+    owned = sorted(_label_items(ChildRights.from_label(raw))) if raw else []
+    for item in owned:
+        _revoke_item(cfg, incus, full, item)
+    return owned
+
+
+def _apply(ctx: ActionContext, child: Node, item: str, held: Held) -> None:
+    if not held.present:
+        _revoke_item(ctx.cfg, ctx.incus, child.full, item)
+        return
+    if item == "loose":
+        net_switch.switch_mode(ctx.cfg, ctx.incus, child.full, "loose", until=held.until)
         return
     kind, value = item.split(":", 1)
     if kind == "mount":
-        if held.present:
-            mounts.attach(ctx.cfg, ctx.incus, child.full, value, until=held.until)
-        elif mounts.is_attached(ctx.incus, child.full, value):
-            mounts.remove_optional_mount(ctx.cfg, ctx.incus, child.full, value)
-    elif held.present:
-        egress_scope.add_container_entry(ctx.cfg, ctx.incus, child.full, value, until=held.until)
+        mounts.attach(ctx.cfg, ctx.incus, child.full, value, until=held.until)
     else:
-        egress_scope.remove_container_entry(ctx.cfg, ctx.incus, child.full, value)
+        egress_scope.add_container_entry(ctx.cfg, ctx.incus, child.full, value, until=held.until)
 
 
 def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:

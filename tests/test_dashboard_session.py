@@ -11,6 +11,7 @@ from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt, validate_answer
 from jailbee.dashboard.system import SystemStatus
+from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.sysstat import MemoryStatus
@@ -699,6 +700,125 @@ def test_save_profile_failure_closes_menu(mocker, tmp_path, existing):
 def test_save_profile_hidden_when_ssh_policy_forbids(mocker, tmp_path):
     session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
     assert "save-profile" not in [e.value for e in session.open_orchestration("alpha-one").entries]
+
+
+@pytest.mark.parametrize(
+    ("action", "child", "argv"),
+    [
+        ("adopt", False, ["orchestrate", "adopt", "--", "alpha-one", "alpha-two"]),
+        ("release", True, ["orchestrate", "release", "--", "alpha-two"]),
+    ],
+)
+def test_orchestration_topology_picker(mocker, tmp_path, action, child, argv):
+    from jailbee.orchestration.view import ChildView
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    row = ci("alpha-two", "alpha")
+    if child:
+        row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
+    session.groups[0].containers.append(row)
+    menu = session.open_orchestration("alpha-one")
+    entry = next(e for e in menu.entries if e.value == action)
+    picker = session.submit_picker(menu, entry)
+    assert picker.purpose == "container-orchestration-" + action
+    assert picker.back.purpose == "container-orchestration"
+    assert [e.label for e in picker.entries] == [row.display_name]
+    result = session.submit_picker(picker, picker.entries[0])
+    assert quiet.call_args.args[0].repo_root == tmp_path
+    assert quiet.call_args.args[1] == argv
+    assert result.purpose == "container-orchestration"
+
+
+@pytest.mark.parametrize("action", ["adopt", "release"])
+def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, action):
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.orchestration.view import ChildView
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    row = ci("alpha-two", "alpha")
+    if action == "release":
+        row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
+    session.groups[0].containers.append(row)
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": [f"orchestrate {action}"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    outer = tmenu.open_menu(
+        session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True
+    )
+    assert outer is not None
+    assert any(verb == "orchestration" for _, verb in outer.actions)
+    menu = session.open_orchestration("alpha-one")
+    assert [e.value for e in menu.entries] == [action]
+    picker = session.submit_picker(menu, menu.entries[0])
+    assert [e.value for e in picker.entries] == ["alpha-two"]
+    assert session.submit_picker(picker, picker.entries[0]).purpose == "container-orchestration"
+    expected = ["orchestrate", action, "--"]
+    if action == "adopt":
+        expected.append("alpha-one")
+    assert quiet.call_args.args[1] == [*expected, "alpha-two"]
+
+
+def test_ssh_topology_does_not_offer_other_repo_candidates(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session.groups.append(
+        dmodel.RepoGroup("beta", str(tmp_path / "beta"), None, [ci("beta-free", "beta")])
+    )
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": ["orchestrate adopt"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    assert (
+        tmenu.open_menu(session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True)
+        is None
+    )
+    assert session.open_orchestration("alpha-one") is None
+
+
+def test_orchestration_topology_empty_and_ssh_gates(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.orchestration.view import ChildView
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    assert not {"adopt", "release"} & {
+        e.value for e in session.open_orchestration("alpha-one").entries
+    }
+    session.groups[0].containers.extend(
+        [
+            ci("alpha-free", "alpha"),
+            dataclasses.replace(
+                ci("alpha-child", "alpha"), child=ChildView("alpha-one", "working", (), False, ())
+            ),
+            dataclasses.replace(
+                ci("alpha-other", "alpha"),
+                child=ChildView("alpha-other-parent", "working", (), False, ()),
+            ),
+        ]
+    )
+    menu = session.open_orchestration("alpha-one")
+    picker = session.submit_picker(menu, next(e for e in menu.entries if e.value == "release"))
+    assert [e.value for e in picker.entries] == ["alpha-child"]
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": ["orchestrate grant"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    assert not {"adopt", "release"} & {
+        e.value for e in session.open_orchestration("alpha-one").entries
+    }
 
 
 def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):

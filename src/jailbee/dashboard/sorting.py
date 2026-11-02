@@ -11,8 +11,8 @@ The default order — undated containers first, then newest first, as
 sort's tie-breaker, so returning to the default after a sort restores it
 exactly instead of keeping the previous sort's order.
 
-Forks are then moved under their parent (``fork_tree.tree_order``), so every
-sort sorts roots and siblings, never splitting a fork from its parent.
+Orchestration children are moved under their orchestrator (``fork_tree.tree_order``),
+so every sort sorts roots and siblings without splitting a child from its orchestrator.
 """
 
 from __future__ import annotations
