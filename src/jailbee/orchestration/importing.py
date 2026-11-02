@@ -165,9 +165,15 @@ def _merge_into_child(
             outcome = f"{child.short} already contains {oid[:12]}"
         else:
             new_head = sync._merge_ref_in_container(
-                bounded, child.full, repo_dir, ref=ref, label=label,
+                bounded,
+                child.full,
+                repo_dir,
+                ref=ref,
+                label=label,
                 message=f"Merge {label} from orchestrator {ctx.sender.short}",
-                short=child.short, uid=uid, ff_only=probe.relation == "fast_forward",
+                short=child.short,
+                uid=uid,
+                ff_only=probe.relation == "fast_forward",
             )
             kind = "fast-forward" if probe.relation == "fast_forward" else "merge commit"
             body = (
@@ -181,14 +187,28 @@ def _merge_into_child(
         return refused("child changed during update; merge aborted, nothing merged")
     except (SyncError, IncusError) as exc:
         return refused(str(exc))
-    msg = InboxMessage.model_validate({
-        "version": 1, "id": new_host_id(), "type": "message", "kind": "update",
-        "from": ctx.sender.short, "imported_ref": ref, "imported_sha": oid,
-        "merged_head": new_head, "body": body,
-    })
+    msg = InboxMessage.model_validate(
+        {
+            "version": 1,
+            "id": new_host_id(),
+            "type": "message",
+            "kind": "update",
+            "from": ctx.sender.short,
+            "imported_ref": ref,
+            "imported_sha": oid,
+            "merged_head": new_head,
+            "body": body,
+        }
+    )
     outbox.deliver(
-        ctx.incus, ctx.root, child.full, msg, running=True, uid=uid,
-        now=ctx.now, seq=next(ctx.seq),
+        ctx.incus,
+        ctx.root,
+        child.full,
+        msg,
+        running=True,
+        uid=uid,
+        now=ctx.now,
+        seq=next(ctx.seq),
     )
     return done(outcome)
 
@@ -263,8 +283,14 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
     if manifest.merge:
         assert branch is not None
         return _merge_into_child(
-            ctx, child, bounded, repo_dir=child_repo_dir, ref=ref, oid=oid,
-            label=branch, child_branch=child_branch,
+            ctx,
+            child,
+            bounded,
+            repo_dir=child_repo_dir,
+            ref=ref,
+            oid=oid,
+            label=branch,
+            child_branch=child_branch,
         )
     msg = InboxMessage.model_validate(
         {

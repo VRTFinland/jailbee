@@ -289,9 +289,14 @@ def test_update_rejects_invalid_import_oid(tmp_path, seams, oid):
 @pytest.fixture
 def merge_seams(mocker):
     from jailbee.sync import MergeProbe
+
     return {
-        "preflight": mocker.patch("jailbee.sync._run_container_preflights", return_value="child-branch"),
-        "probe": mocker.patch("jailbee.sync.probe_merge_in_container", return_value=MergeProbe("fast_forward", ())),
+        "preflight": mocker.patch(
+            "jailbee.sync._run_container_preflights", return_value="child-branch"
+        ),
+        "probe": mocker.patch(
+            "jailbee.sync.probe_merge_in_container", return_value=MergeProbe("fast_forward", ())
+        ),
         "merge": mocker.patch("jailbee.sync._merge_ref_in_container", return_value="b" * 40),
         "abort": mocker.patch("jailbee.sync.abort_merge_in_container"),
         "head": mocker.patch("jailbee.sync._container_head_oid", return_value="c" * 40),
@@ -320,6 +325,7 @@ def test_update_merge_fast_forward_merges_and_messages(tmp_path, seams, merge_se
 
 def test_update_merge_creates_merge_commit(tmp_path, seams, merge_seams):
     from jailbee.sync import MergeProbe
+
     merge_seams["probe"].return_value = MergeProbe("merge", ())
     assert actions.dispatch(_ctx(tmp_path), _manifest(merge=True)).state == "done"
     kwargs = merge_seams["merge"].call_args.kwargs
@@ -327,9 +333,13 @@ def test_update_merge_creates_merge_commit(tmp_path, seams, merge_seams):
     assert kwargs["message"] == "Merge main from orchestrator orch"
 
 
-@pytest.mark.parametrize("paths, expected", [(("a.py", "b.py"), "a.py, b.py"), (tuple(str(i) for i in range(25)), "… and 5 more")])
+@pytest.mark.parametrize(
+    "paths, expected",
+    [(("a.py", "b.py"), "a.py, b.py"), (tuple(str(i) for i in range(25)), "… and 5 more")],
+)
 def test_update_merge_conflicts_refused(tmp_path, seams, merge_seams, paths, expected):
     from jailbee.sync import MergeProbe
+
     merge_seams["probe"].return_value = MergeProbe("merge", paths)
     out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
     assert out.state == "refused" and expected in out.detail
@@ -354,6 +364,7 @@ def test_update_merge_mount_mode_refused(tmp_path, seams, merge_seams):
 
 def test_update_merge_already_contained_no_merge(tmp_path, seams, merge_seams):
     from jailbee.sync import MergeProbe
+
     merge_seams["probe"].return_value = MergeProbe("contained", ())
     out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
     assert out.state == "done" and out.detail == f"fix-1 already contains {SHA[:12]}"
@@ -364,6 +375,7 @@ def test_update_merge_already_contained_no_merge(tmp_path, seams, merge_seams):
 
 def test_update_merge_race_conflict_aborts_and_refuses(tmp_path, seams, merge_seams, mocker):
     from jailbee.sync import MergeConflictError
+
     merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
     assert actions.dispatch(_ctx(tmp_path), _manifest(merge=True)).state == "refused"
     merge_seams["abort"].assert_called_once()
@@ -373,8 +385,14 @@ def test_update_merge_race_conflict_aborts_and_refuses(tmp_path, seams, merge_se
 def test_update_merge_with_explicit_ref(tmp_path, seams, merge_seams, mocker):
     mocker.patch("jailbee.orchestration.importing._update_source", return_value=SHA)
     mocker.patch("jailbee.submodules.transport_submodules_to_container")
-    mocker.patch("jailbee.sync.push_to_container", return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"))
-    assert actions.dispatch(_ctx(tmp_path), _manifest(ref="refs/heads/release/1", merge=True)).state == "done"
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
+    assert (
+        actions.dispatch(_ctx(tmp_path), _manifest(ref="refs/heads/release/1", merge=True)).state
+        == "done"
+    )
     assert merge_seams["probe"].call_args.kwargs["ref"] == "refs/jailbee/update/orch/u1"
     assert merge_seams["merge"].call_args.kwargs["label"] == "refs/heads/release/1"
 
@@ -387,7 +405,9 @@ def test_update_without_merge_never_probes(tmp_path, seams, merge_seams):
 
 def test_inbox_merged_head_validated():
     from pydantic import ValidationError
+
     from jailbee.orchestration.protocol import InboxMessage
+
     fields = dict(version=1, id="h-12345678", type="message", body="x", merged_head="bad")
     with pytest.raises(ValidationError):
         InboxMessage.model_validate({**fields, "from": "orch"})
