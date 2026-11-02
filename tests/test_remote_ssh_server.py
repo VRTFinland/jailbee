@@ -1916,7 +1916,9 @@ def test_gpg_forward_accepted_once_and_uses_own_path(connection, mocker, tmp_pat
     assert instance.unix_server_requested("/jailbee/gpg-agent") is False
     assert asyncio.run(pending) == "listener"
     session_id = connection.get_extra_info("jailbee_gpg")
-    connection.forward_local_path.assert_awaited_once_with(str(tmp_path / "gpg-remote" / f"{session_id}.sock"), "/jailbee/gpg-agent")
+    connection.forward_local_path.assert_awaited_once_with(
+        str(tmp_path / "gpg-remote" / f"{session_id}.sock"), "/jailbee/gpg-agent"
+    )
     assert registry.current() == session_id
     assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink().name == f"{session_id}.sock"
 
@@ -1951,7 +1953,9 @@ def test_connection_lost_removes_gpg_forward(connection, mocker, tmp_path):
     instance.connection_lost(ConnectionResetError())
     assert registry.current() is None
     assert not socket.exists()
-    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path("/run/jailbee-gpg/host/S.gpg-agent")
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path(
+        "/run/jailbee-gpg/host/S.gpg-agent"
+    )
 
 
 def test_connection_lost_without_gpg_keeps_registry(connection, mocker, tmp_path):
@@ -1973,7 +1977,9 @@ def test_serve_async_resets_gpg_switch_on_start(listener, mocker, tmp_path):
     stale.touch()
     asyncio.run(server.serve_async(RemoteSSHConfig()))
     assert not stale.exists()
-    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path("/run/jailbee-gpg/host/S.gpg-agent")
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path(
+        "/run/jailbee-gpg/host/S.gpg-agent"
+    )
     _, listen = listener
     factory = listen.call_args.kwargs["server_factory"]
     instance = factory()

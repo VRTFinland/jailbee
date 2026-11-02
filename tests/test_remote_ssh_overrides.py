@@ -11,8 +11,8 @@ from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides, de
 
 @pytest.mark.parametrize("value", [False, True])
 def test_remote_gpg_enabled_reads_live_flag(tmp_path, value) -> None:
-    from jailbee.remote_ssh.overrides import remote_gpg_enabled
     from jailbee.global_config import default_global_config_path
+    from jailbee.remote_ssh.overrides import remote_gpg_enabled
 
     path = default_global_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -23,7 +23,9 @@ def test_remote_gpg_enabled_reads_live_flag(tmp_path, value) -> None:
 def test_remote_gpg_enabled_fails_closed(mocker) -> None:
     from jailbee.remote_ssh.overrides import remote_gpg_enabled
 
-    mocker.patch("jailbee.remote_ssh.overrides.load_global_config", side_effect=ConfigError("broken"))
+    mocker.patch(
+        "jailbee.remote_ssh.overrides.load_global_config", side_effect=ConfigError("broken")
+    )
     assert remote_gpg_enabled() is False
 
 

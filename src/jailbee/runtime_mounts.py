@@ -329,7 +329,9 @@ def _gpg_device_configs(runtime_dir: str) -> dict[str, dict[str, str]]:
         "gpg-socket": {"source": str(directory), "path": path, "readonly": "true"},
         "gpg-host-socket": {"source": path, "path": CONTAINER_HOST_DIR, "readonly": "true"},
         "gpg-remote-socket": {
-            "source": str(remote_dir()), "path": CONTAINER_REMOTE_DIR, "readonly": "true"
+            "source": str(remote_dir()),
+            "path": CONTAINER_REMOTE_DIR,
+            "readonly": "true",
         },
     }
 

@@ -87,4 +87,6 @@ def test_reset_points_host_and_clears_stale():
 def test_ssh_link_always_host():
     forwards = gpg.GpgForwards()
     forwards.add("a")
-    assert os.readlink(gpg.switch_dir() / "S.gpg-agent.ssh") == "/run/jailbee-gpg/host/S.gpg-agent.ssh"
+    assert (
+        os.readlink(gpg.switch_dir() / "S.gpg-agent.ssh") == "/run/jailbee-gpg/host/S.gpg-agent.ssh"
+    )

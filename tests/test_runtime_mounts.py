@@ -60,13 +60,25 @@ def test_gpg_mounts_follow_remote_flag(mocker, tmp_path, remote):
     incus = MagicMock()
     incus.exec.return_value = str(cfg.container_user.uid)
     attach_runtime_devices(cfg, incus, "test")
-    added = {c.args[1]: c.args[3] for c in incus.config_device_add.call_args_list if c.args[1].startswith("gpg-")}
+    added = {
+        c.args[1]: c.args[3]
+        for c in incus.config_device_add.call_args_list
+        if c.args[1].startswith("gpg-")
+    }
     runtime = f"/run/user/{cfg.container_user.uid}/gnupg"
     expected = {"gpg-socket": {"source": runtime, "path": runtime, "readonly": "true"}}
     if remote:
         expected["gpg-socket"]["source"] = str(tmp_path / "gpg-switch")
-        expected["gpg-host-socket"] = {"source": runtime, "path": "/run/jailbee-gpg/host", "readonly": "true"}
-        expected["gpg-remote-socket"] = {"source": str(tmp_path / "gpg-remote"), "path": "/run/jailbee-gpg/remote", "readonly": "true"}
+        expected["gpg-host-socket"] = {
+            "source": runtime,
+            "path": "/run/jailbee-gpg/host",
+            "readonly": "true",
+        }
+        expected["gpg-remote-socket"] = {
+            "source": str(tmp_path / "gpg-remote"),
+            "path": "/run/jailbee-gpg/remote",
+            "readonly": "true",
+        }
     assert added == expected
 
 
@@ -77,7 +89,9 @@ def test_gpg_remote_on_creates_switch_dir_without_server(mocker, tmp_path):
     incus = MagicMock()
     incus.exec.return_value = str(cfg.container_user.uid)
     attach_runtime_devices(cfg, incus, "test")
-    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path("/run/jailbee-gpg/host/S.gpg-agent")
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path(
+        "/run/jailbee-gpg/host/S.gpg-agent"
+    )
 
 
 def test_gpg_disabled_skips_all_gpg_devices(mocker):
