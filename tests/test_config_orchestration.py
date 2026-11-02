@@ -36,6 +36,17 @@ def test_profile_defaults_match_grant_defaults():
     )
 
 
+def test_profile_accepts_default_runner():
+    p = OrchestrationProfile.model_validate(
+        {"default_runner": {"agent": "claude-jb", "profile": "grok", "model": "sonnet"}}
+    )
+    assert p.default_runner == Runner(agent="claude-jb", profile="grok", model="sonnet")
+
+
+def test_profile_default_runner_defaults_to_none():
+    assert OrchestrationProfile().default_runner is None
+
+
 def test_unknown_operation_rejected():
     with pytest.raises(ValidationError, match="fly"):
         OrchestrationProfile(operations=["spawn", "message", "fly"])

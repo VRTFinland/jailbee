@@ -37,6 +37,29 @@ def test_profile_grant_converts(cfg_with_view):
     assert g == Grant(max_running_children=5, grantable=Grantable(mounts=("data",)))
 
 
+def test_profile_grant_carries_runner(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "repo")
+    runner = Runner(agent="claude", model="opus")
+    cfg._orchestration_view = OrchestrationView(
+        profiles={"p": OrchestrationProfile(default_runner=runner)}
+    )
+    assert profile_grant(cfg, "p").default_runner == runner
+
+
+def test_profile_of_round_trips_a_grant():
+    g = Grant(
+        max_running_children=3,
+        operations=("message", "spawn", "stop"),
+        grantable=Grantable(mounts=("data",), loose=True, egress=("pypi.org",)),
+        default_runner=Runner(agent="claude", model="opus"),
+    )
+    p = profiles.profile_of(g)
+    assert p.max_running_children == 3
+    assert p.operations == ["message", "spawn", "stop"]
+    assert p.grantable.model_dump() == {"mounts": ["data"], "loose": True, "egress": ["pypi.org"]}
+    assert profiles._grant_of(p) == g
+
+
 def test_unknown_profile_lists_known(cfg_with_view):
     with pytest.raises(GrantError, match=r"nope.*bugfixer"):
         profile_grant(cfg_with_view, "nope")

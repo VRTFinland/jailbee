@@ -98,9 +98,12 @@ orchestration:
     bugfixer:
       max_running_children: 5
       grantable: { mounts: [data] }
+      default_runner: { agent: claude, model: opus }
   default_profile: bugfixer   # applied to every new container when set
 ```
 
+A profile may set `default_runner` for children of its holder; the runner is
+copied into the container preference along with the profile's rights.
 A profile is copied into the grant when it is applied. Editing the profile
 later does not change grants already given; running `jb orchestrate grant
 --profile` again does. `default_profile` is applied when a container is
@@ -271,8 +274,8 @@ runs the repo's primary agent as configured. Set the container preference with
 `--runner-profile` and `--runner-model` require `--runner-agent`. Use
 `--clear-runner` to remove the container preference and fall back to config.
 Reapplying `--profile` also clears the container preference unless a runner is
-specified. `jb orchestrate show` and `ls` display the effective preference;
-the dashboard offers a default runner entry. This preference grants no rights.
+specified or the profile names one. `jb orchestrate show` and `ls` display the
+effective preference; the dashboard offers a default runner entry. This preference grants no rights.
 On `restart`, an absent `runner` keeps the child's previous one, while
 `"runner": null` selects the current effective default, or clears the runner
 if no default is configured. The runner is stored on the child as a label and

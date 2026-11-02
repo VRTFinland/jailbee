@@ -2749,6 +2749,7 @@ orchestration:
   profiles:
     worker:
       max_running_children: 4    # 1-64, default 4
+      default_runner: {agent: claude, model: opus}  # optional container preference
       operations: [spawn, message, import, restart, stop, destroy]   # default
       grantable:                 # what the holder may hand on to its children
         mounts: []               # optional_mounts names
