@@ -14,6 +14,7 @@ def test_stage_creates_current_and_version(tmp_path):
     assert (tmp_path / "current").readlink() == result.path.relative_to(tmp_path)
     assert (result.path / "VERSION").read_text() == f"{__version__} {container_app.code_hash()}\n"
     assert (result.path / "jailbee" / "__init__.py").is_file()
+    assert result.path.stat().st_mode & 0o777 == 0o755
     assert not list(result.path.rglob("__pycache__"))
     before = result.path.stat().st_mtime_ns
     assert not container_app.stage(root=tmp_path).changed
@@ -26,6 +27,26 @@ def test_stage_keeps_two_versions(tmp_path, monkeypatch):
         assert container_app.stage(root=tmp_path).changed
     assert sorted(p.name for p in tmp_path.glob("app-*")) == ["app-b", "app-c"]
     assert (tmp_path / "current").readlink().name == "app-c"
+
+
+def test_stage_retains_previous_active_after_rollback(tmp_path, monkeypatch):
+    for value in ("a", "b", "a", "c"):
+        monkeypatch.setattr(container_app, "code_hash", lambda value=value: value)
+        container_app.stage(root=tmp_path)
+    assert sorted(p.name for p in tmp_path.glob("app-*")) == ["app-a", "app-c"]
+
+
+def test_version_changes_hash_and_staged_identity(tmp_path, monkeypatch):
+    container_app.code_hash.cache_clear()
+    try:
+        first = container_app.stage(root=tmp_path).path
+        monkeypatch.setattr(container_app, "__version__", "999.0")
+        container_app.code_hash.cache_clear()
+        second = container_app.stage(root=tmp_path).path
+        assert first != second
+        assert (second / "VERSION").read_text().startswith("999.0 ")
+    finally:
+        container_app.code_hash.cache_clear()
 
 
 def test_concurrent_staging_publishes_only_complete_version(tmp_path, monkeypatch):
@@ -101,6 +122,7 @@ def test_run_in_container_retries_once_on_skew(monkeypatch):
     incus.exec_bytes.side_effect = [ExecResult(86, b"", b"old"), ExecResult(0, b"ok", b"")]
     stage = Mock(return_value=container_app.StageResult(path=Mock(), changed=False))
     monkeypatch.setattr(container_app, "stage", stage)
+    monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", Mock())
     result = container_app.run_in_container(Mock(), incus, "one", ["version"], uid=123)
     assert result.stdout == b"ok"
     stage.assert_called_once_with(force=True)
@@ -127,13 +149,21 @@ def test_retry_syncs_skills_only_when_changed(monkeypatch, tmp_path, changed):
     sync = Mock()
     monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
     container_app.run_in_container(cfg, incus, "one", ["version"], uid=7)
-    assert sync.call_args_list == ([call(cfg)] if changed else [])
+    assert sync.call_args_list == [call(cfg)]
 
 
 def test_run_in_container_old_image():
     incus = Mock()
     incus.exec_bytes.return_value = ExecResult(127, b"", b"")
     with pytest.raises(container_app.ContainerJailbeeError, match="jb base build"):
+        container_app.run_in_container(Mock(), incus, "one", [], uid=None)
+
+
+@pytest.mark.parametrize("result", [ExecResult(88, b"", b""), ExecResult(1, b"", b"not mounted")])
+def test_run_in_container_missing_mount_requests_apply(result):
+    incus = Mock()
+    incus.exec_bytes.return_value = result
+    with pytest.raises(container_app.ContainerJailbeeError, match="jb apply"):
         container_app.run_in_container(Mock(), incus, "one", [], uid=None)
 
 
@@ -166,4 +196,4 @@ def test_broker_start_syncs_skills_on_change(monkeypatch, tmp_path):
         container_app, "stage", Mock(return_value=container_app.StageResult(tmp_path, False))
     )
     broker._stage_container_app(broker.BrokerMemory())
-    sync.assert_not_called()
+    assert sync.call_args_list == [call(cfgs[0]), call(cfgs[1])]

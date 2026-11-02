@@ -5,6 +5,7 @@ from pathlib import Path
 
 from jailbee.config.common import _parse_yaml_text
 from jailbee.config.errors import ConfigError
+from jailbee.config.legacy_pr import fold_legacy_pr_keys
 from jailbee.config.loader import load_config_from_layers
 from jailbee.config.models_agents import AutostartStage
 
@@ -22,9 +23,10 @@ def validate_repo_layer(path: Path) -> RepoLayerReport:
     label = str(path)
     try:
         text = path.read_text()
+        raw = _parse_yaml_text(text, label)
         cfg = load_config_from_layers(
             {},
-            _parse_yaml_text(text, label),
+            raw,
             path,
             origin=label,
             emit_hint=False,
@@ -51,4 +53,13 @@ def validate_repo_layer(path: Path) -> RepoLayerReport:
                             f"references optional_mount '{key}' — not defined in this file; "
                             "host layers may define it"
                         )
-    return RepoLayerReport(label, None, tuple(unchecked), tuple(cfg.deprecation_notices()))
+    notices = cfg.deprecation_notices()
+    if cfg.golden.python:
+        notices.append("golden.python is deprecated and ignored; remove it from the golden block.")
+    if "dashboard" in cfg.model_fields_set:
+        notices.append("dashboard: is deprecated and ignored; remove the repo-level block.")
+    if isinstance(raw.get("chrome"), dict):
+        notices.append("chrome: is deprecated; migrate it to browsers.chrome.")
+    if fold_legacy_pr_keys(raw)[1]:
+        notices.append("ai_pr_description and other legacy PR keys are deprecated; use pr:.")
+    return RepoLayerReport(label, None, tuple(unchecked), tuple(notices))

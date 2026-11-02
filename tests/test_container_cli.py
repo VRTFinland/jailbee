@@ -20,6 +20,14 @@ def test_host_commands_snapshot():
     )
 
 
+def test_container_validate_config_help():
+    from jailbee.container_cli import container_app
+
+    result = CliRunner().invoke(container_app, ["config", "validate", "--help"])
+    assert result.exit_code == 0
+    assert "Path to" in result.output
+
+
 def test_container_help_lists_only_shared():
     from jailbee.container_cli import container_app
 

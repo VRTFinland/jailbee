@@ -117,12 +117,17 @@ def test_in_container_jailbee_upgrade_notes_are_separate() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
     notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1)]
+    matched = []
     for phrase, action in (
         ("dependency venv, launcher, context marker", "base_build"),
         ("mounts the host's jailbee code read-only", "apply"),
         ("syncs skills describing `jailbee config validate` inside containers", "apply"),
     ):
-        assert [n.actions for n in notes if phrase in n.reason] == [frozenset({action})]
+        found = [n for n in notes if phrase in n.reason]
+        assert len(found) == 1
+        assert found[0].actions == frozenset({action})
+        matched.append(found[0])
+    assert len({id(n) for n in matched}) == 3
 
 
 def test_upcoming_context_flag_has_one_note_per_action() -> None:

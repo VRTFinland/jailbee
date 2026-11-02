@@ -28,8 +28,13 @@ copies rather than mutating the loaded configuration.
 The entry point dispatches to separate host and container CLI apps. The golden
 image supplies a dependency venv, launcher and context marker; the host stages
 versioned package code and mounts it read-only at `/opt/jailbee/app`. The
-launcher resolves the current version once, so a running command keeps its code.
-A host-to-container version handshake retries once after restaging on mismatch.
+launcher resolves the current version once. The hash includes the installed
+package version as well as its files. Init, apply, container creation and boot,
+broker startup and handshake retry stage the code; config-bearing triggers sync
+their repository's skills independently of whether staging changed. The current
+and previous active versions are retained; a process lasting through two further
+distinct upgrades can lose its code. A host-to-container version handshake retries
+once after restaging on mismatch.
 Its internal exit codes distinguish version skew (86), missing or outdated
 dependencies (87), and code not mounted (88).
 

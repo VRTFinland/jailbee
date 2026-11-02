@@ -34,6 +34,24 @@ def test_unknown_optional_mount_is_unchecked(repo_config):
     assert report_repo_layer(report) == 0
 
 
+@pytest.mark.parametrize("text, token", [
+    ("golden:\n  python: '3.11'\n", "golden.python"),
+    ("dashboard: {}\n", "dashboard:"),
+    ("chrome:\n  enabled: false\n", "chrome:"),
+    ("claude:\n  ai_pr_description: false\n", "ai_pr_description"),
+])
+def test_repo_deprecations_reported_by_both_clis(repo_config, text, token):
+    from jailbee.cli import app
+    from jailbee.container_cli import container_app
+
+    repo_config.write_text(text)
+    runner = CliRunner()
+    for cli, extra in ((app, ["--repo-layer"]), (container_app, [])):
+        result = runner.invoke(cli, ["config", "validate", *extra, "--config", str(repo_config)])
+        assert result.exit_code == 2, result.output
+        assert token in result.output
+
+
 def test_schema_error_exit_1(repo_config):
     from jailbee.config.repo_layer import validate_repo_layer
     from jailbee.config_validate_cmd import report_repo_layer

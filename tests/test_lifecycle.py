@@ -1720,6 +1720,9 @@ def test_new_container_memory_override_is_explicit(tmp_path, mocker, memory, for
 def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
+    staged = mocker.patch("jailbee.container_app.stage")
+    incus.profile_assign.side_effect = lambda *args: staged.assert_called_once_with()
+    incus.start.side_effect = lambda *args: staged.assert_called_once_with()
     incus.exists.return_value = False
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
@@ -11930,7 +11933,7 @@ def test_boot_container_stages_app(tmp_path, mocker):
     _boot_events(mocker, incus)
     mocker.patch("jailbee.agent_instructions.missing_staging_dirs", return_value=[])
     staged = mocker.patch("jailbee.container_app.stage")
-    staged.return_value.changed = True
+    staged.return_value.changed = False
     skills = mocker.patch("jailbee.agent_skills.sync_agent_skills")
     boot_container(cfg, incus, "feat-x", restart=False)
     staged.assert_called_once_with()
