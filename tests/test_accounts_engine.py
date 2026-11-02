@@ -99,6 +99,12 @@ class FakeAdapter:
     def session_home(self, cfg: Any, container: str) -> Path:
         return Path("/nonexistent") / container
 
+    def resume_args(self, session_id: str) -> str | None:
+        return None
+
+    def session_exists(self, cfg: Any, container: str, session_id: str) -> bool:
+        return False
+
     def blockers(self, cfg: Any, incus: Any, containers: Any) -> list[str]:
         return []
 

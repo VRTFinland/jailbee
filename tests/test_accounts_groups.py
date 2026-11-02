@@ -359,6 +359,12 @@ class _RecordingAdapter:
     def session_home(self, cfg, container):
         return Path("/nonexistent") / container
 
+    def resume_args(self, session_id):
+        return None
+
+    def session_exists(self, cfg, container, session_id):
+        return False
+
     def blockers(self, cfg, incus, containers):
         return []
 
