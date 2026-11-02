@@ -1,13 +1,15 @@
-from unittest.mock import MagicMock, call
+import subprocess
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from jailbee.incus import ExecResult, IncusError
+from jailbee.incus import ExecResult, Incus, IncusError
 from jailbee.sync import MergeProbe, SyncError, abort_merge_in_container, probe_merge_in_container
 
 
 def probe(*results: ExecResult) -> tuple[MagicMock, MergeProbe]:
     incus = MagicMock()
+    incus.exec_timeout = None
     incus.exec_bytes.side_effect = results
     result = probe_merge_in_container(incus, "box", "/repo", ref="refs/jailbee/x", uid=1000)
     return incus, result
@@ -20,6 +22,7 @@ def test_merge_probe_contained() -> None:
         "box",
         ["git", "-C", "/repo", "merge-base", "--is-ancestor", "refs/jailbee/x", "HEAD"],
         uid=1000,
+        timeout=None,
     )
 
 
@@ -30,6 +33,7 @@ def test_merge_probe_fast_forward() -> None:
         "box",
         ["git", "-C", "/repo", "merge-base", "--is-ancestor", "HEAD", "refs/jailbee/x"],
         uid=1000,
+        timeout=None,
     )
 
 
@@ -50,6 +54,7 @@ def test_merge_probe_clean_merge() -> None:
             "refs/jailbee/x",
         ],
         uid=1000,
+        timeout=None,
     )
 
 
@@ -78,6 +83,17 @@ def test_merge_tree_probe_error_raises() -> None:
 def test_merge_probe_ancestor_error_raises(results: tuple[ExecResult, ...]) -> None:
     with pytest.raises(SyncError, match="cannot compare HEAD with refs/jailbee/x in box: broken"):
         probe(*results)
+
+
+@pytest.mark.parametrize("timeout", [7, 37])
+def test_probe_passes_configured_timeout_to_subprocess(timeout: int) -> None:
+    incus = Incus().with_exec_timeout(timeout)
+    results = [subprocess.CompletedProcess([], rc, b"", b"") for rc in (1, 1, 0)]
+    with patch("jailbee.incus.subprocess.run", side_effect=results) as run:
+        result = probe_merge_in_container(incus, "box", "/repo", ref="refs/jailbee/x", uid=1000)
+    assert result == MergeProbe("merge", ())
+    assert run.call_count == 3
+    assert all(item.kwargs["timeout"] == timeout for item in run.call_args_list)
 
 
 def test_abort_merge_swallows_incus_error() -> None:

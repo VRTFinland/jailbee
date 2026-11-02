@@ -2683,7 +2683,10 @@ def probe_merge_in_container(
     )
     for left, right, relation in comparisons:
         result = incus.exec_bytes(
-            full_name, ["git", "-C", repo_dir, "merge-base", "--is-ancestor", left, right], uid=uid
+            full_name,
+            ["git", "-C", repo_dir, "merge-base", "--is-ancestor", left, right],
+            uid=uid,
+            timeout=incus.exec_timeout,
         )
         if result.returncode == 0:
             return MergeProbe(relation, ())
@@ -2705,6 +2708,7 @@ def probe_merge_in_container(
             ref,
         ],
         uid=uid,
+        timeout=incus.exec_timeout,
     )
     if result.returncode not in (0, 1):
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
