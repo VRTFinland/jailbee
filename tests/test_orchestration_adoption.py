@@ -333,3 +333,58 @@ def test_adopt_reservation_counts_toward_capacity(cfg, rig, tmp_path, mocker):
     assert adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path).adopted == (
         "myrepo-a",
     )
+
+
+def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker):
+    import json
+
+    from jailbee.global_config import GlobalConfig
+    from jailbee.orchestration import finishing, outbox
+    from jailbee.orchestration.actions import ActionContext, Node, destroy_guard
+    from jailbee.orchestration.protocol import PendingFinish
+
+    rows, incus = rig
+    old, child = rows
+    old["status"] = "Stopped"
+    child["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.ON_DONE: "destroy"})
+    rows.append(raw("myrepo-new", config={labels.GRANT: Grant().to_label()}))
+    by_name = {row["name"]: row for row in rows}
+    incus.config_set.side_effect = lambda name, key, value: by_name[name]["config"].__setitem__(key, value)
+    incus.config_unset_checked.side_effect = lambda name, key: by_name[name]["config"].pop(key, None)
+    incus.with_exec_timeout.return_value = incus
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.sync._container_current_branch", return_value="branch")
+    mocker.patch("jailbee.orchestration.actions._child_head", return_value="a" * 40)
+    transport = mocker.patch("jailbee.sync.merge_container_into_container")
+    transport.return_value.push.container_ref = "refs/jailbee/from/a/branch"
+    transport.return_value.push.new_oid = "a" * 40
+    write = mocker.patch("jailbee.orchestration.outbox._atomic_write")
+
+    def node(row):
+        return Node(row["name"], row["name"].removeprefix("myrepo-"),
+                    row["status"] == "Running", dict(row["config"]))
+
+    ctx = ActionContext(cfg=cfg, gcfg=GlobalConfig(), incus=incus, root=tmp_path,
+                        sender=node(old), nodes={r["name"]: node(r) for r in rows},
+                        now=datetime(2026, 1, 1, tzinfo=UTC))
+    item = PendingFinish(version=1, type="finish", id="done1", child_full="myrepo-a",
+                         child_short="a", branch="branch", done_sha="a" * 40,
+                         body="done", in_reply_to=None, uid=None)
+    path = finishing.park(ctx, ctx.sender, item)
+    adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    adoption.adopt(cfg, incus, "myrepo-new", ["myrepo-a"], root=tmp_path)
+    assert path.exists()
+    ctx.nodes = {r["name"]: node(r) for r in rows}
+    ctx.sender = node(old)
+    outbox.flush_pending(incus, tmp_path, "myrepo-o", uid=None,
+                         finish=finishing.flush_callback(ctx))
+    messages = [json.loads(c.args[4]) for c in write.call_args_list]
+    report = next(m for m in messages if m.get("kind") == "done")
+    assert report["import_error"] and report["on_done"] == "keep"
+    assert not path.exists()
+    transport.assert_not_called()
+    assert labels.LAST_IMPORT not in child["config"]
+    ctx.sender = node(by_name["myrepo-new"])
+    assert destroy_guard(ctx, node(child)) is not None
