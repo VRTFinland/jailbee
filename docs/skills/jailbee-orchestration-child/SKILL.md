@@ -15,6 +15,11 @@ push, open PRs, spawn, stop or destroy containers. Those manifests are
 refused, and that work belongs to the orchestrator. Schemas are in
 [`references/protocol.md`](references/protocol.md).
 
+An `adopted` inbox message can make you a child mid-session; from then on,
+follow this skill. `JAILBEE_ROLE=child` is set only on the next agent launch,
+not retroactively in your current session. Adoption does not automatically
+relaunch your agent.
+
 You may be running a non-default agent or model, chosen by your orchestrator
 or the user; do not change it.
 

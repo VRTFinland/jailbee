@@ -64,6 +64,12 @@ so look again once before concluding anything. The file can also outlive a
 revoked grant; a request made after revocation is `refused` with
 "orchestration grant revoked".
 
+An `adopted` inbox message means the host user attached an existing container
+as your child. It has no import baseline and its agent is not supervised or
+automatically relaunched. Ask the user to close a hand-started agent before
+using `jailbee-inbox send restart --child C --agent-only` to relaunch it under
+supervision; otherwise you may start a second agent.
+
 ## Runtime rights
 
 Ask for the least: prefer an egress host over loose, and a timed grant over
