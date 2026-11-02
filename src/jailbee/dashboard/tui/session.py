@@ -1388,9 +1388,7 @@ class DashboardSession:
             return self._close_after_failure()
         return self._reopen_orchestration(container, "save-profile")
 
-    def _submit_orchestration_text(
-        self, prompt: TextPrompt, answer: str
-    ) -> Picker | None:
+    def _submit_orchestration_text(self, prompt: TextPrompt, answer: str) -> Picker | None:
         container = prompt.target
         repo = self.repo_for(container, "container")
         found = self._listed_container(container)
@@ -1414,7 +1412,10 @@ class DashboardSession:
                 return Picker(
                     "container-orchestration-overwrite-profile",
                     f"Replace profile '{answer}'?",
-                    (PickerEntry("No", "no", "n"), PickerEntry("Yes, replace", f"yes:{answer}", "y")),
+                    (
+                        PickerEntry("No", "no", "n"),
+                        PickerEntry("Yes, replace", f"yes:{answer}", "y"),
+                    ),
                     target=container,
                     back=self.open_orchestration(container),
                 )

@@ -520,10 +520,21 @@ def test_grant_argv_empty_lists_clear():
 
 def test_profile_save_argv():
     assert dact.orchestrate_profile_save_argv("c", "p") == [
-        "orchestrate", "profile", "save", "--", "c", "p"
+        "orchestrate",
+        "profile",
+        "save",
+        "--",
+        "c",
+        "p",
     ]
     assert dact.orchestrate_profile_save_argv("c", "p", force=True) == [
-        "orchestrate", "profile", "save", "--force", "--", "c", "p"
+        "orchestrate",
+        "profile",
+        "save",
+        "--force",
+        "--",
+        "c",
+        "p",
     ]
 
 

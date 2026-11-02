@@ -610,7 +610,9 @@ def test_save_profile_entry_only_with_grant(mocker, tmp_path):
 
 
 def _save_profile_prompt(session):
-    return session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "save-profile"))
+    return session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "save-profile")
+    )
 
 
 def test_save_profile_prompt_cancel_returns_to_menu(mocker, tmp_path):
@@ -634,7 +636,14 @@ def test_save_profile_runs_cli_and_reopens(mocker, tmp_path):
     prompt = _save_profile_prompt(session)
     assert prompt.purpose == "container-orchestration-save-profile"
     out = session.submit_prompt(prompt, " reviewer ")
-    assert quiet.call_args.args[1] == ["orchestrate", "profile", "save", "--", "alpha-one", "reviewer"]
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "profile",
+        "save",
+        "--",
+        "alpha-one",
+        "reviewer",
+    ]
     assert out.purpose == "container-orchestration"
     assert out.entries[out.start_index].value == "save-profile"
 
@@ -661,7 +670,15 @@ def test_save_profile_existing_name_confirmation(mocker, tmp_path, choice):
         quiet.assert_not_called()
         assert session.notice == "Cancelled"
     else:
-        assert quiet.call_args.args[1] == ["orchestrate", "profile", "save", "--force", "--", "alpha-one", "bugfixer"]
+        assert quiet.call_args.args[1] == [
+            "orchestrate",
+            "profile",
+            "save",
+            "--force",
+            "--",
+            "alpha-one",
+            "bugfixer",
+        ]
     assert out.entries[out.start_index].value == "save-profile"
 
 
