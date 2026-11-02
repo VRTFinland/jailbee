@@ -297,7 +297,10 @@ def orchestration_grant_permitted(
 
 
 def orchestration_offered(
-    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool,
+    container: ContainerInfo,
+    ssh_policy: RemoteSSHConfig | None,
+    *,
+    over_ssh: bool,
     rows: Sequence[ContainerInfo] = (),
 ) -> bool:
     """Offer orchestration when a permitted action applies to this container."""
@@ -317,7 +320,8 @@ def orchestration_offered(
         permitted(orchestrate_adopt_argv(container.name, row.name), ssh_policy, over_ssh=over_ssh)
         for row in adoptable_rows(rows, container.name)
     ) or any(
-        row.child is not None and row.child.orchestrator == container.name
+        row.child is not None
+        and row.child.orchestrator == container.name
         and permitted(orchestrate_release_argv(row.name), ssh_policy, over_ssh=over_ssh)
         for row in rows
     )

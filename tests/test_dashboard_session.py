@@ -640,11 +640,13 @@ def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, act
         row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
     session.groups[0].containers.append(row)
     session.over_ssh = True
-    session.ssh_policy = RemoteSSHConfig.model_validate({
-        "commands": {"mode": "allowlist", "allow": [f"orchestrate {action}"]},
-        "restrict_host": False,
-        "orchestration": "ssh",
-    })
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": [f"orchestrate {action}"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
     outer = tmenu.open_menu(
         session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True
     )
@@ -665,14 +667,21 @@ def test_ssh_topology_does_not_offer_other_repo_candidates(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteSSHConfig
 
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
-    session.groups.append(dmodel.RepoGroup("beta", str(tmp_path / "beta"), None, [ci("beta-free", "beta")]))
+    session.groups.append(
+        dmodel.RepoGroup("beta", str(tmp_path / "beta"), None, [ci("beta-free", "beta")])
+    )
     session.over_ssh = True
-    session.ssh_policy = RemoteSSHConfig.model_validate({
-        "commands": {"mode": "allowlist", "allow": ["orchestrate adopt"]},
-        "restrict_host": False,
-        "orchestration": "ssh",
-    })
-    assert tmenu.open_menu(session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True) is None
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": ["orchestrate adopt"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    assert (
+        tmenu.open_menu(session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True)
+        is None
+    )
     assert session.open_orchestration("alpha-one") is None
 
 
