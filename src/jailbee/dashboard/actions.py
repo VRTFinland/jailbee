@@ -268,6 +268,23 @@ def orchestrate_revoke_argv(name: str) -> list[str]:
     return ["orchestrate", "revoke", "--", name]
 
 
+def orchestrate_adopt_argv(orchestrator: str, child: str) -> list[str]:
+    return ["orchestrate", "adopt", "--", orchestrator, child]
+
+
+def orchestrate_release_argv(child: str) -> list[str]:
+    return ["orchestrate", "release", "--", child]
+
+
+def adoptable_rows(rows: Sequence[ContainerInfo], orchestrator: str) -> list[ContainerInfo]:
+    parents = {row.child.orchestrator for row in rows if row.child is not None}
+    return [
+        row for row in rows
+        if row.name != orchestrator and row.grant is None and row.child is None
+        and row.mode != "mount" and row.name not in parents
+    ]
+
+
 def orchestration_grant_permitted(
     container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
 ) -> bool:
