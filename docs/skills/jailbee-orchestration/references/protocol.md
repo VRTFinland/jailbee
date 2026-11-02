@@ -363,9 +363,10 @@ messages carry the parent's ref and SHA. `ls` marks imported/failed reports;
 `read` shows all fields. Merge `imported_ref` in the merged-fork workflow, or stage a source manifest without merging for one PR per child; retry `import`
 after fixing `import_error`.
 
-`send --wait [--timeout DUR]` consumes only the status for that manifest:
+`send --wait [--timeout DUR|none]` consumes only the status for that manifest:
 exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
-timeout (default 30m). Recommend it for spawn, update and destroy.
+timeout (default 30m). `none` waits without a deadline and never exits 3.
+Recommend it for spawn, update and destroy.
 
 For waits, use `jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m`.
 The broker may send a host-only `message` of kind `idle`, with the child's

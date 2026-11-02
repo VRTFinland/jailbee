@@ -21,6 +21,18 @@ or the user; do not change it.
 General development practice (style, tests, commits) comes from the project's
 own instructions.
 
+## Stay reachable
+
+At session start, run `jailbee-inbox wait --timeout none` in the background;
+with Claude, use Bash `run_in_background`. When it exits 0, run
+`jailbee-inbox ls`, handle and `jailbee-inbox read <id>` every unread message,
+including status replies, then re-arm the waiter. Exit 2 means a waiter already
+runs: do not start another, and never run a foreground ordinary `wait` alongside
+it. `send --wait` is safe alongside the waiter. After an accepted `done` in a
+kept child, keep the waiter armed between tasks. If background commands are not
+available, run `jailbee-inbox wait --timeout 30m` in a loop and re-run it on
+exit 1.
+
 ## Give up access
 
 When access is no longer needed, use `jailbee-inbox send rights
@@ -117,17 +129,10 @@ base branch. Explicit sources arrive at
 
 ## Waiting for a reply
 
-After a `question` or `blocked`, run:
-
-```bash
-jailbee-inbox wait --timeout 30m   # prints the path of the oldest unread message
-```
-
-It exits 0 with a path, 1 on timeout and 2 on a usage error. On timeout,
-wait again. After `wait` returns, run `jailbee-inbox ls` and handle **every**
-unread message: replies to several manifests arrive as a burst. It returns at
-once while any message is unread, so `jailbee-inbox read <id>` each one before
-waiting again. Never poll tighter than every 5 min. Treat the next message from
+After a `question` or `blocked`, keep the background waiter armed as described
+in **Stay reachable**. It prints the oldest unread message's path on exit 0;
+`wait` returns at once while any message is unread, so read every message
+before re-arming it. Never poll tighter than every 5 min. Treat the next message from
 your orchestrator as the answer. Its `in_reply_to` is informational only: the
 host gives relayed messages new ids, so it need not equal the id of your
 message.
@@ -155,9 +160,10 @@ state `done` (delivered), `queued` or `refused`. Only `refused` needs action;
 it is final, so fix the cause and send a new message under a new id.
 `queued` is not a failure: your orchestrator is stopped or has older parked
 items; the report is imported before delivery when it can receive it. Do not
-resend it. `send --wait [--timeout DUR]` (default 30m) prints the matching
+resend it. `send --wait [--timeout DUR|none]` (default 30m) prints the matching
 status and moves only that status to `inbox/read/`: 0 for done/queued/started,
-1 for refused/failed, 2 for usage error, 3 for timeout.
+1 for refused/failed, 2 for usage error, 3 for timeout. `none` waits without a
+deadline and never exits 3.
 
 Two `refused` details for `done` are not a fault in your manifest or your
 tree: `could not fetch your branch to the host: ...` and

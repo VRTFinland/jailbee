@@ -178,6 +178,19 @@ def test_child_skill_limits_the_child() -> None:
         assert forbidden_act in text, forbidden_act
 
 
+def test_child_skill_keeps_a_background_waiter() -> None:
+    text = _skill_text(CHILD)
+    assert "jailbee-inbox wait --timeout none" in text
+    assert "background" in text
+    assert "exit 2" in text or "exits 2" in text
+    assert "re-arm" in text
+
+
+def test_orchestration_skill_pairs_none_with_quiet_after() -> None:
+    text = _skill_text(ORCH)
+    assert "--timeout none" in text and "--quiet-after" in text
+
+
 def test_child_skill_covers_done_bounce() -> None:
     text = _skill_text(CHILD)
     assert "uncommitted" in text and "detached" in text

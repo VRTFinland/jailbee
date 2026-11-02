@@ -217,6 +217,8 @@ more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 After `wait` returns, run `jailbee-inbox ls` and handle **every** unread
 message before waiting again: replies to several manifests arrive as a burst.
+For a background orchestrator waiter, use `--timeout none` only together with
+`--quiet-after` so silent children still wake it.
 
 Use `--wake-on`, not home-made wrappers that read/log notes or statuses:
 **wait never consumes anything**, including nonmatches. It returns the oldest
@@ -260,7 +262,8 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
 
 Use `send --wait` for `spawn`, `update` and `destroy`. It prints and marks
 only the matching status read: exit 0 for done/queued/started, 1 for
-refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m).
+refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m;
+`none` waits without a deadline and never exits 3).
 A timeout is not a refusal: read the eventual reply instead of resending.
 The broker is not instant; expect seconds, not milliseconds.
 

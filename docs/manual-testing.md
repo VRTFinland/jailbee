@@ -6052,7 +6052,14 @@ In the orchestrator, `jailbee-inbox wait` returns the path of the first unread
 message (it blocks on `inotifywait` when installed, polls every
 `JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and `read
 <id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
-messages read first, or `wait` returns at once. Reply:
+messages read first, or `wait` returns at once.
+
+1. In the child, with real `inotifywait` installed and no unread messages, start `jailbee-inbox wait --timeout none`.
+2. Leave it waiting for more than 10 minutes, then send a message from the orchestrator.
+3. Expect the child waiter to wake promptly; read the message and start the waiter again.
+4. Interrupt it with Ctrl-C, then re-run it and verify it starts without exit 2.
+
+Reply:
 
 ```bash
 jailbee-inbox send message --to child-b --reply-to <id> --text "call it hello-b.txt"

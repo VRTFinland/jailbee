@@ -241,6 +241,8 @@ was accepted, or its previous monitored agent has ended (the broker reported,
 or would report, `blocked`). A working child or uncertain agent liveness is
 refused; there is no force option. Active startup workers also prevent relaunch.
 Without the flag, a running child is still refused with "stop it first".
+A kept worker's agent keeps `jailbee-inbox wait --timeout none` in the
+background between tasks, re-arming it after handling messages.
 
 Only the agent tmux window is replaced. Container boot, setup stages and all
 `on_start` actions are skipped; existing services stay running. The fresh
@@ -372,12 +374,17 @@ messages already present return immediately. Use `send --wait` for spawn,
 update and destroy, and always for a child's done report: it consumes only
 that manifest's status, returning 0 for done/queued/started, 1 for
 refused/failed, 2 for usage errors and 3 for timeout (default 30m).
+For `send --wait` and ordinary `wait`, `--timeout none` waits without a
+deadline; `send --wait --timeout none` never exits 3.
 For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
 
 ```bash
 jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
 ```
+
+For a background orchestrator waiter, use `--timeout none` only together with
+`--quiet-after` so silent children still wake it.
 
 `--wake-on` accepts comma-separated message kinds (`note`, `question`, `done`,
 `blocked`, host-generated `idle`) and status states (`queued`, `started`, `done`, `failed`, `refused`).
