@@ -515,7 +515,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"apply"}),
-        reason="`jailbee apply` syncs orchestration skills describing resuming a child's agent session",
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing resuming a child's agent session"
+        ),
     ),
 )
 """What each release requires, ascending by version. Maintained by hand.
