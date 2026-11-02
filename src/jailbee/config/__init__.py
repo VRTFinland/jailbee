@@ -56,7 +56,6 @@ from jailbee.config.models_agents import (
     PrConfig,
 )
 from jailbee.config.models_apps import APP_NAME_RE, AppEntry
-from jailbee.config.models_services import Service, ServiceDependency, ServicePrepareStep
 from jailbee.config.models_behaviour import (
     BootConfig,
     ConfirmConfig,
@@ -98,6 +97,7 @@ from jailbee.config.models_net import (
     parse_duration_value,
     parse_ttl,
 )
+from jailbee.config.models_services import Service, ServiceDependency, ServicePrepareStep
 from jailbee.config.models_tools import (
     BrowserConfig,
     BrowsersConfig,
@@ -147,9 +147,6 @@ __all__ = [
     "AutostartChain",
     "AutostartStage",
     "AutostartStep",
-    "Service",
-    "ServiceDependency",
-    "ServicePrepareStep",
     "BootConfig",
     "BrowserConfig",
     "BrowserSource",
@@ -183,6 +180,9 @@ __all__ = [
     "PrConfig",
     "PullConfig",
     "PushConfig",
+    "Service",
+    "ServiceDependency",
+    "ServicePrepareStep",
     "SharedCache",
     "SshConfig",
     "Stacks",

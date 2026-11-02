@@ -568,14 +568,16 @@ class Config(BaseModel):
                 if dependency == name:
                     raise ValueError(f"service '{name}' depends on itself")
                 if dependency not in self.services:
-                    raise ValueError(f"service '{name}' references unknown dependency '{dependency}'")
+                    raise ValueError(
+                        f"service '{name}' references unknown dependency '{dependency}'"
+                    )
 
         visited: set[str] = set()
         active: list[str] = []
 
         def visit(name: str) -> None:
             if name in active:
-                cycle = active[active.index(name):] + [name]
+                cycle = [*active[active.index(name) :], name]
                 raise ValueError(f"service dependency cycle: {' -> '.join(cycle)}")
             if name in visited:
                 return
