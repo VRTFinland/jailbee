@@ -2003,6 +2003,7 @@ def test_failed_listen_preserves_active_gpg(listener, mocker, tmp_path):
 
 def test_second_server_cannot_reset_or_serve_gpg(listener, mocker, tmp_path):
     import fcntl
+
     from jailbee.remote_ssh.gpg_forward import GpgForwards
 
     mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
