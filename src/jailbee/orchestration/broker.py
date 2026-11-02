@@ -829,6 +829,29 @@ def _installed_version() -> str | None:
         return None
 
 
+def _stage_container_app(memory: BrokerMemory) -> None:
+    from jailbee import container_app
+    from jailbee.agent_skills import sync_agent_skills
+
+    try:
+        changed = container_app.stage().changed
+    except Exception:
+        log.exception("broker: jailbee app staging failed; continuing")
+        return
+    if changed:
+        try:
+            configs = repo_configs(memory)
+        except Exception:
+            log.exception("broker: cannot load repos for skills sync")
+            return
+        for cfg in configs.values():
+            if cfg is not None:
+                try:
+                    sync_agent_skills(cfg)
+                except Exception:
+                    log.exception("broker: skills sync failed")
+
+
 def run_broker(incus: Incus) -> int:
     """Body of `jailbee _broker`: loop until SIGTERM (or SIGINT), then exit 0.
 
@@ -856,6 +879,7 @@ def run_broker(incus: Incus) -> int:
     try:
         journal = Journal(root)
         log.info("orchestration broker starting")
+        _stage_container_app(memory)
         while not stop.requested:
             try:
                 active = tick(

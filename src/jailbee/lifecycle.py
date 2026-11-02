@@ -2787,6 +2787,16 @@ def boot_container(
     # rather than leaving Incus to fail with an opaque disk-device error.
     from jailbee.agent_instructions import missing_staging_dirs, sync_global_instructions
 
+    from jailbee import container_app
+
+    try:
+        staged = container_app.stage()
+    except Exception as e:
+        raise ValueError(f"cannot start: jailbee app staging failed: {e}") from e
+    if staged.changed:
+        from jailbee.agent_skills import sync_agent_skills
+
+        sync_agent_skills(cfg)
     sync_global_instructions(cfg)
     missing = missing_staging_dirs(cfg)
     if missing:
