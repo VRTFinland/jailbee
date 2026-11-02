@@ -277,10 +277,7 @@ def test_pr_derived_name_is_checked_against_queue(
 def test_plan_spawn_prepends_preamble(tmp_path: Path) -> None:
     plan = plan_spawn(_ctx(tmp_path), _m(), queued_names=())
     assert not isinstance(plan, Outcome)
-    assert plan.prompt == (
-        "You are a child container of orchestrator `orch`. "
-        "Use the `jailbee-orchestration-child` skill.\n\ndo it"
-    )
+    assert plan.prompt == actions.child_preamble("orch") + "\n\ndo it"
     assert plan.kind == "fork"
     assert plan.base is None
 
