@@ -52,9 +52,11 @@ def test_claude_session_exists_finds_transcript(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("bad", ["", "../x", "$(id)", RESUME_UUID.upper(), RESUME_UUID + "0"])
-def test_claude_session_exists_rejects_invalid_ids(tmp_path: Path, bad: str) -> None:
+def test_claude_session_exists_rejects_invalid_ids(tmp_path: Path, bad: str, mocker) -> None:
     cfg = _cfg(tmp_path)
+    locate = mocker.patch("jailbee.accounts.adapters.claude.claude_activity.locate")
     assert not CLAUDE.session_exists(cfg, "container", bad)
+    locate.assert_not_called()
 
 
 def test_store_dir_follows_xdg_data_home(tmp_path: Path, monkeypatch) -> None:

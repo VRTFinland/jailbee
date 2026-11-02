@@ -1888,7 +1888,7 @@ def test_session_write_failure_does_not_break_supervision(rig: Rig, monkeypatch)
     from jailbee.orchestration import agent_watch
 
     entry = watch.WatchEntry(
-        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, agent_only=True
     )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
@@ -1904,5 +1904,7 @@ def test_session_write_failure_does_not_break_supervision(rig: Rig, monkeypatch)
     )
     rig.incus.config_set.side_effect = RuntimeError("write failure")
     rig.tick()
-    assert _watches(rig)[0].confirmed
-    rig.incus.config_set.assert_called_once()
+    assert _watches(rig)[0].live_since == NOW.isoformat()
+    rig.incus.config_set.assert_called_once_with(
+        "proj-kid", labels.AGENT_SESSIONS, json.dumps(["00000000-0000-0000-0000-000000000001"])
+    )
