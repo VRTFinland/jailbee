@@ -59,12 +59,13 @@ def test_update_explicit_ref_uses_spawn_source_and_isolated_destination(tmp_path
     subs = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     out = actions.dispatch(ctx, _manifest(ref=ref))
     assert out.state == "done"
-    prepare.assert_called_once_with(ctx.cfg, ctx.incus.with_exec_timeout.return_value, "orch", ref=ref)
+    prepare.assert_called_once_with(ctx.cfg, ctx.incus.with_exec_timeout.return_value, "orch", ref=ref, timeout=actions.CHILD_TRANSPORT_TIMEOUT_S)
     assert push.call_args.kwargs == {
         "source": "u1", "source_ref": SHA, "namespace": "update/orch",
         "ff_local_branch": False, "timeout": actions.CHILD_TRANSPORT_TIMEOUT_S,
     }
     assert subs.call_args.kwargs["commit"] == SHA
+    assert subs.call_args.kwargs["pin_commits"] is True
     seams["merge"].assert_not_called()
     msg = seams["deliver"].call_args.args[3]
     assert msg.imported_ref == "refs/jailbee/update/orch/u1"
@@ -129,8 +130,23 @@ def test_update_transports_real_spawn_source_resolution(tmp_path, seams, mocker,
     assert actions.dispatch(ctx, _manifest(ref=ref)).state == "done"
     bounded.exec.assert_called_once_with(ctx.sender.full, ["git", "-C", "/r", "rev-parse", "--verify", f"{ref}^{{commit}}"], uid=ctx.cfg.container_user.uid)
     assert fetch.call_args.args[-1] == SHA
+    assert fetch.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S
     assert host_subs.call_args.kwargs["commit"] == SHA
+    assert host_subs.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S
     assert push.call_args.kwargs["source_ref"] == SHA
+
+
+def test_update_historical_submodules_use_path_independent_pins(tmp_path, seams, mocker):
+    from jailbee.forking import ForkSource
+    from jailbee.submodules import SubmoduleError
+
+    mocker.patch("jailbee.forking.prepare_fork", return_value=ForkSource("myrepo-orch", "main", SHA, None))
+    def transport(*args, **kwargs):
+        if not kwargs.get("pin_commits"):
+            raise SubmoduleError("historical path 'old c++ % path' is not a valid refname")
+    mocker.patch("jailbee.submodules.transport_submodules_to_container", side_effect=transport)
+    mocker.patch("jailbee.sync.push_to_container", return_value=_result().push)
+    assert actions.dispatch(_ctx(tmp_path), _manifest(ref="refs/heads/history")).state == "done"
 
 
 def test_update_base_uses_real_upstream_resolution(tmp_path, seams, mocker):

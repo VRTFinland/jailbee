@@ -106,7 +106,10 @@ def _update_source(ctx: ActionContext, manifest: UpdateManifest) -> str:
     """Resolve explicit sources using the same policies as spawn."""
     bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
     if manifest.ref is not None:
-        return forking.prepare_fork(ctx.cfg, bounded, ctx.sender.short, ref=manifest.ref).commit
+        return forking.prepare_fork(
+            ctx.cfg, bounded, ctx.sender.short, ref=manifest.ref,
+            timeout=CHILD_TRANSPORT_TIMEOUT_S,
+        ).commit
     assert manifest.base is not None
     opts = lifecycle.NewContainerOptions(
         container_branch=manifest.base,
@@ -144,7 +147,7 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
             repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, child.full)
             submodules.transport_submodules_to_container(
                 ctx.cfg, bounded, child.full, repo_dir=repo_dir,
-                commit=commit, timeout=CHILD_TRANSPORT_TIMEOUT_S,
+                commit=commit, timeout=CHILD_TRANSPORT_TIMEOUT_S, pin_commits=True,
             )
             push = sync.push_to_container(
                 ctx.cfg, bounded, child.short,

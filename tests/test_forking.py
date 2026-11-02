@@ -252,9 +252,9 @@ def test_explicit_ref_resolves_source_commit_without_dirty_check(cfg, wired, moc
     assert result.untrusted and result.pr_labels == {}
     dirty.assert_not_called()
     fetch.assert_not_called()
-    pinned.assert_called_once_with(cfg, incus, "src", "refs/heads/topic", sha)
+    pinned.assert_called_once_with(cfg, incus, "src", "refs/heads/topic", sha, timeout=None)
     transport.assert_called_once_with(
-        cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo", commit=sha
+        cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo", commit=sha, timeout=None
     )
 
 
@@ -290,7 +290,7 @@ def test_explicit_sha_fetches_verified_commit(cfg, wired, mocker):
     result = forking.prepare_fork(cfg, incus, "src", ref=sha)
     assert result.commit == sha
     assert any("^{commit}" in arg for call in incus.exec.call_args_list for arg in call.args[1])
-    fetch.assert_called_once_with(cfg, incus, "src", sha)
+    fetch.assert_called_once_with(cfg, incus, "src", sha, timeout=None)
 
 
 def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
@@ -309,6 +309,7 @@ def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
     fetch = mocker.patch("jailbee.git.fetch_url")
     mocker.patch("jailbee.git.rev_parse", return_value=child_sha)
     submodules.transport_submodules_to_host_at_commit(
-        cfg, incus, "myrepo-src", "src", repo_dir="/repo", commit=sha
+        cfg, incus, "myrepo-src", "src", repo_dir="/repo", commit=sha, timeout=17
     )
     assert fetch.call_args.args[2] == f"+{child_sha}:refs/jailbee-sub/src/commits/{child_sha}"
+    assert fetch.call_args.kwargs["timeout"] == 17
