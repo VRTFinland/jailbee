@@ -27,6 +27,8 @@ class FakeProc(LocalProc):
         self.group_signals = []
         self.query_delay = 0
         self.query_count = 0
+        self.creation_env = {}
+        self.run_env = {}
 
     def tmux(self, args):
         args = list(args)
@@ -55,8 +57,10 @@ class FakeProc(LocalProc):
         elif command == "new-window":
             name = args[args.index("-n") + 1]
             self.windows[name] = (0, "", 123)
+            self.creation_env[name] = dict(args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e")
         elif command == "respawn-pane":
             name = args[args.index("-t") + 1].split("=", 1)[-1]
+            self.run_env[name] = dict(args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e")
             if name in self.immediate_exit:
                 if name in self.window_remain:
                     self.windows[name] = (1, 42, 123)
@@ -129,6 +133,13 @@ def test_start_window_and_session(tmp_path):
     )
     data = json.loads((rt.state_dir / "state.json").read_text())
     assert data["web"]["state"] == "ready" and "T" in data["web"]["since"]
+
+
+def test_respawn_service_receives_configured_environment(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "serve", "env": {"K": "V", "TOKEN": "a=b"}}})
+    assert rt.start(["web"]).ok
+    assert proc.creation_env["svc-web"] == {"K": "V", "TOKEN": "a=b"}
+    assert proc.run_env["svc-web"] == {"K": "V", "TOKEN": "a=b"}
 
 
 def test_start_dependencies_skip_ready(tmp_path):

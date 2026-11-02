@@ -188,7 +188,11 @@ class ServiceRuntime:
             self.proc.tmux(["kill-window", "-t", target])
             self._save(name, "failed", configured.stderr)
             return False
-        spawned = self.proc.tmux(["respawn-pane", "-k", "-t", target, "bash", "-lc", service.run])
+        respawn = ["respawn-pane", "-k", "-t", target]
+        for key, value in service.env.items():
+            respawn.extend(["-e", f"{key}={value}"])
+        respawn.extend(["bash", "-lc", service.run])
+        spawned = self.proc.tmux(respawn)
         if spawned.returncode:
             self._save(name, "failed", spawned.stderr)
             return False
