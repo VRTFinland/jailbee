@@ -13,12 +13,12 @@ touches Incus or the network.
 
 from __future__ import annotations
 
-import importlib.resources
 import importlib.metadata
+import importlib.resources
 import json
-import sys
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 SNIPPET_HEREDOC_START = "cat > /etc/profile.d/jailbee-env.sh <<'EOF'\n"
@@ -334,7 +334,7 @@ def test_launcher_behaviour(tmp_path):
     script = _install_sh()
     marker = "cat > /usr/local/bin/jailbee <<'EOF'\n"
     start = script.index(marker) + len(marker)
-    launcher = script[start:script.index("\nEOF\n", start)]
+    launcher = script[start : script.index("\nEOF\n", start)]
     app = tmp_path / "app"
     venv = tmp_path / "venv"
     env = {"PATH": "/usr/bin:/bin", "JAILBEE_APP_DIR": str(app), "JAILBEE_VENV_DIR": str(venv)}
@@ -348,25 +348,36 @@ def test_launcher_behaviour(tmp_path):
     python = venv / "bin" / "python"
     python.write_text('#!/bin/bash\nprintf "%s\\n" "$PYTHONPATH" "$@"\n')
     python.chmod(0o755)
-    result = subprocess.run(["bash", "-c", launcher, "launcher", "hello world"], env=env, capture_output=True, text=True)
+    result = subprocess.run(
+        ["bash", "-c", launcher, "launcher", "hello world"], env=env, capture_output=True, text=True
+    )
     assert result.returncode == 0
-    assert result.stdout.splitlines() == [str(version), "-P", "-m", "jailbee.container_main", "hello world"]
+    assert result.stdout.splitlines() == [
+        str(version),
+        "-P",
+        "-m",
+        "jailbee.container_main",
+        "hello world",
+    ]
 
 
 def test_dependency_stamp_records_installed_versions(tmp_path):
     script = _install_sh()
-    marker = "\"$VENV/bin/python\" -c '\n"
+    marker = '"$VENV/bin/python" -c \'\n'
     start = script.index(marker) + len(marker)
-    code = script[start:script.index("\n'\n", start)]
+    code = script[start : script.index("\n'\n", start)]
     stamp = tmp_path / "deps.json"
     code = code.replace("/opt/jailbee/deps.json", str(stamp))
     result = subprocess.run(
         [sys.executable, "-c", code],
         env={"JAILBEE_CONTAINER_DEPS": "typer==0 rich==0"},
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(stamp.read_text()) == {"packages": {
-        "typer": importlib.metadata.version("typer"),
-        "rich": importlib.metadata.version("rich"),
-    }}
+    assert json.loads(stamp.read_text()) == {
+        "packages": {
+            "typer": importlib.metadata.version("typer"),
+            "rich": importlib.metadata.version("rich"),
+        }
+    }
