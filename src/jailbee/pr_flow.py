@@ -42,6 +42,7 @@ class AiConsent:
 
     ai: bool = False
     no_ai: bool = False
+    attempted: bool = False
     _answer: bool | None = None
 
     def __post_init__(self) -> None:
@@ -566,6 +567,8 @@ def resolve_pr_text_and_head(
     ):
         from jailbee.tui import console
 
+        if consent is not None:
+            consent.attempted = True
         with console.status(status_label):
             ai_text = pr_ai.generate_pr_text(
                 cfg,
@@ -855,6 +858,8 @@ def resolve_pr_description_update(
         return None
     if generated_text is not None:
         return DescriptionUpdate(title=generated_text.title, body=generated_text.body)
+    if consent is not None and consent.attempted:
+        return None
     if not (consent or AiConsent()).allow(cfg, description=True, branch=False):
         return None
 

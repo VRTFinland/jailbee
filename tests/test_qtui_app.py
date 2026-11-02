@@ -1258,8 +1258,12 @@ def test_on_action_pr_source_choice_dispatches_or_cancels(mocker, tmp_path, sele
         options.assert_not_called()
     elif selection is None:
         options.assert_called_once()
-        assert output.call_args.args[0][:4] == ["jailbee", "pr", "push", "p-foo"]
-        spawn.assert_not_called()
+        output.assert_not_called()
+        action = spawn.call_args.args[0]
+        assert action.argv[:4] == ["jailbee", "pr", "push", "p-foo"]
+        assert action.launch == "terminal"
+        assert "--ai" not in action.argv
+        assert "--no-ai" not in action.argv
     else:
         output.assert_not_called()
         options.assert_not_called()
@@ -1284,11 +1288,16 @@ def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):
         PrAnswers(ready=True, regenerate=False, confirm_foreign=True),
     )
     open_output = mocker.patch.object(qapp.AppController, "_open_output")
+    spawn = mocker.patch.object(qapp.AppController, "_spawn", return_value=True)
 
     controller.on_action("pr push", "p-foo")
 
     dialog.assert_called_once()
-    assert open_output.call_args.args[0][-2:] == ["--ready", "--yes"]
+    open_output.assert_not_called()
+    action = spawn.call_args.args[0]
+    assert action.argv[-2:] == ["--ready", "--yes"]
+    assert action.launch == "terminal"
+    assert "--ai" not in action.argv
 
 
 def test_on_action_pr_cancelled_dispatches_nothing(mocker, tmp_path):

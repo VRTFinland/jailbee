@@ -156,3 +156,40 @@ def test_conflicting_ai_flags_fail_before_publication(mocker, submodule):
     assert result.exit_code == 2
     assert "mutually exclusive" in result.output
     load.assert_not_called()
+
+
+@pytest.mark.parametrize("text", [None, PrText("Generated", "Body", "feat/x")])
+def test_discovered_existing_pr_does_not_repeat_agent_run(tmp_path, mocker, text):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    scope = pr_flow.PrScope.for_repo(cfg)
+    consent = pr_flow.AiConsent()
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=text)
+    mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
+    incus = mocker.MagicMock()
+    plan = pr_flow.resolve_pr_text_and_head(
+        cfg, incus, "c", scope, is_update=False, stored_head=None,
+        source_branch="feat/x", base="main", title=None, body=None, as_name=None,
+        no_ai=False, status_label="Generating", consent=consent,
+    )
+    update = pr_flow.resolve_pr_description_update(
+        cfg, incus, "c", scope, branch="feat/x", base="main", title=None,
+        body=None, description=True, ai_on=True, consent=consent, generated_text=plan.ai_text,
+    )
+    generate.assert_called_once()
+    confirm.assert_called_once()
+    assert (update is not None) == (text is not None)
+
+
+def test_noninteractive_description_flag_is_not_agent_consent(tmp_path, mocker, capsys):
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
+    update = pr_flow.resolve_pr_description_update(
+        cfg, mocker.MagicMock(), "c", pr_flow.PrScope.for_repo(cfg), branch="feat/x",
+        base="main", title=None, body=None, description=True, ai_on=True,
+    )
+    assert update is None
+    generate.assert_not_called()
+    assert "--ai" in capsys.readouterr().err
