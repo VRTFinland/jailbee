@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
-from jailbee.orchestration import adoption, labels
+from jailbee.orchestration import adoption, labels, state, watch
 from jailbee.orchestration.grant import Grant
 
 
@@ -39,11 +39,11 @@ def test_adopt_sets_policy_then_parent(cfg, rig):
 
 def test_clears_only_present_stale_labels_before_setting(cfg, rig):
     rows, incus = rig
-    rows[1]["config"].update({labels.STATE: "done", labels.DONE_SHA: "x", labels.LAST_IMPORT: "x", labels.TIMED: "x"})
+    rows[1]["config"].update({key: "x" for key in adoption.CHILD_STATE_LABELS})
     adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
-    assert {c.args[1] for c in incus.config_unset_checked.call_args_list} == {labels.STATE, labels.DONE_SHA, labels.LAST_IMPORT, labels.TIMED}
+    assert {c.args[1] for c in incus.config_unset_checked.call_args_list} == set(adoption.CHILD_STATE_LABELS)
     operations = [c[0] for c in incus.mock_calls if c[0] in {"config_unset_checked", "config_set"}]
-    assert operations == ["config_unset_checked"] * 4 + ["config_set"] * 2
+    assert operations == ["config_unset_checked"] * 10 + ["config_set"] * 2
     assert not {labels.LAST_IMPORT, labels.RIGHTS, labels.RUNNER} & {c.args[1] for c in incus.config_set.call_args_list}
 
 
@@ -94,4 +94,80 @@ def test_cap_counts_running_and_deduplicates(cfg, rig):
 def test_candidates_filter_and_sort(cfg, rig):
     rows, incus = rig
     rows.extend([raw("myrepo-z"), raw("myrepo-b", config={"user.jailbee.mode": "mount"}), raw("myrepo-c", config={labels.GRANT: "x"}), raw("myrepo-d", config={labels.SPAWNED_BY: "myrepo-o"}), raw("myrepo-e", own=False), raw("myrepo-f"), raw("myrepo-g", config={labels.SPAWNED_BY: "myrepo-f"})])
+    rows.reverse()
     assert adoption.candidates(cfg, incus, "myrepo-o") == ["myrepo-a", "myrepo-z"]
+
+
+def test_adopt_notifies_both_without_watching(cfg, rig, tmp_path, mocker):
+    _, incus = rig
+    deliver = mocker.patch("jailbee.orchestration.outbox.deliver")
+    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    assert not result.warnings
+    assert [c.args[2] for c in deliver.call_args_list] == ["myrepo-a", "myrepo-o"]
+    child, parent = [c.args[3] for c in deliver.call_args_list]
+    assert (child.kind, child.from_) == ("adopted", "o")
+    assert (parent.kind, parent.from_) == ("adopted", "a")
+    assert "close" in parent.body and "send restart --child a --agent-only" in parent.body
+    assert watch.load_watch(tmp_path) == {}
+
+
+def test_adopt_delivery_failures_are_warnings(cfg, rig, tmp_path, mocker):
+    _, incus = rig
+    mocker.patch("jailbee.orchestration.outbox.deliver", side_effect=OSError("offline"))
+    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    assert len(result.warnings) == 2
+    assert all("could not notify" in warning for warning in result.warnings)
+    incus.config_set.assert_any_call("myrepo-a", labels.SPAWNED_BY, "myrepo-o")
+
+
+def test_release_live_autostart_preserves_labels(cfg, rig, tmp_path, mocker):
+    rows, incus = rig
+    rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
+    mocker.patch("jailbee.autostart_status.live_run", return_value=object())
+    with pytest.raises(ValueError, match="autostart is running"):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    incus.config_unset_checked.assert_not_called()
+
+
+def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
+    rows, incus = rig
+    rows[1]["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.STATE: "done"})
+    pending = state.pending_dir(tmp_path, "myrepo-a")
+    pending.mkdir(parents=True)
+    (pending / "queued.json").write_text("{}")
+    watch.register(tmp_path, "myrepo-o", watch.WatchEntry("ref", "myrepo-a", "spawn", "2026-01-01T00:00:00+00:00"))
+    deliver = mocker.patch("jailbee.orchestration.outbox.deliver", side_effect=OSError("offline"))
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    assert len(result.warnings) == 1 and "could not notify o" in result.warnings[0]
+    assert deliver.call_args.args[2] == "myrepo-o"
+    assert deliver.call_args.args[3].kind == "released"
+    assert result.orchestrator == "myrepo-o" and result.revoked == ()
+    assert incus.config_unset_checked.call_args_list == [call("myrepo-a", labels.SPAWNED_BY), call("myrepo-a", labels.STATE)]
+    assert not (pending / "queued.json").exists()
+    assert watch.load_watch(tmp_path) == {}
+
+
+def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tmp_path, mocker):
+    rows, incus = rig
+    from jailbee.orchestration.grant import ChildRights
+    rows[1]["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.RIGHTS: ChildRights(mounts=("data",), loose=True).to_label()})
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.mounts.is_attached", return_value=True)
+    remove = mocker.patch("jailbee.mounts.remove_optional_mount", side_effect=RuntimeError("failed"))
+    mocker.patch("jailbee.net_switch.switch_mode")
+    with pytest.raises(RuntimeError, match="failed"):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    incus.config_unset_checked.assert_not_called()
+    remove.side_effect = None
+    mocker.patch("jailbee.orchestration.outbox.deliver")
+    result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    assert set(result.revoked) == {"loose", "mount:data"}
+    remove.assert_called_with(cfg, incus, "myrepo-a", "data")
+
+
+def test_release_non_child_refused(cfg, rig, tmp_path):
+    _, incus = rig
+    with pytest.raises(adoption.AdoptError, match="is not a child"):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    incus.config_unset_checked.assert_not_called()
