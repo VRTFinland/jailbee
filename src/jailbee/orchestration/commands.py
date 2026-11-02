@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from jailbee.config.models_orchestration import PROFILE_NAME_RE, OrchestrationProfile
 from jailbee.lifecycle import short_name
 from jailbee.orchestration import labels, service
 from jailbee.orchestration.grant import (
@@ -24,10 +25,12 @@ from jailbee.orchestration.grant import (
     cap_excess,
     effective_grant,
 )
-from jailbee.orchestration.profiles import default_grant, profile_grant, repo_cap
+from jailbee.orchestration.profiles import default_grant, profile_grant, profile_of, repo_cap
 from jailbee.orchestration.runner_model import Runner
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from jailbee.config import Config
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.incus import Incus
@@ -112,6 +115,54 @@ def read_grant(incus: Incus, full: str) -> Grant | None:
     if raw is None:
         return None
     return Grant.from_label(raw)
+
+
+@dataclass(frozen=True)
+class SavedProfile:
+    name: str
+    profile: OrchestrationProfile
+    replaced: bool
+
+
+def save_profile(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    name: str,
+    *,
+    global_path: Path,
+    force: bool = False,
+) -> SavedProfile:
+    """Persist a container's stored grant as a global orchestration profile."""
+    from jailbee.config.local_layer import local_config_path, read_local_raw
+    from jailbee.config_writer import YamlChange, patch_file
+
+    if not PROFILE_NAME_RE.fullmatch(name):
+        raise GrantError(
+            f"invalid profile name {name!r}: use lowercase letters, digits and dashes, "
+            "starting with a letter (max 32 characters)"
+        )
+    stored = read_grant(incus, full)
+    if stored is None:
+        raise GrantError(f"no grant on {short_name(cfg, full)!r}; grant it first")
+    local = read_local_raw(cfg.container_prefix)
+    orchestration = local.get("orchestration")
+    profiles = orchestration.get("profiles") if isinstance(orchestration, dict) else None
+    if isinstance(profiles, dict) and name in profiles:
+        path = local_config_path(cfg.container_prefix)
+        raise GrantError(
+            f"profile {name!r} is defined in {path}, which overrides global.yaml; "
+            "edit it there with `jailbee config edit --local`"
+        )
+    replaced = name in cfg.orchestration_view().profiles
+    if replaced and not force:
+        raise GrantError(f"profile {name!r} already exists; pass --force to replace it")
+    profile = profile_of(stored)
+    patch_file(
+        global_path,
+        [YamlChange(("orchestration", "profiles", name), profile.model_dump(mode="json", exclude_none=True))],
+    )
+    return SavedProfile(name, profile, replaced)
 
 
 def _check_ops(names: tuple[str, ...]) -> None:
