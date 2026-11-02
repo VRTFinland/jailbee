@@ -70,7 +70,9 @@ class AiConsent:
             else:
                 from jailbee.tui import hint_console
 
-                hint_console.print("Skipping PR AI generation in a non-interactive run; use --ai to enable it.")
+                hint_console.print(
+                    "Skipping PR AI generation in a non-interactive run; use --ai to enable it."
+                )
                 self._answer = False
         return self._answer
 

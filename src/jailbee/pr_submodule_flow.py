@@ -204,7 +204,12 @@ def publish_submodule_prs_first(
                 short,
                 candidate,
                 SubPrOptions(
-                    ready=ready, ai=ai, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False
+                    ready=ready,
+                    ai=ai,
+                    no_ai=no_ai,
+                    no_outbox=no_outbox,
+                    yes=yes,
+                    note_merge_order=False,
                 ),
                 repo_dir=repo_dir,
                 confirm_plan=None,

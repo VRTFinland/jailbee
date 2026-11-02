@@ -259,7 +259,11 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
     [
         (["--title", "Typed title"], {"--title": "Typed title"}, None),
         (["--body", "Typed body"], {"--body": "Typed body"}, None),
-        (["--description", "--ai"], {"--title": "Generated title", "--body": "Generated body"}, None),
+        (
+            ["--description", "--ai"],
+            {"--title": "Generated title", "--body": "Generated body"},
+            None,
+        ),
         (["--ready"], {}, True),
         (["--draft"], {}, False),
         (["--title", "Typed title", "--ready"], {"--title": "Typed title"}, True),

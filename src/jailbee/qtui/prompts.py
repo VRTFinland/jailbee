@@ -231,7 +231,9 @@ class PrOptionsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Create or update PR for '{name}'")
         self._ready = QCheckBox("Mark the PR ready for review", self)
-        self._regen = QCheckBox("Request a description update (agent use asks in the terminal)", self)
+        self._regen = QCheckBox(
+            "Request a description update (agent use asks in the terminal)", self
+        )
         self._adopt = QCheckBox("Confirm publishing to an existing PR's head branch", self)
         note = QLabel(
             "A new PR opens as a draft. Leave 'ready' unchecked to leave an "
