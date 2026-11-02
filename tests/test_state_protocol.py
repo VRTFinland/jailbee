@@ -116,6 +116,7 @@ def _full_snapshot() -> Snapshot:
                             last_tool="Bash  ls <b>",
                             last_message="[red]done[/red]",
                             subagents=2,
+                            background_clear=False,
                             shells=1,
                             modified=123.5,
                             state="idle",
