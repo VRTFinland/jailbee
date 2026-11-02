@@ -317,8 +317,14 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 
 For merged work, prefer a fresh fork for rework: it starts from your latest merged state. For independent PRs, use the ref or PR workflow above.
 For an existing `keep` child, `jailbee-inbox send update --child C --wait`
-transports your branch and tells the child which ref to merge. The broker
-never merges it. To launch another session, stop then restart the child
+transports your branch and tells the child which ref to merge. To send a
+different source without switching your branch, add `--ref refs/heads/topic`
+(or a full 40-hex commit or imported `refs/jailbee/from/...` ref), or use
+`--base release/1` for a host-resolved base as with spawn `--new --base`.
+`--ref` and `--base` are mutually exclusive. Explicit sources land at
+`refs/jailbee/update/<orchestrator>/<manifest-id>`, separate from branch and
+child-import refs; omitted selectors preserve today's branch transport.
+The broker never merges it. To launch another session, stop then restart the child
 with a new prompt; an immediate restart reports `done`, a queued one reports
 `queued` then `started`.
 

@@ -171,15 +171,32 @@ Transport the orchestrator's current branch into a running child at
 `refs/jailbee/from/<orchestrator>/<branch>`, without touching its index or
 existing worktree. The child receives an `update` message carrying
 `imported_ref` and `imported_sha`, and merges when convenient. The `import`
-grant operation permits update; no new grant is needed. Detached parent
-HEAD and stopped child are refused.
+grant operation permits update; no new grant is needed. A stopped child is
+refused. Without a source selector, detached parent HEAD is refused as before.
+
+Optional `ref` accepts a full `refs/` name or 40-hex commit in the
+orchestrator's repository, using spawn's explicit-ref rules. Optional `base`
+accepts a host branch, resolved with the same local/upstream and
+`new.autofetch` policy as spawn `--new --base`. They are mutually exclusive.
+Explicit sources land at `refs/jailbee/update/<orchestrator>/<id>`: a stable
+per-request ref in a separate namespace, never overwriting current-branch
+updates or imported child refs. They work with a detached parent HEAD. The
+message still carries the exact `imported_ref` and `imported_sha`; no local
+branch, base anchor, index or worktree is moved.
 
 <!-- kind: outbox -->
 ```json
 {"version": 1, "id": "update-fix-12", "type": "update", "child": "fix-issue-12"}
 ```
 
-CLI: `jailbee-inbox send update --child C --wait`.
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "update-release-1", "type": "update", "child": "pool-release", "base": "release/1"}
+```
+
+CLI: `jailbee-inbox send update --child C [--ref REF | --base BRANCH] --wait`.
+For example, use `--ref refs/jailbee/from/worker/fix` to reuse imported work,
+or `--base release/1` to deliver a host-resolved release branch.
 
 ### `restart`
 

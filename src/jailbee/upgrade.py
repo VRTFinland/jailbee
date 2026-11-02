@@ -456,6 +456,22 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "and the quiet-child watchdog for inbox waits"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox gains `send update --ref` and "
+            "`--base` to transport a selected source into a running child"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing explicit "
+            "update refs, commits and host base branches"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
