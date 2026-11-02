@@ -142,6 +142,35 @@ def test_agent_only_restart_resume_passes_id_to_relaunch(tmp_path, seams, sessio
     rig.incus.config_set.assert_any_call(rig.child.full, labels.RESUME, session_id)
 
 
+def test_agent_only_clears_previous_resume_before_relaunch(tmp_path, seams, session, monkeypatch):
+    import json
+
+    from jailbee.orchestration import agent_session
+
+    session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    rig = Rig(tmp_path, running=True, config={
+        labels.STATE: labels.STATE_DONE,
+        labels.AGENT_SESSIONS: json.dumps([session_id]),
+    })
+    live = dict(rig.child.config)
+    rig.incus.config_get_checked.side_effect = lambda name, key: live.get(key)
+    rig.incus.config_unset_checked.side_effect = lambda name, key: live.pop(key, None)
+    rig.incus.config_set.side_effect = lambda name, key, value: live.__setitem__(key, value)
+    adapter = MagicMock()
+    adapter.resume_args.return_value = "--resume"
+    adapter.session_exists.return_value = True
+    monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
+    observed = []
+    session.side_effect = lambda *args, **kwargs: observed.append((live.get(labels.RESUME), kwargs["resume"]))
+    monkeypatch.setattr(agent_session, "relaunch", session)
+    assert actions.handle_restart(rig.ctx(), restart(resume="last")).state == "started"
+    assert live[labels.RESUME] == session_id
+    live[labels.STATE] = labels.STATE_DONE
+    assert actions.handle_restart(rig.ctx(), restart()).state == "started"
+    assert observed == [(session_id, session_id), (None, None)]
+    assert labels.RESUME not in live
+
+
 @pytest.mark.parametrize(
     "status,confirmed,allowed",
     [

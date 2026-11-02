@@ -53,6 +53,7 @@ def test_restart_resume_last_resolves_latest(tmp_path, seams, adapter):
     assert actions.handle_restart(rig.ctx(), manifest("last")).state == "started"
     rig.incus.config_set.assert_any_call(rig.child.full, labels.RESUME, B)
     assert labels.valid_session_id(adapter.resume_args.call_args.args[0])
+    adapter.session_exists.assert_called_once_with(rig.cfg, rig.child.full, B)
 
 
 def test_restart_without_resume_unsets_label(tmp_path, seams):
@@ -65,6 +66,7 @@ def test_restart_without_resume_unsets_label(tmp_path, seams):
     "requested,history,exists,capable,detail",
     [
         (B, [A], True, True, f"session `{B}` was not recorded for child `c1`"),
+        (B, [A], False, True, f"session `{B}` was not recorded for child `c1`"),
         ("last", [], True, True, "child `c1` has no recorded agent session"),
         (A, [A], False, True, f"session `{A}` has no transcript any more"),
         ("last", [], True, False, "agent `claude` cannot resume a session"),
@@ -78,6 +80,45 @@ def test_restart_refusals(tmp_path, seams, adapter, requested, history, exists, 
         "refused", detail
     )
     seams["boot"].assert_not_called()
+    if requested == B:
+        adapter.session_exists.assert_not_called()
+
+
+@pytest.mark.parametrize("mode,expected", [("primary", "other"), ("retained", "claude"), ("explicit", "claude")])
+def test_restart_selects_effective_agent_adapter(tmp_path, seams, monkeypatch, mode, expected):
+    from jailbee.orchestration.runner import Runner
+
+    runner = Runner(agent="claude", model="sonnet")
+    config = {labels.AGENT_SESSIONS: json.dumps([A])}
+    if mode == "retained":
+        config[labels.RUNNER] = runner.to_label()
+    rig = Rig(tmp_path, config=config)
+    monkeypatch.setattr("jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "other"})())
+    monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
+    adapter = MagicMock()
+    adapter.resume_args.return_value = "--resume"
+    adapter.session_exists.return_value = True
+    lookup = MagicMock(return_value=adapter)
+    monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lookup)
+    kwargs = {"runner": runner.model_dump()} if mode == "explicit" else {}
+    assert actions.handle_restart(rig.ctx(), manifest(A, **kwargs)).state == "started"
+    lookup.assert_called_once_with(expected)
+    adapter.session_exists.assert_called_once_with(rig.cfg, rig.child.full, A)
+
+
+def test_stopped_restart_clears_previous_resume_before_boot(tmp_path, seams, adapter):
+    rig = Rig(tmp_path, config={labels.AGENT_SESSIONS: json.dumps([A])})
+    live = dict(rig.child.config)
+    rig.incus.config_set.side_effect = lambda name, key, value: live.__setitem__(key, value)
+    rig.incus.config_unset_checked.side_effect = lambda name, key: live.pop(key, None)
+    observed = []
+    seams["boot"].side_effect = lambda *args, **kwargs: (observed.append(live.get(labels.RESUME)) or type("Worker", (), {"pid": 12345, "log_path": "/tmp/log"})())
+    assert actions.handle_restart(rig.ctx(), manifest(A)).state == "started"
+    assert live[labels.RESUME] == A
+    state.save_reservations(tmp_path, {})
+    assert actions.handle_restart(rig.ctx(), manifest()).state == "started"
+    assert observed == [A, None]
+    assert labels.RESUME not in live
 
 
 def test_queued_restart_keeps_resolved_id(tmp_path, seams, adapter, monkeypatch):
