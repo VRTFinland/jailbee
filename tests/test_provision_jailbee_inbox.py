@@ -1,6 +1,7 @@
 """Runs the `jailbee-inbox` script install.sh writes against a temporary
 orchestration directory. Needs bash and jq (both in the golden image)."""
 
+import ctypes
 import importlib.resources
 import json
 import os
@@ -195,19 +196,51 @@ def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
 
 
 def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
+    ready = tmp_path / "watch-pid"
+    stubs = _stub(tmp_path, f'echo $$ > "{ready}"\nexec sleep 30\n')
     env = env_for(base, tmp_path)
-    proc = _popen_wait(script, env, "--timeout", "none")
+    env["PATH"] = f"{stubs}:{env['PATH']}"
+    # Adopt the orphaned watcher so the test can reap it after killing it.
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous_subreaper = ctypes.c_int()
+    assert libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0) == 0
+    assert libc.prctl(36, 1, 0, 0, 0) == 0
+    proc = subprocess.Popen(
+        ["/bin/bash", str(script), "wait", "--timeout", "none"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    watcher_pid = None
     try:
-        time.sleep(0.3)
-        assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+        deadline = time.monotonic() + 2
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "watcher did not start"
+        watcher_pid = int(ready.read_text())
+        args = ["/bin/bash", str(script), "wait", "--timeout", "0"]
+        assert subprocess.run(args, env=env, capture_output=True, timeout=2).returncode == 2
         proc.terminate()
-        proc.communicate(timeout=2)
+        proc.wait(timeout=2)
+        os.kill(watcher_pid, 0)
+        assert subprocess.run(args, env=env, capture_output=True, timeout=2).returncode == 1
+        os.kill(watcher_pid, 0)
     finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.communicate()
-    assert proc.returncode != 0
-    assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
+        # The watcher can outlive its parent; kill the entire private session.
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=2)
+        if watcher_pid is None and ready.exists():
+            watcher_pid = int(ready.read_text())
+        if watcher_pid is not None:
+            try:
+                os.waitpid(watcher_pid, 0)
+            except ChildProcessError:
+                pass
+        assert libc.prctl(36, previous_subreaper.value, 0, 0, 0) == 0
 
 
 @pytest.mark.parametrize("dur", ["None", "NONE", "forever", "inf", "none5"])

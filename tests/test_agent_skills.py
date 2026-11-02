@@ -188,7 +188,11 @@ def test_child_skill_keeps_a_background_waiter() -> None:
 
 def test_orchestration_skill_pairs_none_with_quiet_after() -> None:
     text = _skill_text(ORCH)
-    assert "--timeout none" in text and "--quiet-after" in text
+    paragraphs = text.split("\n\n")
+    assert any(
+        re.search(r"`--timeout none`\s+only together with\s+`--quiet-after`", paragraph)
+        for paragraph in paragraphs
+    )
 
 
 def test_child_skill_covers_done_bounce() -> None:
