@@ -38,7 +38,17 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
     ctx.now += timedelta(minutes=10)
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"] == first["children"]
-    assert delivered(ctx)["updated_at"] == ctx.now.timestamp()
+    assert delivered(ctx)["children"][0]["started_at"] == first["children"][0]["started_at"]
+
+
+def test_heartbeat_stamped_at_write_not_round_start(tmp_path, monkeypatch):
+    # A broker round can run long (imports, slow `incus exec`); `ctx.now` is
+    # the round's start, so stamping it made the heartbeat stale on arrival.
+    ctx = context(tmp_path)
+    written = ctx.now.timestamp() + 58
+    monkeypatch.setattr(inbox_state.time, "time", lambda: written)
+    inbox_state.sync_children(ctx)
+    assert delivered(ctx)["updated_at"] == written
 
 
 def test_snapshot_stop_restart_and_removal(tmp_path):

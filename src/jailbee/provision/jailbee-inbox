@@ -20,7 +20,7 @@ Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
          (note,question,done,blocked,queued,started,failed,refused). A child's
          first message after each start always wakes. Nothing is marked read.
          --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running
-         child is silent that long; needs fresh broker children.json (<=60s).
+         child is silent that long; needs fresh broker children.json (<=15m).
          Only one wait may run; a second exits 2. Concurrent send --wait is
          safe: wait skips its reserved statuses until that sender exits.
   ls     One line per unread message, oldest first:
@@ -178,7 +178,7 @@ children = {}
 running = set()
 try:
     assert snapshot and snapshot["version"] == 1
-    assert number(snapshot["updated_at"]) and -5 <= now - snapshot["updated_at"] <= 60
+    assert number(snapshot["updated_at"]) and -5 <= now - snapshot["updated_at"] <= 900
     assert isinstance(snapshot["children"], list)
     for c in snapshot["children"]:
         assert isinstance(c["name"], str) and isinstance(c["running"], bool)
@@ -188,7 +188,7 @@ try:
             running.add(c["name"])
 except (AssertionError, KeyError, TypeError):
     if quiet:
-        print("jailbee-inbox: --quiet-after needs a fresh broker children.json (at most 60s old)", file=sys.stderr)
+        print("jailbee-inbox: --quiet-after needs a fresh broker children.json (at most 15 minutes old)", file=sys.stderr)
         sys.exit(2)
     children = {}
 

@@ -1349,12 +1349,20 @@ def test_wait_quiet_child_counts_all_activity(script, base, tmp_path, read):
 @pytest.mark.parametrize("state", [None, "bad", "stale"])
 def test_wait_quiet_requires_fresh_state(script, base, tmp_path, state):
     if state == "stale":
-        child_snapshot(base, updated=time.time() - 120)
+        child_snapshot(base, updated=time.time() - 16 * 60)
     elif state == "bad":
         (base / "children.json").write_text("{}")
     r = run(script, "wait", "--quiet-after", "1m", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 2
     assert "children.json" in r.stderr
+
+
+def test_wait_quiet_tolerates_one_slow_broker_round(script, base, tmp_path):
+    # One broker round may take minutes (a child import has a 600 s transport
+    # timeout); a heartbeat older than 60 s is not a dead broker.
+    child_snapshot(base, started=time.time(), updated=time.time() - 5 * 60)
+    r = run(script, "wait", "--quiet-after", "1m", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 1, r.stderr
 
 
 def test_wait_single_waiter_lock(script, base, tmp_path):

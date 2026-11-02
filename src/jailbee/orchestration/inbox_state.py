@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING
 
 from jailbee.orchestration import labels
@@ -44,7 +45,10 @@ def sync_children(ctx: ActionContext) -> None:
         children.append(item)
         durable.append({**item, "running": child.running, "full": child.full, "key": child.key})
     atomic_write_text(path, json.dumps({"owner": ctx.sender.key, "children": durable}))
-    text = json.dumps({"version": 1, "updated_at": ctx.now.timestamp(), "children": children})
+    # Stamped now, not with `ctx.now`: that is the round's start, and a round
+    # can run long (child imports, slow `incus exec`), which would make the
+    # heartbeat look stale the moment it lands.
+    text = json.dumps({"version": 1, "updated_at": time.time(), "children": children})
     _atomic_write(
         ctx.incus,
         ctx.sender.full,
