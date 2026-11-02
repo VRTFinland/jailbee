@@ -358,6 +358,18 @@ needed, even at capacity, and agent-only restart never queues. It returns
 agent exit yields `blocked`. Without `--agent-only`, stop the child first;
 ordinary restart runs boot/autostart and can queue.
 
+To resume a conversation, find the child's latest session with
+`jailbee-inbox children` (or `children --json`), then restart with a new prompt:
+
+```bash
+jailbee-inbox send restart --child fix-issue-12 --resume last --agent-only --text "Continue the task."
+```
+
+Use `--resume ID` for a specific session; only sessions recorded for that child
+are accepted. Omit `--agent-only` for a stopped child, and optionally select a
+runner using the same flags as above. The prompt becomes a new turn in the
+resumed conversation. Unsupervised children do not record new sessions.
+
 ## Finishing
 
 When everything is merged, offer the human a pull request through the
