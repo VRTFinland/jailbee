@@ -148,10 +148,14 @@ def test_agent_only_clears_previous_resume_before_relaunch(tmp_path, seams, sess
     from jailbee.orchestration import agent_session
 
     session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    rig = Rig(tmp_path, running=True, config={
-        labels.STATE: labels.STATE_DONE,
-        labels.AGENT_SESSIONS: json.dumps([session_id]),
-    })
+    rig = Rig(
+        tmp_path,
+        running=True,
+        config={
+            labels.STATE: labels.STATE_DONE,
+            labels.AGENT_SESSIONS: json.dumps([session_id]),
+        },
+    )
     live = dict(rig.child.config)
     rig.incus.config_get_checked.side_effect = lambda name, key: live.get(key)
     rig.incus.config_unset_checked.side_effect = lambda name, key: live.pop(key, None)
@@ -161,7 +165,9 @@ def test_agent_only_clears_previous_resume_before_relaunch(tmp_path, seams, sess
     adapter.session_exists.return_value = True
     monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
     observed = []
-    session.side_effect = lambda *args, **kwargs: observed.append((live.get(labels.RESUME), kwargs["resume"]))
+    session.side_effect = lambda *args, **kwargs: observed.append(
+        (live.get(labels.RESUME), kwargs["resume"])
+    )
     monkeypatch.setattr(agent_session, "relaunch", session)
     assert actions.handle_restart(rig.ctx(), restart(resume="last")).state == "started"
     assert live[labels.RESUME] == session_id

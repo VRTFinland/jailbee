@@ -84,7 +84,9 @@ def test_restart_refusals(tmp_path, seams, adapter, requested, history, exists, 
         adapter.session_exists.assert_not_called()
 
 
-@pytest.mark.parametrize("mode,expected", [("primary", "other"), ("retained", "claude"), ("explicit", "claude")])
+@pytest.mark.parametrize(
+    "mode,expected", [("primary", "other"), ("retained", "claude"), ("explicit", "claude")]
+)
 def test_restart_selects_effective_agent_adapter(tmp_path, seams, monkeypatch, mode, expected):
     from jailbee.orchestration.runner import Runner
 
@@ -93,7 +95,9 @@ def test_restart_selects_effective_agent_adapter(tmp_path, seams, monkeypatch, m
     if mode == "retained":
         config[labels.RUNNER] = runner.to_label()
     rig = Rig(tmp_path, config=config)
-    monkeypatch.setattr("jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "other"})())
+    monkeypatch.setattr(
+        "jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "other"})()
+    )
     monkeypatch.setattr(actions, "runner_problems", lambda *args: [])
     adapter = MagicMock()
     adapter.resume_args.return_value = "--resume"
@@ -112,7 +116,10 @@ def test_stopped_restart_clears_previous_resume_before_boot(tmp_path, seams, ada
     rig.incus.config_set.side_effect = lambda name, key, value: live.__setitem__(key, value)
     rig.incus.config_unset_checked.side_effect = lambda name, key: live.pop(key, None)
     observed = []
-    seams["boot"].side_effect = lambda *args, **kwargs: (observed.append(live.get(labels.RESUME)) or type("Worker", (), {"pid": 12345, "log_path": "/tmp/log"})())
+    seams["boot"].side_effect = lambda *args, **kwargs: (
+        observed.append(live.get(labels.RESUME))
+        or type("Worker", (), {"pid": 12345, "log_path": "/tmp/log"})()
+    )
     assert actions.handle_restart(rig.ctx(), manifest(A)).state == "started"
     assert live[labels.RESUME] == A
     state.save_reservations(tmp_path, {})
