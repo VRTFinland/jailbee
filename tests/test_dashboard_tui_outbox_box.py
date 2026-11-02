@@ -250,6 +250,17 @@ def test_escape_and_enter_leave_a_preview_that_replaced_the_list(key):
     assert (got.name, got.value) == ("preview", "auto")
 
 
+@pytest.mark.parametrize("key", ["up", "k", "pageup", "home"])
+def test_short_narrow_preview_consumes_scroll_keys(key):
+    async def scenario(app, box, pilot):
+        assert not box._list.display
+        assert app.query_one("#outbox-right").display
+        assert not app.query_one("#outbox-preview").allow_vertical_scroll
+        return await press(box, key, key if len(key) == 1 else None)
+
+    assert run(state2(preview="on"), scenario, size=(80, 50)) is True
+
+
 def test_side_by_side_threshold():
     def visibility(app):
         return (

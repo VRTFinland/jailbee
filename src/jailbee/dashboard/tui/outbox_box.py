@@ -18,6 +18,7 @@ from collections.abc import Callable
 from rich.spinner import Spinner
 from rich.text import Text
 from textual import events
+from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
@@ -90,6 +91,14 @@ _QUESTION_MOVES = {
     "down": "cursor_down",
     "j": "cursor_down",
 }
+
+
+def _run_action(widget: Widget, action: str) -> None:
+    """Run a direct widget action, treating Textual's skip as a no-op."""
+    try:
+        getattr(widget, f"action_{action}")()
+    except SkipAction:
+        pass
 
 
 def _title(text: str) -> Text:
@@ -436,7 +445,7 @@ class OutboxBox(OverlayBox):
             return self.Intent(self.key, "answer", None, value)
         move = _QUESTION_MOVES.get(key)
         if move is not None:
-            getattr(lst, f"action_{move}")()
+            _run_action(lst, move)
         return True
 
     async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]  # see OverlayBox.handle_key
@@ -464,6 +473,6 @@ class OutboxBox(OverlayBox):
             scroll = _PREVIEW_SCROLL.get(key)
             if scroll is None:
                 return False
-            getattr(self.query_one(f"#{PREVIEW_ID}", PreviewScroll), f"action_{scroll}")()
+            _run_action(self.query_one(f"#{PREVIEW_ID}", PreviewScroll), scroll)
             return True
         return await super().handle_key(event)
