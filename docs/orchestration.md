@@ -453,14 +453,16 @@ merged state.
 - **Update.** `update` (allowed by the `import` operation) brings the
   orchestrator's current branch into a running child at
   `refs/jailbee/from/<orchestrator>/<branch>`. The child receives an `update`
-  message with `imported_ref`/`imported_sha` and merges that ref itself.
-  Optional `ref` selects a full `refs/` name or 40-hex commit in the parent's
+  message with `imported_ref`/`imported_sha`. Without `--merge`, the child
+  merges that ref itself. With `--merge`, a message with `merged_head` means
+  the branch was already updated: the child re-reads files and must not merge
+  `imported_ref` again. Optional `ref` selects a full `refs/` name or 40-hex commit in the parent's
   repository, with spawn's validation; optional `base` selects a host branch
   using spawn `--new --base` resolution (including `new.autofetch`). They
   cannot be combined. Explicit sources land at
   `refs/jailbee/update/<orchestrator>/<manifest-id>`, never overwriting the
-  parent's current-branch ref or a child's imported ref. No worktree, index,
-  local branch or base anchor is moved by the broker. Detached parent HEAD
+  parent's current-branch ref or a child's imported ref. Without `--merge`,
+  no worktree, index, local branch or base anchor is moved by the broker. Detached parent HEAD
   is refused only when neither selector is supplied.
 - **Stop** a child; **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is

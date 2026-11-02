@@ -168,9 +168,9 @@ Fetch a child's committed work into your repo as
 ### `update`
 
 Transport the orchestrator's current branch into a running child at
-`refs/jailbee/from/<orchestrator>/<branch>`, without touching its index or
-existing worktree. The child receives an `update` message carrying
-`imported_ref` and `imported_sha`, and merges when convenient. The `import`
+`refs/jailbee/from/<orchestrator>/<branch>`. Without `merge: true`, this does
+not touch its index or worktree, and the child merges when convenient. The child
+receives an `update` message carrying `imported_ref` and `imported_sha`. The `import`
 grant operation permits update; no new grant is needed. A stopped child is
 refused. Without a source selector, detached parent HEAD is refused as before.
 
@@ -181,8 +181,8 @@ accepts a host branch, resolved with the same local/upstream and
 Explicit sources land at `refs/jailbee/update/<orchestrator>/<id>`: a stable
 per-request ref in a separate namespace, never overwriting current-branch
 updates or imported child refs. They work with a detached parent HEAD. The
-message still carries the exact `imported_ref` and `imported_sha`; no local
-branch, base anchor, index or worktree is moved.
+message still carries the exact `imported_ref` and `imported_sha`. Without
+`merge: true`, no local branch, base anchor, index or worktree is moved.
 
 <!-- kind: outbox -->
 ```json
