@@ -305,26 +305,34 @@ def test_unknown_names_do_not_mutate(tmp_path):
 
 def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
     from io import BytesIO
+
     from jailbee.services.local_proc import LocalProc
 
     # Output before the capture block belongs to the snapshot; only subsequent
     # notifications are streamed. Repeated lines do not depend on history size.
-    protocol = (b"%begin 1 1 0\n%end 1 1 0\n"
-                b"%output %7 NEW\134012\n"
-                b"%begin 1 2 0\nOLD\nNEW\n%end 1 2 0\n"
-                b"%output %7 same\134012same\134012\n"
-                b"%output %8 unrelated\134012\n%exit\n")
+    protocol = (
+        b"%begin 1 1 0\n%end 1 1 0\n"
+        b"%output %7 NEW\134012\n"
+        b"%begin 1 2 0\nOLD\nNEW\n%end 1 2 0\n"
+        b"%output %7 same\134012same\134012\n"
+        b"%output %8 unrelated\134012\n%exit\n"
+    )
+
     class Process:
         def __init__(self):
             self.stdin = BytesIO()
             self.stdout = BytesIO(protocol)
             self.returncode = None
+
         def poll(self):
             return self.returncode
+
         def terminate(self):
             self.returncode = 0
+
         def wait(self, timeout=None):
             return 0
+
     process = Process()
     monkeypatch.setattr("jailbee.services.local_proc.subprocess.Popen", lambda *a, **kw: process)
     proc = LocalProc()

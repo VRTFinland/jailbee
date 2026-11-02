@@ -22,7 +22,9 @@ class LocalProc:
             raise RuntimeError(pane_result.stderr.strip() or "service window not found")
         process = subprocess.Popen(
             ["tmux", "-C", "attach-session", "-t", "autostart", "-f", "read-only,ignore-size"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
         assert process.stdin is not None and process.stdout is not None
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -56,7 +58,7 @@ class LocalProc:
                     continue
                 prefix = f"%output {pane} ".encode()
                 if line.startswith(prefix):
-                    raw = line[len(prefix):]
+                    raw = line[len(prefix) :]
                     raw = re.sub(rb"\\([0-7]{3})", lambda m: bytes([int(m[1], 8)]), raw)
                     text = decoder.decode(raw)
                     if text:
