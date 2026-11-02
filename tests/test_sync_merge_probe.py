@@ -17,7 +17,9 @@ def test_merge_probe_contained() -> None:
     incus, result = probe(ExecResult(0, b"", b""))
     assert result == MergeProbe("contained", ())
     incus.exec_bytes.assert_called_once_with(
-        "box", ["git", "-C", "/repo", "merge-base", "--is-ancestor", "refs/jailbee/x", "HEAD"], uid=1000
+        "box",
+        ["git", "-C", "/repo", "merge-base", "--is-ancestor", "refs/jailbee/x", "HEAD"],
+        uid=1000,
     )
 
 
@@ -25,7 +27,9 @@ def test_merge_probe_fast_forward() -> None:
     incus, result = probe(ExecResult(1, b"", b""), ExecResult(0, b"", b""))
     assert result == MergeProbe("fast_forward", ())
     assert incus.exec_bytes.call_args_list[1] == call(
-        "box", ["git", "-C", "/repo", "merge-base", "--is-ancestor", "HEAD", "refs/jailbee/x"], uid=1000
+        "box",
+        ["git", "-C", "/repo", "merge-base", "--is-ancestor", "HEAD", "refs/jailbee/x"],
+        uid=1000,
     )
 
 
@@ -33,12 +37,28 @@ def test_merge_probe_clean_merge() -> None:
     incus, result = probe(ExecResult(1, b"", b""), ExecResult(1, b"", b""), ExecResult(0, b"", b""))
     assert result == MergeProbe("merge", ())
     incus.exec_bytes.assert_called_with(
-        "box", ["git", "-C", "/repo", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "refs/jailbee/x"], uid=1000
+        "box",
+        [
+            "git",
+            "-C",
+            "/repo",
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "HEAD",
+            "refs/jailbee/x",
+        ],
+        uid=1000,
     )
 
 
 def test_merge_probe_conflicts_listed() -> None:
-    _, result = probe(ExecResult(1, b"", b""), ExecResult(1, b"", b""), ExecResult(1, b"0" * 40 + b"\na.py\nb.py\na.py\n", b""))
+    _, result = probe(
+        ExecResult(1, b"", b""),
+        ExecResult(1, b"", b""),
+        ExecResult(1, b"0" * 40 + b"\na.py\nb.py\na.py\n", b""),
+    )
     assert result.conflicts == ("a.py", "b.py")
     assert result.relation == "merge"
 
@@ -48,10 +68,13 @@ def test_merge_tree_probe_error_raises() -> None:
         probe(ExecResult(1, b"", b""), ExecResult(1, b"", b""), ExecResult(128, b"", b"broken"))
 
 
-@pytest.mark.parametrize("results", [
-    (ExecResult(128, b"", b"broken"),),
-    (ExecResult(1, b"", b""), ExecResult(128, b"", b"broken")),
-])
+@pytest.mark.parametrize(
+    "results",
+    [
+        (ExecResult(128, b"", b"broken"),),
+        (ExecResult(1, b"", b""), ExecResult(128, b"", b"broken")),
+    ],
+)
 def test_merge_probe_ancestor_error_raises(results: tuple[ExecResult, ...]) -> None:
     with pytest.raises(SyncError, match="cannot compare HEAD with refs/jailbee/x in box: broken"):
         probe(*results)

@@ -2693,7 +2693,17 @@ def probe_merge_in_container(
 
     result = incus.exec_bytes(
         full_name,
-        ["git", "-C", repo_dir, "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", ref],
+        [
+            "git",
+            "-C",
+            repo_dir,
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "HEAD",
+            ref,
+        ],
         uid=uid,
     )
     if result.returncode not in (0, 1):
@@ -2701,7 +2711,9 @@ def probe_merge_in_container(
         raise SyncError(f"merge check failed in {full_name}: {stderr}")
     conflicts: tuple[str, ...] = ()
     if result.returncode == 1:
-        conflicts = tuple(dict.fromkeys(result.stdout.decode("utf-8", errors="replace").splitlines()[1:]))
+        conflicts = tuple(
+            dict.fromkeys(result.stdout.decode("utf-8", errors="replace").splitlines()[1:])
+        )
     return MergeProbe("merge", conflicts)
 
 
