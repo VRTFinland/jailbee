@@ -161,9 +161,7 @@ def build_action(
     if verb == "pr push" and extra_flags and "--source-manifest" in extra_flags:
         # Source publication must keep its existing terminal confirmation gates.
         launch = "terminal"
-    return ActionCommand(
-        argv=argv, launch=launch, confirm=confirm, cwd=target.cwd(), verb=verb
-    )
+    return ActionCommand(argv=argv, launch=launch, confirm=confirm, cwd=target.cwd(), verb=verb)
 
 
 def build_bulk_action(

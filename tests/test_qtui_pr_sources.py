@@ -33,8 +33,8 @@ def test_request_loads_target_config_and_resolves_full_name(mocker, tmp_path, co
 
 
 def test_request_unreadable_config_keeps_own_branch_available(mocker, tmp_path):
-    from jailbee.qtui.pr_sources import _Request
     from jailbee.config import ConfigError
+    from jailbee.qtui.pr_sources import _Request
 
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("unavailable"))
     request = _Request(RepoTarget(tmp_path, None), "short")

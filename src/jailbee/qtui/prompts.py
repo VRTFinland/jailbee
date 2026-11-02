@@ -194,17 +194,22 @@ class PushOptionsDialog(QDialog):
 class PrSourceDialog(QDialog):
     """Choose an outbox proposal before asking own-branch-only PR options."""
 
-    def __init__(self, name: str, pending: Sequence[PendingSource], *, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, name: str, pending: Sequence[PendingSource], *, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"PR source for '{name}'")
         self._source = QComboBox(self)
         self._source.addItem("container branch", "")
         for proposal in pending:
             self._source.addItem(
-                f"{proposal.title} — {proposal.head} → {proposal.base or 'default base'} ({proposal.manifest})",
+                f"{proposal.title} — {proposal.head} → {proposal.base or 'default base'} "
+                f"({proposal.manifest})",
                 proposal.manifest,
             )
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)

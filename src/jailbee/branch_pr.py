@@ -47,8 +47,16 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
             (a for a in manifest.actions if isinstance(a, pr_outbox.DescriptionAction)), None
         )
         source = manifest.source or ""
-        head = source[:7] if len(source) == 40 and all(c in "0123456789abcdefABCDEF" for c in source) else source
-        pending.append(PendingSource(name, action.title if action and action.title else name, head, manifest.base))
+        head = (
+            source[:7]
+            if len(source) == 40 and all(c in "0123456789abcdefABCDEF" for c in source)
+            else source
+        )
+        pending.append(
+            PendingSource(
+                name, action.title if action and action.title else name, head, manifest.base
+            )
+        )
     return pending
 
 

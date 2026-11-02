@@ -1235,9 +1235,15 @@ def test_on_action_pr_source_choice_dispatches_or_cancels(mocker, tmp_path, sele
     from jailbee.qtui.prompts import PrAnswers
 
     controller = _controller_with_group(mocker, tmp_path)
-    mocker.patch("jailbee.qtui.app.pending_pr_sources", create=True, return_value=[PendingSource("m.json", "Title", "topic", "main")])
+    mocker.patch(
+        "jailbee.qtui.app.pending_pr_sources",
+        create=True,
+        return_value=[PendingSource("m.json", "Title", "topic", "main")],
+    )
     dialog = mocker.patch("jailbee.qtui.app.PrSourceDialog", create=True)
-    dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected if selection == "cancel" else QDialog.DialogCode.Accepted
+    dialog.return_value.exec.return_value = (
+        QDialog.DialogCode.Rejected if selection == "cancel" else QDialog.DialogCode.Accepted
+    )
     dialog.return_value.manifest.return_value = selection
     options = _stub_dialog(mocker, "PrOptionsDialog", PrAnswers(None, False, False))
     output = mocker.patch.object(qapp.AppController, "_open_output")

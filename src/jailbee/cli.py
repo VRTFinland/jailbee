@@ -8562,11 +8562,24 @@ def pr_push_cmd(
     short = short_name(cfg, full)
     pending = branch_pr.pending_source_manifests(cfg, incus, full)
     if pending:
-        own_options = any((
-            title is not None, body is not None, base is not None, ready is not None,
-            description, web, no_ai, no_outbox, branch is not None, as_name is not None,
-            pr_number is not None, stacked, retarget is not None, no_submodules,
-        ))
+        own_options = any(
+            (
+                title is not None,
+                body is not None,
+                base is not None,
+                ready is not None,
+                description,
+                web,
+                no_ai,
+                no_outbox,
+                branch is not None,
+                as_name is not None,
+                pr_number is not None,
+                stacked,
+                retarget is not None,
+                no_submodules,
+            )
+        )
         if not own_options and prompting.is_interactive():
             picked = branch_pr.choose_pr_source(pending, own_label="container branch")
             if picked is not None:
@@ -8574,9 +8587,12 @@ def pr_push_cmd(
                 return
         else:
             from rich.text import Text
+
             from jailbee.tui import hint_console
 
-            hint_console.print(Text(branch_pr.pending_sources_note(pending, short)), highlight=False)
+            hint_console.print(
+                Text(branch_pr.pending_sources_note(pending, short)), highlight=False
+            )
     scope = pr_flow.PrScope.for_repo(cfg)
     pr_flow.assert_pr_inheritance_complete(incus, full)
     state = pr_flow.ContainerLabelState(incus, full, short=short)

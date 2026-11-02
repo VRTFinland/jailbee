@@ -113,6 +113,7 @@ def test_pending_skips_rejected_manifest(source_publisher):
 @pytest.mark.parametrize("incomplete", ["identity", "rejected"])
 def test_pending_incomplete_snapshot_is_empty(source_publisher, incomplete):
     from dataclasses import replace
+
     from jailbee.branch_pr import pending_source_manifests
 
     p = source_publisher
@@ -135,7 +136,10 @@ def test_choose_pr_source_lists_own_branch_first(mocker, selected):
     from jailbee.branch_pr import PendingSource, choose_pr_source
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    pending = [PendingSource("a.json", "First", "topic", "main"), PendingSource("b.json", "Second", "other", None)]
+    pending = [
+        PendingSource("a.json", "First", "topic", "main"),
+        PendingSource("b.json", "Second", "other", None),
+    ]
 
     def select(noun, options):
         assert noun == "PR source"
@@ -146,7 +150,10 @@ def test_choose_pr_source_lists_own_branch_first(mocker, selected):
         return options[selected].value
 
     mocker.patch("jailbee.prompting._select", side_effect=select)
-    assert choose_pr_source(pending, own_label="container branch") == [None, "a.json", "b.json"][selected]
+    assert (
+        choose_pr_source(pending, own_label="container branch")
+        == [None, "a.json", "b.json"][selected]
+    )
 
 
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):

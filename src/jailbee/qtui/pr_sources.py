@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import QProgressDialog
 
 from jailbee.branch_pr import PendingSource
@@ -43,7 +43,9 @@ class _Request(QThread):
             log.debug("Cannot read PR source proposals", exc_info=True)
 
 
-def pending_pr_sources(target: RepoTarget, name: str, parent: QWidget | None) -> list[PendingSource]:
+def pending_pr_sources(
+    target: RepoTarget, name: str, parent: QWidget | None
+) -> list[PendingSource]:
     request = _Request(target, name)
     progress = QProgressDialog("Reading PR source proposals…", "", 0, 0, parent)
     progress.setCancelButton(None)

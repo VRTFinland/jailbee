@@ -112,10 +112,14 @@ def source_choice(mocker, tmp_path):
 
     cfg, incus = _setup(mocker, tmp_path)
     cfg.pr.ai_description = False
-    pending = mocker.patch("jailbee.branch_pr.pending_source_manifests", create=True, return_value=[
-        PendingSource("a.json", "First", "topic", "main"),
-        PendingSource("b.json", "Second", "other", None),
-    ])
+    pending = mocker.patch(
+        "jailbee.branch_pr.pending_source_manifests",
+        create=True,
+        return_value=[
+            PendingSource("a.json", "First", "topic", "main"),
+            PendingSource("b.json", "Second", "other", None),
+        ],
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     select = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, opts: opts[0].value)
     source = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
@@ -131,7 +135,9 @@ def test_pr_push_picker_publishes_picked_manifest(source_choice):
     assert result.exit_code == 0, result.output
     from unittest.mock import ANY
 
-    p["source"].assert_called_once_with(p["cfg"], p["incus"], "feat-foo", "b.json", force=True, yes=True, confirm=ANY)
+    p["source"].assert_called_once_with(
+        p["cfg"], p["incus"], "feat-foo", "b.json", force=True, yes=True, confirm=ANY
+    )
     p["own"].assert_not_called()
 
 
@@ -177,7 +183,20 @@ def test_pr_push_picker_cancel_publishes_nothing(source_choice):
     p["source"].assert_not_called()
 
 
-@pytest.mark.parametrize("options", [["--no-ai"], ["--title", "x"], ["--base", "main"], ["--body", "x"], ["--ready"], ["--draft"], ["--no-draft"], ["--no-outbox"], ["--no-submodules"]])
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--no-ai"],
+        ["--title", "x"],
+        ["--base", "main"],
+        ["--body", "x"],
+        ["--ready"],
+        ["--draft"],
+        ["--no-draft"],
+        ["--no-outbox"],
+        ["--no-submodules"],
+    ],
+)
 def test_pr_push_own_branch_option_skips_picker(source_choice, options):
     p = source_choice
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", *options])
