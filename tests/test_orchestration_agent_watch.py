@@ -290,8 +290,18 @@ def test_current_session_matches_prompted_pid(tmp_path, mocker):
         AgentSession("claude", 123, 42, "waiting", None, NOW, 1, b),
     ]
     mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
-    assert current_session(make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)) == b
-    assert current_session(make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=43)) is None
+    assert (
+        current_session(
+            make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)
+        )
+        == b
+    )
+    assert (
+        current_session(
+            make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=43)
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("session_id", ["../x", "$(id)", "AAAAAAAA-0000-0000-0000-000000000000"])
@@ -301,9 +311,16 @@ def test_current_session_rejects_non_uuid(tmp_path, mocker, session_id):
     from tests.conftest import make_config
 
     adapter = MagicMock()
-    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "waiting", None, NOW, 1, session_id)]
+    adapter.read_sessions.return_value = [
+        AgentSession("claude", 123, 42, "waiting", None, NOW, 1, session_id)
+    ]
     mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
-    assert current_session(make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)) is None
+    assert (
+        current_session(
+            make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)
+        )
+        is None
+    )
 
 
 def test_current_session_reader_raises_returns_none(tmp_path, mocker):
@@ -313,4 +330,9 @@ def test_current_session_reader_raises_returns_none(tmp_path, mocker):
     adapter = MagicMock()
     adapter.read_sessions.side_effect = RuntimeError("broken")
     mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
-    assert current_session(make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)) is None
+    assert (
+        current_session(
+            make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42)
+        )
+        is None
+    )

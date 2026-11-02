@@ -17,9 +17,11 @@ RESUME = "user.jailbee.orchestration.resume"
 
 
 def valid_session_id(value: object) -> bool:
-    return isinstance(value, str) and re.fullmatch(
-        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value
-    ) is not None
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value)
+        is not None
+    )
 
 
 def sessions_of(config: Mapping[str, str]) -> list[str]:
@@ -35,7 +37,9 @@ def sessions_of(config: Mapping[str, str]) -> list[str]:
 def with_session(history: list[str], session_id: str, cap: int = 10) -> list[str] | None:
     if history and history[-1] == session_id:
         return None
-    return ([item for item in history if item != session_id] + [session_id])[-cap:] if cap > 0 else []
+    return (
+        ([item for item in history if item != session_id] + [session_id])[-cap:] if cap > 0 else []
+    )
 
 
 GRANT = "user.jailbee.orchestration.grant"

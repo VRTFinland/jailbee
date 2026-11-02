@@ -1853,17 +1853,23 @@ def test_failed_profile_restart_boot_reports_failed_for_the_same_ref(
 def test_supervision_records_new_session_once(rig: Rig, monkeypatch) -> None:
     from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     child = _child()
     rig.incus.list_containers.return_value = [_orch(), child]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
     current = [ids[0]]
     monkeypatch.setattr(agent_watch, "current_session", lambda *a: current[0], raising=False)
+
     def write(name, key, value):
         child["config"][key] = value
+
     rig.incus.config_set.side_effect = write
     rig.tick()
     rig.tick()
@@ -1871,18 +1877,31 @@ def test_supervision_records_new_session_once(rig: Rig, monkeypatch) -> None:
     current[0] = ids[1]
     rig.tick()
     assert rig.incus.config_set.call_count == 2
-    assert rig.incus.config_set.call_args.args == ("proj-kid", labels.AGENT_SESSIONS, json.dumps(ids))
+    assert rig.incus.config_set.call_args.args == (
+        "proj-kid",
+        labels.AGENT_SESSIONS,
+        json.dumps(ids),
+    )
 
 
 def test_session_write_failure_does_not_break_supervision(rig: Rig, monkeypatch) -> None:
     from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
-    monkeypatch.setattr(agent_watch, "current_session", lambda *a: "00000000-0000-0000-0000-000000000001", raising=False)
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
+    monkeypatch.setattr(
+        agent_watch,
+        "current_session",
+        lambda *a: "00000000-0000-0000-0000-000000000001",
+        raising=False,
+    )
     rig.incus.config_set.side_effect = RuntimeError("write failure")
     rig.tick()
     assert _watches(rig)[0].confirmed

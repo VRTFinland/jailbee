@@ -86,5 +86,5 @@ def test_sessions_of_tolerates_garbage():
 
     sid = "00000000-0000-0000-0000-000000000001"
     assert labels.sessions_of({labels.AGENT_SESSIONS: '{"x":1}'}) == []
-    assert labels.sessions_of({labels.AGENT_SESSIONS: 'not json'}) == []
+    assert labels.sessions_of({labels.AGENT_SESSIONS: "not json"}) == []
     assert labels.sessions_of({labels.AGENT_SESSIONS: f'["../x", "{sid}", 123]'}) == [sid]
