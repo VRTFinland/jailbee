@@ -17,16 +17,26 @@ def cfg(make_cfg, tmp_path):
 
 
 def raw(name, *, status="Running", config=None, own=True):
-    return {"name": name, "status": status, "profiles": ["myrepo-base"] if own else [], "config": config or {}}
+    return {
+        "name": name,
+        "status": status,
+        "profiles": ["myrepo-base"] if own else [],
+        "config": config or {},
+    }
 
 
 @pytest.fixture
 def rig(mocker):
     mocker.patch("jailbee.orchestration.commands.repo_registered", return_value=True)
-    rows = [raw("myrepo-o", config={labels.GRANT: Grant(max_running_children=2).to_label()}), raw("myrepo-a")]
+    rows = [
+        raw("myrepo-o", config={labels.GRANT: Grant(max_running_children=2).to_label()}),
+        raw("myrepo-a"),
+    ]
     incus = MagicMock()
     incus.list_containers.side_effect = lambda: rows
-    incus.config_get.side_effect = lambda name, key: next((r["config"].get(key) for r in rows if r["name"] == name), None)
+    incus.config_get.side_effect = lambda name, key: next(
+        (r["config"].get(key) for r in rows if r["name"] == name), None
+    )
     return rows, incus
 
 
@@ -34,31 +44,58 @@ def test_adopt_sets_policy_then_parent(cfg, rig):
     _, incus = rig
     result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
     assert result.adopted == ("myrepo-a",)
-    assert incus.config_set.call_args_list[-2:] == [call("myrepo-a", labels.ON_DONE, "keep"), call("myrepo-a", labels.SPAWNED_BY, "myrepo-o")]
+    assert incus.config_set.call_args_list[-2:] == [
+        call("myrepo-a", labels.ON_DONE, "keep"),
+        call("myrepo-a", labels.SPAWNED_BY, "myrepo-o"),
+    ]
 
 
 def test_clears_only_present_stale_labels_before_setting(cfg, rig):
     rows, incus = rig
     rows[1]["config"].update({key: "x" for key in adoption.CHILD_STATE_LABELS})
     adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
-    assert {c.args[1] for c in incus.config_unset_checked.call_args_list} == set(adoption.CHILD_STATE_LABELS)
+    assert {c.args[1] for c in incus.config_unset_checked.call_args_list} == set(
+        adoption.CHILD_STATE_LABELS
+    )
     operations = [c[0] for c in incus.mock_calls if c[0] in {"config_unset_checked", "config_set"}]
     assert operations == ["config_unset_checked"] * 10 + ["config_set"] * 2
-    assert not {labels.LAST_IMPORT, labels.RIGHTS, labels.RUNNER} & {c.args[1] for c in incus.config_set.call_args_list}
+    assert not {labels.LAST_IMPORT, labels.RIGHTS, labels.RUNNER} & {
+        c.args[1] for c in incus.config_set.call_args_list
+    }
 
 
-@pytest.mark.parametrize("scenario,fragment", [("self", "cannot adopt itself"), ("other", "is not a container of this repo"), ("mount", "mount-mode"), ("grant", "holds an orchestration grant"), ("children", "has children of its own"), ("parent", "is a child of 'p'; release it first"), ("no_grant", "holds no orchestration grant"), ("orchestrator_child", "children never orchestrate")])
+@pytest.mark.parametrize(
+    "scenario,fragment",
+    [
+        ("self", "cannot adopt itself"),
+        ("other", "is not a container of this repo"),
+        ("mount", "mount-mode"),
+        ("grant", "holds an orchestration grant"),
+        ("children", "has children of its own"),
+        ("parent", "is a child of 'p'; release it first"),
+        ("no_grant", "holds no orchestration grant"),
+        ("orchestrator_child", "children never orchestrate"),
+    ],
+)
 def test_refusals(cfg, rig, scenario, fragment):
     rows, incus = rig
     child = "myrepo-a"
-    if scenario == "self": child = "myrepo-o"
-    if scenario == "other": rows[1]["profiles"] = []
-    if scenario == "mount": rows[1]["config"]["user.jailbee.mode"] = "mount"
-    if scenario == "grant": rows[1]["config"][labels.GRANT] = "invalid"
-    if scenario == "children": rows.append(raw("myrepo-c", config={labels.SPAWNED_BY: child}))
-    if scenario == "parent": rows[1]["config"][labels.SPAWNED_BY] = "myrepo-p"
-    if scenario == "no_grant": rows[0]["config"].clear()
-    if scenario == "orchestrator_child": rows[0]["config"][labels.SPAWNED_BY] = "myrepo-p"
+    if scenario == "self":
+        child = "myrepo-o"
+    if scenario == "other":
+        rows[1]["profiles"] = []
+    if scenario == "mount":
+        rows[1]["config"]["user.jailbee.mode"] = "mount"
+    if scenario == "grant":
+        rows[1]["config"][labels.GRANT] = "invalid"
+    if scenario == "children":
+        rows.append(raw("myrepo-c", config={labels.SPAWNED_BY: child}))
+    if scenario == "parent":
+        rows[1]["config"][labels.SPAWNED_BY] = "myrepo-p"
+    if scenario == "no_grant":
+        rows[0]["config"].clear()
+    if scenario == "orchestrator_child":
+        rows[0]["config"][labels.SPAWNED_BY] = "myrepo-p"
     with pytest.raises(adoption.AdoptError, match=fragment):
         adoption.adopt(cfg, incus, "myrepo-o", [child])
     incus.config_set.assert_not_called()
@@ -84,16 +121,34 @@ def test_already_skipped(cfg, rig):
 
 def test_cap_counts_running_and_deduplicates(cfg, rig):
     rows, incus = rig
-    rows.extend([raw("myrepo-existing", config={labels.SPAWNED_BY: "myrepo-o"}), raw("myrepo-s", status="Stopped"), raw("myrepo-b")])
+    rows.extend(
+        [
+            raw("myrepo-existing", config={labels.SPAWNED_BY: "myrepo-o"}),
+            raw("myrepo-s", status="Stopped"),
+            raw("myrepo-b"),
+        ]
+    )
     result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a", "myrepo-a", "myrepo-s"])
     assert result.adopted == ("myrepo-a", "myrepo-s")
-    with pytest.raises(adoption.AdoptError, match="2 running children.*jb orchestrate grant --children"):
+    with pytest.raises(
+        adoption.AdoptError, match=r"2 running children.*jb orchestrate grant --children"
+    ):
         adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a", "myrepo-b"])
 
 
 def test_candidates_filter_and_sort(cfg, rig):
     rows, incus = rig
-    rows.extend([raw("myrepo-z"), raw("myrepo-b", config={"user.jailbee.mode": "mount"}), raw("myrepo-c", config={labels.GRANT: "x"}), raw("myrepo-d", config={labels.SPAWNED_BY: "myrepo-o"}), raw("myrepo-e", own=False), raw("myrepo-f"), raw("myrepo-g", config={labels.SPAWNED_BY: "myrepo-f"})])
+    rows.extend(
+        [
+            raw("myrepo-z"),
+            raw("myrepo-b", config={"user.jailbee.mode": "mount"}),
+            raw("myrepo-c", config={labels.GRANT: "x"}),
+            raw("myrepo-d", config={labels.SPAWNED_BY: "myrepo-o"}),
+            raw("myrepo-e", own=False),
+            raw("myrepo-f"),
+            raw("myrepo-g", config={labels.SPAWNED_BY: "myrepo-f"}),
+        ]
+    )
     rows.reverse()
     assert adoption.candidates(cfg, incus, "myrepo-o") == ["myrepo-a", "myrepo-z"]
 
@@ -135,7 +190,11 @@ def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
     pending = state.pending_dir(tmp_path, "myrepo-a")
     pending.mkdir(parents=True)
     (pending / "queued.json").write_text("{}")
-    watch.register(tmp_path, "myrepo-o", watch.WatchEntry("ref", "myrepo-a", "spawn", "2026-01-01T00:00:00+00:00"))
+    watch.register(
+        tmp_path,
+        "myrepo-o",
+        watch.WatchEntry("ref", "myrepo-a", "spawn", "2026-01-01T00:00:00+00:00"),
+    )
     deliver = mocker.patch("jailbee.orchestration.outbox.deliver", side_effect=OSError("offline"))
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
     result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
@@ -143,7 +202,10 @@ def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
     assert deliver.call_args.args[2] == "myrepo-o"
     assert deliver.call_args.args[3].kind == "released"
     assert result.orchestrator == "myrepo-o" and result.revoked == ()
-    assert incus.config_unset_checked.call_args_list == [call("myrepo-a", labels.SPAWNED_BY), call("myrepo-a", labels.STATE)]
+    assert incus.config_unset_checked.call_args_list == [
+        call("myrepo-a", labels.SPAWNED_BY),
+        call("myrepo-a", labels.STATE),
+    ]
     assert not (pending / "queued.json").exists()
     assert watch.load_watch(tmp_path) == {}
 
@@ -151,10 +213,18 @@ def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
 def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tmp_path, mocker):
     rows, incus = rig
     from jailbee.orchestration.grant import ChildRights
-    rows[1]["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.RIGHTS: ChildRights(mounts=("data",), loose=True).to_label()})
+
+    rows[1]["config"].update(
+        {
+            labels.SPAWNED_BY: "myrepo-o",
+            labels.RIGHTS: ChildRights(mounts=("data",), loose=True).to_label(),
+        }
+    )
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
     mocker.patch("jailbee.mounts.is_attached", return_value=True)
-    remove = mocker.patch("jailbee.mounts.remove_optional_mount", side_effect=RuntimeError("failed"))
+    remove = mocker.patch(
+        "jailbee.mounts.remove_optional_mount", side_effect=RuntimeError("failed")
+    )
     mocker.patch("jailbee.net_switch.switch_mode")
     with pytest.raises(RuntimeError, match="failed"):
         adoption.release(cfg, incus, "myrepo-a", root=tmp_path)

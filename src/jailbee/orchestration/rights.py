@@ -116,9 +116,7 @@ def _apply(ctx: ActionContext, child: Node, item: str, held: Held) -> None:
         _revoke_item(ctx.cfg, ctx.incus, child.full, item)
         return
     if item == "loose":
-        net_switch.switch_mode(
-            ctx.cfg, ctx.incus, child.full, "loose", until=held.until
-        )
+        net_switch.switch_mode(ctx.cfg, ctx.incus, child.full, "loose", until=held.until)
         return
     kind, value = item.split(":", 1)
     if kind == "mount":
