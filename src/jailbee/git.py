@@ -42,8 +42,12 @@ def repo_toplevel(path: Path) -> Path | None:
     """Return the Git working tree root, or None outside a working tree."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=path,
-            capture_output=True, text=True, timeout=_LOCAL_DISCOVERY_TIMEOUT, check=False,
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=_LOCAL_DISCOVERY_TIMEOUT,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

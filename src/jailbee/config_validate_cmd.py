@@ -22,8 +22,8 @@ def validate_repo_config(path: Path | None) -> int:
         from jailbee.git import repo_toplevel
 
         root = repo_toplevel(Path.cwd())
-        path = root / '.jailbee' / 'config.yaml' if root else None
+        path = root / ".jailbee" / "config.yaml" if root else None
         if path is None or not path.is_file():
-            error_plain('no .jailbee/config.yaml in this repository')
+            error_plain("no .jailbee/config.yaml in this repository")
             return 1
     return report_repo_layer(validate_repo_layer(path))

@@ -8,16 +8,16 @@ from typer.testing import CliRunner
 
 @pytest.fixture
 def repo_config(tmp_path):
-    path = tmp_path / 'repo' / '.jailbee' / 'config.yaml'
+    path = tmp_path / "repo" / ".jailbee" / "config.yaml"
     path.parent.mkdir(parents=True)
     return path
 
 
-@pytest.mark.parametrize('fixture', ['full_config.yaml', 'minimal_config.yaml'])
+@pytest.mark.parametrize("fixture", ["full_config.yaml", "minimal_config.yaml"])
 def test_fixture_repo_layer_ok(repo_config, fixture):
     from jailbee.config.repo_layer import validate_repo_layer
 
-    repo_config.write_text((Path(__file__).parent / 'fixtures' / fixture).read_text())
+    repo_config.write_text((Path(__file__).parent / "fixtures" / fixture).read_text())
     assert validate_repo_layer(repo_config).error is None
 
 
@@ -38,53 +38,64 @@ def test_schema_error_exit_1(repo_config):
     from jailbee.config.repo_layer import validate_repo_layer
     from jailbee.config_validate_cmd import report_repo_layer
 
-    repo_config.write_text('bogus: true\n')
+    repo_config.write_text("bogus: true\n")
     report = validate_repo_layer(repo_config)
     assert report.error is not None
     assert report_repo_layer(report) == 1
 
 
-@pytest.mark.parametrize('text', ['bogus: true\n', '{}\n', "autostart:\n  on_start:\n    - name: old\n      run: 'true'\n      mounts: [creds]\n"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bogus: true\n",
+        "{}\n",
+        "autostart:\n  on_start:\n    - name: old\n      run: 'true'\n      mounts: [creds]\n",
+    ],
+)
 def test_host_and_container_output_identical(repo_config, text):
     from jailbee.cli import app
     from jailbee.container_cli import container_app
 
     repo_config.write_text(text)
     runner = CliRunner()
-    host = runner.invoke(app, ['config', 'validate', '--repo-layer', '--config', str(repo_config)])
-    container = runner.invoke(container_app, ['config', 'validate', '--config', str(repo_config)])
-    assert (host.exit_code, host.stdout, host.stderr) == (container.exit_code, container.stdout, container.stderr)
+    host = runner.invoke(app, ["config", "validate", "--repo-layer", "--config", str(repo_config)])
+    container = runner.invoke(container_app, ["config", "validate", "--config", str(repo_config)])
+    assert (host.exit_code, host.stdout, host.stderr) == (
+        container.exit_code,
+        container.stdout,
+        container.stderr,
+    )
 
 
 def test_container_default_path_is_git_toplevel(repo_config, monkeypatch):
-    from jailbee.container_cli import container_app
     from jailbee import git
+    from jailbee.container_cli import container_app
 
-    subdir = repo_config.parent.parent / 'subdir'
+    subdir = repo_config.parent.parent / "subdir"
     subdir.mkdir()
     monkeypatch.chdir(subdir)
-    monkeypatch.setattr(git, 'repo_toplevel', lambda path: repo_config.parent.parent)
-    repo_config.write_text('{}\n')
-    result = CliRunner().invoke(container_app, ['config', 'validate'])
+    monkeypatch.setattr(git, "repo_toplevel", lambda path: repo_config.parent.parent)
+    repo_config.write_text("{}\n")
+    result = CliRunner().invoke(container_app, ["config", "validate"])
     assert result.exit_code == 0, result.output
     repo_config.unlink()
-    result = CliRunner().invoke(container_app, ['config', 'validate'])
+    result = CliRunner().invoke(container_app, ["config", "validate"])
     assert result.exit_code == 1
-    assert 'no .jailbee/config.yaml in this repository' in result.output
+    assert "no .jailbee/config.yaml in this repository" in result.output
 
 
 def test_repo_layer_ignores_host_layers(repo_config, monkeypatch, tmp_path):
-    from jailbee.config.repo_layer import validate_repo_layer
     from jailbee import global_config
     from jailbee.config import loader
+    from jailbee.config.repo_layer import validate_repo_layer
 
-    global_path = tmp_path / 'global.yaml'
-    global_path.write_text('bogus: true\n')
-    local_path = tmp_path / 'local.yaml'
-    local_path.write_text('bogus: true\n')
-    monkeypatch.setattr(global_config, 'default_global_config_path', lambda: global_path)
-    monkeypatch.setattr(loader, 'local_config_path', lambda prefix: local_path)
-    repo_config.write_text('{}\n')
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("bogus: true\n")
+    local_path = tmp_path / "local.yaml"
+    local_path.write_text("bogus: true\n")
+    monkeypatch.setattr(global_config, "default_global_config_path", lambda: global_path)
+    monkeypatch.setattr(loader, "local_config_path", lambda prefix: local_path)
+    repo_config.write_text("{}\n")
     assert validate_repo_layer(repo_config).error is None
 
 
@@ -92,7 +103,9 @@ def test_legacy_step_mount_warning_and_notice(repo_config):
     from jailbee.config.repo_layer import validate_repo_layer
     from jailbee.config_validate_cmd import report_repo_layer
 
-    repo_config.write_text("autostart:\n  on_start:\n    - name: old\n      run: 'true'\n      mounts: [creds]\n")
+    repo_config.write_text(
+        "autostart:\n  on_start:\n    - name: old\n      run: 'true'\n      mounts: [creds]\n"
+    )
     report = validate_repo_layer(repo_config)
     assert len(report.unchecked) == 1
     assert len(report.notices) == 1
@@ -101,12 +114,16 @@ def test_legacy_step_mount_warning_and_notice(repo_config):
 
 def test_git_toplevel_uses_git_wrapper(tmp_path, mocker):
     import subprocess
+
     from jailbee.git import repo_toplevel
 
-    run = mocker.patch('jailbee.git.subprocess.run', return_value=subprocess.CompletedProcess([], 0, '/work/repo\n', ''))
-    assert repo_toplevel(tmp_path) == Path('/work/repo')
-    assert run.call_args.args[0] == ['git', 'rev-parse', '--show-toplevel']
-    run.return_value = subprocess.CompletedProcess([], 128, '', 'not a repository')
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, "/work/repo\n", ""),
+    )
+    assert repo_toplevel(tmp_path) == Path("/work/repo")
+    assert run.call_args.args[0] == ["git", "rev-parse", "--show-toplevel"]
+    run.return_value = subprocess.CompletedProcess([], 128, "", "not a repository")
     assert repo_toplevel(tmp_path) is None
 
 
@@ -114,12 +131,13 @@ def test_validation_without_host_extras(repo_config):
     import subprocess
     import sys
 
-    repo_config.write_text('{}\n')
+    repo_config.write_text("{}\n")
     script = """
 import builtins, sys
 real = builtins.__import__
 def guard(name, *args, **kwargs):
-    if name.split('.')[0] in {'sqlmodel', 'questionary', 'ruamel', 'textual'} or name == 'jailbee.cli':
+    if (name.split('.')[0] in {'sqlmodel', 'questionary', 'ruamel', 'textual'}
+            or name == 'jailbee.cli'):
         raise ImportError('forbidden import: ' + name)
     return real(name, *args, **kwargs)
 builtins.__import__ = guard
@@ -127,6 +145,8 @@ from jailbee.container_cli import container_app
 sys.argv = ['jailbee', 'config', 'validate', '--config', sys.argv[1]]
 container_app()
 """
-    result = subprocess.run([sys.executable, '-c', script, str(repo_config)], capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(repo_config)], capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
-    assert 'Schema OK' in result.stdout
+    assert "Schema OK" in result.stdout
