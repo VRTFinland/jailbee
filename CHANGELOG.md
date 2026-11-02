@@ -61,6 +61,11 @@ before editing `## Unreleased`.
   every column; explicit `--fields`, configured `ls.fields`, piped output and
   JSON are unchanged.
 
+### Fixed
+
+- Scrolling a short Outbox preview in a narrow terminal no longer crashes the
+  terminal dashboard.
+
 ## 1.8.0 - 2026-10-29
 
 ### Added
