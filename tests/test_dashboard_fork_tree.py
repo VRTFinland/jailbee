@@ -21,7 +21,9 @@ def _c(name: str, child_of: str | None = None, fork_of: str | None = None) -> Co
         created_at=None,
     )
     return dataclasses.replace(
-        c, fork_of=fork_of, child=ChildView(child_of, "working", (), False, ()) if child_of else None
+        c,
+        fork_of=fork_of,
+        child=ChildView(child_of, "working", (), False, ()) if child_of else None,
     )
 
 

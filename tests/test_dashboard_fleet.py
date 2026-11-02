@@ -13,8 +13,8 @@ from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui.frame import frame_title
-from tests.dashboard_fixtures import WIDE, ci, wide_group
 from jailbee.orchestration.view import ChildView
+from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 Row = dmodel.Row
@@ -413,7 +413,9 @@ def test_entry_equality_changes_when_the_parent_disappears(tmp_path):
 def test_deep_fork_name_is_cut_with_an_ellipsis_not_wrapped(tmp_path):
     rows = [ci("p-c0", "p")]
     for i in range(1, 6):
-        rows.append(replace(ci(f"p-c{i}", "p"), child=ChildView(f"p-c{i - 1}", "working", (), False, ())))
+        rows.append(
+            replace(ci(f"p-c{i}", "p"), child=ChildView(f"p-c{i - 1}", "working", (), False, ()))
+        )
     group = dmodel.RepoGroup("p", str(tmp_path), None, rows)
     model = _name_model(group, column_widths={"name": 10})
     entry = next(e for e in model.entries if e.container and e.container.name == "p-c5")
