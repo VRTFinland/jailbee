@@ -661,7 +661,10 @@ def test_tick_shows_the_grant_once_the_snapshot_has_it(mocker, tmp_path):
     session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
     info = session.client.groups[0].containers[0]
     session.client.groups[0].containers[0] = dataclasses.replace(
-        info, grant=GrantView(limit=4, operations=("message", "spawn"), mounts=(), loose=False, egress=())
+        info,
+        grant=GrantView(
+            limit=4, operations=("message", "spawn"), mounts=(), loose=False, egress=()
+        ),
     )
     session.tick()
     assert session.overlay.entries[0].value == "limit"
@@ -688,7 +691,9 @@ def test_pending_mark_removed_with_container(mocker, tmp_path):
 def test_revoke_clears_pending_mark(mocker, tmp_path):
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
     session._grant_pending["alpha-one"] = float("inf")
-    confirm = session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "revoke"))
+    confirm = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "revoke")
+    )
     session.submit_picker(confirm, PickerEntry("", "yes"))
     assert "alpha-one" not in session._grant_pending
 
@@ -696,7 +701,10 @@ def test_revoke_clears_pending_mark(mocker, tmp_path):
 def test_failed_grant_closes_the_menu(mocker, tmp_path):
     session, quiet = _orchestration_session(mocker, tmp_path)
     quiet.return_value = False
-    assert session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults")) is None
+    assert (
+        session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+        is None
+    )
     assert session.overlay is None
 
 
