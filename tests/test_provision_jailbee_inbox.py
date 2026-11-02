@@ -1603,8 +1603,13 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
 
 
 def test_children_lists_name_running_session(script, base, tmp_path):
-    children = [{"name": "alpha", "running": True, "session": "abc"}, {"name": "beta", "running": False, "session": None}]
-    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": children}))
+    children = [
+        {"name": "alpha", "running": True, "session": "abc"},
+        {"name": "beta", "running": False, "session": None},
+    ]
+    (base / "children.json").write_text(
+        json.dumps({"version": 1, "updated_at": time.time(), "children": children})
+    )
     r = run(script, "children", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
     assert len(r.stdout.splitlines()) == 2
@@ -1614,14 +1619,18 @@ def test_children_lists_name_running_session(script, base, tmp_path):
 
 def test_children_json_prints_array(script, base, tmp_path):
     children = [{"name": "a", "running": True, "session": None, "started_at": 1}]
-    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": children}))
+    (base / "children.json").write_text(
+        json.dumps({"version": 1, "updated_at": time.time(), "children": children})
+    )
     r = run(script, "children", "--json", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == children
 
 
 def test_children_stale_heartbeat_notes_on_stderr(script, base, tmp_path):
-    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time() - 901, "children": []}))
+    (base / "children.json").write_text(
+        json.dumps({"version": 1, "updated_at": time.time() - 901, "children": []})
+    )
     r = run(script, "children", "--json", env=env_for(base, tmp_path))
     assert r.returncode == 0
     assert json.loads(r.stdout) == []
@@ -1636,7 +1645,10 @@ def test_children_missing_file_exits_1(script, base, tmp_path):
 
 @pytest.mark.parametrize("resume", ["last", "01234567-89ab-cdef-0123-456789abcdef"])
 def test_send_restart_resume(script, base, tmp_path, resume):
-    _, manifest = manifest_of(base, send(script, base, tmp_path, "restart", "--child", "c", "--text", "go", "--resume", resume))
+    _, manifest = manifest_of(
+        base,
+        send(script, base, tmp_path, "restart", "--child", "c", "--text", "go", "--resume", resume),
+    )
     assert manifest["resume"] == resume
 
 

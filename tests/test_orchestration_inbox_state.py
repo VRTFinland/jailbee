@@ -166,4 +166,7 @@ def test_snapshot_publishes_latest_session(tmp_path):
     _kid_with(ctx, {})
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["session"] is None
-    assert json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())["children"][0]["session"] is None
+    assert (
+        json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())["children"][0]["session"]
+        is None
+    )
