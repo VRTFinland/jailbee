@@ -14,6 +14,44 @@ if TYPE_CHECKING:
 BRANCH_PRS_LABEL = "user.jailbee.branch_prs"
 
 
+@dataclass(frozen=True)
+class PendingSource:
+    manifest: str
+    title: str
+    head: str
+    base: str | None
+
+
+def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[PendingSource]:
+    """Read source proposals without letting an unavailable outbox block a push."""
+    from jailbee import pr_outbox
+    from jailbee.outbox_io import OutboxReadError
+
+    try:
+        snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid)
+    except OutboxReadError:
+        return []
+    if snapshot.rejected or snapshot.identity is None:
+        return []
+    pending = []
+    for name in snapshot.manifest_names:
+        try:
+            manifest = pr_outbox.parse_manifest(name, snapshot.files[name], snapshot.files)
+            if not pr_outbox.is_source_manifest(manifest):
+                continue
+            if pr_outbox.source_publication_receipt(snapshot, name) is not None:
+                continue
+        except pr_outbox.ManifestError:
+            continue
+        action = next(
+            (a for a in manifest.actions if isinstance(a, pr_outbox.DescriptionAction)), None
+        )
+        source = manifest.source or ""
+        head = source[:7] if len(source) == 40 and all(c in "0123456789abcdefABCDEF" for c in source) else source
+        pending.append(PendingSource(name, action.title if action and action.title else name, head, manifest.base))
+    return pending
+
+
 def default_head(source: str) -> str:
     if source.startswith("refs/jailbee/from/"):
         parts = source.split("/", 4)

@@ -68,6 +68,68 @@ def source_publisher(mocker, make_cfg, tmp_path):
     return locals() | {"real_consume": real_consume}
 
 
+def test_pending_lists_source_manifests_in_order(source_publisher):
+    from jailbee.branch_pr import PendingSource, pending_source_manifests
+
+    p = source_publisher
+    other = dict(p["data"], source="refs/heads/other")
+    other.pop("base")
+    other["actions"] = [{"type": "description", "title": "Other", "body": "Text"}]
+    p["snapshot"].files["a.json"] = json.dumps(other)
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == [
+        PendingSource("a.json", "Other", "refs/heads/other", None),
+        PendingSource("m.json", "Title", "refs/jailbee/from/child/feature/a", "main"),
+    ]
+    p["read"].assert_called_once_with(p["incus"], "full", uid=p["cfg"].container_user.uid)
+
+
+def test_pending_skips_own_branch_description(source_publisher):
+    from jailbee.branch_pr import pending_source_manifests
+
+    p = source_publisher
+    data = dict(p["data"])
+    for key in ("source", "source_sha", "base"):
+        data.pop(key)
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
+def test_pending_skips_published_receipt(source_publisher, mocker):
+    from jailbee.branch_pr import pending_source_manifests
+
+    p = source_publisher
+    mocker.patch("jailbee.pr_outbox.source_publication_receipt", return_value={"url": "url"})
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
+def test_pending_skips_rejected_manifest(source_publisher):
+    from jailbee.branch_pr import pending_source_manifests
+
+    p = source_publisher
+    p["snapshot"].files["m.json"] = "invalid"
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
+@pytest.mark.parametrize("incomplete", ["identity", "rejected"])
+def test_pending_incomplete_snapshot_is_empty(source_publisher, incomplete):
+    from dataclasses import replace
+    from jailbee.branch_pr import pending_source_manifests
+
+    p = source_publisher
+    changes = {"identity": None} if incomplete == "identity" else {"rejected": ("bad.json",)}
+    p["read"].return_value = replace(p["snapshot"], **changes)
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
+def test_pending_unreadable_outbox_is_empty(source_publisher):
+    from jailbee.branch_pr import pending_source_manifests
+    from jailbee.outbox_io import OutboxReadError
+
+    p = source_publisher
+    p["read"].side_effect = OutboxReadError("unreadable")
+    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
+
+
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 
