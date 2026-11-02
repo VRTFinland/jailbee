@@ -1211,6 +1211,23 @@ container from `feat/a` to `main`.
 
 ### `jailbee pr push [NAME]`
 
+On a terminal, pending source proposals add a source picker: the container's own
+branch first, then each proposal's title, head, base and file name. A selected
+manifest follows the existing source publication gates and confirmation; cancel
+publishes nothing. Own-branch descriptions and already-published source receipts
+are not separate candidates. No sources means no extra prompt. Both dashboards'
+**Create/update PR** offers the choice (Qt uses a native dialog and confirms source
+publication in a terminal).
+
+Off a terminal, publish the own branch as before and print the pending count and
+`--source-manifest <file>` / `jailbee outbox NAME` hints on stderr. Any explicit
+own-branch option skips the picker but keeps that note: `--title`, `--body`,
+`--base`, `--branch`, `--as`, `--pr`, `--stacked`, `--retarget`/`--no-retarget`,
+`--ready`/`--draft`/`--no-draft`, `--description`, `--web`, `--no-ai`, `--no-outbox`
+and `--no-submodules`. Only `--config`, `--force` and `--yes` preserve the picker;
+force and yes carry over unchanged. An unreadable outbox does not block the own
+branch. This selection does not apply to `jailbee submodule pr push`.
+
 For a pinned imported source use `jailbee pr push NAME --source-manifest
 FILE.json`. It publishes that ref at its recorded SHA independently of the
 container's own PR. An existing PR supplies its actual head and base; a
@@ -1399,8 +1416,9 @@ it. Omit `MANIFEST` to drop everything pending in the container.
 
 ### Interaction with `jailbee pr push`
 
-- **`--no-outbox`** on `jailbee pr push` skips the outbox lookup entirely,
-  including the post-publish offer described below.
+- **`--no-outbox`** on `jailbee pr push` skips own-branch outbox descriptions
+  and the post-publish offer described below. Pending source proposals are still
+  counted for the stderr hint; this option skips their picker.
 - **Description precedence**, most specific first: explicit
   `--title`/`--body` → a pending outbox description (`pr: null`, or one
   naming this PR) → the container's Claude CLI (unless `--no-ai`) →

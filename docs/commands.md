@@ -170,6 +170,28 @@ Listing commands generally treat an omitted target as "all" rather than asking.
 > pre-rename spelling) is read but never written, and is not warned about —
 > nobody is being asked to retype it. All are removed in 2.0.0.
 
+### PR source selection
+
+`jailbee pr push <name>` on a terminal offers the container's own branch first,
+then pending source PR proposals from its outbox, labelled with title, source
+head, base and manifest file. Picking one runs the same confirmation, validation
+and receipt handling as `--source-manifest <file>`. Cancel publishes nothing.
+An own-branch description is not a separate source; published proposals awaiting
+cleanup are not offered again. Without pending sources there is no extra question.
+The dashboards' **Create/update PR** offers the same choice: the terminal
+frontend uses the CLI picker; Qt shows a native choice and opens a terminal for
+source publication confirmation.
+
+Off a terminal, the command keeps publishing the own branch and prints a pending
+source count on stderr, with `--source-manifest <file>` and `jailbee outbox <name>`
+hints. Explicit `--source-manifest` skips the picker. So does any own-branch option
+(`--title`, `--body`, `--base`, `--branch`, `--as`, `--pr`, `--stacked`,
+`--retarget`/`--no-retarget`, `--ready`/`--draft`/`--no-draft`, `--description`,
+`--web`, `--no-ai`, `--no-outbox`, `--no-submodules`), but the count is still printed.
+Only `--config`, `--force` and `--yes` preserve the choice; `--force` and `--yes`
+carry over to the selected manifest. An unreadable or invalid outbox never blocks
+the own-branch flow. `jailbee submodule pr push` is unchanged.
+
 ### Console
 
 `jailbee console` opens an interactive `jb[<prefix>]> ` prompt on your own

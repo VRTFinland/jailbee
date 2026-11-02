@@ -51,6 +51,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee pr push` and the dashboards' **Create/update PR** offer pending source
+  PR proposals from the outbox alongside the container's own branch. Explicit
+  own-branch options skip the picker; non-interactive runs retain the own branch
+  and print a pending-source hint on stderr.
+
 - `jailbee ls` drops low-priority columns until its default table fits the
   terminal, with a notice listing hidden columns. Use `--wide` / `-w` to keep
   every column; explicit `--fields`, configured `ls.fields`, piped output and

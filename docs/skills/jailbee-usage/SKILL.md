@@ -1406,6 +1406,19 @@ jailbee pr push feat-foo --ready    # open (or flip) it ready-for-review
 jailbee pr push feat-foo --web      # …and open it in the browser
 ```
 
+When source proposals are pending, a terminal run first offers the container's
+own branch and each pending proposal (title, head, base and file). Cancel aborts;
+picking a proposal uses the existing source publication confirmation and receipts.
+The dashboards' **Create/update PR** offers the same choice; Qt confirms a selected
+source in a terminal. Off a terminal, the own branch still publishes, with the
+pending source count and explicit-publication hints on stderr. Only `--config`,
+`--force` and `--yes` preserve the picker; other explicit options (including
+`--no-ai`, `--no-outbox`, `--title`, `--base` and draft/ready flags) select the own
+branch and print the note. Force and yes carry over to picked sources.
+Own-branch descriptions are not separate sources; published receipts are skipped.
+No pending sources means no extra question. An unreadable outbox never blocks the
+own branch. `jailbee submodule pr push` is unchanged.
+
 For an imported branch, publish its pinned source manifest explicitly:
 `jailbee pr push <container> --source-manifest <file.json>`. Pending source
 proposals show `awaiting-push`; `outbox apply` refuses them with a push hint,
