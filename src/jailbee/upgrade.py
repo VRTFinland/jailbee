@@ -94,6 +94,11 @@ class UpgradeNote:
 UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason="the golden image carries an in-container `jailbee` (dependency venv, launcher, context marker)",
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` mounts the host's jailbee code read-only into containers "

@@ -100,7 +100,38 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ripgrep fd-find jq htop \
     openssh-server kitty-terminfo \
     apparmor \
-    inotify-tools
+    inotify-tools python3-venv
+
+# Bake dependencies independently of the optional Python stack.
+python3 -m venv /opt/jailbee/venv
+if [ -n "${JAILBEE_CONTAINER_DEPS:-}" ]; then
+    # The host passes space-separated pinned distribution requirements.
+    /opt/jailbee/venv/bin/pip install --no-cache-dir $JAILBEE_CONTAINER_DEPS
+fi
+VENV=/opt/jailbee/venv
+"$VENV/bin/python" -c '
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+names = [spec.split("==", 1)[0] for spec in os.environ.get("JAILBEE_CONTAINER_DEPS", "").split()]
+Path("/opt/jailbee/deps.json").write_text(json.dumps({"packages": {name: importlib.metadata.version(name) for name in names}}) + "\n")
+'
+mkdir -p /etc/jailbee
+touch /etc/jailbee/container
+cat > /usr/local/bin/jailbee <<'EOF'
+#!/bin/bash
+# jailbee inside a container: host-supplied code over a baked dependency venv.
+APP="${JAILBEE_APP_DIR:-/opt/jailbee/app}"
+VENV="${JAILBEE_VENV_DIR:-/opt/jailbee/venv}"
+if [ ! -d "$APP/current/jailbee" ]; then
+    echo "jailbee: the host's jailbee code is not mounted here — run \`jb apply\` on the host." >&2
+    exit 88
+fi
+PYTHONPATH="$(readlink -f "$APP/current")" exec "$VENV/bin/python" -P -m jailbee.container_main "$@"
+EOF
+chmod 755 /usr/local/bin/jailbee
+ln -sf /usr/local/bin/jailbee /usr/local/bin/jb
 
 # xterm-ghostty: Ghostty exports TERM=xterm-ghostty. ncurses-term (6.6) ships
 # the entry only as `ghostty`, and Ubuntu's older ncurses-term not at all, so

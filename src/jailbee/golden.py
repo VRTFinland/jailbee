@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from jailbee import container_deps
 from jailbee.config import Config
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import LOOSE_BRIDGE, ensure_loose_bridge
@@ -663,6 +664,7 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
             )
         stack_node_major = stacks.node_major()
         exec_env = {
+            "JAILBEE_CONTAINER_DEPS": " ".join(container_deps.pinned_requirements()),
             "CONTAINER_UID": str(cfg.container_user.uid),
             "CONTAINER_GID": str(cfg.container_user.gid),
             "JAVA_PACKAGE": stacks.java_package() or _java_apt_package(cfg.golden.java),
