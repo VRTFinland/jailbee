@@ -114,7 +114,10 @@ def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
 def _popen_wait(script, env, *args):
     return subprocess.Popen(
         ["bash", str(script), "wait", *args],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
 
 
@@ -236,9 +239,22 @@ def test_send_wait_timeout_none(script, base, tmp_path):
     thread.start()
     try:
         r = subprocess.run(
-            ["/bin/bash", "-x", str(script), "send", "message", "--text", "done",
-             "--wait", "--timeout", "none"],
-            env=env_for(base, tmp_path), capture_output=True, text=True, timeout=5,
+            [
+                "/bin/bash",
+                "-x",
+                str(script),
+                "send",
+                "message",
+                "--text",
+                "done",
+                "--wait",
+                "--timeout",
+                "none",
+            ],
+            env=env_for(base, tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
     finally:
         thread.join()
@@ -251,7 +267,12 @@ def test_send_wait_timeout_none(script, base, tmp_path):
 
 
 def test_send_rejects_bad_none_timeout(script, base, tmp_path):
-    assert send(script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "forever").returncode == 2
+    assert (
+        send(
+            script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "forever"
+        ).returncode
+        == 2
+    )
     assert not list((base / "outbox").glob("*.json"))
 
 
@@ -372,8 +393,7 @@ def test_wait_settle_respects_timeout(script, base, tmp_path):
     log = tmp_path / "sleeps"
     stubs = _stub(
         tmp_path,
-        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
-        "exit 0\n",
+        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\nexit 0\n",
     )
     real_sleep = shutil.which("sleep")
     (stubs / "sleep").write_text(
@@ -1645,8 +1665,7 @@ def test_wait_watchdog_without_new_inbox_event(script, base, tmp_path):
     stubs = _stub(tmp_path, "exit 127\n")
     real_sleep = shutil.which("sleep")
     (stubs / "sleep").write_text(
-        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\n'
-        f'exec "{real_sleep}" "$@"\n'
+        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\nexec "{real_sleep}" "$@"\n'
     )
     (stubs / "sleep").chmod(0o755)
     env["PATH"] = f"{stubs}:{env['PATH']}"
