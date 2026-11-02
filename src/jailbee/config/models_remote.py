@@ -198,6 +198,16 @@ class RemoteSSHConfig(BaseModel):
             "On by default."
         ),
     )
+    gpg: bool = Field(
+        default=False,
+        description=(
+            "Let a `jb remote ssh` client forward its gpg-agent "
+            "(`RemoteForward /jailbee/gpg-agent <agent-extra-socket>`); while "
+            "the forward is up, every `gpg.enabled` container uses the client's "
+            "keys instead of the host's agent. Containers pick the change up "
+            "on their next start. Off by default."
+        ),
+    )
     network: bool = Field(
         default=False,
         description=(

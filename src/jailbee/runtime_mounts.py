@@ -26,7 +26,13 @@ from pathlib import Path
 from jailbee.config import Config
 from jailbee.gui import SHARED_DISPLAY_DIR, display_state_dir, host_is_wayland, host_wayland_socket
 from jailbee.incus import Incus, IncusError
-from jailbee.remote_ssh.overrides import remote_rdp_enabled
+from jailbee.remote_ssh.gpg_forward import (
+    CONTAINER_HOST_DIR,
+    CONTAINER_REMOTE_DIR,
+    ensure_switch_dir,
+    remote_dir,
+)
+from jailbee.remote_ssh.overrides import remote_gpg_enabled, remote_rdp_enabled
 from jailbee.tui import info, warn
 
 WAYLAND_DEVICE = "wayland-socket"
@@ -70,12 +76,12 @@ directory under `waypipe.servers_dir()`, so a container reaches no other
 container's server. Read-only for the same reason as `DISPLAY_DEVICE`.
 """
 
-# Everything `detach_runtime_devices` removes.
-DETACHED_DEVICES: frozenset[str] = SOCKET_DEVICES | {DISPLAY_DEVICE, WAYPIPE_DEVICE}
-
 # Device names that belong to the gpg integration and must be skipped
 # when ``gpg.enabled`` is false.
-GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket"})
+GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket", "gpg-host-socket", "gpg-remote-socket"})
+
+# Everything `detach_runtime_devices` removes.
+DETACHED_DEVICES: frozenset[str] = SOCKET_DEVICES | GPG_DEVICES | {DISPLAY_DEVICE, WAYPIPE_DEVICE}
 
 # Device names whose host source is a *directory* inside the host's own
 # /run/user/<uid>, mounted read-only.
@@ -97,7 +103,7 @@ GPG_DEVICES: frozenset[str] = frozenset({"gpg-socket"})
 #
 # ``wayland-socket`` and ``dbus-socket`` are single-file mounts, where
 # unlinking the bind-mount point returns EBUSY — already protected.
-READONLY_DEVICES: frozenset[str] = frozenset({"gpg-socket", "pulse-socket"})
+READONLY_DEVICES: frozenset[str] = GPG_DEVICES | {"pulse-socket"}
 
 WAYLAND_DISPLAY_ENV = "WAYLAND_DISPLAY"
 WAYLAND_DISPLAY_KEY = f"environment.{WAYLAND_DISPLAY_ENV}"
@@ -313,6 +319,23 @@ def ensure_host_display(cfg: Config, incus: Incus, name: str) -> EnsureResult:
     return result
 
 
+def _gpg_device_configs(runtime_dir: str) -> dict[str, dict[str, str]]:
+    """Keep all three directories readonly; boot initializes host fallback."""
+    path = f"{runtime_dir}/gnupg"
+    if not remote_gpg_enabled():
+        return {"gpg-socket": {"source": path, "path": path, "readonly": "true"}}
+    directory = ensure_switch_dir()
+    return {
+        "gpg-socket": {"source": str(directory), "path": path, "readonly": "true"},
+        "gpg-host-socket": {"source": path, "path": CONTAINER_HOST_DIR, "readonly": "true"},
+        "gpg-remote-socket": {
+            "source": str(remote_dir()),
+            "path": CONTAINER_REMOTE_DIR,
+            "readonly": "true",
+        },
+    }
+
+
 def attach_runtime_devices(
     cfg: Config,
     incus: Incus,
@@ -357,6 +380,10 @@ def attach_runtime_devices(
     skip_wayland = on_demand or wayland_skip_reason is not None
     devices = _devices_for_host(cfg, skip_wayland=skip_wayland)
     for device_name, basename in devices.items():
+        if device_name == "gpg-socket":
+            for gpg_name, gpg_config in _gpg_device_configs(runtime_dir).items():
+                _add_device(incus, name, gpg_name, gpg_config)
+            continue
         path = f"{runtime_dir}/{basename}"
         device_config = {"source": path, "path": path}
         if device_name in READONLY_DEVICES:

@@ -351,6 +351,70 @@ defaults can expose the console and command routes on an already-enabled service
 unless `global.yaml` disables them; review that policy and authorized keys
 before upgrading.
 
+### GPG keys over remote SSH
+
+To decrypt or sign inside containers using keys on a Linux or macOS client,
+opt in on the server in `~/.config/jailbee/global.yaml`:
+
+```yaml
+remote:
+  ssh:
+    gpg: true
+```
+
+Keep `gpg.enabled: true` in each participating repo. Run `jb restart <container>`
+once for existing containers to install the new read-only switch mounts; no
+profile apply or golden-image rebuild is needed. The local host agent still
+works when the SSH service has never been started. Import the client's public
+keys into the host's `~/.gnupg` (`gpg --import public-keys.asc`): containers
+read that keyring, not the client's keyring.
+
+On the client, start the agent and ask GnuPG for its restricted extra socket:
+
+```bash
+gpgconf --launch gpg-agent
+gpgconf --list-dirs agent-extra-socket
+```
+
+Use the command's actual output. Typical paths are
+`/run/user/<uid>/gnupg/S.gpg-agent.extra` on Linux and
+`~/.gnupg/S.gpg-agent.extra` on macOS with Homebrew GnuPG or GPGTools (expand
+the home directory to its absolute path). Add one line to the SSH `Host` block
+used to reach Jailbee:
+
+```sshconfig
+Host jb
+    HostName your-host
+    User jailbee
+    Port 8022
+    RemoteForward /jailbee/gpg-agent /path/from/gpgconf/S.gpg-agent.extra
+```
+
+Open `ssh -t jb dashboard` or `ssh -t jb console`. While the forward is up,
+**every** `gpg.enabled` container with the new mounts uses the client's agent,
+not just the container you enter. The newest live forward wins; when it closes,
+the previous live forward takes over, or the host agent resumes. Pinentry and
+card touch prompts appear on the client. `SSH_AUTH_SOCK` and SSH authentication
+inside containers keep using the host agent. No private key is transferred
+through this forward. Cancelling the forward without closing SSH also restores
+the previous agent. Only one SSH server process per host user owns the switch;
+a concurrent diagnostic server on another port refuses GPG forwards rather than
+interfering with the active service.
+
+For a smartcard, run `gpg --card-status` on the client if its agent has not
+learned the card yet. Software keys need no card-learning step. GnuPG 2.4 may
+print `problem with fast path key listing: Forbidden - ignored` through the
+restricted extra socket; this does not prevent decryption.
+
+Treat this as host-wide authority to request operations. When GPG is a gate
+for secrets, prefer a smartcard with a touch policy, for example
+`ykman openpgp keys set-touch dec on` and `ykman openpgp keys set-touch sig on`
+on the client. With a software key, or a card without a touch policy, the
+client agent's passphrase cache (`default-cache-ttl`) can let any participating
+container decrypt without a prompt while the cache is warm. Client-only private
+keys stay on the client; any private keys already stored in the host's shared
+`~/.gnupg` remain readable there. See [Security](security.md#security-model).
+
 ### Top-level app promotion
 
 An `apps:` entry with `top_level: true` also runs as a bare `jailbee <name>

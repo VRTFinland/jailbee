@@ -52,6 +52,65 @@ def wayland_session(monkeypatch, mocker):
     mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=True)
 
 
+@pytest.mark.parametrize("remote", [False, True])
+def test_gpg_mounts_follow_remote_flag(mocker, tmp_path, remote):
+    mocker.patch("jailbee.runtime_mounts.remote_gpg_enabled", return_value=remote)
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    cfg = _cfg()
+    incus = MagicMock()
+    incus.exec.return_value = str(cfg.container_user.uid)
+    attach_runtime_devices(cfg, incus, "test")
+    added = {
+        c.args[1]: c.args[3]
+        for c in incus.config_device_add.call_args_list
+        if c.args[1].startswith("gpg-")
+    }
+    runtime = f"/run/user/{cfg.container_user.uid}/gnupg"
+    expected = {"gpg-socket": {"source": runtime, "path": runtime, "readonly": "true"}}
+    if remote:
+        expected["gpg-socket"]["source"] = str(tmp_path / "gpg-switch")
+        expected["gpg-host-socket"] = {
+            "source": runtime,
+            "path": "/run/jailbee-gpg/host",
+            "readonly": "true",
+        }
+        expected["gpg-remote-socket"] = {
+            "source": str(tmp_path / "gpg-remote"),
+            "path": "/run/jailbee-gpg/remote",
+            "readonly": "true",
+        }
+    assert added == expected
+
+
+def test_gpg_remote_on_creates_switch_dir_without_server(mocker, tmp_path):
+    mocker.patch("jailbee.runtime_mounts.remote_gpg_enabled", return_value=True)
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    cfg = _cfg()
+    incus = MagicMock()
+    incus.exec.return_value = str(cfg.container_user.uid)
+    attach_runtime_devices(cfg, incus, "test")
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink() == Path(
+        "/run/jailbee-gpg/host/S.gpg-agent"
+    )
+
+
+def test_gpg_disabled_skips_all_gpg_devices(mocker):
+    mocker.patch("jailbee.runtime_mounts.remote_gpg_enabled", return_value=True)
+    cfg = _cfg()
+    cfg = cfg.model_copy(update={"gpg": cfg.gpg.model_copy(update={"enabled": False})})
+    incus = MagicMock()
+    incus.exec.return_value = str(cfg.container_user.uid)
+    attach_runtime_devices(cfg, incus, "test")
+    assert not any(c.args[1].startswith("gpg-") for c in incus.config_device_add.call_args_list)
+
+
+def test_detach_removes_gpg_extra_devices():
+    incus = MagicMock()
+    detach_runtime_devices(_cfg(), incus, "test")
+    removed = {c.args[1] for c in incus.config_device_remove.call_args_list}
+    assert {"gpg-host-socket", "gpg-remote-socket"} <= removed
+
+
 def test_attach_polls_until_logind_provisions_dir(wayland_session):
     """attach_runtime_devices must wait for /run/user/<uid> to be owned
     by the dev UID before adding devices — otherwise the bind mounts
