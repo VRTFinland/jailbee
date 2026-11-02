@@ -206,12 +206,16 @@ def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
     )
     deliver = mocker.patch("jailbee.orchestration.outbox.deliver", side_effect=OSError("offline"))
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
-    result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    rows[0]["status"] = "Stopped"
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path, now=now)
     assert len(result.warnings) == 1 and "could not notify o" in result.warnings[0]
     assert deliver.call_args.args[2] == "myrepo-o"
     assert deliver.call_args.args[3].kind == "released"
     assert deliver.call_args.args[3].body == adoption.RELEASED_ORCHESTRATOR_BODY.format(child="a")
-    assert deliver.call_args.kwargs["running"] is True
+    assert deliver.call_args.args[3].from_ == "a"
+    assert deliver.call_args.kwargs["running"] is False
+    assert deliver.call_args.kwargs["now"] == now
     assert deliver.call_args.kwargs["uid"] == cfg.container_user.uid
     assert deliver.call_args.kwargs["seq"] == 0
     assert result.orchestrator == "myrepo-o" and result.revoked == ()
@@ -237,7 +241,11 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
         }
     )
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
-    mocker.patch("jailbee.mounts.is_attached", return_value=True)
+    attached = {"data", "user-data", "timed"}
+    allowed_egress = {"owned.example", "user.example"}
+    mocker.patch(
+        "jailbee.mounts.is_attached", side_effect=lambda incus, full, name: name in attached
+    )
     remove = mocker.patch(
         "jailbee.mounts.remove_optional_mount", side_effect=RuntimeError("failed")
     )
@@ -246,11 +254,21 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
     with pytest.raises(RuntimeError, match="failed"):
         adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
     incus.config_unset_checked.assert_not_called()
-    remove.side_effect = None
+    remove.reset_mock()
+    egress.reset_mock()
     events = []
     switch.side_effect = lambda *args, **kwargs: events.append("loose")
-    remove.side_effect = lambda *args, **kwargs: events.append("mount:data")
-    egress.side_effect = lambda *args, **kwargs: events.append("egress:owned.example")
+
+    def remove_mount(cfg, incus, full, name):
+        attached.remove(name)
+        events.append(f"mount:{name}")
+
+    def remove_egress(cfg, incus, full, name):
+        allowed_egress.discard(name)
+        events.append(f"egress:{name}")
+
+    remove.side_effect = remove_mount
+    egress.side_effect = remove_egress
     incus.config_unset_checked.side_effect = lambda *args: events.append("unset")
     mocker.patch("jailbee.orchestration.outbox.deliver")
     result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
@@ -259,8 +277,10 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
     switch.assert_called_with(cfg, incus, "myrepo-a", "strict", until=None)
     egress.assert_called_with(cfg, incus, "myrepo-a", "owned.example")
     assert events[:4] == ["egress:owned.example", "loose", "mount:data", "unset"]
-    assert remove.call_args_list[-1:] == [call(cfg, incus, "myrepo-a", "data")]
-    assert egress.call_args_list[-1:] == [call(cfg, incus, "myrepo-a", "owned.example")]
+    assert remove.call_args_list == [call(cfg, incus, "myrepo-a", "data")]
+    assert egress.call_args_list == [call(cfg, incus, "myrepo-a", "owned.example")]
+    assert attached == {"user-data", "timed"}
+    assert allowed_egress == {"user.example"}
 
 
 def test_release_cleanup_failure_restores_parent_for_retry(cfg, rig, tmp_path, mocker):
