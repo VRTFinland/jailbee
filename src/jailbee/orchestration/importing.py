@@ -145,10 +145,11 @@ def _merge_into_child(
     child_branch: str,
 ) -> Outcome:
     uid = ctx.cfg.container_user.uid
+    new_head: str | None
     try:
         probe = sync.probe_merge_in_container(bounded, child.full, repo_dir, ref=ref, uid=uid)
-        if probe.conflicts:
-            paths = ", ".join(probe.conflicts[:20])
+        if probe.conflicted or probe.conflicts:
+            paths = ", ".join(probe.conflicts[:20]) or "unspecified paths"
             if len(probe.conflicts) > 20:
                 paths += f" … and {len(probe.conflicts) - 20} more"
             return refused(
@@ -164,6 +165,9 @@ def _merge_into_child(
             )
             outcome = f"{child.short} already contains {oid[:12]}"
         else:
+            current_branch = sync._run_container_preflights(bounded, child.full, repo_dir, uid=uid)
+            if current_branch != child_branch:
+                return refused("child branch changed during update; nothing was merged")
             new_head = sync._merge_ref_in_container(
                 bounded,
                 child.full,
@@ -184,8 +188,20 @@ def _merge_into_child(
             )
             outcome = f"merged {label} into {child.short}/{child_branch}: {kind} {new_head[:12]}"
     except sync.MergeConflictError:
-        sync.abort_merge_in_container(bounded, child.full, repo_dir, uid=uid)
-        return refused("child changed during update; merge aborted, nothing merged")
+        if sync.abort_merge_in_container(bounded, child.full, repo_dir, uid=uid):
+            return refused("child changed during update; merge aborted, nothing merged")
+        return refused(
+            f"child changed during update; merge cleanup failed or is uncertain. "
+            f"Inspect {child.short} and resolve or abort the merge manually."
+        )
+    except sync.PostMergeError as exc:
+        new_head = exc.head
+        body = (
+            f"{ctx.sender.short} merged {label} ({oid[:12]}) into your branch {child_branch}. "
+            f"Your files changed on disk — re-read before editing; do not merge {ref} again. "
+            f"Warning: post-merge maintenance failed: {exc}"
+        )
+        outcome = f"merged {label} into {child.short}/{child_branch}; warning: {exc}"
     except (SyncError, IncusError) as exc:
         return refused(str(exc))
     msg = InboxMessage.model_validate(

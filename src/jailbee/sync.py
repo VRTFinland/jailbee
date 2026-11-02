@@ -160,6 +160,14 @@ class MergeConflictError(SyncError):
         self.report = report
 
 
+class PostMergeError(SyncError):
+    """A merge was applied but post-merge maintenance failed."""
+
+    def __init__(self, message: str, head: str | None) -> None:
+        super().__init__(message)
+        self.head = head
+
+
 @dataclass(frozen=True)
 class CleanupResult:
     """Outcome of `run_post_merge_cleanup`."""
@@ -2671,6 +2679,7 @@ class MergeProbe:
 
     relation: Literal["contained", "fast_forward", "merge"]
     conflicts: tuple[str, ...]
+    conflicted: bool = False
 
 
 def probe_merge_in_container(
@@ -2718,15 +2727,16 @@ def probe_merge_in_container(
         conflicts = tuple(
             dict.fromkeys(result.stdout.decode("utf-8", errors="replace").splitlines()[1:])
         )
-    return MergeProbe("merge", conflicts)
+    return MergeProbe("merge", conflicts, conflicted=result.returncode == 1)
 
 
-def abort_merge_in_container(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> None:
+def abort_merge_in_container(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> bool:
     """Best-effort cleanup of an in-progress merge."""
     try:
         incus.exec(full_name, ["git", "-C", repo_dir, "merge", "--abort"], uid=uid)
     except IncusError:
-        pass
+        return False
+    return True
 
 
 def _merge_ref_in_container(
@@ -2804,6 +2814,11 @@ def _merge_ref_in_container(
         # conflict resolver.
         if _index_lock_held(exc):
             raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
+        failure = str(exc).lower()
+        if "merging is not possible because you have unmerged files" in failure or (
+            "you have not concluded your merge" in failure
+        ):
+            raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
         if not resolve_gitlinks:
@@ -2839,8 +2854,8 @@ def _merge_ref_in_container(
         )
         # Fall through to the post-merge tail (prune + update_submodules_in_container + head).
 
-    if vanishing:
-        try:
+    try:
+        if vanishing:
             submodules.prune_vanished_worktrees(
                 run,
                 repo_dir,
@@ -2848,14 +2863,16 @@ def _merge_ref_in_container(
                 fs=submodules.ContainerFs(incus, full_name, uid=uid),
                 target_label=label,
             )
-        except submodules.SubmoduleError as exc:
-            raise SyncError(str(exc)) from exc
-
-    submodules.update_submodules_in_container(
-        incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
-    )
-
-    return _container_head_oid(incus, full_name, repo_dir, uid=uid)
+        submodules.update_submodules_in_container(
+            incus, full_name, repo_dir=repo_dir, uid=uid, env=git_env
+        )
+        return _container_head_oid(incus, full_name, repo_dir, uid=uid)
+    except (submodules.SubmoduleError, IncusError, SyncError) as exc:
+        try:
+            merged_head = _container_head_oid(incus, full_name, repo_dir, uid=uid)
+        except (SyncError, IncusError):
+            merged_head = None
+        raise PostMergeError(str(exc), merged_head) from exc
 
 
 def compute_submodule_moves(

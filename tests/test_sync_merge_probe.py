@@ -68,6 +68,15 @@ def test_merge_probe_conflicts_listed() -> None:
     assert result.relation == "merge"
 
 
+def test_merge_probe_conflict_without_paths() -> None:
+    _, result = probe(
+        ExecResult(1, b"", b""), ExecResult(1, b"", b""),
+        ExecResult(1, b"0" * 40 + b"\n", b""),
+    )
+    assert result.conflicted
+    assert result.conflicts == ()
+
+
 def test_merge_tree_probe_error_raises() -> None:
     with pytest.raises(SyncError, match="merge check failed in box: broken"):
         probe(ExecResult(1, b"", b""), ExecResult(1, b"", b""), ExecResult(128, b"", b"broken"))
@@ -99,5 +108,5 @@ def test_probe_passes_configured_timeout_to_subprocess(timeout: int) -> None:
 def test_abort_merge_swallows_incus_error() -> None:
     incus = MagicMock()
     incus.exec.side_effect = IncusError("failed")
-    abort_merge_in_container(incus, "box", "/repo", uid=1000)
+    assert abort_merge_in_container(incus, "box", "/repo", uid=1000) is False
     incus.exec.assert_called_once_with("box", ["git", "-C", "/repo", "merge", "--abort"], uid=1000)
