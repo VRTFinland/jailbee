@@ -569,7 +569,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
-        reason="the in-container jailbee venv adds questionary and prompt-toolkit for service pickers",
+        reason=(
+            "the in-container jailbee venv adds questionary and prompt-toolkit for service pickers"
+        ),
     ),
     UpgradeNote(
         version=(1, 8, 1),

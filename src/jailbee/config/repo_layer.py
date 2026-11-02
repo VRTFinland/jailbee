@@ -24,8 +24,16 @@ def load_repo_layer(path: Path) -> Config:
     path = path.resolve()
     try:
         raw = _parse_yaml_text(path.read_text(), str(path))
-        return load_config_from_layers({}, raw, path, origin=str(path), emit_hint=False,
-                                       local_raw={}, repo_layer=True, skip_git=True)
+        return load_config_from_layers(
+            {},
+            raw,
+            path,
+            origin=str(path),
+            emit_hint=False,
+            local_raw={},
+            repo_layer=True,
+            skip_git=True,
+        )
     except (OSError, UnicodeError) as exc:
         raise ConfigError(str(exc)) from exc
 

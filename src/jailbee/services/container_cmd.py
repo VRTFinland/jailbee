@@ -33,8 +33,11 @@ def _runtime(repo: Path | None) -> ServiceRuntime:
 
 
 @service_app.callback()
-def group(ctx: Context, repo: Annotated[Path | None, typer.Option("--repo")] = None,
-          json_output: Annotated[bool, typer.Option("--json")] = False) -> None:
+def group(
+    ctx: Context,
+    repo: Annotated[Path | None, typer.Option("--repo")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
     ctx.obj = _runtime(repo)
     if ctx.invoked_subcommand is None:
         _list(ctx.obj, json_output)
@@ -57,7 +60,13 @@ def ls(ctx: Context, json_output: Annotated[bool, typer.Option("--json")] = Fals
 
 def _names(rt: ServiceRuntime, names: list[str] | None, *, destructive: bool = False) -> list[str]:
     if not names:
-        names = [prompting.choose_one("service", [prompting.Option(n, n, n) for n in rt.cfg.services], destructive=destructive)]
+        names = [
+            prompting.choose_one(
+                "service",
+                [prompting.Option(n, n, n) for n in rt.cfg.services],
+                destructive=destructive,
+            )
+        ]
     try:
         graph.topo_order(rt.cfg.services, names)
     except graph.UnknownServiceError as exc:
@@ -69,7 +78,11 @@ def _names(rt: ServiceRuntime, names: list[str] | None, *, destructive: bool = F
 def _report(report: RunReport) -> None:
     if not report.ok:
         typer.echo(report.tail, err=True)
-        typer.echo(f"the service failed to start — if dependencies changed, try `jailbee service refresh {report.failed}`", err=True)
+        typer.echo(
+            "the service failed to start — if dependencies changed, try "
+            f"`jailbee service refresh {report.failed}`",
+            err=True,
+        )
         raise typer.Exit(1)
 
 
@@ -103,10 +116,17 @@ def refresh_cmd(ctx: Context, names: Annotated[list[str] | None, typer.Argument(
 
 
 @service_app.command()
-def plan(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None, op: Annotated[Literal['start', 'restart', 'refresh'], typer.Option('--op')] = 'start', json_output: Annotated[bool, typer.Option('--json')] = False) -> None:
+def plan(
+    ctx: Context,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    op: Annotated[Literal["start", "restart", "refresh"], typer.Option("--op")] = "start",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
     rt: ServiceRuntime = ctx.obj
     try:
-        payload = graph.plan_payload(rt.cfg.services, names or [], op, step_timeout=rt.cfg.autostart.step_timeout)
+        payload = graph.plan_payload(
+            rt.cfg.services, names or [], op, step_timeout=rt.cfg.autostart.step_timeout
+        )
     except graph.UnknownServiceError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
@@ -117,7 +137,12 @@ def plan(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = No
 
 
 @service_app.command()
-def logs(ctx: Context, name: Annotated[str | None, typer.Argument()] = None, lines: Annotated[int, typer.Option('-n', min=1)] = 30, follow: Annotated[bool, typer.Option('--follow')] = False) -> None:
+def logs(
+    ctx: Context,
+    name: Annotated[str | None, typer.Argument()] = None,
+    lines: Annotated[int, typer.Option("-n", min=1)] = 30,
+    follow: Annotated[bool, typer.Option("--follow")] = False,
+) -> None:
     rt: ServiceRuntime = ctx.obj
     selected = _names(rt, [name] if name else None)[0]
     if not follow:

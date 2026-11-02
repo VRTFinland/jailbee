@@ -18,13 +18,18 @@ def elevation_refusal(cfg: Config, names: Sequence[str], hostname: str) -> str |
     details = []
     for name in elevated:
         access = graph.elevation(cfg.services[name])
-        parts = (["network loose"] if access.network else []) + (["mounts " + ", ".join(access.mounts)] if access.mounts else [])
+        parts = (["network loose"] if access.network else []) + (
+            ["mounts " + ", ".join(access.mounts)] if access.mounts else []
+        )
         details.append(f"{name}: {'; '.join(parts)}")
     short = hostname.removeprefix(cfg.container_prefix + "-")
     selected = " ".join(names)
-    return (f"refresh of {', '.join(elevated)} needs elevated access ({'; '.join(details)}) — "
-            f"the agent cannot grant that to itself. Ask the orchestrator: `jailbee-inbox send refresh --child {short} --services {selected} --wait`, "
-            f"or on the host: `jb service refresh {short} {selected}`")
+    return (
+        f"refresh of {', '.join(elevated)} needs elevated access ({'; '.join(details)}) — "
+        "the agent cannot grant that to itself. Ask the orchestrator: "
+        f"`jailbee-inbox send refresh --child {short} --services {selected} --wait`, "
+        f"or on the host: `jb service refresh {short} {selected}`"
+    )
 
 
 def run_refresh(rt: ServiceRuntime, cfg: Config, names: Sequence[str]) -> RunReport:
@@ -37,7 +42,13 @@ def run_refresh(rt: ServiceRuntime, cfg: Config, names: Sequence[str]) -> RunRep
         for name in order:
             service = cfg.services[name]
             for step in service.prepare:
-                result = rt.proc.run_shell(step.run, cwd=str(rt.repo_dir / (step.working_dir or service.working_dir)), env={**service.env, **step.env}, timeout=step.timeout or cfg.autostart.step_timeout, capture=False)
+                result = rt.proc.run_shell(
+                    step.run,
+                    cwd=str(rt.repo_dir / (step.working_dir or service.working_dir)),
+                    env={**service.env, **step.env},
+                    timeout=step.timeout or cfg.autostart.step_timeout,
+                    capture=False,
+                )
                 if result and not step.continue_on_error:
                     return RunReport(False, tuple(done), name, "prepare failed")
             done.append(name)

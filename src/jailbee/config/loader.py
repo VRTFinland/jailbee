@@ -907,7 +907,9 @@ def load_config_from_layers(
         merged["apps"] = merge_apps_raw(before_apps, local_apps)
 
     label = f"{origin} (+ {local_from})" if local_overlay else origin
-    cfg = _build_config_from_dict(merged, path, origin=label, repo_layer=repo_layer, skip_git=skip_git)
+    cfg = _build_config_from_dict(
+        merged, path, origin=label, repo_layer=repo_layer, skip_git=skip_git
+    )
 
     creds = _credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix, local_creds))
