@@ -504,6 +504,22 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "reports and including idle in the recommended wake filter"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox accepts `--timeout none` for "
+            "`wait` and `send --wait`, waiting without a deadline"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills telling children to keep "
+            "a background `jailbee-inbox wait --timeout none` running"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

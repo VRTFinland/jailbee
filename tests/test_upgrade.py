@@ -986,9 +986,15 @@ def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
     from jailbee.upgrade import UPGRADE_NOTES, Watermark, pending
 
     owed = pending("1.8.0", {"base_build": Watermark((1, 7, 8), observed=True)})
-    notes = [n for n in UPGRADE_NOTES if "jailbee-inbox" in n.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 0) and "jailbee-inbox" in n.reason]
     assert notes and all(n.actions == frozenset({"base_build"}) for n in notes)
-    assert any(n.version == (1, 8, 1) and "autostart profiles" in n.reason for n in notes)
+    assert any(
+        n.version == (1, 8, 1)
+        and n.actions == frozenset({"base_build"})
+        and "jailbee-inbox" in n.reason
+        and "autostart profiles" in n.reason
+        for n in UPGRADE_NOTES
+    )
     assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
     apply_owed = pending("1.8.0", {"apply": Watermark((1, 7, 8), observed=True)})
     assert not any(
@@ -1028,6 +1034,19 @@ def test_upgrade_note_announces_orchestration_skills() -> None:
     notes = [n for n in UPGRADE_NOTES if "jailbee-orchestration" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
+
+
+def test_inbox_wait_none_has_build_and_apply_notes() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1)]
+    assert any(
+        n.actions == frozenset({"base_build"}) and "--timeout none" in n.reason for n in notes
+    )
+    assert any(
+        n.actions == frozenset({"apply"}) and "background" in n.reason and "wait" in n.reason
+        for n in notes
+    )
 
 
 def test_runtime_rights_upgrade_notes_one_per_reason():
