@@ -10,12 +10,16 @@ from tests.conftest import make_config
 
 
 def test_mixed_refresh_refuses_before_lock_or_commands(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path).model_copy(update={"services": {
-            "safe": Service(run="true", prepare=[ServicePrepareStep(run="true")]),
-            "backend": Service(
-                run="true", prepare=[ServicePrepareStep(run="true", network="loose")]
-            ),
-        }})
+    cfg = make_config(tmp_path).model_copy(
+        update={
+            "services": {
+                "safe": Service(run="true", prepare=[ServicePrepareStep(run="true")]),
+                "backend": Service(
+                    run="true", prepare=[ServicePrepareStep(run="true", network="loose")]
+                ),
+            }
+        }
+    )
     rt = ServiceRuntime(cfg, tmp_path, Mock(), tmp_path / "state")
     message = elevation_refusal(
         cfg.model_copy(update={"container_prefix": "myrepo"}), ["safe", "backend"], "myrepo-feat-x"
@@ -32,7 +36,11 @@ def test_mixed_refresh_refuses_before_lock_or_commands(tmp_path: Path) -> None:
 
 
 def test_refresh_prepares_before_restart(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path).model_copy(update={"services": {"db": Service(run="true", prepare=[ServicePrepareStep(run="migrate")])}})
+    cfg = make_config(tmp_path).model_copy(
+        update={
+            "services": {"db": Service(run="true", prepare=[ServicePrepareStep(run="migrate")])}
+        }
+    )
     proc = Mock()
     proc.run_shell.return_value = 0
     rt = ServiceRuntime(cfg, tmp_path, proc, tmp_path / "state")
@@ -49,15 +57,19 @@ def test_refresh_prepares_before_restart(tmp_path: Path) -> None:
 
 
 def test_continue_on_error_runs_remaining_steps(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path).model_copy(update={"services": {
-            "db": Service(
-                run="true",
-                prepare=[
-                    ServicePrepareStep(run="first", continue_on_error=True),
-                    ServicePrepareStep(run="second"),
-                ],
-            )
-        }})
+    cfg = make_config(tmp_path).model_copy(
+        update={
+            "services": {
+                "db": Service(
+                    run="true",
+                    prepare=[
+                        ServicePrepareStep(run="first", continue_on_error=True),
+                        ServicePrepareStep(run="second"),
+                    ],
+                )
+            }
+        }
+    )
     proc = Mock()
     proc.run_shell.side_effect = [1, 0]
     rt = ServiceRuntime(cfg, tmp_path, proc, tmp_path / "state")
@@ -68,7 +80,9 @@ def test_continue_on_error_runs_remaining_steps(tmp_path: Path) -> None:
 
 
 def test_unknown_name_does_not_mutate(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path).model_copy(update={"services": {"db": Service(run="true", prepare=[ServicePrepareStep(run="first")])}})
+    cfg = make_config(tmp_path).model_copy(
+        update={"services": {"db": Service(run="true", prepare=[ServicePrepareStep(run="first")])}}
+    )
     proc = Mock()
     rt = ServiceRuntime(cfg, tmp_path, proc, tmp_path / "state")
     with pytest.raises(ValueError, match="Unknown"):

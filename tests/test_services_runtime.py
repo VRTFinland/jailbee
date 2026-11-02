@@ -344,20 +344,29 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
 def test_follow_snapshot_preserves_protocol_looking_lines(monkeypatch):
     from io import BytesIO
 
-    protocol = (b"%begin 1 1 0\n%end 1 1 0\n"
-                b"%begin 1 2 0\n%exit ordinary\n%error 1 9 0\n"
-                b"%end 1 8 0\n%begin 1 7 0\nlast\n%end 1 2 0\n"
-                b"%output %7 ok\134012\n%exit\n")
+    protocol = (
+        b"%begin 1 1 0\n%end 1 1 0\n"
+        b"%begin 1 2 0\n%exit ordinary\n%error 1 9 0\n"
+        b"%end 1 8 0\n%begin 1 7 0\nlast\n%end 1 2 0\n"
+        b"%output %7 ok\134012\n%exit\n"
+    )
+
     class Process:
         def __init__(self):
             self.stdin = BytesIO()
             self.stdout = BytesIO(protocol)
+
         def poll(self):
             return 0
+
         def wait(self):
             return 0
+
     process = Process()
     monkeypatch.setattr("jailbee.services.local_proc.subprocess.Popen", lambda *a, **kw: process)
     proc = LocalProc()
     monkeypatch.setattr(proc, "tmux", lambda args: subprocess.CompletedProcess(args, 0, "%7\n", ""))
-    assert list(proc.follow_pane("autostart:=svc-db", 30)) == ["%exit ordinary\n%error 1 9 0\n%end 1 8 0\n%begin 1 7 0\nlast\n", "ok\n"]
+    assert list(proc.follow_pane("autostart:=svc-db", 30)) == [
+        "%exit ordinary\n%error 1 9 0\n%end 1 8 0\n%begin 1 7 0\nlast\n",
+        "ok\n",
+    ]

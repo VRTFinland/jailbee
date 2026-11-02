@@ -56,7 +56,7 @@ class LocalProc:
                     continue
                 if not streaming:
                     if re.fullmatch(rb"%begin \d+ \d+ \d+", line):
-                        capture_id = line[len(b"%begin "):]
+                        capture_id = line[len(b"%begin ") :]
                     continue
                 prefix = f"%output {pane} ".encode()
                 if line.startswith(prefix):
