@@ -323,9 +323,13 @@ def test_children_of_repo_filters_and_sorts(cfg, rig):
 def test_adopt_reservation_counts_toward_capacity(cfg, rig, tmp_path, mocker):
     rows, incus = rig
     rows[0]["config"][labels.GRANT] = Grant(max_running_children=1).to_label()
-    state.save_reservations(tmp_path, {"myrepo-o": [state.Reservation("myrepo-creating", 123, "t")]})
+    state.save_reservations(
+        tmp_path, {"myrepo-o": [state.Reservation("myrepo-creating", 123, "t")]}
+    )
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
     with pytest.raises(adoption.AdoptError, match="limit of 1"):
         adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
     rows[1]["status"] = "Stopped"
-    assert adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path).adopted == ("myrepo-a",)
+    assert adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path).adopted == (
+        "myrepo-a",
+    )

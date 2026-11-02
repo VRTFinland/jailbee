@@ -208,12 +208,19 @@ def adopt(
         from jailbee.orchestration.actions import slot_breakdown
 
         root = root if root is not None else state.state_root()
-        mine = {name for name, raw in rows.items()
-                if _config(raw).get(labels.SPAWNED_BY) == orchestrator_full}
-        running_names = {name for name in mine | set(pending)
-                         if name in rows and rows[name].get("status") == "Running"}
-        running = slot_breakdown(cfg.container_prefix, root, orchestrator_full, mine,
-                                 running_names, set(rows))[3]
+        mine = {
+            name
+            for name, raw in rows.items()
+            if _config(raw).get(labels.SPAWNED_BY) == orchestrator_full
+        }
+        running_names = {
+            name
+            for name in mine | set(pending)
+            if name in rows and rows[name].get("status") == "Running"
+        }
+        running = slot_breakdown(
+            cfg.container_prefix, root, orchestrator_full, mine, running_names, set(rows)
+        )[3]
         if running > effective.max_running_children:
             problems.append(
                 f"limit of {effective.max_running_children} running children exceeded; "

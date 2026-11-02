@@ -498,8 +498,12 @@ def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
     """Running, live job, reservation counts and their deduplicated total."""
     children = ctx.children()
     return slot_breakdown(
-        ctx.cfg.container_prefix, ctx.root, ctx.sender.full,
-        {n.full for n in children}, {n.full for n in children if n.running}, set(ctx.nodes),
+        ctx.cfg.container_prefix,
+        ctx.root,
+        ctx.sender.full,
+        {n.full for n in children},
+        {n.full for n in children if n.running},
+        set(ctx.nodes),
     )
 
 
