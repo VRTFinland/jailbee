@@ -8506,6 +8506,21 @@ def pr_push_cmd(
         error("--force requires an explicit container name (no interactive picker).")
         raise typer.Exit(2)
 
+    from jailbee import branch_pr, prompting
+
+    def publish_source(manifest: str) -> None:
+        result = branch_pr.publish_source_manifest(
+            cfg,
+            incus,
+            short_name(cfg, full),
+            manifest,
+            force=force,
+            yes=yes,
+            confirm=lambda question: prompting.confirm(question, default=False),
+        )
+        if result:
+            raise typer.Exit(result)
+
     if source_manifest is not None:
         if any(
             (
@@ -8522,21 +8537,9 @@ def pr_push_cmd(
                 "--as, --pr or --stacked."
             )
             raise typer.Exit(2)
-        from jailbee import branch_pr, prompting
-
         cfg = _load_or_exit(config)
         incus, full = _resolve_existing(cfg, name)
-        result = branch_pr.publish_source_manifest(
-            cfg,
-            incus,
-            short_name(cfg, full),
-            source_manifest,
-            force=force,
-            yes=yes,
-            confirm=lambda question: prompting.confirm(question, default=False),
-        )
-        if result:
-            raise typer.Exit(result)
+        publish_source(source_manifest)
         return
 
     if pr_number is not None and as_name is not None:
@@ -8557,6 +8560,23 @@ def pr_push_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
+    pending = branch_pr.pending_source_manifests(cfg, incus, full)
+    if pending:
+        own_options = any((
+            title is not None, body is not None, base is not None, ready is not None,
+            description, web, no_ai, no_outbox, branch is not None, as_name is not None,
+            pr_number is not None, stacked, retarget is not None, no_submodules,
+        ))
+        if not own_options and prompting.is_interactive():
+            picked = branch_pr.choose_pr_source(pending, own_label="container branch")
+            if picked is not None:
+                publish_source(picked)
+                return
+        else:
+            from rich.text import Text
+            from jailbee.tui import hint_console
+
+            hint_console.print(Text(branch_pr.pending_sources_note(pending, short)), highlight=False)
     scope = pr_flow.PrScope.for_repo(cfg)
     pr_flow.assert_pr_inheritance_complete(incus, full)
     state = pr_flow.ContainerLabelState(incus, full, short=short)

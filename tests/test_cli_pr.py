@@ -106,6 +106,98 @@ def _setup(mocker, tmp_path, labels=None):
     return cfg_mock, incus_mock
 
 
+@pytest.fixture
+def source_choice(mocker, tmp_path):
+    from jailbee.branch_pr import PendingSource
+
+    cfg, incus = _setup(mocker, tmp_path)
+    cfg.pr.ai_description = False
+    pending = mocker.patch("jailbee.branch_pr.pending_source_manifests", create=True, return_value=[
+        PendingSource("a.json", "First", "topic", "main"),
+        PendingSource("b.json", "Second", "other", None),
+    ])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, opts: opts[0].value)
+    source = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
+    own = mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    return locals()
+
+
+def test_pr_push_picker_publishes_picked_manifest(source_choice):
+    p = source_choice
+    p["select"].side_effect = lambda noun, opts: opts[2].value
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes", "--force"])
+    assert result.exit_code == 0, result.output
+    from unittest.mock import ANY
+
+    p["source"].assert_called_once_with(p["cfg"], p["incus"], "feat-foo", "b.json", force=True, yes=True, confirm=ANY)
+    p["own"].assert_not_called()
+
+
+def test_pr_push_picker_own_branch_runs_current_flow(source_choice):
+    p = source_choice
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+    assert result.exit_code == 0, result.output
+    p["select"].assert_called_once()
+    p["own"].assert_called_once()
+    p["create"].assert_called_once()
+    p["source"].assert_not_called()
+
+
+def test_pr_push_no_pending_no_picker(source_choice):
+    p = source_choice
+    p["pending"].return_value = []
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+    assert result.exit_code == 0, result.output
+    p["select"].assert_not_called()
+    p["own"].assert_called_once()
+
+
+def test_pr_push_noninteractive_pending_prints_note(source_choice, mocker):
+    p = source_choice
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "2 source PR proposals" in result.stderr
+    assert "--source-manifest" in result.stderr and "jailbee outbox feat-foo" in result.stderr
+    assert "source PR proposals" not in result.stdout
+    p["select"].assert_not_called()
+    p["own"].assert_called_once()
+
+
+def test_pr_push_picker_cancel_publishes_nothing(source_choice):
+    p = source_choice
+    p["select"].side_effect = None
+    p["select"].return_value = None
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+    assert result.exit_code == 1
+    assert "cancelled" in result.output
+    p["own"].assert_not_called()
+    p["source"].assert_not_called()
+
+
+@pytest.mark.parametrize("options", [["--no-ai"], ["--title", "x"], ["--base", "main"], ["--body", "x"], ["--ready"], ["--draft"], ["--no-draft"], ["--no-outbox"], ["--no-submodules"]])
+def test_pr_push_own_branch_option_skips_picker(source_choice, options):
+    p = source_choice
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", *options])
+    assert result.exit_code == 0, result.output
+    assert "2 source PR proposals" in result.stderr
+    p["select"].assert_not_called()
+    p["own"].assert_called_once()
+    p["source"].assert_not_called()
+
+
+def test_pr_push_source_manifest_flag_skips_picker(source_choice):
+    p = source_choice
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "a.json"])
+    assert result.exit_code == 0, result.output
+    p["select"].assert_not_called()
+    p["pending"].assert_not_called()
+    p["own"].assert_not_called()
+    p["source"].assert_called_once()
+
+
 def test_source_manifest_cli_delegates(mocker, tmp_path):
     cfg, incus = _setup(mocker, tmp_path)
     publish = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
@@ -3023,11 +3115,15 @@ def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
-    read = mocker.patch("jailbee.pr_outbox.read_outbox")
+    read = _mock_store(mocker, {})
+    apply = mocker.patch("jailbee.pr_outbox.offer_pending_comments")
 
     assert CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"]).exit_code == 0
 
-    read.assert_not_called()
+    # Source proposals are counted even with an own-branch-only option, but
+    # --no-outbox still suppresses the post-push offer and its publication.
+    read.assert_called_once()
+    apply.assert_not_called()
 
 
 def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):

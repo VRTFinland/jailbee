@@ -130,6 +130,25 @@ def test_pending_unreadable_outbox_is_empty(source_publisher):
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
 
 
+@pytest.mark.parametrize("selected", [0, 1, 2])
+def test_choose_pr_source_lists_own_branch_first(mocker, selected):
+    from jailbee.branch_pr import PendingSource, choose_pr_source
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    pending = [PendingSource("a.json", "First", "topic", "main"), PendingSource("b.json", "Second", "other", None)]
+
+    def select(noun, options):
+        assert noun == "PR source"
+        assert options[0].title == "container branch"
+        assert "First" in options[1].title and "a.json" in options[1].title
+        assert "topic" in options[1].title and "main" in options[1].title
+        assert "default base" in options[2].title
+        return options[selected].value
+
+    mocker.patch("jailbee.prompting._select", side_effect=select)
+    assert choose_pr_source(pending, own_label="container branch") == [None, "a.json", "b.json"][selected]
+
+
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 

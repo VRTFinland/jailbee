@@ -52,6 +52,32 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
     return pending
 
 
+def choose_pr_source(pending: list[PendingSource], *, own_label: str) -> str | None:
+    """Choose a proposal or the own branch; cancellation never means own branch."""
+    from jailbee import prompting
+
+    # None is reserved for cancellation by choose_one and questionary.
+    options = [prompting.Option("", own_label, own_label)]
+    options.extend(
+        prompting.Option(
+            p.manifest,
+            f"{p.title} — {p.head} → {p.base or 'default base'} ({p.manifest})",
+            p.manifest,
+        )
+        for p in pending
+    )
+    return prompting.choose_one("PR source", options, destructive=True) or None
+
+
+def pending_sources_note(pending: list[PendingSource], short: str) -> str:
+    count = len(pending)
+    subject = "1 source PR proposal is" if count == 1 else f"{count} source PR proposals are"
+    return (
+        f"{subject} pending in the outbox; publish one with --source-manifest <file> "
+        f"or `jailbee outbox {short}`."
+    )
+
+
 def default_head(source: str) -> str:
     if source.startswith("refs/jailbee/from/"):
         parts = source.split("/", 4)
