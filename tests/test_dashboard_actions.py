@@ -518,6 +518,26 @@ def test_grant_argv_empty_lists_clear():
     assert dact.orchestrate_grant_argv("alpha-o", loose=True)[2] == "--loose"
 
 
+def test_profile_save_argv():
+    assert dact.orchestrate_profile_save_argv("c", "p") == [
+        "orchestrate",
+        "profile",
+        "save",
+        "--",
+        "c",
+        "p",
+    ]
+    assert dact.orchestrate_profile_save_argv("c", "p", force=True) == [
+        "orchestrate",
+        "profile",
+        "save",
+        "--force",
+        "--",
+        "c",
+        "p",
+    ]
+
+
 def test_revoke_argv():
     assert dact.orchestrate_revoke_argv("alpha-o") == ["orchestrate", "revoke", "--", "alpha-o"]
 

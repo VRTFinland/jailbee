@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from jailbee.config.models_orchestration import OrchestrationProfile
+from jailbee.config.models_orchestration import GrantableConfig, OrchestrationProfile
 from jailbee.orchestration.grant import Grant, Grantable, GrantError, Operation, RepoCap
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
@@ -25,6 +25,21 @@ def _grant_of(profile: OrchestrationProfile) -> Grant:
             loose=g.loose,
             egress=tuple(g.egress),
         ),
+        default_runner=profile.default_runner,
+    )
+
+
+def profile_of(grant: Grant) -> OrchestrationProfile:
+    """Convert a grant into an equivalent orchestration profile."""
+    return OrchestrationProfile(
+        max_running_children=grant.max_running_children,
+        operations=list(grant.operations),
+        grantable=GrantableConfig(
+            mounts=list(grant.grantable.mounts),
+            loose=grant.grantable.loose,
+            egress=list(grant.grantable.egress),
+        ),
+        default_runner=grant.default_runner,
     )
 
 

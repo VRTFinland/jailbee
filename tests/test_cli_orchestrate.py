@@ -7,7 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from jailbee.orchestration.commands import GrantFlags, GrantRow
+from jailbee.config.models_orchestration import OrchestrationProfile
+from jailbee.orchestration.commands import GrantFlags, GrantRow, SavedProfile
 from jailbee.orchestration.grant import Grant, Grantable, GrantError
 
 runner = CliRunner()
@@ -22,7 +23,12 @@ def patched(tmp_path, mocker, make_cfg):
     resolve = mocker.patch(
         "jailbee.cli._resolve_existing", return_value=(incus, f"{cfg.container_prefix}-a")
     )
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=tmp_path / "global.yaml")
     return SimpleNamespace(
+        save_profile=mocker.patch(
+            "jailbee.orchestration.commands.save_profile",
+            return_value=SavedProfile("reviewer", OrchestrationProfile(), False),
+        ),
         cfg=cfg,
         incus=incus,
         resolve=resolve,
@@ -34,6 +40,46 @@ def patched(tmp_path, mocker, make_cfg):
         ),
         list_grants=mocker.patch("jailbee.orchestration.commands.list_grants", return_value=[]),
     )
+
+
+def test_profile_save_passes_names_and_force(patched, tmp_path):
+    res = runner.invoke(app, ["orchestrate", "profile", "save", "a", "reviewer", "--force"])
+    assert res.exit_code == 0, res.output
+    args, kwargs = patched.save_profile.call_args
+    assert args == (patched.cfg, patched.incus, f"{patched.cfg.container_prefix}-a", "reviewer")
+    assert kwargs == {"force": True, "global_path": tmp_path / "global.yaml"}
+    assert "Saved profile 'reviewer' from 'a':" in res.output
+
+
+def test_profile_save_replaced_and_double_dash(patched):
+    patched.save_profile.return_value = SavedProfile("reviewer", OrchestrationProfile(), True)
+    res = runner.invoke(app, ["orchestrate", "profile", "save", "--force", "--", "a", "reviewer"])
+    assert res.exit_code == 0, res.output
+    assert "Saved profile 'reviewer' (replaced) from 'a':" in res.output
+
+
+def test_profile_save_refusal_exits_1(patched):
+    patched.save_profile.side_effect = GrantError("profile 'reviewer' already exists")
+    res = runner.invoke(app, ["orchestrate", "profile", "save", "a", "reviewer"])
+    assert res.exit_code == 1 and "already exists" in res.output
+
+
+def test_profile_save_prompts_for_missing_name(patched, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["Invalid name", "reviewer"])
+    res = runner.invoke(app, ["orchestrate", "profile", "save", "a"])
+    assert res.exit_code == 0, res.output
+    assert ask.call_args_list == [mocker.call("Profile name", None, None)] * 2
+    assert "Invalid profile name" in res.output
+    assert patched.save_profile.call_args.args[3] == "reviewer"
+
+
+def test_profile_save_missing_name_noninteractive_exits_2(patched, monkeypatch):
+    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    res = runner.invoke(app, ["orchestrate", "profile", "save", "a"])
+    assert res.exit_code == 2
+    assert "missing Profile name" in res.output
+    patched.save_profile.assert_not_called()
 
 
 def test_grant_passes_flags(patched):

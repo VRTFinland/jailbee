@@ -520,6 +520,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "a background `jailbee-inbox wait --timeout none` running"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs the usage skill describing `orchestrate profile save` "
+            "and dashboard orchestration menu improvements"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

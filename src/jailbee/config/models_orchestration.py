@@ -72,6 +72,10 @@ class OrchestrationProfile(BaseModel):
         description="What the holder may hand on to the children it spawns.",
     )
 
+    default_runner: Runner | None = Field(
+        default=None, description="Default runner for children of a container granted this profile."
+    )
+
     @field_validator("operations")
     @classmethod
     def _operations_valid(cls, v: list[str]) -> list[str]:

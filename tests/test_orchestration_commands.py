@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from jailbee.config import Config
 from jailbee.config.models_host import OptionalMount
@@ -103,6 +104,111 @@ def _registered(mocker):
 @pytest.fixture
 def ensure(mocker):
     return mocker.patch("jailbee.orchestration.service.ensure_running")
+
+
+@pytest.fixture
+def incus_with_grant(make_incus, mocker):
+    mocker.patch("jailbee.config.local_layer.read_local_raw", return_value={})
+    return make_incus(_stored(Grant(max_running_children=3)))
+
+
+def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
+    path = tmp_path / "global.yaml"
+    saved = commands.save_profile(cfg, incus_with_grant, "myrepo-a", "reviewer", global_path=path)
+    data = yaml.safe_load(path.read_text())
+    assert data["orchestration"]["profiles"]["reviewer"] == {
+        "max_running_children": 3,
+        "operations": ["destroy", "import", "message", "restart", "rights", "spawn", "stop"],
+        "grantable": {"mounts": [], "loose": False, "egress": []},
+    }
+    assert saved.name == "reviewer" and saved.profile.max_running_children == 3
+    assert saved.replaced is False
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_save_profile_includes_runner(cfg, make_incus, mocker, tmp_path):
+    mocker.patch("jailbee.config.local_layer.read_local_raw", return_value={})
+    incus = make_incus(_stored(Grant(default_runner=Runner(agent="claude", model="sonnet"))))
+    path = tmp_path / "global.yaml"
+    commands.save_profile(cfg, incus, "myrepo-a", "reviewer", global_path=path)
+    assert yaml.safe_load(path.read_text())["orchestration"]["profiles"]["reviewer"][
+        "default_runner"
+    ] == {"agent": "claude", "model": "sonnet"}
+
+
+def test_save_profile_keeps_other_keys_and_comments(cfg, incus_with_grant, tmp_path):
+    path = tmp_path / "global.yaml"
+    original = "# keep me\nnew:\n  autofetch: true\n"
+    path.write_text(original)
+    commands.save_profile(cfg, incus_with_grant, "myrepo-a", "reviewer", global_path=path)
+    assert original in path.read_text()
+
+
+def test_save_profile_refuses_invalid_name_before_read(cfg, incus, tmp_path):
+    path = tmp_path / "global.yaml"
+    with pytest.raises(GrantError, match="invalid profile name 'Bad_Name'"):
+        commands.save_profile(cfg, incus, "myrepo-a", "Bad_Name", global_path=path)
+    assert not path.exists()
+    incus.config_get.assert_not_called()
+
+
+def test_save_profile_refuses_without_grant(cfg, incus, tmp_path):
+    path = tmp_path / "global.yaml"
+    with pytest.raises(GrantError, match="no grant on 'a'; grant it first"):
+        commands.save_profile(cfg, incus, "myrepo-a", "reviewer", global_path=path)
+    assert not path.exists()
+
+
+def test_save_profile_refuses_malformed_grant(cfg, make_incus, tmp_path):
+    path = tmp_path / "global.yaml"
+    with pytest.raises(GrantError, match="invalid grant label"):
+        commands.save_profile(
+            cfg, make_incus({labels.GRANT: "{"}), "myrepo-a", "reviewer", global_path=path
+        )
+    assert not path.exists()
+
+
+def test_save_profile_refuses_existing_without_force(cfg, incus_with_grant, tmp_path):
+    path = tmp_path / "global.yaml"
+    with pytest.raises(GrantError, match="already exists; pass --force"):
+        commands.save_profile(cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path)
+    assert not path.exists()
+
+
+def test_save_profile_force_replaces(cfg, incus_with_grant, tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text(
+        "orchestration:\n  profiles:\n    bugfixer:\n      max_running_children: 5\n"
+        "      default_runner:\n        agent: claude\n        model: sonnet\n"
+        "    adjacent:\n      max_running_children: 7\n"
+    )
+    saved = commands.save_profile(
+        cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True
+    )
+    assert saved.replaced is True
+    profiles = yaml.safe_load(path.read_text())["orchestration"]["profiles"]
+    assert profiles["bugfixer"]["max_running_children"] == 3
+    assert "default_runner" not in profiles["bugfixer"]
+    assert profiles["adjacent"] == {"max_running_children": 7}
+
+
+def test_save_profile_refuses_local_shadow(cfg, incus_with_grant, mocker, tmp_path):
+    path = tmp_path / "global.yaml"
+    local = tmp_path / "myrepo.yaml"
+    mocker.patch(
+        "jailbee.config.local_layer.read_local_raw",
+        return_value={"orchestration": {"profiles": {"bugfixer": {}}}},
+    )
+    mocker.patch("jailbee.config.local_layer.local_config_path", return_value=local)
+    with pytest.raises(GrantError) as exc:
+        commands.save_profile(
+            cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True
+        )
+    assert str(exc.value) == (
+        f"profile 'bugfixer' is defined in {local}, which overrides global.yaml; "
+        "edit it there with `jailbee config edit --local`"
+    )
+    assert not path.exists()
 
 
 def test_grant_reports_same_prior_grant_with_single_read(cfg, incus, ensure, mocker):

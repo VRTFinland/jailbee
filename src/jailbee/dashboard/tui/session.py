@@ -419,6 +419,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
+        self._grant_pending: dict[str, float] = {}
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
@@ -1139,8 +1140,16 @@ class DashboardSession:
             entries.append(PickerEntry(f"Default runner: {runner_label}…", "runner"))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
+            if permitted(
+                dact.orchestrate_profile_save_argv(container, "x"),
+                self.ssh_policy,
+                over_ssh=self.over_ssh,
+            ):
+                entries.append(PickerEntry("Save as profile…", "save-profile"))
             if revoke_ok:
                 entries.append(PickerEntry("Revoke…", "revoke"))
+        elif self._grant_pending.get(container, 0.0) > time.monotonic():
+            entries.append(PickerEntry("Granted — waiting for refresh…", "pending"))
         else:
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Grant profile '{p}'", f"profile:{p}"))
@@ -1167,6 +1176,7 @@ class DashboardSession:
             repo = self.repo_for(container, "container")
             if repo is not None:
                 if self.run_quiet_cli(repo, dact.orchestrate_revoke_argv(container)):
+                    self._grant_pending.pop(container, None)
                     self._patch_grant(container, None)
             else:
                 self.set_notice(f"'{container}' is gone")
@@ -1186,6 +1196,24 @@ class DashboardSession:
         if found is None or not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
+        if picker.purpose == "container-orchestration-overwrite-profile":
+            if not entry.value.startswith("yes:"):
+                self.set_notice("Cancelled")
+                return self._reopen_orchestration(container, "save-profile")
+            return self._save_orchestration_profile(container, entry.value[4:], force=True)
+        if entry.value == "save-profile":
+            if found[1].grant is None:
+                self.set_notice("Orchestration is not available for this container")
+                return None
+            return TextPrompt(
+                "container-orchestration-save-profile",
+                f"Orchestration for '{found[1].display_name}'",
+                "Save grant as profile (lowercase letters, digits, dashes)",
+                target=container,
+                back=self.open_orchestration(container),
+            )
+        if entry.value == "pending":
+            return self._reopen_orchestration(container, "pending")
         if picker.purpose == "container-orchestration-runner":
             return self._submit_runner(container, entry.value)
         if entry.value == "runner":
@@ -1200,8 +1228,11 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(container)
         # the profile's grant is unknown here: drop any local edit and let the snapshot show it
         self._grant_patches.pop(container, None)
-        self.run_quiet_cli(repo, argv)
-        return None
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        if found[1].grant is None:
+            self._grant_pending[container] = time.monotonic() + GRANT_PATCH_SECONDS
+        return self._reopen_orchestration(container, entry.value)
 
     def _runner_picker(self, container: str) -> Picker | None:
         from jailbee.orchestration.runner_model import RUNNER_TIERS
@@ -1341,6 +1372,22 @@ class DashboardSession:
         self.overlay = self.open_orchestration(container, start_index=index)
         return self.overlay if isinstance(self.overlay, Picker) else None
 
+    def _save_orchestration_profile(
+        self, container: str, name: str, *, force: bool = False
+    ) -> Picker | None:
+        repo = self.repo_for(container, "container")
+        found = self._listed_container(container)
+        if repo is None or found is None or found[1].grant is None:
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        argv = dact.orchestrate_profile_save_argv(container, name, force=force)
+        if not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        return self._reopen_orchestration(container, "save-profile")
+
     def _submit_orchestration_text(self, prompt: TextPrompt, answer: str) -> Picker | None:
         container = prompt.target
         repo = self.repo_for(container, "container")
@@ -1352,6 +1399,27 @@ class DashboardSession:
         if grant is None or not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
+        if prompt.purpose == "container-orchestration-save-profile":
+            from jailbee.config.models_orchestration import PROFILE_NAME_RE
+
+            if not PROFILE_NAME_RE.fullmatch(answer):
+                self.set_notice(
+                    f"invalid profile name '{answer}': use lowercase letters, digits and dashes, "
+                    "starting with a letter"
+                )
+                return self._reopen_orchestration(container, "save-profile")
+            if answer in found[0].orchestration_profiles:
+                return Picker(
+                    "container-orchestration-overwrite-profile",
+                    f"Replace profile '{answer}'?",
+                    (
+                        PickerEntry("No", "no", "n"),
+                        PickerEntry("Yes, replace", f"yes:{answer}", "y"),
+                    ),
+                    target=container,
+                    back=self.open_orchestration(container),
+                )
+            return self._save_orchestration_profile(container, answer)
         if prompt.purpose == "container-orchestration-limit":
             limit = int(answer)
             argv = dact.orchestrate_grant_argv(container, children=limit)
@@ -1394,9 +1462,15 @@ class DashboardSession:
 
     def _apply_grant_patches(self) -> None:
         """Overlay the held patches on the freshly gathered ``self.presented`` (tick only)."""
+        now = time.monotonic()
+        listed_grants = {c.name: c.grant for g in self.presented for c in g.containers}
+        self._grant_pending = {
+            name: expires
+            for name, expires in self._grant_pending.items()
+            if name in listed_grants and listed_grants[name] is None and now < expires
+        }
         if not self._grant_patches:
             return
-        now = time.monotonic()
         for group in self.presented:
             for info in group.containers:
                 held = self._grant_patches.get(info.name)
@@ -2050,7 +2124,11 @@ class DashboardSession:
             return None
         if prompt.purpose == "container-memory-other":
             return self.change_memory(prompt.target, answer)
-        if prompt.purpose in ("container-orchestration-limit", "container-orchestration-egress"):
+        if prompt.purpose in (
+            "container-orchestration-limit",
+            "container-orchestration-egress",
+            "container-orchestration-save-profile",
+        ):
             return self._submit_orchestration_text(prompt, answer)
         if prompt.purpose == "container-retarget":
             self.run_dashboard_command(
@@ -2189,6 +2267,7 @@ class DashboardSession:
             "container-orchestration",
             "container-orchestration-revoke",
             "container-orchestration-runner",
+            "container-orchestration-overwrite-profile",
         ):
             return self.submit_orchestration(picker, entry)
         if picker.purpose == "container-mounts":

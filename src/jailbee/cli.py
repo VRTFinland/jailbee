@@ -12774,6 +12774,9 @@ orchestrate_app = typer.Typer(
 )
 app.add_typer(orchestrate_app)
 
+orchestrate_profile_app = typer.Typer(name="profile", help="Manage orchestration profiles.")
+orchestrate_app.add_typer(orchestrate_profile_app)
+
 
 def _grant_summary(grant: Any) -> str:
     """One line describing a grant: limit, operations, mounts, loose, egress."""
@@ -12922,6 +12925,46 @@ def orchestrate_grant_cmd(
                 f"default runner: {problem}; spawns without a runner will be refused "
                 "until this is fixed"
             )
+
+
+@orchestrate_profile_app.command("save")
+def orchestrate_profile_save_cmd(
+    name: ContainerArg = None,
+    profile: Annotated[str | None, typer.Argument(help="Profile name.")] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace an existing global profile of that name.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Save a container's orchestration grant as a named host profile (global.yaml)."""
+    from jailbee import prompting
+    from jailbee.config.models_orchestration import PROFILE_NAME_RE
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import commands
+    from jailbee.orchestration.grant import GrantError
+    from jailbee.orchestration.profiles import _grant_of
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, name)
+    if profile is None:
+        profile = prompting.ask_text(
+            "Profile name",
+            validate=lambda value: (
+                None if PROFILE_NAME_RE.fullmatch(value) else "Invalid profile name"
+            ),
+        )
+    try:
+        saved = commands.save_profile(
+            cfg, incus, full, profile, global_path=_global_config_path_for_write(), force=force
+        )
+    except GrantError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    replaced = " (replaced)" if saved.replaced else ""
+    success(
+        f"Saved profile '{saved.name}'{replaced} from '{short_name(cfg, full)}': "
+        f"{_grant_summary(_grant_of(saved.profile))}"
+    )
 
 
 @orchestrate_app.command("revoke")
