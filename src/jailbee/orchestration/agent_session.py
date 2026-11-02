@@ -22,11 +22,16 @@ def relaunch(
     *,
     runner: Runner | None,
     old_agent: str,
+    resume: str | None = None,
 ) -> None:
     """Replace one agent window using the same prompt wrapper as a boot."""
     target = "claude" if runner is not None else primary_agent(cfg).name
     steps = autostart.agent_autostart_steps(
-        cfg, initial_prompt=True, extra_env=child_env(cfg, incus, child), runner=runner
+        cfg,
+        initial_prompt=True,
+        extra_env=child_env(cfg, incus, child),
+        runner=runner,
+        resume=resume,
     )
     step = next(s for s in steps if s.name == target)
     repo_dir = lifecycle.container_repo_dir(cfg, incus, child)

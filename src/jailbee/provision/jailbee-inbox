@@ -10,6 +10,7 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
        jailbee-inbox ls
        jailbee-inbox read <id> [--keep]
        jailbee-inbox runners [--json]
+       jailbee-inbox children [--json]
        jailbee-inbox send <type> [options]
 
   wait   Print the path of the oldest unread message (exit 0), waiting up to
@@ -33,6 +34,9 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
   runners  List the default runner and the runners a spawn or restart may name
          (--agent/--profile/--model of send). --json prints one array.
 
+  children [--json]  Each child: name, running, latest agent session (from the
+         broker's children.json).
+
   send   Write a manifest for the orchestrator's host into outbox/ and print
          its id. --wait [--timeout DUR|none] waits for its status (default 30m):
          exit 0 on done/queued/started, 1 on refused/failed, 3 on timeout.
@@ -46,7 +50,8 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
                     --branch is required except for --pr; the broker derives
                     the branch from the PR and ignores any supplied branch.
            restart  --child C [--on-done destroy|keep] [--autostart-profile NAME]
-                    [--agent-only] [runner | --default-runner] + text
+                    [--agent-only] [--resume ID|last] [runner | --default-runner] + text
+                    --resume continues a recorded agent session (see children).
                     --agent-only relaunches an idle RUNNING child's agent only;
                     no boot/on_start, no extra slot, cannot use --autostart-profile.
            update   --child C [--ref REF | --base BRANCH] [--merge]
@@ -547,6 +552,31 @@ new_id() {
     printf '%s-%s-%s' "$1" "$(date -u +%Y%m%d%H%M%S)" "$suffix"
 }
 
+cmd_children() {
+    local json=0 snapshot="$base/children.json" now updated
+    if [ "$#" -gt 0 ]; then
+        [ "$#" -eq 1 ] && [ "$1" = "--json" ] || bad_usage "children accepts only --json"
+        json=1
+    fi
+    if [ ! -f "$snapshot" ]; then
+        printf 'jailbee-inbox: children.json is unavailable\n' >&2
+        return 1
+    fi
+    if ! updated="$(jq -er 'select(.version == 1 and (.updated_at | type == "number") and (.children | type == "array")) | .updated_at' "$snapshot")"; then
+        printf 'jailbee-inbox: invalid children.json\n' >&2
+        return 1
+    fi
+    now="$(date +%s)"
+    if jq -en --argjson now "$now" --argjson updated "$updated" '$now - $updated > 900' >/dev/null; then
+        printf 'jailbee-inbox: children.json heartbeat is stale (over 15 minutes old)\n' >&2
+    fi
+    if [ "$json" -eq 1 ]; then
+        jq '.children' "$snapshot"
+    else
+        jq -r '.children[] | [.name, (.running | tostring), (.session // "-")] | @tsv' "$snapshot"
+    fi
+}
+
 cmd_send() {
     [ $# -ge 1 ] || bad_usage "send needs a type"
     local type="$1"; shift
@@ -555,7 +585,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local autostart_profile="" agent_only=0 merge=0
+    local autostart_profile="" agent_only=0 merge=0 resume=""
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=() revoke_mounts=() revoke_egress=()
@@ -573,7 +603,7 @@ cmd_send() {
             --default-runner) default_runner=1; shift; continue ;;
             --agent-only) agent_only=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress|--autostart-profile)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress|--autostart-profile|--resume)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
                 if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
@@ -604,12 +634,17 @@ cmd_send() {
             --model) model="$opt_val" ;;
             --on-done) on_done="$opt_val" ;;
             --autostart-profile) autostart_profile="$opt_val" ;;
+            --resume) resume="$opt_val" ;;
             --timeout) timeout="$opt_val" ;;
         esac
         shift 2
     done
 
     [ "$merge" -eq 0 ] || [ "$type" = "update" ] || bad_usage "--merge only applies to update"
+    if [ -n "$resume" ]; then
+        [ "$type" = "restart" ] || bad_usage "--resume only applies to restart"
+        [[ "$resume" = "last" || "$resume" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || bad_usage "--resume must be last or a lowercase UUID"
+    fi
     if [ "$agent_only" -eq 1 ]; then
         [ "$type" = "restart" ] || bad_usage "--agent-only only applies to restart"
         [ -z "$autostart_profile" ] || bad_usage "--agent-only cannot be combined with --autostart-profile"
@@ -689,6 +724,9 @@ cmd_send() {
     fi
     if [ "$agent_only" -eq 1 ]; then
         runner_json="$(jq -c '. + {agent_only: true}' <<<"$runner_json")"
+    fi
+    if [ -n "$resume" ]; then
+        runner_json="$(jq -c --arg r "$resume" '. + {resume: $r}' <<<"$runner_json")"
     fi
     if [ -n "$on_done" ]; then
         runner_json="$(jq -c --arg p "$on_done" '. + {on_done: $p}' <<<"$runner_json")"
@@ -858,6 +896,7 @@ case "$sub" in
     ls) cmd_ls "$@" ;;
     read) cmd_read "$@" ;;
     runners) cmd_runners "$@" ;;
+    children) cmd_children "$@" ;;
     send) cmd_send "$@" ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;

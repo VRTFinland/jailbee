@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 from contextlib import suppress
@@ -986,6 +987,21 @@ class ClaudeAdapter:
         shared config home.
         """
         return agent_private.private_root(cfg, container) / CONFIG_HOME_SUBPATH
+
+    def resume_args(self, session_id: str) -> str | None:
+        if (
+            re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", session_id
+            )
+            is None
+        ):
+            return None
+        return f"--resume {session_id}"
+
+    def session_exists(self, cfg: Config, container: str, session_id: str) -> bool:
+        if self.resume_args(session_id) is None:
+            return False
+        return claude_activity.locate(self.config_home(cfg), session_id) is not None
 
     def blockers(self, cfg: Config, incus: Incus, containers: Sequence[str]) -> list[str]:
         """Claude never blocks a switch: it re-reads the credential itself."""

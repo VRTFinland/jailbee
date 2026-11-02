@@ -411,6 +411,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
         reason=(
+            "the golden image's jailbee-inbox lists children's agent sessions (`children`) "
+            "and can restart a child resuming one (`send restart --resume`)"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
             "the golden image's jailbee-inbox supports named autostart profiles "
             "for spawn and restart"
         ),
@@ -549,6 +557,13 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason=(
             "`jailbee apply` syncs orchestration skills describing children "
             "adopted with `jb orchestrate adopt`"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing resuming a child's agent session"
         ),
     ),
 )

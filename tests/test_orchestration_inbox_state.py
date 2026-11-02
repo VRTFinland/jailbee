@@ -33,7 +33,7 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
     inbox_state.sync_children(ctx)
     first = delivered(ctx)
     assert first["children"] == [
-        {"name": "kid", "running": True, "started_at": ctx.now.timestamp()}
+        {"name": "kid", "running": True, "started_at": ctx.now.timestamp(), "session": None}
     ]
     ctx.now += timedelta(minutes=10)
     inbox_state.sync_children(ctx)
@@ -153,3 +153,20 @@ def test_snapshot_finished_child_keeps_start_time(tmp_path):
     ctx.now += timedelta(minutes=5)
     inbox_state.sync_children(ctx)
     assert delivered(ctx)["children"][0]["started_at"] == start
+
+
+def test_snapshot_publishes_latest_session(tmp_path):
+    ctx = context(tmp_path)
+    ids = ["01234567-89ab-cdef-0123-456789abcdef", "12345678-89ab-cdef-0123-456789abcdef"]
+    _kid_with(ctx, {labels.AGENT_SESSIONS: json.dumps(ids)})
+    inbox_state.sync_children(ctx)
+    assert delivered(ctx)["children"][0]["session"] == ids[-1]
+    saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
+    assert saved["children"][0]["session"] == ids[-1]
+    _kid_with(ctx, {})
+    inbox_state.sync_children(ctx)
+    assert delivered(ctx)["children"][0]["session"] is None
+    assert (
+        json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())["children"][0]["session"]
+        is None
+    )

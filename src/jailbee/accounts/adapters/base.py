@@ -335,6 +335,14 @@ class AccountAdapter(Protocol):
         """
         ...
 
+    def resume_args(self, session_id: str) -> str | None:
+        """Return shell words to resume; None means this agent cannot resume a recorded session."""
+        ...
+
+    def session_exists(self, cfg: Config, container: str, session_id: str) -> bool:
+        """Return whether the recorded session exists for this agent."""
+        ...
+
     def blockers(self, cfg: Config, incus: Incus, containers: Sequence[str]) -> list[str]:
         """Containers whose running agent makes a park or switch unsafe.
 

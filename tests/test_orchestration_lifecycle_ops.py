@@ -551,7 +551,7 @@ def test_restart_with_runner_replaces_label(
     rig = Rig(tmp_path, limit=2)
     order: list[str] = []
     rig.incus.config_set.side_effect = lambda *a, **k: order.append("set")
-    rig.incus.config_unset_checked.side_effect = lambda *a, **k: order.append("unset")
+    rig.incus.config_unset_checked.side_effect = lambda c, k: order.append(k)
     seams["boot"].side_effect = lambda *a, **k: (order.append("boot"), seams["boot"].return_value)[
         1
     ]
@@ -560,7 +560,16 @@ def test_restart_with_runner_replaces_label(
     rig.incus.config_set.assert_called_once_with(
         "proj-c1", labels.RUNNER, '{"agent":"claude-jb","profile":"grok"}'
     )
-    assert order == ["unset", "unset", "unset", "unset", "unset", "set", "boot"]
+    assert order == [
+        labels.STOPPED_HEAD,
+        labels.DONE_SHA,
+        labels.STATE,
+        labels.PENDING_DESTROY,
+        labels.STOPPED_DIRTY,
+        "set",
+        labels.RESUME,
+        "boot",
+    ]
 
 
 def test_restart_with_null_runner_clears_label(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
@@ -571,7 +580,7 @@ def test_restart_with_null_runner_clears_label(tmp_path: Path, seams: dict[str, 
     ]
     rig.incus.config_unset_checked.side_effect = lambda c, k: order.append(k)
     assert actions.handle_restart(rig.ctx(), _restart_with(runner=None)).state == "started"
-    assert order[-2:] == [labels.RUNNER, "boot"]
+    assert order[-3:] == [labels.RUNNER, labels.RESUME, "boot"]
     rig.incus.config_set.assert_not_called()
 
 

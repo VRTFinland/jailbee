@@ -28,6 +28,37 @@ def _cfg(tmp_path: Path, *, group: str | None = None):
     return make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared", **extra)
 
 
+RESUME_UUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+def test_claude_resume_args_uuid() -> None:
+    assert CLAUDE.resume_args(RESUME_UUID) == f"--resume {RESUME_UUID}"
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "last", "../x", "$(id)", RESUME_UUID.upper(), RESUME_UUID + "0"]
+)
+def test_claude_resume_args_rejects_non_uuid(bad: str) -> None:
+    assert CLAUDE.resume_args(bad) is None
+
+
+def test_claude_session_exists_finds_transcript(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    assert not CLAUDE.session_exists(cfg, "container", RESUME_UUID)
+    project = CLAUDE.config_home(cfg) / "projects" / "-x"
+    project.mkdir(parents=True)
+    (project / f"{RESUME_UUID}.jsonl").write_text("", encoding="utf-8")
+    assert CLAUDE.session_exists(cfg, "container", RESUME_UUID)
+
+
+@pytest.mark.parametrize("bad", ["", "../x", "$(id)", RESUME_UUID.upper(), RESUME_UUID + "0"])
+def test_claude_session_exists_rejects_invalid_ids(tmp_path: Path, bad: str, mocker) -> None:
+    cfg = _cfg(tmp_path)
+    locate = mocker.patch("jailbee.accounts.adapters.claude.claude_activity.locate")
+    assert not CLAUDE.session_exists(cfg, "container", bad)
+    locate.assert_not_called()
+
+
 def test_store_dir_follows_xdg_data_home(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     assert engine.store_dir(CLAUDE) == (

@@ -48,6 +48,7 @@ class QueuedRequest:
     pr_base: str | None = None
     fork_base: str | None = None
     fork_base_pinned: bool = False
+    resume: str | None = None
 
 
 @dataclass(frozen=True)

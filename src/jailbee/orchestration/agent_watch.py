@@ -13,6 +13,8 @@ from jailbee.incus import IncusError
 from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
+    from jailbee.accounts.adapters.base import AccountAdapter
+    from jailbee.accounts.models import AgentSession
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.actions import Node, Outcome
@@ -61,24 +63,46 @@ class AgentStatus:
     proc_start: int | None = None
 
 
+def _matched_session(
+    cfg: Config, name: str, status: AgentStatus
+) -> tuple[AccountAdapter, AgentSession] | None:
+    from jailbee.accounts.adapters import base
+    from jailbee.agent_status import _one_per_process
+
+    if not status.alive or status.pid is None or status.proc_start is None:
+        return None
+    adapter = base.get_adapter(status.agent)
+    sessions = _one_per_process(adapter.read_sessions(adapter.session_home(cfg, name)))
+    session = next(
+        (s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None
+    )
+    return (adapter, session) if session is not None else None
+
+
+def current_session(cfg: Config, name: str, status: AgentStatus) -> str | None:
+    """Find a safe session ID for the prompted process, best effort."""
+    from jailbee.orchestration.labels import valid_session_id
+
+    try:
+        matched = _matched_session(cfg, name, status)
+        sid = matched[1].session_id if matched is not None else None
+        return sid if valid_session_id(sid) else None
+    except Exception:
+        return None
+
+
 def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -> str | None:
     """Adapter evidence for this prompted process only; unknown is never idle.
 
     Do not infer idleness from an unchanged pane: long-running tool calls can
     be silent. The adapter owns all agent-specific session/transcript formats.
     """
-    from jailbee.accounts.adapters import base
-    from jailbee.agent_status import _one_per_process
-
-    if not status.alive or status.pid is None or status.proc_start is None:
-        return None
     try:
-        adapter = base.get_adapter(status.agent)
-        sessions = _one_per_process(adapter.read_sessions(adapter.session_home(cfg, name)))
-        session = next(
-            (s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None
-        )
-        if session is None or session.state not in ("waiting", "idle"):
+        matched = _matched_session(cfg, name, status)
+        if matched is None:
+            return None
+        adapter, session = matched
+        if session.state not in ("waiting", "idle"):
             return None
         paths = adapter.locate_activity(adapter.config_home(cfg), session)
         activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None

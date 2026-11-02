@@ -402,7 +402,7 @@ Inside each orchestrator and child, `/home/dev/.jailbee/orchestration/` holds
 orchestrator, `grant.json`, a read-only copy of its limits. The broker installs
 both directories and the current `jailbee-inbox` helper into every orchestrator
 and child it serves, including containers from older images. `jb base build`
-bakes the same helper (`wait`, `ls`, `read`, `runners`, `send`) into new images
+bakes the same helper (`wait`, `ls`, `read`, `runners`, `children`, `send`) into new images
 so agents need not write JSON by hand. After `wait`, run `ls` and handle every
 unread message. `JAILBEE_INBOX_SETTLE` controls the quiet window after an arrival
 (default 1 second, 0 disables), capped at 5 seconds and the wait timeout;
