@@ -297,12 +297,10 @@ def orchestration_grant_permitted(
 
 
 def orchestration_offered(
-    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
+    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool,
+    rows: Sequence[ContainerInfo] = (),
 ) -> bool:
-    """Whether ``Orchestration…`` is offered: an existing, non-child, non-mount container.
-
-    It needs `grant`, or an existing grant that `revoke` can take away.
-    """
+    """Offer orchestration when a permitted action applies to this container."""
     if not (
         container.state in _EXISTING_STATES
         and container.child is None
@@ -311,8 +309,17 @@ def orchestration_offered(
         return False
     if orchestration_grant_permitted(container, ssh_policy, over_ssh=over_ssh):
         return True
-    return container.grant is not None and permitted(
-        orchestrate_revoke_argv(container.name), ssh_policy, over_ssh=over_ssh
+    if container.grant is None:
+        return False
+    if permitted(orchestrate_revoke_argv(container.name), ssh_policy, over_ssh=over_ssh):
+        return True
+    return any(
+        permitted(orchestrate_adopt_argv(container.name, row.name), ssh_policy, over_ssh=over_ssh)
+        for row in adoptable_rows(rows, container.name)
+    ) or any(
+        row.child is not None and row.child.orchestrator == container.name
+        and permitted(orchestrate_release_argv(row.name), ssh_policy, over_ssh=over_ssh)
+        for row in rows
     )
 
 
@@ -346,6 +353,7 @@ def container_extras(
     *,
     over_ssh: bool,
     remote_mountable: Sequence[str] = (),
+    rows: Sequence[ContainerInfo] = (),
 ) -> ContainerExtras:
     """What one container's menu adds; each entry hidden when its command would be refused.
 
@@ -373,7 +381,7 @@ def container_extras(
             container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
         ):
             before.append(("Mounts…", MOUNTS))
-    if orchestration_offered(container, ssh_policy, over_ssh=over_ssh):
+    if orchestration_offered(container, ssh_policy, over_ssh=over_ssh, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))
     return ContainerExtras(tuple(after_job), tuple(before))
 

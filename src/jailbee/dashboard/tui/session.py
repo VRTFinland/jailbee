@@ -1093,7 +1093,9 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         group, info = found
-        if not dact.orchestration_offered(info, self.ssh_policy, over_ssh=self.over_ssh):
+        if not dact.orchestration_offered(
+            info, self.ssh_policy, over_ssh=self.over_ssh, rows=group.containers
+        ):
             self.set_notice("Orchestration is not available for this container")
             return None
         from rich.text import Text
@@ -1105,7 +1107,7 @@ class DashboardSession:
             dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
         )
         if not dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh):
-            # offered only for its revoke entry (see orchestration_offered)
+            # Grant edits are unavailable; independently permitted actions follow below.
             if info.grant is not None and revoke_ok:
                 entries.append(PickerEntry("Revoke…", "revoke"))
         elif info.grant is not None:
