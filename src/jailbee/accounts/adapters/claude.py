@@ -989,7 +989,12 @@ class ClaudeAdapter:
         return agent_private.private_root(cfg, container) / CONFIG_HOME_SUBPATH
 
     def resume_args(self, session_id: str) -> str | None:
-        if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", session_id) is None:
+        if (
+            re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", session_id
+            )
+            is None
+        ):
             return None
         return f"--resume {session_id}"
 

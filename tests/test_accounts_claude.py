@@ -35,7 +35,9 @@ def test_claude_resume_args_uuid() -> None:
     assert CLAUDE.resume_args(RESUME_UUID) == f"--resume {RESUME_UUID}"
 
 
-@pytest.mark.parametrize("bad", ["", "last", "../x", "$(id)", RESUME_UUID.upper(), RESUME_UUID + "0"])
+@pytest.mark.parametrize(
+    "bad", ["", "last", "../x", "$(id)", RESUME_UUID.upper(), RESUME_UUID + "0"]
+)
 def test_claude_resume_args_rejects_non_uuid(bad: str) -> None:
     assert CLAUDE.resume_args(bad) is None
 
