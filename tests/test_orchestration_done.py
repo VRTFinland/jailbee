@@ -425,3 +425,25 @@ def test_done_probe_timeout_refused_without_labels(tmp_path: Path, mocker: Mocke
     assert out.state == "refused"
     assert "timed out" in out.detail
     _untouched(rig)
+
+
+def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
+    import json
+    from jailbee.orchestration import finishing, outbox
+
+    rig = _make(tmp_path, mocker, orch_running=False)
+    _policy(rig, "destroy")
+    messages.handle_message(rig.ctx, _done())
+    child = Node(CHILD, "fix-1", True, {labels.SPAWNED_BY: "myrepo-new", labels.ON_DONE: "destroy"})
+    old = rig.ctx.nodes["myrepo-orch"]
+    rig.ctx.nodes = {CHILD: child, old.full: old}
+    rig.ctx.sender = old
+    atomic = mocker.patch("jailbee.orchestration.outbox._atomic_write")
+    assert outbox.flush_pending(rig.incus, tmp_path, old.full, uid=None, finish=finishing.flush_callback(rig.ctx)) == 1
+    message = json.loads(atomic.call_args.args[4])
+    assert message["import_error"] and message["on_done"] == "keep"
+    assert not list(pending_dir(tmp_path, old.full).glob("*.finish.json"))
+    rig.import_child.assert_not_called()
+    from jailbee.orchestration.actions import destroy_guard
+    assert destroy_guard(rig.ctx, child) is not None
+    assert not any(c.args[1] in (labels.LAST_IMPORT, labels.PENDING_DESTROY) for c in rig.incus.config_set.call_args_list)

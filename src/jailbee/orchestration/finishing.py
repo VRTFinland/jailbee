@@ -55,6 +55,8 @@ def complete(
             f"child {item.child_short} no longer exists; its branch is on the host at "
             f"refs/jailbee/{item.child_short}/{item.branch} ({item.done_sha[:12]})"
         )
+    elif child.config.get(labels.SPAWNED_BY) != orchestrator.full:
+        error = f"stale done report: {item.child_short} is no longer this orchestrator's child"
     elif child.config.get(labels.LAST_IMPORT) == item.done_sha and importing.imported_ref_matches(
         ctx, orchestrator, f"refs/jailbee/from/{item.child_short}/{item.branch}", item.done_sha
     ):

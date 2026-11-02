@@ -485,22 +485,22 @@ def creating_children(ctx: ActionContext) -> set[str]:
     return live_create_jobs(ctx.cfg.container_prefix) | reserved
 
 
-def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
-    """Running, live job, reservation counts and their deduplicated total.
-
-    A job row does not record its orchestrator, so a live create job counts
-    when its container does not exist yet or is one of this sender's children.
-    Reservations make the count independent of the job row, whose insert is best-effort.
-    """
-    mine = {n.full for n in ctx.children()}
-    running = {n.full for n in ctx.children() if n.running}
-    jobs = {
-        name
-        for name in live_create_jobs(ctx.cfg.container_prefix)
-        if name in mine or name not in ctx.nodes
-    }
-    reserved = live_reservations(ctx)
+def slot_breakdown(
+    prefix: str, root: Path, sender: str, mine: set[str], running: set[str], existing: set[str]
+) -> tuple[int, int, int, int]:
+    """Count running children and accepted creations, deduplicated by name."""
+    jobs = {name for name in live_create_jobs(prefix) if name in mine or name not in existing}
+    reserved = {r.child_full for r in load_reservations(root).get(sender, [])}
     return len(running), len(jobs), len(reserved), len(running | jobs | reserved)
+
+
+def count_breakdown(ctx: ActionContext) -> tuple[int, int, int, int]:
+    """Running, live job, reservation counts and their deduplicated total."""
+    children = ctx.children()
+    return slot_breakdown(
+        ctx.cfg.container_prefix, ctx.root, ctx.sender.full,
+        {n.full for n in children}, {n.full for n in children if n.running}, set(ctx.nodes),
+    )
 
 
 def running_children(ctx: ActionContext) -> int:

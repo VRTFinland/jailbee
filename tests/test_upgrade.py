@@ -1044,3 +1044,16 @@ def test_runtime_rights_upgrade_notes_one_per_reason():
     ]
     assert len(supervision) == 1
     assert supervision[0].actions == frozenset({"apply"})
+
+
+def test_adoption_upgrade_note_is_apply_only():
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if "adopted with `jb orchestrate adopt`" in n.reason]
+    assert len(notes) == 1
+    assert notes[0].version == (1, 8, 1)
+    assert notes[0].actions == frozenset({"apply"})
+    assert notes[0].reason == (
+        "`jailbee apply` syncs orchestration skills describing children "
+        "adopted with `jb orchestrate adopt`"
+    )

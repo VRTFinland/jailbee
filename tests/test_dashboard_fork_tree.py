@@ -62,7 +62,10 @@ def test_self_and_cyclic_children_terminate_and_keep_every_row_once():
     ]
     out = [c.name for c in ft.tree_order(rows)]
     assert sorted(out) == sorted(c.name for c in rows) and len(out) == len(rows)
-    assert ft.fork_layout(rows).orphans == frozenset()
+    layout = ft.fork_layout(rows)
+    assert layout.orphans == frozenset()
+    assert all(layout.depth[row.name] == 0 for row in rows)
+    assert all(ft.name_prefix(layout, row.name) == "" for row in rows)
 
 
 def test_name_prefix_glyphs():
