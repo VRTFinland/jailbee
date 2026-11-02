@@ -230,7 +230,9 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
     rows[1]["config"].update(
         {
             labels.SPAWNED_BY: "myrepo-o",
-            labels.RIGHTS: ChildRights(mounts=("data",), loose=True, egress=("owned.example",)).to_label(),
+            labels.RIGHTS: ChildRights(
+                mounts=("data",), loose=True, egress=("owned.example",)
+            ).to_label(),
             labels.TIMED: '{"mount:timed": "2026-12-01T00:00:00+00:00"}',
         }
     )
