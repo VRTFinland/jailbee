@@ -776,6 +776,15 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
             return refused("; ".join(problems))
+    if req.resume is not None:
+        from jailbee.agents import primary_agent
+
+        agent = "claude" if effective is not None else primary_agent(ctx.cfg).name
+        if not labels.valid_session_id(req.resume):
+            return refused("queued restart has an invalid pinned session")
+        resume = _resolve_resume(ctx, node, req.resume, agent, pinned=True)
+        if isinstance(resume, Outcome):
+            return resume
     grant = ctx.grant()
     policy = req.on_done
     if policy == "destroy" and (grant is None or "destroy" not in grant.operations):
@@ -890,7 +899,12 @@ def _set_resume(ctx: ActionContext, child: Node, resume: str | None) -> None:
 
 
 def _resolve_resume(
-    ctx: ActionContext, child: Node, requested: str | None, agent: str | None
+    ctx: ActionContext,
+    child: Node,
+    requested: str | None,
+    agent: str | None,
+    *,
+    pinned: bool = False,
 ) -> str | Outcome | None:
     if requested is None:
         return None
@@ -910,7 +924,8 @@ def _resolve_resume(
         session_id = history[-1]
     else:
         session_id = requested
-        if session_id not in history:
+        # A queued pin was checked on acceptance; bounded history may have evicted it.
+        if not pinned and session_id not in history:
             return refused(f"session `{session_id}` was not recorded for child `{child.short}`")
     if not adapter.session_exists(ctx.cfg, child.full, session_id):
         return refused(f"session `{session_id}` has no transcript any more")

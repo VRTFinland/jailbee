@@ -140,6 +140,40 @@ def test_queued_restart_keeps_resolved_id(tmp_path, seams, adapter, monkeypatch)
     rig.incus.config_set.assert_any_call(rig.child.full, labels.RESUME, A)
 
 
+@pytest.mark.parametrize("failure", ["capability", "transcript"])
+def test_queued_restart_revalidates_before_boot(tmp_path, seams, adapter, monkeypatch, failure):
+    rig = Rig(tmp_path, config={labels.AGENT_SESSIONS: json.dumps([A])})
+    monkeypatch.setattr(actions, "running_children", lambda ctx: 1)
+    assert actions.handle_restart(rig.ctx(), manifest("last")).state == "queued"
+    req = state.load_queue(tmp_path)[rig.sender.full][0]
+    monkeypatch.setattr(actions, "_still_granted", lambda *args: None)
+    if failure == "capability":
+        monkeypatch.setattr(
+            "jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "codex"})()
+        )
+        adapter.resume_args.return_value = None
+        detail = "agent `codex` cannot resume a session"
+    else:
+        adapter.session_exists.return_value = False
+        detail = f"session `{A}` has no transcript any more"
+    assert actions._start_restart(rig.ctx(), req) == actions.Outcome("refused", detail)
+    seams["boot"].assert_not_called()
+
+
+def test_queued_restart_keeps_pin_after_history_eviction(tmp_path, seams, adapter, monkeypatch):
+    rig = Rig(tmp_path, config={labels.AGENT_SESSIONS: json.dumps([A])})
+    monkeypatch.setattr(actions, "running_children", lambda ctx: 1)
+    assert actions.handle_restart(rig.ctx(), manifest("last")).state == "queued"
+    req = state.load_queue(tmp_path)[rig.sender.full][0]
+    rig.child.config[labels.AGENT_SESSIONS] = json.dumps(
+        [f"{i:08x}-bbbb-bbbb-bbbb-bbbbbbbbbbbb" for i in range(10)]
+    )
+    monkeypatch.setattr(actions, "_still_granted", lambda *args: None)
+    assert actions._start_restart(rig.ctx(), req).state == "started"
+    adapter.session_exists.assert_called_with(rig.cfg, rig.child.full, A)
+    rig.incus.config_set.assert_any_call(rig.child.full, labels.RESUME, A)
+
+
 def test_queue_file_without_resume_key_loads(tmp_path):
     req = state.QueuedRequest("r", "child", "restart", None, "now", "", None, "go", {})
     state.save_queue(tmp_path, {"orch": [req]})
