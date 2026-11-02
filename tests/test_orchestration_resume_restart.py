@@ -6,14 +6,23 @@ from pydantic import ValidationError
 
 from jailbee.orchestration import actions, labels, state
 from jailbee.orchestration.protocol import RestartManifest
-from tests.test_orchestration_lifecycle_ops import Rig, seams  # noqa: F401
+from tests.test_orchestration_lifecycle_ops import Rig
+from tests.test_orchestration_lifecycle_ops import seams as lifecycle_seams
+
+
+@pytest.fixture
+def seams(monkeypatch):
+    return lifecycle_seams.__wrapped__(monkeypatch)
+
 
 A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
 
 def manifest(resume=None, **kwargs):
-    return RestartManifest.model_validate(dict(version=1, id="r1", type="restart", child="c1", prompt="go", resume=resume) | kwargs)
+    return RestartManifest.model_validate(
+        dict(version=1, id="r1", type="restart", child="c1", prompt="go", resume=resume) | kwargs
+    )
 
 
 @pytest.mark.parametrize("value", [None, "last", A])
@@ -33,7 +42,9 @@ def adapter(monkeypatch):
     adapter.resume_args.return_value = "--resume"
     adapter.session_exists.return_value = True
     monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
-    monkeypatch.setattr("jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "claude"})())
+    monkeypatch.setattr(
+        "jailbee.agents.primary_agent", lambda cfg: type("Agent", (), {"name": "claude"})()
+    )
     return adapter
 
 
@@ -50,17 +61,22 @@ def test_restart_without_resume_unsets_label(tmp_path, seams):
     rig.incus.config_unset_checked.assert_any_call(rig.child.full, labels.RESUME)
 
 
-@pytest.mark.parametrize("requested,history,exists,capable,detail", [
-    (B, [A], True, True, f"session `{B}` was not recorded for child `c1`"),
-    ("last", [], True, True, "child `c1` has no recorded agent session"),
-    (A, [A], False, True, f"session `{A}` has no transcript any more"),
-    ("last", [], True, False, "agent `claude` cannot resume a session"),
-])
+@pytest.mark.parametrize(
+    "requested,history,exists,capable,detail",
+    [
+        (B, [A], True, True, f"session `{B}` was not recorded for child `c1`"),
+        ("last", [], True, True, "child `c1` has no recorded agent session"),
+        (A, [A], False, True, f"session `{A}` has no transcript any more"),
+        ("last", [], True, False, "agent `claude` cannot resume a session"),
+    ],
+)
 def test_restart_refusals(tmp_path, seams, adapter, requested, history, exists, capable, detail):
     rig = Rig(tmp_path, config={labels.AGENT_SESSIONS: json.dumps(history)})
     adapter.session_exists.return_value = exists
     adapter.resume_args.return_value = "--resume" if capable else None
-    assert actions.handle_restart(rig.ctx(), manifest(requested)) == actions.Outcome("refused", detail)
+    assert actions.handle_restart(rig.ctx(), manifest(requested)) == actions.Outcome(
+        "refused", detail
+    )
     seams["boot"].assert_not_called()
 
 

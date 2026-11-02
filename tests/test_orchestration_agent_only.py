@@ -124,10 +124,14 @@ def test_agent_only_restart_resume_passes_id_to_relaunch(tmp_path, seams, sessio
     from jailbee.orchestration import agent_session
 
     session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    rig = Rig(tmp_path, running=True, config={
-        labels.STATE: labels.STATE_DONE,
-        labels.AGENT_SESSIONS: json.dumps([session_id]),
-    })
+    rig = Rig(
+        tmp_path,
+        running=True,
+        config={
+            labels.STATE: labels.STATE_DONE,
+            labels.AGENT_SESSIONS: json.dumps([session_id]),
+        },
+    )
     adapter = MagicMock()
     adapter.resume_args.return_value = "--resume"
     adapter.session_exists.return_value = True

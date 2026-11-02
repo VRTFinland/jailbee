@@ -891,7 +891,7 @@ def _set_resume(ctx: ActionContext, child: Node, resume: str | None) -> None:
 
 def _resolve_resume(
     ctx: ActionContext, child: Node, requested: str | None, agent: str | None
-) -> str | None | Outcome:
+) -> str | Outcome | None:
     if requested is None:
         return None
     from jailbee.accounts.adapters.base import get_adapter
@@ -1062,7 +1062,9 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if m.agent_only:
-        return _restart_agent(ctx, child, m, prompt, effective, set_runner=set_runner, resume=resume)
+        return _restart_agent(
+            ctx, child, m, prompt, effective, set_runner=set_runner, resume=resume
+        )
     if not queued and running_children(ctx) < grant.max_running_children:
         return _boot(
             ctx,
