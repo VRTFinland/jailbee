@@ -45,7 +45,7 @@ class TextPrompt:
     initial: str = ""
     target: str = ""
     carry: tuple[str, ...] = ()
-    back: EgressState | AccountsState | None = None
+    back: Picker | EgressState | AccountsState | None = None
     suggestions: tuple[str, ...] = ()
     require_suggestion: bool = False
 
@@ -81,7 +81,11 @@ def validate_answer(prompt: TextPrompt, text: str) -> str | None:
     """Why ``text`` cannot answer ``prompt``, or None when it can."""
     answer = text.strip()
     # an empty answer clears the alias, or the children's egress list
-    clears = ("container-rename", "container-orchestration-egress")
+    clears = (
+        "container-rename",
+        "container-orchestration-egress",
+        "container-orchestration-save-profile",
+    )
     if not answer and prompt.purpose not in clears:
         return f"{prompt.label} cannot be empty"
     if prompt.purpose == "container-orchestration-limit" and not (

@@ -601,6 +601,89 @@ def _orchestration_session(
     return session, mocker.patch.object(session, "run_quiet_cli", return_value=True)
 
 
+def test_save_profile_entry_only_with_grant(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path)
+    assert "save-profile" not in [e.value for e in session.open_orchestration("alpha-one").entries]
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert values.index("save-profile") == values.index("revoke") - 1
+
+
+def _save_profile_prompt(session):
+    return session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "save-profile"))
+
+
+def test_save_profile_prompt_cancel_returns_to_menu(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    session.overlay = _save_profile_prompt(session)
+    session.overlay_cancel()
+    quiet.assert_not_called()
+    assert session.overlay.purpose == "container-orchestration"
+    assert session.notice == "Cancelled"
+
+
+def test_save_profile_empty_answer_reaches_handler():
+    from jailbee.dashboard.overlays import TextPrompt, validate_answer
+
+    prompt = TextPrompt("container-orchestration-save-profile", "Title", "Name")
+    assert validate_answer(prompt, " ") is None
+
+
+def test_save_profile_runs_cli_and_reopens(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = _save_profile_prompt(session)
+    assert prompt.purpose == "container-orchestration-save-profile"
+    out = session.submit_prompt(prompt, " reviewer ")
+    assert quiet.call_args.args[1] == ["orchestrate", "profile", "save", "--", "alpha-one", "reviewer"]
+    assert out.purpose == "container-orchestration"
+    assert out.entries[out.start_index].value == "save-profile"
+
+
+@pytest.mark.parametrize("answer", ["Bad Name", "", "ab\nc", "a" * 33])
+def test_save_profile_invalid_name_runs_nothing(mocker, tmp_path, answer):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    out = session.submit_prompt(_save_profile_prompt(session), answer)
+    quiet.assert_not_called()
+    assert "invalid profile name" in session.notice
+    assert out.entries[out.start_index].value == "save-profile"
+
+
+@pytest.mark.parametrize("choice", ["no", "yes:bugfixer"])
+def test_save_profile_existing_name_confirmation(mocker, tmp_path, choice):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    ask = session.submit_prompt(_save_profile_prompt(session), "bugfixer")
+    assert ask.purpose == "container-orchestration-overwrite-profile"
+    assert [e.value for e in ask.entries] == ["no", "yes:bugfixer"]
+    assert ask.back.purpose == "container-orchestration"
+    quiet.assert_not_called()
+    out = session.submit_picker(ask, PickerEntry("", choice))
+    if choice == "no":
+        quiet.assert_not_called()
+        assert session.notice == "Cancelled"
+    else:
+        assert quiet.call_args.args[1] == ["orchestrate", "profile", "save", "--force", "--", "alpha-one", "bugfixer"]
+    assert out.entries[out.start_index].value == "save-profile"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_save_profile_failure_closes_menu(mocker, tmp_path, existing):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    prompt = _save_profile_prompt(session)
+    if existing:
+        ask = session.submit_prompt(prompt, "bugfixer")
+        out = session.submit_picker(ask, PickerEntry("", "yes:bugfixer"))
+    else:
+        out = session.submit_prompt(prompt, "reviewer")
+    assert out is None
+    assert session.overlay is None
+
+
+def test_save_profile_hidden_when_ssh_policy_forbids(mocker, tmp_path):
+    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+    assert "save-profile" not in [e.value for e in session.open_orchestration("alpha-one").entries]
+
+
 def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):
     session, _ = _orchestration_session(mocker, tmp_path)
     picker = session.open_orchestration("alpha-one")
@@ -616,8 +699,8 @@ def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):
 def test_orchestration_picker_with_grant_reapplies_and_revokes(mocker, tmp_path):
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
     picker = session.open_orchestration("alpha-one")
-    assert [e.value for e in picker.entries][-2:] == ["profile:bugfixer", "revoke"]
-    assert picker.entries[-2].label == "Re-apply profile 'bugfixer'"
+    assert [e.value for e in picker.entries][-3:] == ["profile:bugfixer", "save-profile", "revoke"]
+    assert picker.entries[-3].label == "Re-apply profile 'bugfixer'"
     # card lines, markup stripped (the picker draws plain text)
     assert picker.detail[0].startswith("orchestrator · children 0/2")
     assert all("[dim]" not in line for line in picker.detail)
@@ -659,6 +742,9 @@ def test_tick_shows_the_grant_once_the_snapshot_has_it(mocker, tmp_path):
 
     session, _ = _orchestration_session(mocker, tmp_path)
     session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+    session.tick()
+    assert [e.value for e in session.overlay.entries] == ["pending"]
+    assert "alpha-one" in session._grant_pending
     info = session.client.groups[0].containers[0]
     session.client.groups[0].containers[0] = dataclasses.replace(
         info,
@@ -762,6 +848,7 @@ def test_orchestration_edit_entries_labels(mocker, tmp_path):
         ("Egress for children: pypi.org…", "egress"),
         ("Default runner: inherit (agent default)…", "runner"),
         ("Re-apply profile 'bugfixer'", "profile:bugfixer"),
+        ("Save as profile…", "save-profile"),
         ("Revoke…", "revoke"),
     ]
 
@@ -1214,6 +1301,7 @@ def test_menu_locally_unchanged(mocker, tmp_path):
         "egress",
         "runner",
         "profile:bugfixer",
+        "save-profile",
         "revoke",
     ]
 

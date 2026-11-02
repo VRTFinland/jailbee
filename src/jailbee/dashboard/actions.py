@@ -264,6 +264,10 @@ def orchestrate_grant_argv(
     return ["orchestrate", "grant", *options, "--", name]
 
 
+def orchestrate_profile_save_argv(name: str, profile: str, *, force: bool = False) -> list[str]:
+    return ["orchestrate", "profile", "save", *(["--force"] if force else []), "--", name, profile]
+
+
 def orchestrate_revoke_argv(name: str) -> list[str]:
     return ["orchestrate", "revoke", "--", name]
 
