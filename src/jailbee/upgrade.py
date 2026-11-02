@@ -523,7 +523,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"apply"}),
-        reason="`jailbee apply` syncs skills describing `jailbee config validate` inside containers",
+        reason=(
+            "`jailbee apply` syncs skills describing `jailbee config validate` inside containers"
+        ),
     ),
 )
 """What each release requires, ascending by version. Maintained by hand.
