@@ -153,9 +153,16 @@ def test_wait_timeout_none_uses_full_watch_slices(script, base, tmp_path):
 
 def test_wait_timeout_none_settles_burst(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
+    ready = tmp_path / "watch-ready"
+    stubs = _stub(tmp_path, f': > "{ready}"\nsleep 0.1\nexit 2\n')
+    env["PATH"] = f"{stubs}:{env['PATH']}"
 
     def writer():
-        time.sleep(0.5)
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not ready.exists():
+            return
         write_inbox(base, FIRST, message("h-0000aaaa"))
         time.sleep(0.4)
         write_inbox(base, SECOND, message("h-0000bbbb"))
@@ -228,11 +235,16 @@ def test_send_wait_timeout_none(script, base, tmp_path):
     thread = threading.Thread(target=reply)
     thread.start()
     try:
-        r = send(script, base, tmp_path, "message", "--text", "done", "--wait", "--timeout", "none")
+        r = subprocess.run(
+            ["/bin/bash", "-x", str(script), "send", "message", "--text", "done",
+             "--wait", "--timeout", "none"],
+            env=env_for(base, tmp_path), capture_output=True, text=True, timeout=5,
+        )
     finally:
         thread.join()
     assert not errors
     assert r.returncode == 0, r.stderr
+    assert "+ cmd_wait --timeout none" in r.stderr
     assert '"state": "done"' in r.stdout
     assert (base / "inbox" / "read" / SECOND).exists()
     assert unrelated.exists()
@@ -357,19 +369,22 @@ def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
 
 def test_wait_settle_respects_timeout(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
-
-    def writer():
-        time.sleep(0.3)
-        write_inbox(base, FIRST, message("h-0000aaaa"))
-
-    t = threading.Thread(target=writer)
-    t.start()
-    started = time.monotonic()
+    log = tmp_path / "sleeps"
+    stubs = _stub(
+        tmp_path,
+        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
+        "exit 0\n",
+    )
+    real_sleep = shutil.which("sleep")
+    (stubs / "sleep").write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\nexec "{real_sleep}" "$@"\n'
+    )
+    (stubs / "sleep").chmod(0o755)
+    env["PATH"] = f"{stubs}:{env['PATH']}"
     r = run(script, "wait", "--timeout", "1", env=env)
-    t.join()
-    elapsed = time.monotonic() - started
     assert r.returncode == 0, r.stderr
-    assert 0.85 < elapsed < 1.5
+    assert log.exists(), "arrival must occur after the initial scan and enter settling"
+    assert sum(float(value) for value in log.read_text().split()) <= 1
 
 
 def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
@@ -1623,14 +1638,23 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
 
 
 def test_wait_watchdog_without_new_inbox_event(script, base, tmp_path):
-    child_snapshot(base, started=time.time())
+    child_snapshot(base, started=time.time() + 2)
     env = env_for(base, tmp_path)
     env["JAILBEE_INBOX_POLL"] = "5"
-    started = time.monotonic()
-    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "3", env=env)
+    log = tmp_path / "sleeps"
+    stubs = _stub(tmp_path, "exit 127\n")
+    real_sleep = shutil.which("sleep")
+    (stubs / "sleep").write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\n'
+        f'exec "{real_sleep}" "$@"\n'
+    )
+    (stubs / "sleep").chmod(0o755)
+    env["PATH"] = f"{stubs}:{env['PATH']}"
+    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "10", env=env)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "quiet-child kid"
-    assert time.monotonic() - started < 2.5
+    sleeps = [float(value) for value in log.read_text().split()]
+    assert sleeps and all(0 < value <= 1 for value in sleeps)
 
 
 def test_wait_poll_respects_timeout(script, base, tmp_path):
