@@ -11935,3 +11935,13 @@ def test_boot_container_stages_app(tmp_path, mocker):
     boot_container(cfg, incus, "feat-x", restart=False)
     staged.assert_called_once_with()
     skills.assert_called_once_with(cfg)
+
+
+def test_boot_staging_failure_is_value_error(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.container_app.stage", side_effect=OSError("stage broke"))
+    with pytest.raises(ValueError, match="stage broke"):
+        boot_container(cfg, incus, "feat-x", restart=False)
+    incus.start.assert_not_called()

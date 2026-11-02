@@ -1,4 +1,6 @@
-from unittest.mock import Mock
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -26,18 +28,63 @@ def test_stage_keeps_two_versions(tmp_path, monkeypatch):
     assert (tmp_path / "current").readlink().name == "app-c"
 
 
+def test_concurrent_staging_publishes_only_complete_version(tmp_path, monkeypatch):
+    first_copy = Event()
+    continue_copy = Event()
+    original = container_app.shutil.copytree
+
+    def slow_copy(*args, **kwargs):
+        first_copy.set()
+        assert continue_copy.wait(10)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(container_app.shutil, "copytree", slow_copy)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(container_app.stage, root=tmp_path)
+        assert first_copy.wait(10)
+        second = pool.submit(container_app.stage, root=tmp_path)
+        assert not (tmp_path / "current").exists()
+        continue_copy.set()
+        results = [first.result(timeout=20), second.result(timeout=20)]
+    assert sorted(result.changed for result in results) == [False, True]
+    current = (tmp_path / "current").resolve()
+    assert (current / "VERSION").read_text() == f"{__version__} {container_app.code_hash()}\n"
+    assert (current / "jailbee" / "__init__.py").is_file()
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
 def test_run_in_container_retries_once_on_skew(monkeypatch):
     incus = Mock()
     incus.exec_bytes.side_effect = [ExecResult(86, b"", b"old"), ExecResult(0, b"ok", b"")]
-    stage = Mock()
+    stage = Mock(return_value=container_app.StageResult(path=Mock(), changed=False))
     monkeypatch.setattr(container_app, "stage", stage)
     result = container_app.run_in_container(Mock(), incus, "one", ["version"], uid=123)
     assert result.stdout == b"ok"
     stage.assert_called_once_with(force=True)
-    assert incus.exec_bytes.call_count == 2
+    expected = f"{__version__} {container_app.code_hash()}"
+    assert incus.exec_bytes.call_args_list == [
+        call("one", ["jailbee", "--expect-version", expected, "version"], uid=123),
+        call("one", ["jailbee", "--expect-version", expected, "version"], uid=123),
+    ]
     incus.exec_bytes.side_effect = [ExecResult(86, b"", b"old"), ExecResult(86, b"", b"old")]
-    with pytest.raises(container_app.ContainerJailbeeError, match="old"):
+    with pytest.raises(container_app.ContainerJailbeeError) as exc:
         container_app.run_in_container(Mock(), incus, "one", [], uid=None)
+    assert "old" in str(exc.value)
+    assert expected in str(exc.value)
+
+
+@pytest.mark.parametrize("changed", [True, False])
+def test_retry_syncs_skills_only_when_changed(monkeypatch, tmp_path, changed):
+    cfg = Mock()
+    incus = Mock()
+    incus.exec_bytes.side_effect = [ExecResult(86, b"", b"old"), ExecResult(0, b"", b"")]
+    monkeypatch.setattr(
+        container_app, "stage", Mock(return_value=container_app.StageResult(tmp_path, changed))
+    )
+    sync = Mock()
+    monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
+    container_app.run_in_container(cfg, incus, "one", ["version"], uid=7)
+    assert sync.call_args_list == ([call(cfg)] if changed else [])
 
 
 def test_run_in_container_old_image():
@@ -53,6 +100,8 @@ def test_binds_profile_mounts_app_readonly(make_cfg, tmp_path):
     from jailbee.profiles import binds_profile_yaml
 
     device = yaml.safe_load(binds_profile_yaml(make_cfg(tmp_path)))["devices"]["jailbee-app"]
+    assert device["type"] == "disk"
+    assert device["source"] == str(container_app.staging_root())
     assert device["path"] == "/opt/jailbee/app"
     assert device["readonly"] == "true"
 
@@ -68,7 +117,7 @@ def test_broker_start_syncs_skills_on_change(monkeypatch, tmp_path):
     monkeypatch.setattr(broker, "repo_configs", Mock(return_value={"a": cfgs[0], "b": cfgs[1]}))
     monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
     broker._stage_container_app(broker.BrokerMemory())
-    assert sync.call_count == 2
+    assert sync.call_args_list == [call(cfgs[0]), call(cfgs[1])]
     sync.reset_mock()
     monkeypatch.setattr(
         container_app, "stage", Mock(return_value=container_app.StageResult(tmp_path, False))

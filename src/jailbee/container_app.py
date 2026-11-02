@@ -107,7 +107,10 @@ def run_in_container(
     command = ["jailbee", "--expect-version", expected, *args]
     result = incus.exec_bytes(full, command, uid=uid)
     if result.returncode == EXIT_SKEW:
-        stage(force=True)
+        if stage(force=True).changed:
+            from jailbee.agent_skills import sync_agent_skills
+
+            sync_agent_skills(cfg)
         result = incus.exec_bytes(full, command, uid=uid)
         if result.returncode == EXIT_SKEW:
             their = result.stderr.decode(errors="replace").strip() or "unknown"
