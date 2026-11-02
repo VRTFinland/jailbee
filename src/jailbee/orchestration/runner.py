@@ -36,6 +36,14 @@ def read_runner(incus: Incus, container: str) -> Runner | None:
     return parse_runner_label(incus.config_get(container, RUNNER))
 
 
+def read_resume(incus: Incus, container: str) -> str | None:
+    """Return the validated resume label, if present."""
+    from jailbee.orchestration.labels import RESUME, valid_session_id
+
+    value = incus.config_get(container, RESUME)
+    return value if isinstance(value, str) and valid_session_id(value) else None
+
+
 def runner_command(command: str, runner: Runner) -> str | None:
     """The configured Claude command rewritten for `runner`; None when it is not Claude's.
 

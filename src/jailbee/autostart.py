@@ -304,6 +304,7 @@ def agent_autostart_steps(
     initial_prompt: bool = False,
     extra_env: Mapping[str, str] | None = None,
     runner: Runner | None = None,
+    resume: str | None = None,
 ) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
 
@@ -384,11 +385,25 @@ def agent_autostart_steps(
         env = {**(extra_env or {}), **dict(spec.env)}
         prompt_args = cfg.agents[spec.name].prompt_args if is_primary else None
         if is_primary and prompt_args:
+            resume_words = ""
+            if resume:
+                from jailbee.accounts.adapters.base import get_adapter
+                from jailbee.orchestration.labels import valid_session_id
+
+                try:
+                    resume_words = (
+                        get_adapter(spec.name).resume_args(resume) if valid_session_id(resume) else None
+                    ) or ""
+                except KeyError:
+                    pass
+                if not resume_words:
+                    log.warning("agent %s cannot resume session %r", spec.name, resume)
             run = prompted_run(
                 command,
                 prompt_args,
                 report_exit=(extra_env or {}).get("JAILBEE_ROLE") == "child",
                 agent=spec.name,
+                resume_args=resume_words,
             )
             env[PROMPT_ENV] = CONSUMED_PATH
         else:
@@ -410,7 +425,7 @@ def _on_start_agent_steps(
 
     pending = prompt_pending(incus, container, uid=cfg.container_user.uid)
     from jailbee.orchestration.labels import child_env, orchestrator_env
-    from jailbee.orchestration.runner import read_runner
+    from jailbee.orchestration.runner import read_resume, read_runner
 
     steps = agent_autostart_steps(
         cfg,
@@ -420,6 +435,7 @@ def _on_start_agent_steps(
             **orchestrator_env(cfg, incus, container),
         },
         runner=read_runner(incus, container),
+        resume=read_resume(incus, container),
     )
     return steps, pending
 

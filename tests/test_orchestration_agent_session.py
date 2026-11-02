@@ -94,3 +94,18 @@ def test_relaunch_only_prompted_agent_with_shared_environment(tmp_path, monkeypa
     assert kw["env"]["AGENT_VAR"] == "agent"
     assert kw["env"]["REPO_DIR"] == "/repo"
     assert kw["env"][initial_prompt.PROMPT_ENV] == initial_prompt.CONSUMED_PATH
+
+
+def test_relaunch_passes_resume(cfg, monkeypatch):
+    incus = MagicMock()
+    incus.config_get.return_value = "orch"
+    monkeypatch.setattr(agent_session.lifecycle, "container_repo_dir", lambda *a: "/repo")
+    monkeypatch.setattr(initial_prompt, "write_prompt", MagicMock())
+    monkeypatch.setattr(agent_session.tmux, "kill_window", MagicMock())
+    monkeypatch.setattr(agent_session.tmux, "ensure_session", MagicMock())
+    launch = MagicMock()
+    monkeypatch.setattr(agent_session.tmux, "launch_step", launch)
+    session = "12345678-1234-1234-1234-123456789abc"
+    agent_session.relaunch(cfg, incus, "child", "task", runner=None, old_agent="claude",
+                           resume=session)
+    assert f"--resume {session}" in launch.call_args.kwargs["command"]

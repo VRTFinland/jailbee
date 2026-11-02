@@ -69,7 +69,7 @@ def prompt_problem(cfg: Config, runner: Runner | None = None) -> str | None:
 
 
 def prompted_run(
-    command: str, prompt_args: str, *, report_exit: bool = False, agent: str = ""
+    command: str, prompt_args: str, *, report_exit: bool = False, agent: str = "", resume_args: str = ""
 ) -> str:
     """Step `run` string: consume the prompt file once, else launch plain.
 
@@ -77,10 +77,11 @@ def prompted_run(
     before exec, and the parent records every exit status. The broker owns
     reporting, including loss of this wrapper, and suppresses intentional stops.
     """
+    prompted = " ".join(p for p in (command, resume_args, prompt_args) if p)
     if not report_exit:
         return (
             f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
-            f"exec {command} {prompt_args}; fi; exec {command}"
+            f"exec {prompted}; fi; exec {command}"
         )
     record = (
         "import json, pathlib, sys; "
@@ -96,7 +97,7 @@ def prompted_run(
         f"if [ -f {PROMPT_PATH} ]; then mv -f {PROMPT_PATH} {CONSUMED_PATH} && "
         f"{{ umask 077; ( python3 -c {shlex.quote(record)} "
         f'"$BASHPID" {shlex.quote(AGENT_PID_PATH)} {shlex.quote(agent)}; '
-        f"exec {command} {prompt_args} ); rc=$?; "
+        f"exec {prompted} ); rc=$?; "
         f'printf "%s\\n" "$rc" > {shlex.quote(AGENT_EXIT_PATH)}.tmp; '
         f"mv -f {shlex.quote(AGENT_EXIT_PATH)}.tmp {shlex.quote(AGENT_EXIT_PATH)}; "
         f'exit "$rc"; }}; fi; exec {command}'

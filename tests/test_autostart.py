@@ -1192,7 +1192,7 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None)
+    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, resume=None)
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()
@@ -1217,6 +1217,7 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
         initial_prompt=False,
         extra_env={"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": "orch"},
         runner=None,
+        resume=None,
     )
 
 
@@ -1372,3 +1373,55 @@ def test_run_autostart_with_pending_prompt_puts_the_agent_after_detached_stages(
     plan = run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
     assert [s.stage for s in plan.blocking] == ["db", "agents"]
     assert [s.stage for s in plan.detached] == ["seed"]
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_agent_steps_resume_only_on_prompted_primary(tmp_path, pending):
+    cfg = _prompt_cfg(tmp_path, claude={"enabled": True, "autostart": True},
+                      codex={"enabled": True, "autostart": True})
+    session = "12345678-1234-1234-1234-123456789abc"
+    steps = agent_autostart_steps(cfg, initial_prompt=pending, resume=session)
+    runs = {step.name: step.run for step in steps}
+    assert (f"--resume {session}" in runs["claude"]) == pending
+    assert "--resume" not in runs["codex"]
+
+
+def test_resume_uses_runner_effective_primary(tmp_path):
+    from jailbee.orchestration.runner import Runner
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True},
+                                    "codex": {"enabled": True}}, primary_agent="codex")
+    session = "12345678-1234-1234-1234-123456789abc"
+    steps = agent_autostart_steps(cfg, initial_prompt=True, runner=Runner(agent="claude"),
+                                  resume=session)
+    assert f"--resume {session}" in next(s.run for s in steps if s.name == "claude")
+
+
+@pytest.mark.parametrize("value,expected", [("12345678-1234-1234-1234-123456789abc",
+                                               "12345678-1234-1234-1234-123456789abc"),
+                                              ("garbage", None), ("ABCDEF78-1234-1234-1234-123456789abc", None)])
+def test_on_start_agent_steps_reads_resume_label(tmp_path, mocker, value, expected):
+    from jailbee.autostart import _on_start_agent_steps
+    from jailbee.orchestration import labels
+
+    cfg = _prompt_cfg(tmp_path, claude={"enabled": True})
+    incus = mocker.Mock()
+    incus.config_get.side_effect = lambda name, key: value if key == labels.RESUME else None
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
+    steps, _ = _on_start_agent_steps(cfg, incus, "child", AutostartTrigger.ON_START)
+    assert (f"--resume {value}" in steps[0].run) == (expected is not None)
+
+
+@pytest.mark.parametrize("session,adapter_result", [("bad; touch /tmp/x", "--resume unsafe"),
+                                                       ("12345678-1234-1234-1234-123456789abc", None)])
+def test_resume_unavailable_warns_and_launches_plain(tmp_path, mocker, caplog, session, adapter_result):
+    cfg = _prompt_cfg(tmp_path, claude={"enabled": True})
+    adapter = mocker.Mock()
+    adapter.resume_args.return_value = adapter_result
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    [step] = agent_autostart_steps(cfg, initial_prompt=True, resume=session)
+    assert "--resume" not in step.run
+    assert "cannot resume" in caplog.text
+    if session.startswith("bad"):
+        adapter.resume_args.assert_not_called()
