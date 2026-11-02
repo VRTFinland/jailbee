@@ -69,6 +69,18 @@ golden:
   node: 24
   python: "3.13"
 
+services:
+  db:
+    prepare:
+      - run: docker compose pull
+        network: loose
+        mounts: [aws]
+    run: docker compose up
+  backend:
+    run: npm run dev
+    depends_on:
+      db: {restart: true}
+
 autostart:
   step_timeout: 600
   env:

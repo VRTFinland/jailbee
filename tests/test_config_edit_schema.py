@@ -300,8 +300,8 @@ def test_build_specs_covers_every_config_leaf():
     """
     from jailbee.config_edit.schema import build_specs
 
-    # Named autostart profiles add two repo-level leaves.
-    assert len(build_specs(Config)) == 114
+    # Services add one editable model-map leaf.
+    assert len(build_specs(Config)) == 115
     # remote.ssh.gpg adds one opt-in global boolean.
     assert len(build_specs(GlobalConfig)) == 59
 

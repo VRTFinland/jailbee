@@ -21,6 +21,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     field_validator,
+    model_validator,
 )
 
 from jailbee.config.common import CONTAINER_USERNAME, PathExpanded
@@ -68,6 +69,7 @@ from jailbee.config.models_net import (
     parse_ttl,
 )
 from jailbee.config.models_orchestration import OrchestrationView
+from jailbee.config.models_services import SERVICE_NAME_RE, Service
 from jailbee.config.models_tools import (
     BrowserConfig,
     BrowsersConfig,
@@ -346,6 +348,9 @@ class Config(BaseModel):
             "not from the checkout that invoked it."
         ),
     )
+    services: dict[str, Service] = Field(
+        default_factory=dict, description="Long-running services defined by this repository."
+    )
     docker_registry_mirror: DockerRegistryMirrorRepoConfig = Field(
         default=DockerRegistryMirrorRepoConfig(),
         description=(
@@ -553,6 +558,36 @@ class Config(BaseModel):
         A method, not a property: a property would shadow `model_copy(update=...)`.
         """
         return self._service_storage_pool
+
+    @model_validator(mode="after")
+    def _validate_services(self) -> Config:
+        for name, service in self.services.items():
+            if not SERVICE_NAME_RE.fullmatch(name):
+                raise ValueError(f"invalid service name '{name}'")
+            for dependency in service.depends_on:
+                if dependency == name:
+                    raise ValueError(f"service '{name}' depends on itself")
+                if dependency not in self.services:
+                    raise ValueError(f"service '{name}' references unknown dependency '{dependency}'")
+
+        visited: set[str] = set()
+        active: list[str] = []
+
+        def visit(name: str) -> None:
+            if name in active:
+                cycle = active[active.index(name):] + [name]
+                raise ValueError(f"service dependency cycle: {' -> '.join(cycle)}")
+            if name in visited:
+                return
+            active.append(name)
+            for dependency in self.services[name].depends_on:
+                visit(dependency)
+            active.pop()
+            visited.add(name)
+
+        for name in self.services:
+            visit(name)
+        return self
 
     @field_validator("egress_allow")
     @classmethod
@@ -951,6 +986,14 @@ class Config(BaseModel):
                                     f"autostart.{trigger_name}[{step.name}].mounts "
                                     f"references unknown optional_mount: '{m}'"
                                 )
+        for name, service in self.services.items():
+            for index, prepare_step in enumerate(service.prepare, 1):
+                for mount_name in prepare_step.mounts:
+                    if mount_name not in known_mounts:
+                        issues.append(
+                            f"services.{name}.prepare[{index}].mounts "
+                            f"references unknown optional_mount: '{mount_name}'"
+                        )
         # NOTE: the deprecation of a step's own `network:`/`mounts:` is
         # deliberately NOT reported here — see `deprecation_notices`. Anything
         # this method returns is read by `branch_config.load_branch_autostart`

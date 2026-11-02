@@ -56,6 +56,7 @@ from jailbee.config.models_agents import (
     PrConfig,
 )
 from jailbee.config.models_apps import APP_NAME_RE, AppEntry
+from jailbee.config.models_services import Service, ServiceDependency, ServicePrepareStep
 from jailbee.config.models_behaviour import (
     BootConfig,
     ConfirmConfig,
@@ -146,6 +147,9 @@ __all__ = [
     "AutostartChain",
     "AutostartStage",
     "AutostartStep",
+    "Service",
+    "ServiceDependency",
+    "ServicePrepareStep",
     "BootConfig",
     "BrowserConfig",
     "BrowserSource",

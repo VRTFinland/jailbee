@@ -21,6 +21,23 @@ def test_fixture_repo_layer_ok(repo_config, fixture):
     assert validate_repo_layer(repo_config).error is None
 
 
+def test_prepare_mount_unchecked_in_repo_layer(repo_config):
+    from jailbee.config.repo_layer import validate_repo_layer
+    from jailbee.config_validate_cmd import report_repo_layer
+
+    repo_config.write_text(
+        "services:\n  backend:\n    run: server\n    prepare:\n"
+        "      - run: setup\n        mounts: [creds]\n"
+    )
+    report = validate_repo_layer(repo_config)
+    assert report.error is None
+    assert len(report.unchecked) == 1
+    assert "unchecked (host layer)" in report.unchecked[0]
+    assert "services.backend.prepare" in report.unchecked[0]
+    assert "'creds'" in report.unchecked[0]
+    assert report_repo_layer(report) == 0
+
+
 def test_unknown_optional_mount_is_unchecked(repo_config):
     from jailbee.config.repo_layer import validate_repo_layer
     from jailbee.config_validate_cmd import report_repo_layer

@@ -53,6 +53,15 @@ def validate_repo_layer(path: Path) -> RepoLayerReport:
                             f"references optional_mount '{key}' — not defined in this file; "
                             "host layers may define it"
                         )
+    for name, service in cfg.services.items():
+        for index, step in enumerate(service.prepare, 1):
+            for key in step.mounts:
+                if key not in cfg.optional_mounts:
+                    unchecked.append(
+                        f"unchecked (host layer): services.{name}.prepare[{index}].mounts "
+                        f"references optional_mount '{key}' — not defined in this file; "
+                        "host layers may define it"
+                    )
     notices = cfg.deprecation_notices()
     if cfg.golden.python:
         notices.append("golden.python is deprecated and ignored; remove it from the golden block.")
