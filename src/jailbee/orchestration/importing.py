@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from jailbee import lifecycle, sync
+from jailbee import forking, git, lifecycle, submodules, sync
 from jailbee.git import GitError
 from jailbee.incus import IncusError
 from jailbee.orchestration import labels, outbox
@@ -102,8 +102,33 @@ def import_child(ctx: ActionContext, child: Node, orchestrator: Node) -> Importe
     return Imported(ref, oid)
 
 
+def _update_source(ctx: ActionContext, manifest: UpdateManifest) -> str:
+    """Resolve explicit sources using the same policies as spawn."""
+    bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+    if manifest.ref is not None:
+        return forking.prepare_fork(ctx.cfg, bounded, ctx.sender.short, ref=manifest.ref).commit
+    assert manifest.base is not None
+    opts = lifecycle.NewContainerOptions(
+        container_branch=manifest.base,
+        base=manifest.base,
+        name=None,
+        network="strict",
+        memory=None,
+        cpu=ctx.cfg.defaults.cpu,
+        from_base=ctx.cfg.golden.alias,
+        clone=True,
+    )
+    resolved = lifecycle.resolve_clone_ref(ctx.cfg, opts, autofetch=ctx.cfg.new.autofetch)
+    commit = resolved.checkout_commit or git.rev_parse(
+        ctx.cfg.repo_root, f"refs/heads/{resolved.source_branch}^{{commit}}"
+    )
+    if commit is None:
+        raise SyncError(f"Cannot resolve base branch '{manifest.base}' to a commit")
+    return commit
+
+
 def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
-    """Relay the parent's branch to a child; the child chooses when to merge."""
+    """Relay a parent source to a child; the child chooses when to merge."""
     if not isinstance(manifest, UpdateManifest):
         return refused("not an update manifest")
     child = ctx.child(manifest.child)
@@ -113,26 +138,42 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
         return refused(f"{child.short} is not running; restart it first")
     bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
     try:
-        repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, ctx.sender.full)
-        branch = sync._container_current_branch(
-            bounded, ctx.sender.full, repo_dir, uid=ctx.cfg.container_user.uid
-        )
-        if branch is None:
-            return refused("detached HEAD: check out your branch before update")
-        result = sync.merge_container_into_container(
-            ctx.cfg,
-            bounded,
-            ctx.sender.short,
-            child.short,
-            branch=branch,
-            plain=True,
-            ff_local_branch=False,
-            require_clean_target=False,
-            timeout=CHILD_TRANSPORT_TIMEOUT_S,
-        )
-    except (SyncError, GitError, IncusError) as exc:
+        if manifest.ref is not None or manifest.base is not None:
+            branch = manifest.ref or manifest.base
+            commit = _update_source(ctx, manifest)
+            repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, child.full)
+            submodules.transport_submodules_to_container(
+                ctx.cfg, bounded, child.full, repo_dir=repo_dir,
+                commit=commit, timeout=CHILD_TRANSPORT_TIMEOUT_S,
+            )
+            push = sync.push_to_container(
+                ctx.cfg, bounded, child.short,
+                source=manifest.id, source_ref=commit,
+                namespace=f"update/{ctx.sender.short}", ff_local_branch=False,
+                timeout=CHILD_TRANSPORT_TIMEOUT_S,
+            )
+        else:
+            repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, ctx.sender.full)
+            branch = sync._container_current_branch(
+                bounded, ctx.sender.full, repo_dir, uid=ctx.cfg.container_user.uid
+            )
+            if branch is None:
+                return refused("detached HEAD: check out your branch before update")
+            result = sync.merge_container_into_container(
+                ctx.cfg,
+                bounded,
+                ctx.sender.short,
+                child.short,
+                branch=branch,
+                plain=True,
+                ff_local_branch=False,
+                require_clean_target=False,
+                timeout=CHILD_TRANSPORT_TIMEOUT_S,
+            )
+            push = result.push
+    except (SyncError, GitError, IncusError, ValueError, submodules.SubmoduleError) as exc:
         return refused(str(exc))
-    ref, oid = result.push.container_ref, result.push.new_oid
+    ref, oid = push.container_ref, push.new_oid
     if not _FULL_OID.fullmatch(oid or ""):
         return refused(f"updated as {ref}, but its commit id `{oid}` could not be recorded")
     msg = InboxMessage.model_validate(
