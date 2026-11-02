@@ -152,9 +152,7 @@ def enable_terminal_features(incus: Incus, container: str) -> None:
         pass
 
 
-def kill_window(
-    incus: Incus, container: str, window: str, *, checked: bool = False
-) -> None:
+def kill_window(incus: Incus, container: str, window: str, *, checked: bool = False) -> None:
     """Kill a window by name. Ignores 'no such window' errors.
 
     Every window target in this module is `<session>:=<name>`: the `=` makes

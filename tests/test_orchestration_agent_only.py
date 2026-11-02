@@ -45,7 +45,9 @@ def session(monkeypatch):
         live_labels = dict(rig.child.config)
         rig.incus.config_get_checked.side_effect = lambda name, key: live_labels.get(key)
         rig.incus.config_unset_checked.side_effect = lambda name, key: live_labels.pop(key, None)
-        rig.incus.config_set.side_effect = lambda name, key, value: live_labels.__setitem__(key, value)
+        rig.incus.config_set.side_effect = lambda name, key, value: live_labels.__setitem__(
+            key, value
+        )
 
     monkeypatch.setattr(Rig, "__init__", init)
     launch = MagicMock()

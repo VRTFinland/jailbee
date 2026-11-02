@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jailbee.incus import IncusError
-
 from jailbee import initial_prompt
+from jailbee.incus import IncusError
 from jailbee.orchestration import agent_session
 from jailbee.orchestration.runner import Runner
 from tests.conftest import make_config, with_agent
