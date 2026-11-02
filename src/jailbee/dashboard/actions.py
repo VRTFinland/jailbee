@@ -279,9 +279,13 @@ def orchestrate_release_argv(child: str) -> list[str]:
 def adoptable_rows(rows: Sequence[ContainerInfo], orchestrator: str) -> list[ContainerInfo]:
     parents = {row.child.orchestrator for row in rows if row.child is not None}
     return [
-        row for row in rows
-        if row.name != orchestrator and row.grant is None and row.child is None
-        and row.mode != "mount" and row.name not in parents
+        row
+        for row in rows
+        if row.name != orchestrator
+        and row.grant is None
+        and row.child is None
+        and row.mode != "mount"
+        and row.name not in parents
     ]
 
 

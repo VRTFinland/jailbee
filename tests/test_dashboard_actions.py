@@ -14,18 +14,37 @@ from jailbee.dashboard.model import prompt_target_kind
 from jailbee.dashboard.overlays import validate_answer
 from jailbee.lifecycle import ContainerInfo
 
+
 def test_adoption_commands_and_candidates():
     from jailbee.orchestration.view import ChildView, GrantView
     from tests.dashboard_fixtures import ci
 
     child = ChildView("alpha-parent", "working", (), False, ())
-    rows = [ci("alpha-parent", "alpha"), ci("alpha-free", "alpha"),
-            dataclasses.replace(ci("alpha-grant", "alpha"), grant=GrantView(1, (), (), False, ())),
-            dataclasses.replace(ci("alpha-child", "alpha"), child=child),
-            ci("alpha-mount", "alpha", mode="mount"), ci("alpha-has-child", "alpha"),
-            dataclasses.replace(ci("alpha-nested", "alpha"), child=dataclasses.replace(child, orchestrator="alpha-has-child"))]
-    assert dact.orchestrate_adopt_argv("alpha-parent", "alpha-free") == ["orchestrate", "adopt", "--", "alpha-parent", "alpha-free"]
-    assert dact.orchestrate_release_argv("alpha-child") == ["orchestrate", "release", "--", "alpha-child"]
+    rows = [
+        ci("alpha-parent", "alpha"),
+        ci("alpha-free", "alpha"),
+        dataclasses.replace(ci("alpha-grant", "alpha"), grant=GrantView(1, (), (), False, ())),
+        dataclasses.replace(ci("alpha-child", "alpha"), child=child),
+        ci("alpha-mount", "alpha", mode="mount"),
+        ci("alpha-has-child", "alpha"),
+        dataclasses.replace(
+            ci("alpha-nested", "alpha"),
+            child=dataclasses.replace(child, orchestrator="alpha-has-child"),
+        ),
+    ]
+    assert dact.orchestrate_adopt_argv("alpha-parent", "alpha-free") == [
+        "orchestrate",
+        "adopt",
+        "--",
+        "alpha-parent",
+        "alpha-free",
+    ]
+    assert dact.orchestrate_release_argv("alpha-child") == [
+        "orchestrate",
+        "release",
+        "--",
+        "alpha-child",
+    ]
     assert [r.name for r in dact.adoptable_rows(rows, "alpha-parent")] == ["alpha-free"]
 
 

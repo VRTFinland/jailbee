@@ -1147,10 +1147,20 @@ class DashboardSession:
             entries.append(PickerEntry("Grant with defaults", "defaults"))
         if info.grant is not None:
             candidates = dact.adoptable_rows(group.containers, container)
-            children = [r for r in group.containers if r.child and r.child.orchestrator == container]
-            if candidates and permitted(dact.orchestrate_adopt_argv(container, candidates[0].name), self.ssh_policy, over_ssh=self.over_ssh):
+            children = [
+                r for r in group.containers if r.child and r.child.orchestrator == container
+            ]
+            if candidates and permitted(
+                dact.orchestrate_adopt_argv(container, candidates[0].name),
+                self.ssh_policy,
+                over_ssh=self.over_ssh,
+            ):
                 entries.append(PickerEntry("Adopt container…", "adopt"))
-            if children and permitted(dact.orchestrate_release_argv(children[0].name), self.ssh_policy, over_ssh=self.over_ssh):
+            if children and permitted(
+                dact.orchestrate_release_argv(children[0].name),
+                self.ssh_policy,
+                over_ssh=self.over_ssh,
+            ):
                 entries.append(PickerEntry("Release child…", "release"))
         return Picker(
             "container-orchestration",
@@ -1195,24 +1205,39 @@ class DashboardSession:
             return None
         group, info = found
         if picker.purpose in ("container-orchestration-adopt", "container-orchestration-release"):
-            argv = (dact.orchestrate_adopt_argv(container, entry.value)
-                    if picker.purpose.endswith("adopt") else dact.orchestrate_release_argv(entry.value))
+            argv = (
+                dact.orchestrate_adopt_argv(container, entry.value)
+                if picker.purpose.endswith("adopt")
+                else dact.orchestrate_release_argv(entry.value)
+            )
             if permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
                 self.run_quiet_cli(repo, argv)
             return self.open_orchestration(container)
         if entry.value in ("adopt", "release") and info.grant is not None:
-            rows = (dact.adoptable_rows(group.containers, container) if entry.value == "adopt"
-                    else [r for r in group.containers if r.child and r.child.orchestrator == container])
-            rows = [r for r in rows if permitted(
-                dact.orchestrate_adopt_argv(container, r.name) if entry.value == "adopt"
-                else dact.orchestrate_release_argv(r.name), self.ssh_policy, over_ssh=self.over_ssh)]
+            rows = (
+                dact.adoptable_rows(group.containers, container)
+                if entry.value == "adopt"
+                else [r for r in group.containers if r.child and r.child.orchestrator == container]
+            )
+            rows = [
+                r
+                for r in rows
+                if permitted(
+                    dact.orchestrate_adopt_argv(container, r.name)
+                    if entry.value == "adopt"
+                    else dact.orchestrate_release_argv(r.name),
+                    self.ssh_policy,
+                    over_ssh=self.over_ssh,
+                )
+            ]
             if not rows:
                 return self.open_orchestration(container)
             return Picker(
                 "container-orchestration-" + entry.value,
                 "Choose a container" if entry.value == "adopt" else "Choose a child",
                 tuple(PickerEntry(r.display_name, r.name) for r in rows),
-                target=container, back=self.open_orchestration(container),
+                target=container,
+                back=self.open_orchestration(container),
             )
         if not self._orchestration_editable(info):
             self.set_notice("Orchestration is not available for this container")

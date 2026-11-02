@@ -601,28 +601,31 @@ def _orchestration_session(
     return session, mocker.patch.object(session, "run_quiet_cli", return_value=True)
 
 
-@pytest.mark.parametrize(('action', 'child', 'argv'), [
-    ('adopt', False, ['orchestrate', 'adopt', '--', 'alpha-one', 'alpha-two']),
-    ('release', True, ['orchestrate', 'release', '--', 'alpha-two']),
-])
+@pytest.mark.parametrize(
+    ("action", "child", "argv"),
+    [
+        ("adopt", False, ["orchestrate", "adopt", "--", "alpha-one", "alpha-two"]),
+        ("release", True, ["orchestrate", "release", "--", "alpha-two"]),
+    ],
+)
 def test_orchestration_topology_picker(mocker, tmp_path, action, child, argv):
     from jailbee.orchestration.view import ChildView
 
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
-    row = ci('alpha-two', 'alpha')
+    row = ci("alpha-two", "alpha")
     if child:
-        row = dataclasses.replace(row, child=ChildView('alpha-one', 'working', (), False, ()))
+        row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
     session.groups[0].containers.append(row)
-    menu = session.open_orchestration('alpha-one')
+    menu = session.open_orchestration("alpha-one")
     entry = next(e for e in menu.entries if e.value == action)
     picker = session.submit_picker(menu, entry)
-    assert picker.purpose == 'container-orchestration-' + action
-    assert picker.back.purpose == 'container-orchestration'
+    assert picker.purpose == "container-orchestration-" + action
+    assert picker.back.purpose == "container-orchestration"
     assert [e.label for e in picker.entries] == [row.display_name]
     result = session.submit_picker(picker, picker.entries[0])
     assert quiet.call_args.args[0].repo_root == tmp_path
     assert quiet.call_args.args[1] == argv
-    assert result.purpose == 'container-orchestration'
+    assert result.purpose == "container-orchestration"
 
 
 def test_orchestration_topology_empty_and_ssh_gates(mocker, tmp_path):
@@ -630,18 +633,35 @@ def test_orchestration_topology_empty_and_ssh_gates(mocker, tmp_path):
     from jailbee.orchestration.view import ChildView
 
     session, _ = _orchestration_session(mocker, tmp_path, grant=True)
-    assert not {'adopt', 'release'} & {e.value for e in session.open_orchestration('alpha-one').entries}
-    session.groups[0].containers.extend([
-        ci('alpha-free', 'alpha'),
-        dataclasses.replace(ci('alpha-child', 'alpha'), child=ChildView('alpha-one', 'working', (), False, ())),
-        dataclasses.replace(ci('alpha-other', 'alpha'), child=ChildView('alpha-other-parent', 'working', (), False, ())),
-    ])
-    menu = session.open_orchestration('alpha-one')
-    picker = session.submit_picker(menu, next(e for e in menu.entries if e.value == 'release'))
-    assert [e.value for e in picker.entries] == ['alpha-child']
+    assert not {"adopt", "release"} & {
+        e.value for e in session.open_orchestration("alpha-one").entries
+    }
+    session.groups[0].containers.extend(
+        [
+            ci("alpha-free", "alpha"),
+            dataclasses.replace(
+                ci("alpha-child", "alpha"), child=ChildView("alpha-one", "working", (), False, ())
+            ),
+            dataclasses.replace(
+                ci("alpha-other", "alpha"),
+                child=ChildView("alpha-other-parent", "working", (), False, ()),
+            ),
+        ]
+    )
+    menu = session.open_orchestration("alpha-one")
+    picker = session.submit_picker(menu, next(e for e in menu.entries if e.value == "release"))
+    assert [e.value for e in picker.entries] == ["alpha-child"]
     session.over_ssh = True
-    session.ssh_policy = RemoteSSHConfig.model_validate({'commands': {'mode': 'allowlist', 'allow': ['orchestrate grant']}, 'restrict_host': False, 'orchestration': 'ssh'})
-    assert not {'adopt', 'release'} & {e.value for e in session.open_orchestration('alpha-one').entries}
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": ["orchestrate grant"]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    assert not {"adopt", "release"} & {
+        e.value for e in session.open_orchestration("alpha-one").entries
+    }
 
 
 def test_orchestration_picker_without_grant_lists_profiles(mocker, tmp_path):
