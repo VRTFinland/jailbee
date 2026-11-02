@@ -1683,3 +1683,14 @@ def test_config_get_checked_distinguishes_missing_and_failure(incus, mocker):
     )
     with pytest.raises(IncusError):
         incus.config_get_checked("c", "user.test")
+
+
+def test_exec_interactive_inherits_all_standard_streams(incus, mocker):
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    incus.exec_interactive("feat-foo", ["jailbee", "service", "logs", "web"])
+    kwargs = run.call_args.kwargs
+    assert all(kwargs.get(stream) is None for stream in ("stdin", "stdout", "stderr"))
+    assert not kwargs.get("capture_output", False)
