@@ -174,6 +174,7 @@ def _merge_into_child(
                 short=child.short,
                 uid=uid,
                 ff_only=probe.relation == "fast_forward",
+                resolve_gitlinks=False,
             )
             kind = "fast-forward" if probe.relation == "fast_forward" else "merge commit"
             body = (

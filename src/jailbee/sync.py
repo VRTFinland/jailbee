@@ -2740,6 +2740,7 @@ def _merge_ref_in_container(
     short: str,
     uid: int,
     ff_only: bool,
+    resolve_gitlinks: bool = True,
 ) -> str:
     """Merge `ref` into whatever `full_name` has checked out; return the new HEAD.
 
@@ -2805,6 +2806,16 @@ def _merge_ref_in_container(
             raise SyncError(_index_lock_message(short, repo_dir, "merge")) from exc
         if not _container_has_merge_in_progress(incus, full_name, repo_dir):
             raise SyncError(f"git merge failed in container '{short}': {exc}") from exc
+        if not resolve_gitlinks:
+            raise MergeConflictError(
+                f"Merge of '{label}' in container '{short}' hit conflicts.",
+                report=ConflictReport(
+                    resolution=submodules.GitlinkResolution(resolved=[], unresolved=[]),
+                    nongitlink=[],
+                    branch=label,
+                    location=f"jailbee shell {short}\ncd {repo_dir}",
+                ),
+            ) from exc
         report = submodules.resolve_gitlink_conflicts(
             run, repo_dir, message=_sub_merge_message(label)
         )

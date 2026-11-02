@@ -16,7 +16,9 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
+    SerializerFunctionWrapHandler,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -325,6 +327,13 @@ class InboxMessage(BaseModel):
     on_done: OnDone | None = None
     autostart_profile: str | None = None
     on_done_reason: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        if self.merged_head is None:
+            result.pop("merged_head", None)
+        return result
 
     @field_validator("merged_head")
     @classmethod

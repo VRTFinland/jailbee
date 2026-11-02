@@ -411,3 +411,48 @@ def test_inbox_merged_head_validated():
     fields = dict(version=1, id="h-12345678", type="message", body="x", merged_head="bad")
     with pytest.raises(ValidationError):
         InboxMessage.model_validate({**fields, "from": "orch"})
+
+
+@pytest.mark.parametrize("source", [{"ref": "refs/heads/release/1"}, {"base": "main"}])
+def test_update_merge_explicit_dirty_before_source_or_transport(tmp_path, seams, merge_seams, mocker, source):
+    merge_seams["preflight"].side_effect = SyncError("dirty")
+    source_resolve = mocker.patch("jailbee.orchestration.importing._update_source")
+    prepare = mocker.patch("jailbee.forking.prepare_fork")
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch("jailbee.sync.push_to_container")
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True, **source))
+    assert out == actions.refused("dirty")
+    for call in (source_resolve, prepare, transport, push):
+        call.assert_not_called()
+
+
+def test_update_merge_child_repo_preflight_probe_and_abort(tmp_path, seams, merge_seams, mocker):
+    from jailbee.sync import MergeConflictError
+
+    ctx = _ctx(tmp_path)
+    bounded = ctx.incus.with_exec_timeout.return_value
+    seams["repo"].side_effect = lambda cfg, incus, name: "/child" if name == CHILD else "/parent"
+    merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
+    out = actions.dispatch(ctx, _manifest(merge=True))
+    uid = ctx.cfg.container_user.uid
+    merge_seams["preflight"].assert_called_once_with(bounded, CHILD, "/child", uid=uid)
+    merge_seams["probe"].assert_called_once_with(
+        bounded, CHILD, "/child", ref="refs/jailbee/from/fix-1/fix-1", uid=uid
+    )
+    assert merge_seams["merge"].call_args.kwargs["resolve_gitlinks"] is False
+    merge_seams["abort"].assert_called_once_with(bounded, CHILD, "/child", uid=uid)
+    assert out == actions.refused("child changed during update; merge aborted, nothing merged")
+    seams["deliver"].assert_not_called()
+
+
+def test_inbox_json_omits_only_unset_merged_head():
+    import json
+    from jailbee.orchestration.protocol import InboxMessage
+
+    msg = InboxMessage.model_validate({"version": 1, "id": "h-12345678", "type": "message", "from": "orch", "body": "hi"})
+    data = json.loads(msg.model_dump_json(by_alias=True))
+    assert "merged_head" not in data
+    assert data["imported_ref"] is None and data["imported_sha"] is None
+    assert data["on_done"] is None
+    with_head = msg.model_copy(update={"merged_head": "a" * 40})
+    assert json.loads(with_head.model_dump_json(by_alias=True))["merged_head"] == "a" * 40

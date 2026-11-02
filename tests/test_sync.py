@@ -9760,3 +9760,19 @@ def test_forced_pinned_push_leases_absent_remote(mocker, make_cfg, tmp_path):
     push = mocker.patch("jailbee.git.push_to_remote")
     sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
     assert push.call_args.kwargs["force_with_lease"] == ""
+
+
+def test_container_merge_can_refuse_gitlink_resolution(mocker):
+    incus = mocker.MagicMock()
+    runner = mocker.MagicMock(return_value=(True, "base"))
+    mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("conflict"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    resolver = mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
+    with pytest.raises(sync.MergeConflictError):
+        sync._merge_ref_in_container(incus, "full-c", "/r", ref="r", label="main", message="m", short="c", uid=1000, ff_only=False, resolve_gitlinks=False)
+    resolver.assert_not_called()
+    incus.exec.assert_not_called()
