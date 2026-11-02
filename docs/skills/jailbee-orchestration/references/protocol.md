@@ -194,7 +194,18 @@ branch, base anchor, index or worktree is moved.
 {"version": 1, "id": "update-release-1", "type": "update", "child": "pool-release", "base": "release/1"}
 ```
 
-CLI: `jailbee-inbox send update --child C [--ref REF | --base BRANCH] --wait`.
+Optional `merge: true` applies the transported source to the child's branch
+only after a conflict check. A clean fast-forward advances the branch; divergent
+histories get a merge commit; an already-contained source leaves HEAD unchanged.
+The broker refuses a stopped or mount-mode child, detached HEAD, a dirty worktree,
+an in-progress merge, or conflicts, including gitlink conflicts conservatively
+refused even if Git might resolve them. Other transport or Git failures can also
+fail the request. The child may be running: there is no agent-idle gate, so
+coordinate before applying changes. An update message with optional `merged_head`
+reports the resulting child HEAD: the child must re-read files and must not
+merge `imported_ref` again. Without it, the child merges manually.
+
+CLI: `jailbee-inbox send update --child C [--ref REF | --base BRANCH] [--merge] --wait`.
 For example, use `--ref refs/jailbee/from/worker/fix` to reuse imported work,
 or `--base release/1` to deliver a host-resolved release branch.
 

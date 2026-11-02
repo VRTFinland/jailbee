@@ -409,8 +409,17 @@ For multi-session work, spawn with `--on-done keep`; `update --child C`
 brings the parent's latest committed branch into the existing child. Add
 `--ref REF` to send a full ref or 40-hex commit from the parent's repo, or
 `--base BRANCH` to send a host-resolved base without switching the parent's
-branch. The two options are mutually exclusive.
-Prefer a fresh fork for rework so it starts from the latest merged state.
+branch. The two options are mutually exclusive. Plain update transports a ref
+for the child to merge manually; use `--merge` when the child is idle or between
+tasks to check for conflicts and apply it automatically. A clean fast-forward
+advances HEAD, divergent histories create a merge commit, and an already-contained
+source leaves HEAD unchanged. The broker refuses a stopped or mount-mode child,
+detached HEAD, dirty worktree, merge in progress, or conflicts, including gitlink
+conflicts conservatively even when Git might resolve them. There is no idle gate,
+so coordinate with the child. An update message with `merged_head` means the
+branch was already updated: the child must re-read files, not merge the
+`imported_ref` again. Prefer a fresh fork for rework so it starts from the latest
+merged state.
 
 ## Lifecycle
 

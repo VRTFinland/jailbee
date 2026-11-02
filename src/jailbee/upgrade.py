@@ -504,6 +504,19 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "reports and including idle in the recommended wake filter"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox accepts `send update --merge` to merge "
+            "an update into a child's branch after a conflict check"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason="`jailbee apply` syncs orchestration skills describing conflict-checked update merges",
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

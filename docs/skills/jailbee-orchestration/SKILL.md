@@ -338,8 +338,15 @@ different source without switching your branch, add `--ref refs/heads/topic`
 `--ref` and `--base` are mutually exclusive. Explicit sources land at
 `refs/jailbee/update/<orchestrator>/<manifest-id>`, separate from branch and
 child-import refs; omitted selectors preserve today's branch transport.
-The broker never merges it. For an idle RUNNING child, launch another session
-without repeating heavy startup:
+Plain update leaves the child to merge it. Prefer `--merge` when the child is
+idle or between tasks: the broker checks conflicts first, then fast-forwards,
+creates a merge commit, or leaves an already-contained source unchanged. A dirty
+worktree, merge in progress, detached HEAD, mount-mode or stopped child, or any
+conflict (including conservatively detected gitlink conflicts) refuses the
+request. There is no idle gate; coordinate with the child. A message with
+`merged_head` means the branch has moved and the child must re-read files, not
+merge the imported ref again. Use plain update while the child is mid-task.
+For an idle RUNNING child, launch another session without repeating heavy startup:
 
 ```bash
 jailbee-inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
