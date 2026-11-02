@@ -35,6 +35,33 @@ main()
     assert "deps unavailable" in result.stderr
 
 
+def test_successful_container_start_never_imports_host_cli():
+    import os
+    import subprocess
+
+    script = """
+import builtins
+import sys
+from pathlib import Path
+original = builtins.__import__
+def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == 'jailbee.cli' or (name == 'jailbee' and 'cli' in fromlist):
+        raise AssertionError('host CLI imported')
+    return original(name, globals, locals, fromlist, level)
+builtins.__import__ = guarded
+from jailbee import container_main
+container_main.container_deps.check = lambda: None
+container_main.PACKAGE_DIR = Path('.')
+from jailbee.entry import main
+sys.argv = ['jailbee', 'version']
+main()
+"""
+    env = dict(os.environ, JAILBEE_CONTEXT="container")
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()
+
+
 def test_entry_dispatches_to_container(monkeypatch, mocker):
     from jailbee import container_main
 
