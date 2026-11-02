@@ -32,6 +32,52 @@ def test_request_loads_target_config_and_resolves_full_name(mocker, tmp_path, co
     assert request.pending == []
 
 
+@pytest.mark.parametrize("dismiss", ["escape", "close"])
+def test_source_loading_keeps_processing_events_when_dismissed(mocker, tmp_path, qtbot, dismiss):
+    import threading
+
+    from PySide6.QtCore import Qt, QThread, QTimer
+    from PySide6.QtWidgets import QApplication
+    from jailbee.qtui import pr_sources
+
+    release = threading.Event()
+
+    class SlowRequest(QThread):
+        pending = []
+
+        def run(self):
+            release.wait(timeout=1)
+
+    worker = SlowRequest()
+    mocker.patch.object(pr_sources, "_Request", return_value=worker)
+    ticks = []
+    timer = QTimer()
+
+    def tick():
+        ticks.append(1)
+        if len(ticks) >= 8:
+            release.set()
+
+    def dismiss_window():
+        window = QApplication.activeModalWidget()
+        assert window is not None
+        if dismiss == "escape":
+            qtbot.keyClick(window, Qt.Key.Key_Escape)
+        else:
+            window.close()
+
+    timer.timeout.connect(tick)
+    timer.start(10)
+    QTimer.singleShot(20, dismiss_window)
+    try:
+        assert pr_sources.pending_pr_sources(RepoTarget(tmp_path, None), "short", None) == []
+    finally:
+        release.set()
+        worker.wait()
+        timer.stop()
+    assert len(ticks) >= 8
+
+
 def test_request_unreadable_config_keeps_own_branch_available(mocker, tmp_path):
     from jailbee.config import ConfigError
     from jailbee.qtui.pr_sources import _Request

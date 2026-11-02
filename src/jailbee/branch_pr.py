@@ -28,7 +28,7 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
     from jailbee.outbox_io import OutboxReadError
 
     try:
-        snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid)
+        snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
     except OutboxReadError:
         return []
     if snapshot.rejected or snapshot.identity is None:

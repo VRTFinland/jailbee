@@ -6,7 +6,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QThread
-from PySide6.QtWidgets import QProgressDialog
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout
 
 from jailbee.branch_pr import PendingSource
 
@@ -43,13 +44,32 @@ class _Request(QThread):
             log.debug("Cannot read PR source proposals", exc_info=True)
 
 
+class _LoadingDialog(QDialog):
+    """Keep the event loop alive until the worker can safely be released."""
+
+    def __init__(self, parent: QWidget | None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("PR source proposals")
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Reading PR source proposals...", self))
+        progress = QProgressBar(self)
+        progress.setRange(0, 0)
+        layout.addWidget(progress)
+
+    def reject(self) -> None:
+        # Esc cannot end the nested event loop while the request still runs.
+        pass
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        event.ignore()
+
+
 def pending_pr_sources(
     target: RepoTarget, name: str, parent: QWidget | None
 ) -> list[PendingSource]:
     request = _Request(target, name)
-    progress = QProgressDialog("Reading PR source proposals…", "", 0, 0, parent)
-    progress.setCancelButton(None)
-    progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+    progress = _LoadingDialog(parent)
     request.finished.connect(progress.accept)
     request.start()
     progress.exec()
