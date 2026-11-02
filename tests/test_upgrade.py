@@ -1082,6 +1082,23 @@ def test_runtime_rights_upgrade_notes_one_per_reason():
     assert supervision[0].actions == frozenset({"apply"})
 
 
+def test_service_upgrade_notes_have_separate_reasons() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    reasons = {
+        (
+            "the in-container jailbee venv adds questionary and prompt-toolkit "
+            "for `jailbee service` pickers"
+        ): "base_build",
+        "`jailbee apply` syncs skills describing `services:` and `jailbee service`": "apply",
+    }
+    for reason, action in reasons.items():
+        notes = [n for n in UPGRADE_NOTES if n.reason == reason]
+        assert len(notes) == 1
+        assert notes[0].version == (1, 8, 1)
+        assert notes[0].actions == frozenset({action})
+
+
 def test_adoption_upgrade_note_is_apply_only():
     from jailbee.upgrade import UPGRADE_NOTES
 

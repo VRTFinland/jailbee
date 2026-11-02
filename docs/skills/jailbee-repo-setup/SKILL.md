@@ -328,6 +328,16 @@ top-level `claude:` block as an alias for `agents.claude` — prefer
 `agents.claude` into the same layer stack; `jailbee config validate`
 rejects that combination with a `ConfigError`.
 
+### `services` — managed foreground processes
+
+Prefer defining long-running `background: true` autostart commands as
+`services:` with a foreground `run` command, optional readiness and stop
+commands, and explicit dependencies. Starting services is separate from
+autostart; conversion does not automatically start them on container boot.
+Use prepare for setup steps and `jailbee service refresh` to run them. Prepare
+with loose networking or mounts requires elevation, which is not yet available;
+ask the orchestrator. See [`services` schema](references/config-schema.md#services).
+
 ### `autostart.on_create` / `on_start` — what runs when a container appears
 
 `on_create` runs once when `jailbee new <name>` provisions the container. `on_start` runs every time the container goes stopped→running (including on the *initial* `jailbee new`, after `on_create`).

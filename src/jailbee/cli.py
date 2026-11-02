@@ -18047,7 +18047,7 @@ def _service_command(
 @service_app.command("ls")
 def service_ls_cmd(
     name: ContainerArg = None,
-    json_output: Annotated[bool, typer.Option("--json")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output JSON.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """List services."""
@@ -18057,7 +18057,7 @@ def service_ls_cmd(
 @service_app.command("start")
 def service_start_cmd(
     name: ContainerArg = None,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
+    names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
 ) -> None:
     """Start services."""
@@ -18067,7 +18067,7 @@ def service_start_cmd(
 @service_app.command("stop")
 def service_stop_cmd(
     name: ContainerArg = None,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
+    names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
 ) -> None:
     """Stop services."""
@@ -18077,7 +18077,7 @@ def service_stop_cmd(
 @service_app.command("restart")
 def service_restart_cmd(
     name: ContainerArg = None,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
+    names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
 ) -> None:
     """Restart services."""
@@ -18087,7 +18087,7 @@ def service_restart_cmd(
 @service_app.command("refresh")
 def service_refresh_cmd(
     name: ContainerArg = None,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
+    names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
 ) -> None:
     """Prepare and restart services."""
@@ -18097,9 +18097,9 @@ def service_refresh_cmd(
 @service_app.command("logs")
 def service_logs_cmd(
     name: ContainerArg = None,
-    service: Annotated[str | None, typer.Argument()] = None,
-    lines: Annotated[int, typer.Option("-n", min=1)] = 30,
-    follow: Annotated[bool, typer.Option("--follow")] = False,
+    service: Annotated[str | None, typer.Argument(help="Service name.")] = None,
+    lines: Annotated[int, typer.Option("-n", min=1, help="Number of log lines.")] = 30,
+    follow: Annotated[bool, typer.Option("--follow", help="Follow log output.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Show service logs."""

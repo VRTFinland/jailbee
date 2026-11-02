@@ -38,6 +38,18 @@ once after restaging on mismatch.
 Its internal exit codes distinguish version skew (86), missing or outdated
 dependencies (87), and code not mounted (88).
 
+## Service runtime
+
+Service definitions come from the container worktree's `.jailbee/config.yaml`.
+The host queries the container's `jailbee service plan --json` (version 1)
+as the machine interface rather than reading its own checkout. Mutations
+serialize on a container lock; state is stored under `~/.jailbee/services/`,
+with tmux windows as ground truth. Each foreground service runs in a `svc-*`
+window of the shared autostart session. Readiness gates dependent starts.
+`services/local_proc.py` is the container-only subprocess boundary for tmux and
+bash; runtime operations receive it as a dependency. Elevated prepare is
+refused until the orchestrated elevation path is implemented.
+
 ## Golden image
 
 `jailbee base build` provisions a golden using the configured

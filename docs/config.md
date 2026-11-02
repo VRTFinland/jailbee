@@ -15,6 +15,58 @@ optional host-local per-repo override:
 
 Run `jailbee config init` in a repo to generate a per-repo template.
 
+## Services
+
+`services:` defines named foreground processes in the repo config. Names start
+with a lowercase letter or digit, contain only lowercase letters, digits, `_`
+or `-`, and are at most 63 characters.
+
+| Field | Meaning and default |
+|---|---|
+| `run` | Required nonempty foreground command. |
+| `prepare` | Serial steps, default `[]`, executed only on refresh. |
+| `ready`, `ready_timeout` | Optional probe and positive timeout in seconds (120). |
+| `stop`, `stop_timeout` | Optional stop command and positive timeout in seconds (10). |
+| `working_dir`, `env` | Repo-relative directory (`""`) and environment (`{}`). |
+| `depends_on` | Map of service names to `{restart: false}` by default. |
+
+Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
+(list), `env`, `working_dir`, `timeout` (default autostart step timeout), and
+`continue_on_error` (false). Loose network or nonempty mounts requires elevation;
+only prepare can be elevated. Elevated refresh is not yet available.
+Dependencies must exist, be acyclic, and be ready before the dependent starts.
+`restart: true` cascades restarts to the dependent; `{}` does not.
+See [service commands](commands.md#services).
+
+### Service example
+
+This illustrative excerpt references `pricing` without defining it: define a
+`pricing` service or remove that dependency before validating the configuration.
+
+```yaml
+services:
+  db:
+    prepare:                       # optional serial list of steps
+      - run: docker compose pull
+        network: loose
+    run: docker compose up         # long-running, foreground
+    ready: docker compose exec db pg_isready   # optional
+    ready_timeout: 120             # seconds, optional
+    stop: docker compose stop      # optional
+    stop_timeout: 10               # seconds, optional
+    working_dir: ""                # relative to repo dir
+    env: {}
+  backend:
+    depends_on:
+      db: { restart: true }        # db restart cascades to backend
+      pricing: {}                  # must be running/ready; no cascade
+    prepare:
+      - run: uv sync
+        network: loose
+      - run: uv run manage.py migrate
+    run: uv run manage.py runserver
+```
+
 ## Configuration layers
 
 `jailbee` deep-merges three explicit YAML layers, then supplies schema

@@ -19,6 +19,19 @@ Common conventions:
 - Container names derive from branches by replacing `/` with `-`
   (`feat/foo` → `feat-foo`).
 
+## Services
+
+In a container: `jailbee service [ls] [--json]`, `jailbee service
+start|stop|restart|refresh [SERVICE...]`, `jailbee service logs [SERVICE]
+[-n N] [--follow]`, and `jailbee service plan [SERVICE...] --op
+start|restart|refresh --json`. Group option `--repo PATH` selects the repo.
+On the host: `jb service ls [CONTAINER] [--json]`, `jb service
+start|stop|restart|refresh [CONTAINER] [SERVICE...]`, and `jb service logs
+[CONTAINER] [SERVICE] [-n N] [--follow]`. Pickers require a terminal.
+Start includes dependencies; restart cascades only on `restart: true`;
+refresh prepares named services only. Elevated refresh is not yet available:
+ask the orchestrator when it is refused.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in an exact registered repo (never a path)

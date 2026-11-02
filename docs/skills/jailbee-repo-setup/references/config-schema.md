@@ -447,6 +447,23 @@ differ: a repo's `command` **replaces** the global one (a second binary
 path would otherwise become an argument to the first), while `args`
 **appends** to it, the way every other list-valued config key does.
 
+## `services`
+
+Repo service names start with a lowercase letter or digit, contain lowercase
+letters, digits, `_` or `-`, and have at most 63 characters. Each has required
+nonempty `run` and optional `prepare` (list), `ready` (command), `ready_timeout`
+(positive seconds, 120), `stop` (command), `stop_timeout` (positive seconds,
+10), `working_dir` (repo-relative, `""`), `env` (`{}`), and `depends_on` (`{}`).
+Dependency keys name defined services, form an acyclic graph, and must be ready
+before start; `{restart: true}` cascades restarts.
+
+Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
+(list), `env`, `working_dir`, `timeout` (default autostart step timeout), and
+`continue_on_error` (false). Loose network or nonempty mounts require elevation,
+unavailable until the orchestrated refresh path is implemented. Convert
+long-running `background: true` autostart steps to foreground services where
+appropriate; starting services remains a separate operation.
+
 ## `autostart`
 
 IDE and browser launches are controlled by `jetbrains.autostart` /

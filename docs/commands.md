@@ -31,6 +31,28 @@ returns it to the built-in height; with the mouse on, drag the panel's top borde
 The table always keeps five rows and its header, and the panel at least two rows.
 The height is remembered with the rest of the view.
 
+## Services
+
+Inside a container use `jailbee service [ls] [--json]`, `jailbee service
+start|stop|restart|refresh [SERVICE...]`, or `jailbee service logs [SERVICE]
+[-n N] [--follow]`. Group option `--repo PATH` selects a repository path;
+otherwise discovery starts at the current directory. `jailbee service plan
+[SERVICE...] --op start|restart|refresh --json` exposes the execution plan.
+
+On the host use `jb service ls [CONTAINER] [--json]`, `jb service
+start|stop|restart|refresh [CONTAINER] [SERVICE...]`, or `jb service logs
+[CONTAINER] [SERVICE] [-n N] [--follow]`. Omitted values use a terminal
+picker, otherwise the command reports candidates. Definitions always come from
+the container worktree, not the host checkout.
+
+Start includes dependencies and waits for readiness; stop does not stop
+dependents. Restart cascades only over `restart: true` edges. Refresh prepares
+only named services before restarting them and their cascaded dependents;
+start and restart never prepare. Elevated refresh is not yet available: ask
+the orchestrator if refused. Logs use tmux scrollback, not durable or
+byte-perfect capture: a line matching the exact tmux control-protocol snapshot
+trailer can truncate the snapshot or end following.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in that registered repository instead of the

@@ -47,7 +47,8 @@ isolated per-branch development environments using Incus system containers. See
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
 - **Shelling out to non-incus binaries is intentional** and stays one module
-  per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
+  per concern: `services/local_proc.py` (`tmux`, `bash`, inside a container only),
+  `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
   `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
   (`du`), `terminfo.py` (`infocmp`, on the host; the container side goes through
   `Incus`), `pool.py` (`rsync`), `macos.py` (`sh`), `mac_container.py`
