@@ -37,10 +37,12 @@ def sync_children(ctx: ActionContext) -> None:
                     started = value
         # A finished child may keep running until import/destroy; it must not
         # trip the helper's quiet watchdog, so it is published as not running.
+        sessions = labels.sessions_of(child.config)
         item = {
             "name": child.short,
             "running": child.running and not labels.is_finished(child.config),
             "started_at": started,
+            "session": sessions[-1] if sessions else None,
         }
         children.append(item)
         durable.append({**item, "running": child.running, "full": child.full, "key": child.key})

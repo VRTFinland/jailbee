@@ -1600,3 +1600,54 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
         except ProcessLookupError:
             pass
         proc.wait(timeout=3)
+
+
+def test_children_lists_name_running_session(script, base, tmp_path):
+    children = [{"name": "alpha", "running": True, "session": "abc"}, {"name": "beta", "running": False, "session": None}]
+    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": children}))
+    r = run(script, "children", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert len(r.stdout.splitlines()) == 2
+    assert r.stdout.splitlines()[0].split() == ["alpha", "true", "abc"]
+    assert r.stdout.splitlines()[1].split() == ["beta", "false", "-"]
+
+
+def test_children_json_prints_array(script, base, tmp_path):
+    children = [{"name": "a", "running": True, "session": None, "started_at": 1}]
+    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": children}))
+    r = run(script, "children", "--json", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == children
+
+
+def test_children_stale_heartbeat_notes_on_stderr(script, base, tmp_path):
+    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time() - 901, "children": []}))
+    r = run(script, "children", "--json", env=env_for(base, tmp_path))
+    assert r.returncode == 0
+    assert json.loads(r.stdout) == []
+    assert "stale" in r.stderr.lower()
+
+
+def test_children_missing_file_exits_1(script, base, tmp_path):
+    r = run(script, "children", env=env_for(base, tmp_path))
+    assert r.returncode == 1
+    assert "children.json" in r.stderr
+
+
+@pytest.mark.parametrize("resume", ["last", "01234567-89ab-cdef-0123-456789abcdef"])
+def test_send_restart_resume(script, base, tmp_path, resume):
+    _, manifest = manifest_of(base, send(script, base, tmp_path, "restart", "--child", "c", "--text", "go", "--resume", resume))
+    assert manifest["resume"] == resume
+
+
+def test_send_resume_only_for_restart(script, base, tmp_path):
+    r = send(script, base, tmp_path, "spawn", "--branch", "b", "--text", "go", "--resume", "last")
+    assert r.returncode == 2
+    assert "only applies to restart" in r.stderr
+
+
+def test_send_restart_resume_rejects_garbage(script, base, tmp_path):
+    r = send(script, base, tmp_path, "restart", "--child", "c", "--text", "go", "--resume", "../x")
+    assert r.returncode == 2
+    assert "--resume" in r.stderr
+    assert not (base / "outbox").exists()
