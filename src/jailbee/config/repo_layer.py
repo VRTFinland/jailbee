@@ -18,11 +18,12 @@ class RepoLayerReport:
 
 
 def validate_repo_layer(path: Path) -> RepoLayerReport:
+    path = path.resolve()
     label = str(path)
     try:
         text = path.read_text()
         cfg = load_config_from_layers(
-            {}, _parse_yaml_text(text, label), path, origin=label, emit_hint=False, local_raw={}
+            {}, _parse_yaml_text(text, label), path, origin=label, emit_hint=False, local_raw={}, repo_layer=True
         )
     except (ConfigError, OSError, UnicodeError) as exc:
         return RepoLayerReport(label, str(exc), (), ())

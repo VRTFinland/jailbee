@@ -556,6 +556,7 @@ def _build_config_from_dict(
     config_path: Path,
     *,
     origin: str | None = None,
+    repo_layer: bool = False,
 ) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -583,7 +584,7 @@ def _build_config_from_dict(
     raw = resolve_browsers_raw(raw)
     _check_retired_keys(raw)
     try:
-        cfg = Config.model_validate(raw)
+        cfg = Config.model_validate(raw, context={"repo_layer": repo_layer})
     except ValidationError as e:
         raise ConfigError(f"Config validation failed in {label}:\n{e}") from e
 
@@ -766,6 +767,7 @@ def load_config_from_layers(
     emit_hint: bool = True,
     local_raw: dict[str, object] | None = None,
     local_origin: str | None = None,
+    repo_layer: bool = False,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
@@ -902,7 +904,7 @@ def load_config_from_layers(
         merged["apps"] = merge_apps_raw(before_apps, local_apps)
 
     label = f"{origin} (+ {local_from})" if local_overlay else origin
-    cfg = _build_config_from_dict(merged, path, origin=label)
+    cfg = _build_config_from_dict(merged, path, origin=label, repo_layer=repo_layer)
 
     creds = _credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix, local_creds))
