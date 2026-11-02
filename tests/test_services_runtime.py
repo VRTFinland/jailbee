@@ -271,7 +271,12 @@ def test_stop_query_crosses_deadline(tmp_path):
     rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop_timeout": 1}})
     proc.windows["svc-web"] = (0, "", 123)
     proc.query_delay = 1.1
-    proc.sleep = lambda seconds: (_ for _ in ()).throw(ValueError("negative")) if seconds < 0 else None
+
+    def checked_sleep(seconds):
+        assert seconds >= 0
+        proc.clock += seconds
+
+    proc.sleep = checked_sleep
     assert rt.stop(["web"]).ok
     assert "svc-web" not in proc.windows
 
