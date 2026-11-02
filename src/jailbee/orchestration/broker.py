@@ -351,6 +351,22 @@ def _settle_agent_watch(
             )
         else:
             _reply(ctx, entry.ref, outcome, memory)
+    if updated is not None and updated.confirmed and child is not None:
+        token = agent_watch.idle_signal(ctx.cfg, child.full, status, now=ctx.now) if status is not None else None
+        updated, idle_body = agent_watch.advance_idle(
+            updated, token, now=ctx.now, after=ctx.cfg.orchestration_view().repo.idle_after_seconds
+        )
+        if idle_body is not None:
+            tail = agent_watch.output_tail(ctx.incus, child.full, status.agent if status else "agent", uid=ctx.cfg.container_user.uid)
+            if tail:
+                idle_body += f"\nLast agent output:\n{tail}"
+            message = InboxMessage.model_validate({
+                "version": 1, "id": new_host_id(), "type": "message", "from": child.short,
+                "kind": "idle", "body": idle_body, "in_reply_to": entry.ref,
+            })
+            deliver(ctx.incus, ctx.root, ctx.sender.full, message,
+                    running=ctx.sender.running, uid=ctx.cfg.container_user.uid,
+                    now=ctx.now, seq=next(memory.seq))
     index = entries.index(entry)
     if updated is None:
         entries.pop(index)
@@ -408,6 +424,10 @@ def _handle_raw(
             # The detail goes to the container; the exception text stays in the log.
             log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
             outcome = refused("broker error")
+    if (isinstance(manifest, MessageManifest) and manifest.kind != "done"
+            and outcome is not None and outcome.state in ("done", "queued") and ctx.role() == "child"):
+        watch.record_message(ctx.root, ctx.sender.config[labels.SPAWNED_BY], ctx.sender.full,
+                             manifest.kind or "note", manifest.body)
     if isinstance(manifest, MessageManifest) and manifest.kind == "done" and outcome is not None:
         if outcome.state in ("done", "queued") and ctx.role() == "child":
             watch.cancel(ctx.root, ctx.sender.config[labels.SPAWNED_BY], ctx.sender.full)
