@@ -448,7 +448,19 @@ def test_release_picker(patched, mocker):
     assert "warning" in result.output
 
 
-def test_release_single_candidate_is_selected_without_prompt(patched, mocker):
+def test_release_single_candidate_noninteractive_refuses(patched, mocker):
+    prefix = patched.cfg.container_prefix
+    mocker.patch("jailbee.incus.Incus", return_value=patched.incus)
+    mocker.patch("jailbee.orchestration.adoption.children_of_repo", return_value=[f"{prefix}-a"])
+    release = mocker.patch("jailbee.orchestration.adoption.release")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["orchestrate", "release"])
+    assert result.exit_code == 2, result.output
+    assert "a" in result.output
+    release.assert_not_called()
+
+
+def test_release_single_candidate_interactive_uses_picker(patched, mocker):
     from jailbee.orchestration.adoption import ReleaseResult
 
     prefix = patched.cfg.container_prefix
@@ -458,12 +470,12 @@ def test_release_single_candidate_is_selected_without_prompt(patched, mocker):
         "jailbee.orchestration.adoption.release",
         return_value=ReleaseResult(f"{prefix}-o", (), ()),
     )
-    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    select = mocker.patch("jailbee.prompting._select")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value=f"{prefix}-a")
     result = runner.invoke(app, ["orchestrate", "release"])
     assert result.exit_code == 0, result.output
+    select.assert_called_once()
     release.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-a")
-    select.assert_not_called()
     assert "Released 'a' from 'o'" in result.output
 
 

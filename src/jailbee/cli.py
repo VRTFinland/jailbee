@@ -13022,6 +13022,7 @@ def orchestrate_release_cmd(
                     "child to release",
                     [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names],
                     empty_reason="no child container of this repo can be released",
+                    destructive=True,
                 )
             ]
         for child in selected:
