@@ -5714,6 +5714,61 @@ def test_container_merge_wraps_prune_failure(mocker):
         )
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        "fatal: You have not concluded your merge (MERGE_HEAD exists).",
+        "error: Merging is not possible because you have unmerged files.",
+    ],
+)
+def test_container_merge_existing_operation_is_not_conflict(mocker, error):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError(error))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    with pytest.raises(sync.SyncError) as exc:
+        sync._merge_ref_in_container(
+            incus,
+            "box",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+            resolve_gitlinks=False,
+        )
+    assert not isinstance(exc.value, sync.MergeConflictError)
+
+
+def test_container_merge_post_merge_maintenance_error_records_head(mocker):
+    incus = mocker.MagicMock()
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync._container_head_oid", return_value="b" * 40)
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync._exec_container_git_write")
+    mocker.patch(
+        "jailbee.sync.submodules.update_submodules_in_container",
+        side_effect=sync.IncusError("submodule failed"),
+    )
+    with pytest.raises(sync.PostMergeError) as exc:
+        sync._merge_ref_in_container(
+            incus,
+            "box",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+            resolve_gitlinks=False,
+        )
+    assert exc.value.head == "b" * 40
+
+
 def test_container_merge_failure_does_not_prune(mocker):
     incus = mocker.MagicMock()
     mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
@@ -9760,3 +9815,30 @@ def test_forced_pinned_push_leases_absent_remote(mocker, make_cfg, tmp_path):
     push = mocker.patch("jailbee.git.push_to_remote")
     sync.push_ref_to_remote(cfg, "refs/jailbee/feat/source/heads/topic", "topic", force=True)
     assert push.call_args.kwargs["force_with_lease"] == ""
+
+
+def test_container_merge_can_refuse_gitlink_resolution(mocker):
+    incus = mocker.MagicMock()
+    runner = mocker.MagicMock(return_value=(True, "base"))
+    mocker.patch("jailbee.sync.submodules._container_runner", return_value=runner)
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="head")
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync.submodules.assert_vanishing_clean")
+    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError("conflict"))
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    resolver = mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
+    with pytest.raises(sync.MergeConflictError):
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+            resolve_gitlinks=False,
+        )
+    resolver.assert_not_called()
+    incus.exec.assert_not_called()

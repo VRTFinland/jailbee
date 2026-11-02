@@ -284,3 +284,257 @@ def test_update_rejects_invalid_import_oid(tmp_path, seams, oid):
     seams["merge"].return_value = _result(oid)
     assert actions.dispatch(_ctx(tmp_path), _manifest()).state == "refused"
     seams["deliver"].assert_not_called()
+
+
+@pytest.fixture
+def merge_seams(mocker):
+    from jailbee.sync import MergeProbe
+
+    return {
+        "preflight": mocker.patch(
+            "jailbee.sync._run_container_preflights", return_value="child-branch"
+        ),
+        "probe": mocker.patch(
+            "jailbee.sync.probe_merge_in_container", return_value=MergeProbe("fast_forward", ())
+        ),
+        "merge": mocker.patch("jailbee.sync._merge_ref_in_container", return_value="b" * 40),
+        "abort": mocker.patch("jailbee.sync.abort_merge_in_container"),
+        "head": mocker.patch("jailbee.sync._container_head_oid", return_value="c" * 40),
+    }
+
+
+def test_update_manifest_merge_defaults_false():
+    m = _manifest()
+    assert m.merge is False
+    assert "merge" not in m.model_dump(exclude_defaults=True)
+
+
+def test_update_merge_fast_forward_merges_and_messages(tmp_path, seams, merge_seams):
+    ctx = _ctx(tmp_path)
+    seams["repo"].side_effect = lambda cfg, incus, name: "/child" if name == CHILD else "/parent"
+    out = actions.dispatch(ctx, _manifest(merge=True))
+    assert out.state == "done"
+    call = merge_seams["merge"].call_args
+    assert call.args[2] == "/child"
+    assert call.kwargs["ff_only"] is True
+    assert call.kwargs["ref"] == "refs/jailbee/from/fix-1/fix-1"
+    assert call.kwargs["uid"] == ctx.cfg.container_user.uid
+    msg = seams["deliver"].call_args.args[3]
+    assert msg.merged_head == "b" * 40 and "fast-forward" in msg.body
+
+
+def test_update_merge_creates_merge_commit(tmp_path, seams, merge_seams):
+    from jailbee.sync import MergeProbe
+
+    merge_seams["probe"].return_value = MergeProbe("merge", ())
+    assert actions.dispatch(_ctx(tmp_path), _manifest(merge=True)).state == "done"
+    kwargs = merge_seams["merge"].call_args.kwargs
+    assert not kwargs["ff_only"]
+    assert kwargs["message"] == "Merge main from orchestrator orch"
+
+
+@pytest.mark.parametrize(
+    "paths, expected",
+    [(("a.py", "b.py"), "a.py, b.py"), (tuple(str(i) for i in range(25)), "… and 5 more")],
+)
+def test_update_merge_conflicts_refused(tmp_path, seams, merge_seams, paths, expected):
+    from jailbee.sync import MergeProbe
+
+    merge_seams["probe"].return_value = MergeProbe("merge", paths)
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "refused" and expected in out.detail
+    assert "refs/jailbee/from/fix-1/fix-1" in out.detail
+    merge_seams["merge"].assert_not_called()
+    seams["deliver"].assert_not_called()
+
+
+def test_update_merge_conflict_without_paths_refuses(tmp_path, seams, merge_seams):
+    from jailbee.sync import MergeProbe
+
+    merge_seams["probe"].return_value = MergeProbe("merge", (), conflicted=True)
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "refused" and "conflict" in out.detail
+    merge_seams["merge"].assert_not_called()
+    seams["deliver"].assert_not_called()
+
+
+def test_update_merge_abort_failure_is_not_reported_as_aborted(
+    tmp_path, seams, merge_seams, mocker
+):
+    from jailbee.sync import MergeConflictError
+
+    merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
+    merge_seams["abort"].return_value = False
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "refused" and "manual" in out.detail
+    assert "merge aborted" not in out.detail
+    seams["deliver"].assert_not_called()
+
+
+def test_update_merge_dirty_child_refused_before_transport(tmp_path, seams, merge_seams):
+    merge_seams["preflight"].side_effect = SyncError("Container working tree is dirty")
+    assert actions.dispatch(_ctx(tmp_path), _manifest(merge=True)).state == "refused"
+    seams["merge"].assert_not_called()
+
+
+def test_update_merge_mount_mode_refused(tmp_path, seams, merge_seams):
+    ctx = _ctx(tmp_path)
+    ctx.incus.with_exec_timeout.return_value.config_get.return_value = "mount"
+    assert actions.dispatch(ctx, _manifest(merge=True)).state == "refused"
+    seams["merge"].assert_not_called()
+    merge_seams["preflight"].assert_not_called()
+
+
+def test_update_merge_already_contained_no_merge(tmp_path, seams, merge_seams):
+    from jailbee.sync import MergeProbe
+
+    merge_seams["probe"].return_value = MergeProbe("contained", ())
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "done" and out.detail == f"fix-1 already contains {SHA[:12]}"
+    merge_seams["merge"].assert_not_called()
+    msg = seams["deliver"].call_args.args[3]
+    assert "already contains" in msg.body and msg.merged_head == "c" * 40
+
+
+def test_update_merge_race_conflict_aborts_and_refuses(tmp_path, seams, merge_seams, mocker):
+    from jailbee.sync import MergeConflictError
+
+    merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
+    assert actions.dispatch(_ctx(tmp_path), _manifest(merge=True)).state == "refused"
+    merge_seams["abort"].assert_called_once()
+    seams["deliver"].assert_not_called()
+
+
+def test_update_merge_existing_operation_refused_without_abort(
+    tmp_path, seams, merge_seams, mocker
+):
+    merge_seams["preflight"].side_effect = ["child-branch", SyncError("merge in progress")]
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "refused" and "merge in progress" in out.detail
+    merge_seams["merge"].assert_not_called()
+    merge_seams["abort"].assert_not_called()
+    seams["deliver"].assert_not_called()
+
+
+def test_update_merge_git_existing_merge_refusal_does_not_abort(
+    tmp_path, seams, merge_seams, mocker
+):
+    from jailbee import sync
+
+    mocker.stop(merge_seams["merge"])
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="a" * 40)
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
+    mocker.patch(
+        "jailbee.sync._exec_container_git_write",
+        side_effect=sync.IncusError(
+            "fatal: You have not concluded your merge (MERGE_HEAD exists)."
+        ),
+    )
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "refused" and "MERGE_HEAD" in out.detail
+    merge_seams["abort"].assert_not_called()
+    seams["deliver"].assert_not_called()
+
+
+@pytest.mark.parametrize("head", ["b" * 40, None])
+def test_update_merge_post_merge_warning_delivers(tmp_path, seams, merge_seams, mocker, head):
+    from jailbee import sync
+
+    mocker.stop(merge_seams["merge"])
+    mocker.patch("jailbee.sync._container_ref_oid", return_value="a" * 40)
+    merge_seams["head"].side_effect = [head] if head else [SyncError("cannot read HEAD")]
+    mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
+    mocker.patch("jailbee.sync._exec_container_git_write")
+    mocker.patch(
+        "jailbee.sync.submodules.update_submodules_in_container",
+        side_effect=sync.IncusError("submodule failed"),
+    )
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
+    assert out.state == "done" and "warning" in out.detail
+    msg = seams["deliver"].call_args.args[3]
+    assert msg.merged_head == head
+    assert "submodule failed" in msg.body and "re-read" in msg.body
+    assert "do not merge" in msg.body
+
+
+def test_update_merge_with_explicit_ref(tmp_path, seams, merge_seams, mocker):
+    mocker.patch("jailbee.orchestration.importing._update_source", return_value=SHA)
+    mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
+    assert (
+        actions.dispatch(_ctx(tmp_path), _manifest(ref="refs/heads/release/1", merge=True)).state
+        == "done"
+    )
+    assert merge_seams["probe"].call_args.kwargs["ref"] == "refs/jailbee/update/orch/u1"
+    assert merge_seams["merge"].call_args.kwargs["label"] == "refs/heads/release/1"
+
+
+def test_update_without_merge_never_probes(tmp_path, seams, merge_seams):
+    assert actions.dispatch(_ctx(tmp_path), _manifest()).state == "done"
+    merge_seams["probe"].assert_not_called()
+    merge_seams["preflight"].assert_not_called()
+
+
+def test_inbox_merged_head_validated():
+    from pydantic import ValidationError
+
+    from jailbee.orchestration.protocol import InboxMessage
+
+    fields = dict(version=1, id="h-12345678", type="message", body="x", merged_head="bad")
+    with pytest.raises(ValidationError):
+        InboxMessage.model_validate({**fields, "from": "orch"})
+
+
+@pytest.mark.parametrize("source", [{"ref": "refs/heads/release/1"}, {"base": "main"}])
+def test_update_merge_explicit_dirty_before_source_or_transport(
+    tmp_path, seams, merge_seams, mocker, source
+):
+    merge_seams["preflight"].side_effect = SyncError("dirty")
+    source_resolve = mocker.patch("jailbee.orchestration.importing._update_source")
+    prepare = mocker.patch("jailbee.forking.prepare_fork")
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_container")
+    push = mocker.patch("jailbee.sync.push_to_container")
+    out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True, **source))
+    assert out == actions.refused("dirty")
+    for call in (source_resolve, prepare, transport, push):
+        call.assert_not_called()
+
+
+def test_update_merge_child_repo_preflight_probe_and_abort(tmp_path, seams, merge_seams, mocker):
+    from jailbee.sync import MergeConflictError
+
+    ctx = _ctx(tmp_path)
+    bounded = ctx.incus.with_exec_timeout.return_value
+    seams["repo"].side_effect = lambda cfg, incus, name: "/child" if name == CHILD else "/parent"
+    merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
+    out = actions.dispatch(ctx, _manifest(merge=True))
+    uid = ctx.cfg.container_user.uid
+    assert merge_seams["preflight"].call_count == 2
+    merge_seams["preflight"].assert_called_with(bounded, CHILD, "/child", uid=uid)
+    merge_seams["probe"].assert_called_once_with(
+        bounded, CHILD, "/child", ref="refs/jailbee/from/fix-1/fix-1", uid=uid
+    )
+    assert merge_seams["merge"].call_args.kwargs["resolve_gitlinks"] is False
+    merge_seams["abort"].assert_called_once_with(bounded, CHILD, "/child", uid=uid)
+    assert out == actions.refused("child changed during update; merge aborted, nothing merged")
+    seams["deliver"].assert_not_called()
+
+
+def test_inbox_json_omits_only_unset_merged_head():
+    import json
+
+    from jailbee.orchestration.protocol import InboxMessage
+
+    msg = InboxMessage.model_validate(
+        {"version": 1, "id": "h-12345678", "type": "message", "from": "orch", "body": "hi"}
+    )
+    data = json.loads(msg.model_dump_json(by_alias=True))
+    assert "merged_head" not in data
+    assert data["imported_ref"] is None and data["imported_sha"] is None
+    assert data["on_done"] is None
+    with_head = msg.model_copy(update={"merged_head": "a" * 40})
+    assert json.loads(with_head.model_dump_json(by_alias=True))["merged_head"] == "a" * 40

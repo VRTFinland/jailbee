@@ -514,6 +514,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     ),
     UpgradeNote(
         version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox accepts `send update --merge` to merge "
+            "an update into a child's branch after a conflict check"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills telling children to keep "
@@ -526,6 +534,13 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason=(
             "`jailbee apply` syncs the usage skill describing `orchestrate profile save` "
             "and dashboard orchestration menu improvements"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing conflict-checked update merges"
         ),
     ),
 )

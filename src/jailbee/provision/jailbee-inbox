@@ -49,7 +49,9 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
                     [--agent-only] [runner | --default-runner] + text
                     --agent-only relaunches an idle RUNNING child's agent only;
                     no boot/on_start, no extra slot, cannot use --autostart-profile.
-           update   --child C [--ref REF | --base BRANCH]
+           update   --child C [--ref REF | --base BRANCH] [--merge]
+                    --merge merges the update into the child's branch after a
+                    conflict check; a conflict refuses it.
            import | stop   --child C
            destroy  --child C [--force]
            rights   [--child C] [--loose] [--mount M]... [--egress H]... --for DUR
@@ -553,7 +555,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local autostart_profile="" agent_only=0
+    local autostart_profile="" agent_only=0 merge=0
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=() revoke_mounts=() revoke_egress=()
@@ -562,6 +564,7 @@ cmd_send() {
     while [ $# -gt 0 ]; do
         opt_val=""
         case "$1" in
+            --merge) merge=1; shift; continue ;;
             --wait) wait=1; shift; continue ;;
             --new) new=1; shift; continue ;;
             --loose) loose=1; shift; continue ;;
@@ -606,6 +609,7 @@ cmd_send() {
         shift 2
     done
 
+    [ "$merge" -eq 0 ] || [ "$type" = "update" ] || bad_usage "--merge only applies to update"
     if [ "$agent_only" -eq 1 ]; then
         [ "$type" = "restart" ] || bad_usage "--agent-only only applies to restart"
         [ -z "$autostart_profile" ] || bad_usage "--agent-only cannot be combined with --autostart-profile"
@@ -812,9 +816,11 @@ cmd_send() {
                  + (if $force == 1 then {force: true} else {} end)' > "$json_tmp" ;;
         update)
             jq -n --arg id "$id" --arg child "$child" --arg ref "$ref" --arg base "$base_branch" \
+                --argjson merge "$merge" \
                 '{version: 1, id: $id, type: "update", child: $child}
                  + (if $ref != "" then {ref: $ref} else {} end)
-                 + (if $base != "" then {base: $base} else {} end)' > "$json_tmp" ;;
+                 + (if $base != "" then {base: $base} else {} end)
+                 + (if $merge == 1 then {merge: true} else {} end)' > "$json_tmp" ;;
         import|stop)
             jq -n --arg id "$id" --arg type "$type" --arg child "$child" \
                 '{version: 1, id: $id, type: $type, child: $child}' > "$json_tmp" ;;

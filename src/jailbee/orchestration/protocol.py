@@ -14,9 +14,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SerializerFunctionWrapHandler,
     TypeAdapter,
     ValidationError,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -237,6 +239,7 @@ class UpdateManifest(_Manifest):
     child: str
     ref: str | None = None
     base: str | None = None
+    merge: bool = False
 
     @field_validator("ref")
     @classmethod
@@ -319,10 +322,25 @@ class InboxMessage(BaseModel):
     in_reply_to: str | None = None
     imported_ref: str | None = None
     imported_sha: str | None = None
+    merged_head: str | None = None
     import_error: str | None = None
     on_done: OnDone | None = None
     autostart_profile: str | None = None
     on_done_reason: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        if self.merged_head is None:
+            result.pop("merged_head", None)
+        return result
+
+    @field_validator("merged_head")
+    @classmethod
+    def _merged_head(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("merged_head must be a 40-character lowercase commit id")
+        return value
 
 
 class PendingFinish(BaseModel):
