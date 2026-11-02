@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jailbee import __version__
 from jailbee.cli_context import EXIT_NOT_MOUNTED, EXIT_SKEW
@@ -108,17 +108,19 @@ def profile_device() -> dict[str, dict[str, str]]:
 
 
 def run_in_container(
-    cfg: Config, incus: Incus, full: str, args: Sequence[str], *, uid: int | None
+    cfg: Config, incus: Incus, full: str, args: Sequence[str], *, uid: int | None,
+    cwd: str | None = None, env: dict[str, str] | None = None, init_groups: bool = False,
 ) -> ExecResult:
     expected = f"{__version__} {code_hash()}"
     command = ["jailbee", "--expect-version", expected, *args]
-    result = incus.exec_bytes(full, command, uid=uid)
+    kwargs: dict[str, Any] = {} if cwd is None and env is None and not init_groups else {"cwd": cwd, "env": env, "init_groups": init_groups}
+    result = incus.exec_bytes(full, command, uid=uid, **kwargs)
     if result.returncode == EXIT_SKEW:
         stage(force=True)
         from jailbee.agent_skills import sync_agent_skills
 
         sync_agent_skills(cfg)
-        result = incus.exec_bytes(full, command, uid=uid)
+        result = incus.exec_bytes(full, command, uid=uid, **kwargs)
         if result.returncode == EXIT_SKEW:
             their = result.stderr.decode(errors="replace").strip() or "unknown"
             raise ContainerJailbeeError(
@@ -133,4 +135,30 @@ def run_in_container(
             "this container's image has no in-container jailbee - run `jb base build`, "
             "then recreate the container"
         )
+    return result
+
+
+def run_in_container_interactive(
+    cfg: Config, incus: Incus, full: str, args: Sequence[str], *,
+    uid: int | None, cwd: str | None = None,
+) -> int:
+    from jailbee.config import CONTAINER_USERNAME
+
+    expected = f"{__version__} {code_hash()}"
+    command = ["jailbee", "--expect-version", expected, *args]
+    def execute() -> int:
+        return incus.exec_interactive(full, command, uid=uid, cwd=cwd,
+            env={"HOME": f"/home/{CONTAINER_USERNAME}"}, init_groups=True)
+    result = execute()
+    if result == EXIT_SKEW:
+        stage(force=True)
+        from jailbee.agent_skills import sync_agent_skills
+        sync_agent_skills(cfg)
+        result = execute()
+        if result == EXIT_SKEW:
+            raise ContainerJailbeeError(f"container still sees a different jailbee after restaging {expected}")
+    if result == EXIT_NOT_MOUNTED:
+        raise ContainerJailbeeError("in-container jailbee is not mounted - run `jb apply` on the host")
+    if result == 127:
+        raise ContainerJailbeeError("this container's image has no in-container jailbee - run `jb base build`, then recreate the container")
     return result

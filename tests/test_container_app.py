@@ -197,3 +197,19 @@ def test_broker_start_syncs_skills_on_change(monkeypatch, tmp_path):
     )
     broker._stage_container_app(broker.BrokerMemory())
     assert sync.call_args_list == [call(cfgs[0]), call(cfgs[1])]
+
+
+def test_interactive_retries_once_on_skew(monkeypatch):
+    incus = Mock()
+    incus.exec_interactive.side_effect = [86, 0]
+    stage = Mock()
+    sync = Mock()
+    monkeypatch.setattr(container_app, "stage", stage)
+    monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
+    cfg = Mock()
+    assert container_app.run_in_container_interactive(cfg, incus, "one", ["version"], uid=123, cwd="/repo") == 0
+    stage.assert_called_once_with(force=True)
+    sync.assert_called_once_with(cfg)
+    incus.exec_interactive.side_effect = [86, 86]
+    with pytest.raises(container_app.ContainerJailbeeError):
+        container_app.run_in_container_interactive(cfg, incus, "one", [], uid=123)

@@ -423,6 +423,12 @@ NO_UNLOCKS = RemoteUnlocks()
 
 _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
     {
+        "service ls",
+        "service logs",
+        "service start",
+        "service stop",
+        "service restart",
+        "service refresh",
         "account ls",
         "account group ls",
         "orchestrate ls",
