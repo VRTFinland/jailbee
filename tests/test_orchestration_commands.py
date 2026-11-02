@@ -177,17 +177,19 @@ def test_save_profile_refuses_existing_without_force(cfg, incus_with_grant, tmp_
 
 def test_save_profile_force_replaces(cfg, incus_with_grant, tmp_path):
     path = tmp_path / "global.yaml"
-    path.write_text("orchestration:\n  profiles:\n    bugfixer:\n      max_running_children: 5\n")
+    path.write_text(
+        "orchestration:\n  profiles:\n    bugfixer:\n      max_running_children: 5\n"
+        "      default_runner:\n        agent: claude\n        model: sonnet\n"
+        "    adjacent:\n      max_running_children: 7\n"
+    )
     saved = commands.save_profile(
         cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True
     )
     assert saved.replaced is True
-    assert (
-        yaml.safe_load(path.read_text())["orchestration"]["profiles"]["bugfixer"][
-            "max_running_children"
-        ]
-        == 3
-    )
+    profiles = yaml.safe_load(path.read_text())["orchestration"]["profiles"]
+    assert profiles["bugfixer"]["max_running_children"] == 3
+    assert "default_runner" not in profiles["bugfixer"]
+    assert profiles["adjacent"] == {"max_running_children": 7}
 
 
 def test_save_profile_refuses_local_shadow(cfg, incus_with_grant, mocker, tmp_path):
