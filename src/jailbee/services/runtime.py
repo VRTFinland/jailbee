@@ -86,7 +86,15 @@ class ServiceRuntime:
                 os.unlink(path)
 
     def _panes(self) -> dict[str, _Pane]:
-        result = self.proc.tmux(["list-windows", "-t", SESSION_NAME, "-F", "#{window_name}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}"])
+        result = self.proc.tmux(
+            [
+                "list-windows",
+                "-t",
+                SESSION_NAME,
+                "-F",
+                "#{window_name}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}",
+            ]
+        )
         panes: dict[str, _Pane] = {}
         for line in result.stdout.splitlines():
             fields = line.split("\t")
@@ -108,11 +116,21 @@ class ServiceRuntime:
             if pane is None:
                 result.append(ServiceStatus(name, "stopped", None, None, ""))
             elif pane.dead:
-                result.append(ServiceStatus(name, "exited", window, saved.get("since"), f"exited with status {pane.status}"))
+                result.append(
+                    ServiceStatus(
+                        name,
+                        "exited",
+                        window,
+                        saved.get("since"),
+                        f"exited with status {pane.status}",
+                    )
+                )
             else:
                 raw = saved.get("state", "ready")
                 state: State = raw if raw in ("starting", "ready", "failed") else "ready"  # type: ignore[assignment]  # narrowed by membership
-                result.append(ServiceStatus(name, state, window, saved.get("since"), saved.get("detail", "")))
+                result.append(
+                    ServiceStatus(name, state, window, saved.get("since"), saved.get("detail", ""))
+                )
         return result
 
     def _target(self, name: str) -> str:
@@ -120,10 +138,18 @@ class ServiceRuntime:
 
     def logs(self, name: str, lines: int) -> str:
         topo_order(self.cfg.services, [name])
-        return self.proc.tmux(["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"]).stdout
+        return self.proc.tmux(
+            ["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"]
+        ).stdout
 
     def _shell(self, service: Service, command: str, timeout: float, *, capture: bool) -> int:
-        return self.proc.run_shell(command, cwd=str(self.repo_dir / service.working_dir), env=service.env, timeout=timeout, capture=capture)
+        return self.proc.run_shell(
+            command,
+            cwd=str(self.repo_dir / service.working_dir),
+            env=service.env,
+            timeout=timeout,
+            capture=capture,
+        )
 
     def _start_one(self, name: str) -> bool:
         service = self.cfg.services[name]
@@ -132,15 +158,29 @@ class ServiceRuntime:
         if existing is not None:
             self.proc.tmux(["kill-window", "-t", target])
         if self.proc.tmux(["has-session", "-t", SESSION_NAME]).returncode:
-            result = self.proc.tmux(["new-session", "-d", "-s", SESSION_NAME, "-x", "200", "-y", "50"])
+            result = self.proc.tmux(
+                ["new-session", "-d", "-s", SESSION_NAME, "-x", "200", "-y", "50"]
+            )
             if result.returncode:
                 self._save(name, "failed", result.stderr)
                 return False
         # Set the inherited option before spawning, so even instant exits survive.
-        previous = self.proc.tmux(["show-options", "-g", "-w", "-v", "remain-on-exit"]).stdout.strip() or "off"
+        previous = (
+            self.proc.tmux(["show-options", "-g", "-w", "-v", "remain-on-exit"]).stdout.strip()
+            or "off"
+        )
         self.proc.tmux(["set-option", "-g", "-w", "remain-on-exit", "on"])
         self._save(name, "starting")
-        args = ["new-window", "-d", "-t", f"{SESSION_NAME}:", "-n", WINDOW_PREFIX + name, "-c", str(self.repo_dir / service.working_dir)]
+        args = [
+            "new-window",
+            "-d",
+            "-t",
+            f"{SESSION_NAME}:",
+            "-n",
+            WINDOW_PREFIX + name,
+            "-c",
+            str(self.repo_dir / service.working_dir),
+        ]
         for key, value in service.env.items():
             args.extend(["-e", f"{key}={value}"])
         args.extend(["bash", "-lc", service.run])
