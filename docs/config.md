@@ -32,6 +32,16 @@ schema-default list and its first explicit value. Agent presets are a separate
 base for agent entries (see [`agents`](#agents)). The effective `Config` object
 contains the validated result.
 
+## Validating inside a container
+
+Inside a Jailbee container, `jailbee config validate` checks the repository's
+`.jailbee/config.yaml` against the schema and defaults. Host global and
+host-local layers and host path existence are not checked; mount references
+that may be defined by a host layer are reported as unchecked. Use `--config
+PATH` to choose another file. On the host, `jailbee config validate
+--repo-layer` performs the same repo-only check; without that flag the host
+validates the merged configuration.
+
 ## Host-local overrides
 
 Use the host-local file for a repo-specific choice that should not be shared

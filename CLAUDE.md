@@ -39,6 +39,9 @@ isolated per-branch development environments using Incus system containers. See
   directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
   `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
   derivation is never defined in `Config`, the CLI or the overview.
+- **Container CLI dispatch:** `entry.py` selects `container_cli` before importing
+  the host CLI. Container-side modules use only the standard library or baked
+  dependencies and do not start subprocesses.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.

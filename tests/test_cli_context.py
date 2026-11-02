@@ -8,6 +8,11 @@ from jailbee import cli_context
 def test_env_override_wins(tmp_path: Path) -> None:
     for context in ("host", "container"):
         assert cli_context.detect({"JAILBEE_CONTEXT": context}, tmp_path / "none", "/x") == context
+    marker = tmp_path / "marker"
+    marker.touch()
+    assert cli_context.detect(
+        {"JAILBEE_CONTEXT": "host"}, marker, "/opt/jailbee/app/current/jailbee/__init__.py"
+    ) == "host"
 
 
 def test_marker_and_mount_path_means_container(tmp_path: Path) -> None:
@@ -34,6 +39,25 @@ def test_wrong_side_message(monkeypatch: pytest.MonkeyPatch) -> None:
         cli_context.wrong_side_message("service", "host") or ""
     )
     assert cli_context.wrong_side_message("unknown", "container") is None
+
+
+def test_import_time_version_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.metadata
+    import runpy
+
+    import jailbee
+
+    package = tmp_path / "jailbee"
+    package.mkdir()
+    init = package / "__init__.py"
+    init.write_text(Path(jailbee.__file__).read_text())
+    (tmp_path / "VERSION").write_text("1.8.1 abcd\n")
+
+    def missing(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert runpy.run_path(str(init))["__version__"] == "1.8.1"
 
 
 def test_version_falls_back_to_staged_file(tmp_path: Path) -> None:

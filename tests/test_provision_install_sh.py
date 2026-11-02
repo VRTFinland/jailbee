@@ -327,6 +327,7 @@ def test_install_sh_creates_venv_and_launchers():
     assert "/opt/jailbee/venv/bin/pip install --no-cache-dir $JAILBEE_CONTAINER_DEPS" in script
     assert "/opt/jailbee/deps.json" in script
     assert "/etc/jailbee/container" in script
+    assert "chmod 755 /usr/local/bin/jailbee" in script
     assert "ln -s" in script and "/usr/local/bin/jb" in script
 
 

@@ -93,22 +93,6 @@ class UpgradeNote:
 
 UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image carries an in-container `jailbee` "
-            "(dependency venv, launcher, context marker)"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"apply"}),
-        reason=(
-            "`jailbee apply` mounts the host's jailbee code read-only into containers "
-            "at /opt/jailbee/app"
-        ),
-    ),
-    UpgradeNote(
         version=(1, 2, 0),
         actions=frozenset({"base_build"}),
         reason=(
@@ -519,6 +503,27 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`jailbee apply` syncs orchestration skills describing live-agent idle "
             "reports and including idle in the recommended wake filter"
         ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image carries an in-container `jailbee` "
+            "(dependency venv, launcher, context marker)"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` mounts the host's jailbee code read-only into containers "
+            "at /opt/jailbee/app"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason="`jailbee apply` syncs skills describing `jailbee config validate` inside containers",
     ),
 )
 """What each release requires, ascending by version. Maintained by hand.

@@ -10,6 +10,8 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **In-container jailbee.** Validate the repo configuration from inside a container; host code is staged read-only and kept in sync.
+
 - **GPG keys over remote SSH.** With `remote.ssh.gpg`, a `jb remote ssh`
   client can forward its gpg-agent with one `RemoteForward` line; while
   connected, `gpg.enabled` containers decrypt and sign with the client's keys

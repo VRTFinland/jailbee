@@ -276,7 +276,12 @@ seen configured before:
   rename. Two *scratch* directories with the same name still share a prefix
   (see below).
 
-`jailbee config show` / `jailbee config validate` both work here too, and
+Inside a Jailbee container, `jailbee config validate` checks only the repo
+layer, not host global or host-local layers. Host `jailbee config validate
+--repo-layer` performs the same check. Host paths are not checked, and mount
+references supplied only by host layers are reported as unchecked.
+
+On the host, `jailbee config show` / `jailbee config validate` both work here too, and
 report the same synthesized source instead of erroring on the missing file.
 The one command that still needs a real config file is `jailbee net egress
 export`: it prints a replacement for the repo config's `egress_allow:` key,

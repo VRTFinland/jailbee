@@ -113,6 +113,18 @@ def test_claude_jb_upgrade_note_advises_base_build_only() -> None:
     assert notes[0].actions == frozenset({"base_build"})
 
 
+def test_in_container_jailbee_upgrade_notes_are_separate() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1)]
+    for phrase, action in (
+        ("dependency venv, launcher, context marker", "base_build"),
+        ("mounts the host's jailbee code read-only", "apply"),
+        ("syncs skills describing `jailbee config validate` inside containers", "apply"),
+    ):
+        assert [n.actions for n in notes if phrase in n.reason] == [frozenset({action})]
+
+
 def test_upcoming_context_flag_has_one_note_per_action() -> None:
     """The wrapper is in the image (`base build`); the ceiling is in `litellm.json` (`apply`)."""
     from jailbee.upgrade import UPGRADE_NOTES
