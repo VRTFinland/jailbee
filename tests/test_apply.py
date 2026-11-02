@@ -3515,13 +3515,14 @@ def test_apply_samples_usage_before_live_memory_enforcement(make_cfg, tmp_path, 
 def test_apply_stages_app(make_cfg, tmp_path, mocker):
     from jailbee.apply import run_apply
     from jailbee.global_config import GlobalConfig
+
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = []
-    incus.network_get.return_value = ''
-    mocker.patch('jailbee.apply._profile_differs', return_value=False)
-    mocker.patch('jailbee.apply._acl_differs', return_value=False)
-    stage = mocker.patch('jailbee.container_app.stage')
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    stage = mocker.patch("jailbee.container_app.stage")
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _: False)
     stage.assert_called_once_with()

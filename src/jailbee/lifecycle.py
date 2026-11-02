@@ -2785,9 +2785,8 @@ def boot_container(
 
     # Create the mounted source before boot; report a failed mkdir ourselves
     # rather than leaving Incus to fail with an opaque disk-device error.
-    from jailbee.agent_instructions import missing_staging_dirs, sync_global_instructions
-
     from jailbee import container_app
+    from jailbee.agent_instructions import missing_staging_dirs, sync_global_instructions
 
     try:
         staged = container_app.stage()

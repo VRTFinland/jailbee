@@ -95,7 +95,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"apply"}),
-        reason="`jailbee apply` mounts the host's jailbee code read-only into containers at /opt/jailbee/app",
+        reason=(
+            "`jailbee apply` mounts the host's jailbee code read-only into containers "
+            "at /opt/jailbee/app"
+        ),
     ),
     UpgradeNote(
         version=(1, 2, 0),

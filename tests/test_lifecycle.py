@@ -11926,12 +11926,12 @@ def test_orchestration_columns_shown_with_orchestration():
 def test_boot_container_stages_app(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
-    incus.list_containers.return_value = [{'name': 'feat-x', 'status': 'Stopped'}]
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
     _boot_events(mocker, incus)
-    mocker.patch('jailbee.agent_instructions.missing_staging_dirs', return_value=[])
-    staged = mocker.patch('jailbee.container_app.stage')
+    mocker.patch("jailbee.agent_instructions.missing_staging_dirs", return_value=[])
+    staged = mocker.patch("jailbee.container_app.stage")
     staged.return_value.changed = True
-    skills = mocker.patch('jailbee.agent_skills.sync_agent_skills')
-    boot_container(cfg, incus, 'feat-x', restart=False)
+    skills = mocker.patch("jailbee.agent_skills.sync_agent_skills")
+    boot_container(cfg, incus, "feat-x", restart=False)
     staged.assert_called_once_with()
     skills.assert_called_once_with(cfg)
