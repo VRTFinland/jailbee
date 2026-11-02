@@ -82,7 +82,11 @@ exit 0, error statuses and signals. It includes status/signal and recent
 output when available; loss of the wrapper/container may leave status
 unknown. Do not send a duplicate. A refused `done` does not silence this
 monitoring. Broker `stop`/`destroy` ends the run intentionally; restart
-begins a fresh monitored run.
+begins a fresh monitored run. Your orchestrator may use `restart --agent-only`
+after accepted `done` (or after this agent exits) to replace only the agent
+session in a kept RUNNING child, with a new runner and prompt. It does not
+boot the container or repeat `on_start`; existing services stay running.
+Children cannot request this restart themselves.
 
 Always send `done` with `--wait` and end the session only after exit 0
 (`done` or `queued`). The reply says whether work was imported and whether

@@ -64,6 +64,13 @@ done, and for any message your work depends on. Exit 0 means accepted
 the session only after done returns 0. A timeout needs the original reply,
 not another report. The container may be destroyed after done, so commit first.
 
+A kept RUNNING child may later receive a new session through its orchestrator's
+`restart` with `agent_only: true` (`--agent-only`). Only accepted `done` or an
+ended monitored agent permits this: working agents are not interrupted.
+The old agent window is replaced and a new runner/prompt starts under fresh
+monitoring, without container boot or `on_start`; services persist. This is
+an orchestrator operation, not a manifest a child may send.
+
 ## Child `rights`
 
 Give up rights orchestration supplied; ask for additional rights with a

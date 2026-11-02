@@ -214,7 +214,19 @@ marker.
  "child": "fix-issue-12", "prompt": "Try again.", "runner": null}
 ```
 
-CLI: `jailbee-inbox send restart --child C [--agent A [--profile P] [--model M] | --default-runner]` with the prompt on stdin or `--text`.
+CLI: `jailbee-inbox send restart --child C [--agent-only] [--agent A [--profile P] [--model M] | --default-runner]` with the prompt on stdin or `--text`.
+
+Optional `agent_only: true` (`--agent-only`) instead requires a RUNNING child.
+It replaces only the agent tmux window with a fresh prompted, monitored session,
+without boot, setup or any `on_start` actions; services stay running. It is
+allowed only after accepted child `done`, or when the previous monitored agent
+has ended (already reported, or reportable, as `blocked`). Busy children, active
+startup workers and unknown liveness are refused; no force option. Runner and
+`on_done` handling are unchanged. Combining `autostart_profile` with `agent_only`
+is refused. It consumes no new slot, creates no reservation and never queues.
+Status is `started`, then ready-and-alive `done` or startup `failed`; subsequent
+exit without accepted child `done` yields `blocked`. Absent/false keeps ordinary
+stopped-child restart semantics (a running child is refused: "stop it first").
 
 ### `stop`
 

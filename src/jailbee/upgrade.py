@@ -456,6 +456,22 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "and the quiet-child watchdog for inbox waits"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox gains `send restart --agent-only` "
+            "to relaunch an idle running child's agent without boot or on_start"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing idle running "
+            "worker reuse with `restart --agent-only` and per-task runners"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

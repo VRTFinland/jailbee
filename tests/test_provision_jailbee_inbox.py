@@ -1161,6 +1161,29 @@ def test_send_restart_runner_and_default_runner(script, base, tmp_path):
     assert "runner" not in m
 
 
+@pytest.mark.parametrize("runner", [[], ["--agent", "claude", "--model", "haiku"], ["--default-runner"]])
+def test_send_restart_agent_only(script, base, tmp_path, runner):
+    from jailbee.orchestration.protocol import RestartManifest, parse_manifest
+
+    result = send(script, base, tmp_path, "restart", "--child", "c", "--agent-only", *runner, "--text", "fresh task")
+    mid, manifest = manifest_of(base, result)
+    assert manifest["agent_only"] is True
+    files = {p.name: p.read_text() for p in (base / "outbox").glob("*.md")}
+    parsed = parse_manifest(f"{mid}.json", json.dumps(manifest), files)
+    assert isinstance(parsed, RestartManifest) and parsed.agent_only
+
+
+@pytest.mark.parametrize("args,detail", [
+    (["restart", "--child", "c", "--autostart-profile", "heavy", "--text", "p"], "cannot be combined"),
+    (["spawn", "--branch", "b", "--text", "p"], "only applies to restart"),
+    (["stop", "--child", "c"], "only applies to restart"),
+])
+def test_send_agent_only_option_errors(script, base, tmp_path, args, detail):
+    result = send(script, base, tmp_path, *args, "--agent-only")
+    assert result.returncode == 2 and detail in result.stderr
+    assert not list((base / "outbox").glob("*.json"))
+
+
 def test_send_restart_default_runner_writes_null(script, base, tmp_path):
     from jailbee.orchestration.protocol import parse_manifest, restart_sets_runner
 
