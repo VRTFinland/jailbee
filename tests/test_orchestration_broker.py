@@ -1874,8 +1874,6 @@ def test_broker_start_stages_and_syncs_registered_repos(
     assert broker.run_broker(MagicMock()) == 0
     stage.assert_called_once_with()
     tick.assert_called_once()
-    assert sync.call_args_list == (
-        [mock_call(cfg1), mock_call(cfg2)] if changed and not failure else []
-    )
+    assert sync.call_args_list == ([mock_call(cfg1), mock_call(cfg2)] if not failure else [])
     if failure:
         assert "staging failed" in caplog.text
