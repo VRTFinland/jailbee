@@ -57,10 +57,14 @@ class FakeProc(LocalProc):
         elif command == "new-window":
             name = args[args.index("-n") + 1]
             self.windows[name] = (0, "", 123)
-            self.creation_env[name] = dict(args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e")
+            self.creation_env[name] = dict(
+                args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e"
+            )
         elif command == "respawn-pane":
             name = args[args.index("-t") + 1].split("=", 1)[-1]
-            self.run_env[name] = dict(args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e")
+            self.run_env[name] = dict(
+                args[i + 1].split("=", 1) for i in range(len(args) - 1) if args[i] == "-e"
+            )
             if name in self.immediate_exit:
                 if name in self.window_remain:
                     self.windows[name] = (1, 42, 123)
