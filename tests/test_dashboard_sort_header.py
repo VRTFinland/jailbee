@@ -10,6 +10,7 @@ from jailbee.dashboard.model import RepoGroup
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.tui import fleet
 from tests.dashboard_fixtures import NOW, ci
+from jailbee.orchestration.view import ChildView
 
 ENABLED = ("name", "state", "created")
 
@@ -75,7 +76,7 @@ def test_optimized_name_width_counts_the_fork_prefix():
         "alpha",
         "/repos/alpha",
         None,
-        [parent, replace(ci("alpha-bbbb", "alpha"), fork_of="alpha-aaaa")],
+        [parent, replace(ci("alpha-bbbb", "alpha"), child=ChildView("alpha-aaaa", "working", (), False, ()))],
     )
     base = optimize_column_widths([plain], now=NOW, enabled=("name",))["name"]
     assert optimize_column_widths([forked], now=NOW, enabled=("name",))["name"] == base + 2
