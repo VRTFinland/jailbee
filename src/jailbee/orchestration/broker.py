@@ -256,7 +256,7 @@ def _settle_watches(
     watches = watch.load_watch(ctx.root)
     entries = watches.get(ctx.sender.full, [])
     for entry in list(entries):
-        if jobs is None and not entry.confirmed:
+        if jobs is None and not entry.confirmed and not entry.agent_only:
             continue
         if entry.supervise:
             _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
@@ -298,7 +298,7 @@ def _settle_agent_watch(
         entries.remove(entry)
         watch.save_watch(ctx.root, watches)
         return
-    if not entry.confirmed:
+    if not entry.confirmed and not entry.agent_only:
         boot = watch.verdict(
             entry,
             jobs.get(entry.child_full),

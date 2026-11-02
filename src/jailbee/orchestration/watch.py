@@ -46,6 +46,7 @@ class WatchEntry:
     ready_since: str | None = None
     live_since: str | None = None
     confirmed: bool = False
+    agent_only: bool = False  # No boot job belongs to this run.
 
 
 @dataclass(frozen=True)

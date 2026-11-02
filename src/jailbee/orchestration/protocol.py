@@ -237,6 +237,7 @@ class RestartManifest(_Manifest):
     type: Literal["restart"]
     child: str
     prompt: str
+    agent_only: bool = False
     # Absent keeps the child's runner; an explicit null clears it
     # (see `restart_sets_runner`).
     runner: Runner | None = None
