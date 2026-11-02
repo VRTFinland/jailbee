@@ -152,7 +152,9 @@ def enable_terminal_features(incus: Incus, container: str) -> None:
         pass
 
 
-def kill_window(incus: Incus, container: str, window: str) -> None:
+def kill_window(
+    incus: Incus, container: str, window: str, *, checked: bool = False
+) -> None:
     """Kill a window by name. Ignores 'no such window' errors.
 
     Every window target in this module is `<session>:=<name>`: the `=` makes
@@ -160,6 +162,18 @@ def kill_window(incus: Incus, container: str, window: str) -> None:
     with no `claude` window yet, `kill-window -t autostart:claude` killed a
     running `claude-jb` (agent windows are named after the agent).
     """
+    if checked:
+        # Check absence inside the container so a transport failure is not
+        # mistaken for an absent window. Exact names match launch_step targets.
+        target = shlex.quote(f"{SESSION_NAME}:={window}")
+        incus.exec(
+            container,
+            _runuser(
+                f"if tmux list-windows -t {SESSION_NAME} -F '#{{window_name}}' 2>/dev/null "
+                f"| grep -Fxq -- {shlex.quote(window)}; then tmux kill-window -t {target}; fi"
+            ),
+        )
+        return
     try:
         incus.exec(
             container,

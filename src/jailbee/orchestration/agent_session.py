@@ -33,9 +33,10 @@ def relaunch(
     env, cwd, timeout = autostart._step_invocation(cfg, step, repo_dir)
     # Stop the old wrapper before resetting its runtime/exit files: it must not
     # write a late exit status into the new session's monitoring state.
-    tmux.kill_window(incus, child, tmux.window_for(old_agent))
+    tmux.kill_window(incus, child, tmux.window_for(old_agent), checked=True)
     if target != old_agent:
-        tmux.kill_window(incus, child, tmux.window_for(step.name))
+        tmux.kill_window(incus, child, tmux.window_for(step.name), checked=True)
+    tmux.ensure_session(incus, child, start_dir=repo_dir)
     initial_prompt.write_prompt(
         incus, child, prompt, uid=cfg.container_user.uid, gid=cfg.container_user.gid
     )

@@ -902,7 +902,14 @@ def _restart_agent(
         (e for e in load_watch(ctx.root).get(ctx.sender.full, []) if e.child_full == child.full),
         None,
     )
-    finished = labels.is_finished(child.config)
+    try:
+        live_config = {
+            key: ctx.incus.config_get_checked(child.full, key) or ""
+            for key in (labels.STATE, labels.DONE_SHA, labels.LAST_IMPORT)
+        }
+    except Exception as exc:
+        return refused(f"child `{child.short}` state could not be checked: {exc}")
+    finished = labels.is_finished(live_config)
     ended = (
         status is not None
         and not status.alive

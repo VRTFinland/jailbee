@@ -38,6 +38,16 @@ def session(monkeypatch):
             prompt_args='"$(cat "$JAILBEE_INITIAL_PROMPT_FILE")"',
         ),
     )
+    original_init = Rig.__init__
+
+    def init(rig, *args, **kwargs):
+        original_init(rig, *args, **kwargs)
+        live_labels = dict(rig.child.config)
+        rig.incus.config_get_checked.side_effect = lambda name, key: live_labels.get(key)
+        rig.incus.config_unset_checked.side_effect = lambda name, key: live_labels.pop(key, None)
+        rig.incus.config_set.side_effect = lambda name, key, value: live_labels.__setitem__(key, value)
+
+    monkeypatch.setattr(Rig, "__init__", init)
     launch = MagicMock()
     monkeypatch.setattr(actions, "live_job_kind", MagicMock(return_value=None))
     monkeypatch.setattr(
@@ -221,3 +231,16 @@ def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
     broker._settle_watches(ctx, memory, {})
     assert deliver.call_args.args[3].kind == "blocked"
     assert load_watch(tmp_path).get(rig.sender.full, []) == []
+
+
+def test_same_round_relaunch_cannot_interrupt_new_work(tmp_path, seams, session, monkeypatch):
+    from jailbee.orchestration import agent_session
+
+    rig = Rig(tmp_path, running=True, config={labels.STATE: labels.STATE_DONE})
+    ctx = rig.ctx()
+    monkeypatch.setattr(agent_session, "relaunch", session)
+    assert actions.handle_restart(ctx, restart()).state == "started"
+    out = actions.handle_restart(ctx, restart(id="r-second"))
+    assert out.state == "refused" and "working" in out.detail
+    session.assert_called_once()
+    assert load_watch(tmp_path)[rig.sender.full][0].ref == "r-new"
