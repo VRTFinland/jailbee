@@ -3,11 +3,31 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from jailbee.config import Config
 from jailbee.config.common import _parse_yaml_text
 from jailbee.config.errors import ConfigError
 from jailbee.config.legacy_pr import fold_legacy_pr_keys
 from jailbee.config.loader import load_config_from_layers
 from jailbee.config.models_agents import AutostartStage
+
+
+def default_repo_config_path(cwd: Path | None = None) -> Path:
+    current = (cwd or Path.cwd()).resolve()
+    for directory in (current, *current.parents):
+        marker = directory / ".git"
+        if marker.is_dir() or marker.is_file():
+            return directory / ".jailbee" / "config.yaml"
+    return current / ".jailbee" / "config.yaml"
+
+
+def load_repo_layer(path: Path) -> Config:
+    path = path.resolve()
+    try:
+        raw = _parse_yaml_text(path.read_text(), str(path))
+        return load_config_from_layers({}, raw, path, origin=str(path), emit_hint=False,
+                                       local_raw={}, repo_layer=True, skip_git=True)
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

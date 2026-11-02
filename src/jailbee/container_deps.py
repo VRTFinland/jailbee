@@ -10,6 +10,8 @@ CONTAINER_REQUIREMENTS: dict[str, str] = {
     "rich": "13.7",
     "pyyaml": "6.0",
     "pydantic": "2.6",
+    "questionary": "2.0",
+    "prompt-toolkit": "3.0",
 }
 STAMP = Path("/opt/jailbee/deps.json")
 _ERROR = (

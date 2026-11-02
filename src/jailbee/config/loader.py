@@ -557,6 +557,7 @@ def _build_config_from_dict(
     *,
     origin: str | None = None,
     repo_layer: bool = False,
+    skip_git: bool = False,
 ) -> Config:
     """Validate a raw merged dict and populate computed Config fields.
 
@@ -592,9 +593,10 @@ def _build_config_from_dict(
     object.__setattr__(cfg, "repo_root", repo_root)
     # Resolve the upstream remote before the default branch: the latter is
     # `refs/remotes/<remote>/HEAD`, so it depends on the former.
-    upstream_remote = detect_upstream_remote(repo_root) or DEFAULT_REMOTE
-    object.__setattr__(cfg, "upstream_remote", upstream_remote)
-    object.__setattr__(cfg, "default_branch", detect_default_branch(repo_root, upstream_remote))
+    if not skip_git:
+        upstream_remote = detect_upstream_remote(repo_root) or DEFAULT_REMOTE
+        object.__setattr__(cfg, "upstream_remote", upstream_remote)
+        object.__setattr__(cfg, "default_branch", detect_default_branch(repo_root, upstream_remote))
     if not cfg.container_prefix:
         object.__setattr__(cfg, "container_prefix", derive_prefix(raw, config_path))
     if not _PREFIX_RE.match(cfg.container_prefix):
@@ -768,6 +770,7 @@ def load_config_from_layers(
     local_raw: dict[str, object] | None = None,
     local_origin: str | None = None,
     repo_layer: bool = False,
+    skip_git: bool = False,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
@@ -904,7 +907,7 @@ def load_config_from_layers(
         merged["apps"] = merge_apps_raw(before_apps, local_apps)
 
     label = f"{origin} (+ {local_from})" if local_overlay else origin
-    cfg = _build_config_from_dict(merged, path, origin=label, repo_layer=repo_layer)
+    cfg = _build_config_from_dict(merged, path, origin=label, repo_layer=repo_layer, skip_git=skip_git)
 
     creds = _credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix, local_creds))

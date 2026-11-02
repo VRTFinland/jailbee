@@ -38,6 +38,8 @@ def test_check_ok(tmp_path: Path) -> None:
                     "rich": "13.7",
                     "pyyaml": "6.0",
                     "pydantic": "2.11.0rc1",
+                    "questionary": "2.0",
+                    "prompt-toolkit": "3.0",
                 }
             }
         )
@@ -61,4 +63,11 @@ def test_pinned_requirements_uses_installed_versions(monkeypatch: pytest.MonkeyP
         "rich==1.2.3",
         "pyyaml==1.2.3",
         "pydantic==1.2.3",
+        "questionary==1.2.3",
+        "prompt-toolkit==1.2.3",
     ]
+
+
+def test_container_requirements_include_pickers() -> None:
+    assert container_deps.CONTAINER_REQUIREMENTS["questionary"] == "2.0"
+    assert container_deps.CONTAINER_REQUIREMENTS["prompt-toolkit"] == "3.0"
