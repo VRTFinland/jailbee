@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from jailbee import forking, git, lifecycle, submodules, sync
 from jailbee.git import GitError
-from jailbee.incus import IncusError
+from jailbee.incus import Incus, IncusError
 from jailbee.orchestration import labels, outbox
 from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
@@ -133,6 +133,66 @@ def _update_source(ctx: ActionContext, manifest: UpdateManifest) -> str:
     return commit
 
 
+def _merge_into_child(
+    ctx: ActionContext,
+    child: Node,
+    bounded: Incus,
+    *,
+    repo_dir: str,
+    ref: str,
+    oid: str,
+    label: str,
+    child_branch: str,
+) -> Outcome:
+    uid = ctx.cfg.container_user.uid
+    try:
+        probe = sync.probe_merge_in_container(bounded, child.full, repo_dir, ref=ref, uid=uid)
+        if probe.conflicts:
+            paths = ", ".join(probe.conflicts[:20])
+            if len(probe.conflicts) > 20:
+                paths += f" … and {len(probe.conflicts) - 20} more"
+            return refused(
+                f"update --merge refused: merging {label} ({oid[:12]}) into "
+                f"{child.short}/{child_branch} would conflict in: {paths}. Nothing was merged; "
+                f"the source is available in the child as {ref}."
+            )
+        if probe.relation == "contained":
+            new_head = sync._container_head_oid(bounded, child.full, repo_dir, uid=uid)
+            body = (
+                f"{ctx.sender.short} update: your branch {child_branch} already contains "
+                f"{label} ({oid[:12]}); nothing changed."
+            )
+            outcome = f"{child.short} already contains {oid[:12]}"
+        else:
+            new_head = sync._merge_ref_in_container(
+                bounded, child.full, repo_dir, ref=ref, label=label,
+                message=f"Merge {label} from orchestrator {ctx.sender.short}",
+                short=child.short, uid=uid, ff_only=probe.relation == "fast_forward",
+            )
+            kind = "fast-forward" if probe.relation == "fast_forward" else "merge commit"
+            body = (
+                f"{ctx.sender.short} merged {label} ({oid[:12]}) into your branch "
+                f"{child_branch}: {kind} {new_head[:12]}. Your files changed on disk — "
+                f"re-read before editing; do not merge {ref} again."
+            )
+            outcome = f"merged {label} into {child.short}/{child_branch}: {kind} {new_head[:12]}"
+    except sync.MergeConflictError:
+        sync.abort_merge_in_container(bounded, child.full, repo_dir, uid=uid)
+        return refused("child changed during update; merge aborted, nothing merged")
+    except (SyncError, IncusError) as exc:
+        return refused(str(exc))
+    msg = InboxMessage.model_validate({
+        "version": 1, "id": new_host_id(), "type": "message", "kind": "update",
+        "from": ctx.sender.short, "imported_ref": ref, "imported_sha": oid,
+        "merged_head": new_head, "body": body,
+    })
+    outbox.deliver(
+        ctx.incus, ctx.root, child.full, msg, running=True, uid=uid,
+        now=ctx.now, seq=next(ctx.seq),
+    )
+    return done(outcome)
+
+
 def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
     """Relay a parent source to a child; the child chooses when to merge."""
     if not isinstance(manifest, UpdateManifest):
@@ -143,7 +203,16 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
     if not child.running:
         return refused(f"{child.short} is not running; restart it first")
     bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+    child_repo_dir = ""
+    child_branch = ""
     try:
+        if manifest.merge:
+            if bounded.config_get(child.full, "user.jailbee.mode") == "mount":
+                return refused(f"{child.short} is in mount mode; update --merge is not applicable")
+            child_repo_dir = lifecycle.container_repo_dir(ctx.cfg, bounded, child.full)
+            child_branch = sync._run_container_preflights(
+                bounded, child.full, child_repo_dir, uid=ctx.cfg.container_user.uid
+            )
         if manifest.ref is not None or manifest.base is not None:
             branch = manifest.ref or manifest.base
             commit = _update_source(ctx, manifest)
@@ -191,6 +260,12 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
     ref, oid = push.container_ref, push.new_oid
     if not _FULL_OID.fullmatch(oid or ""):
         return refused(f"updated as {ref}, but its commit id `{oid}` could not be recorded")
+    if manifest.merge:
+        assert branch is not None
+        return _merge_into_child(
+            ctx, child, bounded, repo_dir=child_repo_dir, ref=ref, oid=oid,
+            label=branch, child_branch=child_branch,
+        )
     msg = InboxMessage.model_validate(
         {
             "version": 1,

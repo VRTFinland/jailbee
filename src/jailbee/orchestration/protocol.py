@@ -237,6 +237,7 @@ class UpdateManifest(_Manifest):
     child: str
     ref: str | None = None
     base: str | None = None
+    merge: bool = False
 
     @field_validator("ref")
     @classmethod
@@ -319,10 +320,18 @@ class InboxMessage(BaseModel):
     in_reply_to: str | None = None
     imported_ref: str | None = None
     imported_sha: str | None = None
+    merged_head: str | None = None
     import_error: str | None = None
     on_done: OnDone | None = None
     autostart_profile: str | None = None
     on_done_reason: str | None = None
+
+    @field_validator("merged_head")
+    @classmethod
+    def _merged_head(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("merged_head must be a 40-character lowercase commit id")
+        return value
 
 
 class PendingFinish(BaseModel):
