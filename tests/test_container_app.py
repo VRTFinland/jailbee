@@ -37,8 +37,10 @@ def test_concurrent_staging_publishes_only_complete_version(tmp_path, monkeypatc
     current = tmp_path / "current"
     first_copy, continue_copy, second_lock = Event(), Event(), Event()
     copytree, flock, replace, unlink = (
-        container_app.shutil.copytree, container_app.fcntl.flock,
-        container_app.os.replace, Path.unlink,
+        container_app.shutil.copytree,
+        container_app.fcntl.flock,
+        container_app.os.replace,
+        Path.unlink,
     )
     guard = Lock()
     lock_calls = 0
