@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Lock
 from unittest.mock import Mock, call
 
 import pytest
@@ -29,26 +29,67 @@ def test_stage_keeps_two_versions(tmp_path, monkeypatch):
 
 
 def test_concurrent_staging_publishes_only_complete_version(tmp_path, monkeypatch):
-    first_copy = Event()
-    continue_copy = Event()
-    original = container_app.shutil.copytree
+    from pathlib import Path
+
+    monkeypatch.setattr(container_app, "code_hash", lambda: "old")
+    old = container_app.stage(root=tmp_path).path
+    monkeypatch.setattr(container_app, "code_hash", lambda: "new")
+    current = tmp_path / "current"
+    first_copy, continue_copy, second_lock = Event(), Event(), Event()
+    copytree, flock, replace, unlink = (
+        container_app.shutil.copytree, container_app.fcntl.flock,
+        container_app.os.replace, Path.unlink,
+    )
+    guard = Lock()
+    lock_calls = 0
+    swaps = []
+
+    def observe_flock(fd, operation):
+        nonlocal lock_calls
+        with guard:
+            lock_calls += 1
+            if lock_calls == 2:
+                second_lock.set()
+        return flock(fd, operation)
 
     def slow_copy(*args, **kwargs):
         first_copy.set()
         assert continue_copy.wait(10)
-        return original(*args, **kwargs)
+        return copytree(*args, **kwargs)
 
+    def observe_replace(source, destination):
+        if destination == current:
+            assert current.is_symlink() and current.resolve(strict=True) == old
+            assert (current / "VERSION").read_text() == f"{__version__} old\n"
+            target = (tmp_path / Path(source).readlink()).resolve(strict=True)
+            assert (target / "VERSION").read_text() == f"{__version__} new\n"
+            replace(source, destination)
+            assert current.is_symlink() and current.resolve(strict=True) == target
+            swaps.append(target)
+        else:
+            replace(source, destination)
+
+    def guard_unlink(path, *args, **kwargs):
+        assert path != current, "current must not be unlinked before replacement"
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(container_app.fcntl, "flock", observe_flock)
     monkeypatch.setattr(container_app.shutil, "copytree", slow_copy)
+    monkeypatch.setattr(container_app.os, "replace", observe_replace)
+    monkeypatch.setattr(Path, "unlink", guard_unlink)
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(container_app.stage, root=tmp_path)
-        assert first_copy.wait(10)
-        second = pool.submit(container_app.stage, root=tmp_path)
-        assert not (tmp_path / "current").exists()
-        continue_copy.set()
+        try:
+            assert first_copy.wait(10)
+            second = pool.submit(container_app.stage, root=tmp_path)
+            assert second_lock.wait(10)
+            assert current.is_symlink() and current.resolve(strict=True) == old
+            assert (current / "VERSION").read_text() == f"{__version__} old\n"
+        finally:
+            continue_copy.set()
         results = [first.result(timeout=20), second.result(timeout=20)]
     assert sorted(result.changed for result in results) == [False, True]
-    current = (tmp_path / "current").resolve()
-    assert (current / "VERSION").read_text() == f"{__version__} {container_app.code_hash()}\n"
+    assert swaps == [tmp_path / "app-new"]
     assert (current / "jailbee" / "__init__.py").is_file()
     assert not list(tmp_path.glob("*.tmp-*"))
 
