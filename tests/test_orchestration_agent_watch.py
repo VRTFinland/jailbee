@@ -25,6 +25,47 @@ def advance(entry, status, *, seconds=0, child=None):
     return step(entry, child, status, now=NOW + timedelta(seconds=seconds))
 
 
+def test_idle_episode_threshold_repeat_and_activity_reset() -> None:
+    from jailbee.orchestration.agent_watch import advance_idle
+
+    entry = supervised(confirmed=True)
+    entry, body = advance_idle(entry, "session-turn-1", now=NOW, after=900)
+    assert body is None
+    entry, body = advance_idle(entry, "session-turn-1", now=NOW + timedelta(seconds=899), after=900)
+    assert body is None
+    entry, body = advance_idle(entry, "session-turn-1", now=NOW + timedelta(seconds=900), after=900)
+    assert "15m" in body
+    assert (
+        advance_idle(entry, "session-turn-1", now=NOW + timedelta(seconds=1799), after=900)[1]
+        is None
+    )
+    entry, body = advance_idle(
+        entry, "session-turn-1", now=NOW + timedelta(seconds=1800), after=900
+    )
+    assert "30m" in body
+    entry, body = advance_idle(
+        entry, "session-turn-2", now=NOW + timedelta(seconds=1801), after=900
+    )
+    assert body is None
+    assert (
+        advance_idle(entry, "session-turn-2", now=NOW + timedelta(seconds=2700), after=900)[1]
+        is None
+    )
+    entry, body = advance_idle(entry, None, now=NOW + timedelta(seconds=2701), after=900)
+    assert body is None and entry.idle_since is None and entry.idle_reported_at is None
+    assert (
+        advance_idle(entry, "session-turn-2", now=NOW + timedelta(seconds=5000), after=900)[1]
+        is None
+    )
+
+
+def test_blocked_message_suppresses_idle() -> None:
+    from jailbee.orchestration.agent_watch import advance_idle
+
+    entry = supervised(confirmed=True, last_message_kind="blocked", idle_since=NOW.isoformat())
+    assert advance_idle(entry, "turn", now=NOW + timedelta(hours=1), after=900)[1] is None
+
+
 def test_alive_requires_two_separated_observations() -> None:
     from jailbee.orchestration.agent_watch import AgentStatus
 
@@ -63,6 +104,86 @@ def test_done_suppresses_but_external_stop_reports() -> None:
     assert advance(supervised(confirmed=True), AgentStatus(False, rc=0), child=done) == (None, None)
     stopped = Node("proj-kid", "kid", False, {})
     assert advance(supervised(confirmed=True), None, child=stopped)[1].state == "failed"
+
+
+@pytest.mark.parametrize(
+    "state,subagents,expected",
+    [
+        ("waiting", 0, True),
+        ("waiting", 1, True),
+        ("idle", 0, True),
+        ("idle", 1, False),
+        ("busy", 0, False),
+        ("shell", 0, False),
+        ("unknown", 0, False),
+    ],
+)
+def test_adapter_idle_signal_matches_only_prompted_process(
+    tmp_path, mocker, state, subagents, expected
+):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, idle_signal
+    from tests.conftest import make_config
+
+    cfg = make_config(tmp_path)
+    adapter = MagicMock()
+    session = AgentSession("claude", 123, 42, state, "input needed", NOW, 1, "session")
+    adapter.read_sessions.return_value = [session]
+    adapter.read_activity.return_value = AgentActivity(
+        None, "last", subagents=subagents, modified=10, background_clear=subagents == 0
+    )
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    result = idle_signal(cfg, "kid", status, now=NOW)
+    assert (result is not None) is expected
+    assert (
+        idle_signal(cfg, "kid", AgentStatus(True, "claude", pid=124, proc_start=42), now=NOW)
+        is None
+    )
+    assert (
+        idle_signal(cfg, "kid", AgentStatus(True, "claude", pid=123, proc_start=43), now=NOW)
+        is None
+    )
+
+
+def test_old_background_work_cannot_be_treated_as_idle(tmp_path, mocker):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, idle_signal
+    from tests.conftest import make_config
+
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "idle", None, NOW, 1)]
+    # A freshness count of zero is only an estimate, not completion evidence.
+    adapter.read_activity.return_value = AgentActivity(None, "last", subagents=0)
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    assert (
+        idle_signal(
+            make_config(tmp_path),
+            "kid",
+            AgentStatus(True, "claude", pid=123, proc_start=42),
+            now=NOW,
+        )
+        is None
+    )
+
+
+def test_idle_signal_unknown_adapter_and_missing_transcript(tmp_path, mocker):
+    from jailbee.accounts.models import AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, idle_signal
+    from tests.conftest import make_config
+
+    cfg = make_config(tmp_path)
+    lookup = mocker.patch(
+        "jailbee.accounts.adapters.base.get_adapter", side_effect=KeyError("codex")
+    )
+    status = AgentStatus(True, "codex", pid=123, proc_start=42)
+    assert idle_signal(cfg, "kid", status, now=NOW) is None
+    adapter = MagicMock()
+    lookup.side_effect = None
+    lookup.return_value = adapter
+    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "idle", None, NOW, 1)]
+    adapter.locate_activity.return_value = None
+    assert idle_signal(cfg, "kid", status, now=NOW) is None
 
 
 def test_probe_live_and_exited() -> None:

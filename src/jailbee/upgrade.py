@@ -488,6 +488,22 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "update refs, commits and host base branches"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "the golden image's jailbee-inbox accepts `wait --wake-on idle` "
+            "for broker reports of live prompted agents awaiting input"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing live-agent idle "
+            "reports and including idle in the recommended wake filter"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

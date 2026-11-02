@@ -25,7 +25,11 @@ before editing `## Unreleased`.
   read; a child's first report after spawn/restart always wakes. The
   `--quiet-after` watchdog names silent running children. Concurrent
   `send --wait` replies are reserved for their sender, and a second ordinary
-  waiter is rejected.
+  waiter is rejected. The broker also reports live prompted agents awaiting
+  input as `idle`, matchable with `--wake-on idle`: after 15 minutes by default,
+  repeated at the same interval (`orchestration.idle_after_seconds`). Reports
+  include the last child message and recent output; detection uses the agent's
+  session signal (currently Claude), not pane silence.
 
 - Orchestrators can grant and revoke a child's network, optional mounts and
   egress rights at runtime, timed or permanent; children can relinquish their

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -47,6 +47,11 @@ class WatchEntry:
     live_since: str | None = None
     confirmed: bool = False
     agent_only: bool = False  # No boot job belongs to this run.
+    idle_since: str | None = None
+    idle_reported_at: str | None = None
+    idle_token: str | None = None
+    last_message_kind: str | None = None
+    last_message_line: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +121,27 @@ def register(root: Path, orchestrator: str, entry: WatchEntry) -> None:
     entries = [e for e in watches.get(orchestrator, []) if e.child_full != entry.child_full]
     entries.append(entry)
     watches[orchestrator] = entries
+    save_watch(root, watches)
+
+
+def record_message(root: Path, orchestrator: str, child_full: str, kind: str, body: str) -> None:
+    """Accepted child traffic resets the idle episode, not the supervision."""
+    watches = load_watch(root)
+    lines = body.splitlines()
+    line = "".join(ch for ch in (lines[0] if lines else "") if ch.isprintable())[:240]
+    watches[orchestrator] = [
+        replace(
+            e,
+            idle_since=None,
+            idle_reported_at=None,
+            idle_token=None,
+            last_message_kind=kind,
+            last_message_line=line,
+        )
+        if e.child_full == child_full
+        else e
+        for e in watches.get(orchestrator, [])
+    ]
     save_watch(root, watches)
 
 

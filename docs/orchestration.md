@@ -328,6 +328,31 @@ are retried, not misreported as death. Existing children need a broker
 restart request to acquire the new supervision. At most 32 manifests per
 container are read per round.
 
+A live prompted agent that waits for input without accepted `done` also
+triggers an `idle` message. The default threshold is 15 minutes, configured
+per repo with `orchestration.idle_after_seconds` (positive seconds, default
+900); the same interval controls repeats. The body names the child, elapsed
+idle duration, last accepted child message kind and first line (at most 240
+characters, or `none`), plus the same bounded tmux tail as `blocked` when
+available. Read that message and answer the child; this is not completion
+and does not authorize restarting an agent that is still alive.
+
+The broker matches its prompted PID and process start to the account
+adapter's session, currently Claude. `waiting` is input required; `idle`
+counts only with readable transcript evidence and no subagent history.
+Claude transcripts have no reliable subagent-finished marker, so even old
+subagent files conservatively suppress plain `idle`; a genuine `waiting`
+state still reports input required.
+`busy` and `shell` do not count. Adapter or probe failures and unsupported
+agents are unknown, not idle. An unchanged pane is deliberately not used:
+a silent tool call could still be working. For those agents the separate
+message-silence watchdog remains available. The episode resets on activity
+or accepted child messages; timestamps survive a broker restart. Accepted
+`done`, successful broker stop/destroy and agent-exit `blocked` end it. An
+accepted child-sent `blocked` suppresses idle until its next accepted message.
+A refused `done` does not suppress monitoring. `wait` only filters these
+messages; it neither detects idle nor configures the threshold.
+
 The broker is non-interactive. Anything that would prompt the operator (the
 autostart escalation gate for an untrusted source, an autofetch that needs a
 hardware-key touch) is refused with that reason; the broker never answers a
@@ -351,11 +376,11 @@ For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
 
 ```bash
-jailbee-inbox wait --wake-on done,question,blocked,failed,refused --quiet-after 60m --timeout 30m
+jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
 ```
 
 `--wake-on` accepts comma-separated message kinds (`note`, `question`, `done`,
-`blocked`) and status states (`queued`, `started`, `done`, `failed`, `refused`).
+`blocked`, host-generated `idle`) and status states (`queued`, `started`, `done`, `failed`, `refused`).
 It returns the oldest matching unread path; **nothing is marked read**, even
 when it does not match. Omit the filter for any unread message. The first
 message from a child after each spawn/restart always wakes, regardless of

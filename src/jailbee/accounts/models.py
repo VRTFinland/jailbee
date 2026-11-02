@@ -299,6 +299,8 @@ class AgentActivity:
     """Latest validated real-event time (UTC), independent of state age and file mtime."""
     recent: tuple[ActivityEvent, ...] = ()
     """Up to `RECENT_EVENTS` steps, oldest first; `()` for an agent whose adapter reads none."""
+    background_clear: bool | None = None
+    """Positive adapter evidence of no background agents, not an mtime estimate."""
 
 
 @dataclass(frozen=True)

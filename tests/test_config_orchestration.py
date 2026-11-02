@@ -19,6 +19,14 @@ from jailbee.orchestration.runner import Runner
 from tests.conftest import make_cfg
 
 
+def test_idle_threshold_is_positive_and_configurable():
+    assert RepoOrchestration().idle_after_seconds == 900
+    assert RepoOrchestration(idle_after_seconds=60).idle_after_seconds == 60
+    for value in (0, -1):
+        with pytest.raises(ValidationError):
+            RepoOrchestration(idle_after_seconds=value)
+
+
 def test_profile_defaults_match_grant_defaults():
     p = OrchestrationProfile()
     assert (p.max_running_children, p.operations, p.grantable.mounts) == (

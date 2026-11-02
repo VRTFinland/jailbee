@@ -13,6 +13,7 @@ from jailbee.incus import IncusError
 from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.actions import Node, Outcome
     from jailbee.orchestration.watch import WatchEntry
@@ -56,6 +57,74 @@ class AgentStatus:
     agent: str = "agent"
     rc: int | None = None
     recorded: bool = False
+    pid: int | None = None
+    proc_start: int | None = None
+
+
+def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -> str | None:
+    """Adapter evidence for this prompted process only; unknown is never idle.
+
+    Do not infer idleness from an unchanged pane: long-running tool calls can
+    be silent. The adapter owns all agent-specific session/transcript formats.
+    """
+    from jailbee.accounts.adapters import base
+    from jailbee.agent_status import _one_per_process
+
+    if not status.alive or status.pid is None or status.proc_start is None:
+        return None
+    try:
+        adapter = base.get_adapter(status.agent)
+        sessions = _one_per_process(adapter.read_sessions(adapter.session_home(cfg, name)))
+        session = next(
+            (s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None
+        )
+        if session is None or session.state not in ("waiting", "idle"):
+            return None
+        paths = adapter.locate_activity(adapter.config_home(cfg), session)
+        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        # Waiting means input is required, even if background work exists.
+        # Idle without readable activity cannot rule out a running subagent.
+        if session.state == "idle" and (activity is None or activity.background_clear is not True):
+            return None
+        return json.dumps(
+            [
+                session.session_id,
+                session.state,
+                str(session.since),
+                activity.modified if activity else None,
+                str(activity.last_event_at) if activity else None,
+            ]
+        )
+    except Exception:
+        # Adapter formats are undocumented; a broken reader must not stall supervision.
+        return None
+
+
+def advance_idle(
+    entry: WatchEntry, token: str | None, *, now: datetime, after: int
+) -> tuple[WatchEntry, str | None]:
+    """One durable idle episode, with at most one notification per interval."""
+    if token is None or entry.last_message_kind == "blocked":
+        return replace(entry, idle_since=None, idle_reported_at=None, idle_token=None), None
+    if entry.idle_token != token or entry.idle_since is None:
+        return replace(
+            entry, idle_since=now.isoformat(), idle_reported_at=None, idle_token=token
+        ), None
+    since = datetime.fromisoformat(entry.idle_since)
+    due = datetime.fromisoformat(entry.idle_reported_at) if entry.idle_reported_at else since
+    if (now - due).total_seconds() < after:
+        return entry, None
+    minutes = int((now - since).total_seconds() // 60)
+    last = (
+        f"{entry.last_message_kind} {entry.last_message_line or ''}"
+        if entry.last_message_kind
+        else "none"
+    )
+    body = (
+        f"[jailbee] child `{entry.child_full}` has been waiting for input for {minutes}m; "
+        f"last message: {last}"
+    )
+    return replace(entry, idle_reported_at=now.isoformat()), body
 
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
@@ -72,6 +141,9 @@ try:
     boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     result['alive'] = (pid > 1 and stat[0] not in ('Z', 'X')
                        and stat[19] == data['start'] and boot == data['boot'])
+    if result['alive']:
+        result['pid'] = pid
+        result['proc_start'] = int(stat[19])
 except (OSError, ValueError, KeyError, TypeError, IndexError):
     pass
 try:
@@ -104,7 +176,12 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
         recorded = data.get("recorded", False)
         if not isinstance(recorded, bool):
             return None
-        return AgentStatus(data["alive"], agent, rc, recorded)
+        pid, start = data.get("pid"), data.get("proc_start")
+        if any(
+            value is not None and (type(value) is not int or value < 0) for value in (pid, start)
+        ):
+            return None
+        return AgentStatus(data["alive"], agent, rc, recorded, pid, start)
     except (IncusError, ValueError, TypeError):
         return None
 
