@@ -18,6 +18,19 @@ from jailbee.config.models_remote import (
 from jailbee.global_config import GlobalConfig, validate_global_raw
 
 
+def test_gpg_defaults_off() -> None:
+    assert RemoteSSHConfig().gpg is False
+
+
+def test_gpg_parses_true(tmp_path: Path) -> None:
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text("remote: {ssh: {gpg: true}}\n")
+    config, _ = load_global_config(path)
+    assert config.remote.ssh.gpg is True
+
+
 def test_remote_ssh_defaults_enable_all_routes_with_full_commands() -> None:
     ssh = GlobalConfig().remote.ssh
     assert ssh.listen == "127.0.0.1"

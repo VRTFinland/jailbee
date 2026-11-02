@@ -177,3 +177,8 @@ def remote_rdp_enabled(overrides: ServeOverrides | None = None) -> bool:
 def remote_waypipe_enabled(overrides: ServeOverrides | None = None) -> bool:
     """`remote.ssh.waypipe`, live: `waypipe ssh` sessions and their forward."""
     return _live_ssh_flag("waypipe", overrides)
+
+
+def remote_gpg_enabled(overrides: ServeOverrides | None = None) -> bool:
+    """`remote.ssh.gpg`, live: client gpg-agent forwarding and switch mounts."""
+    return _live_ssh_flag("gpg", overrides)
