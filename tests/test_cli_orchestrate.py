@@ -370,16 +370,20 @@ def test_adopt_and_release_cli(patched, mocker):
     prefix = patched.cfg.container_prefix
     patched.resolve.side_effect = lambda cfg, name: (patched.incus, f"{prefix}-{name}")
     adopt = mocker.patch(
-        "jailbee.orchestration.adoption.adopt", return_value=AdoptResult((f"{prefix}-a",), (), ())
+        "jailbee.orchestration.adoption.adopt",
+        return_value=AdoptResult((f"{prefix}-a", f"{prefix}-b"), (), ()),
     )
     release = mocker.patch(
         "jailbee.orchestration.adoption.release",
         return_value=ReleaseResult(f"{prefix}-o", ("mounts data",), ()),
     )
-    result = runner.invoke(app, ["orchestrate", "adopt", "o", "a"])
+    result = runner.invoke(app, ["orchestrate", "adopt", "o", "a", "b"])
     assert result.exit_code == 0, result.output
-    adopt.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-o", [f"{prefix}-a"])
+    adopt.assert_called_once_with(
+        patched.cfg, patched.incus, f"{prefix}-o", [f"{prefix}-a", f"{prefix}-b"]
+    )
     assert "Adopted 'a'" in result.output
+    assert "Adopted 'b'" in result.output
     result = runner.invoke(app, ["orchestrate", "release", "a"])
     assert result.exit_code == 0, result.output
     release.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-a")
@@ -442,6 +446,25 @@ def test_release_picker(patched, mocker):
     assert result.exit_code == 0, result.output
     release.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-a")
     assert "warning" in result.output
+
+
+def test_release_single_candidate_is_selected_without_prompt(patched, mocker):
+    from jailbee.orchestration.adoption import ReleaseResult
+
+    prefix = patched.cfg.container_prefix
+    mocker.patch("jailbee.incus.Incus", return_value=patched.incus)
+    mocker.patch("jailbee.orchestration.adoption.children_of_repo", return_value=[f"{prefix}-a"])
+    release = mocker.patch(
+        "jailbee.orchestration.adoption.release",
+        return_value=ReleaseResult(f"{prefix}-o", (), ()),
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    select = mocker.patch("jailbee.prompting._select")
+    result = runner.invoke(app, ["orchestrate", "release"])
+    assert result.exit_code == 0, result.output
+    release.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-a")
+    select.assert_not_called()
+    assert "Released 'a' from 'o'" in result.output
 
 
 @pytest.mark.parametrize("command,args", [("adopt", ["o", "a"]), ("release", ["a"])])
