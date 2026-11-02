@@ -231,16 +231,35 @@ def test_branch_only_consent_never_applies_generated_description(tmp_path, mocke
     confirm = mocker.patch("jailbee.prompting._confirm", return_value=answer)
     mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
     mocker.patch("jailbee.git.commit_subject", return_value="Commit title")
-    generate = mocker.patch("jailbee.pr_ai.generate_pr_text", return_value=PrText("Generated", "Generated body", "ai/head"))
+    generate = mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText("Generated", "Generated body", "ai/head"),
+    )
     scope = pr_flow.PrScope.for_repo(cfg)
     plan = pr_flow.resolve_pr_text_and_head(
-        cfg, mocker.MagicMock(), "c", scope, is_update=False, stored_head=None,
-        source_branch="feat/x", base="main", title=None, body=None, as_name=None,
-        no_ai=False, status_label="Generating",
+        cfg,
+        mocker.MagicMock(),
+        "c",
+        scope,
+        is_update=False,
+        stored_head=None,
+        source_branch="feat/x",
+        base="main",
+        title=None,
+        body=None,
+        as_name=None,
+        no_ai=False,
+        status_label="Generating",
     )
     title, body = pr_flow.resolve_create_text(
-        scope, ai_on=False, ai_text=plan.ai_text, title=None, body=None,
-        fallback_ref="ref", publish_name=plan.publish_name, origin_label="container c",
+        scope,
+        ai_on=False,
+        ai_text=plan.ai_text,
+        title=None,
+        body=None,
+        fallback_ref="ref",
+        publish_name=plan.publish_name,
+        origin_label="container c",
     )
     assert "branch-name proposal" in confirm.call_args.args[0]
     assert "description" not in confirm.call_args.args[0]
@@ -261,14 +280,24 @@ def test_noninteractive_env_on_a_tty_still_requires_opt_in(tmp_path, mocker, mon
 
 def test_update_outbox_text_never_asks_agent_consent(tmp_path, mocker):
     from tests.test_cli_submodule_pr import _outbox_source
+
     cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True}})
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.prompting._confirm")
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     update = pr_flow.resolve_pr_description_update(
-        cfg, mocker.MagicMock(), "c", pr_flow.PrScope.for_repo(cfg), branch="feat/x",
-        base="main", title=None, body=None, description=True, ai_on=True, use_outbox=True,
+        cfg,
+        mocker.MagicMock(),
+        "c",
+        pr_flow.PrScope.for_repo(cfg),
+        branch="feat/x",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ai_on=True,
+        use_outbox=True,
     )
     assert update is not None and update.title == "feat: from container"
     confirm.assert_not_called()

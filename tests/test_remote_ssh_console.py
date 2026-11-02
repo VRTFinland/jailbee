@@ -80,7 +80,9 @@ def console_env(tmp_path: Path, mocker) -> ConsoleEnv:
     return ConsoleEnv(prompt, repo_root, other_root, config.remote.ssh.model_dump_json())
 
 
-@pytest.mark.parametrize("command", [["pr", "push", "alpha"], ["submodule", "pr", "push", "alpha", "lib/a"]])
+@pytest.mark.parametrize(
+    "command", [["pr", "push", "alpha"], ["submodule", "pr", "push", "alpha", "lib/a"]]
+)
 def test_pr_reexec_inherits_session_terminal_for_agent_consent(mocker, tmp_path, command):
     run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
     argv = [sys.executable, "-m", "jailbee", *command]
