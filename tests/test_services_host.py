@@ -12,13 +12,24 @@ def test_run_op_builds_container_argv(make_cfg, tmp_path, monkeypatch):
     run = Mock(return_value=0)
     monkeypatch.setattr("jailbee.container_app.run_in_container_interactive", run)
     assert host.run_op(cfg, incus, "one", "restart", ["web"]) == 0
-    run.assert_called_once_with(cfg, incus, "one", ["service", "--repo", "/repo", "restart", "web"], uid=cfg.container_user.uid, cwd="/repo")
+    run.assert_called_once_with(
+        cfg,
+        incus,
+        "one",
+        ["service", "--repo", "/repo", "restart", "web"],
+        uid=cfg.container_user.uid,
+        cwd="/repo",
+    )
 
 
 def test_elevated_refresh_refused(make_cfg, tmp_path, monkeypatch):
     cfg = make_cfg(tmp_path)
     monkeypatch.setattr("jailbee.lifecycle.container_repo_dir", lambda *args: "/repo")
-    payload = {"services": [{"name": "web", "will_prepare": True, "elevation": {"network": "loose", "mounts": []}}]}
+    payload = {
+        "services": [
+            {"name": "web", "will_prepare": True, "elevation": {"network": "loose", "mounts": []}}
+        ]
+    }
     run = Mock(return_value=ExecResult(0, json.dumps(payload).encode(), b""))
     monkeypatch.setattr("jailbee.container_app.run_in_container", run)
     assert "web: network loose" in host.elevated_refresh_refusal(cfg, Mock(), "one", ["web"])
@@ -27,14 +38,18 @@ def test_elevated_refresh_refused(make_cfg, tmp_path, monkeypatch):
 
 def test_host_service_commands_present():
     from typer.main import get_command
+
     from jailbee.cli import app
+
     group = get_command(app).commands["service"]
     assert set(group.commands) == {"ls", "start", "stop", "restart", "refresh", "logs"}
 
 
 def test_cli_refresh_refuses_before_interactive(make_cfg, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee import cli
+
     cfg = make_cfg(tmp_path)
     incus = Mock()
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: cfg)
@@ -50,7 +65,9 @@ def test_cli_refresh_refuses_before_interactive(make_cfg, tmp_path, monkeypatch)
 
 def test_cli_omitted_service_uses_container_names(make_cfg, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee import cli, prompting
+
     cfg = make_cfg(tmp_path)
     incus = Mock()
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: cfg)

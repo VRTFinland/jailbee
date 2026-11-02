@@ -207,7 +207,12 @@ def test_interactive_retries_once_on_skew(monkeypatch):
     monkeypatch.setattr(container_app, "stage", stage)
     monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
     cfg = Mock()
-    assert container_app.run_in_container_interactive(cfg, incus, "one", ["version"], uid=123, cwd="/repo") == 0
+    assert (
+        container_app.run_in_container_interactive(
+            cfg, incus, "one", ["version"], uid=123, cwd="/repo"
+        )
+        == 0
+    )
     stage.assert_called_once_with(force=True)
     sync.assert_called_once_with(cfg)
     incus.exec_interactive.side_effect = [86, 86]

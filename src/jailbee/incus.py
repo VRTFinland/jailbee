@@ -606,7 +606,9 @@ class Incus:
         is checked only after the whole output has been captured, so it limits
         what is returned (exceeding it is an ``IncusError``), not memory use.
         """
-        args = self._exec_args(name, cmd, uid=uid, gid=gid, cwd=cwd, env=env, init_groups=init_groups)
+        args = self._exec_args(
+            name, cmd, uid=uid, gid=gid, cwd=cwd, env=env, init_groups=init_groups
+        )
         if self.dry_run:
             return ExecResult(0, b"", b"")
         stdin_kwargs: dict[str, Any] = (

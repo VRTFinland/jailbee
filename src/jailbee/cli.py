@@ -18003,13 +18003,17 @@ def prune(
             success(f"Destroyed {short_name(cfg, name)}")
 
 
-
-
 service_app = typer.Typer(name="service", help="Manage container services.", no_args_is_help=True)
 app.add_typer(service_app)
 
 
-def _service_command(op: str, name: str | None, names: list[str] | None, config: Path | None, extra: Sequence[str] = ()) -> None:
+def _service_command(
+    op: str,
+    name: str | None,
+    names: list[str] | None,
+    config: Path | None,
+    extra: Sequence[str] = (),
+) -> None:
     from jailbee import prompting
     from jailbee.container_app import ContainerJailbeeError
     from jailbee.services import host
@@ -18020,7 +18024,13 @@ def _service_command(op: str, name: str | None, names: list[str] | None, config:
         selected = list(names or [])
         if op not in ("ls",) and not selected:
             candidates = host.service_names(cfg, incus, full)
-            selected = [prompting.choose_one("service", [prompting.Option(n, n, n) for n in candidates], destructive=op == "stop")]
+            selected = [
+                prompting.choose_one(
+                    "service",
+                    [prompting.Option(n, n, n) for n in candidates],
+                    destructive=op == "stop",
+                )
+            ]
         if op == "refresh":
             refusal = host.elevated_refresh_refusal(cfg, incus, full, selected)
             if refusal:
@@ -18035,39 +18045,71 @@ def _service_command(op: str, name: str | None, names: list[str] | None, config:
 
 
 @service_app.command("ls")
-def service_ls_cmd(name: ContainerArg = None, json_output: Annotated[bool, typer.Option("--json")] = False, config: ConfigOption = None) -> None:
+def service_ls_cmd(
+    name: ContainerArg = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+    config: ConfigOption = None,
+) -> None:
     """List services."""
     _service_command("ls", name, None, config, ["--json"] if json_output else [])
 
 
 @service_app.command("start")
-def service_start_cmd(name: ContainerArg = None, names: Annotated[list[str] | None, typer.Argument()] = None, config: ConfigOption = None) -> None:
+def service_start_cmd(
+    name: ContainerArg = None,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    config: ConfigOption = None,
+) -> None:
     """Start services."""
     _service_command("start", name, names, config)
 
 
 @service_app.command("stop")
-def service_stop_cmd(name: ContainerArg = None, names: Annotated[list[str] | None, typer.Argument()] = None, config: ConfigOption = None) -> None:
+def service_stop_cmd(
+    name: ContainerArg = None,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    config: ConfigOption = None,
+) -> None:
     """Stop services."""
     _service_command("stop", name, names, config)
 
 
 @service_app.command("restart")
-def service_restart_cmd(name: ContainerArg = None, names: Annotated[list[str] | None, typer.Argument()] = None, config: ConfigOption = None) -> None:
+def service_restart_cmd(
+    name: ContainerArg = None,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    config: ConfigOption = None,
+) -> None:
     """Restart services."""
     _service_command("restart", name, names, config)
 
 
 @service_app.command("refresh")
-def service_refresh_cmd(name: ContainerArg = None, names: Annotated[list[str] | None, typer.Argument()] = None, config: ConfigOption = None) -> None:
+def service_refresh_cmd(
+    name: ContainerArg = None,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    config: ConfigOption = None,
+) -> None:
     """Prepare and restart services."""
     _service_command("refresh", name, names, config)
 
 
 @service_app.command("logs")
-def service_logs_cmd(name: ContainerArg = None, service: Annotated[str | None, typer.Argument()] = None, lines: Annotated[int, typer.Option("-n", min=1)] = 30, follow: Annotated[bool, typer.Option("--follow")] = False, config: ConfigOption = None) -> None:
+def service_logs_cmd(
+    name: ContainerArg = None,
+    service: Annotated[str | None, typer.Argument()] = None,
+    lines: Annotated[int, typer.Option("-n", min=1)] = 30,
+    follow: Annotated[bool, typer.Option("--follow")] = False,
+    config: ConfigOption = None,
+) -> None:
     """Show service logs."""
-    _service_command("logs", name, [service] if service else None, config, ["-n", str(lines), *(["--follow"] if follow else [])])
+    _service_command(
+        "logs",
+        name,
+        [service] if service else None,
+        config,
+        ["-n", str(lines), *(["--follow"] if follow else [])],
+    )
 
 
 if __name__ == "__main__":
