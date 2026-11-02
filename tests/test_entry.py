@@ -12,6 +12,31 @@ from jailbee.incus import IncusError
 from jailbee.repo_option import RepoOptionError
 
 
+def test_entry_dispatches_to_container(monkeypatch, mocker):
+    from jailbee import container_main
+
+    monkeypatch.setenv("JAILBEE_CONTEXT", "container")
+    target = mocker.patch.object(container_main, "main")
+    host = mocker.patch("jailbee.macos.maybe_delegate")
+    main()
+    target.assert_called_once_with()
+    host.assert_not_called()
+
+
+def test_host_rejects_container_command(monkeypatch, mocker, capsys):
+    from jailbee import cli_context
+
+    monkeypatch.setenv("JAILBEE_CONTEXT", "host")
+    monkeypatch.setattr(cli_context, "CONTAINER_COMMANDS", frozenset({"inbox"}))
+    monkeypatch.setattr(sys, "argv", ["jailbee", "inbox"])
+    host = mocker.patch("jailbee.macos.maybe_delegate")
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "only available inside a jailbee container" in capsys.readouterr().err
+    host.assert_not_called()
+
+
 def test_incus_error_is_reported_as_a_message_not_a_traceback(mocker, capsys):
     """An IncusError reaching the top is jailbee's own diagnosis, not a crash.
 

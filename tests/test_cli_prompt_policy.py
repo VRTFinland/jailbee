@@ -80,9 +80,12 @@ def _walk(cmd: Any, path: str) -> Iterator[tuple[str, Any]]:
 
 
 def test_no_command_has_a_required_positional() -> None:
-    root = typer.main.get_command(app)
+    from jailbee.container_cli import container_app
+
+    roots = [typer.main.get_command(app), typer.main.get_command(container_app)]
     offenders = [
         f"{path} {param.name}"
+        for root in roots
         for path, cmd in _walk(root, "jailbee")
         for param in cmd.params
         if param.param_type_name == "argument" and param.required

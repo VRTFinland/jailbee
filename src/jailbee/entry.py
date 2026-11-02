@@ -124,6 +124,19 @@ def prepare_argv(argv: list[str]) -> list[str]:
 
 
 def main() -> None:
+    from jailbee import cli_context
+
+    if cli_context.detect() == "container":
+        from jailbee.container_main import main as container_main
+
+        container_main()
+        return
+    if len(sys.argv) > 1:
+        error = cli_context.wrong_side_message(sys.argv[1], "host")
+        if error:
+            print(error, file=sys.stderr)
+            raise SystemExit(2)
+
     from jailbee.macos import BridgeError, maybe_delegate
 
     try:
