@@ -2422,6 +2422,17 @@ def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
     wait.assert_called_once_with()
 
 
+def test_pr_push_dispatch_inherits_terminal_streams(mocker, tmp_path):
+    run = mocker.patch.object(ddispatch.subprocess, "run")
+    run.return_value.returncode = 0
+    patch_pause(mocker)
+
+    ddispatch._dispatch_action(_dispatch_target(tmp_path), "pr push", "alpha-x")
+
+    assert run.call_args.args[0][:4] == ["jailbee", "pr", "push", "alpha-x"]
+    assert not {"stdin", "stdout", "stderr", "capture_output"} & run.call_args.kwargs.keys()
+
+
 def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
