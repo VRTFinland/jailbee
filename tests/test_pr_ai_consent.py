@@ -169,13 +169,34 @@ def test_discovered_existing_pr_does_not_repeat_agent_run(tmp_path, mocker, text
     mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", side_effect=lambda p, s: p)
     incus = mocker.MagicMock()
     plan = pr_flow.resolve_pr_text_and_head(
-        cfg, incus, "c", scope, is_update=False, stored_head=None,
-        source_branch="feat/x", base="main", title=None, body=None, as_name=None,
-        no_ai=False, status_label="Generating", consent=consent,
+        cfg,
+        incus,
+        "c",
+        scope,
+        is_update=False,
+        stored_head=None,
+        source_branch="feat/x",
+        base="main",
+        title=None,
+        body=None,
+        as_name=None,
+        no_ai=False,
+        status_label="Generating",
+        consent=consent,
     )
     update = pr_flow.resolve_pr_description_update(
-        cfg, incus, "c", scope, branch="feat/x", base="main", title=None,
-        body=None, description=True, ai_on=True, consent=consent, generated_text=plan.ai_text,
+        cfg,
+        incus,
+        "c",
+        scope,
+        branch="feat/x",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ai_on=True,
+        consent=consent,
+        generated_text=plan.ai_text,
     )
     generate.assert_called_once()
     confirm.assert_called_once()
@@ -187,8 +208,16 @@ def test_noninteractive_description_flag_is_not_agent_consent(tmp_path, mocker, 
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
     update = pr_flow.resolve_pr_description_update(
-        cfg, mocker.MagicMock(), "c", pr_flow.PrScope.for_repo(cfg), branch="feat/x",
-        base="main", title=None, body=None, description=True, ai_on=True,
+        cfg,
+        mocker.MagicMock(),
+        "c",
+        pr_flow.PrScope.for_repo(cfg),
+        branch="feat/x",
+        base="main",
+        title=None,
+        body=None,
+        description=True,
+        ai_on=True,
     )
     assert update is None
     generate.assert_not_called()
