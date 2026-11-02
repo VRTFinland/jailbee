@@ -51,6 +51,13 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- PR agent generation now requires consent: one No-default question covers the
+  configured title/description and branch-name proposal. `--ai` skips the
+  question; `--no-ai` skips generation. Non-interactive runs require `--ai`,
+  including `--description` updates. Existing outbox text needs no AI consent.
+  The policy covers submodule PRs, dashboards and remote SSH; Qt opens PR flows
+  in a terminal for the question.
+
 - `jailbee pr push` and the dashboards' **Create/update PR** offer pending source
   PR proposals from the outbox alongside the container's own branch. Explicit
   own-branch options skip the picker; non-interactive runs retain the own branch

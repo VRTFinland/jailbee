@@ -1223,7 +1223,7 @@ Off a terminal, publish the own branch as before and print the pending count and
 `--source-manifest <file>` / `jailbee outbox NAME` hints on stderr. Any explicit
 own-branch option skips the picker but keeps that note: `--title`, `--body`,
 `--base`, `--branch`, `--as`, `--pr`, `--stacked`, `--retarget`/`--no-retarget`,
-`--ready`/`--draft`/`--no-draft`, `--description`, `--web`, `--no-ai`, `--no-outbox`
+`--ready`/`--draft`/`--no-draft`, `--description`, `--web`, `--ai`, `--no-ai`, `--no-outbox`
 and `--no-submodules`. Only `--config`, `--force` and `--yes` preserve the picker;
 force and yes carry over unchanged. An unreadable outbox does not block the own
 branch. This selection does not apply to `jailbee submodule pr push`.
@@ -1291,7 +1291,7 @@ Before the superproject push, `jailbee pr push` offers submodules with commits a
 of their own base, a recorded submodule PR, or a pending outbox description for
 their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
 takes all. Off a TTY without `--yes`, they are skipped with a warning.
-`--no-submodules` opts out. `--no-ai`, `--no-outbox` and `--ready`/`--draft`
+`--no-submodules` opts out. `--ai`/`--no-ai`, `--no-outbox` and `--ready`/`--draft`
 apply to the submodule PRs too; other flags apply only to the superproject.
 A failed submodule does not stop the superproject PR, but the run exits 1.
 Submodule outbox partial failures also exit 1, keeping the published PR's
@@ -1311,12 +1311,13 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--title <t>` / `--body <b>` | Set PR title / body (override AI per field). Default on create: last commit subject / placeholder. |
 | `--base <branch>` | PR base branch (default: the container's recorded base branch). |
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create, unchanged on update. (`--no-draft` is a hidden back-compat alias for `--ready`.) |
-| `--description` / `-d` | Update only: regenerate the PR description with Claude and apply it. A description already written in the container's outbox wins over this — add `--no-outbox` to regenerate anyway. |
+| `--description` / `-d` | Update only: request a description update; agent generation still needs consent (`--ai` off-TTY). A description already written in the container's outbox wins over this — add `--no-outbox` to regenerate anyway. |
 | `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. On an undecided review container the rejection waits for the adopt-or-stack choice: legal with `--stacked`, refused (before any push or label write) when the run adopts. |
 | `--stacked` | On a `jailbee new --pr` container: open a NEW PR based on the reviewed PR's head instead of pushing into it. See above. Mutually exclusive with `--pr N` (exit 2). |
 | `--retarget` / `--no-retarget` | Move (or don't) the container's base branch to the stacked PR's base after opening it. Default: ask on a TTY, otherwise skip and print the command. Only acted on when a stacked PR is opened. |
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
+| `--ai` | Authorize configured PR AI generation without asking; does not override disabled config. Mutually exclusive with `--no-ai`. |
 | `--no-ai` | Skip AI generation of the title/body (even when `pr.ai_description` is on); keep the container branch name as-is. Does **not** ignore a description already written in the container's outbox — that is `--no-outbox`. |
 | `--no-submodules` | Skip the submodule PR checklist and publishing; publish only the superproject. |
 | `--no-outbox` | Ignore a PR description written in the container's outbox. See [PR review outbox](#pr-review-outbox). |
@@ -1331,8 +1332,19 @@ default `auto` = the repo's own autostart agent (Claude preferred, `claude-jb` w
 swapped. `pr.ai_branch` similarly proposes the head branch name (confirmed
 interactively). On an existing PR the
 description is left untouched unless you pass `--description`, `--title`/`--body`,
-or accept the interactive prompt — which is only offered for a PR JailBee itself
-created.
+pass `--ai`, or accept the interactive prompt — an unsolicited update is only
+offered for a PR JailBee itself created.
+
+Before running the agent, one confirmation names it and the features actually
+needed (title/description, branch-name proposal, or both). The default is **No**:
+running an agent costs time/money and sends code to a model. Declining behaves
+like `--no-ai`. `--ai` skips the question; `--no-ai` skips generation without
+asking. Neither flag overrides disabled config. `--yes` and `--description` are
+not AI consent. Off-TTY or with `JAILBEE_NONINTERACTIVE`, no agent runs without
+`--ai`; a single stderr info line explains the flag. Existing outbox descriptions
+are used without this confirmation. The same policy applies to submodule PRs,
+the terminal dashboard and remote SSH. Qt's PR flows open a terminal for the
+question, after its source picker and publication options.
 
 Generation reads the commits and cumulative diff, `.github/pull_request_template.md`,
 the spec or issue the branch implements, and `CONTRIBUTING.md` / `CLAUDE.md` /
@@ -1664,10 +1676,11 @@ yet in the superproject's gitlink"), never as an error.
 | `--title <t>` / `--body <b>` | Set PR title / body (override AI per field). |
 | `--base <branch>` | PR base branch (default: the submodule's own default — see below). |
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create. |
-| `--description` / `-d` | Update only: regenerate the description with Claude and apply it. |
+| `--description` / `-d` | Update only: request a description update; agent generation still needs consent (`--ai` off-TTY). |
 | `--as <branch>` | Explicit PR head branch name. **New PRs only** — exit 2 once the path has a recorded PR. |
 | `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
-| `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
+| `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** authorize AI generation or skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
+| `--ai` | Authorize configured PR AI generation without asking; does not override disabled config. Mutually exclusive with `--no-ai`. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
 | `--no-outbox` | Skip staged PR descriptions and the outbox publication offer. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |

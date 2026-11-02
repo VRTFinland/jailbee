@@ -221,19 +221,17 @@ class PrSourceDialog(QDialog):
 
 
 class PrOptionsDialog(QDialog):
-    """Asks the three things `jailbee pr` would prompt for on a TTY.
+    """Collect publication options before the CLI opens in a terminal.
 
-    Off-TTY the CLI accepts the AI-proposed head branch name unchanged and
-    skips the "regenerate the description?" offer, so those are the defaults
-    here too; the adoption confirmation is an *error* off-TTY, which is why it
-    is an explicit checkbox rather than a silent --yes.
+    Agent consent is asked there, after checking existing outbox text and the
+    configured agent. These checkboxes do not authorize an agent run.
     """
 
     def __init__(self, name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Create or update PR for '{name}'")
         self._ready = QCheckBox("Mark the PR ready for review", self)
-        self._regen = QCheckBox("Regenerate the description with Claude", self)
+        self._regen = QCheckBox("Request a description update (agent use asks in the terminal)", self)
         self._adopt = QCheckBox("Confirm publishing to an existing PR's head branch", self)
         note = QLabel(
             "A new PR opens as a draft. Leave 'ready' unchecked to leave an "

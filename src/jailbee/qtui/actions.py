@@ -44,6 +44,8 @@ _TERMINAL_VERBS: frozenset[str] = frozenset(
         "issue apply",
         "pr bind",
         "pr unbind",
+        "pr push",
+        "submodule pr push",
         "outbox browse",
         "fork",
         "rename",
@@ -233,5 +235,9 @@ def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list
             "No terminal emulator found for an interactive action. "
             "Set $JAILBEE_TERMINAL or install one (e.g. gnome-terminal, konsole, xterm)."
         )
-    argv = acknowledge_command(action.argv) if action.verb == "merge" else action.argv
+    argv = (
+        acknowledge_command(action.argv)
+        if action.verb in {"merge", "pr push", "submodule pr push"}
+        else action.argv
+    )
     return build_terminal_command(terminal, argv)

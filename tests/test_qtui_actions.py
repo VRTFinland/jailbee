@@ -65,6 +65,17 @@ def test_qt_merge_terminal_waits_after_cli_report():
     assert "jailbee merge alpha" in launched[4]
 
 
+@pytest.mark.parametrize("verb", ["pr push", "submodule pr push"])
+def test_pr_flows_use_terminal_for_agent_consent(verb):
+    action = a.build_action(verb, "alpha", _t("/repo/.jailbee/config.yaml"))
+    assert action.launch == "terminal"
+    assert "--ai" not in action.argv
+    assert "--no-ai" not in action.argv
+    launched = a.resolve_launch(action, TerminalSpec("xterm", ["-e"]))
+    assert launched[:3] == ["xterm", "-e", "sh"]
+    assert f"jailbee {verb} alpha" in launched[4]
+
+
 def test_build_action_destroy_requires_confirm():
     ac = a.build_action("destroy", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.confirm is True
@@ -186,10 +197,9 @@ def test_launch_mode_classifies_the_verbs():
     printing verbs do not: the GUI shows their output itself, and a terminal
     emulator would close over it. Everything else self-detaches or has nothing
     to say."""
-    for verb in ("shell", "tmux"):
+    for verb in ("shell", "tmux", "pr push", "submodule pr push"):
         assert a.launch_mode(verb) == "terminal", verb
     for verb in (
-        "pr push",
         "git push",
         "git push --pr",
         "git pull",
