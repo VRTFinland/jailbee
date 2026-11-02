@@ -43,6 +43,22 @@ class LocalProc:
         except ProcessLookupError:
             pass
 
+    def service_pgid(self, pid: int) -> int | None:
+        """Resolve only a pane-led group, never a shared caller/server group."""
+        try:
+            pgid = os.getpgid(pid)
+            if pgid != pid or pgid == os.getpgrp():
+                return None
+            return pgid
+        except ProcessLookupError:
+            return None
+
+    def signal_group(self, pgid: int, sig: int) -> None:
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            pass
+
     def pid_alive(self, pid: int) -> bool:
         try:
             os.kill(pid, 0)

@@ -164,12 +164,6 @@ class ServiceRuntime:
             if result.returncode:
                 self._save(name, "failed", result.stderr)
                 return False
-        # Set the inherited option before spawning, so even instant exits survive.
-        previous = (
-            self.proc.tmux(["show-options", "-g", "-w", "-v", "remain-on-exit"]).stdout.strip()
-            or "off"
-        )
-        self.proc.tmux(["set-option", "-g", "-w", "remain-on-exit", "on"])
         self._save(name, "starting")
         args = [
             "new-window",
@@ -183,15 +177,21 @@ class ServiceRuntime:
         ]
         for key, value in service.env.items():
             args.extend(["-e", f"{key}={value}"])
-        args.extend(["bash", "-lc", service.run])
-        try:
-            created = self.proc.tmux(args)
-            if created.returncode:
-                self._save(name, "failed", created.stderr)
-                return False
-            self.proc.tmux(["set-option", "-w", "-t", target, "remain-on-exit", "on"])
-        finally:
-            self.proc.tmux(["set-option", "-g", "-w", "remain-on-exit", previous])
+        # Keep the initial pane alive until its window-local option is set.
+        args.extend(["sleep", "infinity"])
+        created = self.proc.tmux(args)
+        if created.returncode:
+            self._save(name, "failed", created.stderr)
+            return False
+        configured = self.proc.tmux(["set-option", "-w", "-t", target, "remain-on-exit", "on"])
+        if configured.returncode:
+            self.proc.tmux(["kill-window", "-t", target])
+            self._save(name, "failed", configured.stderr)
+            return False
+        spawned = self.proc.tmux(["respawn-pane", "-k", "-t", target, "bash", "-lc", service.run])
+        if spawned.returncode:
+            self._save(name, "failed", spawned.stderr)
+            return False
         deadline = self.proc.now() + (service.ready_timeout if service.ready else READY_GRACE_S)
         while True:
             pane = self._panes().get(WINDOW_PREFIX + name)
@@ -241,20 +241,24 @@ class ServiceRuntime:
             if pane is None:
                 continue
             service = self.cfg.services[name]
+            pgid = self.proc.service_pgid(pane.pid) if not pane.dead else None
             if not pane.dead:
                 if service.stop:
                     self._shell(service, service.stop, service.stop_timeout, capture=False)
-                else:
-                    self.proc.killpg(pane.pid, signal.SIGINT)
+                elif pgid is not None:
+                    self.proc.signal_group(pgid, signal.SIGINT)
                 deadline = self.proc.now() + service.stop_timeout
                 while self.proc.now() < deadline:
                     current = self._panes().get(WINDOW_PREFIX + name)
                     if current is None or current.dead:
                         break
-                    self.proc.sleep(min(READY_POLL_S, deadline - self.proc.now()))
+                    remaining = deadline - self.proc.now()
+                    if remaining <= 0:
+                        break
+                    self.proc.sleep(min(READY_POLL_S, remaining))
             self.proc.tmux(["kill-window", "-t", self._target(name)])
-            if self.proc.pid_alive(pane.pid):
-                self.proc.killpg(pane.pid, signal.SIGKILL)
+            if pgid is not None:
+                self.proc.signal_group(pgid, signal.SIGKILL)
             self._save(name, "stopped")
             done.append(name)
         return RunReport(True, tuple(done), None, "")

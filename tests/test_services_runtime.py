@@ -23,6 +23,10 @@ class FakeProc(LocalProc):
         self.shells = []
         self.immediate_exit = set()
         self.global_remain = "off"
+        self.window_remain = set()
+        self.group_signals = []
+        self.query_delay = 0
+        self.query_count = 0
 
     def tmux(self, args):
         args = list(args)
@@ -38,14 +42,26 @@ class FakeProc(LocalProc):
             output = self.global_remain + "\n"
         elif command == "set-option" and "-g" in args:
             self.global_remain = args[-1]
+        elif command == "set-option" and "-w" in args:
+            self.window_remain.add(args[args.index("-t") + 1].split("=", 1)[-1])
         elif command == "list-windows":
+            self.query_count += 1
+            if self.query_count == 2:
+                self.clock += self.query_delay
             output = "".join(
                 f"{name}\t{dead}\t{status}\t{pid}\n"
                 for name, (dead, status, pid) in self.windows.items()
             )
         elif command == "new-window":
             name = args[args.index("-n") + 1]
-            self.windows[name] = (1, 42, 123) if name in self.immediate_exit else (0, "", 123)
+            self.windows[name] = (0, "", 123)
+        elif command == "respawn-pane":
+            name = args[args.index("-t") + 1].split("=", 1)[-1]
+            if name in self.immediate_exit:
+                if name in self.window_remain:
+                    self.windows[name] = (1, 42, 123)
+                else:
+                    self.windows.pop(name, None)
         elif command == "kill-window":
             self.windows.pop(args[args.index("-t") + 1].split("=", 1)[-1], None)
         elif command == "capture-pane":
@@ -58,6 +74,12 @@ class FakeProc(LocalProc):
 
     def killpg(self, pid, sig):
         self.signals.append((pid, sig))
+
+    def service_pgid(self, pid):
+        return pid + 1000
+
+    def signal_group(self, pgid, sig):
+        self.group_signals.append((pgid, sig))
 
     def pid_alive(self, pid):
         return False
@@ -98,9 +120,6 @@ def test_start_window_and_session(tmp_path):
         "svc-web",
         str(tmp_path / "app"),
         "K=V",
-        "bash",
-        "-lc",
-        "serve",
     ):
         assert item in window
     assert any(c[:3] == ["new-session", "-d", "-s"] for c in proc.commands)
@@ -145,11 +164,11 @@ def test_immediate_exit_preserved_and_failed(tmp_path):
     proc.immediate_exit.add("svc-web")
     result = rt.start(["web"])
     assert not result.ok and result.failed == "web" and result.tail == "failure output\n"
-    new_index = next(i for i, c in enumerate(proc.commands) if c[0] == "new-window")
-    assert any(
-        c[0] == "set-option" and "-g" in c and c[-2:] == ["remain-on-exit", "on"]
-        for c in proc.commands[:new_index]
-    )
+    assert not any(c[0] == "set-option" and "-g" in c for c in proc.commands)
+    set_index = next(i for i, c in enumerate(proc.commands) if c[0] == "set-option")
+    spawn_index = next(i for i, c in enumerate(proc.commands) if c[0] == "respawn-pane")
+    assert set_index < spawn_index
+    assert proc.commands[spawn_index][-3:] == ["bash", "-lc", "exit 42"]
     assert proc.global_remain == "off"
 
 
@@ -164,7 +183,7 @@ def test_stop_command_and_signal(tmp_path):
     proc.windows.update({"svc-a": (0, "", 1), "svc-b": (0, "", 2)})
     assert rt.stop(["a", "b"]).ok
     assert proc.shells[0][0] == "stop" and proc.shells[0][3] == 3
-    assert (2, signal.SIGINT) in proc.signals
+    assert (1002, signal.SIGINT) in proc.group_signals
     assert proc.clock == 5
     assert all(
         "autostart:=svc-" in c[c.index("-t") + 1] for c in proc.commands if c[0] == "kill-window"
@@ -238,6 +257,22 @@ def test_hanging_stop_command_has_timeout(tmp_path):
     proc.run_shell = hanging
     assert rt.stop(["web"]).ok
     assert proc.clock == 8
+    assert "svc-web" not in proc.windows
+
+
+def test_stop_kills_group_even_when_leader_disappears(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop_timeout": 1}})
+    proc.windows["svc-web"] = (0, "", 123)
+    assert rt.stop(["web"]).ok
+    assert (1123, signal.SIGKILL) in proc.group_signals
+
+
+def test_stop_query_crosses_deadline(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop_timeout": 1}})
+    proc.windows["svc-web"] = (0, "", 123)
+    proc.query_delay = 1.1
+    proc.sleep = lambda seconds: (_ for _ in ()).throw(ValueError("negative")) if seconds < 0 else None
+    assert rt.stop(["web"]).ok
     assert "svc-web" not in proc.windows
 
 
