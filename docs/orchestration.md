@@ -221,7 +221,7 @@ available as `jailbee-inbox send spawn|restart --autostart-profile NAME`.
 Names are validated against the host repo's [autostart profiles](config.md#profiles).
 Spawn passes the choice to creation; restart stores it before booting, runs
 missing one-shot stages, then the selected start stages in a background boot
-worker. All restarts return `started` with a log path, keeping the
+worker. Ordinary restarts return `started` with a log path, keeping the
 broker responsive and reserving the child's capacity while it boots. A later
 setup failure is also recorded in the job and log and reaches the orchestrator
 as a second status, `failed` (``restart of child `x` failed: ...``), for the same ref;
@@ -231,6 +231,32 @@ remember the selection and revalidate it before starting. An unknown name is
 refused with ``autostart profile `NAME` is not defined``. This field selects
 stages, not the agent or its LiteLLM profile; omit it to use the creation
 default or keep a child's existing choice on restart.
+
+## Reuse a running worker without autostart
+
+Use `jailbee-inbox send restart --child C --agent-only --text "Next task"`
+(or manifest `"agent_only": true`) for a persistent worker kept with
+`on_done: "keep"`. The child must be RUNNING and idle: either its `done`
+was accepted, or its previous monitored agent has ended (the broker reported,
+or would report, `blocked`). A working child or uncertain agent liveness is
+refused; there is no force option. Active startup workers also prevent relaunch.
+Without the flag, a running child is still refused with "stop it first".
+
+Only the agent tmux window is replaced. Container boot, setup stages and all
+`on_start` actions are skipped; existing services stay running. The fresh
+session receives the prompt with the usual child preamble as its first input.
+Runner options work exactly as ordinary restart: omit to keep, name
+`--agent`/`--profile`/`--model` to change, or use `--default-runner`.
+`--on-done` may change the completion policy. `--autostart-profile` is refused
+with `--agent-only`, since no autostart runs.
+
+The child already occupies its running slot, so this action adds no slot or
+reservation and never queues, even at the running-child limit. It returns
+`started`, followed by `done` after ready-and-alive confirmation; an early
+failure returns `failed`, and later exit without accepted child `done` sends
+`blocked`, just like spawn/restart. For shared-state rework, send `update`
+first and include merging the imported ref in the new task; the broker never
+merges it itself.
 
 ## Runner: which agent a child runs
 

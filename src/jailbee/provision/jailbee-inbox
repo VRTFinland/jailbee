@@ -44,7 +44,9 @@ Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
                     --branch is required except for --pr; the broker derives
                     the branch from the PR and ignores any supplied branch.
            restart  --child C [--on-done destroy|keep] [--autostart-profile NAME]
-                    [runner | --default-runner] + text
+                    [--agent-only] [runner | --default-runner] + text
+                    --agent-only relaunches an idle RUNNING child's agent only;
+                    no boot/on_start, no extra slot, cannot use --autostart-profile.
            import | update | stop   --child C
            destroy  --child C [--force]
            rights   [--child C] [--loose] [--mount M]... [--egress H]... --for DUR
@@ -536,7 +538,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local autostart_profile=""
+    local autostart_profile="" agent_only=0
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=() revoke_mounts=() revoke_egress=()
@@ -551,6 +553,7 @@ cmd_send() {
             --revoke-loose) revoke_loose=1; shift; continue ;;
             --force) force=1; shift; continue ;;
             --default-runner) default_runner=1; shift; continue ;;
+            --agent-only) agent_only=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
             --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress|--autostart-profile)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
@@ -588,6 +591,10 @@ cmd_send() {
         shift 2
     done
 
+    if [ "$agent_only" -eq 1 ]; then
+        [ "$type" = "restart" ] || bad_usage "--agent-only only applies to restart"
+        [ -z "$autostart_profile" ] || bad_usage "--agent-only cannot be combined with --autostart-profile"
+    fi
     if [ -n "$timeout" ]; then
         [ "$wait" -eq 1 ] || bad_usage "--timeout needs --wait"
         parse_duration "$timeout" >/dev/null
@@ -654,6 +661,9 @@ cmd_send() {
     if [ -n "$autostart_profile" ]; then
         [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--autostart-profile only applies to spawn and restart"
         runner_json="$(jq -c --arg p "$autostart_profile" '. + {autostart_profile: $p}' <<<"$runner_json")"
+    fi
+    if [ "$agent_only" -eq 1 ]; then
+        runner_json="$(jq -c '. + {agent_only: true}' <<<"$runner_json")"
     fi
     if [ -n "$on_done" ]; then
         runner_json="$(jq -c --arg p "$on_done" '. + {on_done: $p}' <<<"$runner_json")"

@@ -279,9 +279,10 @@ After readiness the broker reports any prompted-agent exit without accepted
 status/signal and a bounded tmux output tail when available; disappearance
 of the wrapper or container is reported with unknown status. Only accepted
 `done` and successful broker `stop`/`destroy` suppress this; a refused `done`
-does not. Read the detail, then `stop` the still-running container and
-`restart` with a new prompt, or tell the human. Restart launches a fresh
-monitored run. A transient probe failure is retried.
+does not. Read the detail, then use `restart --agent-only` on the still-running
+idle child with a new prompt, or tell the human. Stop then ordinary restart
+is still available when container startup needs repeating. Either launches a
+fresh monitored run. A transient probe failure is retried.
 
 ## Answering children
 
@@ -318,9 +319,25 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 For merged work, prefer a fresh fork for rework: it starts from your latest merged state. For independent PRs, use the ref or PR workflow above.
 For an existing `keep` child, `jailbee-inbox send update --child C --wait`
 transports your branch and tells the child which ref to merge. The broker
-never merges it. To launch another session, stop then restart the child
-with a new prompt; an immediate restart reports `done`, a queued one reports
-`queued` then `started`.
+never merges it. For an idle RUNNING child, launch another session without
+repeating heavy startup:
+
+```bash
+jailbee-inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
+```
+
+Only accepted `done` or an ended monitored agent (reported/reportable as
+`blocked`) permits relaunch. A working child, uncertain liveness or active
+startup worker is refused; never interrupt work or retry with force. The old
+agent window ends; the fresh session gets the child preamble and new prompt.
+Container boot, setup and every `on_start` action are skipped; services remain
+running. Runner omission keeps the previous choice, explicit flags replace it,
+and `--default-runner` selects the current default. `--on-done` is allowed;
+`--autostart-profile` is incompatible. No additional slot or reservation is
+needed, even at capacity, and agent-only restart never queues. It returns
+`started`, then ready-and-alive `done` or startup `failed`; later unfinished
+agent exit yields `blocked`. Without `--agent-only`, stop the child first;
+ordinary restart runs boot/autostart and can queue.
 
 ## Finishing
 

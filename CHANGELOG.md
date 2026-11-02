@@ -15,6 +15,12 @@ before editing `## Unreleased`.
   connected, `gpg.enabled` containers decrypt and sign with the client's keys
   (for example a YubiKey), falling back to the host's agent when it closes.
 
+- Orchestrators can reuse an idle RUNNING child with `jailbee-inbox send
+  restart --agent-only`, selecting a runner and fresh prompt per task without
+  container boot or `on_start`. Accepted `done` or an ended monitored agent
+  is required; busy children are refused. Existing services stay running,
+  no additional slot is needed, and the new session is monitored as usual.
+
 - `jailbee-inbox wait --wake-on` filters wakeups without marking any message
   read; a child's first report after spawn/restart always wakes. The
   `--quiet-after` watchdog names silent running children. Concurrent

@@ -879,10 +879,113 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
     return done(f"child `{child.short}` stopped")
 
 
+def _restart_agent(
+    ctx: ActionContext,
+    child: Node,
+    m: RestartManifest,
+    prompt: str,
+    runner: Runner | None,
+    *,
+    set_runner: bool,
+) -> Outcome:
+    from jailbee import initial_prompt
+    from jailbee.agents import primary_agent
+    from jailbee.orchestration import agent_session, agent_watch
+    from jailbee.orchestration.watch import WatchEntry, load_watch, register
+
+    if not child.running:
+        return refused(f"child `{child.short}` must be running for agent_only")
+    if child.full in creating_children(ctx) or live_job_kind(child.full) is not None:
+        return refused(f"child `{child.short}` is working (startup is still running)")
+    status = agent_watch.probe(ctx.incus, child.full, uid=ctx.cfg.container_user.uid)
+    previous = next(
+        (e for e in load_watch(ctx.root).get(ctx.sender.full, []) if e.child_full == child.full),
+        None,
+    )
+    try:
+        live_config = {
+            key: ctx.incus.config_get_checked(child.full, key) or ""
+            for key in (labels.STATE, labels.DONE_SHA, labels.LAST_IMPORT)
+        }
+    except Exception as exc:
+        return refused(f"child `{child.short}` state could not be checked: {exc}")
+    finished = labels.is_finished(live_config)
+    ended = (
+        status is not None
+        and not status.alive
+        and (
+            status.rc is not None
+            or status.recorded
+            or (previous is not None and previous.confirmed)
+        )
+    )
+    if not finished and not ended:
+        return refused(f"child `{child.short}` is working; wait for accepted done or agent exit")
+    problem = initial_prompt.prompt_problem(ctx.cfg, runner)
+    if problem is not None:
+        return refused(problem)
+    try:
+        initial_prompt.validate_prompt_text(prompt)
+    except initial_prompt.PromptError as exc:
+        return refused(str(exc))
+    old_runner = parse_runner_label(child.config.get(labels.RUNNER))
+    old_agent = (
+        status.agent
+        if status is not None and status.agent != "agent"
+        else "claude"
+        if old_runner is not None
+        else primary_agent(ctx.cfg).name
+    )
+    if old_agent is None:
+        return refused(f"child `{child.short}`: previous agent could not be identified")
+    try:
+        register(
+            ctx.root,
+            ctx.sender.full,
+            WatchEntry(
+                m.id,
+                child.full,
+                "restart",
+                ctx.now.isoformat(),
+                supervise=True,
+                agent_only=True,
+            ),
+        )
+        for key in (
+            labels.STOPPED_HEAD,
+            labels.DONE_SHA,
+            labels.STATE,
+            labels.PENDING_DESTROY,
+            labels.STOPPED_DIRTY,
+        ):
+            ctx.incus.config_unset_checked(child.full, key)
+        if set_runner:
+            if runner is None:
+                ctx.incus.config_unset_checked(child.full, labels.RUNNER)
+            else:
+                ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
+        if m.on_done is not None:
+            ctx.incus.config_set(child.full, labels.ON_DONE, m.on_done)
+        agent_session.relaunch(
+            ctx.cfg,
+            ctx.incus,
+            child.full,
+            prompt,
+            runner=runner,
+            old_agent=old_agent,
+        )
+    except Exception as exc:
+        _drop_watch(ctx, child.full)
+        return refused(f"child `{child.short}` agent could not be restarted: {exc}")
+    return Outcome("started", f"child `{child.short}` agent restarting (container kept running)")
+
+
 def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
     if not isinstance(m, RestartManifest):
         return refused("not a restart manifest")
+    if m.agent_only and m.autostart_profile is not None:
+        return refused("autostart_profile cannot be combined with agent_only (no autostart runs)")
     problem = _profile_problem(ctx.cfg, m.autostart_profile)
     if problem is not None:
         return refused(problem)
@@ -894,7 +997,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child
-    if child.running:
+    if child.running and not m.agent_only:
         return refused(f"child `{child.short}` is running; stop it first")
     if child.full in creating_children(ctx):
         return refused(f"child `{child.short}` is still being created")
@@ -911,6 +1014,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
+    if m.agent_only:
+        return _restart_agent(ctx, child, m, prompt, effective, set_runner=set_runner)
     if not queued and running_children(ctx) < grant.max_running_children:
         return _boot(
             ctx,

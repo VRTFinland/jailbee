@@ -55,17 +55,19 @@ class AgentStatus:
     alive: bool
     agent: str = "agent"
     rc: int | None = None
+    recorded: bool = False
 
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
 import json, pathlib, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:])
-result = dict(alive=False, agent='agent', rc=None)
+result = dict(alive=False, agent='agent', rc=None, recorded=False)
 try:
     data = json.loads(runtime.read_text())
     result['agent'] = data['agent']
     pid = int(data['pid'])
+    result['recorded'] = pid > 1
     stat = pathlib.Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
     boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     result['alive'] = (pid > 1 and stat[0] not in ('Z', 'X')
@@ -99,7 +101,10 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
             rc is not None and (type(rc) is not int or not 0 <= rc <= 255)
         ):
             return None
-        return AgentStatus(data["alive"], agent, rc)
+        recorded = data.get("recorded", False)
+        if not isinstance(recorded, bool):
+            return None
+        return AgentStatus(data["alive"], agent, rc, recorded)
     except (IncusError, ValueError, TypeError):
         return None
 
