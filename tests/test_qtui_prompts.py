@@ -123,6 +123,19 @@ def test_push_dialog_takes_a_caller_supplied_title(qtbot):
     assert dlg.windowTitle() == "Refresh 'alpha-x' from PR #42"
 
 
+def test_pr_source_dialog_lists_own_then_sources_and_returns_manifest(qtbot):
+    from jailbee.branch_pr import PendingSource
+    from jailbee.qtui.prompts import PrSourceDialog
+
+    dlg = PrSourceDialog("alpha-x", [PendingSource("m.json", "Proposal", "topic", "main")])
+    qtbot.addWidget(dlg)
+    assert dlg.manifest() is None
+    assert "container branch" in dlg._source.itemText(0)
+    assert all(text in dlg._source.itemText(1) for text in ("Proposal", "topic", "main", "m.json"))
+    dlg._source.setCurrentIndex(1)
+    assert dlg.manifest() == "m.json"
+
+
 def test_pr_dialog_unchecked_leaves_every_choice_at_the_cli_default(qtbot):
     dlg = PrOptionsDialog("alpha-x")
     qtbot.addWidget(dlg)

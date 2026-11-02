@@ -1229,6 +1229,45 @@ def test_on_action_pr_refresh_without_a_known_number_stays_honest(mocker, tmp_pa
     assert dialog.call_args.kwargs["title"] == "Refresh 'p-foo' from its PR head"
 
 
+@pytest.mark.parametrize("selection", ["m.json", None, "cancel"])
+def test_on_action_pr_source_choice_dispatches_or_cancels(mocker, tmp_path, selection):
+    from jailbee.branch_pr import PendingSource
+    from jailbee.qtui.prompts import PrAnswers
+
+    controller = _controller_with_group(mocker, tmp_path)
+    mocker.patch("jailbee.qtui.app.pending_pr_sources", create=True, return_value=[PendingSource("m.json", "Title", "topic", "main")])
+    dialog = mocker.patch("jailbee.qtui.app.PrSourceDialog", create=True)
+    dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected if selection == "cancel" else QDialog.DialogCode.Accepted
+    dialog.return_value.manifest.return_value = selection
+    options = _stub_dialog(mocker, "PrOptionsDialog", PrAnswers(None, False, False))
+    output = mocker.patch.object(qapp.AppController, "_open_output")
+    spawn = mocker.patch.object(qapp.AppController, "_spawn", return_value=True)
+
+    controller.on_action("pr push", "p-foo")
+
+    dialog.assert_called_once()
+    if selection == "cancel":
+        output.assert_not_called()
+        spawn.assert_not_called()
+        options.assert_not_called()
+    elif selection is None:
+        options.assert_called_once()
+        assert output.call_args.args[0][:4] == ["jailbee", "pr", "push", "p-foo"]
+        spawn.assert_not_called()
+    else:
+        output.assert_not_called()
+        options.assert_not_called()
+        action = spawn.call_args.args[0]
+        assert action.argv[:4] == ["jailbee", "pr", "push", "p-foo"]
+        assert action.argv[-2:] == ["--source-manifest", "m.json"]
+        assert action.launch == "terminal"
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_pr_sources(mocker):
+    mocker.patch("jailbee.qtui.app.pending_pr_sources", return_value=[])
+
+
 def test_on_action_pr_asks_and_passes_the_flags(mocker, tmp_path):
     from jailbee.qtui.prompts import PrAnswers
 

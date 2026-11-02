@@ -48,9 +48,11 @@ from jailbee.qtui.actions import (
 )
 from jailbee.qtui.outbox import OutboxDialog
 from jailbee.qtui.output import CommandOutputDialog
+from jailbee.qtui.pr_sources import pending_pr_sources
 from jailbee.qtui.prompts import (
     NewContainerDialog,
     PrOptionsDialog,
+    PrSourceDialog,
     PushOptionsDialog,
     RetargetDialog,
     confirm_text,
@@ -425,6 +427,15 @@ class AppController(QObject):
                 return None
             return ["--", retarget_dlg.answer()]
         if verb == "pr push":
+            target = RepoTarget.of(group)
+            pending = pending_pr_sources(target, name, self._window) if target is not None else []
+            if pending:
+                source_dlg = PrSourceDialog(name, pending, parent=self._window)
+                if source_dlg.exec() != QDialog.DialogCode.Accepted:
+                    return None
+                manifest = source_dlg.manifest()
+                if manifest is not None:
+                    return ["--source-manifest", manifest]
             pr_dlg = PrOptionsDialog(name, parent=self._window)
             if pr_dlg.exec() != QDialog.DialogCode.Accepted:
                 return None

@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from jailbee.branch_pr import PendingSource
+
 
 @dataclass(frozen=True)
 class PushAnswers:
@@ -187,6 +189,30 @@ class PushOptionsDialog(QDialog):
             action=None if self._action is None else str(self._action.currentData()),
             source=None if self._source is None else str(self._source.currentData()),
         )
+
+
+class PrSourceDialog(QDialog):
+    """Choose an outbox proposal before asking own-branch-only PR options."""
+
+    def __init__(self, name: str, pending: Sequence[PendingSource], *, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"PR source for '{name}'")
+        self._source = QComboBox(self)
+        self._source.addItem("container branch", "")
+        for proposal in pending:
+            self._source.addItem(
+                f"{proposal.title} — {proposal.head} → {proposal.base or 'default base'} ({proposal.manifest})",
+                proposal.manifest,
+            )
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._source)
+        layout.addWidget(buttons)
+
+    def manifest(self) -> str | None:
+        return str(self._source.currentData()) or None
 
 
 class PrOptionsDialog(QDialog):

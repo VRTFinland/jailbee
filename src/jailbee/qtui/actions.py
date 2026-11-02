@@ -157,8 +157,12 @@ def build_action(
         argv.append("--force")
     if extra_flags:
         argv += extra_flags
+    launch = launch_mode(verb)
+    if verb == "pr push" and extra_flags and "--source-manifest" in extra_flags:
+        # Source publication must keep its existing terminal confirmation gates.
+        launch = "terminal"
     return ActionCommand(
-        argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd(), verb=verb
+        argv=argv, launch=launch, confirm=confirm, cwd=target.cwd(), verb=verb
     )
 
 
