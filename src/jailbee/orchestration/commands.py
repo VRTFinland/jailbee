@@ -160,7 +160,12 @@ def save_profile(
     profile = profile_of(stored)
     patch_file(
         global_path,
-        [YamlChange(("orchestration", "profiles", name), profile.model_dump(mode="json", exclude_none=True))],
+        [
+            YamlChange(
+                ("orchestration", "profiles", name),
+                profile.model_dump(mode="json", exclude_none=True),
+            )
+        ],
     )
     return SavedProfile(name, profile, replaced)
 

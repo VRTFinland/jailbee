@@ -162,7 +162,9 @@ def test_save_profile_refuses_without_grant(cfg, incus, tmp_path):
 def test_save_profile_refuses_malformed_grant(cfg, make_incus, tmp_path):
     path = tmp_path / "global.yaml"
     with pytest.raises(GrantError, match="invalid grant label"):
-        commands.save_profile(cfg, make_incus({labels.GRANT: "{"}), "myrepo-a", "reviewer", global_path=path)
+        commands.save_profile(
+            cfg, make_incus({labels.GRANT: "{"}), "myrepo-a", "reviewer", global_path=path
+        )
     assert not path.exists()
 
 
@@ -176,19 +178,34 @@ def test_save_profile_refuses_existing_without_force(cfg, incus_with_grant, tmp_
 def test_save_profile_force_replaces(cfg, incus_with_grant, tmp_path):
     path = tmp_path / "global.yaml"
     path.write_text("orchestration:\n  profiles:\n    bugfixer:\n      max_running_children: 5\n")
-    saved = commands.save_profile(cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True)
+    saved = commands.save_profile(
+        cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True
+    )
     assert saved.replaced is True
-    assert yaml.safe_load(path.read_text())["orchestration"]["profiles"]["bugfixer"]["max_running_children"] == 3
+    assert (
+        yaml.safe_load(path.read_text())["orchestration"]["profiles"]["bugfixer"][
+            "max_running_children"
+        ]
+        == 3
+    )
 
 
 def test_save_profile_refuses_local_shadow(cfg, incus_with_grant, mocker, tmp_path):
     path = tmp_path / "global.yaml"
     local = tmp_path / "myrepo.yaml"
-    mocker.patch("jailbee.config.local_layer.read_local_raw", return_value={"orchestration": {"profiles": {"bugfixer": {}}}})
+    mocker.patch(
+        "jailbee.config.local_layer.read_local_raw",
+        return_value={"orchestration": {"profiles": {"bugfixer": {}}}},
+    )
     mocker.patch("jailbee.config.local_layer.local_config_path", return_value=local)
     with pytest.raises(GrantError) as exc:
-        commands.save_profile(cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True)
-    assert str(exc.value) == f"profile 'bugfixer' is defined in {local}, which overrides global.yaml; edit it there with `jailbee config edit --local`"
+        commands.save_profile(
+            cfg, incus_with_grant, "myrepo-a", "bugfixer", global_path=path, force=True
+        )
+    assert str(exc.value) == (
+        f"profile 'bugfixer' is defined in {local}, which overrides global.yaml; "
+        "edit it there with `jailbee config edit --local`"
+    )
     assert not path.exists()
 
 
