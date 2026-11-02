@@ -620,6 +620,7 @@ def _boot(
     on_done: str | None = None,
     autostart_profile: str | None = None,
     manifest_id: str = "",
+    resume: str | None = None,
 ) -> Outcome:
     problem = _profile_problem(ctx.cfg, autostart_profile)
     if problem is not None:
@@ -642,6 +643,7 @@ def _boot(
                 ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
             else:
                 ctx.incus.config_unset_checked(child.full, labels.RUNNER)
+        _set_resume(ctx, child, resume)
         if on_done is not None:
             ctx.incus.config_set(child.full, labels.ON_DONE, on_done)
         if autostart_profile is not None:
@@ -788,6 +790,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         on_done=policy,
         autostart_profile=req.autostart_profile,
         manifest_id=req.manifest_id,
+        resume=req.resume,
     )
 
 
@@ -879,6 +882,41 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
     return done(f"child `{child.short}` stopped")
 
 
+def _set_resume(ctx: ActionContext, child: Node, resume: str | None) -> None:
+    if resume is None:
+        ctx.incus.config_unset_checked(child.full, labels.RESUME)
+    else:
+        ctx.incus.config_set(child.full, labels.RESUME, resume)
+
+
+def _resolve_resume(
+    ctx: ActionContext, child: Node, requested: str | None, agent: str | None
+) -> str | None | Outcome:
+    if requested is None:
+        return None
+    from jailbee.accounts.adapters.base import get_adapter
+
+    try:
+        adapter = get_adapter(agent or "")
+        probe = "00000000-0000-0000-0000-000000000000" if requested == "last" else requested
+        if adapter.resume_args(probe) is None:
+            return refused(f"agent `{agent}` cannot resume a session")
+    except (KeyError, LookupError):
+        return refused(f"agent `{agent}` cannot resume a session")
+    history = labels.sessions_of(child.config)
+    if requested == "last":
+        if not history:
+            return refused(f"child `{child.short}` has no recorded agent session")
+        session_id = history[-1]
+    else:
+        session_id = requested
+        if session_id not in history:
+            return refused(f"session `{session_id}` was not recorded for child `{child.short}`")
+    if not adapter.session_exists(ctx.cfg, child.full, session_id):
+        return refused(f"session `{session_id}` has no transcript any more")
+    return session_id
+
+
 def _restart_agent(
     ctx: ActionContext,
     child: Node,
@@ -887,6 +925,7 @@ def _restart_agent(
     runner: Runner | None,
     *,
     set_runner: bool,
+    resume: str | None,
 ) -> Outcome:
     from jailbee import initial_prompt
     from jailbee.agents import primary_agent
@@ -964,6 +1003,7 @@ def _restart_agent(
                 ctx.incus.config_unset_checked(child.full, labels.RUNNER)
             else:
                 ctx.incus.config_set(child.full, labels.RUNNER, runner.to_label())
+        _set_resume(ctx, child, resume)
         if m.on_done is not None:
             ctx.incus.config_set(child.full, labels.ON_DONE, m.on_done)
         agent_session.relaunch(
@@ -973,6 +1013,7 @@ def _restart_agent(
             prompt,
             runner=runner,
             old_agent=old_agent,
+            resume=resume,
         )
     except Exception as exc:
         _drop_watch(ctx, child.full)
@@ -1010,12 +1051,18 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         problems = runner_problems(ctx.cfg, ctx.incus, ctx.gcfg, effective)
         if problems:
             return refused("; ".join(problems))
+    from jailbee.agents import primary_agent
+
+    agent = "claude" if effective is not None else primary_agent(ctx.cfg).name
+    resume = _resolve_resume(ctx, child, m.resume, agent)
+    if isinstance(resume, Outcome):
+        return resume
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")
     if m.agent_only:
-        return _restart_agent(ctx, child, m, prompt, effective, set_runner=set_runner)
+        return _restart_agent(ctx, child, m, prompt, effective, set_runner=set_runner, resume=resume)
     if not queued and running_children(ctx) < grant.max_running_children:
         return _boot(
             ctx,
@@ -1027,6 +1074,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             on_done=m.on_done,
             autostart_profile=m.autostart_profile,
             manifest_id=m.id,
+            resume=resume,
         )
     queued.append(
         QueuedRequest(
@@ -1041,6 +1089,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             rights={},
             runner=runner.model_dump(mode="json") if runner else None,
             runner_set=set_runner,
+            resume=resume,
             on_done=m.on_done,
             autostart_profile=m.autostart_profile,
         )

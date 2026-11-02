@@ -266,6 +266,16 @@ class RestartManifest(_Manifest):
     runner: Runner | None = None
     on_done: OnDone | None = None
     autostart_profile: str | None = None
+    resume: str | None = None
+
+    @field_validator("resume")
+    @classmethod
+    def _resume(cls, v: str | None) -> str | None:
+        from jailbee.orchestration.labels import valid_session_id
+
+        if v is not None and v != "last" and not valid_session_id(v):
+            raise ValueError("resume must be last or a lowercase UUID")
+        return v
 
     @field_validator("prompt")
     @classmethod
