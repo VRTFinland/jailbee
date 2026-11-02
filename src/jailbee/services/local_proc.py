@@ -30,11 +30,20 @@ class LocalProc:
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         snapshot: list[bytes] = []
         attached = False
-        capturing = False
+        capture_id: bytes | None = None
         streaming = False
         try:
             for line in process.stdout:
                 line = line.rstrip(b"\n")
+                if capture_id is not None and not streaming:
+                    if line == b"%end " + capture_id:
+                        streaming = True
+                        yield b"".join(snapshot).decode("utf-8", errors="replace")
+                    elif line == b"%error " + capture_id:
+                        raise RuntimeError("failed to capture service window")
+                    else:
+                        snapshot.append(line + b"\n")
+                    continue
                 if line.startswith(b"%exit"):
                     break
                 if not attached:
@@ -46,15 +55,8 @@ class LocalProc:
                         process.stdin.flush()
                     continue
                 if not streaming:
-                    if line.startswith(b"%begin "):
-                        capturing = True
-                    elif capturing and line.startswith(b"%error "):
-                        raise RuntimeError("failed to capture service window")
-                    elif capturing and line.startswith(b"%end "):
-                        streaming = True
-                        yield b"".join(snapshot).decode("utf-8", errors="replace")
-                    elif capturing:
-                        snapshot.append(line + b"\n")
+                    if re.fullmatch(rb"%begin \d+ \d+ \d+", line):
+                        capture_id = line[len(b"%begin "):]
                     continue
                 prefix = f"%output {pane} ".encode()
                 if line.startswith(prefix):
