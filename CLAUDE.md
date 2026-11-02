@@ -41,7 +41,8 @@ isolated per-branch development environments using Incus system containers. See
   derivation is never defined in `Config`, the CLI or the overview.
 - **Container CLI dispatch:** `entry.py` selects `container_cli` before importing
   the host CLI. Container-side modules use only the standard library or baked
-  dependencies and do not start subprocesses.
+  dependencies. `services/local_proc.py` is the container-only exception for
+  subprocess calls to `tmux` and `bash`.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
