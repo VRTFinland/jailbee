@@ -101,7 +101,11 @@ Use the same `--wait` rule for any message your work depends on.
 An `update` message carries `imported_ref` and `imported_sha`. Commit or
 stash current work, run `git merge <imported_ref>`, resolve conflicts,
 commit, then continue. The broker only transports objects and refs; it
-never merges into your working tree. The message body names the branch.
+never merges into your working tree. The message body names the source:
+by default the parent's current branch, or an explicit ref, commit or host
+base branch. Explicit sources arrive at
+`refs/jailbee/update/<orchestrator>/<manifest-id>`; always use the message's
+`imported_ref` rather than guessing a branch ref.
 
 ## Waiting for a reply
 

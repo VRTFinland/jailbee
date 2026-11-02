@@ -1351,7 +1351,13 @@ def fetch_from_container(
 
 
 def fetch_ref_from_container(
-    cfg: Config, incus: Incus, short: str, ref: str, expected_sha: str
+    cfg: Config,
+    incus: Incus,
+    short: str,
+    ref: str,
+    expected_sha: str,
+    *,
+    timeout: float | None = None,
 ) -> str:
     """Fetch a validated container ref and verify its manifest pin."""
     if not ref.startswith("refs/") or not git.check_ref_format(ref):
@@ -1364,7 +1370,7 @@ def fetch_ref_from_container(
 
     full_name = assert_container_publishable(cfg, incus, short)
     url = _build_ext_url(cfg, incus, full_name)
-    git.fetch_url(cfg.repo_root, url, f"+{ref}:{host_ref}", tags="none")
+    git.fetch_url(cfg.repo_root, url, f"+{ref}:{host_ref}", tags="none", timeout=timeout)
     actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if actual is None:
         raise SyncError(f"fetch succeeded but {host_ref} did not resolve")
@@ -1375,7 +1381,14 @@ def fetch_ref_from_container(
     return host_ref
 
 
-def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) -> str:
+def fetch_sha_from_container(
+    cfg: Config,
+    incus: Incus,
+    short: str,
+    sha: str,
+    *,
+    timeout: float | None = None,
+) -> str:
     """Fetch a verified commit object into a source-specific host ref."""
     if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
         raise SyncError("Invalid source SHA: expected a full 40-character hexadecimal SHA")
@@ -1384,7 +1397,11 @@ def fetch_sha_from_container(cfg: Config, incus: Incus, short: str, sha: str) ->
         raise SyncError(f"Invalid host ref: {host_ref}")
     full = assert_container_publishable(cfg, incus, short)
     git.fetch_url(
-        cfg.repo_root, _build_ext_url(cfg, incus, full), f"+{sha}:{host_ref}", tags="none"
+        cfg.repo_root,
+        _build_ext_url(cfg, incus, full),
+        f"+{sha}:{host_ref}",
+        tags="none",
+        timeout=timeout,
     )
     actual = git.rev_parse(cfg.repo_root, f"{host_ref}^{{commit}}")
     if actual is None or actual.lower() != sha.lower():

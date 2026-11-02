@@ -87,7 +87,14 @@ def inherited_pr_labels(incus: Incus, full: str) -> dict[str, str]:
     return result
 
 
-def prepare_fork(cfg: Config, incus: Incus, source: str, *, ref: str | None = None) -> ForkSource:
+def prepare_fork(
+    cfg: Config,
+    incus: Incus,
+    source: str,
+    *,
+    ref: str | None = None,
+    timeout: float | None = None,
+) -> ForkSource:
     """Check ``source`` can be forked and bring its HEAD commit to the host.
 
     Refuses a stopped, mount-mode or clone-less source and one with
@@ -118,11 +125,11 @@ def prepare_fork(cfg: Config, incus: Incus, source: str, *, ref: str | None = No
             if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
                 raise ForkError(f"Cannot resolve source ref '{ref}' to a commit")
             if is_sha:
-                sync.fetch_sha_from_container(cfg, incus, short, commit)
+                sync.fetch_sha_from_container(cfg, incus, short, commit, timeout=timeout)
             else:
-                sync.fetch_ref_from_container(cfg, incus, short, ref, commit)
+                sync.fetch_ref_from_container(cfg, incus, short, ref, commit, timeout=timeout)
             submodules.transport_submodules_to_host_at_commit(
-                cfg, incus, full, short, repo_dir=repo_dir, commit=commit
+                cfg, incus, full, short, repo_dir=repo_dir, commit=commit, timeout=timeout
             )
             branch = sync._resolve_branch(incus, full, repo_dir, None, uid=cfg.container_user.uid)
             base = incus.config_get(full, "user.jailbee.base_branch") or None

@@ -113,7 +113,11 @@ A `message` from your orchestrator (`from` is its short name):
 ```
 
 An `update` message carries optional `imported_ref` and `imported_sha`
-(full commit ID), plus a body naming the parent's branch. Commit or stash,
+(full commit ID), plus a body naming the parent's source. With no selector,
+that is its current branch at `refs/jailbee/from/<orchestrator>/<branch>`.
+An explicit ref, commit or host base arrives instead at
+`refs/jailbee/update/<orchestrator>/<manifest-id>`, isolated from branch
+updates and imported child refs. Always use the message's ref. Commit or stash,
 `git merge <imported_ref>`, resolve conflicts, commit, then continue. The
 broker never merges into your worktree. Other import fields on messages are
 `import_error`, `on_done` (`destroy` or `keep`) and `on_done_reason` (why a

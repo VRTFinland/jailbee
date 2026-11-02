@@ -31,6 +31,10 @@ before editing `## Unreleased`.
   egress rights at runtime, timed or permanent; children can relinquish their
   own access. Loose permission includes narrower egress within the repo cap.
   `jailbee net egress add --for` also schedules per-container egress expiry.
+  `jailbee-inbox send update --ref REF` transports a full ref or commit from
+  the orchestrator's repo; `--base BRANCH` resolves a host base as spawn does.
+  Explicit updates use an isolated per-request ref without switching branches;
+  omitting both options preserves the current-branch update.
 
 - **Named autostart profiles.** Repos can select startup stages with
   `autostart.profiles` and `default_profile`; `new --autostart-profile` remembers

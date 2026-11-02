@@ -9569,6 +9569,18 @@ def test_container_transport_errors_keep_cli_sync_boundary(mocker, make_cfg, tmp
             _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
 
 
+@pytest.mark.parametrize("source", ["refs/heads/topic", "a" * 40])
+def test_explicit_source_fetch_forwards_transport_timeout(mocker, make_cfg, tmp_path, source):
+    cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    fetch = mocker.patch("jailbee.git.fetch_url")
+    if source.startswith("refs/"):
+        sync.fetch_ref_from_container(cfg, incus, "feat-foo", source, "a" * 40, timeout=17)
+    else:
+        sync.fetch_sha_from_container(cfg, incus, "feat-foo", source, timeout=17)
+    assert fetch.call_args.kwargs["timeout"] == 17
+
+
 @pytest.mark.parametrize("actual", [None, "b" * 40])
 def test_fetch_sha_rejects_missing_or_mismatched_commit(mocker, make_cfg, tmp_path, actual):
     cfg, incus = _fetch_stub(mocker, tmp_path, make_cfg)

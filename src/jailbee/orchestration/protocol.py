@@ -84,6 +84,15 @@ def _checked_ref(v: str) -> str:
     return v
 
 
+def _checked_source_ref(v: str) -> str:
+    """An explicit source shared by spawn and update."""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", v):
+        if not v.startswith("refs/"):
+            raise ValueError("ref must be a full refs/ name or 40-hex commit")
+        _checked_ref(v)
+    return v
+
+
 def _checked_text(v: str) -> str:
     if len(v.encode("utf-8")) > MAX_PROMPT_BYTES:
         raise ValueError(f"text exceeds {MAX_PROMPT_BYTES} bytes")
@@ -130,11 +139,7 @@ class SpawnManifest(_Manifest):
     @field_validator("ref")
     @classmethod
     def _source_ref(cls, v: str | None) -> str | None:
-        if v is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", v):
-            if not v.startswith("refs/"):
-                raise ValueError("ref must be a full refs/ name or 40-hex commit")
-            _checked_ref(v)
-        return v
+        return None if v is None else _checked_source_ref(v)
 
     @model_validator(mode="after")
     def _spawn_fields(self) -> Self:
@@ -230,6 +235,24 @@ class UpdateManifest(_Manifest):
     version: Literal[1]
     type: Literal["update"]
     child: str
+    ref: str | None = None
+    base: str | None = None
+
+    @field_validator("ref")
+    @classmethod
+    def _source_ref(cls, v: str | None) -> str | None:
+        return None if v is None else _checked_source_ref(v)
+
+    @field_validator("base")
+    @classmethod
+    def _base(cls, v: str | None) -> str | None:
+        return None if v is None else _checked_ref(v)
+
+    @model_validator(mode="after")
+    def _source(self) -> Self:
+        if self.ref is not None and self.base is not None:
+            raise ValueError("ref and base are mutually exclusive")
+        return self
 
 
 class RestartManifest(_Manifest):

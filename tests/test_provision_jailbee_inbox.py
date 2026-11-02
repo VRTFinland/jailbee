@@ -123,6 +123,48 @@ def test_inbox_helper_send_spawn_autostart_profile(script, base, tmp_path, kind)
     assert manifest["autostart_profile"] == "light"
 
 
+@pytest.mark.parametrize(
+    "source", [[], ["--ref", "refs/heads/topic"], ["--ref", "a" * 40], ["--base", "release/1"]]
+)
+def test_send_update_source(script, base, tmp_path, source):
+    result = run(
+        script, "send", "update", "--child", "worker", *source, env=env_for(base, tmp_path)
+    )
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
+    expected = {"version": 1, "id": result.stdout.strip(), "type": "update", "child": "worker"}
+    if source:
+        expected[source[0][2:]] = source[1]
+    assert manifest == expected
+
+
+def test_send_update_ref_and_base_refused(script, base, tmp_path):
+    result = run(
+        script,
+        "send",
+        "update",
+        "--child",
+        "worker",
+        "--ref",
+        "refs/heads/main",
+        "--base",
+        "main",
+        env=env_for(base, tmp_path),
+    )
+    assert result.returncode == 2
+    assert "--ref" in result.stderr and "--base" in result.stderr
+    assert not list((base / "outbox").glob("*.json"))
+
+
+@pytest.mark.parametrize("option", ["--ref", "--base"])
+def test_update_selectors_not_valid_for_import(script, base, tmp_path, option):
+    result = run(
+        script, "send", "import", "--child", "worker", option, "main", env=env_for(base, tmp_path)
+    )
+    assert result.returncode == 2
+    assert not list((base / "outbox").glob("*.json"))
+
+
 def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
 

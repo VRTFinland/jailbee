@@ -47,7 +47,8 @@ Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
                     [--agent-only] [runner | --default-runner] + text
                     --agent-only relaunches an idle RUNNING child's agent only;
                     no boot/on_start, no extra slot, cannot use --autostart-profile.
-           import | update | stop   --child C
+           update   --child C [--ref REF | --base BRANCH]
+           import | stop   --child C
            destroy  --child C [--force]
            rights   [--child C] [--loose] [--mount M]... [--egress H]... --for DUR
                     [--revoke-loose] [--revoke-mount M]... [--revoke-egress H]...
@@ -616,9 +617,15 @@ cmd_send() {
         bad_usage "--to, --kind and --reply-to only apply to message"
     fi
     if [ "$type" != "spawn" ] && {
-        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$base_branch" ] || [ -n "$ref" ] || [ -n "$pr" ] || [ -n "$note" ] \
+        [ -n "$branch" ] || [ "$new" -eq 1 ] || [ -n "$pr" ] || [ -n "$note" ] \
             || { [ "$type" != "rights" ] && { [ "$loose" -eq 1 ] || [ "${#mounts[@]}" -gt 0 ] || [ "${#egress[@]}" -gt 0 ]; }; }; }; then
-        bad_usage "--branch, --new, --base, --mount, --loose, --egress and --note only apply to spawn"
+        bad_usage "--branch, --new, --mount, --loose, --egress and --note only apply to spawn"
+    fi
+    if [ "$type" != "spawn" ] && [ "$type" != "update" ] && { [ -n "$ref" ] || [ -n "$base_branch" ]; }; then
+        bad_usage "--ref and --base only apply to spawn and update"
+    fi
+    if [ "$type" = "update" ] && [ -n "$ref" ] && [ -n "$base_branch" ]; then
+        bad_usage "--ref and --base are mutually exclusive"
     fi
     if [ "$type" != "destroy" ] && [ "$force" -eq 1 ]; then
         bad_usage "--force only applies to destroy"
@@ -789,7 +796,12 @@ cmd_send() {
             jq -n --arg id "$id" --arg child "$child" --argjson force "$force" \
                 '{version: 1, id: $id, type: "destroy", child: $child}
                  + (if $force == 1 then {force: true} else {} end)' > "$json_tmp" ;;
-        import|update|stop)
+        update)
+            jq -n --arg id "$id" --arg child "$child" --arg ref "$ref" --arg base "$base_branch" \
+                '{version: 1, id: $id, type: "update", child: $child}
+                 + (if $ref != "" then {ref: $ref} else {} end)
+                 + (if $base != "" then {base: $base} else {} end)' > "$json_tmp" ;;
+        import|stop)
             jq -n --arg id "$id" --arg type "$type" --arg child "$child" \
                 '{version: 1, id: $id, type: $type, child: $child}' > "$json_tmp" ;;
     esac

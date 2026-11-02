@@ -1827,7 +1827,14 @@ def _set_cloned_subrepo_origin(host_sub: Path, subpath: str, url: str | None) ->
 
 
 def transport_submodules_to_host_at_commit(
-    cfg: Config, incus: Incus, container: str, short: str, *, repo_dir: str, commit: str
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    short: str,
+    *,
+    repo_dir: str,
+    commit: str,
+    timeout: float | None = None,
 ) -> None:
     """Fetch each gitlink from the selected tree, including nested gitlinks."""
 
@@ -1902,7 +1909,7 @@ def transport_submodules_to_host_at_commit(
                 target = _safe_subrepo_target(parent, leaf, name)
                 git.init_subrepo_gitdir(target, url)
                 sub = HostSubRepo(path=path, gitdir=target, worktree=None)
-            git.fetch_url(sub.root, url, f"+{sha}:{pin}", tags="none")
+            git.fetch_url(sub.root, url, f"+{sha}:{pin}", tags="none", timeout=timeout)
             actual = git.rev_parse(sub.root, f"{pin}^{{commit}}")
             if actual is None or actual.lower() != sha.lower():
                 raise SubmoduleError(f"Submodule '{path}' commit {sha} could not be fetched")
