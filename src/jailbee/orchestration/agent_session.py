@@ -40,6 +40,12 @@ def relaunch(
         incus, child, prompt, uid=cfg.container_user.uid, gid=cfg.container_user.gid
     )
     tmux.launch_step(
-        incus, child, name=step.name, command=step.run, env=env, cwd=cwd,
-        background=True, timeout=timeout,
+        incus,
+        child,
+        name=step.name,
+        command=step.run,
+        env=env,
+        cwd=cwd,
+        background=True,
+        timeout=timeout,
     )

@@ -880,8 +880,13 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 def _restart_agent(
-    ctx: ActionContext, child: Node, m: RestartManifest, prompt: str,
-    runner: Runner | None, *, set_runner: bool,
+    ctx: ActionContext,
+    child: Node,
+    m: RestartManifest,
+    prompt: str,
+    runner: Runner | None,
+    *,
+    set_runner: bool,
 ) -> Outcome:
     from jailbee import initial_prompt
     from jailbee.agents import primary_agent
@@ -898,8 +903,14 @@ def _restart_agent(
         None,
     )
     finished = labels.is_finished(child.config)
-    ended = status is not None and not status.alive and (
-        status.rc is not None or status.recorded or (previous is not None and previous.confirmed)
+    ended = (
+        status is not None
+        and not status.alive
+        and (
+            status.rc is not None
+            or status.recorded
+            or (previous is not None and previous.confirmed)
+        )
     )
     if not finished and not ended:
         return refused(f"child `{child.short}` is working; wait for accepted done or agent exit")
@@ -912,18 +923,33 @@ def _restart_agent(
         return refused(str(exc))
     old_runner = parse_runner_label(child.config.get(labels.RUNNER))
     old_agent = (
-        status.agent if status is not None and status.agent != "agent"
-        else "claude" if old_runner is not None else primary_agent(ctx.cfg).name
+        status.agent
+        if status is not None and status.agent != "agent"
+        else "claude"
+        if old_runner is not None
+        else primary_agent(ctx.cfg).name
     )
     if old_agent is None:
         return refused(f"child `{child.short}`: previous agent could not be identified")
     try:
-        register(ctx.root, ctx.sender.full, WatchEntry(
-            m.id, child.full, "restart", ctx.now.isoformat(), supervise=True, agent_only=True,
-        ))
+        register(
+            ctx.root,
+            ctx.sender.full,
+            WatchEntry(
+                m.id,
+                child.full,
+                "restart",
+                ctx.now.isoformat(),
+                supervise=True,
+                agent_only=True,
+            ),
+        )
         for key in (
-            labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE,
-            labels.PENDING_DESTROY, labels.STOPPED_DIRTY,
+            labels.STOPPED_HEAD,
+            labels.DONE_SHA,
+            labels.STATE,
+            labels.PENDING_DESTROY,
+            labels.STOPPED_DIRTY,
         ):
             ctx.incus.config_unset_checked(child.full, key)
         if set_runner:
@@ -934,7 +960,12 @@ def _restart_agent(
         if m.on_done is not None:
             ctx.incus.config_set(child.full, labels.ON_DONE, m.on_done)
         agent_session.relaunch(
-            ctx.cfg, ctx.incus, child.full, prompt, runner=runner, old_agent=old_agent,
+            ctx.cfg,
+            ctx.incus,
+            child.full,
+            prompt,
+            runner=runner,
+            old_agent=old_agent,
         )
     except Exception as exc:
         _drop_watch(ctx, child.full)
