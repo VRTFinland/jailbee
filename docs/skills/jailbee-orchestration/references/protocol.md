@@ -367,6 +367,24 @@ after fixing `import_error`.
 exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
 timeout (default 30m). Recommend it for spawn, update and destroy.
 
+For waits, use `jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m`.
+The broker may send a host-only `message` of kind `idle`, with the child's
+short name in `from` and the spawn/restart ref in `in_reply_to`. Its body names
+the child, elapsed wait, last accepted child message kind and bounded first
+line (or `none`), followed by a bounded pane tail when available. This is not
+a status state and cannot be sent as a manifest kind.
+
+Idle detection begins after readiness and uses the prompted process's exact
+PID/start identity and adapter session/activity signal. Claude `waiting`
+means input is required; `idle` counts only with no active subagents.
+Busy/shell, unknown signals and agents without adapter support do not count;
+pane silence alone is not evidence. The repo's `orchestration.idle_after_seconds`
+defaults to 900 positive seconds, for both first report and repeat cadence.
+Activity/new accepted child messages reset the episode. Accepted done and
+broker stop/destroy end it, as does an agent-exit blocked report. An accepted
+child `blocked` suppresses idle until its next accepted message. Refused done
+does not end monitoring. State survives broker restart; `wait` only filters.
+
 A `status` reply answers one manifest; `ref` is the manifest id and `state`
 is one of five values: `queued`, `started`, `done`, `failed`, `refused`.
 

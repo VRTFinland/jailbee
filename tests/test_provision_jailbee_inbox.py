@@ -1374,6 +1374,15 @@ def child_snapshot(base, *, started=None, running=True, updated=None):
     )
 
 
+def test_wait_idle_filter_matches_host_report_without_consuming_notes(script, base, tmp_path):
+    note = write_inbox(base, FIRST, {**message("n"), "kind": "note"})
+    idle = write_inbox(base, SECOND, {**message("i"), "kind": "idle"})
+    r = run(script, "wait", "--wake-on", "idle", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(idle)
+    assert note.exists() and idle.exists()
+
+
 def test_wait_filter_leaves_nonmatches_unread(script, base, tmp_path):
     note = write_inbox(base, FIRST, {**message("n"), "kind": "note"})
     done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})

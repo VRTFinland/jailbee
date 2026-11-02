@@ -278,7 +278,7 @@ cmd_wait() {
             --wake-on)
                 [ $# -ge 2 ] || die "--wake-on needs a value"
                 wake_on="$2"
-                [[ "$wake_on" =~ ^(note|question|done|blocked|queued|started|refused|failed)(,(note|question|done|blocked|queued|started|refused|failed))*$ ]] \
+                [[ "$wake_on" =~ ^(note|question|done|blocked|idle|queued|started|refused|failed)(,(note|question|done|blocked|idle|queued|started|refused|failed))*$ ]] \
                     || die "--wake-on needs comma-separated message kinds or status states"
                 shift 2 ;;
             --quiet-after)

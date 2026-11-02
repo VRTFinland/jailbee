@@ -88,6 +88,14 @@ session in a kept RUNNING child, with a new runner and prompt. It does not
 boot the container or repeat `on_start`; existing services stay running.
 Children cannot request this restart themselves.
 
+If you need an answer, send `question`, never a progress `note`, before
+waiting. A live agent awaiting input without accepted done may trigger a
+broker-generated `idle` report to your orchestrator (default 15 minutes,
+repeated at that interval). It includes your last accepted message and recent
+output. This safety net is not a substitute for asking explicitly. `idle` is
+host-only, not a kind you can send; an explicit `blocked` suppresses it until
+your next accepted message.
+
 Always send `done` with `--wait` and end the session only after exit 0
 (`done` or `queued`). The reply says whether work was imported and whether
 the container will be destroyed or kept. On exit 1, fix the refusal and

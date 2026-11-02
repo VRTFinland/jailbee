@@ -207,7 +207,7 @@ seconds. Do not hand-roll the protocol. If they stay missing, tell the
 human; the broker may not be running (`jailbee orchestrate status` on the host).
 
 ```bash
-jailbee-inbox wait --wake-on done,question,blocked,failed,refused --quiet-after 60m --timeout 30m
+jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
 ```
 
 It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
@@ -283,6 +283,19 @@ does not. Read the detail, then use `restart --agent-only` on the still-running
 idle child with a new prompt, or tell the human. Stop then ordinary restart
 is still available when container startup needs repeating. Either launches a
 fresh monitored run. A transient probe failure is retried.
+
+A live prompted agent awaiting input also yields a broker-generated `idle`
+message after 15 minutes (repo `orchestration.idle_after_seconds`, default
+900; also the repeat interval). It names the child, elapsed idle time, last
+accepted child message kind/first line and recent pane output when available.
+Read the last message and answer the child or tell the human; `idle` is not
+completion or permission to interrupt a live agent with `restart --agent-only`.
+Activity or accepted child traffic resets the episode. Accepted `done`,
+broker stop/destroy and agent-exit `blocked` end monitoring; a child-sent
+`blocked` suppresses idle until its next accepted message. A refused `done`
+does not silence it. Detection uses the prompted process's adapter session
+signal (currently Claude), not unchanged pane output; unsupported agents or
+unknown signals rely on the separate quiet-child watchdog.
 
 ## Answering children
 

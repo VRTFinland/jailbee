@@ -2771,10 +2771,11 @@ host-local default, the repo default, and finally the global default. It is a
 preference, not a right, and does not grant orchestration permissions.
 
 **Per repo** (`.jailbee/config.yaml`): rights may only be narrowed; the repo
-may set `default_runner` freely.
+may set `default_runner` and the idle-report threshold freely.
 
 | Key | Default | Effect |
 |---|---|---|
+| `idle_after_seconds` | `900` | Positive seconds a live prompted child must await input before a broker `idle` message; also the repeat interval. Requires an adapter session signal (currently Claude); see [idle monitoring](orchestration.md#the-broker). |
 | `allowed` | `true` | `false`: containers of this repo cannot be granted and existing grants have no effect |
 | `max_running_children` | none | Lowers the grant's limit |
 | `mounts` | none | Mounts children may be given; others are dropped |
