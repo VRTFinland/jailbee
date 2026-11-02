@@ -64,7 +64,11 @@ def version() -> None:
 
 
 @config_app.command()
-def validate(config: Annotated[Path | None, typer.Option("--config", help="Path to repository config.yaml.")] = None) -> None:
+def validate(
+    config: Annotated[
+        Path | None, typer.Option("--config", help="Path to repository config.yaml.")
+    ] = None,
+) -> None:
     from jailbee.config_validate_cmd import validate_repo_config
 
     raise typer.Exit(validate_repo_config(config))

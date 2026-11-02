@@ -1102,7 +1102,9 @@ def config_show(
 @config_app.command("validate")
 def config_validate(
     config: ConfigOption = None,
-    repo_layer: Annotated[bool, typer.Option("--repo-layer", help="Validate only the repository configuration layer.")] = False,
+    repo_layer: Annotated[
+        bool, typer.Option("--repo-layer", help="Validate only the repository configuration layer.")
+    ] = False,
 ) -> None:
     """Validate the configuration file (schema + runtime paths)."""
     if repo_layer:
