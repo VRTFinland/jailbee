@@ -1100,8 +1100,16 @@ def config_show(
 
 
 @config_app.command("validate")
-def config_validate(config: ConfigOption = None) -> None:
+def config_validate(
+    config: ConfigOption = None,
+    repo_layer: Annotated[bool, typer.Option("--repo-layer")] = False,
+) -> None:
     """Validate the configuration file (schema + runtime paths)."""
+    if repo_layer:
+        from jailbee.config_validate_cmd import validate_repo_config
+
+        raise typer.Exit(validate_repo_config(config))
+
     from jailbee.config import SCRATCH_ORIGIN_SUFFIX, load_repo_config_unsanitized
     from jailbee.global_config import global_config_issues
 

@@ -65,6 +65,6 @@ def version() -> None:
 
 @config_app.command()
 def validate(config: Annotated[Path | None, typer.Option("--config")] = None) -> None:
-    from jailbee.config_validate_cmd import report_repo_layer
+    from jailbee.config_validate_cmd import validate_repo_config
 
-    raise typer.Exit(report_repo_layer(config))
+    raise typer.Exit(validate_repo_config(config))
