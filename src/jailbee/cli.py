@@ -12950,7 +12950,8 @@ def orchestrate_adopt_cmd(
 ) -> None:
     """Make existing containers children of an orchestrator.
 
-    The orchestrator may then message, update, import, stop, restart and destroy them within its grant.
+    The orchestrator may then message, update, import, stop, restart and destroy
+    them within its grant.
     """
     from jailbee.incus import Incus, IncusError
     from jailbee.lifecycle import short_name
@@ -12963,8 +12964,15 @@ def orchestrate_adopt_cmd(
             incus = Incus()
             full = choose_one(
                 "orchestrator",
-                [Option(r.full, r.short, r.short) for r in commands.list_grants(cfg, incus) if r.grant is not None],
-                empty_reason="no container of this repo holds an orchestration grant; run `jb orchestrate grant` first",
+                [
+                    Option(r.full, r.short, r.short)
+                    for r in commands.list_grants(cfg, incus)
+                    if r.grant is not None
+                ],
+                empty_reason=(
+                    "no container of this repo holds an orchestration grant; "
+                    "run `jb orchestrate grant` first"
+                ),
             )
         else:
             incus, full = _resolve_existing(cfg, orchestrator)
@@ -12972,7 +12980,13 @@ def orchestrate_adopt_cmd(
             incus, selected = _resolve_many(cfg, children)
         else:
             names = adoption.candidates(cfg, incus, full)
-            selected = [choose_one("container to adopt", [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names], empty_reason="no container of this repo can be adopted")]
+            selected = [
+                choose_one(
+                    "container to adopt",
+                    [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names],
+                    empty_reason="no container of this repo can be adopted",
+                )
+            ]
         result = adoption.adopt(cfg, incus, full, selected)
     except (ValueError, IncusError, OSError) as exc:
         error(str(exc))
@@ -13003,10 +13017,18 @@ def orchestrate_release_cmd(
         else:
             incus = Incus()
             names = adoption.children_of_repo(cfg, incus)
-            selected = [choose_one("child to release", [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names], empty_reason="no child container of this repo can be released")]
+            selected = [
+                choose_one(
+                    "child to release",
+                    [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names],
+                    empty_reason="no child container of this repo can be released",
+                )
+            ]
         for child in selected:
             result = adoption.release(cfg, incus, child)
-            message = f"Released '{short_name(cfg, child)}' from '{short_name(cfg, result.orchestrator)}'"
+            message = (
+                f"Released '{short_name(cfg, child)}' from '{short_name(cfg, result.orchestrator)}'"
+            )
             if result.revoked:
                 message += f"; revoked: {', '.join(result.revoked)}"
             success(message + ".")

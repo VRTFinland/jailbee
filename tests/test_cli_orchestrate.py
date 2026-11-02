@@ -369,8 +369,13 @@ def test_adopt_and_release_cli(patched, mocker):
 
     prefix = patched.cfg.container_prefix
     patched.resolve.side_effect = lambda cfg, name: (patched.incus, f"{prefix}-{name}")
-    adopt = mocker.patch("jailbee.orchestration.adoption.adopt", return_value=AdoptResult((f"{prefix}-a",), (), ()))
-    release = mocker.patch("jailbee.orchestration.adoption.release", return_value=ReleaseResult(f"{prefix}-o", ("mounts data",), ()))
+    adopt = mocker.patch(
+        "jailbee.orchestration.adoption.adopt", return_value=AdoptResult((f"{prefix}-a",), (), ())
+    )
+    release = mocker.patch(
+        "jailbee.orchestration.adoption.release",
+        return_value=ReleaseResult(f"{prefix}-o", ("mounts data",), ()),
+    )
     result = runner.invoke(app, ["orchestrate", "adopt", "o", "a"])
     assert result.exit_code == 0, result.output
     adopt.assert_called_once_with(patched.cfg, patched.incus, f"{prefix}-o", [f"{prefix}-a"])
@@ -384,11 +389,20 @@ def test_adopt_and_release_cli(patched, mocker):
 
 def test_adopt_pickers_and_already_warning(patched, mocker):
     from jailbee.orchestration.adoption import AdoptResult
+
     prefix = patched.cfg.container_prefix
     mocker.patch("jailbee.incus.Incus", return_value=patched.incus)
-    patched.list_grants.return_value = [GrantRow("o", f"{prefix}-o", Grant(), None, 0, None), GrantRow("p", f"{prefix}-p", Grant(), None, 0, None)]
-    mocker.patch("jailbee.orchestration.adoption.candidates", return_value=[f"{prefix}-a", f"{prefix}-b"])
-    adopt = mocker.patch("jailbee.orchestration.adoption.adopt", return_value=AdoptResult((), (f"{prefix}-a",), ("notify failed",)))
+    patched.list_grants.return_value = [
+        GrantRow("o", f"{prefix}-o", Grant(), None, 0, None),
+        GrantRow("p", f"{prefix}-p", Grant(), None, 0, None),
+    ]
+    mocker.patch(
+        "jailbee.orchestration.adoption.candidates", return_value=[f"{prefix}-a", f"{prefix}-b"]
+    )
+    adopt = mocker.patch(
+        "jailbee.orchestration.adoption.adopt",
+        return_value=AdoptResult((), (f"{prefix}-a",), ("notify failed",)),
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.prompting._select", side_effect=[f"{prefix}-o", f"{prefix}-a"])
     result = runner.invoke(app, ["orchestrate", "adopt"])
@@ -400,7 +414,9 @@ def test_adopt_pickers_and_already_warning(patched, mocker):
 
 def test_adopt_no_children_noninteractive(patched, mocker):
     prefix = patched.cfg.container_prefix
-    mocker.patch("jailbee.orchestration.adoption.candidates", return_value=[f"{prefix}-a", f"{prefix}-b"])
+    mocker.patch(
+        "jailbee.orchestration.adoption.candidates", return_value=[f"{prefix}-a", f"{prefix}-b"]
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["orchestrate", "adopt", "o"])
     assert result.exit_code == 2
@@ -409,10 +425,17 @@ def test_adopt_no_children_noninteractive(patched, mocker):
 
 def test_release_picker(patched, mocker):
     from jailbee.orchestration.adoption import ReleaseResult
+
     prefix = patched.cfg.container_prefix
     mocker.patch("jailbee.incus.Incus", return_value=patched.incus)
-    mocker.patch("jailbee.orchestration.adoption.children_of_repo", return_value=[f"{prefix}-a", f"{prefix}-b"])
-    release = mocker.patch("jailbee.orchestration.adoption.release", return_value=ReleaseResult(f"{prefix}-o", (), ("warning",)))
+    mocker.patch(
+        "jailbee.orchestration.adoption.children_of_repo",
+        return_value=[f"{prefix}-a", f"{prefix}-b"],
+    )
+    release = mocker.patch(
+        "jailbee.orchestration.adoption.release",
+        return_value=ReleaseResult(f"{prefix}-o", (), ("warning",)),
+    )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.prompting._select", return_value=f"{prefix}-a")
     result = runner.invoke(app, ["orchestrate", "release"])

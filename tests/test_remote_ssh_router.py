@@ -1798,4 +1798,6 @@ def test_orchestrate_adopt_is_a_host_command_unless_the_feature_is_on(monkeypatc
     argv = ("orchestrate", "adopt", "box", "child")
     with pytest.raises(RouteError):
         policy_allows(argv, FULL)
-    assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(orchestration=True)) == "orchestrate adopt"
+    assert (
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(orchestration=True)) == "orchestrate adopt"
+    )

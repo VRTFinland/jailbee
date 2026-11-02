@@ -310,5 +310,11 @@ def test_release_non_child_refused(cfg, rig, tmp_path):
 def test_children_of_repo_filters_and_sorts(cfg, rig):
     rows, incus = rig
     rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
-    rows.extend([raw("myrepo-z", config={labels.SPAWNED_BY: "myrepo-o"}), raw("other-x", config={labels.SPAWNED_BY: "myrepo-o"}, own=False), raw("myrepo-empty", config={labels.SPAWNED_BY: ""})])
+    rows.extend(
+        [
+            raw("myrepo-z", config={labels.SPAWNED_BY: "myrepo-o"}),
+            raw("other-x", config={labels.SPAWNED_BY: "myrepo-o"}, own=False),
+            raw("myrepo-empty", config={labels.SPAWNED_BY: ""}),
+        ]
+    )
     assert adoption.children_of_repo(cfg, incus) == ["myrepo-a", "myrepo-z"]
