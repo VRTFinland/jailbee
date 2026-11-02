@@ -140,10 +140,18 @@ def test_send_update_source(script, base, tmp_path, source):
 
 @pytest.mark.parametrize("source", [[], ["--ref", "refs/heads/x"], ["--base", "release"]])
 def test_send_update_merge_flag(script, base, tmp_path, source):
-    result = run(script, "send", "update", "--child", "c", "--merge", *source, env=env_for(base, tmp_path))
+    result = run(
+        script, "send", "update", "--child", "c", "--merge", *source, env=env_for(base, tmp_path)
+    )
     assert result.returncode == 0, result.stderr
     manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
-    expected = {"version": 1, "id": result.stdout.strip(), "type": "update", "child": "c", "merge": True}
+    expected = {
+        "version": 1,
+        "id": result.stdout.strip(),
+        "type": "update",
+        "child": "c",
+        "merge": True,
+    }
     if source:
         expected[source[0][2:]] = source[1]
     assert manifest == expected
