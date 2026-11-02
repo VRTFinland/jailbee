@@ -75,7 +75,9 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
     try:
         adapter = base.get_adapter(status.agent)
         sessions = _one_per_process(adapter.read_sessions(adapter.session_home(cfg, name)))
-        session = next((s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None)
+        session = next(
+            (s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None
+        )
         if session is None or session.state not in ("waiting", "idle"):
             return None
         paths = adapter.locate_activity(adapter.config_home(cfg), session)
@@ -84,9 +86,15 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
         # Idle without readable activity cannot rule out a running subagent.
         if session.state == "idle" and (activity is None or activity.background_clear is not True):
             return None
-        return json.dumps([session.session_id, session.state, str(session.since),
-                           activity.modified if activity else None,
-                           str(activity.last_event_at) if activity else None])
+        return json.dumps(
+            [
+                session.session_id,
+                session.state,
+                str(session.since),
+                activity.modified if activity else None,
+                str(activity.last_event_at) if activity else None,
+            ]
+        )
     except Exception:
         # Adapter formats are undocumented; a broken reader must not stall supervision.
         return None
@@ -99,14 +107,23 @@ def advance_idle(
     if token is None or entry.last_message_kind == "blocked":
         return replace(entry, idle_since=None, idle_reported_at=None, idle_token=None), None
     if entry.idle_token != token or entry.idle_since is None:
-        return replace(entry, idle_since=now.isoformat(), idle_reported_at=None, idle_token=token), None
+        return replace(
+            entry, idle_since=now.isoformat(), idle_reported_at=None, idle_token=token
+        ), None
     since = datetime.fromisoformat(entry.idle_since)
     due = datetime.fromisoformat(entry.idle_reported_at) if entry.idle_reported_at else since
     if (now - due).total_seconds() < after:
         return entry, None
     minutes = int((now - since).total_seconds() // 60)
-    last = f"{entry.last_message_kind} {entry.last_message_line or ''}" if entry.last_message_kind else "none"
-    body = f"[jailbee] child `{entry.child_full}` has been waiting for input for {minutes}m; last message: {last}"
+    last = (
+        f"{entry.last_message_kind} {entry.last_message_line or ''}"
+        if entry.last_message_kind
+        else "none"
+    )
+    body = (
+        f"[jailbee] child `{entry.child_full}` has been waiting for input for {minutes}m; "
+        f"last message: {last}"
+    )
     return replace(entry, idle_reported_at=now.isoformat()), body
 
 
@@ -160,7 +177,9 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
         if not isinstance(recorded, bool):
             return None
         pid, start = data.get("pid"), data.get("proc_start")
-        if any(value is not None and (type(value) is not int or value < 0) for value in (pid, start)):
+        if any(
+            value is not None and (type(value) is not int or value < 0) for value in (pid, start)
+        ):
             return None
         return AgentStatus(data["alive"], agent, rc, recorded, pid, start)
     except (IncusError, ValueError, TypeError):

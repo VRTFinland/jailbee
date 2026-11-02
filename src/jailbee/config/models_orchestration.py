@@ -131,7 +131,8 @@ class RepoOrchestration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     idle_after_seconds: int = Field(
-        default=900, ge=1,
+        default=900,
+        ge=1,
         description="Seconds awaiting input before a broker idle report; also its repeat interval.",
     )
 

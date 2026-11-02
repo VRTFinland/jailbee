@@ -271,7 +271,9 @@ def _background_clear(directory: Path) -> bool | None:
     """A stale transcript does not prove completion; only no history is clear."""
     try:
         with os.scandir(directory) as entries:
-            return not any(e.name.startswith("agent-") and e.name.endswith(".jsonl") for e in entries)
+            return not any(
+                e.name.startswith("agent-") and e.name.endswith(".jsonl") for e in entries
+            )
     except FileNotFoundError:
         return True
     except OSError:

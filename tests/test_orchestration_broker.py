@@ -1341,16 +1341,29 @@ def test_only_accepted_done_cancels_supervision(rig: Rig, monkeypatch, accepted)
 
 def test_idle_report_contains_last_accepted_message_and_tail(rig: Rig, monkeypatch) -> None:
     from datetime import timedelta
+
     from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
-    text = json.dumps({"version": 1, "id": "n1", "type": "message", "kind": "note", "body": "Need your answer\nsecond line"})
+    text = json.dumps(
+        {
+            "version": 1,
+            "id": "n1",
+            "type": "message",
+            "kind": "note",
+            "body": "Need your answer\nsecond line",
+        }
+    )
     rig.outboxes["proj-kid"] = [RawManifest("n1.json", text, {"n1.json": text})]
     rig.dispatch.return_value = Outcome("done", "delivered")
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     monkeypatch.setattr(agent_watch, "idle_signal", lambda *a, **k: "turn")
     monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "prompt pane")
     rig.tick()
@@ -1369,11 +1382,22 @@ def test_idle_report_contains_last_accepted_message_and_tail(rig: Rig, monkeypat
 
 @pytest.mark.parametrize("kind,accepted", [("blocked", True), ("note", True), ("done", False)])
 def test_child_message_idle_reset_only_when_accepted(rig: Rig, monkeypatch, kind, accepted) -> None:
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True,
-        confirmed=True, idle_since=NOW.isoformat(), idle_token="turn", last_message_kind="blocked")
+    entry = watch.WatchEntry(
+        "s1",
+        "proj-kid",
+        "spawn",
+        NOW.isoformat(),
+        supervise=True,
+        confirmed=True,
+        idle_since=NOW.isoformat(),
+        idle_token="turn",
+        last_message_kind="blocked",
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
-    text = json.dumps({"version": 1, "id": "m1", "type": "message", "kind": kind, "body": "line\nmore"})
+    text = json.dumps(
+        {"version": 1, "id": "m1", "type": "message", "kind": kind, "body": "line\nmore"}
+    )
     rig.outboxes["proj-kid"] = [RawManifest("m1.json", text, {"m1.json": text})]
     rig.dispatch.return_value = Outcome("done" if accepted else "refused", "result")
     monkeypatch.setattr(broker, "_settle_all_watches", lambda *a, **k: None)
@@ -1387,11 +1411,20 @@ def test_child_message_idle_reset_only_when_accepted(rig: Rig, monkeypatch, kind
 @pytest.mark.parametrize("lifecycle", ["active", "done", "stop", "destroy", "blocked"])
 def test_idle_supervision_suppression(rig: Rig, monkeypatch, signal, lifecycle) -> None:
     from datetime import timedelta
+
     from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True,
-        confirmed=True, idle_since=(NOW - timedelta(hours=1)).isoformat(), idle_token="turn",
-        last_message_kind="blocked" if lifecycle == "blocked" else "note")
+    entry = watch.WatchEntry(
+        "s1",
+        "proj-kid",
+        "spawn",
+        NOW.isoformat(),
+        supervise=True,
+        confirmed=True,
+        idle_since=(NOW - timedelta(hours=1)).isoformat(),
+        idle_token="turn",
+        last_message_kind="blocked" if lifecycle == "blocked" else "note",
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     child = _child()
     if lifecycle == "done":
@@ -1400,26 +1433,45 @@ def test_idle_supervision_suppression(rig: Rig, monkeypatch, signal, lifecycle) 
         watch.cancel(rig.root, "proj-orch", "proj-kid")
     rig.incus.list_containers.return_value = [_orch(), child]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     monkeypatch.setattr(agent_watch, "idle_signal", lambda *a, **k: signal)
     monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "")
     rig.tick()
-    messages = [c.args[3] for c in rig.deliver.call_args_list if getattr(c.args[3], "kind", None) == "idle"]
+    messages = [
+        c.args[3] for c in rig.deliver.call_args_list if getattr(c.args[3], "kind", None) == "idle"
+    ]
     assert bool(messages) is (lifecycle == "active" and signal is not None)
 
 
 def test_idle_uses_repo_threshold_and_retries_delivery(rig: Rig, monkeypatch) -> None:
     from datetime import timedelta
+
     from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
     from jailbee.orchestration import agent_watch
 
-    monkeypatch.setattr(type(rig.cfg), "orchestration_view", lambda self: OrchestrationView(repo=RepoOrchestration(idle_after_seconds=60)))
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True,
-        confirmed=True, idle_since=(NOW - timedelta(seconds=60)).isoformat(), idle_token="turn")
+    monkeypatch.setattr(
+        type(rig.cfg),
+        "orchestration_view",
+        lambda self: OrchestrationView(repo=RepoOrchestration(idle_after_seconds=60)),
+    )
+    entry = watch.WatchEntry(
+        "s1",
+        "proj-kid",
+        "spawn",
+        NOW.isoformat(),
+        supervise=True,
+        confirmed=True,
+        idle_since=(NOW - timedelta(seconds=60)).isoformat(),
+        idle_token="turn",
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     monkeypatch.setattr(agent_watch, "idle_signal", lambda *a, **k: "turn")
     monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "")
     rig.deliver.side_effect = RuntimeError("delivery unavailable")

@@ -130,8 +130,16 @@ def record_message(root: Path, orchestrator: str, child_full: str, kind: str, bo
     lines = body.splitlines()
     line = "".join(ch for ch in (lines[0] if lines else "") if ch.isprintable())[:240]
     watches[orchestrator] = [
-        replace(e, idle_since=None, idle_reported_at=None, idle_token=None,
-                last_message_kind=kind, last_message_line=line) if e.child_full == child_full else e
+        replace(
+            e,
+            idle_since=None,
+            idle_reported_at=None,
+            idle_token=None,
+            last_message_kind=kind,
+            last_message_line=line,
+        )
+        if e.child_full == child_full
+        else e
         for e in watches.get(orchestrator, [])
     ]
     save_watch(root, watches)
