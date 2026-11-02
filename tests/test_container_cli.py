@@ -12,7 +12,10 @@ from jailbee import cli_context
 def test_host_commands_snapshot():
     from jailbee.cli import app
 
-    assert cli_context.HOST_COMMANDS == set(typer.main.get_command(app).commands) - cli_context.SHARED_COMMANDS
+    assert (
+        cli_context.HOST_COMMANDS
+        == set(typer.main.get_command(app).commands) - cli_context.SHARED_COMMANDS
+    )
 
 
 def test_container_help_lists_only_shared():
@@ -31,8 +34,18 @@ def test_expect_version_mismatch_exits_86(tmp_path, monkeypatch):
     identity.write_text("1.8.1 aaaa\n")
     monkeypatch.setattr(container_cli, "VERSION_FILE", identity)
     runner = CliRunner()
-    assert runner.invoke(container_cli.container_app, ["--expect-version", "1.8.1 bbbb", "version"]).exit_code == 86
-    assert runner.invoke(container_cli.container_app, ["--expect-version", "1.8.1 aaaa", "version"]).exit_code == 0
+    assert (
+        runner.invoke(
+            container_cli.container_app, ["--expect-version", "1.8.1 bbbb", "version"]
+        ).exit_code
+        == 86
+    )
+    assert (
+        runner.invoke(
+            container_cli.container_app, ["--expect-version", "1.8.1 aaaa", "version"]
+        ).exit_code
+        == 0
+    )
 
 
 def test_container_host_command_errors(monkeypatch, capsys):
