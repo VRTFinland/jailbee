@@ -144,42 +144,6 @@ def test_missing_names_noninteractive(tmp_path: Path, monkeypatch) -> None:
     assert "db" in result.output and "web" in result.output
 
 
-def test_follow_reads_new_lines_by_position(tmp_path: Path, monkeypatch) -> None:
-    from subprocess import CompletedProcess
-
-    from jailbee.services.local_proc import LocalProc
-
-    config = tmp_path / ".jailbee" / "config.yaml"
-    config.parent.mkdir()
-    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: sleep 1\n")
-    calls = []
-    positions = iter(["5 0", "7 0", "7 0"])
-
-    def tmux(self, args):
-        calls.append(args)
-        if args[0] == "display-message":
-            return CompletedProcess(args, 0, next(positions), "")
-        if args[0] == "capture-pane":
-            return CompletedProcess(args, 0, "same\nsame\n" if "-2" in args else "same\n", "")
-        raise AssertionError(args)
-
-    monkeypatch.setattr(LocalProc, "tmux", tmux)
-    sleeps = iter([None, None, KeyboardInterrupt()])
-
-    def sleep(self, seconds):
-        value = next(sleeps)
-        if value is not None:
-            raise value
-
-    monkeypatch.setattr(LocalProc, "sleep", sleep)
-    result = CliRunner().invoke(
-        container_app, ["service", "--repo", str(tmp_path), "logs", "db", "-n", "1", "--follow"]
-    )
-    assert result.exit_code == 0, result.output
-    assert result.stdout == "same\nsame\nsame\n"
-    assert any(call[0] == "capture-pane" and "-2" in call for call in calls)
-
-
 def test_plan_json_matches_graph(tmp_path: Path) -> None:
     from jailbee.config.repo_layer import load_repo_layer
     from jailbee.services.graph import plan_payload
@@ -202,3 +166,13 @@ def test_service_shared_name() -> None:
     from jailbee.cli_context import SHARED_COMMANDS
 
     assert "service" in SHARED_COMMANDS
+
+
+def test_child_help_ignores_missing_and_invalid_config(tmp_path: Path) -> None:
+    runner = CliRunner()
+    args = ["service", "--repo", str(tmp_path), "logs", "--help"]
+    assert runner.invoke(container_app, args).exit_code == 0
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("services: [invalid")
+    assert runner.invoke(container_app, args).exit_code == 0

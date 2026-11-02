@@ -38,9 +38,9 @@ def group(
     repo: Annotated[Path | None, typer.Option("--repo")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    ctx.obj = _runtime(repo)
+    ctx.obj = repo
     if ctx.invoked_subcommand is None:
-        _list(ctx.obj, json_output)
+        _list(_runtime(repo), json_output)
 
 
 def _list(rt: ServiceRuntime, json_output: bool) -> None:
@@ -55,7 +55,7 @@ def _list(rt: ServiceRuntime, json_output: bool) -> None:
 
 @service_app.command("ls")
 def ls(ctx: Context, json_output: Annotated[bool, typer.Option("--json")] = False) -> None:
-    _list(ctx.obj, json_output)
+    _list(_runtime(ctx.obj), json_output)
 
 
 def _names(rt: ServiceRuntime, names: list[str] | None, *, destructive: bool = False) -> list[str]:
@@ -88,25 +88,25 @@ def _report(report: RunReport) -> None:
 
 @service_app.command()
 def start(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     _report(rt.start(_names(rt, names)))
 
 
 @service_app.command()
 def stop(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     _report(rt.stop(_names(rt, names, destructive=True)))
 
 
 @service_app.command()
 def restart(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     _report(rt.restart(_names(rt, names)))
 
 
 @service_app.command("refresh")
 def refresh_cmd(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     selected = _names(rt, names)
     refusal = refresh.elevation_refusal(rt.cfg, selected, socket.gethostname())
     if refusal:
@@ -122,7 +122,7 @@ def plan(
     op: Annotated[Literal["start", "restart", "refresh"], typer.Option("--op")] = "start",
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     try:
         payload = graph.plan_payload(
             rt.cfg.services, names or [], op, step_timeout=rt.cfg.autostart.step_timeout
@@ -143,7 +143,7 @@ def logs(
     lines: Annotated[int, typer.Option("-n", min=1)] = 30,
     follow: Annotated[bool, typer.Option("--follow")] = False,
 ) -> None:
-    rt: ServiceRuntime = ctx.obj
+    rt = _runtime(ctx.obj)
     selected = _names(rt, [name] if name else None)[0]
     if not follow:
         typer.echo(rt.logs(selected, lines), nl=False)

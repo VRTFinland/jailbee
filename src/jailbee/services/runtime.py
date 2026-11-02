@@ -144,40 +144,7 @@ class ServiceRuntime:
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])
-        target = self._target(name)
-
-        def position() -> tuple[int, int]:
-            result = self.proc.tmux(
-                ["display-message", "-p", "-t", target, "#{history_size} #{cursor_y}"]
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or "service window not found")
-            history, cursor = map(int, result.stdout.split())
-            return history + cursor, cursor
-
-        previous, _ = position()
-        yield self.logs(name, lines)
-        while True:
-            self.proc.sleep(1)
-            current, cursor = position()
-            delta = current - previous
-            if delta > 0:
-                result = self.proc.tmux(
-                    [
-                        "capture-pane",
-                        "-p",
-                        "-t",
-                        target,
-                        "-S",
-                        str(cursor - delta),
-                        "-E",
-                        str(cursor - 1),
-                    ]
-                )
-                if result.returncode:
-                    raise RuntimeError(result.stderr.strip() or "service window not found")
-                yield result.stdout
-            previous = current
+        yield from self.proc.follow_pane(self._target(name), lines)
 
     def _shell(self, service: Service, command: str, timeout: float, *, capture: bool) -> int:
         return self.proc.run_shell(
