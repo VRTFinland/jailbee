@@ -21,6 +21,18 @@ PIN and touch requirements depend on the agent and key configuration.
 Hardware-backed keys may avoid exposing private key material as files, but
 do not make every request require a touch.
 
+With the opt-in [GPG keys over remote SSH](commands.md#gpg-keys-over-remote-ssh),
+all participating `gpg.enabled` containers can request decryptions and signatures
+from the client's restricted extra socket. The newest live forward wins;
+disconnecting restores the previous forward or host agent. Only `S.gpg-agent`
+switches: SSH authentication keeps using the host. Client private keys never
+leave the client through the agent protocol. Prefer a smartcard with a touch
+policy (`ykman openpgp keys set-touch dec on` / `sig on`) when GPG gates secrets.
+A software key, or card without a touch policy, can decrypt without a prompt
+while the client agent's `default-cache-ttl` passphrase cache is warm. The switch,
+host and remote directories are read-only in containers; Jailbee never replaces
+or unlinks the host's own runtime GPG sockets.
+
 `ssh.enabled` seeds the top-level `config`, `known_hosts` and `config.d/`
 into an initially empty shared `~/.ssh`. It excludes other top-level files,
 not secrets recursively: `config.d/` is copied recursively and symlinks are
@@ -187,14 +199,18 @@ The SSH protocol surface is also fail-closed:
 - public-key authentication is the only authentication method; password,
   keyboard-interactive, host-based and GSS authentication are disabled;
 - agent forwarding, X11 forwarding, Unix-socket forwarding and remote
-  listeners are disabled, and so is TCP forwarding, with two exceptions (see
+  listeners are disabled, and so is TCP forwarding, with three exceptions (see
   [Remote GUI](#remote-gui)): `127.0.0.1:13389` (the shared display), for any
   authorized key, only while `remote.ssh.rdp` is on; and one reverse unix
   forward per connection, for `waypipe ssh`, requested by a connection
   authenticated by an authorized key, only while `remote.ssh.waypipe` is on.
   JailBee listens for that forward at its own path under the state directory
   (the client never chooses a host path), and the listener's directory is
-  mounted into `jailbee-display` only;
+  mounted into `jailbee-display` only. The third exception is one reverse GPG
+  Unix-socket forward per authenticated connection, only with `remote.ssh.gpg`
+  on and only for the exact marker `/jailbee/gpg-agent`. It listens at a
+  Jailbee-owned path, never a client-selected host path; all participating
+  `gpg.enabled` containers can reach it through read-only mounts;
 - SFTP and SCP are on by default only under `commands.mode: full`, where
   `shell` already reaches the same files; they are off by default under
   `allowlist` and `disabled`, and an explicit `remote.ssh.files` always wins.

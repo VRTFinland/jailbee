@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **GPG keys over remote SSH.** With `remote.ssh.gpg`, a `jb remote ssh`
+  client can forward its gpg-agent with one `RemoteForward` line; while
+  connected, `gpg.enabled` containers decrypt and sign with the client's keys
+  (for example a YubiKey), falling back to the host's agent when it closes.
+
 - `jailbee-inbox wait --wake-on` filters wakeups without marking any message
   read; a child's first report after spawn/restart always wakes. The
   `--quiet-after` watchdog names silent running children. Concurrent

@@ -4879,6 +4879,42 @@ the end-to-end observation is missing. **Do not** copy a login into a rig
 container to fake it: two live copies of one credential rotate each other out,
 which is the failure that removed host-seeding in the first place.
 
+## Remote GPG agent forwarding
+
+Requires a real Jailbee host, a Linux or macOS SSH client with GnuPG, and
+preferably a real card with a touch policy. Follow
+[GPG keys over remote SSH](commands.md#gpg-keys-over-remote-ssh) for setup.
+
+1. Enable `remote.ssh.gpg` on the host and `gpg.enabled` for two repos; import
+   the client's public keys on the host. Restart both containers. Before
+   starting the SSH service, confirm local decryption still uses the host agent.
+2. Inspect both containers' disk devices: `gpg-socket`, `gpg-host-socket` and
+   `gpg-remote-socket` must all have `readonly: "true"`. Check the idmapped dev
+   user can traverse the 0700 directories and connect to the forwarded socket;
+   record its owner and permissions. Attempts to unlink a socket must fail.
+3. On the client, `gpg --card-status` if needed, then add the `RemoteForward`
+   using the output of `gpgconf --list-dirs agent-extra-socket`. Connect to
+   Jailbee and decrypt/sign from both containers. Expected: the client card
+   asks for touch; no client private-key files appear on the host. Repeat with
+   a software key and record passphrase-cache behavior.
+4. Open a second client connection using a distinguishable key. Expected: the
+   latest forward wins across both repos. Close it: the first forward resumes.
+   Close the first: the host agent works again without restarting containers.
+5. Repeat with a killed client and network loss (allow SSH transport detection
+   time). Expected: connection cleanup restores the previous agent/host and
+   removes its stale remote socket. `SSH_AUTH_SOCK` never changes.
+6. Kill/restart the SSH server with an active forward. Expected: startup resets
+   a stale switch to the host and clears stale remote sockets. Host GPG socket
+   inodes are unchanged. Reconnect to use the client again.
+7. Turn `remote.ssh.gpg` off: new marker requests must fail. After restarting
+   containers, only the original direct `gpg-socket` mount remains. With
+   `gpg.enabled: false`, no GPG device is attached even when the remote flag is
+   on. Confirm waypipe still works independently and random Unix paths and a
+   second GPG forward on one connection are refused.
+8. Record GnuPG, SSH and OS versions on both ends. A benign fast-path key-listing
+   `Forbidden - ignored` warning is expected on some GnuPG versions; decryption
+   must still succeed.
+
 ## Host gpg-agent survives a container boot smoke test
 
 Needs a host with `gpg.enabled: true` and a live agent — ideally a smartcard,

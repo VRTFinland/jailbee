@@ -1006,6 +1006,18 @@ shell` needs `jailbee display attach <name>` first; one started at boot (an
 autostart step) needs `gui.wayland: always`. `display attach` also replaces a socket left dead by a
 host re-login; it is host-only.
 
+GPG keys on a Linux or macOS client can also be forwarded: enable
+`remote.ssh.gpg: true` in the host's `global.yaml`, keep repo `gpg.enabled`
+on, and restart existing containers once. In the client's SSH Host block add
+`RemoteForward /jailbee/gpg-agent <output of gpgconf --list-dirs agent-extra-socket>`.
+Import client public keys into the host keyring. Every participating container
+uses the newest live client forward, falling back to the previous one or host
+on disconnect; SSH authentication stays on the host. Private keys stay on the
+client, but any participating container can request operations. Prefer a card
+with touch enabled; software keys or cards without touch may decrypt silently
+while the agent cache is warm. Setup and caveats: `docs/commands.md`, section
+"GPG keys over remote SSH".
+
 On a Linux laptop with a Wayland session and waypipe installed, `waypipe ssh`
 gives native windows instead (on by default via `remote.ssh.waypipe`; each container reaches only its own waypipe server). A Mac does the
 same with the Cocoa-Way compositor (`COCOA_WAY_PRESENTATION=rootless
