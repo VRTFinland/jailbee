@@ -13,7 +13,10 @@ def test_env_override_wins(tmp_path: Path) -> None:
 def test_marker_and_mount_path_means_container(tmp_path: Path) -> None:
     marker = tmp_path / "marker"
     marker.touch()
-    assert cli_context.detect({}, marker, "/opt/jailbee/app/current/jailbee/__init__.py") == "container"
+    assert (
+        cli_context.detect({}, marker, "/opt/jailbee/app/current/jailbee/__init__.py")
+        == "container"
+    )
 
 
 def test_marker_without_mount_path_is_host(tmp_path: Path) -> None:
