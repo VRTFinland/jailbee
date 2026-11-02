@@ -6,6 +6,7 @@ import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, MagicMock
+from unittest.mock import call as mock_call
 
 import pytest
 
@@ -1908,3 +1909,31 @@ def test_session_write_failure_does_not_break_supervision(rig: Rig, monkeypatch)
     rig.incus.config_set.assert_called_once_with(
         "proj-kid", labels.AGENT_SESSIONS, json.dumps(["00000000-0000-0000-0000-000000000001"])
     )
+
+
+@pytest.mark.parametrize("changed,failure", [(True, False), (False, False), (False, True)])
+def test_broker_start_stages_and_syncs_registered_repos(
+    tmp_path, monkeypatch, caplog, changed, failure
+):
+    from jailbee import container_app
+
+    cfg1, cfg2 = MagicMock(), MagicMock()
+    sync = MagicMock()
+    stage = MagicMock(
+        side_effect=OSError("stage broke") if failure else None,
+        return_value=container_app.StageResult(tmp_path, changed),
+    )
+    monkeypatch.setattr(container_app, "stage", stage)
+    monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
+    monkeypatch.setattr(broker, "repo_configs", lambda memory: {"a": cfg1, "b": cfg2})
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    tick = MagicMock(return_value=False)
+    monkeypatch.setattr(broker, "tick", tick)
+    monkeypatch.setattr(broker, "_installed_version", lambda: None)
+    monkeypatch.setattr(broker, "_pause", lambda seconds, stop: _sigterm())
+    assert broker.run_broker(MagicMock()) == 0
+    stage.assert_called_once_with()
+    tick.assert_called_once()
+    assert sync.call_args_list == ([mock_call(cfg1), mock_call(cfg2)] if not failure else [])
+    if failure:
+        assert "staging failed" in caplog.text

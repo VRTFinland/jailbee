@@ -558,6 +558,7 @@ def test_provision_env_extra_keys_pass_through(tmp_path, mocker):
         "JAVA_PACKAGE",
         "NODE_MAJOR",
         "EXTRA_APT_PACKAGES",
+        "JAILBEE_CONTAINER_DEPS",
     ],
 )
 def test_provision_env_reserved_key_raises(tmp_path, mocker, reserved):

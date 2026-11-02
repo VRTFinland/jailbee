@@ -10,7 +10,15 @@ import re
 from pathlib import PurePosixPath
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from jailbee.config.common import CONTAINER_USERNAME
 from jailbee.config.models_net import _reject_offline
@@ -204,7 +212,7 @@ class AutostartStage(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _no_container_scope_on_steps(self) -> AutostartStage:
+    def _no_container_scope_on_steps(self, info: ValidationInfo) -> AutostartStage:
         for chain in self.all_chains():
             for step in chain.steps:
                 if step.network is not None:
@@ -213,7 +221,9 @@ class AutostartStage(BaseModel):
                         f"'{self.stage}' — move it to the stage: a stage owns the network "
                         f"profile for all of its chains"
                     )
-                if step.mounts:
+                if step.mounts and not (
+                    isinstance(info.context, dict) and info.context.get("repo_layer")
+                ):
                     raise ValueError(
                         f"autostart step '{step.name}' sets `mounts` inside stage "
                         f"'{self.stage}' — move them to the stage: a stage owns its mounts "

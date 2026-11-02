@@ -70,6 +70,8 @@ def test_init_creates_shared_dirs(tmp_path, mocker):
     incus.network_acl_exists.return_value = False
     incus.network_get.return_value = ""
     incus.network_exists.return_value = True
+    staged = mocker.patch("jailbee.container_app.stage")
+    incus.profile_create.side_effect = lambda *args: staged.assert_called_once_with()
 
     run_init(cfg, incus)
 

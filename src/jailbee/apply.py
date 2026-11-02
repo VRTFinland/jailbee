@@ -339,6 +339,13 @@ def run_apply(
             "before trusting it to use its own slot."
         )
 
+    from jailbee import container_app
+
+    try:
+        container_app.stage()
+    except Exception as e:
+        warn(f"jailbee app staging failed (continuing): {e}")
+
     # Refresh jailbee's bundled skills in each enabled agent's shared skills
     # directory so existing containers pick up a newer jailbee without
     # recreation. Non-fatal.

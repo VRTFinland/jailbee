@@ -94,6 +94,9 @@ def run_init(
     else:
         info("SSH seed disabled in config — skipping")
 
+    from jailbee import container_app
+
+    container_app.stage()
     names = profile_names(cfg)
     _apply_profile_strict(incus, names.base, base_profile_yaml(cfg))
     _apply_profile_strict(incus, names.binds, binds_profile_yaml(cfg))

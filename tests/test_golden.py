@@ -1461,3 +1461,15 @@ def test_gather_golden_usage_reports_golden_instance(mocker):
     assert result[0].instance_size_bytes == 1234
     assert result[1].instance_name is None
     assert result[1].instance_size_bytes is None
+
+
+def test_build_passes_container_deps(make_cfg, tmp_path, mocker):
+    mocker.patch(
+        "jailbee.container_deps.pinned_requirements", return_value=["typer==1.2", "rich==3.4"]
+    )
+    incus = _incus()
+    build_golden_image(make_cfg(tmp_path), incus)
+    assert (
+        _find_install_run_call(incus).kwargs["env"]["JAILBEE_CONTAINER_DEPS"]
+        == "typer==1.2 rich==3.4"
+    )

@@ -1818,8 +1818,10 @@ def _new_container(
         ensure_claude_credentials_env(cfg, incus)
 
     # Incus needs the instruction mount's source directory before creation.
+    from jailbee import container_app
     from jailbee.agent_instructions import sync_global_instructions
 
+    container_app.stage()
     sync_global_instructions(cfg)
 
     # Before `incus.init`, deliberately. `profile_assign` below is the first
@@ -2785,8 +2787,16 @@ def boot_container(
 
     # Create the mounted source before boot; report a failed mkdir ourselves
     # rather than leaving Incus to fail with an opaque disk-device error.
+    from jailbee import container_app
     from jailbee.agent_instructions import missing_staging_dirs, sync_global_instructions
 
+    try:
+        container_app.stage()
+    except Exception as e:
+        raise ValueError(f"cannot start: jailbee app staging failed: {e}") from e
+    from jailbee.agent_skills import sync_agent_skills
+
+    sync_agent_skills(cfg)
     sync_global_instructions(cfg)
     missing = missing_staging_dirs(cfg)
     if missing:

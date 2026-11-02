@@ -1720,6 +1720,9 @@ def test_new_container_memory_override_is_explicit(tmp_path, mocker, memory, for
 def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
+    staged = mocker.patch("jailbee.container_app.stage")
+    incus.profile_assign.side_effect = lambda *args: staged.assert_called_once_with()
+    incus.start.side_effect = lambda *args: staged.assert_called_once_with()
     incus.exists.return_value = False
     mocker.patch(
         "jailbee.lifecycle.branch_exists_locally",
@@ -11921,3 +11924,27 @@ def test_orchestration_columns_shown_with_orchestration():
     rows = [_orch_ci(as_orch=True, unread=2), _orch_ci(as_child=True)]
     assert all(_ls_spec(n).show_if(rows) for n in ("role", "children", "inbox"))
     assert not _ls_spec("inbox").show_if([_orch_ci(as_orch=True, unread=0)])
+
+
+def test_boot_container_stages_app(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    _boot_events(mocker, incus)
+    mocker.patch("jailbee.agent_instructions.missing_staging_dirs", return_value=[])
+    staged = mocker.patch("jailbee.container_app.stage")
+    staged.return_value.changed = False
+    skills = mocker.patch("jailbee.agent_skills.sync_agent_skills")
+    boot_container(cfg, incus, "feat-x", restart=False)
+    staged.assert_called_once_with()
+    skills.assert_called_once_with(cfg)
+
+
+def test_boot_staging_failure_is_value_error(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.container_app.stage", side_effect=OSError("stage broke"))
+    with pytest.raises(ValueError, match="stage broke"):
+        boot_container(cfg, incus, "feat-x", restart=False)
+    incus.start.assert_not_called()

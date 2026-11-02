@@ -376,7 +376,9 @@ def binds_profile_yaml(cfg: Config) -> str:
     git-clone source), and shared cache/config bind mounts (RW, between
     containers but not with host).
     """
-    devices: dict[str, dict[str, str]] = {}
+    from jailbee.container_app import profile_device
+
+    devices: dict[str, dict[str, str]] = profile_device()
 
     # Host bind mounts from config — manual entries plus auto-additions
     # driven by gpg / jetbrains blocks (see Config.effective_host_mounts).

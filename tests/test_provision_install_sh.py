@@ -13,9 +13,12 @@ touches Incus or the network.
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.resources
+import json
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 SNIPPET_HEREDOC_START = "cat > /etc/profile.d/jailbee-env.sh <<'EOF'\n"
@@ -314,3 +317,68 @@ def test_install_sh_installs_the_xterm_kitty_terminfo():
     so kitty terminals work even where the host has no file to mount."""
     packages = _install_sh().split('echo "==> Installing LXC plumbing apt packages"', 1)[1]
     assert "kitty-terminfo" in packages.split("\n\n", 1)[0]
+
+
+def test_install_sh_creates_venv_and_launchers():
+    script = _install_sh()
+    assert "python3-venv" in _plumbing_apt_packages()
+    assert "python3 -m venv /opt/jailbee/venv" in script
+    assert '[ -n "${JAILBEE_CONTAINER_DEPS:-}" ]' in script
+    assert "/opt/jailbee/venv/bin/pip install --no-cache-dir $JAILBEE_CONTAINER_DEPS" in script
+    assert "/opt/jailbee/deps.json" in script
+    assert "/etc/jailbee/container" in script
+    assert "chmod 755 /usr/local/bin/jailbee" in script
+    assert "ln -s" in script and "/usr/local/bin/jb" in script
+
+
+def test_launcher_behaviour(tmp_path):
+    script = _install_sh()
+    marker = "cat > /usr/local/bin/jailbee <<'EOF'\n"
+    start = script.index(marker) + len(marker)
+    launcher = script[start : script.index("\nEOF\n", start)]
+    app = tmp_path / "app"
+    venv = tmp_path / "venv"
+    env = {"PATH": "/usr/bin:/bin", "JAILBEE_APP_DIR": str(app), "JAILBEE_VENV_DIR": str(venv)}
+    missing = subprocess.run(["bash", "-c", launcher], env=env, capture_output=True, text=True)
+    assert missing.returncode == 88
+    assert "run `jb apply`" in missing.stderr
+    version = app / "app-123"
+    (version / "jailbee").mkdir(parents=True)
+    (app / "current").symlink_to(version.name)
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin" / "python"
+    python.write_text('#!/bin/bash\nprintf "%s\\n" "$PYTHONPATH" "$@"\n')
+    python.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-c", launcher, "launcher", "hello world"], env=env, capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        str(version),
+        "-P",
+        "-m",
+        "jailbee.container_main",
+        "hello world",
+    ]
+
+
+def test_dependency_stamp_records_installed_versions(tmp_path):
+    script = _install_sh()
+    marker = '"$VENV/bin/python" -c \'\n'
+    start = script.index(marker) + len(marker)
+    code = script[start : script.index("\n'\n", start)]
+    stamp = tmp_path / "deps.json"
+    code = code.replace("/opt/jailbee/deps.json", str(stamp))
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={"JAILBEE_CONTAINER_DEPS": "typer==0 rich==0"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(stamp.read_text()) == {
+        "packages": {
+            "typer": importlib.metadata.version("typer"),
+            "rich": importlib.metadata.version("rich"),
+        }
+    }

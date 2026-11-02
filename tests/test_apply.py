@@ -3510,3 +3510,34 @@ def test_apply_samples_usage_before_live_memory_enforcement(make_cfg, tmp_path, 
     assert result.memory_low == ["following", "pin"]
     assert result.memory_defaulted == ["pin"]
     assert events.index("usage") < events.index("write") < events.index("unset")
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_apply_stages_app(make_cfg, tmp_path, mocker, capsys, failure):
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    events = []
+
+    def do_stage():
+        events.append("stage")
+        if failure:
+            raise OSError("stage broke")
+
+    stage = mocker.patch("jailbee.container_app.stage", side_effect=do_stage)
+    mocker.patch(
+        "jailbee.apply.binds_profile_yaml",
+        side_effect=lambda cfg: events.append("binds") or "devices: {}",
+    )
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _: False)
+    stage.assert_called_once_with()
+    assert events == ["stage", "binds"]
+    if failure:
+        assert "stage broke" in capsys.readouterr().out

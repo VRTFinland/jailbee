@@ -38,6 +38,22 @@ start reading one.
 """
 
 
+def repo_toplevel(path: Path) -> Path | None:
+    """Return the Git working tree root, or None outside a working tree."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=_LOCAL_DISCOVERY_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return Path(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else None
+
+
 def _remote_head_branch(repo_root: Path, remote: str) -> str | None:
     """`refs/remotes/<remote>/HEAD`'s branch, or None when it says nothing.
 

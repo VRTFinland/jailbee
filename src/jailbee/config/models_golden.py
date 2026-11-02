@@ -24,6 +24,7 @@ _RESERVED_PROVISION_ENV_KEYS = frozenset(
         "EXTRA_APT_PACKAGES",
         "JAILBEE_USER_HOME",
         "JAILBEE_PROVISION_DIR",
+        "JAILBEE_CONTAINER_DEPS",
     }
 )
 

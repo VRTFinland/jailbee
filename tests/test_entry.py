@@ -12,6 +12,81 @@ from jailbee.incus import IncusError
 from jailbee.repo_option import RepoOptionError
 
 
+def test_fresh_entry_dispatch_never_imports_host_cli():
+    import os
+    import subprocess
+
+    script = """
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in ('jailbee.cli', 'jailbee.macos'):
+        raise AssertionError('host import: ' + name)
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+from jailbee import container_deps
+container_deps.check = lambda: 'deps unavailable'
+from jailbee.entry import main
+main()
+"""
+    env = dict(os.environ, JAILBEE_CONTEXT="container")
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 87, result.stderr
+    assert "deps unavailable" in result.stderr
+
+
+def test_successful_container_start_never_imports_host_cli():
+    import os
+    import subprocess
+
+    script = """
+import builtins
+import sys
+from pathlib import Path
+original = builtins.__import__
+def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == 'jailbee.cli' or (name == 'jailbee' and 'cli' in fromlist):
+        raise AssertionError('host CLI imported')
+    return original(name, globals, locals, fromlist, level)
+builtins.__import__ = guarded
+from jailbee import container_main
+container_main.container_deps.check = lambda: None
+container_main.PACKAGE_DIR = Path('.')
+from jailbee.entry import main
+sys.argv = ['jailbee', 'version']
+main()
+"""
+    env = dict(os.environ, JAILBEE_CONTEXT="container")
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()
+
+
+def test_entry_dispatches_to_container(monkeypatch, mocker):
+    from jailbee import container_main
+
+    monkeypatch.setenv("JAILBEE_CONTEXT", "container")
+    target = mocker.patch.object(container_main, "main")
+    host = mocker.patch("jailbee.macos.maybe_delegate")
+    main()
+    target.assert_called_once_with()
+    host.assert_not_called()
+
+
+def test_host_rejects_container_command(monkeypatch, mocker, capsys):
+    from jailbee import cli_context
+
+    monkeypatch.setenv("JAILBEE_CONTEXT", "host")
+    monkeypatch.setattr(cli_context, "CONTAINER_COMMANDS", frozenset({"inbox"}))
+    monkeypatch.setattr(sys, "argv", ["jailbee", "inbox"])
+    host = mocker.patch("jailbee.macos.maybe_delegate")
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "only available inside a jailbee container" in capsys.readouterr().err
+    host.assert_not_called()
+
+
 def test_incus_error_is_reported_as_a_message_not_a_traceback(mocker, capsys):
     """An IncusError reaching the top is jailbee's own diagnosis, not a crash.
 
