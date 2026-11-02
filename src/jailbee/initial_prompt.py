@@ -69,7 +69,12 @@ def prompt_problem(cfg: Config, runner: Runner | None = None) -> str | None:
 
 
 def prompted_run(
-    command: str, prompt_args: str, *, report_exit: bool = False, agent: str = "", resume_args: str = ""
+    command: str,
+    prompt_args: str,
+    *,
+    report_exit: bool = False,
+    agent: str = "",
+    resume_args: str = "",
 ) -> str:
     """Step `run` string: consume the prompt file once, else launch plain.
 

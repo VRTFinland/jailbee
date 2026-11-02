@@ -106,6 +106,7 @@ def test_relaunch_passes_resume(cfg, monkeypatch):
     launch = MagicMock()
     monkeypatch.setattr(agent_session.tmux, "launch_step", launch)
     session = "12345678-1234-1234-1234-123456789abc"
-    agent_session.relaunch(cfg, incus, "child", "task", runner=None, old_agent="claude",
-                           resume=session)
+    agent_session.relaunch(
+        cfg, incus, "child", "task", runner=None, old_agent="claude", resume=session
+    )
     assert f"--resume {session}" in launch.call_args.kwargs["command"]

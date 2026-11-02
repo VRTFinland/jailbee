@@ -249,13 +249,38 @@ def test_read_runner_parses_label(mocker) -> None:
 @pytest.mark.parametrize("report_exit", [False, True])
 def test_prompted_run_inserts_resume_before_prompt_args(report_exit):
     session = "12345678-1234-1234-1234-123456789abc"
-    run = prompted_run("claude", "PROMPT", report_exit=report_exit,
-                       resume_args=f"--resume {session}")
+    run = prompted_run(
+        "claude", "PROMPT", report_exit=report_exit, resume_args=f"--resume {session}"
+    )
     assert f"exec claude --resume {session} PROMPT" in run
     assert run.endswith("fi; exec claude")
 
 
 @pytest.mark.parametrize("report_exit", [False, True])
 def test_prompted_run_default_unchanged(report_exit):
-    expected = ('if [ -f /home/dev/.jailbee/initial-prompt.md ]; then mv -f /home/dev/.jailbee/initial-prompt.md /home/dev/.jailbee/initial-prompt.consumed.md && exec claude P; fi; exec claude', 'if [ -f /home/dev/.jailbee/initial-prompt.md ]; then mv -f /home/dev/.jailbee/initial-prompt.md /home/dev/.jailbee/initial-prompt.consumed.md && { umask 077; ( python3 -c \'import json, pathlib, sys; p = pathlib.Path(\'"\'"\'/proc\'"\'"\') / sys.argv[1]; d = dict(pid=int(sys.argv[1]), start=(p / \'"\'"\'stat\'"\'"\').read_text().rsplit(\'"\'"\')\'"\'"\', 1)[1].split()[19], boot=pathlib.Path(\'"\'"\'/proc/sys/kernel/random/boot_id\'"\'"\').read_text().strip(), agent=sys.argv[3]); f = pathlib.Path(sys.argv[2]); t = f.with_suffix(\'"\'"\'.tmp\'"\'"\'); t.write_text(json.dumps(d)); t.replace(f)\' "$BASHPID" /home/dev/.jailbee/prompted-agent.json \'\'; exec claude P ); rc=$?; printf "%s\\n" "$rc" > /home/dev/.jailbee/prompted-agent.exit.tmp; mv -f /home/dev/.jailbee/prompted-agent.exit.tmp /home/dev/.jailbee/prompted-agent.exit; exit "$rc"; }; fi; exec claude')
-    assert prompted_run("claude", "P", report_exit=report_exit, resume_args="") == expected[report_exit]
+    expected = (
+        (
+            "if [ -f /home/dev/.jailbee/initial-prompt.md ]; then mv -f /home/"
+            "dev/.jailbee/initial-prompt.md /home/dev/.jailbee/initial-prompt."
+            "consumed.md && exec claude P; fi; exec claude"
+        ),
+        (
+            "if [ -f /home/dev/.jailbee/initial-prompt.md ]; then mv -f /home/"
+            "dev/.jailbee/initial-prompt.md /home/dev/.jailbee/initial-prompt."
+            "consumed.md && { umask 077; ( python3 -c 'import json, pathlib, s"
+            "ys; p = pathlib.Path('\"'\"'/proc'\"'\"') / sys.argv[1]; d = dict(pid"
+            "=int(sys.argv[1]), start=(p / '\"'\"'stat'\"'\"').read_text().rsplit("
+            "'\"'\"')'\"'\"', 1)[1].split()[19], boot=pathlib.Path('\"'\"'/proc/sys/"
+            "kernel/random/boot_id'\"'\"').read_text().strip(), agent=sys.argv[3"
+            "]); f = pathlib.Path(sys.argv[2]); t = f.with_suffix('\"'\"'.tmp'\"'"
+            '"\'); t.write_text(json.dumps(d)); t.replace(f)\' "$BASHPID" /home/'
+            "dev/.jailbee/prompted-agent.json ''; exec claude P ); rc=$?; prin"
+            'tf "%s\\n" "$rc" > /home/dev/.jailbee/prompted-agent.exit.tmp; mv '
+            "-f /home/dev/.jailbee/prompted-agent.exit.tmp /home/dev/.jailbee/"
+            'prompted-agent.exit; exit "$rc"; }; fi; exec claude'
+        ),
+    )
+    assert (
+        prompted_run("claude", "P", report_exit=report_exit, resume_args="")
+        == expected[report_exit]
+    )

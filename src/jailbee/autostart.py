@@ -392,7 +392,9 @@ def agent_autostart_steps(
 
                 try:
                     resume_words = (
-                        get_adapter(spec.name).resume_args(resume) if valid_session_id(resume) else None
+                        get_adapter(spec.name).resume_args(resume)
+                        if valid_session_id(resume)
+                        else None
                     ) or ""
                 except KeyError:
                     pass
