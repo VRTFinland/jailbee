@@ -316,6 +316,15 @@ def _settle_agent_watch(
             return
     if child is not None and child.running:
         status = agent_watch.probe(ctx.incus, child.full, uid=ctx.cfg.container_user.uid)
+        if status is not None and status.alive:
+            try:
+                sid = agent_watch.current_session(ctx.cfg, child.full, status)
+                if sid is not None:
+                    history = labels.with_session(labels.sessions_of(child.config), sid)
+                    if history is not None:
+                        ctx.incus.config_set(child.full, labels.AGENT_SESSIONS, json.dumps(history))
+            except Exception:
+                log.debug("Could not record agent session for %s", child.full, exc_info=True)
     updated, outcome = agent_watch.advance(entry, child, status, now=ctx.now)
     if outcome is not None:
         if outcome.state == "failed" and child is not None and child.running:

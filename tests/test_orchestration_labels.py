@@ -69,3 +69,22 @@ def test_orchestrator_env_empty_without_grant(make_cfg, tmp_path):
     incus = _grant_incus(None)
     assert labels.orchestrator_env(cfg, incus, f"{cfg.container_prefix}-feat") == {}
     incus.config_get.assert_called_once_with(f"{cfg.container_prefix}-feat", labels.GRANT)
+
+
+def test_with_session_appends_dedups_and_caps():
+    from jailbee.orchestration import labels
+
+    ids = [f"00000000-0000-0000-0000-{n:012x}" for n in range(11)]
+    a, b = ids[:2]
+    assert labels.with_session([a, b], a) == [b, a]
+    assert labels.with_session([a, b], b) is None
+    assert labels.with_session(ids[:10], ids[10]) == ids[1:]
+
+
+def test_sessions_of_tolerates_garbage():
+    from jailbee.orchestration import labels
+
+    sid = "00000000-0000-0000-0000-000000000001"
+    assert labels.sessions_of({labels.AGENT_SESSIONS: '{"x":1}'}) == []
+    assert labels.sessions_of({labels.AGENT_SESSIONS: 'not json'}) == []
+    assert labels.sessions_of({labels.AGENT_SESSIONS: f'["../x", "{sid}", 123]'}) == [sid]
