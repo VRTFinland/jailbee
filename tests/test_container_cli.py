@@ -59,7 +59,7 @@ def test_skew_beats_eager_options(tmp_path, monkeypatch, option, before):
     identity.write_text("1.8.1 aaaa\n")
     monkeypatch.setattr(container_cli, "VERSION_FILE", identity)
     handshake = ["--expect-version", "1.8.1 bbbb"]
-    args = handshake + [option] if before else [option] + handshake
+    args = [*handshake, option] if before else [option, *handshake]
     result = CliRunner().invoke(container_cli.container_app, args)
     assert result.exit_code == 86
     assert CliRunner().invoke(container_cli.container_app, [option]).exit_code == 0
@@ -74,7 +74,11 @@ def test_identity_stays_on_imported_stage_after_symlink_swap(tmp_path):
     second = tmp_path / "app-second"
     first.mkdir()
     second.mkdir()
-    shutil.copytree(Path(container_cli.__file__).parent, first / "jailbee", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(
+        Path(container_cli.__file__).parent,
+        first / "jailbee",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
     (first / "VERSION").write_text("1.8.1 aaaa\n")
     (second / "VERSION").write_text("1.8.1 bbbb\n")
     current = tmp_path / "current"
@@ -89,8 +93,13 @@ current.symlink_to(sys.argv[2], target_is_directory=True)
 sys.argv = ['jailbee', '--expect-version', '1.8.1 aaaa', 'version']
 container_app()
 """
-    result = subprocess.run([sys.executable, "-c", script, str(current), str(second)],
-                            cwd=tmp_path, env={"PYTHONPATH": str(current)}, capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(current), str(second)],
+        cwd=tmp_path,
+        env={"PYTHONPATH": str(current)},
+        capture_output=True,
+        text=True,
+    )
     assert result.returncode == 0, result.stderr
 
 

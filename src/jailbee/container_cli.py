@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from typer.core import TyperGroup
 from typer._click import Context
+from typer.core import TyperGroup
 
 from jailbee import __version__, cli_context
 
