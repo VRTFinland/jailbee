@@ -132,14 +132,23 @@ def test_pending_real_reader_skips_snapshot_with_non_utf8_neighbor(mocker, make_
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
     data = {
-        "version": 1, "repo": "acme/widgets", "pr": None, "head_sha": None,
-        "source": "refs/heads/topic", "source_sha": "a" * 40,
+        "version": 1,
+        "repo": "acme/widgets",
+        "pr": None,
+        "head_sha": None,
+        "source": "refs/heads/topic",
+        "source_sha": "a" * 40,
         "actions": [{"type": "description", "title": "Title", "body": "Body"}],
     }
-    incus.exec.return_value = encoded_snapshot({
-        "m.json": json.dumps(data).encode(), "bad.json": b"\xff",
-    })
-    mocker.patch("jailbee.pr_outbox.container_identity", return_value=ContainerIdentity("full", "created"))
+    incus.exec.return_value = encoded_snapshot(
+        {
+            "m.json": json.dumps(data).encode(),
+            "bad.json": b"\xff",
+        }
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.container_identity", return_value=ContainerIdentity("full", "created")
+    )
     mocker.patch("jailbee.pr_outbox._same_identity")
 
     assert pending_source_manifests(cfg, incus, "full") == []

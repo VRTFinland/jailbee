@@ -38,12 +38,15 @@ def test_source_loading_keeps_processing_events_when_dismissed(mocker, tmp_path,
 
     from PySide6.QtCore import Qt, QThread, QTimer
     from PySide6.QtWidgets import QApplication
+
     from jailbee.qtui import pr_sources
 
     release = threading.Event()
 
     class SlowRequest(QThread):
-        pending = []
+        def __init__(self):
+            super().__init__()
+            self.pending = []
 
         def run(self):
             release.wait(timeout=1)
