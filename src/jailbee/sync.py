@@ -2665,6 +2665,54 @@ def _sub_merge_message(branch: str) -> str:
     return f"Merge for superproject merge of '{branch}'"
 
 
+@dataclass(frozen=True)
+class MergeProbe:
+    """Relationship between a container's HEAD and a merge ref."""
+
+    relation: Literal["contained", "fast_forward", "merge"]
+    conflicts: tuple[str, ...]
+
+
+def probe_merge_in_container(
+    incus: Incus, full_name: str, repo_dir: str, *, ref: str, uid: int
+) -> MergeProbe:
+    """Check the merge relationship without modifying the worktree."""
+    comparisons: tuple[tuple[str, str, Literal["contained", "fast_forward"]], ...] = (
+        (ref, "HEAD", "contained"),
+        ("HEAD", ref, "fast_forward"),
+    )
+    for left, right, relation in comparisons:
+        result = incus.exec_bytes(
+            full_name, ["git", "-C", repo_dir, "merge-base", "--is-ancestor", left, right], uid=uid
+        )
+        if result.returncode == 0:
+            return MergeProbe(relation, ())
+        if result.returncode != 1:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise SyncError(f"cannot compare HEAD with {ref} in {full_name}: {stderr}")
+
+    result = incus.exec_bytes(
+        full_name,
+        ["git", "-C", repo_dir, "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", ref],
+        uid=uid,
+    )
+    if result.returncode not in (0, 1):
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise SyncError(f"merge check failed in {full_name}: {stderr}")
+    conflicts: tuple[str, ...] = ()
+    if result.returncode == 1:
+        conflicts = tuple(dict.fromkeys(result.stdout.decode("utf-8", errors="replace").splitlines()[1:]))
+    return MergeProbe("merge", conflicts)
+
+
+def abort_merge_in_container(incus: Incus, full_name: str, repo_dir: str, *, uid: int) -> None:
+    """Best-effort cleanup of an in-progress merge."""
+    try:
+        incus.exec(full_name, ["git", "-C", repo_dir, "merge", "--abort"], uid=uid)
+    except IncusError:
+        pass
+
+
 def _merge_ref_in_container(
     incus: Incus,
     full_name: str,
