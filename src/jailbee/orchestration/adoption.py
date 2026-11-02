@@ -151,6 +151,15 @@ def candidates(cfg: Config, incus: Incus, orchestrator_full: str) -> list[str]:
     )
 
 
+def children_of_repo(cfg: Config, incus: Incus) -> list[str]:
+    """Return this repo's children in short-name order."""
+    return sorted(
+        (name for name, raw in _rows(incus).items()
+         if commands._is_own(cfg, raw) and _config(raw).get(labels.SPAWNED_BY)),
+        key=lambda name: short_name(cfg, name),
+    )
+
+
 def adopt(
     cfg: Config,
     incus: Incus,

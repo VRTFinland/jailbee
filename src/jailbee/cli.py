@@ -12942,6 +12942,81 @@ def orchestrate_revoke_cmd(
         info(f"'{short}' had no grant.")
 
 
+@orchestrate_app.command("adopt")
+def orchestrate_adopt_cmd(
+    orchestrator: ContainerArg = None,
+    children: Annotated[list[str] | None, typer.Argument(help="Containers to adopt.")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Make existing containers children of an orchestrator.
+
+    The orchestrator may then message, update, import, stop, restart and destroy them within its grant.
+    """
+    from jailbee.incus import Incus, IncusError
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import adoption, commands
+    from jailbee.prompting import Option, choose_one
+
+    cfg = _load_or_exit(config)
+    try:
+        if orchestrator is None:
+            incus = Incus()
+            full = choose_one(
+                "orchestrator",
+                [Option(r.full, r.short, r.short) for r in commands.list_grants(cfg, incus) if r.grant is not None],
+                empty_reason="no container of this repo holds an orchestration grant; run `jb orchestrate grant` first",
+            )
+        else:
+            incus, full = _resolve_existing(cfg, orchestrator)
+        if children:
+            incus, selected = _resolve_many(cfg, children)
+        else:
+            names = adoption.candidates(cfg, incus, full)
+            selected = [choose_one("container to adopt", [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names], empty_reason="no container of this repo can be adopted")]
+        result = adoption.adopt(cfg, incus, full, selected)
+    except (ValueError, IncusError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    for child in result.adopted:
+        success(f"Adopted '{short_name(cfg, child)}' into '{short_name(cfg, full)}'.")
+    for child in result.already:
+        info(f"'{short_name(cfg, child)}' is already a child of '{short_name(cfg, full)}'.")
+    for warning in result.warnings:
+        warn_plain(warning)
+
+
+@orchestrate_app.command("release")
+def orchestrate_release_cmd(
+    children: Annotated[list[str] | None, typer.Argument(help="Children to release.")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Release children from their orchestrators and revoke orchestrator-owned rights."""
+    from jailbee.incus import Incus, IncusError
+    from jailbee.lifecycle import short_name
+    from jailbee.orchestration import adoption
+    from jailbee.prompting import Option, choose_one
+
+    cfg = _load_or_exit(config)
+    try:
+        if children:
+            incus, selected = _resolve_many(cfg, children)
+        else:
+            incus = Incus()
+            names = adoption.children_of_repo(cfg, incus)
+            selected = [choose_one("child to release", [Option(n, short_name(cfg, n), short_name(cfg, n)) for n in names], empty_reason="no child container of this repo can be released")]
+        for child in selected:
+            result = adoption.release(cfg, incus, child)
+            message = f"Released '{short_name(cfg, child)}' from '{short_name(cfg, result.orchestrator)}'"
+            if result.revoked:
+                message += f"; revoked: {', '.join(result.revoked)}"
+            success(message + ".")
+            for warning in result.warnings:
+                warn_plain(warning)
+    except (ValueError, IncusError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
 @orchestrate_app.command("show")
 def orchestrate_show_cmd(
     name: ContainerArg = None,
