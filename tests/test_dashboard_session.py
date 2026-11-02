@@ -636,6 +636,70 @@ def test_orchestration_grant_runs_cli(mocker, tmp_path, value, argv):
     assert quiet.call_args.args[1] == argv
 
 
+@pytest.mark.parametrize("value", ["defaults", "profile:bugfixer"])
+def test_grant_keeps_the_orchestration_menu_open(mocker, tmp_path, value):
+    session, _ = _orchestration_session(mocker, tmp_path)
+    out = session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", value))
+    assert out is not None and out.purpose == "container-orchestration"
+    assert [e.value for e in out.entries] == ["pending"]
+    assert out.entries[0].label == "Granted — waiting for refresh…"
+
+
+def test_pending_entry_does_not_run_cli(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+    quiet.reset_mock()
+    out = session.submit_picker(session.overlay, PickerEntry("", "pending"))
+    quiet.assert_not_called()
+    assert [e.value for e in out.entries] == ["pending"]
+
+
+def test_tick_shows_the_grant_once_the_snapshot_has_it(mocker, tmp_path):
+    from jailbee.orchestration.view import GrantView
+
+    session, _ = _orchestration_session(mocker, tmp_path)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+    info = session.client.groups[0].containers[0]
+    session.client.groups[0].containers[0] = dataclasses.replace(
+        info, grant=GrantView(limit=4, operations=("message", "spawn"), mounts=(), loose=False, egress=())
+    )
+    session.tick()
+    assert session.overlay.entries[0].value == "limit"
+    assert "alpha-one" not in session._grant_pending
+
+
+def test_pending_mark_expires(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+    session._grant_pending["alpha-one"] = 0.0
+    session.tick()
+    assert [e.value for e in session.overlay.entries] == ["profile:bugfixer", "defaults"]
+    assert "alpha-one" not in session._grant_pending
+
+
+def test_pending_mark_removed_with_container(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path)
+    session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults"))
+    session.client.groups[0].containers.clear()
+    session.tick()
+    assert "alpha-one" not in session._grant_pending
+
+
+def test_revoke_clears_pending_mark(mocker, tmp_path):
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    session._grant_pending["alpha-one"] = float("inf")
+    confirm = session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "revoke"))
+    session.submit_picker(confirm, PickerEntry("", "yes"))
+    assert "alpha-one" not in session._grant_pending
+
+
+def test_failed_grant_closes_the_menu(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path)
+    quiet.return_value = False
+    assert session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", "defaults")) is None
+    assert session.overlay is None
+
+
 def test_orchestration_revoke_asks_first(mocker, tmp_path):
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
     confirm = session.submit_picker(

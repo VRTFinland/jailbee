@@ -509,7 +509,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs the usage skill describing `orchestrate profile save` "
-            "and dashboard profile saving"
+            "and dashboard orchestration menu improvements"
         ),
     ),
 )
