@@ -12,6 +12,29 @@ from jailbee.incus import IncusError
 from jailbee.repo_option import RepoOptionError
 
 
+def test_fresh_entry_dispatch_never_imports_host_cli():
+    import os
+    import subprocess
+
+    script = """
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in ('jailbee.cli', 'jailbee.macos'):
+        raise AssertionError('host import: ' + name)
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+from jailbee import container_deps
+container_deps.check = lambda: 'deps unavailable'
+from jailbee.entry import main
+main()
+"""
+    env = dict(os.environ, JAILBEE_CONTEXT="container")
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 87, result.stderr
+    assert "deps unavailable" in result.stderr
+
+
 def test_entry_dispatches_to_container(monkeypatch, mocker):
     from jailbee import container_main
 
