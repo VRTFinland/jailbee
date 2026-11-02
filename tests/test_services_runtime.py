@@ -212,6 +212,35 @@ def test_lock_serializes_threads(tmp_path):
     assert entered.is_set()
 
 
+def test_pane_dies_during_readiness_poll(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "ready": "probe"}})
+
+    def probe(cmd, *, cwd, env, timeout, capture):
+        proc.windows["svc-web"] = (1, 23, 123)
+        return 1
+
+    proc.run_shell = probe
+    result = rt.start(["web"])
+    assert not result.ok and result.failed == "web"
+    assert result.tail == "failure output\n"
+    assert "23" in rt.status()[0].detail
+
+
+def test_hanging_stop_command_has_timeout(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop": "stop", "stop_timeout": 4}})
+    proc.windows["svc-web"] = (0, "", 123)
+
+    def hanging(cmd, *, cwd, env, timeout, capture):
+        assert timeout == 4
+        proc.clock += timeout
+        return 124
+
+    proc.run_shell = hanging
+    assert rt.stop(["web"]).ok
+    assert proc.clock == 8
+    assert "svc-web" not in proc.windows
+
+
 def test_unknown_names_do_not_mutate(tmp_path):
     rt, proc = runtime(tmp_path, {"a": {"run": "a"}})
     with pytest.raises(ValueError):
