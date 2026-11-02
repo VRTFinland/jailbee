@@ -6,7 +6,7 @@ die() { printf 'jailbee-inbox: %s\n' "$1" >&2; exit 2; }
 
 usage() {
     cat <<'USAGE'
-Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
+Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after DUR]
        jailbee-inbox ls
        jailbee-inbox read <id> [--keep]
        jailbee-inbox runners [--json]
@@ -14,10 +14,12 @@ Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
 
   wait   Print the path of the oldest unread message (exit 0), waiting up to
          DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1
-         on timeout. --timeout 0 checks once. After an arrival, wait briefly
-         for the burst to settle; then use ls to handle every unread message.
+         on timeout. --timeout 0 checks once; --timeout none waits until a message
+         arrives or the process is interrupted (use it for a background waiter).
+         After an arrival, wait briefly for the burst to settle; then use ls to
+         handle every unread message.
          --wake-on LIST filters comma-separated message kinds/status states
-         (note,question,done,blocked,queued,started,failed,refused). A child's
+         (note,question,done,blocked,idle,queued,started,failed,refused). A child's
          first message after each start always wakes. Nothing is marked read.
          --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running
          child is silent that long; needs fresh broker children.json (<=15m).
@@ -32,7 +34,7 @@ Usage: jailbee-inbox wait [--timeout DUR] [--wake-on LIST] [--quiet-after DUR]
          (--agent/--profile/--model of send). --json prints one array.
 
   send   Write a manifest for the orchestrator's host into outbox/ and print
-         its id. --wait [--timeout DUR] waits for its status (default 30m):
+         its id. --wait [--timeout DUR|none] waits for its status (default 30m):
          exit 0 on done/queued/started, 1 on refused/failed, 3 on timeout.
          Text (body or prompt) comes from --text T, --file PATH or -
          (stdin); at most 65536 bytes, not empty.
@@ -112,6 +114,11 @@ parse_duration() {
         m) echo $((n * 60)) ;;
         h) echo $((n * 3600)) ;;
     esac
+}
+
+parse_timeout() {
+    [ "$1" = none ] && { echo none; return; }
+    parse_duration "$1"
 }
 
 # Milliseconds since the epoch (EPOCHREALTIME is "<sec>.<microsec>").
@@ -273,7 +280,7 @@ cmd_wait() {
         case "$1" in
             --timeout)
                 [ $# -ge 2 ] || die "--timeout needs a value"
-                timeout="$(parse_duration "$2")"
+                timeout="$(parse_timeout "$2")"
                 shift 2 ;;
             --wake-on)
                 [ $# -ge 2 ] || die "--wake-on needs a value"
@@ -295,7 +302,10 @@ cmd_wait() {
         flock -n "$wait_fd" || die "another process is already waiting in this container"
     fi
     local deadline_ms remaining_ms remaining rc slice sleep_for
-    deadline_ms=$(( $(now_ms) + timeout * 1000 ))
+    deadline_ms=""
+    if [ "$timeout" != none ]; then
+        deadline_ms=$(( $(now_ms) + timeout * 1000 ))
+    fi
     while :; do
         if [ -n "$status_ref" ]; then
             first="$(find_status "$status_ref")"
@@ -306,7 +316,7 @@ cmd_wait() {
         fi
         if [ -n "$first" ]; then
             if [ "$waited" -eq 1 ] && [ -z "$status_ref" ]; then
-                settle_inbox "$deadline_ms"
+                settle_inbox "${deadline_ms:-$(( $(now_ms) + SETTLE_MAX * 1000 ))}"
                 rc=0
                 first="$(select_wakeup)" || rc=$?
                 [ "$rc" -eq 0 ] || return "$rc"
@@ -319,8 +329,12 @@ cmd_wait() {
             fi
             return 0
         fi
-        remaining_ms=$((deadline_ms - $(now_ms)))
-        [ "$remaining_ms" -gt 0 ] || return 1
+        if [ -z "$deadline_ms" ]; then
+            remaining_ms=$((WATCH_SLICE * 1000))
+        else
+            remaining_ms=$((deadline_ms - $(now_ms)))
+            [ "$remaining_ms" -gt 0 ] || return 1
+        fi
         remaining=$(( (remaining_ms + 999) / 1000 ))
         # No inbox event is needed for a watchdog deadline or a stopped child.
         # A one-second watchdog slice also notices broker state refreshes.
@@ -598,7 +612,7 @@ cmd_send() {
     fi
     if [ -n "$timeout" ]; then
         [ "$wait" -eq 1 ] || bad_usage "--timeout needs --wait"
-        parse_duration "$timeout" >/dev/null
+        parse_timeout "$timeout" >/dev/null
     fi
     if [ -n "$on_done" ]; then
         [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--on-done only applies to spawn and restart"

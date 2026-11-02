@@ -111,6 +111,138 @@ def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
     )
 
 
+def _popen_wait(script, env, *args):
+    return subprocess.Popen(
+        ["bash", str(script), "wait", *args],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp_path):
+    env = env_for(base, tmp_path)
+    proc = _popen_wait(script, env, "--timeout", "1", "--timeout", "none")
+    try:
+        time.sleep(2.5)
+        assert proc.poll() is None
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        out, err = proc.communicate(timeout=2)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    assert proc.returncode == 0, err
+    assert out.strip().endswith(FIRST)
+
+
+def test_wait_timeout_none_uses_full_watch_slices(script, base, tmp_path):
+    log, counter = tmp_path / "t.log", tmp_path / "n"
+    stubs = _stub(
+        tmp_path,
+        f'printf "%s\\n" "$3" >> {log}\n'
+        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
+        'if [ "$n" -ge 5 ]; then\n'
+        f"  echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
+        "  exit 0\nfi\nexit 2\n",
+    )
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "0"}
+    env["PATH"] = f"{stubs}:{env['PATH']}"
+    r = run(script, "wait", "--timeout", "none", env=env)
+    assert r.returncode == 0, r.stderr
+    assert log.read_text().split() == ["10"] * 6
+
+
+def test_wait_timeout_none_settles_burst(script, base, tmp_path):
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
+
+    def writer():
+        time.sleep(0.5)
+        write_inbox(base, FIRST, message("h-0000aaaa"))
+        time.sleep(0.4)
+        write_inbox(base, SECOND, message("h-0000bbbb"))
+        time.sleep(0.8)
+        write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        r = run(script, "wait", "--timeout", "none", env=env)
+        ls = run(script, "ls", env=env)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip().endswith(FIRST)
+        assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
+        assert "h-0000cccc" in ls.stdout
+    finally:
+        thread.join()
+
+
+def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
+    child_snapshot(base, started=time.time())
+    started = time.monotonic()
+    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "none", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "quiet-child kid"
+    assert time.monotonic() - started < 3
+
+
+def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
+    env = env_for(base, tmp_path)
+    proc = _popen_wait(script, env, "--timeout", "none")
+    try:
+        time.sleep(0.3)
+        assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+        proc.terminate()
+        proc.communicate(timeout=2)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    assert proc.returncode != 0
+    assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
+
+
+@pytest.mark.parametrize("dur", ["None", "NONE", "forever", "inf", "none5"])
+def test_wait_rejects_none_lookalikes(script, base, tmp_path, dur):
+    r = run(script, "wait", "--timeout", dur, env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert r.stderr.startswith("jailbee-inbox: ")
+
+
+def test_send_wait_timeout_none(script, base, tmp_path):
+    unrelated = write_inbox(base, FIRST, message("h-other"))
+    errors = []
+
+    def reply():
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                files = list((base / "outbox").glob("*.json"))
+                if files:
+                    mid = json.loads(files[0].read_text())["id"]
+                    time.sleep(1.5)
+                    write_inbox(base, SECOND, status("h-reply", ref=mid))
+                    return
+                time.sleep(0.01)
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=reply)
+    thread.start()
+    try:
+        r = send(script, base, tmp_path, "message", "--text", "done", "--wait", "--timeout", "none")
+    finally:
+        thread.join()
+    assert not errors
+    assert r.returncode == 0, r.stderr
+    assert '"state": "done"' in r.stdout
+    assert (base / "inbox" / "read" / SECOND).exists()
+    assert unrelated.exists()
+
+
+def test_send_rejects_bad_none_timeout(script, base, tmp_path):
+    assert send(script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "forever").returncode == 2
+    assert not list((base / "outbox").glob("*.json"))
+
+
 @pytest.mark.parametrize("kind", ["spawn", "restart"])
 def test_inbox_helper_send_spawn_autostart_profile(script, base, tmp_path, kind):
     env = env_for(base, tmp_path)
