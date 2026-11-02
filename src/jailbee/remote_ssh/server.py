@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import ipaddress
 import logging
 import re
@@ -10,7 +11,7 @@ import shlex
 import signal
 import sys
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 import asyncssh
 
@@ -106,6 +107,27 @@ class UpdateWatch:
         self._stop()
 
 
+class _GpgListener(asyncssh.SSHListener):
+    """AsyncSSH cancels a forward by closing its listener, not its connection."""
+
+    def __init__(self, listener: asyncssh.SSHListener, cleanup: Callable[[], None]) -> None:
+        super().__init__()
+        self._listener = listener
+        self._cleanup = cleanup
+        self._closed = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            try:
+                self._listener.close()
+            finally:
+                self._cleanup()
+
+    async def wait_closed(self) -> None:
+        await self._listener.wait_closed()
+
+
 class JailbeeSSHServer(asyncssh.SSHServer):
     """Authenticate one connection; allow one waypipe and one GPG forward at owned paths."""
 
@@ -131,18 +153,19 @@ class JailbeeSSHServer(asyncssh.SSHServer):
 
     def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
         self._conn = conn
+        self._closed = False
+        self._gpg_listener: _GpgListener | None = None
         self._keys: list[AuthorizedKey] = []
         if self._live is not None:
             self._live.add(conn)
         log.info("SSH connected source=%r", conn.get_extra_info("peername"))
 
     def connection_lost(self, exc: Exception | None) -> None:
-        session_id = self._conn.get_extra_info("jailbee_gpg")
-        if session_id is not None and self._gpg_forwards is not None:
-            try:
-                self._gpg_forwards.remove(session_id)
-            except OSError:
-                log.warning("SSH gpg forward cleanup failed session=%s", session_id, exc_info=True)
+        self._closed = True
+        if self._gpg_listener is not None:
+            self._gpg_listener.close()
+        else:
+            self._remove_gpg_forward()
         if self._live is not None:
             self._live.discard(self._conn)
         # Transport exception messages can contain client-supplied text.
@@ -234,6 +257,14 @@ class JailbeeSSHServer(asyncssh.SSHServer):
         log.info("SSH waypipe forward session=%s", session_id)
         return self._conn.forward_local_path(str(own), listen_path)
 
+    def _remove_gpg_forward(self) -> None:
+        session_id = self._conn.get_extra_info("jailbee_gpg")
+        if session_id is not None and self._gpg_forwards is not None:
+            try:
+                self._gpg_forwards.remove(session_id)
+            except OSError:
+                log.warning("SSH gpg forward cleanup failed session=%s", session_id, exc_info=True)
+
     def _gpg_server_requested(self, listen_path: str) -> MaybeAwait[Any]:
         from jailbee.remote_ssh import waypipe
 
@@ -255,10 +286,19 @@ class JailbeeSSHServer(asyncssh.SSHServer):
         self._conn.set_extra_info(jailbee_gpg=session_id)
         log.info("SSH gpg forward session=%s", session_id)
 
-        async def forward() -> asyncssh.SSHListener:
+        async def forward() -> asyncssh.SSHListener | bool:
             listener = await self._conn.forward_local_path(str(own), listen_path)
-            registry.add(session_id)
-            return listener
+            wrapped = _GpgListener(listener, self._remove_gpg_forward)
+            if self._closed:
+                wrapped.close()
+                return False
+            try:
+                registry.add(session_id)
+            except OSError:
+                wrapped.close()
+                raise
+            self._gpg_listener = wrapped
+            return wrapped
 
         return forward()
 
@@ -651,11 +691,8 @@ async def serve_async(
     library_log = logging.getLogger("asyncssh")
     previous_level = library_log.level
     library_log.setLevel(max(previous_level, logging.WARNING))
-    gpg_forwards = GpgForwards()
-    try:
-        gpg_forwards.reset()
-    except OSError:
-        log.warning("SSH gpg switch reset failed", exc_info=True)
+    gpg_forwards: GpgForwards | None = None
+    gpg_lock: TextIO | None = None
     live: set[asyncssh.SSHServerConnection] = set()
     listener: asyncssh.SSHAcceptor | None = None
     drain_deadline: asyncio.TimerHandle | None = None
@@ -743,6 +780,25 @@ async def serve_async(
             gss_kex=False,
             gss_host=None,
         )
+        # A failed bind must not reset another server's live forwards. Across
+        # different ports, only the process holding this host-wide lock may
+        # initialize or use the shared switch; other servers refuse GPG only.
+        try:
+            directory = remote_dir().parent
+            directory.mkdir(parents=True, exist_ok=True)
+            gpg_lock = (directory / "gpg-forward.lock").open("a")
+            fcntl.flock(gpg_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if gpg_lock is not None:
+                gpg_lock.close()
+                gpg_lock = None
+            log.warning("SSH gpg switch ownership unavailable; GPG forwards disabled")
+        else:
+            gpg_forwards = GpgForwards()
+            try:
+                gpg_forwards.reset()
+            except OSError:
+                log.warning("SSH gpg switch reset failed", exc_info=True)
         log.info(_startup_summary(config, listener, overrides))
         if remote_waypipe_enabled(overrides):
             from jailbee.remote_ssh.waypipe import prune_dead
@@ -782,6 +838,8 @@ async def serve_async(
             raise ServiceUpdatedError(update.running, update.replaced_by)
         log.info("Jailbee SSH server stopped")
     finally:
+        if gpg_lock is not None:
+            gpg_lock.close()
         library_log.setLevel(previous_level)
 
 

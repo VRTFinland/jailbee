@@ -396,7 +396,10 @@ not just the container you enter. The newest live forward wins; when it closes,
 the previous live forward takes over, or the host agent resumes. Pinentry and
 card touch prompts appear on the client. `SSH_AUTH_SOCK` and SSH authentication
 inside containers keep using the host agent. No private key is transferred
-through this forward.
+through this forward. Cancelling the forward without closing SSH also restores
+the previous agent. Only one SSH server process per host user owns the switch;
+a concurrent diagnostic server on another port refuses GPG forwards rather than
+interfering with the active service.
 
 For a smartcard, run `gpg --card-status` on the client if its agent has not
 learned the card yet. Software keys need no card-learning step. GnuPG 2.4 may

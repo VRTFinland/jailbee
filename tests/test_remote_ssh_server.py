@@ -1909,12 +1909,12 @@ def test_gpg_forward_accepted_once_and_uses_own_path(connection, mocker, tmp_pat
 
     mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
     connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
-    connection.forward_local_path = AsyncMock(return_value="listener")
+    connection.forward_local_path = AsyncMock(return_value=Mock(spec=asyncssh.SSHListener))
     registry = GpgForwards()
     instance = _gpg_server(connection, registry)
     pending = instance.unix_server_requested("/jailbee/gpg-agent")
     assert instance.unix_server_requested("/jailbee/gpg-agent") is False
-    assert asyncio.run(pending) == "listener"
+    assert isinstance(asyncio.run(pending), asyncssh.SSHListener)
     session_id = connection.get_extra_info("jailbee_gpg")
     connection.forward_local_path.assert_awaited_once_with(
         str(tmp_path / "gpg-remote" / f"{session_id}.sock"), "/jailbee/gpg-agent"
@@ -1943,7 +1943,7 @@ def test_connection_lost_removes_gpg_forward(connection, mocker, tmp_path):
 
     mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
     connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
-    connection.forward_local_path = AsyncMock(return_value="listener")
+    connection.forward_local_path = AsyncMock(return_value=Mock(spec=asyncssh.SSHListener))
     registry = GpgForwards()
     instance = _gpg_server(connection, registry)
     asyncio.run(instance.unix_server_requested("/jailbee/gpg-agent"))
@@ -1984,6 +1984,81 @@ def test_serve_async_resets_gpg_switch_on_start(listener, mocker, tmp_path):
     factory = listen.call_args.kwargs["server_factory"]
     instance = factory()
     assert instance._gpg_forwards.current() is None
+
+
+def test_failed_listen_preserves_active_gpg(listener, mocker, tmp_path):
+    from jailbee.remote_ssh.gpg_forward import GpgForwards
+
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    GpgForwards().add("active")
+    socket = tmp_path / "gpg-remote" / "active.sock"
+    socket.touch()
+    _, listen = listener
+    listen.side_effect = OSError("Address already in use")
+    with pytest.raises(OSError):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+    assert socket.exists()
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink().name == "active.sock"
+
+
+def test_second_server_cannot_reset_or_serve_gpg(listener, mocker, tmp_path):
+    import fcntl
+    from jailbee.remote_ssh.gpg_forward import GpgForwards
+
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    GpgForwards().add("active")
+    socket = tmp_path / "gpg-remote" / "active.sock"
+    socket.touch()
+    with (tmp_path / "gpg-forward.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        asyncio.run(server.serve_async(RemoteSSHConfig(port=8023)))
+    assert socket.exists()
+    assert (tmp_path / "gpg-switch" / "S.gpg-agent").readlink().name == "active.sock"
+    _, listen = listener
+    assert listen.call_args.kwargs["server_factory"]()._gpg_forwards is None
+
+
+def test_cancel_gpg_listener_restores_previous_agent(connection, mocker, tmp_path):
+    from jailbee.remote_ssh.gpg_forward import GpgForwards
+
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    underlying = Mock(spec=asyncssh.SSHListener)
+    connection.forward_local_path = AsyncMock(return_value=underlying)
+    registry = GpgForwards()
+    registry.add("previous")
+    instance = _gpg_server(connection, registry)
+    forward = asyncio.run(instance.unix_server_requested("/jailbee/gpg-agent"))
+    socket = tmp_path / "gpg-remote" / f"{registry.current()}.sock"
+    socket.touch()
+    # AsyncSSH's cancel-streamlocal-forward handler closes the returned listener.
+    forward.close()
+    assert registry.current() == "previous"
+    assert not socket.exists()
+    instance.connection_lost(None)
+    assert registry.current() == "previous"
+
+
+def test_disconnect_while_gpg_listener_is_being_created(connection, mocker, tmp_path):
+    from jailbee.remote_ssh.gpg_forward import GpgForwards
+
+    mocker.patch("jailbee.db.state_dir", return_value=tmp_path)
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    registry = GpgForwards()
+    instance = _gpg_server(connection, registry)
+    underlying = Mock(spec=asyncssh.SSHListener)
+
+    async def create(*args):
+        instance.connection_lost(ConnectionResetError())
+        socket = tmp_path / "gpg-remote" / f"{connection.get_extra_info('jailbee_gpg')}.sock"
+        socket.touch()
+        return underlying
+
+    connection.forward_local_path = AsyncMock(side_effect=create)
+    asyncio.run(instance.unix_server_requested("/jailbee/gpg-agent"))
+    assert registry.current() is None
+    assert list((tmp_path / "gpg-remote").glob("*.sock")) == []
+    underlying.close.assert_called_once()
 
 
 WP_SOCK = "/tmp/waypipe-server-6dCPSslHnp.sock"
