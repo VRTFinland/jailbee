@@ -294,6 +294,7 @@ def test_description_update_passes_the_scope_subpath_to_the_ai(tmp_path, mocker)
         body=None,
         description=True,
         ai_on=True,
+        consent=pr_flow.AiConsent(ai=True),
     )
     assert result is not None and (result.title, result.body) == ("t", "b")
     assert gen.call_args.kwargs["subpath"] == "libs/foo"
@@ -532,6 +533,7 @@ def _plan(tmp_path, mocker, *, cfg=None, scope=None, **kwargs):
         as_name=None,
         no_ai=False,
         status_label="Generating…",
+        consent=pr_flow.AiConsent(ai=True),
     )
     defaults.update(kwargs)
     return pr_flow.resolve_pr_text_and_head(
@@ -951,6 +953,7 @@ def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_pa
         use_outbox=True,
         foreign_head=True,
         description=True,
+        consent=pr_flow.AiConsent(ai=True),
     )
 
     assert edit is not None and (edit.title, edit.body) == ("regen", "Fresh.")
@@ -1037,7 +1040,7 @@ def test_an_empty_outbox_leaves_the_regeneration_offer_in_place(tmp_path, mocker
 
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     mocker.patch(
         "jailbee.pr_ai.generate_pr_text",
         return_value=PrText(title="t", body="b", branch="feat/x"),

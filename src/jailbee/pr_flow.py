@@ -36,6 +36,45 @@ if TYPE_CHECKING:
     from jailbee.pr_outbox import OutboxPrText
 
 
+@dataclass
+class AiConsent:
+    """One deliberate agent-run decision per PR, shared by both AI features."""
+
+    ai: bool = False
+    no_ai: bool = False
+    _answer: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.ai and self.no_ai:
+            error("--ai and --no-ai are mutually exclusive.")
+            raise typer.Exit(2)
+
+    def allow(self, cfg: Config, *, description: bool, branch: bool) -> bool:
+        from jailbee import pr_ai, prompting
+
+        if self.no_ai or not (description or branch):
+            return False
+        if self.ai:
+            return True
+        if self._answer is None:
+            if prompting.is_interactive():
+                fields = []
+                if description:
+                    fields.append("PR title and description")
+                if branch:
+                    fields.append("branch-name proposal")
+                self._answer = prompting.confirm(
+                    f"Generate the {' and '.join(fields)} with {pr_ai.agent_label(cfg)}?",
+                    default=False,
+                )
+            else:
+                from jailbee.tui import hint_console
+
+                hint_console.print("Skipping PR AI generation in a non-interactive run; use --ai to enable it.")
+                self._answer = False
+        return self._answer
+
+
 @dataclass(frozen=True)
 class PrScope:
     """Where a PR lives, and how to talk about it.
@@ -455,6 +494,7 @@ def resolve_pr_text_and_head(
     no_ai: bool,
     status_label: str,
     use_outbox: bool = False,
+    consent: AiConsent | None = None,
 ) -> HeadPlan:
     """Decide the PR head name and (on create) generate the title/body.
 
@@ -519,7 +559,9 @@ def resolve_pr_text_and_head(
     ai_text: PrText | None = None
     if outbox_source is not None:
         ai_text = outbox_source.text
-    elif (need_desc_ai or need_branch_ai) and source_branch:
+    elif source_branch and (consent or AiConsent(no_ai=no_ai)).allow(
+        cfg, description=need_desc_ai, branch=need_branch_ai
+    ):
         from jailbee.tui import console
 
         with console.status(status_label):
@@ -712,6 +754,8 @@ def resolve_pr_description_update(
     use_outbox: bool = False,
     for_pr: int | None = None,
     outbox_hint: OutboxPrText | None = None,
+    consent: AiConsent | None = None,
+    generated_text: PrText | None = None,
 ) -> DescriptionUpdate | None:
     """Decide the (title, body) to apply on a PR update, or None to skip.
 
@@ -797,20 +841,19 @@ def resolve_pr_description_update(
                 source=outbox_source,
             )
 
-    want_regen = description
-    if not want_regen and not foreign_head and _can_prompt() and ai_on:
-        want_regen = typer.confirm(
-            f"Update {scope.prefix}the PR description with {pr_ai.agent_label(cfg)}?",
-            default=False,
-        )
-    if not want_regen:
+    if not description and foreign_head:
         return None
     if not ai_on:
-        warn(
-            f"Cannot regenerate {scope.prefix}the description without an agent "
-            "(needs an enabled agent with a `headless` command, pr.ai_description, "
-            "and no --no-ai). Skipping."
-        )
+        if description:
+            warn(
+                f"Cannot regenerate {scope.prefix}the description without an agent "
+                "(needs an enabled agent with a `headless` command, pr.ai_description, "
+                "and no --no-ai). Skipping."
+            )
+        return None
+    if generated_text is not None:
+        return DescriptionUpdate(title=generated_text.title, body=generated_text.body)
+    if not (consent or AiConsent()).allow(cfg, description=True, branch=False):
         return None
 
     from jailbee.tui import console
@@ -1710,6 +1753,8 @@ def apply_pr_updates(
     use_outbox: bool = False,
     outbox_hint: OutboxPrText | None = None,
     management: PrManagement | None = None,
+    consent: AiConsent | None = None,
+    generated_text: PrText | None = None,
 ) -> PrUpdate:
     """Apply description and ready/draft updates to an already-existing PR.
 
@@ -1756,6 +1801,8 @@ def apply_pr_updates(
             use_outbox=use_outbox,
             for_pr=number,
             outbox_hint=outbox_hint,
+            consent=consent,
+            generated_text=generated_text,
         )
         repo_args: dict[str, str] = {}
         if (edit is not None or ready is not None) and (

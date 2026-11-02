@@ -42,6 +42,7 @@ class SubPrOptions:
     base: str | None = None
     ready: bool | None = None
     description: bool = False
+    ai: bool = False
     no_ai: bool = False
     no_outbox: bool = False
     branch: str | None = None
@@ -171,6 +172,7 @@ def publish_submodule_prs_first(
     no_ai: bool,
     no_outbox: bool,
     ready: bool | None,
+    ai: bool = False,
     offer_comments: OfferComments,
     management: PrManagement | None = None,
 ) -> list[SubPrOutcome]:
@@ -202,7 +204,7 @@ def publish_submodule_prs_first(
                 short,
                 candidate,
                 SubPrOptions(
-                    ready=ready, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False
+                    ready=ready, ai=ai, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False
                 ),
                 repo_dir=repo_dir,
                 confirm_plan=None,
@@ -392,6 +394,7 @@ def publish_submodule_pr(
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox.models import OutboxError
 
+    consent = pr_flow.AiConsent(ai=opts.ai, no_ai=opts.no_ai)
     management = management if management is not None else PrManagement()
     try:
         with pr_flow.outbox_publication_guard(
@@ -410,6 +413,7 @@ def publish_submodule_pr(
                 body=opts.body,
                 as_name=opts.as_name,
                 no_ai=opts.no_ai,
+                consent=consent,
                 status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
                 use_outbox=not opts.no_outbox,
             )
@@ -502,6 +506,8 @@ def publish_submodule_pr(
                     description=opts.description,
                     ready=opts.ready,
                     ai_on=ai_on,
+                    consent=consent,
+                    generated_text=plan.ai_text,
                     foreign_head=is_foreign,
                     url=created.url,
                     use_outbox=not opts.no_outbox,

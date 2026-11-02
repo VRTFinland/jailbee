@@ -659,7 +659,7 @@ def test_submodule_pr_no_outbox_forwards_false_and_preserves_the_ai_path(mocker,
     apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
     offer = mocker.patch("jailbee.cli._offer_outbox_comments")
 
-    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox"])
+    result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox", "--ai"])
 
     assert result.exit_code == 0, result.output
     assert resolve.call_args.kwargs["use_outbox"] is False
