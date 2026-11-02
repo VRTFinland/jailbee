@@ -1827,7 +1827,13 @@ def _set_cloned_subrepo_origin(host_sub: Path, subpath: str, url: str | None) ->
 
 
 def transport_submodules_to_host_at_commit(
-    cfg: Config, incus: Incus, container: str, short: str, *, repo_dir: str, commit: str,
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    short: str,
+    *,
+    repo_dir: str,
+    commit: str,
     timeout: float | None = None,
 ) -> None:
     """Fetch each gitlink from the selected tree, including nested gitlinks."""

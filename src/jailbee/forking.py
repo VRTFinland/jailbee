@@ -88,7 +88,11 @@ def inherited_pr_labels(incus: Incus, full: str) -> dict[str, str]:
 
 
 def prepare_fork(
-    cfg: Config, incus: Incus, source: str, *, ref: str | None = None,
+    cfg: Config,
+    incus: Incus,
+    source: str,
+    *,
+    ref: str | None = None,
     timeout: float | None = None,
 ) -> ForkSource:
     """Check ``source`` can be forked and bring its HEAD commit to the host.

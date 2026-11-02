@@ -49,20 +49,36 @@ def test_update_transports_and_messages_child(tmp_path, seams):
 
 
 @pytest.mark.parametrize("ref", ["refs/heads/release/1", "refs/jailbee/from/worker/fix", "b" * 40])
-def test_update_explicit_ref_uses_spawn_source_and_isolated_destination(tmp_path, seams, mocker, ref):
+def test_update_explicit_ref_uses_spawn_source_and_isolated_destination(
+    tmp_path, seams, mocker, ref
+):
     from jailbee.forking import ForkSource
 
     ctx = _ctx(tmp_path)
     seams["branch"].return_value = None
-    prepare = mocker.patch("jailbee.forking.prepare_fork", return_value=ForkSource("proj-orch", "main", SHA, None))
-    push = mocker.patch("jailbee.sync.push_to_container", return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"))
+    prepare = mocker.patch(
+        "jailbee.forking.prepare_fork", return_value=ForkSource("proj-orch", "main", SHA, None)
+    )
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
     subs = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     out = actions.dispatch(ctx, _manifest(ref=ref))
     assert out.state == "done"
-    prepare.assert_called_once_with(ctx.cfg, ctx.incus.with_exec_timeout.return_value, "orch", ref=ref, timeout=actions.CHILD_TRANSPORT_TIMEOUT_S)
+    prepare.assert_called_once_with(
+        ctx.cfg,
+        ctx.incus.with_exec_timeout.return_value,
+        "orch",
+        ref=ref,
+        timeout=actions.CHILD_TRANSPORT_TIMEOUT_S,
+    )
     assert push.call_args.kwargs == {
-        "source": "u1", "source_ref": SHA, "namespace": "update/orch",
-        "ff_local_branch": False, "timeout": actions.CHILD_TRANSPORT_TIMEOUT_S,
+        "source": "u1",
+        "source_ref": SHA,
+        "namespace": "update/orch",
+        "ff_local_branch": False,
+        "timeout": actions.CHILD_TRANSPORT_TIMEOUT_S,
     }
     assert subs.call_args.kwargs["commit"] == SHA
     assert subs.call_args.kwargs["pin_commits"] is True
@@ -76,8 +92,13 @@ def test_update_base_resolves_with_spawn_base_policy(tmp_path, seams, mocker):
     from jailbee.lifecycle import CloneRef
 
     ctx = _ctx(tmp_path)
-    resolver = mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=CloneRef("release/1", False, True, SHA))
-    push = mocker.patch("jailbee.sync.push_to_container", return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"))
+    resolver = mocker.patch(
+        "jailbee.lifecycle.resolve_clone_ref", return_value=CloneRef("release/1", False, True, SHA)
+    )
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
     mocker.patch("jailbee.submodules.transport_submodules_to_container")
     assert actions.dispatch(ctx, _manifest(base="release/1")).state == "done"
     opts = resolver.call_args.args[1]
@@ -93,21 +114,36 @@ def test_update_base_resolves_with_spawn_base_policy(tmp_path, seams, mocker):
 def test_update_unknown_source_refused_without_message(tmp_path, seams, mocker, source):
     from jailbee.forking import ForkError
 
-    mocker.patch("jailbee.forking.prepare_fork", side_effect=ForkError("Cannot resolve source ref 'missing' to a commit"))
-    mocker.patch("jailbee.lifecycle.resolve_clone_ref", side_effect=ValueError("branch 'missing' not found"))
+    mocker.patch(
+        "jailbee.forking.prepare_fork",
+        side_effect=ForkError("Cannot resolve source ref 'missing' to a commit"),
+    )
+    mocker.patch(
+        "jailbee.lifecycle.resolve_clone_ref", side_effect=ValueError("branch 'missing' not found")
+    )
     out = actions.dispatch(_ctx(tmp_path), _manifest(**source))
     assert out.state == "refused" and "missing" in out.detail
     seams["deliver"].assert_not_called()
 
 
-@pytest.mark.parametrize("source", [{"ref": "refs/heads/topic"}, {"base": "main"}, {"ref": "A" * 40}])
+@pytest.mark.parametrize(
+    "source", [{"ref": "refs/heads/topic"}, {"base": "main"}, {"ref": "A" * 40}]
+)
 def test_update_source_selectors_validate(source):
     manifest = _manifest(**source)
     for key, value in source.items():
         assert getattr(manifest, key) == value
 
 
-@pytest.mark.parametrize("source", [{"ref": "main"}, {"ref": "refs/heads/../bad"}, {"base": "-bad"}, {"ref": "refs/heads/main", "base": "main"}])
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"ref": "main"},
+        {"ref": "refs/heads/../bad"},
+        {"base": "-bad"},
+        {"ref": "refs/heads/main", "base": "main"},
+    ],
+)
 def test_update_invalid_selectors_refused(source):
     from pydantic import ValidationError
 
@@ -115,7 +151,10 @@ def test_update_invalid_selectors_refused(source):
         _manifest(**source)
 
 
-@pytest.mark.parametrize("ref, fetch_name", [("refs/heads/topic", "fetch_ref_from_container"), ("A" * 40, "fetch_sha_from_container")])
+@pytest.mark.parametrize(
+    "ref, fetch_name",
+    [("refs/heads/topic", "fetch_ref_from_container"), ("A" * 40, "fetch_sha_from_container")],
+)
 def test_update_transports_real_spawn_source_resolution(tmp_path, seams, mocker, ref, fetch_name):
     ctx = _ctx(tmp_path)
     bounded = ctx.incus.with_exec_timeout.return_value
@@ -126,9 +165,16 @@ def test_update_transports_real_spawn_source_resolution(tmp_path, seams, mocker,
     fetch = mocker.patch(f"jailbee.sync.{fetch_name}")
     host_subs = mocker.patch("jailbee.submodules.transport_submodules_to_host_at_commit")
     mocker.patch("jailbee.submodules.transport_submodules_to_container")
-    push = mocker.patch("jailbee.sync.push_to_container", return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"))
+    push = mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
     assert actions.dispatch(ctx, _manifest(ref=ref)).state == "done"
-    bounded.exec.assert_called_once_with(ctx.sender.full, ["git", "-C", "/r", "rev-parse", "--verify", f"{ref}^{{commit}}"], uid=ctx.cfg.container_user.uid)
+    bounded.exec.assert_called_once_with(
+        ctx.sender.full,
+        ["git", "-C", "/r", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        uid=ctx.cfg.container_user.uid,
+    )
     assert fetch.call_args.args[-1] == SHA
     assert fetch.call_args.kwargs["timeout"] == actions.CHILD_TRANSPORT_TIMEOUT_S
     assert host_subs.call_args.kwargs["commit"] == SHA
@@ -140,10 +186,14 @@ def test_update_historical_submodules_use_path_independent_pins(tmp_path, seams,
     from jailbee.forking import ForkSource
     from jailbee.submodules import SubmoduleError
 
-    mocker.patch("jailbee.forking.prepare_fork", return_value=ForkSource("myrepo-orch", "main", SHA, None))
+    mocker.patch(
+        "jailbee.forking.prepare_fork", return_value=ForkSource("myrepo-orch", "main", SHA, None)
+    )
+
     def transport(*args, **kwargs):
         if not kwargs.get("pin_commits"):
             raise SubmoduleError("historical path 'old c++ % path' is not a valid refname")
+
     mocker.patch("jailbee.submodules.transport_submodules_to_container", side_effect=transport)
     mocker.patch("jailbee.sync.push_to_container", return_value=_result().push)
     assert actions.dispatch(_ctx(tmp_path), _manifest(ref="refs/heads/history")).state == "done"
@@ -156,7 +206,10 @@ def test_update_base_uses_real_upstream_resolution(tmp_path, seams, mocker):
     fetch = mocker.patch("jailbee.lifecycle.fetch_remote_ref")
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=SHA)
     mocker.patch("jailbee.submodules.transport_submodules_to_container")
-    mocker.patch("jailbee.sync.push_to_container", return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"))
+    mocker.patch(
+        "jailbee.sync.push_to_container",
+        return_value=replace(_result().push, container_ref="refs/jailbee/update/orch/u1"),
+    )
     assert actions.dispatch(ctx, _manifest(base="release/1")).state == "done"
     fetch.assert_called_once_with(ctx.cfg.repo_root, ctx.cfg.upstream_remote, "release/1")
     msg = seams["deliver"].call_args.args[3]
@@ -168,7 +221,9 @@ def test_update_explicit_transport_failure_has_no_message(tmp_path, seams, mocke
     from jailbee.forking import ForkSource
     from jailbee.submodules import SubmoduleError
 
-    mocker.patch("jailbee.forking.prepare_fork", return_value=ForkSource("myrepo-orch", "main", SHA, None))
+    mocker.patch(
+        "jailbee.forking.prepare_fork", return_value=ForkSource("myrepo-orch", "main", SHA, None)
+    )
     subs = mocker.patch("jailbee.submodules.transport_submodules_to_container")
     push = mocker.patch("jailbee.sync.push_to_container")
     if failure == "submodules":
