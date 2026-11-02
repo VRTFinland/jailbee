@@ -414,7 +414,9 @@ def test_inbox_merged_head_validated():
 
 
 @pytest.mark.parametrize("source", [{"ref": "refs/heads/release/1"}, {"base": "main"}])
-def test_update_merge_explicit_dirty_before_source_or_transport(tmp_path, seams, merge_seams, mocker, source):
+def test_update_merge_explicit_dirty_before_source_or_transport(
+    tmp_path, seams, merge_seams, mocker, source
+):
     merge_seams["preflight"].side_effect = SyncError("dirty")
     source_resolve = mocker.patch("jailbee.orchestration.importing._update_source")
     prepare = mocker.patch("jailbee.forking.prepare_fork")
@@ -447,9 +449,12 @@ def test_update_merge_child_repo_preflight_probe_and_abort(tmp_path, seams, merg
 
 def test_inbox_json_omits_only_unset_merged_head():
     import json
+
     from jailbee.orchestration.protocol import InboxMessage
 
-    msg = InboxMessage.model_validate({"version": 1, "id": "h-12345678", "type": "message", "from": "orch", "body": "hi"})
+    msg = InboxMessage.model_validate(
+        {"version": 1, "id": "h-12345678", "type": "message", "from": "orch", "body": "hi"}
+    )
     data = json.loads(msg.model_dump_json(by_alias=True))
     assert "merged_head" not in data
     assert data["imported_ref"] is None and data["imported_sha"] is None

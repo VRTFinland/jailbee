@@ -9773,6 +9773,17 @@ def test_container_merge_can_refuse_gitlink_resolution(mocker):
     mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
     resolver = mocker.patch("jailbee.sync.submodules.resolve_gitlink_conflicts")
     with pytest.raises(sync.MergeConflictError):
-        sync._merge_ref_in_container(incus, "full-c", "/r", ref="r", label="main", message="m", short="c", uid=1000, ff_only=False, resolve_gitlinks=False)
+        sync._merge_ref_in_container(
+            incus,
+            "full-c",
+            "/r",
+            ref="r",
+            label="main",
+            message="m",
+            short="c",
+            uid=1000,
+            ff_only=False,
+            resolve_gitlinks=False,
+        )
     resolver.assert_not_called()
     incus.exec.assert_not_called()
