@@ -339,7 +339,10 @@ and does not authorize restarting an agent that is still alive.
 
 The broker matches its prompted PID and process start to the account
 adapter's session, currently Claude. `waiting` is input required; `idle`
-counts only with readable transcript evidence of no active subagents.
+counts only with readable transcript evidence and no subagent history.
+Claude transcripts have no reliable subagent-finished marker, so even old
+subagent files conservatively suppress plain `idle`; a genuine `waiting`
+state still reports input required.
 `busy` and `shell` do not count. Adapter or probe failures and unsupported
 agents are unknown, not idle. An unchanged pane is deliberately not used:
 a silent tool call could still be working. For those agents the separate

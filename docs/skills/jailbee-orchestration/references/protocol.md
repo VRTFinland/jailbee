@@ -376,7 +376,9 @@ a status state and cannot be sent as a manifest kind.
 
 Idle detection begins after readiness and uses the prompted process's exact
 PID/start identity and adapter session/activity signal. Claude `waiting`
-means input is required; `idle` counts only with no active subagents.
+means input is required; `idle` counts only with no subagent history.
+An old transcript is not completion evidence, so plain idle after any
+subagent history is conservatively unknown; genuine waiting still reports.
 Busy/shell, unknown signals and agents without adapter support do not count;
 pane silence alone is not evidence. The repo's `orchestration.idle_after_seconds`
 defaults to 900 positive seconds, for both first report and repeat cadence.

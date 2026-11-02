@@ -267,6 +267,17 @@ def count_fresh_subagents(
     return count
 
 
+def _background_clear(directory: Path) -> bool | None:
+    """A stale transcript does not prove completion; only no history is clear."""
+    try:
+        with os.scandir(directory) as entries:
+            return not any(e.name.startswith("agent-") and e.name.endswith(".jsonl") for e in entries)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return None
+
+
 def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
     """The session's activity, or None when its transcript cannot be read.
 
@@ -285,6 +296,7 @@ def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
         last_tool=parsed.last_tool,
         last_message=parsed.last_message,
         subagents=count_fresh_subagents(paths.subagents, now),
+        background_clear=_background_clear(paths.subagents),
         modified=modified,
         recent=parsed.recent,
         last_event_at=parsed.last_event_at,

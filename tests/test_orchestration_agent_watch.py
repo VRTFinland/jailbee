@@ -107,13 +107,26 @@ def test_adapter_idle_signal_matches_only_prompted_process(tmp_path, mocker, sta
     adapter = MagicMock()
     session = AgentSession("claude", 123, 42, state, "input needed", NOW, 1, "session")
     adapter.read_sessions.return_value = [session]
-    adapter.read_activity.return_value = AgentActivity(None, "last", subagents=subagents, modified=10)
+    adapter.read_activity.return_value = AgentActivity(None, "last", subagents=subagents, modified=10, background_clear=subagents == 0)
     mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
     status = AgentStatus(True, "claude", pid=123, proc_start=42)
     result = idle_signal(cfg, "kid", status, now=NOW)
     assert (result is not None) is expected
     assert idle_signal(cfg, "kid", AgentStatus(True, "claude", pid=124, proc_start=42), now=NOW) is None
     assert idle_signal(cfg, "kid", AgentStatus(True, "claude", pid=123, proc_start=43), now=NOW) is None
+
+
+def test_old_background_work_cannot_be_treated_as_idle(tmp_path, mocker):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, idle_signal
+    from tests.conftest import make_config
+
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "idle", None, NOW, 1)]
+    # A freshness count of zero is only an estimate, not completion evidence.
+    adapter.read_activity.return_value = AgentActivity(None, "last", subagents=0)
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    assert idle_signal(make_config(tmp_path), "kid", AgentStatus(True, "claude", pid=123, proc_start=42), now=NOW) is None
 
 
 def test_idle_signal_unknown_adapter_and_missing_transcript(tmp_path, mocker):

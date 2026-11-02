@@ -341,6 +341,17 @@ def test_an_unreadable_subagents_directory_is_unknown(tmp_path: Path) -> None:
     assert ca.count_fresh_subagents(not_a_dir, 1.0) is None
 
 
+def test_old_subagent_transcript_does_not_prove_background_work_finished(tmp_path: Path) -> None:
+    transcript = _transcript(tmp_path)
+    transcript.write_text(_assistant(_text("waiting")) + "\n")
+    paths = ActivityPaths(transcript, transcript.parent / SID / "subagents")
+    assert ca.read_activity(paths, now=1_000_000).background_clear is True
+    _subagent(paths.subagents, "agent-silent.jsonl", 3600, 1_000_000)
+    activity = ca.read_activity(paths, now=1_000_000)
+    assert activity.subagents == 0
+    assert activity.background_clear is False
+
+
 def test_read_activity_combines_the_tail_and_the_subagent_count(tmp_path: Path) -> None:
     now = 1_000_000.0
     transcript = _transcript(tmp_path)

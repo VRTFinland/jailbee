@@ -82,7 +82,7 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
         activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
         # Waiting means input is required, even if background work exists.
         # Idle without readable activity cannot rule out a running subagent.
-        if session.state == "idle" and (activity is None or activity.subagents != 0):
+        if session.state == "idle" and (activity is None or activity.background_clear is not True):
             return None
         return json.dumps([session.session_id, session.state, str(session.since),
                            activity.modified if activity else None,
