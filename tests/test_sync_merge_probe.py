@@ -70,7 +70,8 @@ def test_merge_probe_conflicts_listed() -> None:
 
 def test_merge_probe_conflict_without_paths() -> None:
     _, result = probe(
-        ExecResult(1, b"", b""), ExecResult(1, b"", b""),
+        ExecResult(1, b"", b""),
+        ExecResult(1, b"", b""),
         ExecResult(1, b"0" * 40 + b"\n", b""),
     )
     assert result.conflicted

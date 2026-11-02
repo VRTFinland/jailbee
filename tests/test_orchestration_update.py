@@ -358,7 +358,9 @@ def test_update_merge_conflict_without_paths_refuses(tmp_path, seams, merge_seam
     seams["deliver"].assert_not_called()
 
 
-def test_update_merge_abort_failure_is_not_reported_as_aborted(tmp_path, seams, merge_seams, mocker):
+def test_update_merge_abort_failure_is_not_reported_as_aborted(
+    tmp_path, seams, merge_seams, mocker
+):
     from jailbee.sync import MergeConflictError
 
     merge_seams["merge"].side_effect = MergeConflictError("conflict", report=mocker.Mock())
@@ -403,7 +405,9 @@ def test_update_merge_race_conflict_aborts_and_refuses(tmp_path, seams, merge_se
     seams["deliver"].assert_not_called()
 
 
-def test_update_merge_existing_operation_refused_without_abort(tmp_path, seams, merge_seams, mocker):
+def test_update_merge_existing_operation_refused_without_abort(
+    tmp_path, seams, merge_seams, mocker
+):
     merge_seams["preflight"].side_effect = ["child-branch", SyncError("merge in progress")]
     out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
     assert out.state == "refused" and "merge in progress" in out.detail
@@ -412,16 +416,21 @@ def test_update_merge_existing_operation_refused_without_abort(tmp_path, seams, 
     seams["deliver"].assert_not_called()
 
 
-def test_update_merge_git_existing_merge_refusal_does_not_abort(tmp_path, seams, merge_seams, mocker):
+def test_update_merge_git_existing_merge_refusal_does_not_abort(
+    tmp_path, seams, merge_seams, mocker
+):
     from jailbee import sync
 
     mocker.stop(merge_seams["merge"])
     mocker.patch("jailbee.sync._container_ref_oid", return_value="a" * 40)
     mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
     mocker.patch("jailbee.sync._container_has_merge_in_progress", return_value=True)
-    mocker.patch("jailbee.sync._exec_container_git_write", side_effect=sync.IncusError(
-        "fatal: You have not concluded your merge (MERGE_HEAD exists)."
-    ))
+    mocker.patch(
+        "jailbee.sync._exec_container_git_write",
+        side_effect=sync.IncusError(
+            "fatal: You have not concluded your merge (MERGE_HEAD exists)."
+        ),
+    )
     out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
     assert out.state == "refused" and "MERGE_HEAD" in out.detail
     merge_seams["abort"].assert_not_called()
@@ -434,11 +443,13 @@ def test_update_merge_post_merge_warning_delivers(tmp_path, seams, merge_seams, 
 
     mocker.stop(merge_seams["merge"])
     mocker.patch("jailbee.sync._container_ref_oid", return_value="a" * 40)
-    merge_seams["head"].side_effect = ([head] if head else [SyncError("cannot read HEAD")])
+    merge_seams["head"].side_effect = [head] if head else [SyncError("cannot read HEAD")]
     mocker.patch("jailbee.sync.submodules.vanishing_submodules", return_value=[])
     mocker.patch("jailbee.sync._exec_container_git_write")
-    mocker.patch("jailbee.sync.submodules.update_submodules_in_container",
-                 side_effect=sync.IncusError("submodule failed"))
+    mocker.patch(
+        "jailbee.sync.submodules.update_submodules_in_container",
+        side_effect=sync.IncusError("submodule failed"),
+    )
     out = actions.dispatch(_ctx(tmp_path), _manifest(merge=True))
     assert out.state == "done" and "warning" in out.detail
     msg = seams["deliver"].call_args.args[3]
