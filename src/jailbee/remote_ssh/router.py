@@ -251,7 +251,8 @@ def command_path(argv: Sequence[str]) -> str:
 # says — `full` included. An entry names a leaf or a whole group. Each one
 # reaches past the containers and the git bridge into the host itself:
 #   - host configuration and the SSH service itself: `config edit`/`init`
-#     (a config decides host mounts and this very policy), `remote ...`;
+#     (a config decides host mounts and this very policy), `remote ...`, and
+#     `orchestrate profile save` (writes the global host configuration);
 #   - host installation and host-level infrastructure: `setup`, `init`,
 #     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
 #     `net migrate`, `net egress proxy up`/`down`, `registry up`/`down`,
@@ -298,6 +299,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net egress proxy down",
         "net loose",
         "orchestrate grant",
+        "orchestrate profile save",
         "registry up",
         "registry down",
         "display up",

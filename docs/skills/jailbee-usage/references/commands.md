@@ -47,7 +47,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 - [Unified outbox (`outbox`, `outbox ls|show|drop|clear|apply`)](#unified-outbox)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
-- [Orchestration grants (`orchestrate grant|revoke|show|ls`)](#orchestration-grants)
+- [Orchestration grants (`orchestrate grant|revoke|show|ls|profile save`)](#orchestration-grants)
 - [Network (`net strict|loose|refresh|status|unregister|install|migrate`, `net egress ls|add|rm|export`)](#network)
 - [Accounts (`account ls|use|park|rm`, `account group …`)](#accounts)
 - [GUI (`ide`, `chrome`, `firefox`, `browser`, `apps ls`, `apps run`, `exec --detach`)](#gui)
@@ -1735,6 +1735,7 @@ the grants only: storing, limiting and inspecting them.
 | `jailbee orchestrate revoke [NAME]` | Remove the grant. Always asks which container (exit 2 off a terminal). |
 | `jailbee orchestrate show [NAME]` | The grant, the effective grant when the repo's caps narrow it, and the running-children count. A malformed stored grant exits 1. |
 | `jailbee orchestrate ls [--json]` | Every container of the repo holding a grant. `--json` prints name, grant, problem and running_children. |
+| `jailbee orchestrate profile save [CONTAINER] [PROFILE] [--force]` | Save a container's grant in global.yaml; `--force` replaces a global profile. A host-local profile of the same name blocks saving. |
 
 `jailbee new` applies the configured `default_profile` to the new container
 (not for mount-mode containers or children, nor when the repo's caps would refuse the grant). Profiles are defined in

@@ -110,6 +110,11 @@ later does not change grants already given; running `jb orchestrate grant
 created, never to a child, and not to a mount-mode container. Where a local
 profile has the same name as a global one, the local one wins.
 
+Save a container's stored grant as a profile with `jb orchestrate profile save
+bugs reviewer`. The profile is written to `global.yaml`; `--force` replaces an
+existing global profile. Saving is refused while `repos/<prefix>.yaml` defines
+that name, because the host-local profile would override it.
+
 The repo layer (`.jailbee/config.yaml`) is different: it can only **narrow**.
 It cannot define profiles or a default, but may set:
 

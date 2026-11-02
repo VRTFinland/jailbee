@@ -504,6 +504,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "reports and including idle in the recommended wake filter"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs the usage skill describing `orchestrate profile save` "
+            "and dashboard profile saving"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
