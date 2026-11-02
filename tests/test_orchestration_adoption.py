@@ -1,5 +1,6 @@
 """Eligibility and labeling of adopted orchestration children."""
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -156,13 +157,20 @@ def test_candidates_filter_and_sort(cfg, rig):
 def test_adopt_notifies_both_without_watching(cfg, rig, tmp_path, mocker):
     _, incus = rig
     deliver = mocker.patch("jailbee.orchestration.outbox.deliver")
-    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path, now=now)
     assert not result.warnings
     assert [c.args[2] for c in deliver.call_args_list] == ["myrepo-a", "myrepo-o"]
     child, parent = [c.args[3] for c in deliver.call_args_list]
     assert (child.kind, child.from_) == ("adopted", "o")
     assert (parent.kind, parent.from_) == ("adopted", "a")
+    assert child.body == adoption.ADOPTED_CHILD_BODY.format(orchestrator="o")
+    assert parent.body == adoption.ADOPTED_ORCHESTRATOR_BODY.format(child="a")
     assert "close" in parent.body and "send restart --child a --agent-only" in parent.body
+    assert [c.kwargs for c in deliver.call_args_list] == [
+        {"running": True, "uid": cfg.container_user.uid, "now": now, "seq": 0},
+        {"running": True, "uid": cfg.container_user.uid, "now": now, "seq": 1},
+    ]
     assert watch.load_watch(tmp_path) == {}
 
 
@@ -186,7 +194,8 @@ def test_release_live_autostart_preserves_labels(cfg, rig, tmp_path, mocker):
 
 def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
     rows, incus = rig
-    rows[1]["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.STATE: "done"})
+    rows[1]["config"].update({key: "x" for key in adoption.CHILD_STATE_LABELS})
+    rows[1]["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.RIGHTS: ""})
     pending = state.pending_dir(tmp_path, "myrepo-a")
     pending.mkdir(parents=True)
     (pending / "queued.json").write_text("{}")
@@ -201,10 +210,14 @@ def test_release_cleans_real_state(cfg, rig, tmp_path, mocker):
     assert len(result.warnings) == 1 and "could not notify o" in result.warnings[0]
     assert deliver.call_args.args[2] == "myrepo-o"
     assert deliver.call_args.args[3].kind == "released"
+    assert deliver.call_args.args[3].body == adoption.RELEASED_ORCHESTRATOR_BODY.format(child="a")
+    assert deliver.call_args.kwargs["running"] is True
+    assert deliver.call_args.kwargs["uid"] == cfg.container_user.uid
+    assert deliver.call_args.kwargs["seq"] == 0
     assert result.orchestrator == "myrepo-o" and result.revoked == ()
     assert incus.config_unset_checked.call_args_list == [
         call("myrepo-a", labels.SPAWNED_BY),
-        call("myrepo-a", labels.STATE),
+        *(call("myrepo-a", key) for key in adoption.CHILD_STATE_LABELS),
     ]
     assert not (pending / "queued.json").exists()
     assert watch.load_watch(tmp_path) == {}
@@ -217,7 +230,8 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
     rows[1]["config"].update(
         {
             labels.SPAWNED_BY: "myrepo-o",
-            labels.RIGHTS: ChildRights(mounts=("data",), loose=True).to_label(),
+            labels.RIGHTS: ChildRights(mounts=("data",), loose=True, egress=("owned.example",)).to_label(),
+            labels.TIMED: '{"mount:timed": "2026-12-01T00:00:00+00:00"}',
         }
     )
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
@@ -225,15 +239,43 @@ def test_release_revokes_only_owned_and_preserves_labels_on_failure(cfg, rig, tm
     remove = mocker.patch(
         "jailbee.mounts.remove_optional_mount", side_effect=RuntimeError("failed")
     )
-    mocker.patch("jailbee.net_switch.switch_mode")
+    switch = mocker.patch("jailbee.net_switch.switch_mode")
+    egress = mocker.patch("jailbee.egress_scope.remove_container_entry")
     with pytest.raises(RuntimeError, match="failed"):
         adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
     incus.config_unset_checked.assert_not_called()
     remove.side_effect = None
+    events = []
+    switch.side_effect = lambda *args, **kwargs: events.append("loose")
+    remove.side_effect = lambda *args, **kwargs: events.append("mount:data")
+    egress.side_effect = lambda *args, **kwargs: events.append("egress:owned.example")
+    incus.config_unset_checked.side_effect = lambda *args: events.append("unset")
     mocker.patch("jailbee.orchestration.outbox.deliver")
     result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
-    assert set(result.revoked) == {"loose", "mount:data"}
+    assert set(result.revoked) == {"loose", "mount:data", "egress:owned.example"}
     remove.assert_called_with(cfg, incus, "myrepo-a", "data")
+    switch.assert_called_with(cfg, incus, "myrepo-a", "strict", until=None)
+    egress.assert_called_with(cfg, incus, "myrepo-a", "owned.example")
+    assert events[:4] == ["egress:owned.example", "loose", "mount:data", "unset"]
+    assert remove.call_args_list[-1:] == [call(cfg, incus, "myrepo-a", "data")]
+    assert egress.call_args_list[-1:] == [call(cfg, incus, "myrepo-a", "owned.example")]
+
+
+def test_release_cleanup_failure_restores_parent_for_retry(cfg, rig, tmp_path, mocker):
+    rows, incus = rig
+    config = rows[1]["config"]
+    config[labels.SPAWNED_BY] = "myrepo-o"
+    incus.config_unset_checked.side_effect = lambda name, key: config.pop(key, None)
+    incus.config_set.side_effect = lambda name, key, value: config.__setitem__(key, value)
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    cancel = mocker.patch("jailbee.orchestration.watch.cancel", side_effect=OSError("failed"))
+    mocker.patch("jailbee.orchestration.outbox.deliver")
+    with pytest.raises(OSError, match="failed"):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    assert config[labels.SPAWNED_BY] == "myrepo-o"
+    cancel.side_effect = None
+    assert adoption.release(cfg, incus, "myrepo-a", root=tmp_path).orchestrator == "myrepo-o"
+    assert labels.SPAWNED_BY not in config
 
 
 def test_release_non_child_refused(cfg, rig, tmp_path):

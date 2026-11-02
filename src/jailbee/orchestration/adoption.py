@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from jailbee.incus import IncusError
 from jailbee.lifecycle import short_name
 from jailbee.orchestration import commands, labels, outbox, rights, state, watch
 from jailbee.orchestration.grant import GrantError, effective_grant
@@ -99,7 +100,7 @@ def _notify(
             now=now,
             seq=seq,
         )
-    except Exception as exc:
+    except (OSError, IncusError) as exc:
         return f"could not notify {short_name(cfg, recipient)}: {exc}"
     return None
 
@@ -253,15 +254,19 @@ def release(
     parent = config.get(labels.SPAWNED_BY)
     if not isinstance(parent, str) or not parent:
         raise AdoptError(f"'{short_name(cfg, child_full)}' is not a child")
-    revoked = rights.revoke_owned(cfg, incus, child_full)
-    incus.config_unset_checked(child_full, labels.SPAWNED_BY)
-    for key in CHILD_STATE_LABELS:
-        if key in config:
-            incus.config_unset_checked(child_full, key)
     root = root if root is not None else state.state_root()
     now = now if now is not None else datetime.now(UTC)
-    watch.cancel(root, parent, child_full)
-    state.purge_pending(root, child_full)
+    revoked = rights.revoke_owned(cfg, incus, child_full)
+    incus.config_unset_checked(child_full, labels.SPAWNED_BY)
+    try:
+        for key in CHILD_STATE_LABELS:
+            if key in config:
+                incus.config_unset_checked(child_full, key)
+        watch.cancel(root, parent, child_full)
+        state.purge_pending(root, child_full)
+    except Exception:
+        incus.config_set(child_full, labels.SPAWNED_BY, parent)
+        raise
     warning = _notify(
         cfg,
         incus,
