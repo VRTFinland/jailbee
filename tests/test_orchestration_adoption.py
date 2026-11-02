@@ -349,8 +349,12 @@ def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker
     child["config"].update({labels.SPAWNED_BY: "myrepo-o", labels.ON_DONE: "destroy"})
     rows.append(raw("myrepo-new", config={labels.GRANT: Grant().to_label()}))
     by_name = {row["name"]: row for row in rows}
-    incus.config_set.side_effect = lambda name, key, value: by_name[name]["config"].__setitem__(key, value)
-    incus.config_unset_checked.side_effect = lambda name, key: by_name[name]["config"].pop(key, None)
+    incus.config_set.side_effect = lambda name, key, value: by_name[name]["config"].__setitem__(
+        key, value
+    )
+    incus.config_unset_checked.side_effect = lambda name, key: by_name[name]["config"].pop(
+        key, None
+    )
     incus.with_exec_timeout.return_value = incus
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
@@ -363,23 +367,43 @@ def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker
     write = mocker.patch("jailbee.orchestration.outbox._atomic_write")
 
     def node(row):
-        return Node(row["name"], row["name"].removeprefix("myrepo-"),
-                    row["status"] == "Running", dict(row["config"]))
+        return Node(
+            row["name"],
+            row["name"].removeprefix("myrepo-"),
+            row["status"] == "Running",
+            dict(row["config"]),
+        )
 
-    ctx = ActionContext(cfg=cfg, gcfg=GlobalConfig(), incus=incus, root=tmp_path,
-                        sender=node(old), nodes={r["name"]: node(r) for r in rows},
-                        now=datetime(2026, 1, 1, tzinfo=UTC))
-    item = PendingFinish(version=1, type="finish", id="done1", child_full="myrepo-a",
-                         child_short="a", branch="branch", done_sha="a" * 40,
-                         body="done", in_reply_to=None, uid=None)
+    ctx = ActionContext(
+        cfg=cfg,
+        gcfg=GlobalConfig(),
+        incus=incus,
+        root=tmp_path,
+        sender=node(old),
+        nodes={r["name"]: node(r) for r in rows},
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="done1",
+        child_full="myrepo-a",
+        child_short="a",
+        branch="branch",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=None,
+    )
     path = finishing.park(ctx, ctx.sender, item)
     adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
     adoption.adopt(cfg, incus, "myrepo-new", ["myrepo-a"], root=tmp_path)
     assert path.exists()
     ctx.nodes = {r["name"]: node(r) for r in rows}
     ctx.sender = node(old)
-    outbox.flush_pending(incus, tmp_path, "myrepo-o", uid=None,
-                         finish=finishing.flush_callback(ctx))
+    outbox.flush_pending(
+        incus, tmp_path, "myrepo-o", uid=None, finish=finishing.flush_callback(ctx)
+    )
     messages = [json.loads(c.args[4]) for c in write.call_args_list]
     report = next(m for m in messages if m.get("kind") == "done")
     assert report["import_error"] and report["on_done"] == "keep"
