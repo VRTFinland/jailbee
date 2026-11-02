@@ -89,28 +89,32 @@ def plan_payload(
     step_timeout: int,
 ) -> dict[str, object]:
     targets = _selected(services, names if names else services)
-    selected = with_dependencies(services, targets) if op == "start" else restart_set(services, targets)
+    selected = (
+        with_dependencies(services, targets) if op == "start" else restart_set(services, targets)
+    )
     order = topo_order(services, selected)
     entries: list[dict[str, object]] = []
     for name in order:
         service = services[name]
         access = elevation(service)
-        entries.append({
-            "name": name,
-            "will_prepare": op == "refresh" and name in targets and bool(service.prepare),
-            "prepare": [
-                {
-                    "name": f"{name}-prepare-{i}",
-                    "run": step.run,
-                    "env": {**service.env, **step.env},
-                    "working_dir": step.working_dir or service.working_dir,
-                    "timeout": step.timeout or step_timeout,
-                    "continue_on_error": step.continue_on_error,
-                }
-                for i, step in enumerate(service.prepare, 1)
-            ],
-            "elevation": {"network": access.network, "mounts": list(access.mounts)},
-            "ready_timeout": service.ready_timeout,
-            "stop_timeout": service.stop_timeout,
-        })
+        entries.append(
+            {
+                "name": name,
+                "will_prepare": op == "refresh" and name in targets and bool(service.prepare),
+                "prepare": [
+                    {
+                        "name": f"{name}-prepare-{i}",
+                        "run": step.run,
+                        "env": {**service.env, **step.env},
+                        "working_dir": step.working_dir or service.working_dir,
+                        "timeout": step.timeout or step_timeout,
+                        "continue_on_error": step.continue_on_error,
+                    }
+                    for i, step in enumerate(service.prepare, 1)
+                ],
+                "elevation": {"network": access.network, "mounts": list(access.mounts)},
+                "ready_timeout": service.ready_timeout,
+                "stop_timeout": service.stop_timeout,
+            }
+        )
     return {"version": 1, "op": op, "order": order, "services": entries}

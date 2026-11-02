@@ -15,11 +15,13 @@ from jailbee.services.graph import (
 
 
 def service(*dependencies: str, restart: bool = False, **kwargs: object) -> Service:
-    return Service.model_validate({
-        "run": "serve",
-        "depends_on": {name: ServiceDependency(restart=restart) for name in dependencies},
-        **kwargs,
-    })
+    return Service.model_validate(
+        {
+            "run": "serve",
+            "depends_on": {name: ServiceDependency(restart=restart) for name in dependencies},
+            **kwargs,
+        }
+    )
 
 
 def test_topo_order_dependencies_first() -> None:
@@ -53,11 +55,13 @@ def test_restart_cascade_transitive_restart_edges() -> None:
 
 
 def test_elevation_union() -> None:
-    svc = service(prepare=[
-        ServicePrepareStep(run="a", network="loose"),
-        ServicePrepareStep(run="b", mounts=["x"]),
-        ServicePrepareStep(run="c", mounts=["x", "y"]),
-    ])
+    svc = service(
+        prepare=[
+            ServicePrepareStep(run="a", network="loose"),
+            ServicePrepareStep(run="b", mounts=["x"]),
+            ServicePrepareStep(run="c", mounts=["x", "y"]),
+        ]
+    )
     assert elevation(svc) == Elevation("loose", ("x", "y"))
     assert elevation(svc).any
     assert not elevation(service()).any
@@ -66,30 +70,58 @@ def test_elevation_union() -> None:
 def test_plan_payload_refresh_prepares_only_named() -> None:
     services = {
         "backend": service("db", restart=True, prepare=[{"run": "backend prep"}]),
-        "db": service(env={"A": "service", "B": "base"}, working_dir="app", prepare=[
-            {"run": "prepare", "env": {"A": "step"}, "network": "loose", "mounts": ["x"]}
-        ]),
+        "db": service(
+            env={"A": "service", "B": "base"},
+            working_dir="app",
+            prepare=[{"run": "prepare", "env": {"A": "step"}, "network": "loose", "mounts": ["x"]}],
+        ),
     }
     payload = plan_payload(services, ["db"], "refresh", step_timeout=45)
     assert payload == {
-        "version": 1, "op": "refresh", "order": ["db", "backend"],
+        "version": 1,
+        "op": "refresh",
+        "order": ["db", "backend"],
         "services": [
-            {"name": "db", "will_prepare": True, "prepare": [{
-                "name": "db-prepare-1", "run": "prepare", "env": {"A": "step", "B": "base"},
-                "working_dir": "app", "timeout": 45, "continue_on_error": False,
-            }], "elevation": {"network": "loose", "mounts": ["x"]},
-                "ready_timeout": 120, "stop_timeout": 10},
-            {"name": "backend", "will_prepare": False, "prepare": [{
-                "name": "backend-prepare-1", "run": "backend prep", "env": {},
-                "working_dir": "", "timeout": 45, "continue_on_error": False,
-            }], "elevation": {"network": None, "mounts": []},
-                "ready_timeout": 120, "stop_timeout": 10},
+            {
+                "name": "db",
+                "will_prepare": True,
+                "prepare": [
+                    {
+                        "name": "db-prepare-1",
+                        "run": "prepare",
+                        "env": {"A": "step", "B": "base"},
+                        "working_dir": "app",
+                        "timeout": 45,
+                        "continue_on_error": False,
+                    }
+                ],
+                "elevation": {"network": "loose", "mounts": ["x"]},
+                "ready_timeout": 120,
+                "stop_timeout": 10,
+            },
+            {
+                "name": "backend",
+                "will_prepare": False,
+                "prepare": [
+                    {
+                        "name": "backend-prepare-1",
+                        "run": "backend prep",
+                        "env": {},
+                        "working_dir": "",
+                        "timeout": 45,
+                        "continue_on_error": False,
+                    }
+                ],
+                "elevation": {"network": None, "mounts": []},
+                "ready_timeout": 120,
+                "stop_timeout": 10,
+            },
         ],
     }
 
 
 def test_plan_payload_unknown_name() -> None:
-    with pytest.raises(UnknownServiceError, match="db.*web"):
+    with pytest.raises(UnknownServiceError, match=r"db.*web"):
         plan_payload({"db": service(), "web": service()}, ["missing"], "start", step_timeout=30)
 
 
@@ -99,7 +131,15 @@ def test_plan_payload_is_json_serializable() -> None:
 
 
 def test_plan_start_includes_dependencies_and_never_prepares() -> None:
-    services = {"web": service("db", prepare=[{"run": "prep", "timeout": 12, "working_dir": "step", "continue_on_error": True}]), "db": service()}
+    services = {
+        "web": service(
+            "db",
+            prepare=[
+                {"run": "prep", "timeout": 12, "working_dir": "step", "continue_on_error": True}
+            ],
+        ),
+        "db": service(),
+    }
     payload = plan_payload(services, ["web"], "start", step_timeout=30)
     assert payload["order"] == ["db", "web"]
     entries = payload["services"]
@@ -111,7 +151,9 @@ def test_plan_start_includes_dependencies_and_never_prepares() -> None:
 
 
 def test_refresh_without_names_prepares_all() -> None:
-    payload = plan_payload({"a": service(prepare=[{"run": "prep"}]), "b": service()}, [], "refresh", step_timeout=30)
+    payload = plan_payload(
+        {"a": service(prepare=[{"run": "prep"}]), "b": service()}, [], "refresh", step_timeout=30
+    )
     entries = payload["services"]
     assert isinstance(entries, list)
     assert [entry["will_prepare"] for entry in entries] == [True, False]
