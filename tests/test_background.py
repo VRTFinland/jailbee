@@ -863,6 +863,16 @@ def _prompt_opts(**kw):
     )
 
 
+@pytest.mark.parametrize("services", [None, [], ["web"]])
+def test_job_codec_round_trips_autostart_services(services):
+    from jailbee.background import job_to_opts, op_to_job
+
+    opts = _prompt_opts(autostart_services=services)
+    job = op_to_job(opts, container_name="c", log_path="/l")
+    restored, _, _ = job_to_opts(job)
+    assert restored.autostart_services == services
+
+
 def test_job_codec_round_trips_initial_prompt():
     import json
 

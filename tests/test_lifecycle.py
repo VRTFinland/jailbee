@@ -9110,6 +9110,39 @@ def test_widening_already_granted_by_the_baseline_is_not_reported(make_cfg, tmp_
     assert not any("widens privileges" in c.args[0] for c in warned.call_args_list)
 
 
+@pytest.mark.parametrize(
+    ("selection", "profile_services", "expected"),
+    [([], ["web"], ()), (["web"], [], ("service[db].prepare",))],
+)
+def test_branch_explicit_services_override_profile(
+    make_cfg, tmp_path, mocker, selection, profile_services, expected
+):
+    from jailbee import lifecycle
+    from jailbee.branch_config import AutostartDeviation
+
+    cfg, _ = _new_env(make_cfg, tmp_path, mocker)
+    branch = make_cfg(
+        tmp_path,
+        services={
+            "web": {"run": "web", "depends_on": {"db": {}}},
+            "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
+        },
+        autostart={
+            "on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}],
+            "profiles": {"minimal": {"stages": ["setup"], "services": profile_services}},
+            "default_profile": "minimal",
+        },
+    )
+    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(branch, AutostartDeviation()))
+    mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
+    mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
+    clone_ref = mocker.Mock(autostart_ref="branch", autostart_source_label="branch")
+    verdict = lifecycle.assess_branch_autostart(
+        cfg, _branch_new_opts(untrusted_head=True, autostart_services=selection), clone_ref
+    ).verdict
+    assert verdict is not None and verdict.widening_steps == expected
+
+
 def test_branch_profile_selects_service_dependencies_for_assessment(make_cfg, tmp_path, mocker):
     from jailbee import lifecycle
     from jailbee.branch_config import AutostartDeviation

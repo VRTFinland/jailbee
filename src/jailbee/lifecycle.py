@@ -1165,6 +1165,8 @@ class NewContainerOptions:
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
     autostart_profile: str | None = None
+    # MUST be mirrored in background.op_to_job/job_to_opts.
+    autostart_services: list[str] | None = None
     # Task text for the primary agent's first launch (`jailbee new --prompt`),
     # written into the container after start and before autostart. MUST be
     # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
@@ -1455,6 +1457,8 @@ def assess_branch_autostart(
     profile_name = opts.autostart_profile or loaded.cfg.autostart.default_profile
     profile = loaded.cfg.autostart.profiles.get(profile_name) if profile_name else None
     selected_services = profile.services if profile is not None and profile != "all" else None
+    if opts.autostart_services is not None:
+        selected_services = opts.autostart_services
     verdict = branch_config.assess_escalation(
         cfg,
         loaded.cfg.autostart,
