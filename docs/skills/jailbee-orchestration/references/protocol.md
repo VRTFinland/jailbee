@@ -327,7 +327,7 @@ need the operation, but the orchestrator must still hold a grant.
 Revoke only orchestration-owned rights (spawn, permanent or timed grants).
 Hand-added rights are left alone, with `<item> was not given by orchestration;
 left as is`. Timed grants never shorten a permanent right or later expiry;
-`never` clears expiry. Revoke before grant; failure rolls back best effort and
+`never` clears expiry (acknowledged as `(no expiry)`). Revoke before grant; failure rolls back best effort and
 replies `failed`; validation refusal changes nothing. Success replies `done`
 with details. Timed rights expire on the host's 60-second timer. Every applied
 manifest is journalled. A child's revoke sends its parent a `note`, e.g.
