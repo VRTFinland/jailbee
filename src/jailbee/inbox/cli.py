@@ -2,10 +2,10 @@
 
 import json
 import os
-import shutil
-import time
 import re
+import shutil
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,7 +132,11 @@ def parse_timeout(text: str) -> int | None:
 
 
 def unread_files(inbox: Path) -> list[Path]:
-    return sorted(p for p in inbox.glob("*.json") if not p.name.startswith(".") and not p.is_symlink() and p.is_file())
+    return sorted(
+        p
+        for p in inbox.glob("*.json")
+        if not p.name.startswith(".") and not p.is_symlink() and p.is_file()
+    )
 
 
 def _load(path: Path) -> object:
@@ -223,7 +227,13 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
         return 1
     try:
         doc = _load(path)
-        if not isinstance(doc, dict) or doc.get("version") != 1 or isinstance(doc.get("updated_at"), bool) or not isinstance(doc.get("updated_at"), (int, float)) or not isinstance(doc.get("children"), list):
+        if (
+            not isinstance(doc, dict)
+            or doc.get("version") != 1
+            or isinstance(doc.get("updated_at"), bool)
+            or not isinstance(doc.get("updated_at"), (int, float))
+            or not isinstance(doc.get("children"), list)
+        ):
             raise ValueError("invalid snapshot")
     except (OSError, ValueError, UnicodeError):
         print(f"{PROG}: invalid children.json", file=sys.stderr)
@@ -237,7 +247,15 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
         for child in children:
             name = child.get("name")
             session = child.get("session")
-            print(tsv(["" if name is None else jq_tostring(name), jq_tostring(child.get("running")), "-" if session is None or session is False else jq_tostring(session)]))
+            print(
+                tsv(
+                    [
+                        "" if name is None else jq_tostring(name),
+                        jq_tostring(child.get("running")),
+                        "-" if session is None or session is False else jq_tostring(session),
+                    ]
+                )
+            )
     return 0
 
 
@@ -252,15 +270,33 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
         try:
             cfg = _load(config)
         except (OSError, ValueError, UnicodeError):
-            print(f"{PROG}: cannot read {config} (not valid JSON); no claude-jb runners listed", file=sys.stderr)
+            print(
+                f"{PROG}: cannot read {config} (not valid JSON); no claude-jb runners listed",
+                file=sys.stderr,
+            )
     runner = None
     source = None
     if isinstance(grant, dict):
         candidate = grant.get("default_runner")
-        if isinstance(candidate, dict) and isinstance(candidate.get("agent"), str) and isinstance(grant.get("default_runner_source"), str) and all(candidate.get(k) is None or isinstance(candidate.get(k), str) for k in ("profile", "model")):
+        if (
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("agent"), str)
+            and isinstance(grant.get("default_runner_source"), str)
+            and all(
+                candidate.get(k) is None or isinstance(candidate.get(k), str)
+                for k in ("profile", "model")
+            )
+        ):
             runner = {k: clean_c1(v) if isinstance(v, str) else v for k, v in candidate.items()}
             source = clean_c1(grant["default_runner_source"])
-    result: list[dict[str, object]] = [{"runner": runner, "default": True, "agent": clean_c1(os.environ.get("JAILBEE_DEFAULT_AGENT") or "unknown"), "source": source}]
+    result: list[dict[str, object]] = [
+        {
+            "runner": runner,
+            "default": True,
+            "agent": clean_c1(os.environ.get("JAILBEE_DEFAULT_AGENT") or "unknown"),
+            "source": source,
+        }
+    ]
     if not shutil.which("claude"):
         return result
     tiers = ["fable", "opus", "sonnet", "haiku"]
@@ -270,8 +306,17 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
             aliases = profile.get("tiers", {}) if isinstance(profile, dict) else {}
             if not isinstance(aliases, dict):
                 aliases = {}
-            aliases = {k: clean_c1(jq_tostring(v)) for k, v in sorted(aliases.items()) if k in tiers}
-            result.append({"runner": {"agent": "claude-jb", "profile": clean_c1(name)}, "models": list(aliases), "aliases": aliases, "default_profile": name == cfg.get("default_profile")})
+            aliases = {
+                k: clean_c1(jq_tostring(v)) for k, v in sorted(aliases.items()) if k in tiers
+            }
+            result.append(
+                {
+                    "runner": {"agent": "claude-jb", "profile": clean_c1(name)},
+                    "models": list(aliases),
+                    "aliases": aliases,
+                    "default_profile": name == cfg.get("default_profile"),
+                }
+            )
     return result
 
 
@@ -299,14 +344,22 @@ def cmd_runners(settings: Settings, args: list[str]) -> int:
     for entry in entries[1:]:
         r = entry["runner"]
         assert isinstance(r, dict)
-        labels.append("claude" if r["agent"] == "claude" else "claude-jb -P " + clean_c0c1(r["profile"]) + (" (default)" if entry["default_profile"] else ""))
+        labels.append(
+            "claude"
+            if r["agent"] == "claude"
+            else "claude-jb -P "
+            + clean_c0c1(r["profile"])
+            + (" (default)" if entry["default_profile"] else "")
+        )
     width = max(map(len, labels), default=0)
     for label, entry in zip(labels, entries[1:], strict=True):
         models = entry["models"]
         assert isinstance(models, list)
         aliases = entry.get("aliases")
         assert aliases is None or isinstance(aliases, dict)
-        values = " ".join(m if aliases is None else m + "=" + clean_c0c1(aliases[m]) for m in models)
+        values = " ".join(
+            m if aliases is None else m + "=" + clean_c0c1(aliases[m]) for m in models
+        )
         print(label.ljust(width) + "  models: " + values)
     return 0
 
@@ -330,7 +383,12 @@ def main(argv: list[str]) -> int:
         if argv[0] in {"help", "-h", "--help"}:
             print(USAGE, end="")
             return 0
-        commands = {"ls": cmd_ls, "read": cmd_read, "children": cmd_children, "runners": cmd_runners}
+        commands = {
+            "ls": cmd_ls,
+            "read": cmd_read,
+            "children": cmd_children,
+            "runners": cmd_runners,
+        }
         if argv[0] in commands:
             return commands[argv[0]](settings, argv[1:])
         raise InboxUsage("not implemented")

@@ -20,7 +20,10 @@ def jq_tostring(v: object) -> str:
 
 
 def tsv(cells: Sequence[str]) -> str:
-    return "\t".join(s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r") for s in cells)
+    return "\t".join(
+        s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+        for s in cells
+    )
 
 
 def pretty(v: object) -> str:
@@ -45,5 +48,11 @@ def ls_line(doc: dict[str, object]) -> str:
         reason = doc.get("on_done_reason")
         if reason is not None and reason is not False:
             text += f" [kept: {jq_tostring(reason)[:60]}]"
-    cells = [doc.get("id"), kind, doc.get("ref" if kind == "status" else "from"), doc.get("state") if kind == "status" else _alternative(doc.get("kind"), ""), text]
+    cells = [
+        doc.get("id"),
+        kind,
+        doc.get("ref" if kind == "status" else "from"),
+        doc.get("state") if kind == "status" else _alternative(doc.get("kind"), ""),
+        text,
+    ]
     return tsv([clean_c0c1("-" if v is None else jq_tostring(v)) for v in cells])
