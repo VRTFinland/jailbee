@@ -486,8 +486,8 @@ a running child that has not reported done shows no activity for that duration.
 Activity is the latest of a message from the child (read or unread), an agent
 event, a commit on the child's branch and CPU use at or above 5% of one core,
 taken from the `status` object below (the broker's own `idle`/`blocked` reports
-from `child.short` count as messages from the child, for `LAST-MSG` too); with no activity, time is measured from the
-child's start. A child whose `status` is missing (an older broker) is timed by
+from `child.short` count as messages from the child, for `LAST-MSG` too); with
+no activity, time is measured from the child's start. A child whose `status` is missing (an older broker) is timed by
 messages alone. Stop or restart resets monitoring, and an overdue child keeps
 waking until activity or a lifecycle change. The broker publishes read-only
 `children.json`: per child its name, `running` (the container state), `done` (an
@@ -528,9 +528,10 @@ only warns on stderr and still prints with exit 0, unlike `wait --quiet-after`
 and `wait --digest`, which exit 2.
 
 Each child item in `children.json` carries `status` (an object for a running
-child; for a stopped one `{"head", "last_to_child_at"}` when it has either,
-`null` when neither; `version` stays 1 and every field is additive and optional, so
-older and newer readers and brokers interoperate):
+child; for a stopped one `{"head", "last_to_child_at"}`, either value possibly
+`null` (a stopped child that was never observed or messaged has `status: null`;
+`version` stays 1 and every field is additive and optional, so older and newer
+readers and brokers interoperate):
 
 | Field | Meaning |
 |---|---|
@@ -538,7 +539,7 @@ older and newer readers and brokers interoperate):
 | `agent` | `{"alive", "state", "since", "last_event_at", "last_tool"}`: the prompted agent's liveness and session state (currently Claude). |
 | `cpu_percent` | Container CPU over the last sample, in % of one core. |
 | `memory_bytes` | Container memory in bytes, net of page cache. |
-| `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and `jailbee inbox wait` waiters; `null` if none or the agent is unknown. |
+| `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and any `jailbee inbox wait` or `inbox send --wait` waiter (recognised by its command line, e.g. `python -m jailbee.container_main inbox wait`); `null` if none or the agent is unknown. |
 | `head` | `{"sha", "time", "subject"}` of the newest commit on the child's branch (committer time), or `null` without commits. |
 | `dirty` | Uncommitted changes in the work tree, or `null` if unknown. |
 | `last_busy_at` | Last time `cpu_percent` was at least 5. Kept across broker restarts. |
@@ -550,7 +551,8 @@ seconds per child; the liveness probe (`agent_watch.probe`) and the git probe
 run at most every 60 seconds; between refreshes the last values are republished
 with their `observed_at`. A session that cannot be read keeps the last known
 `last_event_at`. A stopped child publishes only `head` and `last_to_child_at`
-(`null` when it has neither). Commit subjects and process names come from the
+(each `null` when unknown; the whole `status` is `null` only for a child never
+observed running or messaged). Commit subjects and process names come from the
 child and are untrusted: they are cut to 120 and 160 characters and control
 characters are replaced, in the broker and again when printed.
 
