@@ -403,7 +403,7 @@ exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
 timeout (default 30m). `none` waits without a deadline and never exits 3.
 Recommend it for spawn, update and destroy.
 
-For waits, use `jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m`.
+For waits, use `jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status:refused --quiet-after 60m --timeout 30m`.
 The broker may send a host-only `message` of kind `idle`, with the child's
 short name in `from` and the spawn/restart ref in `in_reply_to`. Its body names
 the child, elapsed wait, last accepted child message kind and bounded first

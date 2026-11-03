@@ -250,7 +250,7 @@ The broker leaves the stale standalone helper that old images retain in place.
 Do not hand-roll the protocol.
 
 ```bash
-jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
+jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status:refused --quiet-after 60m --timeout 30m
 ```
 
 It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
@@ -265,8 +265,10 @@ For a background orchestrator waiter, use `--timeout none` only together with
 
 Use `--wake-on`, not home-made wrappers that read/log notes or statuses:
 **wait never consumes anything**, including nonmatches. It returns the oldest
-matching unread path; without a filter any unread message matches. Message
-kinds and status states share the filter vocabulary. A child's first message
+matching unread path; without a filter any unread message matches. A bare
+word matches a message kind or a status state (`done` is both, so a bare `done`
+wakes on `delivered to` acks); `msg:<kind>` matches only messages and
+`status:<state>` only status replies. A child's first message
 after spawn/restart overrides the filter even if it is a note; read history
 prevents later notes from overriding again. Explicitly read messages by id,
 not filename, or a matching unread message keeps waking you.

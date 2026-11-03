@@ -467,7 +467,7 @@ For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
 
 ```bash
-jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
+jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status:refused --quiet-after 60m --timeout 30m
 ```
 
 For a background orchestrator waiter, use `--timeout none` only together with
@@ -475,6 +475,14 @@ For a background orchestrator waiter, use `--timeout none` only together with
 
 `--wake-on` accepts comma-separated message kinds (`note`, `question`, `done`,
 `blocked`, host-generated `idle`) and status states (`queued`, `started`, `done`, `failed`, `refused`).
+`done` is both a kind and a state, so a bare word matches either: a plain
+`done` also wakes on the `delivered to <child>` status ack that every
+`inbox send message` gets. Prefix a token to say which you mean: `msg:<kind>`
+matches only a message (including the broker's `idle`/`blocked` reports),
+`status:<state>` only a status reply; an unknown kind or state after a prefix is a
+usage error (exit 2). The recommended filter above wakes on child reports and
+on failed or refused manifests, but not on successful acks, which `send --wait`
+already returns.
 It returns the oldest matching unread path; **nothing is marked read**, even
 when it does not match. Omit the filter for any unread message. The first
 message from a child after each spawn/restart always wakes, regardless of
