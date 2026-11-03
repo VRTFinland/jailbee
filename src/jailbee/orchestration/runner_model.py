@@ -37,8 +37,10 @@ class Runner(BaseModel):
     @field_validator("model")
     @classmethod
     def _model(cls, v: str | None) -> str | None:
-        if v is not None and v not in RUNNER_TIERS and not (
-            v.endswith("[1m]") and model_tier(v) in RUNNER_TIERS
+        if (
+            v is not None
+            and v not in RUNNER_TIERS
+            and not (v.endswith("[1m]") and model_tier(v) in RUNNER_TIERS)
         ):
             raise ValueError("model must be a runner tier optionally followed by [1m]")
         return v

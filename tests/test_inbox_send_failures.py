@@ -25,7 +25,12 @@ def test_help_documents_model_suffix(capsys):
 @pytest.mark.parametrize("model", ["opus[1m]", "sonnet[1m]"])
 def test_send_accepts_suffixed_model(tmp_path, monkeypatch, agent, model):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    assert cli.main(["send", "spawn", "--branch", "b", "--text", "x", "--agent", agent, "--model", model]) == 0
+    assert (
+        cli.main(
+            ["send", "spawn", "--branch", "b", "--text", "x", "--agent", agent, "--model", model]
+        )
+        == 0
+    )
     manifest = next((tmp_path / "outbox").glob("*.json"))
     assert json.loads(manifest.read_text())["runner"] == {"agent": agent, "model": model}
 
@@ -33,7 +38,12 @@ def test_send_accepts_suffixed_model(tmp_path, monkeypatch, agent, model):
 @pytest.mark.parametrize("model", ["OPUS[1m]", "opus[2m]", "opus[1M]", "opus [1m]"])
 def test_send_rejects_invalid_model_suffix(tmp_path, monkeypatch, model):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    assert cli.main(["send", "spawn", "--branch", "b", "--text", "x", "--agent", "claude", "--model", model]) == 2
+    assert (
+        cli.main(
+            ["send", "spawn", "--branch", "b", "--text", "x", "--agent", "claude", "--model", model]
+        )
+        == 2
+    )
     assert not list((tmp_path / "outbox").glob("*"))
 
 
