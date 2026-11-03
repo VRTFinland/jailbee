@@ -370,6 +370,7 @@ def publish(settings: "Settings", req: SendRequest) -> str:
     body_path = settings.outbox / f"{id_}.md"
     fd: int | None = None
     moved_body = False
+    publishing_manifest = False
     try:
         if body_name:
             source: BinaryIO
@@ -413,6 +414,7 @@ def publish(settings: "Settings", req: SendRequest) -> str:
             body_tmp.replace(body_path)
             moved_body = True
         try:
+            publishing_manifest = True
             json_tmp.replace(settings.outbox / f"{id_}.json")
         except OSError as exc:
             raise PublishError("could not write the manifest") from exc
@@ -421,7 +423,8 @@ def publish(settings: "Settings", req: SendRequest) -> str:
             fd = None
         return id_
     except BaseException:
-        if moved_body:
+        # After rename the broker may already have consumed the manifest.
+        if moved_body and not (publishing_manifest and not json_tmp.exists()):
             body_path.unlink(missing_ok=True)
         raise
     finally:

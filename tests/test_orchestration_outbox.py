@@ -118,8 +118,13 @@ def test_ensure_env_removes_legacy_helper_and_installs_nothing() -> None:
 def test_ensure_env_missing_launcher_raises() -> None:
     incus = _incus()
     incus.exec.side_effect = [None, IncusError("missing")]
-    with pytest.raises(IncusError, match="jb base build"):
+    with pytest.raises(outbox.ContainerJailbeeMissing) as exc:
         outbox.ensure_orchestration_env(incus, FULL, uid=1000)
+    assert type(exc.value) is outbox.ContainerJailbeeMissing
+    assert str(exc.value) == (
+        "container image has no in-container jailbee (needed for `jailbee inbox`) — "
+        "run `jb base build` on the host, then recreate the container"
+    )
     assert len(incus.exec.call_args_list) == 2
 
 

@@ -88,6 +88,31 @@ def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypat
         os.close(fd)
 
 
+def test_interrupt_after_manifest_rename_keeps_request_and_releases_lock(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
+    original = Path.replace
+
+    def interrupt_after_rename(path, target):
+        result = original(path, target)
+        if path.name == ".fixed.json.tmp":
+            raise KeyboardInterrupt
+        return result
+
+    monkeypatch.setattr(Path, "replace", interrupt_after_rename)
+    assert cli.main(["send", "message", "--text", "hello", "--wait"]) == 130
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    outbox = tmp_path / "outbox"
+    assert json.loads((outbox / "fixed.json").read_text())["body_file"] == "fixed.md"
+    assert (outbox / "fixed.md").read_text() == "hello"
+    fd = os.open(tmp_path / "status-waits" / "fixed.lock", os.O_WRONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(fd)
+
+
 class BoundedReader(io.BytesIO):
     def read(self, size=-1):
         assert 0 < size <= 65536, f"unbounded read: {size}"
