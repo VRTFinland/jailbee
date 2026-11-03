@@ -304,3 +304,18 @@ def test_dispatch_child_message_to_orchestrator_is_not_a_delivery(
     ctx = _ctx(tmp_path, _node("proj-x", **{labels.SPAWNED_BY: "proj-p"}))
     dispatch(ctx, MessageManifest(version=1, id="m1", type="message", body="hi"))
     assert not (tmp_path / "inbox-state").exists()
+
+
+def test_dispatch_swallows_note_delivery_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import inbox_state
+
+    def boom(*args: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setitem(actions.HANDLERS, "message", MagicMock(return_value=actions.done("ok")))
+    monkeypatch.setattr(inbox_state, "note_delivery", boom)
+    ctx = _delivery_ctx(tmp_path)
+    m = MessageManifest(version=1, id="m1", type="message", to="c", body="hi")
+    assert dispatch(ctx, m) == Outcome("done", "ok")

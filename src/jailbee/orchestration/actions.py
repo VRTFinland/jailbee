@@ -244,7 +244,12 @@ def _note_delivery(ctx: ActionContext, manifest: Manifest, outcome: Outcome, rol
         return
     from jailbee.orchestration import inbox_state
 
-    inbox_state.note_delivery(ctx.root, ctx.sender.full, child.full, ctx.now.timestamp())
+    try:
+        inbox_state.note_delivery(ctx.root, ctx.sender.full, child.full, ctx.now.timestamp())
+    except Exception:
+        # The message is already delivered; a bookkeeping failure must not
+        # turn it into a broker error.
+        log.exception("could not record delivery to %s", child.full)
 
 
 def child_preamble(orchestrator_short: str) -> str:

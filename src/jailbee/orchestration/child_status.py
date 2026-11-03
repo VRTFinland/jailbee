@@ -40,6 +40,7 @@ COMMAND_LIMIT = 160
 """Longest command line kept, in characters."""
 
 # C0 controls (incl. ESC and TAB), DEL, and the C1 range.
+_SHA = re.compile(r"[0-9a-f]{40,64}")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
 
 
@@ -103,14 +104,23 @@ class StatusCache:
 
     `host_at` gates the cheap host-side probe (every `STATUS_INTERVAL`);
     `exec_at` gates the probe that runs git inside the container (every
-    `GIT_INTERVAL`). `sampler` holds the CPU reading between gathers.
+    `GIT_INTERVAL`). `samplers` hold the CPU readings between gathers, one per orchestrator: a
+    sampler keeps only the containers of its latest call, so two orchestrators
+    sharing one would erase each other's previous readings.
     """
 
     host_at: dict[str, float] = field(default_factory=dict)
     exec_at: dict[str, float] = field(default_factory=dict)
-    sampler: procstat.ActivitySampler = field(default_factory=procstat.ActivitySampler)
+    samplers: dict[str, procstat.ActivitySampler] = field(default_factory=dict)
     # The last agent probe result per child; the snapshot reads session files with it.
     agent: dict[str, AgentStatus] = field(default_factory=dict)
+
+    def sampler_for(self, orchestrator: str) -> procstat.ActivitySampler:
+        """The CPU sampler of `orchestrator`'s children, created on first use."""
+        sampler = self.samplers.get(orchestrator)
+        if sampler is None:
+            sampler = self.samplers[orchestrator] = procstat.ActivitySampler()
+        return sampler
 
     def host_due(self, full: str, now: float) -> bool:
         """True, and record `now`, when the host probe for `full` is due."""
@@ -165,7 +175,7 @@ def probe_head(
         return None, None
     parts = lines[0].split("\x1f", 2)
     try:
-        if len(parts) != 3 or not parts[0]:
+        if len(parts) != 3 or not _SHA.fullmatch(parts[0]):
             return None, None
         when = float(int(parts[1]))
     except ValueError:

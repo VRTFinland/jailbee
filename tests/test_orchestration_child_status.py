@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from jailbee.incus import IncusError
 from jailbee.orchestration.child_status import (
     GIT_INTERVAL,
@@ -63,6 +65,9 @@ def test_interval_constants():
     assert GIT_INTERVAL == 60
 
 
+SHA = "a" * 40
+
+
 def _head_incus(output=None, error=None):
     incus = MagicMock()
     if error:
@@ -73,9 +78,9 @@ def _head_incus(output=None, error=None):
 
 
 def test_probe_head_parses() -> None:
-    incus = _head_incus("abc\x1f1762160000\x1ffix: x\nDIRTY\n")
+    incus = _head_incus(f"{SHA}\x1f1762160000\x1ffix: x\nDIRTY\n")
     assert probe_head(incus, "kid", "/repo", uid=1000) == (
-        {"sha": "abc", "time": 1762160000.0, "subject": "fix: x"},
+        {"sha": SHA, "time": 1762160000.0, "subject": "fix: x"},
         True,
     )
 
@@ -107,14 +112,14 @@ def test_probe_head_error_sentinel_bare() -> None:
 
 
 def test_probe_head_error_sentinel_after_log_line() -> None:
-    out = "abc\x1f1762160000\x1fsubj\nERROR\n"
+    out = f"{SHA}\x1f1762160000\x1fsubj\nERROR\n"
     assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (None, None)
 
 
 def test_probe_head_hostile_subject_is_cleaned_and_capped() -> None:
     subject = "\x1b[31m" + "A" * 10_000
     head, dirty = probe_head(
-        _head_incus(f"abc\x1f1762160000\x1f{subject}\nCLEAN\n"), "k", "/r", uid=1
+        _head_incus(f"{SHA}\x1f1762160000\x1f{subject}\nCLEAN\n"), "k", "/r", uid=1
     )
     assert dirty is False
     assert head is not None
@@ -125,13 +130,37 @@ def test_probe_head_hostile_subject_is_cleaned_and_capped() -> None:
 
 
 def test_probe_head_non_integer_time() -> None:
-    out = "abc\x1fnow\x1fsubj\nCLEAN\n"
+    out = f"{SHA}\x1fnow\x1fsubj\nCLEAN\n"
     assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (None, None)
 
 
 def test_probe_head_clean_repo_with_commit() -> None:
-    out = "abc\x1f1762160000\x1fsubj\nCLEAN\n"
+    out = f"{SHA}\x1f1762160000\x1fsubj\nCLEAN\n"
     assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (
-        {"sha": "abc", "time": 1762160000.0, "subject": "subj"},
+        {"sha": SHA, "time": 1762160000.0, "subject": "subj"},
         False,
     )
+
+
+def test_probe_head_accepts_sha256_length_sha() -> None:
+    sha = "0123456789abcdef" * 4
+    head, _ = probe_head(_head_incus(f"{sha}\x1f1762160000\x1fs\nCLEAN\n"), "k", "/r", uid=1)
+    assert head is not None and head["sha"] == sha
+
+
+@pytest.mark.parametrize(
+    "sha",
+    [
+        "abc",
+        "A" * 40,
+        "a" * 39,
+        "a" * 65,
+        "\x1b[2J" + "a" * 40,
+        "a" * 40 + "\x1b[31m",
+        "a" * 1_000_000,
+        "g" * 40,
+    ],
+)
+def test_probe_head_rejects_hostile_sha(sha: str) -> None:
+    out = f"{sha}\x1f1762160000\x1fsubj\nCLEAN\n"
+    assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (None, None)

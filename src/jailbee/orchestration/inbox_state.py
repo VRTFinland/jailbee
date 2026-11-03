@@ -138,7 +138,7 @@ def _collect_host(
     try:
         # Every running child is sampled together: the sampler keeps one
         # reading set, and leaving a child out would drop its previous reading.
-        rates = cache.sampler.sample(
+        rates = cache.sampler_for(ctx.sender.full).sample(
             [procstat.SampleInput(n.full, n.init_pid, n.cpu_usage_ns) for n in nodes]
         )
     except Exception:
@@ -164,16 +164,24 @@ def _collect_host(
         _refresh_agent(ctx, cache, node, work)
 
 
-def _activity(started: float, work: dict[str, object]) -> float:
+def _activity(started: float, work: dict[str, object], now: float) -> float:
+    """`activity_at` with child-supplied times clamped to `now`.
+
+    A commit dated in the future (or a forged session event) must not pin the
+    child as active forever.
+    """
     agent = work.get("agent")
     head = work.get("head")
+
+    def seen(value: object) -> float | None:
+        number = _number(value)
+        return None if number is None else min(number, now)
+
     return child_status.activity_at(
         started_at=started,
-        agent_last_event_at=_number(agent.get("last_event_at"))
-        if isinstance(agent, dict)
-        else None,
-        head_time=_number(head.get("time")) if isinstance(head, dict) else None,
-        last_busy_at=_number(work.get("last_busy_at")),
+        agent_last_event_at=seen(agent.get("last_event_at")) if isinstance(agent, dict) else None,
+        head_time=seen(head.get("time")) if isinstance(head, dict) else None,
+        last_busy_at=seen(work.get("last_busy_at")),
     )
 
 
@@ -253,7 +261,7 @@ def sync_children(ctx: ActionContext, cache: child_status.StatusCache | None = N
             work = working[child.full]
             if child.running:
                 work["last_to_child_at"] = delivered_at
-                work["activity_at"] = _activity(started, work)
+                work["activity_at"] = _activity(started, work, now)
                 item["status"] = entry["status"] = work
             else:
                 # Stopped: only what outlives the container. The durable record

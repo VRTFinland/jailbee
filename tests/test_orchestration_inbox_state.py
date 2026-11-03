@@ -213,6 +213,7 @@ class FakeSampler:
         return {i.name: ContainerActivity(cpu_percent=self.cpu) for i in items}
 
 
+_REAL_PROBE_HEAD = child_status.probe_head
 HEAD = {"sha": "a" * 40, "time": 1_000.0, "subject": "feat: x"}
 AGENT = {
     "alive": True,
@@ -263,7 +264,7 @@ def published_status(ctx):
 
 def _cache(cpu=None):
     cache = child_status.StatusCache()
-    cache.sampler = FakeSampler(cpu)
+    cache.samplers["p-orch"] = FakeSampler(cpu)
     return cache
 
 
@@ -295,7 +296,7 @@ def test_sync_children_publishes_status_for_running_child(tmp_path, probes):
     assert st["memory_bytes"] == 5_000
     assert st["activity_at"] == max(now, 5_000.0, 1_000.0)
     assert st["last_to_child_at"] is None
-    assert cache.sampler.calls[0][0].init_pid == 77
+    assert cache.samplers["p-orch"].calls[0][0].init_pid == 77
 
 
 def test_sync_children_memory_subtracts_cache_and_clamps(tmp_path, probes, monkeypatch):
@@ -330,7 +331,7 @@ def test_sync_children_rate_limits_exec_probes(tmp_path, probes):
     inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 1
     assert probes.agent_calls == 1
-    assert len(cache.sampler.calls) == 1
+    assert len(cache.samplers["p-orch"].calls) == 1
     ctx.now += timedelta(seconds=60)
     inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 2
@@ -346,6 +347,9 @@ def test_sync_children_exec_goes_through_bounded_incus(tmp_path, probes):
 
 def test_sync_children_status_survives_broker_restart(tmp_path, probes):
     ctx = context(tmp_path)
+    ctx.nodes["p-kid"] = Node(
+        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, ctx.now.timestamp() - 3600
+    )
     inbox_state.sync_children(ctx, _cache(cpu=80.0))
     busy_at = published_status(ctx)["last_busy_at"]
     assert busy_at == ctx.now.timestamp()
@@ -355,7 +359,8 @@ def test_sync_children_status_survives_broker_restart(tmp_path, probes):
     inbox_state.sync_children(ctx, _cache(cpu=None))  # fresh cache, cold sampler
     st = published_status(ctx)
     assert st["last_busy_at"] == busy_at
-    assert st["activity_at"] >= busy_at
+    # started_at (an hour earlier), agent and head are all older than busy_at.
+    assert st["activity_at"] == busy_at
     assert st["head"] == HEAD
     assert st["cpu_percent"] is None
 
@@ -431,12 +436,87 @@ def test_sync_children_without_cache_preserves_durable_status(tmp_path, probes):
     assert saved["children"][0]["status"]["head"] == HEAD
 
 
-def test_sync_children_published_json_has_no_raw_control_chars(tmp_path, probes):
+def test_sync_children_hostile_subject_is_cleaned_by_real_probe(tmp_path, probes, monkeypatch):
     ctx = context(tmp_path)
-    probes.head = ({"sha": "a", "time": 1.0, "subject": "x\x1b[2Jy"}, False)
+    monkeypatch.setattr(inbox_state.child_status, "probe_head", _REAL_PROBE_HEAD)
+    hostile = "\x1b[2J\x07" + "x" * 10_000
+    ctx.incus.with_exec_timeout.return_value.exec.return_value = (
+        f"{'a' * 40}\x1f100\x1f{hostile}\nCLEAN\n"
+    )
     inbox_state.sync_children(ctx, _cache())
-    text = ctx.incus.exec_with_input.call_args.args[2]
-    assert not any(ord(c) < 0x20 and c != "\n" for c in text)
+    subject = published_status(ctx)["head"]["subject"]
+    assert subject.startswith("?[2J?x")
+    assert len(subject) == child_status.SUBJECT_LIMIT and subject.endswith("…")
+    assert not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in subject)
+
+
+def test_sync_children_rejects_hostile_sha_through_real_probe(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    monkeypatch.setattr(inbox_state.child_status, "probe_head", _REAL_PROBE_HEAD)
+    ctx.incus.with_exec_timeout.return_value.exec.return_value = (
+        "\x1b[2J" + "a" * 1_000_000 + "\x1f100\x1fs\nCLEAN\n"
+    )
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["head"] is None
+    assert len(ctx.incus.exec_with_input.call_args.args[2]) < 10_000
+
+
+@pytest.mark.parametrize(("cpu", "busy"), [(4.99, False), (5.0, True), (5.01, True)])
+def test_cpu_threshold_boundary(tmp_path, probes, cpu, busy):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx, _cache(cpu=cpu))
+    expected = ctx.now.timestamp() if busy else None
+    assert published_status(ctx)["last_busy_at"] == expected
+
+
+def test_activity_at_clamps_child_supplied_future_times(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    now = ctx.now.timestamp()
+    probes.head = ({**HEAD, "time": now + 10_000}, False)
+    monkeypatch.setattr(
+        inbox_state.agent_watch,
+        "agent_snapshot",
+        lambda *a, **k: {**AGENT, "last_event_at": now + 20_000},
+    )
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["activity_at"] == now
+
+
+def _orch_context(tmp_path, orch, kid):
+    parent = Node(orch, orch, True, {})
+    child = Node(kid, kid, True, {labels.SPAWNED_BY: orch}, None, None, 0)
+    return ActionContext(
+        cfg=MagicMock(),
+        gcfg=MagicMock(),
+        incus=MagicMock(),
+        root=tmp_path,
+        sender=parent,
+        nodes={parent.full: parent, child.full: child},
+        now=datetime(2026, 10, 30, 12, tzinfo=UTC),
+    )
+
+
+def test_two_orchestrators_sharing_one_cache_both_get_cpu(tmp_path, probes):
+    import dataclasses
+    import time
+
+    cache = child_status.StatusCache()  # real samplers
+    a = _orch_context(tmp_path, "orch-a", "kid-a")
+    b = _orch_context(tmp_path, "orch-b", "kid-b")
+    seen = []
+    for round_no in range(4):
+        for ctx, kid in ((a, "kid-a"), (b, "kid-b")):
+            node = dataclasses.replace(ctx.nodes[kid], cpu_usage_ns=round_no * 10_000_000_000)
+            ctx.nodes[kid] = node
+            ctx.now += timedelta(seconds=100)
+            time.sleep(0.002)
+            inbox_state.sync_children(ctx, cache)
+            seen.append((round_no, kid, published_status(ctx)["cpu_percent"]))
+    for round_no, kid, cpu in seen:
+        if round_no == 0:
+            assert cpu is None
+        else:
+            assert cpu is not None, (round_no, kid)
 
 
 def test_note_delivery_creates_and_preserves(tmp_path):
