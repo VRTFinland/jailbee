@@ -1357,6 +1357,15 @@ def test_send_rights_usage_errors(script, base, tmp_path, args):
     assert not list((base / "outbox").glob("*.json"))
 
 
+def test_send_usage_error_prints_one_line_and_pointer(script, base, tmp_path):
+    result = send(script, base, tmp_path, "rights", "--loose")
+    assert result.returncode == 2
+    assert result.stderr.strip().splitlines() == [
+        f"{script.prog}: rights grants need --for",
+        f"see: {script.prog} --help",
+    ]
+
+
 def test_send_rights_wait_uses_status_wait(script, base, tmp_path):
     result = send(script, base, tmp_path, "rights", "--revoke-loose", "--wait", "--timeout", "1")
     assert result.returncode == 3

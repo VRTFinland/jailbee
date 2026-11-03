@@ -639,7 +639,7 @@ def main(argv: list[str]) -> int:
         raise InboxUsage("not implemented")
     except InboxBadUsage as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
-        print(USAGE, end="", file=sys.stderr)
+        print(f"see: {PROG} --help", file=sys.stderr)
         return 2
     except InboxUsage as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)

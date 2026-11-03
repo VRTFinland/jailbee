@@ -46,12 +46,14 @@ from jailbee.orchestration.outbox import (
     write_grant_json,
 )
 from jailbee.orchestration.protocol import (
+    DestroyManifest,
     InboxMessage,
     InboxStatus,
     ManifestError,
     MessageManifest,
     RestartManifest,
     SpawnManifest,
+    StopManifest,
     body_file_of,
     new_host_id,
     parse_manifest,
@@ -524,8 +526,31 @@ def _handle_raw(
     )
     if outcome is not None:
         _watch_manifest(ctx, manifest, ref, outcome)
+        _refresh_children_snapshot(ctx, manifest, outcome, memory)
         _reply(ctx, ref, outcome, memory)
     delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+
+
+def _refresh_children_snapshot(
+    ctx: ActionContext, manifest: Manifest | None, outcome: Outcome, memory: BrokerMemory
+) -> None:
+    """Republish children.json right after the broker changed a child's state.
+
+    Otherwise the orchestrator can read `done` for a `stop` and still see
+    `running: true` until the end of the round. Failures only cost the lag.
+    """
+    if (
+        not isinstance(manifest, (StopManifest, DestroyManifest, RestartManifest, SpawnManifest))
+        or outcome.state not in ("done", "started")
+        or ctx.role() != "orchestrator"
+        or not ctx.sender.running
+    ):
+        return
+    try:
+        ctx.nodes = _nodes(ctx.incus.list_containers(), repo_configs(memory))
+        inbox_state.sync_children(ctx, memory.status)
+    except Exception:
+        log.exception("broker: child inbox state of %s failed", ctx.sender.full)
 
 
 def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> None:

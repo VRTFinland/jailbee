@@ -502,7 +502,9 @@ messages alone. Stop or restart resets monitoring, and an overdue child keeps
 waking until activity or a lifecycle change. The broker publishes read-only
 `children.json`: per child its name, `running` (the container state), `done` (an
 accepted `done`; a done child may keep running until it is stopped or
-destroyed), start time, latest agent session and `status`. Quiet monitoring
+destroyed), start time, latest agent session and `status`. After the broker
+itself completes a stop, destroy, restart or spawn, it republishes the snapshot
+before sending the reply. Quiet monitoring
 watches running children that are not done. Requested quiet monitoring exits 2
 if the snapshot is absent, malformed or older than 15 minutes; check the
 broker. Without quiet monitoring, filtering still works if that snapshot is

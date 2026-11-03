@@ -66,7 +66,7 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
     )
     m = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"], force=True)
     out = actions.dispatch(ctx, m)
-    assert out.state == "started" and "/log" in out.detail
+    assert out.state == "started" and "/log" not in out.detail and "log:" not in out.detail
     path = launch.call_args.kwargs["job_path"]
     job = json.loads(path.read_text())
     assert job == {
