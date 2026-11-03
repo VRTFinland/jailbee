@@ -70,6 +70,8 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **The built-in ChatGPT routes default to a 1,050,000-token context window** (was 272,000 since 1.7.0), which a ChatGPT subscription includes at no extra cost. `claude-jb -C 272k` still picks a smaller window for a session, and `context_window` on a route overrides the default. Run `jailbee apply` to update running containers.
+
 - `jailbee tmux` and the dashboard attach through their own tmux session grouped with `autostart` (`tmux new-session -t autostart`), so each attached terminal keeps its own current window. The grouped session is removed on detach, and the next attach returns to the window last used.
 
 - **Child containers message sparsely.** The child skill and spawn preamble tell

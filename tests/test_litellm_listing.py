@@ -21,13 +21,14 @@ def test_host_block_lists_the_builtin_profile_and_its_efforts():
     assert "opus    jb.codex.capable       sol-high" in text
     assert "codex*  account default" in text
     assert "fable" in text and "chatgpt/gpt-6-astra" in text and "high (fixed)" in text
-    assert "high (fixed)" in text and "272000 tokens" in text
+    assert "high (fixed)" in text and "1050000 tokens" in text
 
 
 def test_a_raisable_route_shows_its_ceiling_and_a_fixed_one_does_not():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {
+                "luna-high": {"context_window": 272_000},
                 "fixed": {
                     "model": "openai/x",
                     "context_window": 100_000,

@@ -575,6 +575,25 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`running` is its container state and `done` is reported separately"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the built-in ChatGPT routes default to a 1,050,000-token context window "
+            "(was 272,000), which a ChatGPT subscription includes — `jailbee apply` "
+            "renders it into running containers' LiteLLM profile; nothing to re-apply "
+            "unless you use `jailbee litellm`"
+        ),
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "`claude-jb` words its larger-context-window notice neutrally (quota or "
+            "billing, depending on the provider) — cosmetic, rebuild only if you want "
+            "the new text"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
