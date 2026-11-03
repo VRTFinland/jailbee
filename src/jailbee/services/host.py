@@ -59,7 +59,8 @@ def refresh(
     from jailbee import background, container_app, db, docker_daemon, prompting
     from jailbee.db.models import JOB_REFRESH, BackgroundJob
     from jailbee.lifecycle import container_repo_dir
-    from jailbee.orchestration import agent_watch, state, watch
+    from jailbee.orchestration import actions, agent_watch, labels, state, watch
+    from jailbee.orchestration.protocol import new_host_id
     from jailbee.services import elevated
     from jailbee.tui import error_plain, info_plain
 
@@ -120,12 +121,38 @@ def refresh(
             )
             if not prompting.is_interactive() or not prompting.confirm(message, default=False):
                 raise elevated.RefreshError(message + " Refresh refused.")
+        owner = incus.config_get_checked(full, labels.SPAWNED_BY)
+        prefix = ""
+        before_resume = None
+        if owner:
+            short = owner.removeprefix(cfg.container_prefix + "-")
+            prefix = actions.child_preamble(short) + "\n\n"
+
+            def register_supervision() -> None:
+                watch.register(
+                    state.state_root(),
+                    owner,
+                    watch.WatchEntry(
+                        new_host_id(), full, "restart", datetime.now(UTC).isoformat(),
+                        supervise=True, agent_only=True,
+                    ),
+                )
+                for key in (
+                    labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE,
+                    labels.PENDING_DESTROY, labels.STOPPED_DIRTY,
+                ):
+                    incus.config_unset_checked(full, key)
+
+            before_resume = register_supervision
         report = elevated.run_refresh(
             cfg,
             incus,
             full,
             plan,
             who="requested by the user on the host",
+            before_resume=before_resume,
+            resume_prompt_prefix=prefix,
+            recovery_child=full.removeprefix(cfg.container_prefix + "-") if owner else None,
             mirror_endpoint=docker_daemon.mirror_endpoint_or_none(cfg, incus),
             force=force,
             on_progress=lambda name, stage, status: info_plain(f"{name}: {stage}: {status}"),
@@ -140,8 +167,12 @@ def refresh(
         return 1
     finally:
         if claimed and engine is not None:
-            with Session(engine) as session:
-                background.release_job(session, full, pid)
+            try:
+                with Session(engine) as session:
+                    background.release_job(session, full, pid)
+            except Exception as exc:
+                error_plain(f"could not release refresh job: {exc}")
+                return 1
 
 
 def run_op(

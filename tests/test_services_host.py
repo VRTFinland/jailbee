@@ -195,6 +195,7 @@ def refresh_setup(make_cfg, tmp_path, monkeypatch, *, network="loose", mounts=()
 
     cfg = make_cfg(tmp_path)
     incus = Mock()
+    incus.config_get_checked.return_value = None
     monkeypatch.setattr("jailbee.lifecycle.container_repo_dir", lambda *args: "/repo")
     steps = [{"run": "setup", "network": network, "mounts": list(mounts)}]
     payload = graph.plan_payload(
@@ -351,3 +352,82 @@ def test_host_refresh_rejects_oversized_plan(make_cfg, tmp_path, monkeypatch, ca
     run.return_value = ExecResult(0, b" " * (256 * 1024 + 1), b"")
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
     assert "invalid refresh plan" in capsys.readouterr().err
+
+
+def test_host_child_refresh_registers_before_resume(make_cfg, tmp_path, monkeypatch, db_engine):
+    from jailbee import db
+    from jailbee.orchestration import labels, watch
+    from jailbee.services import elevated
+
+    cfg, incus, run = refresh_setup(make_cfg, tmp_path, monkeypatch)
+    values = {labels.SPAWNED_BY: "parent"}
+    incus.config_get_checked.side_effect = lambda _, key: values.get(key)
+    incus.config_set.side_effect = lambda _, key, value: values.__setitem__(key, value)
+    incus.list_containers.return_value = [{"name": "one", "profiles": ["jb-net-strict"]}]
+    incus.config_show.return_value = "devices: {}\n"
+    monkeypatch.setattr("jailbee.lifecycle.current_network_mode", lambda *a: "strict")
+    monkeypatch.setattr(db, "get_engine", lambda: db_engine)
+    monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
+    monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
+    monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
+    monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
+    monkeypatch.setattr("jailbee.autostart.run_stage", lambda *a, **kw: None)
+    monkeypatch.setattr(elevated, "pause_agent", lambda *a, **kw: elevated.PausedAgent("claude", "11111111-1111-1111-1111-111111111111", None))
+    run.side_effect = [run.return_value, ExecResult(0, b"", b"")]
+    events = []
+    monkeypatch.setattr(watch, "register", lambda root, owner, entry: events.append(("watch", owner, entry)))
+    resume = Mock(side_effect=lambda *a, **kw: events.append(("resume", a[4])))
+    monkeypatch.setattr(elevated, "resume_agent", resume)
+    assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 0
+    assert [event[0] for event in events] == ["watch", "resume"]
+    assert events[0][1] == "parent"
+    assert events[0][2].agent_only and events[0][2].supervise
+    assert "parent" in events[1][1]
+
+
+def test_host_child_watch_failure_withholds_resume(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+    from jailbee import db
+    from jailbee.orchestration import labels, watch
+    from jailbee.services import elevated
+    cfg, incus, run = refresh_setup(make_cfg, tmp_path, monkeypatch)
+    values = {labels.SPAWNED_BY: "parent"}
+    incus.config_get_checked.side_effect = lambda _, key: values.get(key)
+    incus.config_set.side_effect = lambda _, key, value: values.__setitem__(key, value)
+    incus.list_containers.return_value = [{"name": "one", "profiles": ["jb-net-strict"]}]
+    incus.config_show.return_value = "devices: {}\n"
+    monkeypatch.setattr("jailbee.lifecycle.current_network_mode", lambda *a: "strict")
+    monkeypatch.setattr(db, "get_engine", lambda: db_engine)
+    monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
+    monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
+    monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
+    monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
+    monkeypatch.setattr("jailbee.autostart.run_stage", lambda *a, **kw: None)
+    monkeypatch.setattr(elevated, "pause_agent", lambda *a, **kw: elevated.PausedAgent("claude", "11111111-1111-1111-1111-111111111111", None))
+    run.side_effect = [run.return_value, ExecResult(0, b"", b"")]
+    monkeypatch.setattr(watch, "register", Mock(side_effect=RuntimeError("watch failed")))
+    resume = Mock()
+    monkeypatch.setattr(elevated, "resume_agent", resume)
+    assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
+    text = capsys.readouterr().out
+    assert "resume withheld: could not register agent supervision" in text
+    assert "jailbee-inbox send restart --child one --agent-only --resume" in text
+    resume.assert_not_called()
+
+
+def test_host_refresh_release_failure_returns_error(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+    from jailbee import background, db
+    from jailbee.services import elevated
+    cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
+    monkeypatch.setattr(db, "get_engine", lambda: db_engine)
+    monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
+    monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
+    monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
+    monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
+    monkeypatch.setattr(elevated, "run_refresh", lambda *a, **kw: elevated.RefreshReport((elevated.ServiceOutcome("web", "[red]failed[/red]"),), False, "not running"))
+    release = Mock(side_effect=RuntimeError("database failed"))
+    monkeypatch.setattr(background, "release_job", release)
+    assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
+    captured = capsys.readouterr()
+    assert "[red]failed[/red]" in captured.out
+    assert "database failed" in captured.err
+    assert release.call_args.args[1:] == ("one", __import__("os").getpid())
