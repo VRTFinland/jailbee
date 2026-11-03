@@ -279,7 +279,7 @@ def _settle_watches(
             if entry.supervise:
                 _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
                 continue
-            outcome = watch.verdict(
+            outcome = watch.checked_verdict(
                 entry,
                 (jobs or {}).get(entry.child_full),
                 ctx.nodes.get(entry.child_full),
@@ -327,7 +327,7 @@ def _settle_agent_watch(
         watch.save_watch(ctx.root, watches)
         return
     if not entry.confirmed and not entry.agent_only:
-        boot = watch.verdict(
+        boot = watch.checked_verdict(
             entry,
             jobs.get(entry.child_full),
             child,

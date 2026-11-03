@@ -235,3 +235,43 @@ def verdict(
     if (now - since).total_seconds() > WATCH_GRACE_S:
         return failed(f"creation of child `{short}` ended without a container")
     return None
+
+
+def checked_verdict(
+    entry: WatchEntry,
+    job: JobSnapshot | None,
+    child: Node | None,
+    *,
+    orchestrator_full: str,
+    short: str,
+    now: datetime,
+) -> Outcome | None:
+    """`verdict`, with a vanished worker confirmed against a fresh job row.
+
+    `job` is a snapshot taken before the caller refreshed its nodes, which is
+    a full `incus list` and can take seconds. A worker that finishes in that
+    window deletes its row and then exits, so the snapshot still shows a
+    working phase while the pid is already gone — a completed create read as
+    "stopped unexpectedly". The row is re-read once the pid is found gone:
+    still there, the worker really died; gone or replaced, judge the fresh one.
+    """
+    outcome = verdict(
+        entry, job, child, orchestrator_full=orchestrator_full, short=short, now=now
+    )
+    if (
+        outcome is None
+        or outcome is DROP
+        or outcome.state != "failed"
+        or job is None
+        or job.phase in background.TERMINAL_PHASES
+    ):
+        return outcome
+    fresh = read_jobs()
+    if fresh is None:
+        return None  # cannot confirm the death: wait for a readable database
+    current = fresh.get(entry.child_full)
+    if current == job:
+        return outcome
+    return verdict(
+        entry, current, child, orchestrator_full=orchestrator_full, short=short, now=now
+    )

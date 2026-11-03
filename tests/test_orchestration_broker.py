@@ -1773,6 +1773,74 @@ def test_failed_create_parked_for_stopped_orchestrator(
     assert _watches(rig) == []
 
 
+def _worker_finishing_on_probe(
+    monkeypatch: pytest.MonkeyPatch, name: str, phase: str = "autostart"
+) -> dict[str, watch.JobSnapshot]:
+    """A worker that completes between the job snapshot and the liveness probe.
+
+    `_new-worker` deletes its row and only then exits, so by the time a probe
+    finds its pid gone the row is gone too. The probe is where the race shows:
+    it is the first moment after the snapshot that sees the exited worker.
+    """
+    jobs = {name: watch.JobSnapshot(phase, 7, JOB_CREATE, None, NOW)}
+
+    def alive(pid: int) -> bool:
+        jobs.pop(name, None)
+        return False
+
+    monkeypatch.setattr(watch, "read_jobs", lambda: dict(jobs))
+    monkeypatch.setattr(background, "worker_alive", alive)
+    return jobs
+
+
+def test_create_finishing_after_job_snapshot_is_not_reported_failed(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #71: a supervised spawn whose worker finishes mid-settlement is ready, not failed."""
+    from jailbee.orchestration import agent_watch
+
+    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True)
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    _worker_finishing_on_probe(monkeypatch, "proj-kid")
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
+    rig.tick()
+    assert [s for _, s in rig.statuses() if s.state == "failed"] == []
+    assert [e.child_full for e in _watches(rig)] == ["proj-kid"]
+
+
+def test_unsupervised_create_finishing_after_job_snapshot_is_ready(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    watch.save_watch(
+        rig.root, {"proj-orch": [watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat())]}
+    )
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    _worker_finishing_on_probe(monkeypatch, "proj-kid")
+    rig.tick()
+    [(_, s)] = rig.statuses()
+    assert (s.state, s.detail) == ("done", "child `kid` is ready")
+
+
+def test_create_worker_gone_with_its_row_left_is_still_reported(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recheck must not hide a worker that really died mid-create."""
+    watch.save_watch(
+        rig.root, {"proj-orch": [watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat())]}
+    )
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    row = watch.JobSnapshot("autostart", 7, JOB_CREATE, None, NOW)
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-kid": row})
+    monkeypatch.setattr(background, "worker_alive", lambda pid: False)
+    rig.tick()
+    [(_, s)] = rig.statuses()
+    assert s.state == "failed"
+    assert "stopped unexpectedly during autostart" in s.detail
+
+
 def test_unreadable_job_db_reports_nothing(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
