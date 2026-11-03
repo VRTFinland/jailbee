@@ -436,7 +436,14 @@ def test_start_create_rejects_invalid_service_name_before_host_work(tmp_path, mo
     cfg, incus, gcfg = _env(tmp_path, mocker)
     host = mocker.patch("jailbee.create_flow.host_extras")
     with pytest.raises(CreateError) as exc:
-        start_create(cfg, incus, gcfg, _opts(autostart_services=selection), interaction=Interaction.none(), config_path=None)
+        start_create(
+            cfg,
+            incus,
+            gcfg,
+            _opts(autostart_services=selection),
+            interaction=Interaction.none(),
+            config_path=None,
+        )
     assert exc.value.exit_code == 2
     assert repr(selection[-1]) in str(exc.value)
     host.assert_not_called()

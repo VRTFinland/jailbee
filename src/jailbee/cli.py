@@ -2058,7 +2058,10 @@ def new_cmd(
         str | None,
         typer.Option(
             "--services",
-            help="Start only these services (comma-separated) plus their dependencies; an empty value starts none.",
+            help=(
+                "Start only these services (comma-separated) plus their dependencies; "
+                "an empty value starts none."
+            ),
         ),
     ] = None,
     mount: Annotated[
@@ -2224,7 +2227,7 @@ def new_cmd(
       jailbee new mysmoke --mount           # mount mode: positional is the container
                                         # name; host repo is bind-mounted RW
     """
-    from jailbee import prompting
+    from jailbee import create_flow, prompting
     from jailbee.autostart import AutostartStepError
     from jailbee.git import get_current_branch
     from jailbee.incus import Incus
@@ -2235,9 +2238,9 @@ def new_cmd(
         short_name,
     )
 
-    from jailbee import create_flow
-
-    selected_services = None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    selected_services = (
+        None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    )
     try:
         create_flow.validate_service_names(selected_services)
     except create_flow.CreateError as e:
