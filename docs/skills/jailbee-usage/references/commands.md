@@ -111,8 +111,9 @@ In a dev container, `claude-jb [-P NAME] [-C SIZE] [Claude Code args…]` select
 the gateway (`-P` is `--profile`). Plain `claude` remains native. A name that is
 not a profile lists every profile and its window instead of starting. `-C`/`--context SIZE` (`272k`, `1m`, a
 token count, `max`, `default`) sets the session's context window up to the profile's
-`max_context_window` ceiling (1,050,000 for the built-in codex routes) and costs more
-when larger; lowercase `-c` is Claude's `--continue`. `claude-jb --help` lists these
+`max_context_window` ceiling (1,050,000 for the built-in codex routes) (the built-in
+default is also 1,050,000, so `-C 272k` opts down; a window above the
+default can use more quota or billing, depending on the provider); lowercase `-c` is Claude's `--continue`. `claude-jb --help` lists these
 options and the profiles, then Claude's help. Profile selection: flag, then
 `JAILBEE_LITELLM_PROFILE`, then `default_profile` (`codex`; the repo's
 host-local `litellm:` override may change it for that repo's containers).

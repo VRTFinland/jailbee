@@ -40,7 +40,7 @@ def test_builtin_routes_carry_spec_models_and_efforts():
         model="chatgpt/gpt-6-astra",
         effort="high",
         min_effort=None,
-        context_window=272_000,
+        context_window=1_050_000,
         max_context_window=1_050_000,
         params={},
         account="default",
@@ -123,11 +123,11 @@ def test_route_params_still_accept_sampling_settings():
 def test_builtin_gpt6_context_windows():
     windows = {n: r.context_window for n, r in LiteLLMConfig().effective_routes().items()}
     assert windows == {
-        "astra": 272_000,
-        "sol-high": 272_000,
-        "sol-medium": 272_000,
-        "terra-high": 272_000,
-        "luna-high": 272_000,
+        "astra": 1_050_000,
+        "sol-high": 1_050_000,
+        "sol-medium": 1_050_000,
+        "terra-high": 1_050_000,
+        "luna-high": 1_050_000,
     }
 
 
@@ -148,7 +148,7 @@ def test_max_context_window_is_set_per_route():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {
-                "sol-high": {"max_context_window": 500_000},
+                "sol-high": {"context_window": 272_000, "max_context_window": 500_000},
                 "t": {
                     "model": "openai/x",
                     "context_window": 100_000,
@@ -548,7 +548,7 @@ def test_overlay_stacks_on_the_global_route_field_by_field():
         "max",
         500_000,
     )
-    assert host.effective_routes()["sol-high"].context_window == 272_000
+    assert host.effective_routes()["sol-high"].context_window == 1_050_000
 
 
 def test_overlay_params_and_egress_replace_the_global_value():

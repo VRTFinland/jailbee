@@ -97,7 +97,7 @@ def test_instance_config_serves_every_route_every_profile_tier_and_the_catch_all
     assert sol["litellm_params"] == {"model": "chatgpt/gpt-6.1-sol"}
     assert sol["model_info"] == {
         "mode": "responses",
-        "max_input_tokens": 272_000,
+        "max_input_tokens": 1_050_000,
         "id": deployment_id("jb-default-sol-high"),
     }
 
@@ -195,7 +195,7 @@ def test_container_profiles():
                 "sonnet": "jb.codex.standard",
                 "haiku": "jb.codex.cheap",
             },
-            "context_window": 272_000,
+            "context_window": 1_050_000,
             "max_context_window": 1_050_000,
         }
     }
@@ -204,19 +204,19 @@ def test_container_profiles():
 def test_profile_context_window_is_the_smallest_of_the_profiles_routes():
     cfg = LiteLLMConfig.model_validate(
         {
-            "routes": {"luna-high": {"context_window": 1_050_000}},
+            "routes": {"luna-high": {"context_window": 2_000_000}},
             "profiles": {"wide": {"haiku": "luna-high"}},
         }
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
-    assert profiles["wide"]["context_window"] == 1_050_000
-    assert profiles["codex"]["context_window"] == 272_000
+    assert profiles["wide"]["context_window"] == 2_000_000
+    assert profiles["codex"]["context_window"] == 1_050_000
 
 
 def test_profile_ceiling_is_the_smallest_ceiling_of_the_profiles_routes():
     cfg = LiteLLMConfig.model_validate(
         {
-            "routes": {"luna-high": {"max_context_window": 400_000}},
+            "routes": {"luna-high": {"context_window": 272_000, "max_context_window": 400_000}},
             "profiles": {"mixed": {"opus": "sol-high", "haiku": "luna-high"}},
         }
     )

@@ -365,7 +365,8 @@ claude-jb options:
                       then the config's default profile)
   -C, --context SIZE  context window for this session: 272k, 1m, a token
                       count, 'max' (the profile's ceiling) or 'default'.
-                      A larger window costs more per request. (-c is
+                      A larger window can use more of your quota or
+                      billing, depending on the provider. (-c is
                       Claude's --continue and is not touched.)
   -h, --help          this text, then claude's own help
 HELP
@@ -429,7 +430,7 @@ if [ "$have_context" -eq 1 ]; then
         die "--context $context is $window tokens, above the ${ceiling:-$default_window}-token ceiling of profile '$profile'$hint"
     fi
     if [ "$window" -gt "$default_window" ]; then
-        printf 'claude-jb: %s-token context window (default %s); a larger window costs more per request.\n' \
+        printf 'claude-jb: %s-token context window (default %s); a larger window can use more of your quota or billing, depending on the provider.\n' \
             "$window" "$default_window" >&2
     fi
 fi

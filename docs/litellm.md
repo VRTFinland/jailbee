@@ -241,7 +241,7 @@ litellm:
 ```
 
 The two ChatGPT routes need no `context_window`: jailbee already knows those
-models' window (272,000). `grok` does, because `xai/grok-4.3` is not in that
+models' window (1,050,000). `grok` does, because `xai/grok-4.3` is not in that
 table. `sol-medium`, `terra-high` and `luna-high` are built in too, but `mix` maps no tier to
 them, so there is nothing to repeat.
 
@@ -258,7 +258,7 @@ jailbee litellm up
 `claude-jb --model haiku` on the xAI one; with `default_profile: mix` that is
 what a plain `claude-jb` uses. `jailbee litellm ls` shows which model each tier
 resolves to. The profile's window is the smaller of its routes', so `mix`'s
-ceiling is `grok`'s 256,000 tokens, not the ChatGPT routes' 272,000 — see
+ceiling is `grok`'s 256,000 tokens, not the ChatGPT routes' 1,050,000 — see
 [Choosing the context window](#choosing-the-context-window). The built-in
 `codex` profile is still there, all on ChatGPT, via `claude-jb -P codex`.
 
@@ -322,14 +322,16 @@ wrapper's own options and the profiles with their windows, then Claude Code's he
 ### Choosing the context window
 
 `claude-jb -C 1m` (or `--context 1m`, `--context=1m`) sets the session's window.
-The value is `272k`, `1m` (1,000,000), a token count, `max` (the profile's
+The value is `272k` (a smaller window than the default), `1m` (1,000,000), a token count, `max` (the profile's
 ceiling) or `default`; the last flag wins. It is `-C`, not `-c`: lowercase is
 Claude Code's `--continue`, which passes through. Without the flag the session
-uses the profile's default window, so a larger one is always a choice.
+uses the profile's default window; for the built-in ChatGPT routes that is
+the full 1,050,000 tokens, which a ChatGPT subscription includes, and `-C 272k`
+opts down to a smaller one.
 
-Selecting a larger window prints a cost warning on stderr. It permits more
-context per request; actual billing or subscription usage depends on the
-provider and tokens sent, not just the selected limit. The configured ceiling
+Selecting a window larger than the profile's default prints a notice on stderr:
+a larger window can use more of your quota or billing, depending on the
+provider. The configured ceiling
 is each route's `max_context_window`: 1,050,000 for the built-in
 `chatgpt/gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna` routes, and for any other
 route its `context_window` unless you set one. A profile's ceiling is the smallest
@@ -340,10 +342,10 @@ more or fewer tokens than the built-in table says:
 ```yaml
 litellm:
   routes:
-    nova: {model: chatgpt/gpt-7-nova, context_window: 272000, max_context_window: 400000}
+    nova: {model: chatgpt/gpt-7-nova, context_window: 200000, max_context_window: 400000}
 ```
 
-`jailbee litellm ls` shows `272000 tokens (up to 1050000)` for a route that can be
+`jailbee litellm ls` shows `200000 tokens (up to 400000)` for a route that can be
 raised. The ceiling reaches running containers with `jailbee apply`. The flag itself
 requires an image containing the updated wrapper: `jailbee base build` updates
 the image for future containers, not existing ones. An updated wrapper reading
@@ -408,12 +410,13 @@ appear only on their account's instance and only when a profile maps them;
 API-key routes are served by every instance. Profile names
 follow the same rule as route names (`[a-z0-9][a-z0-9_-]{0,63}`).
 
-The built-in models default to a **272,000-token context window** (`astra`,
-`sol-*`, `luna-high`). This is JailBee's configured default, not a live check of
-your subscription's input limit. The higher opt-in ceilings described above
-are configuration limits too; they do not guarantee that a provider accepts
-that many tokens. Verify the backend's current input and output limits before
-raising the window, or requests may fail before Claude Code compacts them.
+The built-in models default to a **1,050,000-token context window** (`astra`,
+`sol-*`, `terra-high`, `luna-high`), which a ChatGPT subscription includes at no
+extra cost. This is JailBee's configured default, not a live check of your
+subscription. Configured windows and ceilings do not guarantee that a provider
+accepts that many tokens: verify the backend's current limits before setting a
+larger `context_window` on another route, or requests may fail before Claude
+Code compacts them.
 A model absent from JailBee's built-in table needs an explicit `context_window`.
 The wrapper exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the **smallest** default
 window among the selected profile's mapped routes, unless `--context` selects
@@ -440,7 +443,7 @@ reach is a config edit away.
    ```yaml
    litellm:
      routes:
-       sol-high: {model: chatgpt/gpt-6.2-sol, context_window: 272000}
+       sol-high: {model: chatgpt/gpt-6.2-sol, context_window: 1050000}
    ```
 
    or add a route and remap the tier:

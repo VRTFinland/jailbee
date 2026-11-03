@@ -78,15 +78,15 @@ XAI_AUTH_HOST = "auth.x.ai"
 An `oauth: true` route needs it besides `PROVIDER_HOSTS["xai"]`."""
 
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
-    "chatgpt/gpt-6-astra": 272_000,
-    "chatgpt/gpt-6.1-sol": 272_000,
-    "chatgpt/gpt-6.1-terra": 272_000,
-    "chatgpt/gpt-6-luna": 272_000,
+    "chatgpt/gpt-6-astra": 1_050_000,
+    "chatgpt/gpt-6.1-sol": 1_050_000,
+    "chatgpt/gpt-6.1-terra": 1_050_000,
+    "chatgpt/gpt-6-luna": 1_050_000,
 }
 """Window Claude Code manages per model. Claude Code compacts a fixed reserve
-below this value, so one above what the subscription backend accepts would
-compact after the backend has already refused the prompt. These are the
-subscription backend's input limit, not the API's 1.05M."""
+below this value, so one above what the backend accepts would compact after
+the backend has already refused the prompt. A ChatGPT subscription includes
+the full 1.05M window at no extra cost, so that is the default."""
 
 KNOWN_MAX_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6-astra": 1_050_000,
@@ -94,8 +94,9 @@ KNOWN_MAX_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6.1-terra": 1_050_000,
     "chatgpt/gpt-6-luna": 1_050_000,
 }
-"""The most `claude-jb --context` may raise a model's window to: the API's
-total. Costs more per request, so it is opt-in per session, never the default."""
+"""The most `claude-jb --context` may raise a model's window to: the model's
+total window, which a ChatGPT subscription includes. A smaller window stays
+available per session (`claude-jb -C 272k`)."""
 
 PARAMS_DENYLIST: frozenset[str] = frozenset(
     {
@@ -270,8 +271,9 @@ class LiteLLMRoute(BaseModel):
             "published to the proxy as the model's `max_input_tokens`. Claude Code takes "
             "one window per session, so `claude-jb` passes the smallest among the "
             "profile's routes as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
-            "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol`, "
-            "`chatgpt/gpt-6.1-terra` and `chatgpt/gpt-6-luna`; required for any other model."
+            "Defaults to 1050000 (included in a ChatGPT subscription) for "
+            "`chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol`, `chatgpt/gpt-6.1-terra` and "
+            "`chatgpt/gpt-6-luna`; required for any other model."
         ),
     )
     max_context_window: int | None = Field(

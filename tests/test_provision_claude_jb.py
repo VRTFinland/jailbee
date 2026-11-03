@@ -458,9 +458,9 @@ def test_context_flag_after_double_dash_is_not_ours(script, argv_env):
     assert _argv(_run(script, argv_env, *tail)) == tail
 
 
-def test_a_larger_window_prints_a_cost_note_on_stderr(script, env):
+def test_a_larger_window_prints_a_neutral_usage_note_on_stderr(script, env):
     r = _run(script, env, "-C", "1m")
-    assert "1000000" in r.stderr and "cost" in r.stderr
+    assert "1000000" in r.stderr and "quota or billing" in r.stderr and "costs" not in r.stderr
     assert r.stderr == _run(script, env, "-C", "max").stderr.replace("1050000", "1000000")
     assert _run(script, env, "-C", "272k").stderr == ""
     assert _run(script, env).stderr == ""
