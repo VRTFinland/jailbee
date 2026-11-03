@@ -154,6 +154,53 @@ def test_delivery_failure_preserves_job(rig, mocker):
     assert not path.exists()
 
 
+def test_final_persist_failure_never_reexecutes(rig, mocker):
+    from jailbee.orchestration import state
+
+    cfg, engine, deliver, incus, path = rig
+    job(path)
+    original = state.atomic_write_text
+    def write(target, text):
+        if "final_status" in json.loads(text):
+            raise OSError("disk full")
+        original(target, text)
+    mocker.patch.object(state, "atomic_write_text", side_effect=write)
+    execute = mocker.patch.object(elevated, "run_plain_refresh", return_value=elevated.RefreshReport((), True, "not running"))
+    assert elevated.run_job(cfg, incus, path) == 1
+    mocker.patch.object(background, "worker_alive", return_value=False)
+    assert elevated.run_job(cfg, incus, path) == 1
+    assert execute.call_count == 1
+    with Session(engine) as session:
+        assert session.get(BackgroundJob, "proj-c") is None
+
+
+def test_release_error_reports_failed_with_service_outcome(rig, mocker):
+    cfg, engine, deliver, incus, path = rig
+    job(path)
+    mocker.patch.object(elevated, "run_plain_refresh", return_value=elevated.RefreshReport((elevated.ServiceOutcome("db", "restarted"),), True, "not running"))
+    mocker.patch.object(background, "release_job", side_effect=RuntimeError("release failed"))
+    assert elevated.run_job(cfg, incus, path) == 1
+    item = deliver.call_args.args[3]
+    assert item.state == "failed"
+    assert "db: restarted" in item.detail and "release failed" in item.detail
+
+
+def test_crash_before_cleanup_delivers_conservative_failure(rig, mocker):
+    cfg, engine, deliver, incus, path = rig
+    job(path)
+    report = elevated.RefreshReport((elevated.ServiceOutcome("db", "restarted"),), True, "not running")
+    execute = mocker.patch.object(elevated, "run_plain_refresh", return_value=report)
+    release = mocker.patch.object(background, "release_job", side_effect=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt):
+        elevated.run_job(cfg, incus, path)
+    release.side_effect = None
+    assert elevated.run_job(cfg, incus, path) == 1
+    item = deliver.call_args.args[3]
+    assert item.state == "failed" and "cleanup unconfirmed" in item.detail
+    assert "db: restarted" in item.detail
+    assert execute.call_count == 1
+
+
 def test_concurrent_claims_only_one_succeeds(rig, mocker):
     from concurrent.futures import ThreadPoolExecutor
     from datetime import UTC, datetime

@@ -96,6 +96,9 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         return _deliver(
             cfg, incus, path, owner, ref, ok=final.state == "done", detail=final.detail, item=final
         )
+    if job.get("execution_phase") == "executing":
+        print("refresh execution outcome is uncertain; manual recovery required")
+        return 1
     try:
         if set(job) != {
             "child_full",
@@ -165,6 +168,8 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         problems = elevated.orchestrator_policy(cfg, grant, plan)
         if problems:
             raise elevated.RefreshError("refresh needs " + "; ".join(problems))
+        job["execution_phase"] = "executing"
+        state.atomic_write_text(path, json.dumps(job))
         if plan.elevated:
             status = agent_watch.probe(incus, child, uid=cfg.container_user.uid)
             if status is None:
@@ -227,10 +232,17 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
                 state="done" if ok else "failed",
                 detail=detail,
             )
-            job["final_status"] = final.model_dump(mode="json")
+            pending = final.model_copy(update={"state": "failed", "detail": detail + "; refresh job cleanup unconfirmed"}) if claimed else final
+            job["final_status"] = pending.model_dump(mode="json")
             state.atomic_write_text(path, json.dumps(job))
         except Exception as exc:
             print(f"could not persist refresh status: {exc}")
+            if claimed and engine is not None:
+                try:
+                    with Session(engine) as session:
+                        background.release_job(session, child, pid)
+                except Exception as release_exc:
+                    print(f"could not release refresh job: {release_exc}")
             return 1
         if claimed and engine is not None:
             try:
@@ -239,4 +251,18 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
             except Exception as exc:
                 ok = False
                 detail += f"; could not release refresh job: {exc}"
+                final = final.model_copy(update={"state": "failed", "detail": detail})
+                job["final_status"] = final.model_dump(mode="json")
+                try:
+                    state.atomic_write_text(path, json.dumps(job))
+                except Exception as persist_exc:
+                    print(f"could not persist cleanup failure: {persist_exc}")
+                    return 1
+            else:
+                job["final_status"] = final.model_dump(mode="json")
+                try:
+                    state.atomic_write_text(path, json.dumps(job))
+                except Exception as persist_exc:
+                    print(f"could not persist completed cleanup: {persist_exc}")
+                    return 1
     return _deliver(cfg, incus, path, owner, ref, ok=ok, detail=detail, item=final)
