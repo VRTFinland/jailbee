@@ -26,6 +26,7 @@ class GeneratedServicesStage(AutostartStage):
     an ordinary stage beside this one.
     """
 
+
 AGENTS_STAGE = "agents"
 """Reserved stage name whose steps jailbee generates from `agents`."""
 
