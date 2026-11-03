@@ -37,7 +37,9 @@ only prepare can be elevated. Elevated refresh requires host or orchestrator aut
 Dependencies must exist, be acyclic, and be ready before the dependent starts.
 `restart: true` cascades restarts to the dependent; `{}` does not.
 On startup, a generated `services` stage prepares and starts selected services
-and their dependencies before the agent stage, waiting for readiness. Successful
+and their dependencies, waiting for readiness. By default it runs before the agent
+stage (or last in `on_start` when no agent starts). To place startup after repo
+prerequisites, use [reserved services stages](#placing-service-startup). Successful
 prepare is recorded per service and container; later starts do not repeat it,
 and a wider selection prepares newly selected services. This record is never
 automatically reset. Elevated prepare uses the autostart network/mount safeguards:
@@ -52,6 +54,64 @@ branch graft on creation) or an explicit nonempty selection. Adding services onl
 inside a container does not enable autostart; they remain manually startable.
 Definitions are read from the container. An old image without in-container
 jailbee warns and skips services. See [service commands](commands.md#services).
+
+### Placing service startup
+
+In stage-form `autostart.on_start`, a `services` stage with no `steps` and no
+`chains` is a reserved service-startup slot. A legacy stage named `services`
+with its own steps/chains remains ordinary work in either trigger and can coexist
+with the slots or the generated stage. Two ordinary stages with that name are
+still duplicates. A `services:` subset list is invalid on an ordinary stage.
+A stepless `services` stage in `on_create` is invalid: move it to `on_start` or
+add steps/chains to make it ordinary work.
+
+Slots reject `network` and nonempty `mounts`: put elevation on service prepare
+steps instead. Position a slot after the setup its processes need:
+
+```yaml
+autostart:
+  on_start:
+    - stage: setup
+      detach: true
+      steps: [{name: deps, run: "make dev-env && pnpm install"}]
+    - stage: services
+      services: [db, frontend]
+    - stage: backend-build
+      steps: [{name: build, run: "./gradlew bootJar"}]
+    - stage: services
+      services: [backend]
+    - stage: services             # any other selected services
+```
+
+The service names must exist in the repo's `services:` block. Several slots may
+name disjoint subsets; a name cannot occur twice, and at most one slot may omit
+its `services` list (or set it to null). That bare slot starts selected services
+not explicitly placed elsewhere. An empty list starts none at that slot. If all
+slots have lists, selected services not named in any slot start at the old
+generated position: before agents, or last when no agent starts. Without any
+reserved slot, placement is unchanged. Legacy flat steps named `services` are
+still ordinary steps; the reserved stage is allowed only in `on_start`.
+
+Slots inherit blocking/detached execution from their position: after a
+`detach: true` boundary they run detached, and `detach: true` on a services slot
+starts that boundary there. `--wait` and `--no-wait` apply as usual. In the example,
+the default agent launches before setup and service startup continues detached.
+
+Selection still decides **which** services run: `new --services`, a profile's
+`services:` list, and orchestration spawn/restart `--services` never get broadened
+by a slot. Slots decide **where** the selected dependency-closed plan runs.
+Dependencies start with their dependent when needed, even if explicitly placed
+in a later slot; their own later start is idempotent. Place dependencies earlier
+if they need separate prerequisites. Named autostart profiles always retain all
+reserved services slots, just as they retain agents; control service selection
+with the profile's `services:` field instead of its `stages:` list. Ordinary
+stages named `services` still follow the profile's stage selection.
+
+Branch-config differences identify slots by occurrence (`services#1`,
+`services#2`, ...), so changing an earlier subset is visible. Multiple generated
+service stages also use those distinct labels in autostart status. Old container
+versions whose service plan lacks dependency metadata run the full selected plan
+at each slot, including all required preparation, rather than partition unsafely.
 
 ### Service example
 
@@ -1898,12 +1958,12 @@ autostart:
 ```
 
 A profile is the literal `all` or a nonempty `stages` list. Stage names select
-from **both** triggers, in config order; the reserved `agents` stage always
-stays selected, even when not listed. Profiles require stage-form triggers,
+from **both** triggers, in config order; the reserved `agents` and `services`
+stages always stay selected, even when not listed. Profiles require stage-form triggers,
 a defined `default_profile`, and known stage names. The profile name `all`
 is reserved. Without `profiles`, `default_profile` is invalid and autostart
-behaves exactly as before. A stage of your own named `services` is an ordinary
-stage and runs beside jailbee's generated services stage.
+behaves exactly as before. The reserved `services` slots determine placement,
+not selection; see [placing service startup](#placing-service-startup).
 
 A profile may specify `services: [web]` to start those known services and their
 dependencies, or `services: []` for none; omitted or null means all. An explicit

@@ -29,6 +29,7 @@ from jailbee.config.models_agents import (
     _AGENT_NAME_RE,
     AgentConfig,
     Autostart,
+    AutostartStage,
     ClaudeAgentConfig,
     DockerRegistryMirrorRepoConfig,
     GithubConfig,
@@ -578,6 +579,15 @@ class Config(BaseModel):
                 if unknown:
                     raise ValueError(
                         f"autostart profile '{name}' names unknown services: "
+                        f"{', '.join(sorted(unknown))}"
+                    )
+
+        for entry in self.autostart.on_start:
+            if isinstance(entry, AutostartStage) and entry.services is not None:
+                unknown = set(entry.services) - self.services.keys()
+                if unknown:
+                    raise ValueError(
+                        f"autostart services stage names unknown services: "
                         f"{', '.join(sorted(unknown))}"
                     )
 

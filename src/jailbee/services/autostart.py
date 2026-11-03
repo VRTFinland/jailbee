@@ -129,6 +129,9 @@ def run_services_stage(
     on_progress: Callable[[str, str, str], None] | None,
     cas_restore: bool,
     live_switch: bool = False,
+    stage_services: list[str] | None = None,
+    excluded_services: list[str] | tuple[str, ...] = (),
+    progress_stage: str = "services",
 ) -> None:
     names = selected_services(cfg, incus, container)
     if names == []:
@@ -160,6 +163,28 @@ def run_services_stage(
     if not order:
         return
     services = {item["name"]: item for item in payload["services"]}
+    # Old container versions cannot describe the graph. Keep the full order
+    # (and its prepare work) rather than silently omit a dependency's prepare.
+    if (stage_services is not None or excluded_services) and all(
+        "depends_on" in services[name] for name in order
+    ):
+        targets = (
+            set(order).intersection(stage_services)
+            if stage_services is not None
+            else set(order).difference(excluded_services)
+        )
+        # Partition the container's selected plan, not the host definitions:
+        # a cloned branch may define a different service graph. Dependencies
+        # follow their dependant even if another slot places them later.
+        pending = list(targets)
+        while pending:
+            for dependency in services[pending.pop()].get("depends_on", []):
+                if dependency in services and dependency not in targets:
+                    targets.add(dependency)
+                    pending.append(dependency)
+        order = [name for name in order if name in targets]
+        if not order:
+            return
     prepared = decode_names(incus.config_get_checked(container, PREPARED_KEY)) or []
     if live_switch:
         deferred: set[str] = set()
@@ -302,7 +327,7 @@ def run_services_stage(
         timeout=sum(s["ready_timeout"] for s in payload["services"]) + 30,
     )
     stage = AutostartStage.model_construct(
-        stage="services",
+        stage=progress_stage,
         network=None,
         mounts=[],
         detach=False,

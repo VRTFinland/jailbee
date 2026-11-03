@@ -17,6 +17,78 @@ def load(text, tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "entries, token",
+    [
+        ([{"stage": "services", "services": ["missing"]}], "unknown services"),
+        ([{"stage": "services"}, {"stage": "services"}], "bare"),
+        ([{"stage": "services", "services": ["web", "web"]}], "more than once"),
+        (
+            [
+                {"stage": "services", "services": ["web"]},
+                {"stage": "services", "services": ["web"]},
+            ],
+            "more than once",
+        ),
+        (
+            [{"stage": "services", "services": ["web"], "steps": [{"name": "up", "run": "x"}]}],
+            "steps",
+        ),
+        ([{"stage": "services", "network": "loose"}], "network"),
+        ([{"stage": "services", "network": "strict"}], "network"),
+        ([{"stage": "services", "mounts": ["aws"]}], "mounts"),
+        ([{"stage": "setup", "services": ["web"]}], "only.*services"),
+    ],
+)
+def test_invalid_services_slots(tmp_path, entries, token):
+    import yaml
+
+    with pytest.raises(ConfigError, match=token):
+        load(
+            yaml.safe_dump({"services": {"web": {"run": "x"}}, "autostart": {"on_start": entries}}),
+            tmp_path,
+        )
+
+
+@pytest.mark.parametrize("trigger", ["on_create", "on_start"])
+def test_ordinary_services_stage_names_are_still_unique(tmp_path, trigger):
+    with pytest.raises(ConfigError, match=r"duplicate.*stage name"):
+        load(
+            f"autostart: {{{trigger}: ["
+            "{stage: services, steps: [{name: a, run: x}]}, "
+            "{stage: services, steps: [{name: b, run: x}]}]}",
+            tmp_path,
+        )
+
+
+def test_ordinary_services_stage_can_coexist_with_slots(tmp_path):
+    cfg = load(
+        "autostart: {on_start: ["
+        "{stage: services, steps: [{name: up, run: x}]}, {stage: services}]}",
+        tmp_path,
+    )
+    assert len(cfg.autostart.on_start) == 2
+
+
+def test_disjoint_services_slots_load_with_dependency_placed_later(tmp_path):
+    cfg = load(
+        "services: {web: {run: x, depends_on: {db: {}}}, db: {run: x}}\n"
+        "autostart: {on_start: [{stage: services, services: [web]}, "
+        "{stage: services, services: [db]}, {stage: services}]}",
+        tmp_path,
+    )
+    assert len(cfg.autostart.on_start) == 3
+
+
+def test_services_slot_is_only_on_start(tmp_path):
+    with pytest.raises(ConfigError, match="on_start"):
+        load("autostart: {on_create: [{stage: services}]}", tmp_path)
+
+
+def test_profile_can_name_implicit_services_slot(tmp_path):
+    load("autostart: {profiles: {p: {stages: [services]}}, default_profile: p}", tmp_path)
+
+
 def test_minimal_service(tmp_path):
     service = load('services: {web: {run: "npm run dev"}}', tmp_path).services["web"]
     assert (service.ready_timeout, service.stop_timeout, service.prepare) == (120, 10, [])

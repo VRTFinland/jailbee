@@ -1398,7 +1398,7 @@ def test_a_stage_entry_draws_the_stage_form():
     got = _stage_editor(trail=("autostart", "on_start", 0))
 
     assert st.screen(got).kind == "entry"
-    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps"]
+    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps", "services"]
 
 
 def test_the_trail_reaches_a_step_through_its_stage_and_its_chain():
@@ -1435,7 +1435,7 @@ def test_a_new_entry_in_a_trigger_of_stages_draws_a_stage_form():
     got = st.enter_crumb(staged, crumb)
 
     assert crumb == 1
-    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps"]
+    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps", "services"]
 
 
 def test_a_new_entry_in_a_flat_trigger_still_draws_a_step_form():

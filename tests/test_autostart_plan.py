@@ -379,25 +379,154 @@ def test_services_boundary_overrides(override, detached, expected):
     assert _order(plan) == expected
 
 
-def test_user_stage_named_services_is_accepted():
-    """Configs written before managed services may already have a stage
-    called `services`; it stays valid and is not the generated stage."""
-    for trigger in ("on_create", "on_start"):
-        Autostart.model_validate({trigger: [{"stage": "services"}]})
-    Autostart.model_validate(
-        {
-            "on_start": [{"stage": "services", "steps": [{"name": "up", "run": "x"}]}],
-            "profiles": {"p": {"stages": ["services"]}},
-            "default_profile": "p",
-        }
-    )
+@pytest.mark.parametrize("trigger", ["on_create", "on_start"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"steps": [{"name": "up", "run": "x"}]},
+        {"chains": [{"name": "up", "steps": [{"name": "up", "run": "x"}]}]},
+    ],
+)
+def test_user_stage_named_services_is_accepted(trigger, body):
+    block = Autostart.model_validate({trigger: [{"stage": "services", **body}]})
+    plan = plan_autostart(block, AutostartTrigger(trigger))
+    assert plan.blocking[0].all_chains()[0].steps[0].run == "x"
 
 
 def test_user_services_stage_and_generated_stage_coexist():
     from jailbee.autostart_plan import GeneratedServicesStage
 
-    block = Autostart.model_validate({"on_start": [{"stage": "services"}]})
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "services", "steps": [{"name": "up", "run": "x"}]},
+                {"stage": "services"},
+            ]
+        }
+    )
     plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
-    stages = [*plan.blocking, *plan.detached]
-    assert [s.stage for s in stages] == ["services", "services"]
-    assert [isinstance(s, GeneratedServicesStage) for s in stages] == [False, True]
+    assert [isinstance(s, GeneratedServicesStage) for s in plan.blocking] == [False, True]
+    implicit = Autostart.model_validate({"on_start": block.on_start[:1]})
+    plan = plan_autostart(implicit, AutostartTrigger.ON_START, services_stage=True)
+    assert [isinstance(s, GeneratedServicesStage) for s in plan.blocking] == [False, True]
+
+
+def test_profiles_do_not_preserve_ordinary_services_stage():
+    from jailbee.autostart_plan import select_profile
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "services", "steps": [{"name": "up", "run": "x"}]},
+                {"stage": "services"},
+            ],
+            "profiles": {"p": {"stages": ["agents"]}},
+            "default_profile": "p",
+        }
+    )
+    assert len(select_profile(block, "p").on_start) == 1
+
+
+def test_explicit_services_stage_runs_after_detached_setup():
+    from jailbee.autostart_plan import GeneratedServicesStage
+
+    block = Autostart.model_validate(
+        {"on_start": [{"stage": "setup", "detach": True}, {"stage": "services"}]}
+    )
+    plan = plan_autostart(
+        block, AutostartTrigger.ON_START, agent_steps=[_AGENT], services_stage=True
+    )
+    assert _order(plan) == (["agents"], ["setup", "services"])
+    assert isinstance(plan.detached[-1], GeneratedServicesStage)
+
+
+@pytest.mark.parametrize(
+    "override, detached, prompted, expected",
+    [
+        ("wait", False, False, (["setup", "services", "agents"], [])),
+        ("no_wait", False, False, (["setup", "agents"], ["services"])),
+        (None, True, False, ([], ["agents", "setup", "services"])),
+        (None, False, True, ([], ["setup", "services", "agents"])),
+    ],
+)
+def test_explicit_services_slot_respects_boundary_overrides(override, detached, prompted, expected):
+    block = Autostart.model_validate(
+        {"on_start": [{"stage": "setup", "detach": True}, {"stage": "services"}]}
+    )
+    plan = plan_autostart(
+        block,
+        AutostartTrigger.ON_START,
+        agent_steps=[_AGENT],
+        services_stage=True,
+        override=override,
+        already_detached=detached,
+        agents_last=prompted,
+    )
+    assert _order(plan) == expected
+
+
+def test_services_subsets_and_remainder_keep_their_positions():
+    from jailbee.autostart_plan import GeneratedServicesStage
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "setup"},
+                {"stage": "services", "services": ["db", "web"]},
+                {"stage": "build", "detach": True},
+                {"stage": "services"},
+            ]
+        }
+    )
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    assert _order(plan) == (["setup", "services"], ["build", "services"])
+    slots = [s for s in [*plan.blocking, *plan.detached] if isinstance(s, GeneratedServicesStage)]
+    assert [s.services for s in slots] == [["db", "web"], None]
+    assert slots[-1].excluded_services == ["db", "web"]
+
+
+def test_subset_only_uses_legacy_position_for_unplaced_services():
+    from jailbee.autostart_plan import GeneratedServicesStage
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "setup", "detach": True},
+                {"stage": "services", "services": ["web"]},
+            ]
+        }
+    )
+    plan = plan_autostart(
+        block, AutostartTrigger.ON_START, agent_steps=[_AGENT], services_stage=True
+    )
+    assert _order(plan) == (["services", "agents"], ["setup", "services"])
+    assert isinstance(plan.blocking[0], GeneratedServicesStage)
+    assert plan.blocking[0].excluded_services == ["web"]
+
+
+def test_disabled_services_slot_disappears_but_preserves_detach():
+    block = Autostart.model_validate(
+        {"on_start": [{"stage": "services", "detach": True}, {"stage": "setup"}]}
+    )
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[_AGENT])
+    assert _order(plan) == (["agents"], ["setup"])
+
+
+def test_flat_services_step_is_not_a_reserved_slot():
+    block = Autostart.model_validate({"on_start": [{"name": "services", "run": "true"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    assert _order(plan) == (["services", "services"], [])
+
+
+def test_profiles_preserve_service_placement_like_agents():
+    from jailbee.autostart_plan import select_profile
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [{"stage": "setup"}, {"stage": "services"}, {"stage": "agents"}],
+            "profiles": {"p": {"stages": ["agents"]}},
+            "default_profile": "p",
+        }
+    )
+    selected = select_profile(block, "p")
+    assert [s.stage for s in selected.on_start] == ["services", "agents"]

@@ -45,6 +45,12 @@ start|stop|restart|refresh [CONTAINER] [SERVICE...]`, or `jb service logs
 picker, otherwise the command reports candidates. Definitions always come from
 the container worktree, not the host checkout.
 
+Automatic startup uses selected services (`new --services`, profile services,
+or orchestration spawn/restart `--services`). The repo can position startup with
+reserved `autostart.on_start` entries `{stage: services}`, optionally with
+`services: [names]`; these do not broaden the selection. Slots after a detach
+boundary run detached. See [placement and fallback rules](config.md#placing-service-startup).
+
 Start includes dependencies and waits for readiness; stop does not stop
 dependents. Restart cascades only over `restart: true` edges. Refresh prepares
 only named services before restarting them and their cascaded dependents;

@@ -45,7 +45,14 @@ instead of guessing how a configured service starts. `start`, `stop`,
 if it requests elevated access, ask the orchestrator rather than attempting
 to grant access yourself. The host or orchestrator can authorize it. On the host,
 include the container before service names, e.g. `jb service restart C X`.
-See [service commands](references/commands.md#services).
+Automatic startup follows the selected services and dependencies. Repos can put
+reserved `{stage: services}` entries in `on_start` after prerequisites, optionally
+with disjoint `services: [names]` subsets. They inherit the detach boundary;
+profiles preserve these slots. CLI/profile selection still controls which services
+start, not the slots. Only stepless services stages are slots; legacy stages
+with steps/chains stay ordinary work in either trigger. Slots reject network and
+nonempty mounts; elevate service prepare steps instead. Multiple slots have
+separate autostart status rows. See [service commands](references/commands.md#services).
 
 ## Mental model (read this first — it explains every command)
 

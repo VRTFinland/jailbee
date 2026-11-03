@@ -12,19 +12,30 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
+from pydantic import Field
+
 from jailbee.config import Autostart, AutostartChain, AutostartStage, AutostartStep
 
 SERVICES_STAGE = "services"
-"""Display name of the stage jailbee inserts to start the `services:` block."""
+"""Reserved on_start stage name for starting selected services."""
 
 
 class GeneratedServicesStage(AutostartStage):
-    """The stage `plan_autostart` inserts to start the `services:` block.
+    """Executor marker for explicit slots and the implicit fallback.
 
-    Recognised by type, never by name: configs written before managed
-    services may have a stage of their own called `services`, and it stays
-    an ordinary stage beside this one.
+    Type-based dispatch keeps legacy flat steps named services ordinary steps.
+    ``services`` names a subset; None means all selected services except
+    ``excluded_services`` (the services explicitly placed in other slots).
     """
+
+    progress_stage: str = Field(
+        default=SERVICES_STAGE,
+        description="Unique progress label for this generated services slot.",
+    )
+    excluded_services: list[str] = Field(
+        default_factory=list,
+        description="Services explicitly placed in other slots, excluded from the remainder.",
+    )
 
 
 AGENTS_STAGE = "agents"
@@ -112,6 +123,23 @@ def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> lis
     return stages
 
 
+def stage_keys(stages: list[AutostartStage]) -> list[str]:
+    """Keep ordinary stage names; identify reserved slots by occurrence.
+
+    Slot numbering is independent of ordinary stages named services. The same
+    labels identify branch diffs and progress rows across detach hand-offs.
+    """
+    occurrence = 0
+    keys: list[str] = []
+    for stage in stages:
+        if stage.is_services_slot():
+            occurrence += 1
+            keys.append(f"services#{occurrence}")
+        else:
+            keys.append(stage.stage)
+    return keys
+
+
 def profile_names(autostart: Autostart) -> tuple[str, ...]:
     return tuple(autostart.profiles)
 
@@ -126,7 +154,10 @@ def select_profile(autostart: Autostart, profile: str | None) -> Autostart:
     return autostart.model_copy(
         update={
             trigger.value: [
-                s for s in normalize_stages(getattr(autostart, trigger.value)) if s.stage in names
+                s
+                for s in normalize_stages(getattr(autostart, trigger.value))
+                if s.stage in names
+                or (trigger == AutostartTrigger.ON_START and s.is_services_slot())
             ]
             for trigger in TRIGGER_ORDER
         }
@@ -215,6 +246,28 @@ def plan_autostart(
     steps = list(agent_steps)
     is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
 
+    service_slots = (
+        [s for s in stages if s.is_services_slot()]
+        if is_stage_form and trigger == AutostartTrigger.ON_START
+        else []
+    )
+    placed = [name for s in service_slots for name in (s.services or [])]
+    if not services_stage:
+        for i in range(len(stages) - 1, -1, -1):
+            if stages[i] in service_slots:
+                dropped = stages.pop(i)
+                if dropped.detach and i < len(stages):
+                    stages[i] = stages[i].model_copy(update={"detach": True})
+    else:
+        stages = [
+            GeneratedServicesStage.model_construct(
+                **s.model_dump(), excluded_services=placed if s.services is None else []
+            )
+            if s in service_slots
+            else s
+            for s in stages
+        ]
+
     explicit = [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE] if is_stage_form else []
     if agents_last and steps:
         agents = _agents_stage(steps)
@@ -271,7 +324,11 @@ def plan_autostart(
             if not already_detached:
                 boundary += 1
 
-    if services_stage and trigger == AutostartTrigger.ON_START:
+    if (
+        services_stage
+        and trigger == AutostartTrigger.ON_START
+        and not any(s.services is None for s in service_slots)
+    ):
         if steps:
             if agents_last:
                 position = len(stages) - 1
@@ -286,8 +343,22 @@ def plan_autostart(
         stages.insert(
             position,
             GeneratedServicesStage.model_construct(
-                stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
+                stage=SERVICES_STAGE,
+                network=None,
+                mounts=[],
+                detach=False,
+                chains=[],
+                steps=[],
+                excluded_services=placed,
             ),
         )
+
+    generated = [s for s in stages if isinstance(s, GeneratedServicesStage)]
+    if len(generated) > 1 or any(
+        s.stage == SERVICES_STAGE and not isinstance(s, GeneratedServicesStage) for s in stages
+    ):
+        for s, key in zip(stages, stage_keys(stages), strict=True):
+            if isinstance(s, GeneratedServicesStage):
+                s.progress_stage = key
 
     return AutostartPlan(blocking=stages[:boundary], detached=stages[boundary:])
