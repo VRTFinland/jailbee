@@ -74,8 +74,8 @@ def payload():
 def test_slots_partition_container_selection_and_include_dependencies(
     tmp_path, mocker, make_cfg, selection, subset, excluded, expected
 ):
-    from jailbee.services.graph import plan_payload
     from jailbee.config.models_services import Service
+    from jailbee.services.graph import plan_payload
 
     # Deliberately no host services: the selected branch owns the actual plan.
     cfg = make_cfg(tmp_path)
@@ -88,18 +88,28 @@ def test_slots_partition_container_selection_and_include_dependencies(
         "worker": Service(run="worker"),
     }
     data = plan_payload(definitions, selection or [], "start", step_timeout=30)
-    mocker.patch.object(container_app, "run_in_container",
-                        return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     run_services_stage(
-        cfg, incus, "box", "/repo", mirror_endpoint=None, on_progress=None,
-        cas_restore=False, stage_services=subset, excluded_services=excluded,
+        cfg,
+        incus,
+        "box",
+        "/repo",
+        mirror_endpoint=None,
+        on_progress=None,
+        cas_restore=False,
+        stage_services=subset,
+        excluded_services=excluded,
     )
     if expected:
         import shlex
 
         command = run.call_args.args[3].all_chains()[0].steps[0].run
-        assert shlex.split(command)[-len(expected):] == expected
+        assert shlex.split(command)[-len(expected) :] == expected
         assert run.call_count == 1
     else:
         run.assert_not_called()
@@ -499,8 +509,14 @@ def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
     dispatch = mocker.patch.object(service_autostart, "run_services_stage")
     ordinary = mocker.patch.object(autostart, "run_stage")
     stage = GeneratedServicesStage.model_construct(
-        stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[],
-        services=["web"], excluded_services=["db"],
+        stage=SERVICES_STAGE,
+        network=None,
+        mounts=[],
+        detach=False,
+        chains=[],
+        steps=[],
+        services=["web"],
+        excluded_services=["db"],
     )
     autostart.run_stages(cfg, incus, "box", [stage], "/repo")
     dispatch.assert_called_once()

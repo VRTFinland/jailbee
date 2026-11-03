@@ -865,7 +865,9 @@ class AutostartProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stages: list[str] = Field(
         min_length=1,
-        description="Stage names selected in both triggers; agents and services slots are retained.",
+        description=(
+            "Stage names selected in both triggers; agents and services slots are retained."
+        ),
     )
 
     services: list[str] | None = Field(

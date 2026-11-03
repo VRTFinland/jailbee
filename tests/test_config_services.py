@@ -23,8 +23,13 @@ def load(text, tmp_path):
         ([{"stage": "services", "services": ["missing"]}], "unknown services"),
         ([{"stage": "services"}, {"stage": "services"}], "bare"),
         ([{"stage": "services", "services": ["web", "web"]}], "more than once"),
-        ([{"stage": "services", "services": ["web"]},
-          {"stage": "services", "services": ["web"]}], "more than once"),
+        (
+            [
+                {"stage": "services", "services": ["web"]},
+                {"stage": "services", "services": ["web"]},
+            ],
+            "more than once",
+        ),
         ([{"stage": "services", "steps": [{"name": "up", "run": "x"}]}], "steps"),
         ([{"stage": "setup", "services": ["web"]}], "only.*services"),
     ],
@@ -33,15 +38,18 @@ def test_invalid_services_slots(tmp_path, entries, token):
     import yaml
 
     with pytest.raises(ConfigError, match=token):
-        load(yaml.safe_dump({"services": {"web": {"run": "x"}},
-                             "autostart": {"on_start": entries}}), tmp_path)
+        load(
+            yaml.safe_dump({"services": {"web": {"run": "x"}}, "autostart": {"on_start": entries}}),
+            tmp_path,
+        )
 
 
 def test_disjoint_services_slots_load_with_dependency_placed_later(tmp_path):
     cfg = load(
         "services: {web: {run: x, depends_on: {db: {}}}, db: {run: x}}\n"
         "autostart: {on_start: [{stage: services, services: [web]}, "
-        "{stage: services, services: [db]}, {stage: services}]}", tmp_path
+        "{stage: services, services: [db]}, {stage: services}]}",
+        tmp_path,
     )
     assert len(cfg.autostart.on_start) == 3
 

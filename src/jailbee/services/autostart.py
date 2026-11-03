@@ -165,7 +165,8 @@ def run_services_stage(
     if stage_services is not None or excluded_services:
         targets = (
             set(order).intersection(stage_services)
-            if stage_services is not None else set(order).difference(excluded_services)
+            if stage_services is not None
+            else set(order).difference(excluded_services)
         )
         # Partition the container's selected plan, not the host definitions:
         # a cloned branch may define a different service graph. Dependencies

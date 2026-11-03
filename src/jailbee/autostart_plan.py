@@ -224,7 +224,8 @@ def plan_autostart(
 
     service_slots = (
         [s for s in stages if s.stage == SERVICES_STAGE]
-        if is_stage_form and trigger == AutostartTrigger.ON_START else []
+        if is_stage_form and trigger == AutostartTrigger.ON_START
+        else []
     )
     placed = [name for s in service_slots for name in (s.services or [])]
     if not services_stage:
@@ -237,7 +238,9 @@ def plan_autostart(
         stages = [
             GeneratedServicesStage.model_construct(
                 **s.model_dump(), excluded_services=placed if s.services is None else []
-            ) if s in service_slots else s
+            )
+            if s in service_slots
+            else s
             for s in stages
         ]
 
@@ -297,8 +300,11 @@ def plan_autostart(
             if not already_detached:
                 boundary += 1
 
-    if (services_stage and trigger == AutostartTrigger.ON_START
-            and not any(s.services is None for s in service_slots)):
+    if (
+        services_stage
+        and trigger == AutostartTrigger.ON_START
+        and not any(s.services is None for s in service_slots)
+    ):
         if steps:
             if agents_last:
                 position = len(stages) - 1
@@ -313,7 +319,12 @@ def plan_autostart(
         stages.insert(
             position,
             GeneratedServicesStage.model_construct(
-                stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[],
+                stage=SERVICES_STAGE,
+                network=None,
+                mounts=[],
+                detach=False,
+                chains=[],
+                steps=[],
                 excluded_services=placed,
             ),
         )
