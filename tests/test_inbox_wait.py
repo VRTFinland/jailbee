@@ -337,3 +337,76 @@ def test_cmd_wait_digest_message_wins_and_digest_follows(tmp_path, capsys):
     message.unlink()
     assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
     assert capsys.readouterr().out.splitlines()[0] == "digest"
+
+
+def test_cmd_wait_digest_stamp_write_failure_still_prints_digest(tmp_path, capsys, monkeypatch):
+    import time
+
+    from jailbee.inbox import cli, waiting
+
+    settings = _settings(tmp_path)
+    fresh_snapshot(tmp_path, [kid("alpha")])
+    (tmp_path / "digest-at").write_text(str(time.time() - 120))
+
+    def broken(base, now):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(waiting, "write_digest_stamp", broken)
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[0] == "digest"
+    assert "alpha" in captured.out
+    assert captured.err.count("could not record the digest time") == 1
+
+
+def test_run_wait_returns_digest_that_becomes_due_mid_wait(tmp_path):
+    import time
+
+    from jailbee.inbox import waiting
+
+    settings = _settings(tmp_path)
+    fresh_snapshot(tmp_path, [kid("alpha")])
+    stamp = tmp_path / "digest-at"
+    slept = []
+
+    class Watcher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def wait(self, seconds):
+            slept.append(seconds)
+            if len(slept) == 2:
+                stamp.write_text(str(time.time() - 120))  # the period elapses meanwhile
+
+        def close(self):
+            pass
+
+    ticks = iter(range(1000))
+    result = waiting.run_wait(
+        settings,
+        timeout=60,
+        wake=frozenset(),
+        quiet=0,
+        digest=60,
+        watcher_factory=Watcher,
+        clock=lambda: float(next(ticks)),
+    )
+    assert result == (0, "digest")
+    assert len(slept) == 2 and max(slept) <= 1
+
+
+def test_digest_missing_stamp_without_running_child_is_still_created(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(running=False), kid("fin", done=True)])
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW, 60) is None
+    assert float((tmp_path / "digest-at").read_text()) == NOW
+
+
+def test_cmd_wait_digest_and_quiet_after_stale_snapshot_names_both_flags(tmp_path):
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    snapshot(tmp_path, [kid()], updated_at=1.0)
+    with pytest.raises(InboxUsage, match=r"--quiet-after and --digest need a fresh broker"):
+        cli.cmd_wait(settings, ["--digest", "1m", "--quiet-after", "5m", "--timeout", "0"])

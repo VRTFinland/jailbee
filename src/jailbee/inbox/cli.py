@@ -572,7 +572,10 @@ def _print_digest(settings: Settings) -> int:
     from jailbee.inbox.waiting import last_from_child, write_digest_stamp
 
     now = time.time()
-    write_digest_stamp(settings.base, now)
+    try:
+        write_digest_stamp(settings.base, now)
+    except OSError as exc:
+        print(f"jailbee-inbox: could not record the digest time: {exc}", file=sys.stderr)
     print("digest")
     loaded = _load_snapshot(settings)
     children: list[object] = list(loaded[1]["children"]) if loaded else []
