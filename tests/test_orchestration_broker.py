@@ -812,7 +812,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    assert rig.incus.list_containers.call_count == 4  # includes fresh supervised-watch snapshot
+    assert rig.incus.list_containers.call_count == 5  # incl. watch snapshot and post-spawn refresh
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
@@ -2075,3 +2075,41 @@ def test_tick_prunes_status_cache_of_vanished_containers(rig: Rig) -> None:
     assert set(memory.status.host_at) == {"proj-kid"}
     assert set(memory.status.exec_at) == {"proj-kid"}
     assert "proj-gone-orch" not in memory.status.samplers
+
+
+@pytest.mark.parametrize("kind", ["stop", "destroy", "restart", "spawn"])
+def test_lifecycle_action_refreshes_children_snapshot_before_the_reply(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    sync = MagicMock()
+    monkeypatch.setattr(broker.inbox_state, "sync_children", sync)
+    rig.seq.attach_mock(sync, "sync_children")
+    before = [_orch(), _child()]
+    after = [_orch(), _child(running=False)]
+    rig.incus.list_containers.side_effect = [before] + [after] * 10
+    extra: dict[str, Any] = {"restart": {"prompt": "p"}}.get(kind, {})
+    text = json.dumps({"version": 1, "id": "m1", "type": kind, "child": "kid", **extra})
+    if kind == "spawn":
+        text = _spawn_raw("m1", prompt_file=False).text
+    rig.outboxes["proj-orch"] = [RawManifest("m1.json", text, {"m1.json": text})]
+    rig.dispatch.return_value = Outcome("done", "child `kid` handled")
+    rig.tick()
+    names = [c[0] for c in rig.seq.mock_calls]
+    assert names.index("sync_children") < names.index("deliver")
+    seen = sync.call_args_list[0].args[0]
+    assert seen.nodes["proj-kid"].running is False
+
+
+def test_refused_lifecycle_action_does_not_resync_early(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = MagicMock()
+    monkeypatch.setattr(broker.inbox_state, "sync_children", sync)
+    rig.seq.attach_mock(sync, "sync_children")
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    text = json.dumps({"version": 1, "id": "m1", "type": "stop", "child": "kid"})
+    rig.outboxes["proj-orch"] = [RawManifest("m1.json", text, {"m1.json": text})]
+    rig.dispatch.return_value = Outcome("refused", "nope")
+    rig.tick()
+    names = [c[0] for c in rig.seq.mock_calls]
+    assert names.index("deliver") < names.index("sync_children")
