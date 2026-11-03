@@ -18,27 +18,41 @@ def _step(name: str, **kw: object) -> AutostartStep:
 
 
 def test_earlier_services_slot_subset_change_is_reported():
-    host = Autostart.model_validate({"on_start": [
-        {"stage": "services", "services": ["db"]}, {"stage": "services"},
-    ]})
-    branch = Autostart.model_validate({"on_start": [
-        {"stage": "services", "services": ["web"]}, {"stage": "services"},
-    ]})
+    host = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "services", "services": ["db"]},
+                {"stage": "services"},
+            ]
+        }
+    )
+    branch = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "services", "services": ["web"]},
+                {"stage": "services"},
+            ]
+        }
+    )
     dev = diff_autostart(host, branch)
-    assert [(c.name, c.fields) for c in dev.changed] == [
-        ("on_start<services#1>", ("services",))
-    ]
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_start<services#1>", ("services",))]
     assert dev.any_change
 
 
 def test_services_slot_grants_do_not_collapse():
     from jailbee.branch_config import _grants
 
-    block = Autostart.model_validate({"on_start": [
-        {"stage": "services", "services": ["db"]}, {"stage": "services"},
-    ]})
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {"stage": "services", "services": ["db"]},
+                {"stage": "services"},
+            ]
+        }
+    )
     assert list(_grants(block.on_start, "on_start")) == [
-        "on_start<services#1>", "on_start<services#2>",
+        "on_start<services#1>",
+        "on_start<services#2>",
     ]
 
 

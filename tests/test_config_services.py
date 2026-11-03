@@ -30,8 +30,10 @@ def load(text, tmp_path):
             ],
             "more than once",
         ),
-        ([{"stage": "services", "services": ["web"],
-           "steps": [{"name": "up", "run": "x"}]}], "steps"),
+        (
+            [{"stage": "services", "services": ["web"], "steps": [{"name": "up", "run": "x"}]}],
+            "steps",
+        ),
         ([{"stage": "services", "network": "loose"}], "network"),
         ([{"stage": "services", "network": "strict"}], "network"),
         ([{"stage": "services", "mounts": ["aws"]}], "mounts"),
@@ -50,15 +52,21 @@ def test_invalid_services_slots(tmp_path, entries, token):
 
 @pytest.mark.parametrize("trigger", ["on_create", "on_start"])
 def test_ordinary_services_stage_names_are_still_unique(tmp_path, trigger):
-    with pytest.raises(ConfigError, match="duplicate.*stage name"):
-        load(f"autostart: {{{trigger}: ["
-             "{stage: services, steps: [{name: a, run: x}]}, "
-             "{stage: services, steps: [{name: b, run: x}]}]}", tmp_path)
+    with pytest.raises(ConfigError, match=r"duplicate.*stage name"):
+        load(
+            f"autostart: {{{trigger}: ["
+            "{stage: services, steps: [{name: a, run: x}]}, "
+            "{stage: services, steps: [{name: b, run: x}]}]}",
+            tmp_path,
+        )
 
 
 def test_ordinary_services_stage_can_coexist_with_slots(tmp_path):
-    cfg = load("autostart: {on_start: ["
-               "{stage: services, steps: [{name: up, run: x}]}, {stage: services}]}", tmp_path)
+    cfg = load(
+        "autostart: {on_start: ["
+        "{stage: services, steps: [{name: up, run: x}]}, {stage: services}]}",
+        tmp_path,
+    )
     assert len(cfg.autostart.on_start) == 2
 
 

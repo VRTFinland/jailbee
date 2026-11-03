@@ -29,7 +29,8 @@ class GeneratedServicesStage(AutostartStage):
     """
 
     progress_stage: str = Field(
-        default=SERVICES_STAGE, description="Unique progress label for this generated services slot."
+        default=SERVICES_STAGE,
+        description="Unique progress label for this generated services slot.",
     )
     excluded_services: list[str] = Field(
         default_factory=list,
@@ -153,10 +154,10 @@ def select_profile(autostart: Autostart, profile: str | None) -> Autostart:
     return autostart.model_copy(
         update={
             trigger.value: [
-                s for s in normalize_stages(getattr(autostart, trigger.value))
-                if s.stage in names or (
-                    trigger == AutostartTrigger.ON_START and s.is_services_slot()
-                )
+                s
+                for s in normalize_stages(getattr(autostart, trigger.value))
+                if s.stage in names
+                or (trigger == AutostartTrigger.ON_START and s.is_services_slot())
             ]
             for trigger in TRIGGER_ORDER
         }
