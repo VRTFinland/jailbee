@@ -1841,6 +1841,27 @@ def test_create_worker_gone_with_its_row_left_is_still_reported(
     assert "stopped unexpectedly during autostart" in s.detail
 
 
+def test_vanished_worker_log_path_goes_to_the_broker_log(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    watch.save_watch(
+        rig.root,
+        {"proj-orch": [watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True)]},
+    )
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    row = watch.JobSnapshot("autostart", 7, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
+    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-kid": row})
+    monkeypatch.setattr(background, "worker_alive", lambda pid: False)
+    with caplog.at_level(logging.WARNING):
+        rig.tick()
+    [(_, s)] = rig.statuses()
+    assert "/state/logs" not in s.detail
+    assert any(
+        "proj-kid" in r.getMessage() and "/state/logs/proj-kid-1.log" in r.getMessage()
+        for r in caplog.records
+    )
+
+
 def test_unreadable_job_db_reports_nothing(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

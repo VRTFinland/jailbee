@@ -344,8 +344,7 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
   A worker that stopped unexpectedly also says what it left: ` — the child was
   removed`, ` — the child was kept, stopped`, or `` — the child was kept
   running; `stop` it before a `restart` ``; a running child refuses `restart`
-  until you `stop` it. The host-side worker log path follows when known; pass
-  it to the human, you cannot read it.
+  until you `stop` it. The broker log on the host names the worker's log.
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
 

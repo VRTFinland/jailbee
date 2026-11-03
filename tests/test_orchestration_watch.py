@@ -119,8 +119,7 @@ def test_dead_worker_says_a_running_child_was_kept_and_needs_a_stop(alive: None)
     assert out == Outcome(
         "failed",
         "creation of child `kid` stopped unexpectedly during autostart — the child was "
-        "kept running; `stop` it before a `restart`. Worker log on the host: "
-        "/state/logs/proj-kid-1.log",
+        "kept running; `stop` it before a `restart`",
     )
 
 
@@ -135,13 +134,11 @@ def test_dead_worker_with_stopped_or_missing_child(alive: None) -> None:
     )
 
 
-def test_failed_row_names_the_worker_log_when_known(alive: None) -> None:
-    row = JobSnapshot("failed", 4242, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
-    out = run(entry(), row, child())
-    assert (
-        out.detail
-        == "creation of child `kid` failed: see the worker log /state/logs/proj-kid-1.log"
-    )
+@pytest.mark.parametrize("phase", ["failed", "autostart"])
+def test_status_detail_never_carries_the_host_log_path(alive: None, phase: str) -> None:
+    """Host paths stay out of container-facing statuses; the broker logs them."""
+    row = JobSnapshot(phase, 999, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
+    assert "/state/logs" not in run(entry(), row, child()).detail
 
 
 def test_no_row_child_present_spawn_is_ready() -> None:

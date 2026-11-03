@@ -398,7 +398,8 @@ exit as a failure until `jb setup` rewrites the unit.
 The broker logs to the user journal (`journalctl --user -u jailbee-broker`).
 Each creation or restart worker it starts writes its own output to
 `~/.local/state/jailbee/logs/<container>-<timestamp>.log` (`$XDG_STATE_HOME`
-when set); a `failed` status whose worker left no error names that file.
+when set). A `failed` status whose worker left no error does not name that
+file, since statuses reach the container; the broker log does.
 
 For each manifest the broker validates it, acts on it at most once, deletes
 it, and answers with a `status` message in the sender's inbox: `queued`,

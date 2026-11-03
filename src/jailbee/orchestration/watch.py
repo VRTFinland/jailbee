@@ -224,16 +224,15 @@ def verdict(
             return None  # live worker, any phase
         if stale_ok:
             if job.phase in background.TERMINAL_PHASES:
-                reason = job.error_msg or " ".join(
-                    w for w in ("see the worker log", job.log_path) if w
-                )
+                reason = job.error_msg or "see the worker log"
                 detail = f"{noun} of child `{short}` failed: {reason}"
                 if spawn and child is None:
                     detail += " — the child was removed"
                 return failed(detail)
             # No error was recorded: the worker was killed, or died before it
             # could write one. Say what it left behind, since a running child
-            # refuses a `restart` until it is stopped.
+            # refuses a `restart` until it is stopped. Its log path is a host
+            # path, so it goes to the broker log (`checked_verdict`), not here.
             detail = f"{noun} of child `{short}` stopped unexpectedly during {job.phase}"
             if child is None:
                 detail += " — the child was removed" if spawn else ""
@@ -241,8 +240,6 @@ def verdict(
                 detail += " — the child was kept running; `stop` it before a `restart`"
             else:
                 detail += " — the child was kept, stopped"
-            if job.log_path:
-                detail += f". Worker log on the host: {job.log_path}"
             return failed(detail)
 
     if child is not None and child.config.get(labels.SPAWNED_BY) == orchestrator_full:
@@ -286,5 +283,10 @@ def checked_verdict(
         return None  # cannot confirm the death: wait for a readable database
     current = fresh.get(entry.child_full)
     if current == job:
+        log.warning(
+            "orchestration watch: the worker for %s left no error; its log: %s",
+            entry.child_full,
+            job.log_path or "unknown",
+        )
         return outcome
     return verdict(entry, current, child, orchestrator_full=orchestrator_full, short=short, now=now)
