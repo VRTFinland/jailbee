@@ -141,7 +141,12 @@ class ServiceRuntime:
         result = self.proc.tmux(["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"])
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "failed to capture service window")
-        return "".join(result.stdout.splitlines(keepends=True)[-lines:])
+        rows = result.stdout.splitlines(keepends=True)
+        # capture-pane pads the output with the empty rows of the visible pane;
+        # drop them so the last N lines are real output, not blank padding.
+        while rows and not rows[-1].strip():
+            rows.pop()
+        return "".join(rows[-lines:])
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])

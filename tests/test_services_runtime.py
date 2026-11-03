@@ -357,6 +357,41 @@ def test_logs_limits_output_and_reports_capture_errors(tmp_path):
         rt.logs("web", 2)
 
 
+def test_logs_trim_trailing_blank_pane_rows_before_slicing(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    pane = "one\ntwo\nthree\n" + "\n" * 20
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 0, pane, "")
+    assert rt.logs("web", 2) == "two\nthree\n"
+    # whitespace-only rows below the output are padding too; inner blanks stay
+    pane = "one\n\nthree\n   \n\n\n"
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 0, pane, "")
+    assert rt.logs("web", 5) == "one\n\nthree\n"
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 0, "\n\n\n", "")
+    assert rt.logs("web", 5) == ""
+
+
+def test_logs_keep_the_dead_pane_line_visible(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    pane = "boom\nPane is dead (status 1, Tue Nov  3 10:00:00 2026)\n" + "\n" * 20
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 0, pane, "")
+    assert rt.logs("web", 2) == "boom\nPane is dead (status 1, Tue Nov  3 10:00:00 2026)\n"
+
+
+def test_failed_start_tail_skips_trailing_blank_pane_rows(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "exit 1"}})
+    proc.immediate_exit.add("svc-web")
+    original = proc.tmux
+
+    def capture(args):
+        if args[0] == "capture-pane":
+            return subprocess.CompletedProcess(args, 0, "err1\nerr2\n" + "\n" * 40, "")
+        return original(args)
+
+    proc.tmux = capture
+    report = rt.start(["web"])
+    assert report.tail.splitlines() == ["err1", "err2"]
+
+
 def test_failed_start_tail_is_limited_and_capture_error_reported(tmp_path):
     rt, proc = runtime(tmp_path, {"web": {"run": "exit 1"}})
     proc.immediate_exit.add("svc-web")
