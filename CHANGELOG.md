@@ -140,6 +140,12 @@ before editing `## Unreleased`.
   done, including a clean exit or a signal, and every child restart is
   verified to bring the agent up
   ([#56](https://github.com/VRTFinland/jailbee/issues/56)).
+- A spawned child whose creation finished while the broker was refreshing its
+  container list is no longer reported as `stopped unexpectedly during
+  autostart` and left unsupervised. A creation or restart that really stops
+  without an error now says whether the child was kept running (so a `stop`
+  must come before a `restart`), and the broker log names the worker's log
+  ([#71](https://github.com/VRTFinland/jailbee/issues/71)).
 - An autostart stage naming an optional mount that is already attached no
   longer fails on the duplicate device, and leaves the mount attached when it
   ends.
