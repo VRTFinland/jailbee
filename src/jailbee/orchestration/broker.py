@@ -611,14 +611,28 @@ def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -
                     started_at = boot.timestamp()
             except ValueError:
                 pass
+        state = entry.get("state")
+        state_data: dict[str, object] = state if isinstance(state, dict) else {}
+        cpu = state_data.get("cpu")
+        memory = state_data.get("memory")
         nodes[name] = Node(
             full=name,
             short=short,
             running=entry.get("status") == "Running",
             config=config,
             started_at=started_at,
+            init_pid=_positive_int(state_data.get("pid")),
+            cpu_usage_ns=_positive_int(cpu.get("usage") if isinstance(cpu, dict) else None),
+            memory_usage=_positive_int(memory.get("usage") if isinstance(memory, dict) else None),
         )
     return nodes
+
+
+def _positive_int(value: object) -> int | None:
+    """An int > 0, else None; bools are ints in Python and are rejected."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def tick(

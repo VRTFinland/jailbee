@@ -2037,3 +2037,29 @@ def test_broker_start_stages_and_syncs_registered_repos(
     assert sync.call_args_list == ([mock_call(cfg1), mock_call(cfg2)] if not failure else [])
     if failure:
         assert "staging failed" in caplog.text
+
+
+def test_nodes_carry_state_sampling_fields() -> None:
+    raw: list[dict[str, object]] = [
+        {
+            "name": "proj-a",
+            "status": "Running",
+            "state": {"pid": 42, "cpu": {"usage": 7}, "memory": {"usage": 1024}},
+        },
+        {"name": "proj-b", "status": "Stopped", "state": None},
+        {
+            "name": "proj-c",
+            "status": "Running",
+            "state": {"pid": True, "cpu": {"usage": 0}, "memory": {"usage": -1}},
+        },
+    ]
+    nodes = broker._nodes(raw, {})
+    assert nodes["proj-a"].init_pid == 42
+    assert nodes["proj-a"].cpu_usage_ns == 7
+    assert nodes["proj-a"].memory_usage == 1024
+    assert nodes["proj-b"].init_pid is None
+    assert nodes["proj-b"].cpu_usage_ns is None
+    assert nodes["proj-b"].memory_usage is None
+    assert nodes["proj-c"].init_pid is None
+    assert nodes["proj-c"].cpu_usage_ns is None
+    assert nodes["proj-c"].memory_usage is None

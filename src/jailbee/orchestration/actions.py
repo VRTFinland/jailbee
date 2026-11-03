@@ -80,6 +80,9 @@ class Node:
     running: bool
     config: Mapping[str, str]
     started_at: float | None = None
+    init_pid: int | None = None
+    cpu_usage_ns: int | None = None
+    memory_usage: int | None = None
 
     @property
     def key(self) -> str:
