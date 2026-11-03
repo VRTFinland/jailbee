@@ -33,7 +33,7 @@ def test_a_raisable_route_shows_its_ceiling_and_a_fixed_one_does_not():
                     "model": "openai/x",
                     "context_window": 100_000,
                     "api_base": "https://llm.example.com/v1",
-                }
+                },
             },
             "profiles": {"p": {"opus": "fixed", "haiku": "luna-high"}},
         }
