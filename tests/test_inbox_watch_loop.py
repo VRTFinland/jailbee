@@ -163,8 +163,10 @@ def test_cmd_wait_inotify_environment_uses_poll_factory(tmp_path, monkeypatch):
 
 def test_interrupt_releases_wait_lock(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+
     def interrupt(*args, **kwargs):
         raise KeyboardInterrupt
+
     with monkeypatch.context() as patch:
         patch.setattr(waiting, "run_wait", interrupt)
         assert cli.main(["wait", "--timeout", "none"]) == 130
@@ -173,50 +175,70 @@ def test_interrupt_releases_wait_lock(tmp_path, monkeypatch, capsys):
 
 
 def test_wait_rechecks_without_event(tmp_path):
-    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "0"})
+    settings = cli.load_settings(
+        {"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "0"}
+    )
     settings.inbox.mkdir()
     message = settings.inbox / "message.json"
+
     class Watcher:
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs):
+            pass
+
         def wait(self, timeout):
             message.write_text('{"type":"message","kind":"note"}')
-        def close(self): pass
-    assert waiting.run_wait(settings, timeout=30, wake=None, quiet=0, watcher_factory=Watcher) == (0, str(message))
+
+        def close(self):
+            pass
+
+    assert waiting.run_wait(settings, timeout=30, wake=None, quiet=0, watcher_factory=Watcher) == (
+        0,
+        str(message),
+    )
 
 
 def test_settle_burst_extends_quiet_period(tmp_path):
     settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
     settings.inbox.mkdir()
-    (settings.inbox / "one.json").write_text('{}')
+    (settings.inbox / "one.json").write_text("{}")
     now = [0.0]
+
     def sleep(duration):
         now[0] += duration
         if 0.4 <= now[0] < 0.6:
-            (settings.inbox / "two.json").write_text('{}')
+            (settings.inbox / "two.json").write_text("{}")
         if 1.2 <= now[0] < 1.4:
-            (settings.inbox / "three.json").write_text('{}')
+            (settings.inbox / "three.json").write_text("{}")
+
     waiting.settle(settings, 10, clock=lambda: now[0], sleep=sleep)
     assert now[0] >= 2.2
-    assert len(list(settings.inbox.glob('*.json'))) == 3
+    assert len(list(settings.inbox.glob("*.json"))) == 3
 
 
 def test_settle_stops_at_deadline(tmp_path):
-    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "3"})
+    settings = cli.load_settings(
+        {"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "3"}
+    )
     settings.inbox.mkdir()
     now = [0.0]
+
     def sleep(duration):
         now[0] += duration
+
     waiting.settle(settings, 0.7, clock=lambda: now[0], sleep=sleep)
     assert now[0] == pytest.approx(0.7)
 
 
 def test_read_vanished_during_move(tmp_path, monkeypatch, capsys):
     from pathlib import Path
+
     settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
     settings.inbox.mkdir()
     (settings.inbox / "message.json").write_text('{"id":"hello"}')
+
     def vanished(self, target):
         raise FileNotFoundError
+
     monkeypatch.setattr(Path, "rename", vanished)
     assert cli.cmd_read(settings, ["hello"]) == 1
     output = capsys.readouterr()
@@ -226,19 +248,38 @@ def test_read_vanished_during_move(tmp_path, monkeypatch, capsys):
 
 def test_watchdog_wakes_without_inbox_events(tmp_path, monkeypatch):
     import json
-    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "0"})
+
+    settings = cli.load_settings(
+        {"JAILBEE_ORCHESTRATION_DIR": str(tmp_path), "JAILBEE_INBOX_SETTLE": "0"}
+    )
     settings.inbox.mkdir()
-    (tmp_path / "children.json").write_text(json.dumps({"version": 1, "updated_at": 1000, "children": [{"name": "kid", "running": True, "started_at": 1000}]}))
+    (tmp_path / "children.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": 1000,
+                "children": [{"name": "kid", "running": True, "started_at": 1000}],
+            }
+        )
+    )
     now = [1000.0]
     monkeypatch.setattr(waiting.time, "time", lambda: now[0])
     slices = []
+
     class Watcher:
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs):
+            pass
+
         def wait(self, timeout):
             slices.append(timeout)
             now[0] += timeout
-        def close(self): pass
-    assert waiting.run_wait(settings, timeout=5, wake=None, quiet=2, watcher_factory=Watcher, clock=lambda: now[0]) == (0, "quiet-child kid")
+
+        def close(self):
+            pass
+
+    assert waiting.run_wait(
+        settings, timeout=5, wake=None, quiet=2, watcher_factory=Watcher, clock=lambda: now[0]
+    ) == (0, "quiet-child kid")
     assert slices == [1, 1]
 
 
@@ -247,8 +288,15 @@ def test_sigint_releases_wait_lock_in_process(tmp_path):
     import signal
     import subprocess
     import sys
+
     env = os.environ | {"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)}
-    process = subprocess.Popen([sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "none"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "none"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
         deadline = time.monotonic() + 5
         acquired = False
@@ -268,7 +316,13 @@ def test_sigint_releases_wait_lock_in_process(tmp_path):
         assert process.returncode == 130
         assert "Traceback" not in stderr
         assert stdout == ""
-        result = subprocess.run([sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "0"], env=env, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            [sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "0"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
         assert result.returncode == 1, result.stderr
     finally:
         if process.poll() is None:
