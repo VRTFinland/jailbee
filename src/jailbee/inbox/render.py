@@ -1,8 +1,8 @@
 """jq-compatible inbox rendering."""
 
 import json
-import re
 import math
+import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 

@@ -1981,9 +1981,7 @@ def test_status_cli_child_filter_and_unknown_child_exit_1(script, base, tmp_path
 
 def test_status_json_includes_last_from_child_at(script, base, tmp_path):
     _write_snapshot(base, [_status_child("kid"), _status_child("other")])
-    path = write_inbox(
-        base, FIRST, {**message("h-0000aaaa"), "from": "kid"}
-    )
+    path = write_inbox(base, FIRST, {**message("h-0000aaaa"), "from": "kid"})
     os.utime(path, (1_700_000_000, 1_700_000_000))
     r = run(script, "status", "--json", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
@@ -2046,9 +2044,7 @@ def test_status_hostile_values_do_not_raise():
     assert len(out.splitlines()) == 1 + len(hostile)
 
 
-@pytest.mark.parametrize(
-    "cpu", [float("nan"), float("inf"), float("-inf"), True, -1.0, "5", None]
-)
+@pytest.mark.parametrize("cpu", [float("nan"), float("inf"), float("-inf"), True, -1.0, "5", None])
 def test_status_non_finite_cpu_prints_question_mark(cpu):
     from jailbee.inbox.render import render_status
 
@@ -2060,9 +2056,8 @@ def test_status_non_finite_cpu_prints_question_mark(cpu):
 
 def test_status_cli_tolerates_nan_and_status_null(script, base, tmp_path):
     (base / "children.json").write_text(
-        '{"version":1,"updated_at":%s,"children":[{"name":"a","running":true,"status":null},'
+        f'{{"version":1,"updated_at":{time.time()},"children":[{{"name":"a","running":true,"status":null}},'
         '{"name":"b","running":true,"status":{"cpu_percent":NaN,"memory_bytes":Infinity}}]}'
-        % time.time()
     )
     r = run(script, "status", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
