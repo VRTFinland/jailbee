@@ -167,8 +167,18 @@ def _parse_number(text: str) -> Decimal | SaturatedNumber:
                 return SaturatedNumber(sign + "0E-1147483646")
         elif adjusted > 999999999:
             return SaturatedNumber(sign + "1.7976931348623157e+308")
-        elif adjusted < -1147483646:
-            return SaturatedNumber(sign + "0E-1147483646")
+        else:
+            fraction_length = len(mantissa.partition(".")[2])
+            drop = -1147483646 - (exp - fraction_length)
+            if drop > 0:
+                significant = digits[first:]
+                if drop > len(significant):
+                    return SaturatedNumber(sign + "0E-1147483646")
+                kept = significant[:-drop] or "0"
+                if significant[-drop] >= "5":
+                    # Round half away from zero, preserving the lower-bound scale.
+                    kept = str(int(kept) + 1)
+                return Decimal((int(bool(sign)), tuple(int(c) for c in kept), -1147483646))
     return Decimal(text)
 
 
