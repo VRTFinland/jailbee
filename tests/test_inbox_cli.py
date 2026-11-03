@@ -1,74 +1,34 @@
-"""Runs the `jailbee-inbox` script install.sh writes against a temporary
-orchestration directory. Needs bash and jq (both in the golden image)."""
+"""Exercise the Python inbox CLI against a temporary orchestration directory."""
 
-import ctypes
-import importlib.resources
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import pytest
 
-pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
-
-# PY_COUNTERPARTS (Tasks 5/6): burst settling, interrupt lock release,
-# missed event recheck, settle timeout, vanished reads, ID collision,
-# watchdog polling, and send --wait timeout none.
-PY_PENDING: frozenset[str] = frozenset()
-
-
-def test_py_pending_is_empty():
-    assert not PY_PENDING
-
-
-bash_only = pytest.mark.bash_only
-
-
 @dataclass
 class Impl:
-    kind: Literal["bash", "python"]
     argv: list[str]
     prog: str
-    pending: bool = False
 
 
 FIRST = "20261025T100000Z-00000001-h-0000aaaa.json"
 SECOND = "20261025T100001Z-00000002-h-0000bbbb.json"
 
 
-def install_sh_text() -> str:
-    return importlib.resources.files("jailbee.provision").joinpath("install.sh").read_text()
 
 
-def helper_text() -> str:
-    return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
 
 
-@pytest.fixture(params=["bash", "python"], ids=["bash", "py"])
-def script(request, tmp_path: Path) -> Impl:
-    if request.param == "python":
-        if request.node.get_closest_marker("bash_only"):
-            pytest.skip("bash-specific test")
-        if any(request.node.originalname == name for name in PY_PENDING):
-            request.applymarker(pytest.mark.xfail(reason="Python port pending", strict=True))
-        return Impl(
-            "python",
-            [sys.executable, "-m", "jailbee.inbox"],
-            "jailbee inbox",
-            request.node.originalname in PY_PENDING,
-        )
-    path = tmp_path / "jailbee-inbox"
-    path.write_text(helper_text())
-    path.chmod(0o755)
-    return Impl("bash", ["/bin/bash", str(path)], "jailbee-inbox")
+@pytest.fixture
+def script() -> Impl:
+    return Impl([sys.executable, "-m", "jailbee.inbox"], "jailbee inbox")
 
 
 @pytest.fixture
@@ -109,30 +69,6 @@ def write_inbox(base: Path, name: str, payload: dict[str, object]) -> Path:
 def env_for(base: Path, tmp_path: Path, path: str | None = None) -> dict[str, str]:
     bin_dir = tmp_path / "nobin"
     bin_dir.mkdir(exist_ok=True)
-    for tool in (
-        "jq",
-        "sleep",
-        "ls",
-        "mv",
-        "mkdir",
-        "date",
-        "cat",
-        "head",
-        "sort",
-        "env",
-        "bash",
-        "od",
-        "tr",
-        "wc",
-        "rm",
-        "flock",
-        "python3",
-    ):
-        found = shutil.which(tool)
-        assert found
-        link = bin_dir / tool
-        if not link.exists():
-            link.symlink_to(found)
     return {
         "PATH": path if path is not None else str(bin_dir),
         "HOME": str(tmp_path),
@@ -145,8 +81,6 @@ def run(script: Impl, *args: str, env: dict[str, str]) -> subprocess.CompletedPr
     result = subprocess.run(
         [*script.argv, *args], env=env, capture_output=True, text=True, timeout=30
     )
-    if script.pending:
-        assert "not implemented" not in result.stderr
     return result
 
 
@@ -176,54 +110,8 @@ def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp
     assert out.strip().endswith(FIRST)
 
 
-@bash_only
-def test_wait_timeout_none_uses_full_watch_slices(script, base, tmp_path):
-    log, counter = tmp_path / "t.log", tmp_path / "n"
-    stubs = _stub(
-        tmp_path,
-        f'printf "%s\\n" "$3" >> {log}\n'
-        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
-        'if [ "$n" -ge 5 ]; then\n'
-        f"  echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
-        "  exit 0\nfi\nexit 2\n",
-    )
-    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "0"}
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--timeout", "none", env=env)
-    assert r.returncode == 0, r.stderr
-    assert log.read_text().split() == ["10"] * 6
 
 
-@bash_only
-def test_wait_timeout_none_settles_burst(script, base, tmp_path):
-    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
-    ready = tmp_path / "watch-ready"
-    stubs = _stub(tmp_path, f': > "{ready}"\nsleep 0.1\nexit 2\n')
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-
-    def writer():
-        deadline = time.monotonic() + 3
-        while not ready.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        if not ready.exists():
-            return
-        write_inbox(base, FIRST, message("h-0000aaaa"))
-        time.sleep(0.4)
-        write_inbox(base, SECOND, message("h-0000bbbb"))
-        time.sleep(0.8)
-        write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
-
-    thread = threading.Thread(target=writer)
-    thread.start()
-    try:
-        r = run(script, "wait", "--timeout", "none", env=env)
-        ls = run(script, "ls", env=env)
-        assert r.returncode == 0, r.stderr
-        assert r.stdout.strip().endswith(FIRST)
-        assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
-        assert "h-0000cccc" in ls.stdout
-    finally:
-        thread.join()
 
 
 def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
@@ -235,53 +123,6 @@ def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
     assert time.monotonic() - started < 3
 
 
-@bash_only
-def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
-    ready = tmp_path / "watch-pid"
-    stubs = _stub(tmp_path, f'echo $$ > "{ready}"\nexec sleep 30\n')
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    # Adopt the orphaned watcher so the test can reap it after killing it.
-    libc = ctypes.CDLL(None, use_errno=True)
-    previous_subreaper = ctypes.c_int()
-    assert libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0) == 0
-    assert libc.prctl(36, 1, 0, 0, 0) == 0
-    proc = subprocess.Popen(
-        [*script.argv, "wait", "--timeout", "none"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    watcher_pid = None
-    try:
-        deadline = time.monotonic() + 2
-        while not ready.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert ready.exists(), "watcher did not start"
-        watcher_pid = int(ready.read_text())
-        args = [*script.argv, "wait", "--timeout", "0"]
-        assert subprocess.run(args, env=env, capture_output=True, timeout=2).returncode == 2
-        proc.terminate()
-        proc.wait(timeout=2)
-        os.kill(watcher_pid, 0)
-        assert subprocess.run(args, env=env, capture_output=True, timeout=2).returncode == 1
-        os.kill(watcher_pid, 0)
-    finally:
-        # The watcher can outlive its parent; kill the entire private session.
-        try:
-            os.killpg(proc.pid, 9)
-        except ProcessLookupError:
-            pass
-        proc.wait(timeout=2)
-        if watcher_pid is None and ready.exists():
-            watcher_pid = int(ready.read_text())
-        if watcher_pid is not None:
-            try:
-                os.waitpid(watcher_pid, 0)
-            except ChildProcessError:
-                pass
-        assert libc.prctl(36, previous_subreaper.value, 0, 0, 0) == 0
 
 
 @pytest.mark.parametrize("dur", ["None", "NONE", "forever", "inf", "none5"])
@@ -291,54 +132,6 @@ def test_wait_rejects_none_lookalikes(script, base, tmp_path, dur):
     assert r.stderr.startswith(f"{script.prog}: ")
 
 
-@bash_only
-def test_send_wait_timeout_none(script, base, tmp_path):
-    unrelated = write_inbox(base, FIRST, message("h-other"))
-    errors = []
-
-    def reply():
-        try:
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                files = list((base / "outbox").glob("*.json"))
-                if files:
-                    mid = json.loads(files[0].read_text())["id"]
-                    time.sleep(1.5)
-                    write_inbox(base, SECOND, status("h-reply", ref=mid))
-                    return
-                time.sleep(0.01)
-        except Exception as exc:
-            errors.append(exc)
-
-    thread = threading.Thread(target=reply)
-    thread.start()
-    try:
-        r = subprocess.run(
-            [
-                "/bin/bash",
-                "-x",
-                script.argv[1],
-                "send",
-                "message",
-                "--text",
-                "done",
-                "--wait",
-                "--timeout",
-                "none",
-            ],
-            env=env_for(base, tmp_path),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    finally:
-        thread.join()
-    assert not errors
-    assert r.returncode == 0, r.stderr
-    assert "+ cmd_wait --timeout none" in r.stderr
-    assert '"state": "done"' in r.stdout
-    assert (base / "inbox" / "read" / SECOND).exists()
-    assert unrelated.exists()
 
 
 def test_send_rejects_bad_none_timeout(script, base, tmp_path):
@@ -568,24 +361,6 @@ def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
     )
 
 
-@bash_only
-def test_wait_settle_respects_timeout(script, base, tmp_path):
-    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
-    log = tmp_path / "sleeps"
-    stubs = _stub(
-        tmp_path,
-        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\nexit 0\n",
-    )
-    real_sleep = shutil.which("sleep")
-    (stubs / "sleep").write_text(
-        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\nexec "{real_sleep}" "$@"\n'
-    )
-    (stubs / "sleep").chmod(0o755)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--timeout", "1", env=env)
-    assert r.returncode == 0, r.stderr
-    assert log.exists(), "arrival must occur after the initial scan and enter settling"
-    assert sum(float(value) for value in log.read_text().split()) <= 1
 
 
 def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
@@ -681,51 +456,8 @@ def test_wait_with_missing_inbox_dir_times_out(script, tmp_path):
     assert run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path)).returncode == 1
 
 
-@bash_only
-def test_wait_uses_inotifywait_when_present(script, base, tmp_path):
-    log = tmp_path / "inotify.log"
-    stubs = tmp_path / "stubs"
-    stubs.mkdir()
-    stub = stubs / "inotifywait"
-    stub.write_text(
-        "#!/bin/bash\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
-        f'echo "{{}}" > "{base}/inbox/.probe.tmp"\n'
-        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
-        "exit 0\n"
-    )
-    stub.chmod(0o755)
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--timeout", "10", env=env)
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip().endswith(FIRST)
-    args = log.read_text().split()
-    assert args[:2] == ["-q", "-t"]
-    assert 1 <= int(args[2]) <= 10
-    assert args[3:] == ["-e", "close_write,moved_to", str(base / "inbox")]
 
 
-@bash_only
-def test_wait_rechecks_after_inotifywait_returns_empty(script, base, tmp_path):
-    stubs = tmp_path / "stubs"
-    stubs.mkdir()
-    counter = tmp_path / "count"
-    stub = stubs / "inotifywait"
-    stub.write_text(
-        "#!/bin/bash\n"
-        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
-        'if [ "$n" -ge 1 ]; then\n'
-        f"  echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
-        "fi\n"
-        "sleep 0.2\nexit 2\n"
-    )
-    stub.chmod(0o755)
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--timeout", "10", env=env)
-    assert r.returncode == 0, r.stderr
-    assert int(counter.read_text()) == 2
 
 
 def test_ls_empty_prints_nothing(script, base, tmp_path):
@@ -790,93 +522,18 @@ def test_read_ignores_corrupt_and_already_read(script, base, tmp_path):
     assert run(script, "read", "h-0000cccc", env=env).returncode == 1
 
 
-@bash_only
-def test_install_sh_installs_inotify_tools():
-    assert "inotify-tools" in install_sh_text()
 
 
-@bash_only
-def test_helper_is_a_bash_script() -> None:
-    assert helper_text().startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
 
 
-@bash_only
-def test_install_sh_installs_packaged_helper() -> None:
-    text = install_sh_text()
-    assert (
-        'install -m 0755 "$JAILBEE_PROVISION_DIR/jailbee-inbox" /usr/local/bin/jailbee-inbox'
-        in text
-    )
-    assert "cat > /usr/local/bin/jailbee-inbox" not in text
 
 
-def _stub(tmp_path: Path, body: str) -> Path:
-    stubs = tmp_path / "stubs"
-    stubs.mkdir(exist_ok=True)
-    stub = stubs / "inotifywait"
-    stub.write_text("#!/bin/bash\n" + body)
-    stub.chmod(0o755)
-    return stubs
 
 
-@bash_only
-def test_inotify_watch_is_capped_to_a_short_slice(script, base, tmp_path):
-    log = tmp_path / "t.log"
-    stubs = _stub(
-        tmp_path,
-        f'printf "%s\\n" "$3" >> {log}\n'
-        f"echo '{json.dumps(message('h-0000aaaa'))}' > \"{base}/inbox/{FIRST}\"\n"
-        "exit 0\n",
-    )
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--timeout", "600", env=env)
-    assert r.returncode == 0, r.stderr
-    assert int(log.read_text().split()[0]) <= 10
 
 
-@bash_only
-def test_wait_finds_message_that_landed_without_an_event(script, base, tmp_path):
-    counter = tmp_path / "count"
-    stubs = _stub(
-        tmp_path,
-        f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n+1)) > {counter}\n"
-        'if [ "$n" -ge 1 ]; then exit 2; fi\n'
-        "sleep 0.3\nexit 2\n",
-    )
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-
-    def later() -> None:
-        while not counter.exists():
-            time.sleep(0.02)
-        write_inbox(base, FIRST, message("h-0000aaaa"))  # no event for the stub
-
-    t = threading.Thread(target=later)
-    t.start()
-    r = run(script, "wait", "--timeout", "30", env=env)
-    t.join()
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip().endswith(FIRST)
 
 
-@bash_only
-def test_read_of_a_file_that_vanishes_exits_1(script, base, tmp_path):
-    path = write_inbox(base, FIRST, message("h-0000aaaa"))
-    env = env_for(base, tmp_path)
-    shim_dir = tmp_path / "shim"
-    shim_dir.mkdir()
-    real_jq = shutil.which("jq")
-    shim = shim_dir / "jq"
-    shim.write_text(
-        f'#!/bin/bash\ncase "$1" in "def clean"*) rm -f "{path}"; exit 2 ;; esac\n'
-        f'exec {real_jq} "$@"\n'
-    )
-    shim.chmod(0o755)
-    env["PATH"] = f"{shim_dir}:{env['PATH']}"
-    r = run(script, "read", "h-0000aaaa", env=env)
-    assert r.returncode == 1
-    assert "no unread message with id h-0000aaaa" in r.stderr
 
 
 # --- send ---------------------------------------------------------------
@@ -900,8 +557,6 @@ def send(
         timeout=30,
         input=stdin,
     )
-    if script.pending:
-        assert "not implemented" not in result.stderr
     return result
 
 
@@ -1232,22 +887,6 @@ def test_send_refuses_oversized_text(script, base, tmp_path):
     assert len(os.listdir(base / "outbox")) == 2  # only the accepted one
 
 
-@bash_only
-def test_send_refuses_to_overwrite_existing_id(script, base, tmp_path):
-    shim = tmp_path / "shim"
-    shim.mkdir()
-    (shim / "od").write_text("#!/bin/bash\necho ' ab cd'\n")
-    (shim / "date").write_text("#!/bin/bash\necho 20261025120000\n")
-    for f in shim.iterdir():
-        f.chmod(0o755)
-    env = env_for(base, tmp_path)
-    env["PATH"] = f"{shim}:{env['PATH']}"
-    first = send(script, base, tmp_path, "stop", "--child", "c", env=env)
-    assert first.returncode == 0 and first.stdout.strip() == "stop-20261025120000-abcd"
-    before = (base / "outbox" / "stop-20261025120000-abcd.json").read_text()
-    again = send(script, base, tmp_path, "stop", "--child", "other", env=env)
-    assert again.returncode == 1
-    assert (base / "outbox" / "stop-20261025120000-abcd.json").read_text() == before
 
 
 def test_send_output_parses_with_protocol(script, base, tmp_path):
@@ -1870,24 +1509,6 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
     assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == str(path)
 
 
-@bash_only
-def test_wait_watchdog_without_new_inbox_event(script, base, tmp_path):
-    child_snapshot(base, started=time.time() + 2)
-    env = env_for(base, tmp_path)
-    env["JAILBEE_INBOX_POLL"] = "5"
-    log = tmp_path / "sleeps"
-    stubs = _stub(tmp_path, "exit 127\n")
-    real_sleep = shutil.which("sleep")
-    (stubs / "sleep").write_text(
-        f'#!/bin/bash\nprintf "%s\\n" "$1" >> "{log}"\nexec "{real_sleep}" "$@"\n'
-    )
-    (stubs / "sleep").chmod(0o755)
-    env["PATH"] = f"{stubs}:{env['PATH']}"
-    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "10", env=env)
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "quiet-child kid"
-    sleeps = [float(value) for value in log.read_text().split()]
-    assert sleeps and all(0 < value <= 1 for value in sleeps)
 
 
 def test_wait_poll_respects_timeout(script, base, tmp_path):

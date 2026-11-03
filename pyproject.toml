@@ -112,7 +112,6 @@ module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-markers = ["bash_only: exercises bash implementation details"]
 # Pinned rather than left to discovery. `website/demo/substrate/` is a
 # committed miniature application — the repo the workflow videos are recorded
 # against — and it has a `tests/` directory of its own that needs FastAPI and
