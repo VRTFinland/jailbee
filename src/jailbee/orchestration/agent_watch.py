@@ -133,6 +133,43 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
         return None
 
 
+def agent_snapshot(
+    cfg: Config, name: str, status: AgentStatus, *, now: datetime
+) -> dict[str, object]:
+    """Structured agent evidence for status display, whatever the session state.
+
+    Unlike `idle_signal` this also covers busy sessions. Times are epoch
+    seconds; unknown fields are None. Any adapter failure leaves only `alive`.
+    """
+    from jailbee.orchestration.child_status import clean_text
+
+    snap: dict[str, object] = {
+        "alive": status.alive,
+        "state": None,
+        "since": None,
+        "last_event_at": None,
+        "last_tool": None,
+    }
+    try:
+        matched = _matched_session(cfg, name, status)
+        if matched is None:
+            return snap
+        adapter, session = matched
+        paths = adapter.locate_activity(adapter.config_home(cfg), session)
+        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        result = dict(snap)
+        result["state"] = session.state
+        result["since"] = session.since.timestamp() if session.since else None
+        if activity is not None:
+            if activity.last_event_at is not None:
+                result["last_event_at"] = activity.last_event_at.timestamp()
+            if activity.last_tool is not None:
+                result["last_tool"] = clean_text(activity.last_tool, 160)
+        return result
+    except Exception:
+        return snap
+
+
 def advance_idle(
     entry: WatchEntry, token: str | None, *, now: datetime, after: int
 ) -> tuple[WatchEntry, str | None]:

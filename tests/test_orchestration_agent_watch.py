@@ -349,3 +349,90 @@ def test_current_session_reader_raises_returns_none(tmp_path, mocker):
         )
         is None
     )
+
+
+def test_agent_snapshot_busy_session_has_last_event(tmp_path, mocker):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
+    from tests.conftest import make_config
+
+    event = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "busy", None, NOW, 1)]
+    adapter.read_activity.return_value = AgentActivity(
+        "Bash\x1b[0m", "msg", subagents=0, last_event_at=event
+    )
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    snap = agent_snapshot(make_config(tmp_path), "kid", status, now=NOW)
+    assert snap == {
+        "alive": True,
+        "state": "busy",
+        "since": NOW.timestamp(),
+        "last_event_at": event.timestamp(),
+        "last_tool": "Bash?[0m",
+    }
+
+
+def test_agent_snapshot_adapter_error_keeps_alive(tmp_path, mocker):
+    from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
+    from tests.conftest import make_config
+
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", side_effect=RuntimeError("boom"))
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    assert agent_snapshot(make_config(tmp_path), "kid", status, now=NOW) == {
+        "alive": True,
+        "state": None,
+        "since": None,
+        "last_event_at": None,
+        "last_tool": None,
+    }
+
+
+def _head_incus(output=None, error=None):
+    incus = MagicMock()
+    if error:
+        incus.exec.side_effect = error
+    else:
+        incus.exec.return_value = output
+    return incus
+
+
+def test_probe_head_parses() -> None:
+    from jailbee.orchestration.child_status import probe_head
+
+    incus = _head_incus("abc\x1f1762160000\x1ffix: x\nDIRTY\n")
+    assert probe_head(incus, "kid", "/repo", uid=1000) == (
+        {"sha": "abc", "time": 1762160000.0, "subject": "fix: x"},
+        True,
+    )
+
+
+def test_probe_head_no_commits() -> None:
+    from jailbee.orchestration.child_status import probe_head
+
+    assert probe_head(_head_incus("CLEAN\n"), "kid", "/repo", uid=1000) == (None, False)
+
+
+def test_probe_head_exec_error() -> None:
+    from jailbee.orchestration.child_status import probe_head
+
+    assert probe_head(_head_incus(error=IncusError("x")), "kid", "/repo", uid=1000) == (None, None)
+
+
+def test_probe_head_unparseable() -> None:
+    from jailbee.orchestration.child_status import probe_head
+
+    assert probe_head(_head_incus("garbage"), "kid", "/repo", uid=1000) == (None, None)
+
+
+def test_probe_head_passes_repo_dir_as_argument() -> None:
+    from jailbee.orchestration.child_status import probe_head
+
+    incus = _head_incus("CLEAN\n")
+    probe_head(incus, "kid", "/repo; rm -rf /", uid=7)
+    args, kwargs = incus.exec.call_args
+    argv = args[1]
+    assert argv[:2] == ["sh", "-c"] and argv[3:] == ["sh", "/repo; rm -rf /"]
+    assert "/repo" not in argv[2]
+    assert kwargs["uid"] == 7

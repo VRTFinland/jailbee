@@ -15,8 +15,13 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from jailbee import procstat
+from jailbee.incus import IncusError
+
+if TYPE_CHECKING:
+    from jailbee.incus import Incus
 
 STATUS_INTERVAL = 30
 """Seconds between host-side status probes of one child."""
@@ -119,3 +124,47 @@ def _due(stamps: dict[str, float], full: str, now: float, interval: float) -> bo
         return False
     stamps[full] = now
     return True
+
+
+# $1 is the repo directory, passed as an argument so it is never parsed as shell.
+_HEAD_SCRIPT = r"""
+log=$(git -C "$1" log -1 --format=%H%x1f%ct%x1f%s 2>/dev/null) && printf '%s\n' "$log"
+if ! porcelain=$(git -C "$1" status --porcelain --ignore-submodules=all 2>/dev/null); then
+    echo ERROR
+elif [ -n "$porcelain" ]; then
+    echo DIRTY
+else
+    echo CLEAN
+fi
+exit 0
+"""
+
+
+def probe_head(
+    incus: Incus, full: str, repo_dir: str, *, uid: int
+) -> tuple[dict[str, object] | None, bool | None]:
+    """The child's HEAD commit and whether its worktree is dirty.
+
+    `(None, dirty)` for a repository without commits; `(None, None)` when the
+    probe fails or prints something unexpected.
+    """
+    try:
+        raw = incus.exec(full, ["sh", "-c", _HEAD_SCRIPT, "sh", repo_dir], uid=uid)
+    except IncusError:
+        return None, None
+    lines = [line for line in raw.splitlines() if line]
+    if not lines or lines[-1] not in ("DIRTY", "CLEAN"):
+        return None, None
+    dirty = lines[-1] == "DIRTY"
+    if len(lines) == 1:
+        return None, dirty
+    if len(lines) != 2:
+        return None, None
+    parts = lines[0].split("\x1f", 2)
+    try:
+        if len(parts) != 3 or not parts[0]:
+            return None, None
+        when = float(int(parts[1]))
+    except ValueError:
+        return None, None
+    return {"sha": parts[0], "time": when, "subject": clean_text(parts[2], SUBJECT_LIMIT)}, dirty
