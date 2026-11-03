@@ -49,6 +49,7 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
                     [--on-done destroy|keep] [--autostart-profile NAME] [--services LIST] [runner] + text
                     --branch is required except for --pr; the broker derives
                     the branch from the PR and ignores any supplied branch.
+           refresh  --child C --services LIST [--wait]  Refresh services in a child (prepare + restart); elevated prepares stop and resume its agent.
            restart  --child C [--on-done destroy|keep] [--autostart-profile NAME] [--services LIST]
                     [--agent-only] [--resume ID|last] [runner | --default-runner] + text
                     --resume continues a recorded agent session (see children).
@@ -582,7 +583,7 @@ cmd_send() {
     [ $# -ge 1 ] || bad_usage "send needs a type"
     local type="$1"; shift
     case "$type" in
-        message|spawn|import|update|restart|stop|destroy|rights) ;;
+        message|spawn|import|update|restart|refresh|stop|destroy|rights) ;;
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
@@ -653,7 +654,10 @@ cmd_send() {
         [ "$services_set" -eq 0 ] || bad_usage "--agent-only cannot be combined with --services"
     fi
     if [ "$services_set" -eq 1 ]; then
-        [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--services only applies to spawn and restart"
+        [ "$type" = "spawn" ] || [ "$type" = "restart" ] || [ "$type" = "refresh" ] || bad_usage "--services only applies to spawn, restart and refresh"
+    fi
+    if [ "$type" = "refresh" ]; then
+        [ "$services_set" -eq 1 ] && [[ "$services" =~ [^,[:space:]] ]] || bad_usage "refresh needs at least one service"
     fi
     if [ -n "$timeout" ]; then
         [ "$wait" -eq 1 ] || bad_usage "--timeout needs --wait"
@@ -686,8 +690,8 @@ cmd_send() {
     if [ "$type" = "update" ] && [ -n "$ref" ] && [ -n "$base_branch" ]; then
         bad_usage "--ref and --base are mutually exclusive"
     fi
-    if [ "$type" != "destroy" ] && [ "$force" -eq 1 ]; then
-        bad_usage "--force only applies to destroy"
+    if [ "$type" != "destroy" ] && [ "$type" != "refresh" ] && [ "$force" -eq 1 ]; then
+        bad_usage "--force only applies to destroy and refresh"
     fi
     if [ "$type" != "spawn" ] && [ "$type" != "restart" ] && {
         [ -n "$agent" ] || [ -n "$profile" ] || [ -n "$model" ] || [ "$default_runner" -eq 1 ]; }; then
@@ -742,7 +746,7 @@ cmd_send() {
     fi
     case "$type" in
         rights) ;;
-        import|update|stop|destroy|restart)
+        import|update|stop|destroy|restart|refresh)
             [ -n "$child" ] || bad_usage "$type needs --child" ;;
         *) [ -z "$child" ] || bad_usage "--child does not apply to $type" ;;
     esac
@@ -857,6 +861,10 @@ cmd_send() {
             jq -n --arg id "$id" --arg pf "$body_name" --arg child "$child" \
                 --argjson runner "$runner_json" \
                 '{version: 1, id: $id, type: "restart", child: $child, prompt_file: $pf} + $runner' > "$json_tmp" ;;
+        refresh)
+            jq -n --arg id "$id" --arg child "$child" --argjson force "$force" --argjson runner "$runner_json" \
+                '{version: 1, id: $id, type: "refresh", child: $child} + $runner
+                 + (if $force == 1 then {force: true} else {} end)' > "$json_tmp" ;;
         destroy)
             jq -n --arg id "$id" --arg child "$child" --argjson force "$force" \
                 '{version: 1, id: $id, type: "destroy", child: $child}

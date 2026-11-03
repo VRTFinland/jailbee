@@ -33,9 +33,23 @@ names** (the branch-level name, never one prefixed with the repo).
 
 Every manifest has `"version"`, `"id"` and `"type"`. Version is `1`, except
 spawn also supports version `2`. The type is one of
-`spawn`, `message`, `import`, `update`, `restart`, `stop`, `destroy`, `rights`.
+`spawn`, `message`, `import`, `update`, `restart`, `refresh`, `stop`, `destroy`, `rights`.
 
 ## Orchestrator manifests
+
+### `refresh`
+
+Refresh services in a child with `jailbee-inbox send refresh --child C
+--services db,web [--force] [--wait] [--timeout DUR]`. The `services` array
+requires 1 to 32 valid service names; duplicates are removed in order. `force`
+defaults to false and skips the idle gate when true. Existing stored grants do
+not gain this operation automatically; re-grant to allow refresh.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "refresh-1", "type": "refresh", "child": "c",
+ "services": ["db", "web"], "force": false}
+```
 
 ### `spawn`
 

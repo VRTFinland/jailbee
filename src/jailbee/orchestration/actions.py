@@ -166,6 +166,7 @@ OPERATION_OF: Mapping[str, str] = {
     "import": "import",
     "update": "import",
     "restart": "restart",
+    "refresh": "refresh",
     "stop": "stop",
     "destroy": "destroy",
     "rights": "rights",

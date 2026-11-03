@@ -374,8 +374,25 @@ def test_send_services_rejects_agent_only(script, base, tmp_path, value):
 def test_send_services_rejects_other_types(script, base, tmp_path, kind):
     result = run(script, "send", kind, "--services", "", env=env_for(base, tmp_path))
     assert result.returncode == 2
-    assert "--services only applies to spawn and restart" in result.stderr
+    assert "--services only applies to spawn, restart and refresh" in result.stderr
     assert not list((base / "outbox").glob("*"))
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_send_refresh_writes_manifest(script, base, tmp_path, force):
+    args = ["--child", "c", "--services", "db,web"] + (["--force"] if force else [])
+    result = run(script, "send", "refresh", *args, env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
+    assert manifest["services"] == ["db", "web"]
+    assert manifest.get("force", False) is force
+
+
+@pytest.mark.parametrize("args", [["--child", "c"], ["--child", "c", "--services", " , , "]])
+def test_send_refresh_requires_services(script, base, tmp_path, args):
+    result = run(script, "send", "refresh", *args, env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert "refresh needs at least one service" in result.stderr
 
 
 @pytest.mark.parametrize(

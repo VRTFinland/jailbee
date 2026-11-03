@@ -12,13 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from jailbee.egress import WildcardSpec, validate_allow_entry
 from jailbee.orchestration.runner_model import Runner
 
-Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights"]
+Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights", "refresh"]
 
 OPERATIONS: tuple[Operation, ...] = (
     "spawn",
     "message",
     "import",
     "restart",
+    "refresh",
     "stop",
     "destroy",
     "rights",
@@ -28,6 +29,7 @@ DEFAULT_OPERATIONS: tuple[Operation, ...] = (
     "destroy",
     "import",
     "message",
+    "refresh",
     "restart",
     "rights",
     "spawn",

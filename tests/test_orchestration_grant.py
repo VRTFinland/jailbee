@@ -23,6 +23,14 @@ from jailbee.orchestration.grant import (
 from jailbee.orchestration.runner_model import Runner
 
 
+def test_refresh_in_operations_and_defaults() -> None:
+    from jailbee.orchestration.grant import DEFAULT_OPERATIONS, OPERATIONS
+
+    assert "refresh" in OPERATIONS and "refresh" in DEFAULT_OPERATIONS
+    legacy = Grant.from_label('{"version":1,"operations":["spawn","message"]}')
+    assert "refresh" not in legacy.operations
+
+
 def test_label_keys_match_spec() -> None:
     assert labels.GRANT == "user.jailbee.orchestration.grant"
     assert labels.RIGHTS == "user.jailbee.orchestration.rights"
@@ -36,7 +44,7 @@ def test_default_grant_label_is_the_spec_shape() -> None:
     assert json.loads(Grant().to_label()) == {
         "version": 1,
         "max_running_children": 4,
-        "operations": ["destroy", "import", "message", "restart", "rights", "spawn", "stop"],
+        "operations": ["destroy", "import", "message", "refresh", "restart", "rights", "spawn", "stop"],
         "grantable": {"mounts": [], "loose": False, "egress": []},
         "default_runner": None,
     }

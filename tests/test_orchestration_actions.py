@@ -100,6 +100,14 @@ def test_operation_not_granted_refused(tmp_path: Path) -> None:
     assert out == Outcome("refused", "operation `destroy` is not in this container's grant")
 
 
+def test_dispatch_refresh_needs_operation(tmp_path: Path) -> None:
+    from jailbee.orchestration.protocol import RefreshManifest
+
+    ctx = _ctx(tmp_path, _node("proj-o", **{labels.GRANT: _grant(operations=["spawn", "message"])}))
+    m = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"])
+    assert dispatch(ctx, m) == Outcome("refused", "operation `refresh` is not in this container's grant")
+
+
 def test_unknown_child_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def stop(ctx: ActionContext, m: StopManifest) -> Outcome:  # type: ignore[override]  # narrower manifest
         res = ctx.child(m.child)

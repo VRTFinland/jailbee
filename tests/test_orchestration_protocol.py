@@ -37,6 +37,26 @@ def test_orchestration_modules_cold_import(module: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_refresh_manifest_valid() -> None:
+    from jailbee.orchestration.protocol import ORCHESTRATOR_TYPES, RefreshManifest
+
+    raw = {"version": 1, "id": "refresh-1", "type": "refresh", "child": "c", "services": ["db", "web", "db"]}
+    manifest = parse_manifest("refresh-1.json", json.dumps(raw), {})
+    assert isinstance(manifest, RefreshManifest)
+    assert manifest.services == ["db", "web"]
+    assert manifest.force is False
+    assert RefreshManifest.model_validate(raw | {"force": True}).force is True
+    assert "refresh" in ORCHESTRATOR_TYPES
+
+
+@pytest.mark.parametrize("services", [[], ["db"] * 33, ["Bad Name"]])
+def test_refresh_manifest_rejects(services: list[str]) -> None:
+    from jailbee.orchestration.protocol import RefreshManifest
+
+    with pytest.raises(ValueError):
+        RefreshManifest.model_validate({"version": 1, "id": "r1", "type": "refresh", "child": "c", "services": services})
+
+
 RIGHTS = {"version": 1, "mounts": [], "loose": False, "egress": []}
 
 

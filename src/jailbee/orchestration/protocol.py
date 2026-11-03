@@ -32,7 +32,7 @@ OnDone = Literal["destroy", "keep"]
 FINISH_SUFFIX = ".finish.json"
 
 ORCHESTRATOR_TYPES = frozenset(
-    {"spawn", "message", "import", "update", "restart", "stop", "destroy", "rights"}
+    {"spawn", "message", "import", "update", "restart", "stop", "destroy", "rights", "refresh"}
 )
 CHILD_TYPES = frozenset({"message"})
 
@@ -126,6 +126,21 @@ class _ServicesManifest(_Manifest):
                 if not SERVICE_NAME_RE.fullmatch(name):
                     raise ValueError(f"invalid service name: {name!r}")
         return value
+
+
+class RefreshManifest(_ServicesManifest):
+    version: Literal[1]
+    type: Literal["refresh"]
+    child: str
+    services: list[str]
+    force: bool = False
+
+    @field_validator("services")
+    @classmethod
+    def _refresh_services(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("at least one service is required")
+        return list(dict.fromkeys(value))
 
 
 class SpawnManifest(_ServicesManifest):
@@ -326,6 +341,7 @@ Manifest = (
     | ImportManifest
     | UpdateManifest
     | RestartManifest
+    | RefreshManifest
     | StopManifest
     | DestroyManifest
     | RightsManifest
