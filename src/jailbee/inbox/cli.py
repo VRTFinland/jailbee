@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
@@ -140,7 +141,7 @@ def unread_files(inbox: Path) -> list[Path]:
 
 
 def _load(path: Path) -> object:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(), parse_float=Decimal)
 
 
 def message_id(path: Path) -> str | None:
@@ -229,9 +230,10 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
         doc = _load(path)
         if (
             not isinstance(doc, dict)
+            or isinstance(doc.get("version"), bool)
             or doc.get("version") != 1
             or isinstance(doc.get("updated_at"), bool)
-            or not isinstance(doc.get("updated_at"), (int, float))
+            or not isinstance(doc.get("updated_at"), (int, float, Decimal))
             or not isinstance(doc.get("children"), list)
         ):
             raise ValueError("invalid snapshot")
@@ -245,18 +247,36 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
         print(pretty(children))
     else:
         for child in children:
+            if child is None:
+                child = {}
+            if not isinstance(child, dict):
+                print(f'jq: error (at {path}:1): Cannot index {_jq_type(child)} with string "name"', file=sys.stderr)
+                return 5
             name = child.get("name")
             session = child.get("session")
-            print(
-                tsv(
-                    [
-                        "" if name is None else jq_tostring(name),
-                        jq_tostring(child.get("running")),
-                        "-" if session is None or session is False else jq_tostring(session),
-                    ]
-                )
-            )
+            session = "-" if session is None or session is False else session
+            for value in (name, session):
+                if isinstance(value, (dict, list)):
+                    print(f"jq: error (at {path}:1): {_jq_type(value)} ({jq_tostring(value)}) is not valid in a csv row", file=sys.stderr)
+                    return 5
+            print(tsv(["" if name is None else jq_tostring(name), jq_tostring(child.get("running")), jq_tostring(session)]))
     return 0
+
+
+def _jq_type(value: object) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+class JqError(Exception):
+    """A jq-compatible data error."""
 
 
 def runners_json(settings: Settings) -> list[dict[str, object]]:
@@ -303,16 +323,20 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
     result.append({"runner": {"agent": "claude"}, "models": tiers})
     if isinstance(cfg, dict) and isinstance(cfg.get("profiles"), dict):
         for name, profile in sorted(cfg["profiles"].items()):
-            aliases = profile.get("tiers", {}) if isinstance(profile, dict) else {}
-            if not isinstance(aliases, dict):
+            if profile is not None and not isinstance(profile, dict):
+                raise JqError(f'Cannot index {_jq_type(profile)} with string "tiers"')
+            aliases = profile.get("tiers") if isinstance(profile, dict) else None
+            if aliases is None or aliases is False:
                 aliases = {}
-            aliases = {
-                k: clean_c1(jq_tostring(v)) for k, v in sorted(aliases.items()) if k in tiers
-            }
+            if isinstance(aliases, list):
+                aliases = {str(i): v for i, v in enumerate(aliases)}
+            if not isinstance(aliases, dict):
+                raise JqError(f"{_jq_type(aliases)} ({jq_tostring(aliases)}) has no keys")
+            aliases = {k: clean_c1(jq_tostring(v)) for k, v in aliases.items() if k in tiers}
             result.append(
                 {
                     "runner": {"agent": "claude-jb", "profile": clean_c1(name)},
-                    "models": list(aliases),
+                    "models": sorted(aliases),
                     "aliases": aliases,
                     "default_profile": name == cfg.get("default_profile"),
                 }
@@ -324,7 +348,11 @@ def cmd_runners(settings: Settings, args: list[str]) -> int:
     for arg in args:
         if arg != "--json":
             raise InboxUsage(f"unknown argument '{arg}' (see --help)")
-    entries = runners_json(settings)
+    try:
+        entries = runners_json(settings)
+    except JqError as exc:
+        print(f"jq: error (at <unknown>): {exc}", file=sys.stderr)
+        return 5
     if args:
         print(pretty(entries))
         return 0

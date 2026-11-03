@@ -2126,3 +2126,61 @@ def test_no_args_and_unknown_subcommand_exit_2(script, base, tmp_path, args):
     result = run(script, *args, env=env_for(base, tmp_path))
     assert result.returncode == 2
     assert result.stderr.startswith(f"Usage: {script.prog} wait")
+
+
+def test_children_null_entry_and_boolean_version(script, base, tmp_path):
+    path = base / "children.json"
+    path.write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": [None]}))
+    result = run(script, "children", env=env_for(base, tmp_path))
+    assert (result.returncode, result.stdout) == (0, "\tnull\t-\n")
+    path.write_text(json.dumps({"version": True, "updated_at": time.time(), "children": []}))
+    result = run(script, "children", env=env_for(base, tmp_path))
+    assert result.returncode == 1
+    assert "invalid children.json" in result.stderr
+
+
+def test_children_composite_name_rejected(script, base, tmp_path):
+    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": [{"name": {}}]}))
+    result = run(script, "children", env=env_for(base, tmp_path))
+    assert result.returncode == 5
+    assert result.stdout == ""
+    assert "object ({}) is not valid in a csv row" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("profiles", [{"broken": 42}, {"broken": {"tiers": 42}}])
+def test_runners_invalid_profile_types(script, base, tmp_path, profiles):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"profiles": profiles}))
+    result = run(script, "runners", "--json", env=_runners_env(base, tmp_path, config=path))
+    assert result.returncode == 5
+    assert result.stdout == ""
+    assert "jq: error" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_runners_alias_order_and_sorted_models(script, base, tmp_path):
+    path = _litellm_config(tmp_path, {"x": {"sonnet": "S", "haiku": "H"}})
+    result = run(script, "runners", "--json", env=_runners_env(base, tmp_path, config=path))
+    assert result.returncode == 0
+    entry = json.loads(result.stdout)[2]
+    assert entry["models"] == ["haiku", "sonnet"]
+    assert list(entry["aliases"]) == ["sonnet", "haiku"]
+
+
+def test_numeric_and_del_rendering_parity(script, base, tmp_path):
+    write_inbox(base, FIRST, {"id": "n", "body": {"x": "a\x7fb", "n": 1e-7}})
+    env = env_for(base, tmp_path)
+    result = run(script, "ls", env=env)
+    assert result.returncode == 0
+    assert result.stdout.endswith('{"x":"a\\\\u007fb","n":1E-7}\n')
+    result = run(script, "read", "n", env=env)
+    assert '"n": 1E-7' in result.stdout
+
+
+@pytest.mark.parametrize("raw, expected", [("1e-7", "1E-7"), ("1e-6", "0.000001"), ("1.2300e5", "1.2300E+5"), ("123e5", "1.23E+7"), ("-0.0", "-0.0"), ("1.0e0", "1.0")])
+def test_read_numeric_corpus_matches_jq(script, base, tmp_path, raw, expected):
+    (base / "inbox" / FIRST).write_text('{"id":"n","body":' + raw + '}')
+    result = run(script, "read", "n", env=env_for(base, tmp_path))
+    assert result.returncode == 0
+    assert '"body": ' + expected in result.stdout
