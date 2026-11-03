@@ -84,9 +84,7 @@ def test_longest_command_excludes_inbox_waiters_by_cmdline(waiter):
     )
     assert got == {"command": "pytest", "seconds": 1099}
     only = {k: samples[k] for k in (1, 2, 3, 4, 7, 8)}
-    assert (
-        longest_command(only, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=cmd.get) is None
-    )
+    assert longest_command(only, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=cmd.get) is None
 
 
 @pytest.mark.parametrize(
