@@ -2053,9 +2053,8 @@ def test_status_caps_oversized_strings_in_table_and_json(script, base, tmp_path)
 
 def test_status_json_non_finite_numbers_become_null(script, base, tmp_path):
     (base / "children.json").write_text(
-        '{"version":1,"updated_at":%s,"children":[{"name":"b","running":true,'
+        f'{{"version":1,"updated_at":{time.time()},"children":[{{"name":"b","running":true,'
         '"status":{"cpu_percent":NaN,"memory_bytes":Infinity,"activity_at":-Infinity}}]}'
-        % time.time()
     )
     r = run(script, "status", "--json", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
