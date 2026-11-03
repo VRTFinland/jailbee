@@ -91,3 +91,10 @@ def test_a_blockquote_line_is_not_absorbed_into_the_paragraph_above():
 def test_unwrapping_is_idempotent():
     once = unwrap("- an item\n  wrapped over\n  three lines")
     assert unwrap(once) == once
+
+
+def test_the_changelog_keeps_an_unreleased_heading_for_finalize():
+    # `make release` runs `changelog.py finalize`, which needs this exact line;
+    # without it the release aborts after the version bump.
+    lines = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+    assert _load().UNRELEASED in (ln.strip() for ln in lines)
