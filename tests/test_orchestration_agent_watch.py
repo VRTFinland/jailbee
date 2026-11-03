@@ -418,6 +418,8 @@ def test_agent_snapshot_recorded_or_exited_agent_is_dead(tmp_path, status_kwargs
     from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
     from tests.conftest import make_config
 
-    snap = agent_snapshot(make_config(tmp_path), "kid", AgentStatus(False, **status_kwargs), now=NOW)
+    snap = agent_snapshot(
+        make_config(tmp_path), "kid", AgentStatus(False, **status_kwargs), now=NOW
+    )
     assert snap["alive"] is False
     assert snap["state"] is None
