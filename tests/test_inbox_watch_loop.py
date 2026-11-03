@@ -17,12 +17,20 @@ def test_watcher_wakes_on_rename_quickly(tmp_path):
     watcher = InboxWatcher(inbox, poll=5)
     if watcher.mode != "inotify":
         pytest.skip("inotify unavailable")
-    timer = threading.Timer(0.2, os.rename, args=(source, inbox / "new.json"))
+    rename_started = threading.Event()
+
+    def publish():
+        rename_started.set()
+        os.rename(source, inbox / "new.json")
+
+    timer = threading.Timer(0.2, publish)
     try:
         timer.start()
         start = time.monotonic()
         watcher.wait(5)
-        assert time.monotonic() - start < 1.5
+        elapsed = time.monotonic() - start
+        assert rename_started.is_set()
+        assert 0.1 <= elapsed < 1.5
     finally:
         timer.join()
         watcher.close()
