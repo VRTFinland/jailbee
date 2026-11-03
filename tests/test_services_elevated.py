@@ -195,7 +195,7 @@ def test_refresh_restart_failure_and_resume_failure(refresh_setup):
     assert report.agent == "resume failed: boom"
 
 
-def test_refresh_before_resume_error_still_attempts_resume(refresh_setup):
+def test_refresh_before_resume_error_withholds_resume(refresh_setup):
     from jailbee.services.elevated import run_refresh
 
     cfg, incus, _, plan, _, _, _, resume = refresh_setup
@@ -206,9 +206,9 @@ def test_refresh_before_resume_error_still_attempts_resume(refresh_setup):
     report = run_refresh(
         cfg, incus, "box", plan, who="host", before_resume=fail, mirror_endpoint=None
     )
-    assert not report.ok and report.agent == "resume failed: watch failed"
+    assert not report.ok and "resume withheld: could not register agent supervision (watch failed)" in report.agent
     assert "db: prepared, restarted" in report.summary()
-    resume.assert_called_once()
+    resume.assert_not_called()
 
 
 def test_refresh_label_failure_resumes(refresh_setup):

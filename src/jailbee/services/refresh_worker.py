@@ -22,21 +22,37 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 
+def _deliver(cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str) -> int:
+    try:
+        try:
+            running = any(
+                r.get("name") == owner and r.get("status") == "Running"
+                for r in incus.list_containers()
+            )
+        except Exception:
+            running = False
+        item = InboxStatus(
+            version=1, id=new_host_id(), type="status", ref=ref,
+            state="done" if ok else "failed", detail=detail,
+        )
+        outbox.deliver(
+            incus, state.state_root(), owner, item, running=running,
+            uid=cfg.container_user.uid, now=datetime.now(UTC),
+        )
+        path.unlink(missing_ok=True)
+    except Exception as exc:
+        print(f"could not deliver refresh status: {exc}")
+        return 1
+    return 0 if ok else 1
+
+
 def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
     try:
         raw = path.read_bytes()
         if len(raw) > 300 * 1024:
             raise ValueError("job too large")
         job = json.loads(raw, object_pairs_hook=elevated._object)
-        if not isinstance(job, dict) or set(job) != {
-            "child_full",
-            "orchestrator_full",
-            "manifest_id",
-            "elevated",
-            "payload",
-            "names",
-            "force",
-        }:
+        if not isinstance(job, dict):
             raise ValueError("invalid job schema")
         child, owner, ref = (job[k] for k in ("child_full", "orchestrator_full", "manifest_id"))
         if any(
@@ -47,6 +63,12 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         if not isinstance(ref, str):
             raise ValueError("invalid manifest id")
         _checked_id(ref)
+    except Exception as exc:
+        print(f"invalid refresh job identity: {exc}")
+        return 1
+    try:
+        if set(job) != {"child_full", "orchestrator_full", "manifest_id", "elevated", "payload", "names", "force"}:
+            raise ValueError("invalid job schema")
         names = job["names"]
         if not isinstance(names, list) or not names or len(names) > 32:
             raise ValueError("invalid names")
@@ -56,8 +78,7 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         if plan.elevated != job["elevated"]:
             raise ValueError("elevation mismatch")
     except Exception as exc:
-        print(f"invalid refresh job: {exc}")
-        return 1
+        return _deliver(cfg, incus, path, owner, ref, ok=False, detail=f"invalid refresh job: {exc}")
 
     pid = os.getpid()
     claimed = False
@@ -147,6 +168,7 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
                 who=f"requested by orchestrator {short}",
                 resume_prompt_prefix=actions.child_preamble(short) + "\n\n",
                 before_resume=before_resume,
+                recovery_child=child.removeprefix(cfg.container_prefix + "-"),
                 mirror_endpoint=docker_daemon.mirror_endpoint_or_none(cfg, incus),
                 force=job["force"],
             )
@@ -163,33 +185,4 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
             except Exception as exc:
                 ok = False
                 detail += f"; could not release refresh job: {exc}"
-    try:
-        try:
-            running = any(
-                r.get("name") == owner and r.get("status") == "Running"
-                for r in incus.list_containers()
-            )
-        except Exception:
-            running = False
-        item = InboxStatus(
-            version=1,
-            id=new_host_id(),
-            type="status",
-            ref=ref,
-            state="done" if ok else "failed",
-            detail=detail,
-        )
-        outbox.deliver(
-            incus,
-            state.state_root(),
-            owner,
-            item,
-            running=running,
-            uid=cfg.container_user.uid,
-            now=datetime.now(UTC),
-        )
-        path.unlink(missing_ok=True)
-    except Exception as exc:
-        print(f"could not deliver refresh status: {exc}")
-        return 1
-    return 0 if ok else 1
+    return _deliver(cfg, incus, path, owner, ref, ok=ok, detail=detail)

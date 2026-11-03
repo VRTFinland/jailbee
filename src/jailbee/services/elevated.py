@@ -407,6 +407,7 @@ def run_refresh(
     who: str,
     resume_prompt_prefix: str = "",
     before_resume: Callable[[], None] | None = None,
+    recovery_child: str | None = None,
     mirror_endpoint: tuple[str, int] | None,
     on_progress: Callable[[str, str, str], None] | None = None,
     force: bool = False,
@@ -538,20 +539,26 @@ def run_refresh(
                 if before_resume is not None:
                     before_resume()
             except Exception as exc:
-                agent = f"resume failed: {_reason(exc)}"
-                ok = False
-            report = RefreshReport(
-                tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent
-            )
-            try:
-                error = resume_agent(
-                    cfg, incus, full, paused, resume_prompt_prefix + report.agent_text(who)
+                child = recovery_child or full
+                agent = (
+                    f"resume withheld: could not register agent supervision ({_reason(exc)}); "
+                    f"recovery: jailbee-inbox send restart --child {child} --agent-only "
+                    f"--resume {paused.session} --text 'Continue your task.'"
                 )
-            except Exception as exc:
-                error = _reason(exc)
-            if error:
-                agent = f"resume failed: {error}"
                 ok = False
+            else:
+                report = RefreshReport(
+                    tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent
+                )
+                try:
+                    error = resume_agent(
+                        cfg, incus, full, paused, resume_prompt_prefix + report.agent_text(who)
+                    )
+                except Exception as exc:
+                    error = _reason(exc)
+                if error:
+                    agent = f"resume failed: {error}"
+                    ok = False
     return RefreshReport(tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent)
 
 
