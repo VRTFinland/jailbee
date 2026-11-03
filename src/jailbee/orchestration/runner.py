@@ -5,6 +5,7 @@ Imported by `protocol`, so it must not import it.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,7 @@ from jailbee import litellm
 from jailbee.orchestration.runner_model import RUNNER_AGENTS as RUNNER_AGENTS
 from jailbee.orchestration.runner_model import RUNNER_TIERS as RUNNER_TIERS
 from jailbee.orchestration.runner_model import Runner as Runner
+from jailbee.orchestration.runner_model import model_tier
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -60,7 +62,7 @@ def runner_command(command: str, runner: Runner) -> str | None:
     if runner.profile:
         parts.append(f"-P {runner.profile}")
     if runner.model:
-        parts.append(f"--model {runner.model}")
+        parts.append(f"--model {shlex.quote(runner.model)}")
     return " ".join(p for p in parts if p)
 
 
@@ -99,6 +101,8 @@ def runner_problems(cfg: Config, incus: Incus, gcfg: GlobalConfig, runner: Runne
             "run `jailbee litellm up`)"
         ]
     tiers = profiles[name].get("tiers")
-    if runner.model and not (isinstance(tiers, dict) and runner.model in tiers):
-        return [f"LiteLLM profile `{name}` has no `{runner.model}` tier"]
+    if runner.model:
+        tier = model_tier(runner.model)
+        if not (isinstance(tiers, dict) and tier in tiers):
+            return [f"LiteLLM profile `{name}` has no `{tier}` tier"]
     return []

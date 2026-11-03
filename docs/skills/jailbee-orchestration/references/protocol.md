@@ -139,7 +139,10 @@ CLI: `jailbee-inbox send spawn [--branch fix/issue-12]
 [--new [--base main] | --ref REF | --pr N] [--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P] [--model M]] -` with the prompt on
 stdin (or `--text T`; `--file` only with an absolute path outside the repo).
 `--profile` and `--model` need `--agent`, and `--profile` needs
-`--agent claude-jb`. `jailbee-inbox runners [--json]` lists the runners you may name and what
+`--agent claude-jb`. Model tiers `fable`, `opus`, `sonnet`, and `haiku` may
+optionally carry the exact suffix `[1m]`; quote shell arguments such as
+`--model 'sonnet[1m]'`. LiteLLM profile validation uses the base tier.
+`jailbee-inbox runners [--json]` lists the runners you may name and what
 omitting one starts: `default: omit runner (<agent>)`, then one line per
 `claude` and per `claude-jb -P <profile>` with its models. The default agent is named only when
 known; otherwise it reads `unknown` and you simply omit `runner`.

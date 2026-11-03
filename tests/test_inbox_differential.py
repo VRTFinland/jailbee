@@ -94,6 +94,9 @@ CASES = [
 def normalize(text):
     text = text.replace("jailbee-inbox", "jailbee inbox")
     text = re.sub(r"(\w+)-\d{14}-[0-9a-f]{4}", r"\1-ID", text)
+    # Python help alone documents its intentional [1m] suffix extension.
+    text = text.replace("haiku (optional [1m])]; see `runners`.", "haiku]; see `runners`.")
+    text = text.replace("         Listed model tiers also accept the [1m] suffix.\n", "")
     return text.replace("JAILBEE_INBOX_INOTIFY=0 forces polling.\n", "")
 
 

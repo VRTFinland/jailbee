@@ -214,7 +214,7 @@ def parse_send(args: list[str]) -> SendRequest:
         require(not (r.profile or r.model), "--profile and --model need --agent")
     require(not r.profile or r.agent == "claude-jb", "--profile needs --agent claude-jb")
     require(
-        not r.model or r.model in {"fable", "opus", "sonnet", "haiku"},
+        not r.model or re.fullmatch(r"(?:fable|opus|sonnet|haiku)(?:\[1m\])?", r.model) is not None,
         "--model must be fable, opus, sonnet or haiku",
     )
     require(

@@ -221,7 +221,9 @@ jailbee-inbox send restart --child fix-issue-12 --default-runner --text "Try aga
 
 `--profile` and `--model` need `--agent`, and `--profile` needs `--agent
 claude-jb`; `--default-runner` is for `restart`
-only and excludes `--agent`.
+only and excludes `--agent`. A model tier may have the exact lowercase suffix
+`[1m]`, for example `--model 'opus[1m]'`; quote it to prevent shell globbing.
+For `claude-jb`, the profile must serve the base tier.
 
 A runner that cannot be honoured is `refused`, never replaced by the default.
 The detail is one of:
