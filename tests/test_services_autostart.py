@@ -173,9 +173,17 @@ def test_live_switch_defers_elevated_dependency_and_starts_safe_service(tmp_path
 
 
 def test_lineage_lookup_failure_aborts_before_prepare(tmp_path, mocker, make_cfg):
+    from jailbee.orchestration.labels import SPAWNED_BY
+
     cfg = make_cfg(tmp_path)
-    incus, _ = labels()
-    incus.config_get_checked.side_effect = IncusError("metadata unavailable")
+    incus, values = labels()
+
+    def checked(container, key):
+        if key == SPAWNED_BY:
+            raise IncusError("metadata unavailable")
+        return values.get(key)
+
+    incus.config_get_checked.side_effect = checked
     mocker.patch.object(
         container_app,
         "run_in_container",

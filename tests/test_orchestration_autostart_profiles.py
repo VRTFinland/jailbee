@@ -154,8 +154,15 @@ def test_profile_restart_reserves_queue_slot_before_setup_can_fail(make_cfg, tmp
 
 
 @pytest.mark.parametrize("kind", ["spawn", "restart"])
-@pytest.mark.parametrize("services", [["Bad"], ["a\n"], ["svc"] * 33])
-def test_manifest_rejects_invalid_service_selection(kind, services):
+@pytest.mark.parametrize(
+    "services,reason",
+    [
+        (["Bad"], "Value error, invalid service name: 'Bad'"),
+        (["a\n"], "Value error, invalid service name: 'a\\n'"),
+        (["svc"] * 33, "Value error, at most 32 services are allowed"),
+    ],
+)
+def test_manifest_rejects_invalid_service_selection(kind, services, reason):
     from tests.test_orchestration_lifecycle_ops import _restart
 
     raw = (_m() if kind == "spawn" else _restart()).model_dump(exclude_unset=True) | {
@@ -163,8 +170,9 @@ def test_manifest_rejects_invalid_service_selection(kind, services):
     }
     with pytest.raises(ValidationError) as exc:
         (SpawnManifest if kind == "spawn" else type(_restart())).model_validate(raw)
-    assert any("services" in error["loc"] for error in exc.value.errors())
-    assert any(error["msg"] for error in exc.value.errors() if "services" in error["loc"])
+    assert any(
+        error["loc"] == ("services",) and error["msg"] == reason for error in exc.value.errors()
+    )
 
 
 @pytest.mark.parametrize("services", [None, [], ["db", "web"]])

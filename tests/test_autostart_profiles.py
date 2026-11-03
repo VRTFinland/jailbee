@@ -270,6 +270,47 @@ def test_services_only_switch_runs_service_hook(make_cfg, tmp_path, mocker):
     run.assert_not_called()
 
 
+def test_switch_to_all_uses_container_service_graph(make_cfg, tmp_path, mocker):
+    import json
+
+    from jailbee.autostart_profiles import PROFILE_KEY, switch_profile
+    from jailbee.incus import ExecResult
+    from jailbee.services.graph import plan_payload
+
+    cfg = make_cfg(
+        tmp_path,
+        services={"db": {"run": "db"}},
+        autostart={
+            "on_start": [{"stage": "setup"}],
+            "profiles": {
+                "light": {"stages": ["setup"], "services": ["db"]},
+                "full": "all",
+            },
+            "default_profile": "light",
+        },
+    )
+    container_cfg = make_cfg(tmp_path, services={"db": {"run": "db"}, "web": {"run": "web"}})
+    data = plan_payload(container_cfg.services, [], "start", step_timeout=30)
+    incus, state = state_incus(mocker, {PROFILE_KEY: "light"})
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", return_value=None)
+    mocker.patch(
+        "jailbee.container_app.run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
+    run = mocker.patch("jailbee.autostart.run_stage")
+    agents = mocker.patch("jailbee.autostart.run_autostart")
+
+    result = switch_profile(cfg, incus, "c", "full", run=True)
+
+    assert not result.deferred
+    assert run.call_args.args[3].chains[0].steps[0].run.endswith("start db web")
+    agents.assert_not_called()
+
+
 def test_switch_to_heavier_runs_missing_on_create_then_new_on_start(make_cfg, tmp_path, mocker):
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY, switch_profile

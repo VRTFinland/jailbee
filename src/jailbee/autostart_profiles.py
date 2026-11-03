@@ -122,19 +122,19 @@ def switch_profile(
     previous = resolve_profile(cfg, incus, container)
     override_services = decode_names(incus.config_get(container, SERVICES_KEY))
 
-    def profile_services(profile: str | None) -> set[str]:
+    def profile_services(profile: str | None) -> frozenset[str] | None:
         selection = cfg.autostart.profiles.get(profile) if profile else None
-        names = (
-            selection.services
-            if selection is not None and selection != "all"
-            else list(cfg.services)
-        )
-        from jailbee.services.graph import with_dependencies
+        if selection is None or selection == "all" or selection.services is None:
+            return None
+        return frozenset(selection.services)
 
-        return with_dependencies(cfg.services, cfg.services if names is None else names)
-
-    services_added = override_services is None and bool(
-        profile_services(name) - profile_services(previous)
+    old_services = profile_services(previous)
+    new_services = profile_services(name)
+    # The container's service graph may differ from the host's graph.
+    services_added = (
+        override_services is None
+        and new_services != frozenset()
+        and new_services != old_services
     )
     incus.config_set(container, PROFILE_KEY, name)
     running = any(
