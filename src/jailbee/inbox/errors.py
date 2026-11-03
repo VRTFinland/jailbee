@@ -1,4 +1,4 @@
-class InboxUsage(Exception):
+class InboxUsage(Exception):  # noqa: N818 - public interface
     """Invalid inbox input."""
 
 
