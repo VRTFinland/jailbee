@@ -2,6 +2,7 @@
 
 import copy
 import json
+from datetime import UTC
 
 import pytest
 
@@ -11,24 +12,30 @@ from jailbee.services import graph
 from jailbee.services.elevated import Plan, RefreshError, host_policy, orchestrator_policy
 from tests.conftest import make_config
 
-
 SID = "11111111-1111-1111-1111-111111111111"
 
 
 def test_pause_no_agent(tmp_path, mocker):
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from jailbee.services import elevated
+
     mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=None)
     kill = mocker.patch("jailbee.tmux.kill_window")
-    assert elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(timezone.utc)) is None
+    assert (
+        elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC))
+        is None
+    )
     kill.assert_not_called()
 
 
 @pytest.fixture
 def paused_setup(tmp_path, mocker):
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from jailbee.orchestration import agent_watch
     from jailbee.services import elevated
+
     cfg, incus = make_config(tmp_path), mocker.Mock()
     incus.config_get_checked.return_value = None
     status = agent_watch.AgentStatus(True, "claude", pid=42, proc_start=77)
@@ -39,7 +46,7 @@ def paused_setup(tmp_path, mocker):
     adapter.resume_args.return_value = "--resume"
     adapter.session_exists.return_value = True
     kill = mocker.patch("jailbee.tmux.kill_window")
-    return cfg, incus, current, idle, adapter, kill, datetime.now(timezone.utc), elevated
+    return cfg, incus, current, idle, adapter, kill, datetime.now(UTC), elevated
 
 
 def test_pause_kills_window_and_remembers_session(paused_setup):
@@ -53,9 +60,12 @@ def test_pause_preserves_runner_and_checked_read_failure(paused_setup):
     from jailbee.incus import IncusError
     from jailbee.orchestration import labels
     from jailbee.orchestration.runner_model import Runner
+
     cfg, incus, _, _, _, kill, now, elevated = paused_setup
     runner = Runner(agent="claude", model="sonnet")
-    incus.config_get_checked.side_effect = lambda _, key: runner.to_label() if key == labels.RUNNER else None
+    incus.config_get_checked.side_effect = lambda _, key: (
+        runner.to_label() if key == labels.RUNNER else None
+    )
     assert elevated.pause_agent(cfg, incus, "box", now=now).runner == runner
     kill.reset_mock()
     incus.config_get_checked.side_effect = IncusError("transport")
@@ -66,9 +76,14 @@ def test_pause_preserves_runner_and_checked_read_failure(paused_setup):
 
 def test_pause_falls_back_to_recorded_history(paused_setup):
     from jailbee.orchestration import labels
+
     cfg, incus, current, _, _, _, now, elevated = paused_setup
     current.return_value = None
-    incus.config_get_checked.side_effect = lambda _, key: json.dumps(["00000000-0000-0000-0000-000000000000", SID]) if key == labels.AGENT_SESSIONS else None
+    incus.config_get_checked.side_effect = lambda _, key: (
+        json.dumps(["00000000-0000-0000-0000-000000000000", SID])
+        if key == labels.AGENT_SESSIONS
+        else None
+    )
     assert elevated.pause_agent(cfg, incus, "box", now=now).session == SID
 
 
@@ -103,7 +118,7 @@ def test_pause_refuses_unresumable_session(paused_setup, failure):
         adapter.resume_args.return_value = None
     else:
         adapter.session_exists.return_value = False
-    with pytest.raises(RefreshError, match="resum|transcript"):
+    with pytest.raises(RefreshError, match=r"resum|transcript"):
         elevated.pause_agent(cfg, incus, "box", now=now)
     kill.assert_not_called()
 
@@ -113,24 +128,33 @@ def test_resume_passes_session_and_runner(paused_setup, mocker):
     relaunch = mocker.patch("jailbee.orchestration.agent_session.relaunch")
     paused = elevated.PausedAgent("claude", SID, None)
     assert elevated.resume_agent(cfg, incus, "box", paused, "prompt") is None
-    relaunch.assert_called_once_with(cfg, incus, "box", "prompt", runner=None, old_agent="claude", resume=SID)
+    relaunch.assert_called_once_with(
+        cfg, incus, "box", "prompt", runner=None, old_agent="claude", resume=SID
+    )
     relaunch.side_effect = RuntimeError("failed")
     assert elevated.resume_agent(cfg, incus, "box", paused, "prompt") == "failed"
 
 
 def test_foreign_agents_excludes_prompted(paused_setup, mocker):
+    from types import SimpleNamespace
+
     from jailbee import agent_status, procstat
     from jailbee.orchestration.agent_watch import AgentStatus
-    from types import SimpleNamespace
+
     cfg, incus, _, _, _, _, _, elevated = paused_setup
     status = AgentStatus(True, "claude", pid=42, proc_start=77)
     incus.list_containers.return_value = [{"name": "box", "state": {"pid": 10}}]
-    sessions = [SimpleNamespace(pid=42, proc_start=77, agent="claude", updated_at=None), SimpleNamespace(pid=43, proc_start=78, agent="claude", updated_at=None)]
+    sessions = [
+        SimpleNamespace(pid=42, proc_start=77, agent="claude", updated_at=None),
+        SimpleNamespace(pid=43, proc_start=78, agent="claude", updated_at=None),
+    ]
     mocker.patch("jailbee.lifecycle.agent_homes", return_value=())
     mocker.patch.object(agent_status, "read_sessions", return_value={"box": sessions})
     mocker.patch.object(procstat, "read_container_pids", return_value=[142, 143])
-    mocker.patch.object(procstat, "read_process", side_effect=lambda p: SimpleNamespace(starttime=p-65))
-    mocker.patch.object(procstat, "read_nspid", side_effect=lambda p: p-100)
+    mocker.patch.object(
+        procstat, "read_process", side_effect=lambda p: SimpleNamespace(starttime=p - 65)
+    )
+    mocker.patch.object(procstat, "read_nspid", side_effect=lambda p: p - 100)
     assert elevated.foreign_agents(cfg, incus, "box", status) == ["claude (pid 43)"]
 
 

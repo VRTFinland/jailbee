@@ -43,7 +43,10 @@ def pause_agent(
     if status is None or not status.alive:
         return None
     try:
-        config = {key: incus.config_get_checked(full, key) or "" for key in (labels.AGENT_SESSIONS, labels.RUNNER)}
+        config = {
+            key: incus.config_get_checked(full, key) or ""
+            for key in (labels.AGENT_SESSIONS, labels.RUNNER)
+        }
     except IncusError as exc:
         raise RefreshError(f"cannot read agent configuration: {exc}") from exc
     session = agent_watch.current_session(cfg, full, status)
@@ -51,9 +54,15 @@ def pause_agent(
         history = labels.sessions_of(config)
         session = history[-1] if history else None
     if not isinstance(session, str) or not labels.valid_session_id(session):
-        raise RefreshError(f"the agent in {full} is running but its session id is unknown, so it could not be resumed — refresh refused")
+        raise RefreshError(
+            f"the agent in {full} is running but its session id is unknown, "
+            "so it could not be resumed — refresh refused"
+        )
     if not force and agent_watch.idle_signal(cfg, full, status, now=now) is None:
-        raise RefreshError(f"the agent in {full} is working (not idle); refresh again when it waits for input, or pass force if it has said its work is paused")
+        raise RefreshError(
+            f"the agent in {full} is working (not idle); refresh again when it waits for input, "
+            "or pass force if it has said its work is paused"
+        )
     try:
         adapter = get_adapter(status.agent)
         if adapter.resume_args(session) is None:
@@ -67,17 +76,29 @@ def pause_agent(
     return PausedAgent(status.agent, session, runner)
 
 
-def resume_agent(cfg: "Config", incus: "Incus", full: str, paused: PausedAgent, prompt: str) -> str | None:
+def resume_agent(
+    cfg: "Config", incus: "Incus", full: str, paused: PausedAgent, prompt: str
+) -> str | None:
     from jailbee.orchestration import agent_session
 
     try:
-        agent_session.relaunch(cfg, incus, full, prompt, runner=paused.runner, old_agent=paused.agent, resume=paused.session)
+        agent_session.relaunch(
+            cfg,
+            incus,
+            full,
+            prompt,
+            runner=paused.runner,
+            old_agent=paused.agent,
+            resume=paused.session,
+        )
     except Exception as exc:
         return str(exc)
     return None
 
 
-def foreign_agents(cfg: "Config", incus: "Incus", full: str, prompted: "AgentStatus | None") -> list[str]:
+def foreign_agents(
+    cfg: "Config", incus: "Incus", full: str, prompted: "AgentStatus | None"
+) -> list[str]:
     from jailbee import agent_status, lifecycle, procstat
     from jailbee.incus import IncusError
 
@@ -85,12 +106,14 @@ def foreign_agents(cfg: "Config", incus: "Incus", full: str, prompted: "AgentSta
         containers = incus.list_containers()
     except (IncusError, ValueError) as exc:
         raise RefreshError(f"cannot inspect container processes: {exc}") from exc
-    item = next ( (c for c in containers if c.get("name") == full), None)
+    item = next((c for c in containers if c.get("name") == full), None)
     state = item.get("state") if item else None
     pid = state.get("pid") if isinstance(state, dict) else None
     if type(pid) is not int or pid <= 0:
         raise RefreshError(f"cannot inspect container processes in {full}")
-    sessions = agent_status._one_per_process(agent_status.read_sessions(lifecycle.agent_homes(cfg, [full])).get(full, ()))
+    sessions = agent_status._one_per_process(
+        agent_status.read_sessions(lifecycle.agent_homes(cfg, [full])).get(full, ())
+    )
     by_start = {s.proc_start for s in sessions}
     live = set()
     for host_pid in procstat.read_container_pids(pid, full):
@@ -99,7 +122,11 @@ def foreign_agents(cfg: "Config", incus: "Incus", full: str, prompted: "AgentSta
             inner = procstat.read_nspid(host_pid)
             live.add((inner, sample.starttime))
     excluded = (prompted.pid, prompted.proc_start) if prompted and prompted.alive else None
-    return [f"{s.agent} (pid {s.pid})" for s in sessions if (s.pid, s.proc_start) in live and (s.pid, s.proc_start) != excluded]
+    return [
+        f"{s.agent} (pid {s.pid})"
+        for s in sessions
+        if (s.pid, s.proc_start) in live and (s.pid, s.proc_start) != excluded
+    ]
 
 
 class _Strict(BaseModel):
