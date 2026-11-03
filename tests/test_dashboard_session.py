@@ -1007,7 +1007,12 @@ def test_toggle_refresh(mocker, tmp_path, enabled):
     assert entry.label == f"Allow refresh: {'on' if enabled else 'off'}"
     session.submit_picker(picker, entry)
     assert quiet.call_args.args[1] == [
-        "orchestrate", "grant", "--deny" if enabled else "--allow", "refresh", "--", "alpha-one"
+        "orchestrate",
+        "grant",
+        "--deny" if enabled else "--allow",
+        "refresh",
+        "--",
+        "alpha-one",
     ]
 
 
