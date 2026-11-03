@@ -132,9 +132,7 @@ def switch_profile(
     new_services = profile_services(name)
     # The container's service graph may differ from the host's graph.
     services_added = (
-        override_services is None
-        and new_services != frozenset()
-        and new_services != old_services
+        override_services is None and new_services != frozenset() and new_services != old_services
     )
     incus.config_set(container, PROFILE_KEY, name)
     running = any(
