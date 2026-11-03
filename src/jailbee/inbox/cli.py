@@ -461,30 +461,30 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
     index = 0
     while index < len(args):
         option = args[index]
-        if option not in ('--timeout', '--wake-on', '--quiet-after'):
+        if option not in ("--timeout", "--wake-on", "--quiet-after"):
             raise InboxUsage(f"unknown argument '{option}' (see --help)")
         if index + 1 == len(args):
-            raise InboxUsage(f'{option} needs a value')
+            raise InboxUsage(f"{option} needs a value")
         value = args[index + 1]
-        if option == '--timeout':
+        if option == "--timeout":
             timeout = parse_timeout(value)
-        elif option == '--quiet-after':
+        elif option == "--quiet-after":
             quiet = parse_duration(value)
             if not quiet:
-                raise InboxUsage('--quiet-after must be positive')
+                raise InboxUsage("--quiet-after must be positive")
         else:
-            tokens = value.split(',')
+            tokens = value.split(",")
             if any(token not in WAKE_TOKENS for token in tokens):
-                raise InboxUsage('--wake-on needs comma-separated message kinds or status states')
+                raise InboxUsage("--wake-on needs comma-separated message kinds or status states")
             wake = frozenset(tokens)
         index += 2
     settings.inbox.mkdir(parents=True, exist_ok=True)
-    fd = os.open(settings.base / 'wait.lock', os.O_WRONLY | os.O_CREAT, 0o644)
+    fd = os.open(settings.base / "wait.lock", os.O_WRONLY | os.O_CREAT, 0o644)
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise InboxUsage('another process is already waiting in this container') from None
+            raise InboxUsage("another process is already waiting in this container") from None
         rc, line = run_wait(settings, timeout=timeout, wake=wake, quiet=quiet)
         if line is not None:
             print(line)

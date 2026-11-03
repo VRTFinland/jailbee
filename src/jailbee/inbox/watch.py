@@ -11,9 +11,9 @@ from typing import Literal
 class InboxWatcher:
     def __init__(self, path: Path, *, poll: float, inotify: bool = True) -> None:
         self.poll = poll
-        self.mode: Literal['inotify', 'poll'] = 'poll'
+        self.mode: Literal["inotify", "poll"] = "poll"
         self.fd = -1
-        if not inotify or os.environ.get('JAILBEE_INBOX_INOTIFY') == '0':
+        if not inotify or os.environ.get("JAILBEE_INBOX_INOTIFY") == "0":
             return
         try:
             libc = ctypes.CDLL(None, use_errno=True)
@@ -24,12 +24,12 @@ class InboxWatcher:
             if libc.inotify_add_watch(fd, os.fsencode(path), 0x8 | 0x80) < 0:
                 self.close()
                 return
-            self.mode = 'inotify'
+            self.mode = "inotify"
         except (AttributeError, OSError):
             self.close()
 
     def wait(self, timeout: float) -> None:
-        if self.mode == 'poll':
+        if self.mode == "poll":
             time.sleep(min(self.poll, timeout))
             return
         if select.select([self.fd], [], [], timeout)[0]:

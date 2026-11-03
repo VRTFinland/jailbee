@@ -161,8 +161,12 @@ def settle(
 
 
 def run_wait(
-    settings: Settings, *, timeout: int | None, wake: frozenset[str] | None,
-    quiet: int, status_ref: str | None = None,
+    settings: Settings,
+    *,
+    timeout: int | None,
+    wake: frozenset[str] | None,
+    quiet: int,
+    status_ref: str | None = None,
     watcher_factory: Callable[..., InboxWatcher] = InboxWatcher,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[int, str | None]:
