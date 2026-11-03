@@ -293,9 +293,9 @@ accepted plan may contain child-edited commands: the orchestrator authorizes
 their execution within the grant and repository cap. Restricted SSH cannot run
 host service refresh, even with network and mount unlocks.
 
-An elevated refresh requires a known agent session and an idle agent, pauses it,
-restores the network and mounts, then resumes the same session, even if prepare
-failed. Unknown agent state or session, insufficient rights, a busy child or a
+If a managed agent is running, an elevated refresh requires its known session and
+idle state, pauses it, restores the network and mounts, then resumes the same
+session, even if prepare failed. Unknown agent state or session, insufficient rights, a busy child or a
 foreign live agent causes refusal. Use `--force` only after the child confirms
 its work is paused or stopped; it bypasses only the idle check. It never permits
 interrupting a working child. On the host `--yes` only consents to foreign
