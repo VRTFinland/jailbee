@@ -110,8 +110,8 @@ def enabled_agent_specs(cfg: Config) -> list[AgentSpec]:
     `_attach_tmux` selects the last generated launch step's window by name
     (`tmux.select_window`), so whichever spec this function orders last is
     the one `jailbee tmux` lands in — not tmux's own creation-order
-    default. Later attaches keep the window the user detached from
-    (`tmux.ever_attached`) and never consult this order at all.
+    default. Later attaches return to the window the user was last on
+    (`tmux.landing_window`) and never consult this order at all.
 
     A single sorted pass over `cfg.agents`, keyed on `n == "claude"` to put
     claude at the end, rather than one pass for the other agents plus a

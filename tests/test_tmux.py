@@ -172,41 +172,57 @@ def test_select_window_returns_false_on_missing():
     assert select_window(incus, "c1", "claude") is False
 
 
-def test_ever_attached_false_when_never_attached():
-    from jailbee.tmux import ever_attached
+def test_landing_window_returns_the_window_id_tmux_prints():
+    from jailbee.tmux import landing_window
+
+    incus = MagicMock()
+    incus.exec.return_value = "@3\n"
+    assert landing_window(incus, "c1") == "@3"
+    script = incus.exec.call_args.args[1][-1]
+    assert "@jailbee_window" in script
+    assert "session_last_attached" in script
+
+
+def test_landing_window_none_when_nothing_remembered():
+    from jailbee.tmux import landing_window
 
     incus = MagicMock()
     incus.exec.return_value = "\n"
-    assert ever_attached(incus, "c1") is False
-    args = " ".join(incus.exec.call_args.args[1])
-    assert "display-message" in args
-    assert "session_last_attached" in args
-    assert "autostart" in args
+    assert landing_window(incus, "c1") is None
 
 
-def test_ever_attached_true_when_a_client_has_attached():
-    from jailbee.tmux import ever_attached
+def test_landing_window_rejects_anything_but_a_window_id():
+    from jailbee.tmux import landing_window
 
     incus = MagicMock()
-    incus.exec.return_value = "1789666104\n"
-    assert ever_attached(incus, "c1") is True
+    incus.exec.return_value = "claude; kill-server\n"
+    assert landing_window(incus, "c1") is None
 
 
-def test_ever_attached_false_on_zero_timestamp():
-    """Some tmux builds report `0` rather than an empty string."""
-    from jailbee.tmux import ever_attached
-
-    incus = MagicMock()
-    incus.exec.return_value = "0\n"
-    assert ever_attached(incus, "c1") is False
-
-
-def test_ever_attached_false_when_session_missing():
-    from jailbee.tmux import ever_attached
+def test_landing_window_none_on_exec_error():
+    from jailbee.tmux import landing_window
 
     incus = MagicMock()
     incus.exec.side_effect = IncusError("can't find session: autostart")
-    assert ever_attached(incus, "c1") is False
+    assert landing_window(incus, "c1") is None
+
+
+def test_grouped_attach_argv_without_window():
+    from jailbee.tmux import grouped_attach_argv
+
+    argv = grouped_attach_argv(None)
+    assert argv[:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert ["set-option", "destroy-unattached", "on"] == argv[5:8]
+    assert argv[9:11] == ["set-hook", "session-window-changed"]
+    assert "@jailbee_window #{window_id}" in argv[11]
+    assert "select-window" not in argv
+
+
+def test_grouped_attach_argv_selects_window_last():
+    from jailbee.tmux import grouped_attach_argv
+
+    argv = grouped_attach_argv(":=claude")
+    assert argv[-4:] == [";", "select-window", "-t", ":=claude"]
 
 
 def test_sanitize_window_name():

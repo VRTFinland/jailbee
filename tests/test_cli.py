@@ -1592,8 +1592,9 @@ def test_tmux_command_attaches_to_session(mocker):
     from jailbee.cli import app
 
     cfg = mocker.MagicMock()
-    # No autostart agents, so select_window isn't called.
+    # No autostart agents and nothing remembered: no window is selected.
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.landing_window", return_value=None)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
@@ -1609,9 +1610,8 @@ def test_tmux_command_attaches_to_session(mocker):
     incus.exec_interactive.assert_called_once()
     container_arg, cmd_arg = incus.exec_interactive.call_args.args
     assert container_arg == "test-feat"
-    cmd_str = " ".join(cmd_arg)
-    assert "tmux attach" in cmd_str
-    assert "autostart" in cmd_str
+    assert cmd_arg[:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert "select-window" not in cmd_arg
     # Routed through `incus exec --user`, not `sudo -i`, so user-defined
     # container.env entries on the base profile survive into the tmux
     # session. HOME must be passed explicitly (incus exec --user UID does
@@ -1640,7 +1640,7 @@ def test_tmux_command_creates_session_if_missing(mocker):
     incus.exec_interactive.return_value = 0
 
     # First exec call (has-session check) raises; subsequent creation calls succeed.
-    incus.exec.side_effect = [IncusError("no session"), "", "", ""]
+    incus.exec.side_effect = [IncusError("no session"), "", "", "", ""]
     mocker.patch(
         "jailbee.cli._resolve_attachable",
         return_value=(incus, "test-feat"),
@@ -1705,13 +1705,13 @@ def test_tmux_command_focuses_claude_window_on_the_first_attach(mocker):
     result = runner.invoke(app, ["tmux", "test-feat"])
 
     assert result.exit_code == 0, result.stdout
-    exec_calls = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
-    assert any("select-window" in c and "autostart:=claude" in c for c in exec_calls)
+    argv = incus.exec_interactive.call_args.args[1]
+    assert argv[-3:] == ["select-window", "-t", ":=claude"]
 
 
 def test_tmux_command_keeps_the_window_you_detached_from(mocker):
-    """Once the session has been attached to, tmux's own current window —
-    whichever the user was last in — wins over the agent-window default."""
+    """Once a client has used the session, the window it was last on —
+    which `landing_window` reports — wins over the agent-window default."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
@@ -1725,7 +1725,7 @@ def test_tmux_command_keeps_the_window_you_detached_from(mocker):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.exec_interactive.return_value = 0
-    incus.exec.return_value = "1789666104"
+    incus.exec.return_value = "@2"
     mocker.patch(
         "jailbee.cli._resolve_attachable",
         return_value=(incus, "test-feat"),
@@ -1735,9 +1735,8 @@ def test_tmux_command_keeps_the_window_you_detached_from(mocker):
     result = runner.invoke(app, ["tmux", "test-feat"])
 
     assert result.exit_code == 0, result.stdout
-    exec_calls = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
-    assert not any("select-window" in c for c in exec_calls)
-    incus.exec_interactive.assert_called_once()
+    argv = incus.exec_interactive.call_args.args[1]
+    assert argv[-3:] == ["select-window", "-t", "@2"]
 
 
 def test_tmux_waits_for_in_flight_container(mocker):
@@ -11123,12 +11122,46 @@ def test_attach_shell_falls_back_to_a_known_term(mocker, monkeypatch):
     assert env["HOME"] == "/home/dev"
 
 
+def _attach_tmux_rig(mocker, *, remembered, steps):
+    from jailbee import cli
+
+    incus = mocker.MagicMock()
+    incus.exec_interactive.return_value = 0
+    mocker.patch("jailbee.terminfo.terminal_env", return_value={})
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/r")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.enable_terminal_features")
+    mocker.patch("jailbee.tmux.landing_window", return_value=remembered)
+    mocker.patch(
+        "jailbee.autostart.agent_autostart_steps",
+        return_value=[mocker.MagicMock(name="s") for _ in steps],
+    )
+    import jailbee.autostart as autostart_mod
+
+    for step, name in zip(autostart_mod.agent_autostart_steps.return_value, steps, strict=True):
+        step.name = name
+    cli._attach_tmux(mocker.MagicMock(), incus, "c1")
+    return incus.exec_interactive.call_args.args[1]
+
+
+def test_attach_tmux_first_attach_lands_on_last_agent_window(mocker):
+    argv = _attach_tmux_rig(mocker, remembered=None, steps=["codex", "claude"])
+    assert argv[:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert argv[-3:] == ["select-window", "-t", ":=claude"]
+
+
+def test_attach_tmux_returns_to_the_remembered_window(mocker):
+    argv = _attach_tmux_rig(mocker, remembered="@4", steps=["claude"])
+    assert argv[-3:] == ["select-window", "-t", "@4"]
+
+
 def test_attach_tmux_falls_back_to_a_known_term_and_enables_features(mocker, monkeypatch):
     from jailbee import cli
 
     incus = _unknown_term_incus(mocker, monkeypatch)
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.landing_window", return_value=None)
     features = mocker.patch("jailbee.tmux.enable_terminal_features")
     cli._attach_tmux(mocker.MagicMock(), incus, "c1")
     features.assert_called_once_with(incus, "c1")

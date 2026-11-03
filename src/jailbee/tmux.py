@@ -199,33 +199,76 @@ def select_window(incus: Incus, container: str, window: str) -> bool:
     return True
 
 
-def ever_attached(incus: Incus, container: str) -> bool:
-    """True once any client has attached to the autostart session.
+LANDING_OPTION = "@jailbee_window"
+"""Autostart-session option holding the window id the last client was on."""
 
-    tmux itself remembers which window a session was on when the last
-    client detached, and restores it on the next attach. `_attach_tmux`
-    overrides that with :func:`select_window` only while this returns
-    False, so the agent window wins on the first attach — where the
-    current window is still the empty window 0, every step window having
-    been created with `-d` (see :func:`_new_window`) — and the window the
-    user actually left wins on every attach after that.
+_WINDOW_ID = re.compile(r"@[0-9]+")
 
-    `#{session_last_attached}` is empty on a session nobody has attached
-    to yet; `"0"` is accepted as the same answer because not every tmux
-    build leaves the format empty. Best-effort like
-    :func:`select_window`: a missing session or a tmux that does not know
-    the format reads as "never attached", which only restores the old
-    unconditional focus.
+# Run by every grouped session whenever its current window changes, so the
+# autostart session remembers it. `client-detached` would be the obvious hook,
+# but `destroy-unattached` removes the grouped session before it can run.
+# `run-shell` (not `set-option -F`) because only it expands `#{window_id}`
+# in the grouped session's own context.
+_REMEMBER_HOOK = f'run-shell -b "tmux set-option -t {SESSION_NAME} {LANDING_OPTION} #{{window_id}}"'
+
+
+def landing_window(incus: Incus, container: str) -> str | None:
+    """The window id a new attach should land on, or None for "no opinion".
+
+    The remembered window (`LANDING_OPTION`) while it still exists; else,
+    on a session a client attached to directly before grouped attaches
+    existed, the autostart session's own current window (the one that
+    client detached from). None on a session nobody has used yet — the
+    caller then picks the agent window — and on any error, which only
+    costs the focus hint.
+
+    `#{session_last_attached}` is empty on a never-attached session;
+    `"0"` is accepted as the same answer because not every tmux build
+    leaves the format empty.
     """
+    script = (
+        f"w=$(tmux show-options -qv -t {SESSION_NAME} {LANDING_OPTION}); "
+        f'if [ -n "$w" ] && tmux list-windows -t {SESSION_NAME} -F "#{{window_id}}" '
+        f'| grep -Fxq -- "$w"; then printf %s "$w"; exit 0; fi; '
+        f"a=$(tmux display-message -p -t {SESSION_NAME} '#{{session_last_attached}}'); "
+        f'if [ -n "$a" ] && [ "$a" != 0 ]; then '
+        f"tmux display-message -p -t {SESSION_NAME} '#{{window_id}}'; fi"
+    )
     try:
-        out = incus.exec(
-            container,
-            _runuser(f"tmux display-message -p -t {SESSION_NAME} '#{{session_last_attached}}'"),
-        )
+        out = incus.exec(container, _runuser(script))
     except IncusError:
-        return False
-    stamp = out.strip()
-    return bool(stamp) and stamp != "0"
+        return None
+    window = out.strip() if isinstance(out, str) else ""
+    return window if _WINDOW_ID.fullmatch(window) else None
+
+
+def grouped_attach_argv(window: str | None) -> list[str]:
+    """`tmux` argv that attaches through a new session grouped with autostart.
+
+    Each attach gets its own session sharing the autostart windows, so
+    two clients (the dashboard and a terminal, say) each keep their own
+    current window instead of dragging each other along. The grouped
+    session is destroyed when its client detaches, so none accumulate.
+    A new grouped session starts on window 0, hence the explicit
+    `select-window` last, after the hook is in place to record it.
+    """
+    argv = [
+        "tmux",
+        "new-session",
+        "-t",
+        SESSION_NAME,
+        ";",
+        "set-option",
+        "destroy-unattached",
+        "on",
+        ";",
+        "set-hook",
+        "session-window-changed",
+        _REMEMBER_HOOK,
+    ]
+    if window is not None:
+        argv += [";", "select-window", "-t", window]
+    return argv
 
 
 def set_server_environment(incus: Incus, container: str, env: dict[str, str | None]) -> None:

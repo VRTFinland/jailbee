@@ -115,7 +115,12 @@ def attach_tmux(incus: Incus, name: str) -> int:
     autostart was the lost repo's config.
     """
     from jailbee.terminfo import terminal_env
-    from jailbee.tmux import SESSION_NAME, enable_terminal_features, ensure_session
+    from jailbee.tmux import (
+        enable_terminal_features,
+        ensure_session,
+        grouped_attach_argv,
+        landing_window,
+    )
 
     ensure_session(incus, name, start_dir=_repo_dir(incus, name))
     enable_terminal_features(incus, name)
@@ -124,7 +129,7 @@ def attach_tmux(incus: Incus, name: str) -> int:
     env.update(terminal_env(incus, name, uid=uid, gid=gid, home=env["HOME"], environ=os.environ))
     return incus.exec_interactive(
         name,
-        ["tmux", "attach", "-t", SESSION_NAME],
+        grouped_attach_argv(landing_window(incus, name)),
         uid=uid,
         gid=gid,
         env=env,

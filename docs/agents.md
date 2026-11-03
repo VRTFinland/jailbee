@@ -105,18 +105,24 @@ is just an ordinary step. Generated steps normally follow your own
 `on_start` steps, but `--no-wait` or an already-deferred `on_create` changes
 the insertion point to the computed hand-off boundary.
 
-Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
-on depends on whether you have been in the session before:
+Every attach (`jailbee tmux`, `--attach tmux`, or the dashboard) opens its
+own tmux session grouped with `autostart` (`tmux new-session -t autostart`).
+The windows are shared, but each attached terminal has its own current
+window, so the dashboard and a second terminal no longer pull each other
+from window to window. The grouped session disappears when you detach.
 
-- **The first attach** tries to select a window **by name** — the last
+Which window an attach lands on depends on whether you have been in the
+session before:
+
+- **The first attach** selects a window **by name** — the last
   *autostarting* agent (one with `autostart: true`), `claude` sorted last
-  among them. If that window does not exist yet or its launch failed,
-  attach falls back to tmux's current window. Stage position controls when
-  the window becomes available, not the preferred agent's name.
-- **Every attach after that** lands on the window you detached from. tmux
-  tracks that itself; jailbee simply stops overriding it once
-  `#{session_last_attached}` says a client has been there. Switch to `codex`,
-  detach, and the next `jailbee tmux` puts you back in `codex`.
+  among them. If that window does not exist yet or its launch failed, the
+  attach stays on window 0. Stage position controls when the window becomes
+  available, not the preferred agent's name.
+- **Every attach after that** lands on the window you were last on. Each
+  grouped session records its current window in the `autostart` session's
+  `@jailbee_window` option whenever it changes. Switch to `codex`, detach,
+  and the next `jailbee tmux` puts you back in `codex`.
 
 Restarting the container resets this — the tmux server dies with it, so the
 next attach is a first attach again and lands on the agent window.

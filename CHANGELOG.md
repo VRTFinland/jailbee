@@ -70,6 +70,8 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee tmux` and the dashboard attach through their own tmux session grouped with `autostart` (`tmux new-session -t autostart`), so each attached terminal keeps its own current window. The grouped session is removed on detach, and the next attach returns to the window last used.
+
 - **Child containers message sparsely.** The child skill and spawn preamble tell
   children to message their orchestrator only when it must act or decide
   (question, blocked, scope change, done), not with progress notes that each

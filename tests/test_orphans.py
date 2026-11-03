@@ -76,10 +76,13 @@ def test_attach_tmux_uses_the_repo_dir_label(mocker):
     incus.exec_interactive.return_value = 0
     mocker.patch.object(orphans, "container_ids", return_value=(1000, 1000))
     ensure = mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.landing_window", return_value="@2")
     assert orphans.attach_tmux(incus, "gamma-x") == 0
     ensure.assert_called_once_with(incus, "gamma-x", start_dir="/home/dev/gamma")
     args, kwargs = incus.exec_interactive.call_args
-    assert args == ("gamma-x", ["tmux", "attach", "-t", "autostart"])
+    assert args[0] == "gamma-x"
+    assert args[1][:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert args[1][-2:] == ["-t", "@2"]
     assert kwargs["uid"] == 1000 and kwargs["init_groups"] is True
 
 

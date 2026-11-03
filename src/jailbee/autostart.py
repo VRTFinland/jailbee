@@ -314,7 +314,7 @@ def agent_autostart_steps(
     (`tmux.select_window`) when it first lands you in the session — not
     because tmux itself would otherwise focus the most-recently-created
     window. That pick applies to the first attach only; after that the
-    window the user detached from wins (`tmux.ever_attached`).
+    window the user was last on wins (`tmux.landing_window`).
 
     Each step's network is left unset (`None`): the agent's egress hosts
     are already folded into `effective_egress_allow()` when the agent is
