@@ -325,7 +325,17 @@ def test_inbox_helper_send_spawn_autostart_profile(script, base, tmp_path, kind)
 @pytest.mark.parametrize("value,expected", [(" web , db ", ["web", "db"]), ("", [])])
 def test_send_services_selection(script, base, tmp_path, kind, value, expected):
     args = ["--branch", "topic"] if kind == "spawn" else ["--child", "worker"]
-    result = run(script, "send", kind, *args, "--services", value, "--text", "go", env=env_for(base, tmp_path))
+    result = run(
+        script,
+        "send",
+        kind,
+        *args,
+        "--services",
+        value,
+        "--text",
+        "go",
+        env=env_for(base, tmp_path),
+    )
     assert result.returncode == 0, result.stderr
     manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
     assert manifest["services"] == expected
@@ -342,7 +352,19 @@ def test_send_services_omitted(script, base, tmp_path, kind):
 
 @pytest.mark.parametrize("value", ["web", ""])
 def test_send_services_rejects_agent_only(script, base, tmp_path, value):
-    result = run(script, "send", "restart", "--child", "worker", "--agent-only", "--services", value, "--text", "go", env=env_for(base, tmp_path))
+    result = run(
+        script,
+        "send",
+        "restart",
+        "--child",
+        "worker",
+        "--agent-only",
+        "--services",
+        value,
+        "--text",
+        "go",
+        env=env_for(base, tmp_path),
+    )
     assert result.returncode == 2
     assert "--agent-only cannot be combined with --services" in result.stderr
     assert not list((base / "outbox").glob("*"))
