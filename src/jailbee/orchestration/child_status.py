@@ -1,0 +1,121 @@
+"""Pure status model for child containers.
+
+Everything here is a function of values the caller already holds: the
+process samples from `procstat`, the clock, and timestamps the broker stored.
+Nothing reads /proc, runs a process, or touches the network, so the broker's
+gather path can call it freely and the tests need no fakes.
+
+Text that originates inside a child (a commit subject, a process name) is
+hostile by default; `clean_text` is applied where it is recorded, and again
+wherever it is printed.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+from jailbee import procstat
+
+STATUS_INTERVAL = 30
+"""Seconds between host-side status probes of one child."""
+
+GIT_INTERVAL = 60
+"""Seconds between git-side status probes of one child."""
+
+BUSY_CPU_PERCENT = 5.0
+"""CPU share of one core above which a child counts as busy."""
+
+SUBJECT_LIMIT = 120
+"""Longest commit subject kept, in characters."""
+
+COMMAND_LIMIT = 160
+"""Longest command line kept, in characters."""
+
+# C0 controls (incl. ESC and TAB), DEL, and the C1 range.
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
+
+
+def clean_text(value: str, limit: int) -> str:
+    """Replace control characters with `?`, then cut to `limit` with `…`.
+
+    A cut string ends in `…` and is exactly `limit` characters long.
+    """
+    text = _CONTROL.sub("?", value)
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
+    return text
+
+
+def longest_command(
+    samples: Mapping[int, procstat.ProcSample], *, uptime: float, clk_tck: int
+) -> dict[str, object] | None:
+    """The oldest non-shell process started directly by a shell in `samples`.
+
+    `uptime` and `clk_tck` turn the process's start tick into seconds since
+    boot; the result is how long that command has been running. None when no
+    process qualifies.
+    """
+    candidates = [
+        sample
+        for sample in samples.values()
+        if sample.comm not in procstat.SHELL_COMMS
+        and (parent := samples.get(sample.ppid)) is not None
+        and parent.comm in procstat.SHELL_COMMS
+    ]
+    if not candidates:
+        return None
+    oldest = min(candidates, key=lambda sample: sample.starttime)
+    return {
+        "command": clean_text(oldest.comm, COMMAND_LIMIT),
+        "seconds": int(uptime - oldest.starttime / clk_tck),
+    }
+
+
+def activity_at(
+    *,
+    started_at: float,
+    agent_last_event_at: float | None,
+    head_time: float | None,
+    last_busy_at: float | None,
+) -> float:
+    """The latest moment the child showed any sign of life.
+
+    Unknown (None) signals are ignored; `started_at` is always known.
+    """
+    times = [started_at]
+    for value in (agent_last_event_at, head_time, last_busy_at):
+        if value is not None:
+            times.append(value)
+    return max(times)
+
+
+@dataclass
+class StatusCache:
+    """Per-child timestamps that rate-limit the two kinds of status probe.
+
+    `host_at` gates the cheap host-side probe (every `STATUS_INTERVAL`);
+    `exec_at` gates the probe that runs git inside the container (every
+    `GIT_INTERVAL`). `sampler` holds the CPU reading between gathers.
+    """
+
+    host_at: dict[str, float] = field(default_factory=dict)
+    exec_at: dict[str, float] = field(default_factory=dict)
+    sampler: procstat.ActivitySampler = field(default_factory=procstat.ActivitySampler)
+
+    def host_due(self, full: str, now: float) -> bool:
+        """True, and record `now`, when the host probe for `full` is due."""
+        return _due(self.host_at, full, now, STATUS_INTERVAL)
+
+    def exec_due(self, full: str, now: float) -> bool:
+        """True, and record `now`, when the in-container probe for `full` is due."""
+        return _due(self.exec_at, full, now, GIT_INTERVAL)
+
+
+def _due(stamps: dict[str, float], full: str, now: float, interval: float) -> bool:
+    last = stamps.get(full)
+    if last is not None and now - last < interval:
+        return False
+    stamps[full] = now
+    return True
