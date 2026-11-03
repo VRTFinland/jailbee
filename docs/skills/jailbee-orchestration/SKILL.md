@@ -243,8 +243,8 @@ Fix the request or tell the human; do not retry with another model.
 
 If `inbox/` or `outbox/` is missing just after a grant, wait briefly: the
 broker creates the directories on its next round. If they stay missing, tell
-the human; the broker may not be running (`jailbee orchestrate status` on the
-host). If `jailbee inbox` is missing, the broker never installs the command:
+the human; the broker may not be running (`jailbee doctor` on the host reports
+it, and `journalctl --user -u jailbee-broker` shows its log). If `jailbee inbox` is missing, the broker never installs the command:
 ask the human to run `jb base build` on the host and recreate the container.
 The broker leaves the stale standalone helper that old images retain in place.
 Do not hand-roll the protocol.
@@ -341,6 +341,11 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
   (followed by ` — the child was removed` when the child no longer exists),
   ``creation of child `<short>` stopped unexpectedly during <phase>`` or
   ``creation of child `<short>` ended without a container``. `see the worker log` stands in for a missing error.
+  A worker that stopped unexpectedly also says what it left: ` — the child was
+  removed`, ` — the child was kept, stopped`, or `` — the child was kept
+  running; `stop` it before a `restart` ``; a running child refuses `restart`
+  until you `stop` it. The host-side worker log path follows when known; pass
+  it to the human, you cannot read it.
 - `refused`: final. Read `detail`, fix the request, and send it again under a
   new id.
 

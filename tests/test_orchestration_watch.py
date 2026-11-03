@@ -103,11 +103,42 @@ def test_failed_row_without_error_msg_says_see_the_worker_log(alive: None) -> No
 
 
 def test_dead_worker_reports_phase(alive: None) -> None:
-    out = run(entry(), job("deps", pid=999), child())
+    out = run(entry(), job("deps", pid=999), None)
     assert out.state == "failed"
-    assert out.detail == "creation of child `kid` stopped unexpectedly during deps"
-    out = run(entry("restart"), job("autostart", pid=999, op_kind=JOB_AUTOSTART), child())
+    assert out.detail == (
+        "creation of child `kid` stopped unexpectedly during deps — the child was removed"
+    )
+    out = run(entry("restart"), job("autostart", pid=999, op_kind=JOB_AUTOSTART), None)
     assert out.detail == "restart of child `kid` stopped unexpectedly during autostart"
+
+
+def test_dead_worker_says_a_running_child_was_kept_and_needs_a_stop(alive: None) -> None:
+    """Issue #71: a half-created child is left running, and `restart` refuses it."""
+    dead = JobSnapshot("autostart", 999, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
+    out = run(entry(), dead, child())
+    assert out == Outcome(
+        "failed",
+        "creation of child `kid` stopped unexpectedly during autostart — the child was "
+        "kept running; `stop` it before a `restart`. Worker log on the host: "
+        "/state/logs/proj-kid-1.log",
+    )
+
+
+def test_dead_worker_with_stopped_or_missing_child(alive: None) -> None:
+    dead = job("clone", pid=999)
+    stopped = Node("proj-kid", "kid", False, {labels.SPAWNED_BY: ORCH})
+    assert run(entry(), dead, stopped).detail == (
+        "creation of child `kid` stopped unexpectedly during clone — the child was kept, stopped"
+    )
+    assert run(entry(), dead, None).detail == (
+        "creation of child `kid` stopped unexpectedly during clone — the child was removed"
+    )
+
+
+def test_failed_row_names_the_worker_log_when_known(alive: None) -> None:
+    row = JobSnapshot("failed", 4242, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
+    out = run(entry(), row, child())
+    assert out.detail == "creation of child `kid` failed: see the worker log /state/logs/proj-kid-1.log"
 
 
 def test_no_row_child_present_spawn_is_ready() -> None:
@@ -191,7 +222,7 @@ def test_read_jobs_snapshots_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         )
         session.commit()
     monkeypatch.setattr("jailbee.db.get_engine", lambda: engine)
-    assert read_jobs() == {"proj-kid": JobSnapshot("failed", 7, JOB_CREATE, "bad", NOW)}
+    assert read_jobs() == {"proj-kid": JobSnapshot("failed", 7, JOB_CREATE, "bad", NOW, "/x")}
     engine.dispose()
 
 

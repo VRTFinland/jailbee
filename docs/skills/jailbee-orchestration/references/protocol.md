@@ -464,8 +464,11 @@ A spawn's final status is `done` or `failed`:
 
 `failed` is final and also reports runtime rights application failures; a restart reports `done` or
 `started`, then `failed` for the same ref if its boot or setup fails later. Other details: ``creation of child `<child>`
-stopped unexpectedly during <phase>``, ``creation of child `<child>` ended
-without a container``; a missing error reads `see the worker log`.
+stopped unexpectedly during <phase>`` (then ` — the child was removed`,
+` — the child was kept, stopped` or `` — the child was kept running; `stop` it
+before a `restart` ``, and `. Worker log on the host: <path>` when known),
+``creation of child `<child>` ended without a container``; a missing error
+reads `see the worker log`, followed by the host path when known.
 
 A `queued` status applies to `restart` as well as `spawn`, and to a
 `message` for a stopped child. Other `done` details: `delivered to <child>`,

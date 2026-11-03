@@ -217,7 +217,7 @@ runtime rights live in the child rights label; timed provenance is separate.
 There is no restart-time escalation check. Requests are preflighted before
 changes, revoke before grant, and roll back on application failure (best effort).
 Applied requests are journalled; no human notification is sent. Existing
-network/mount views and `jailbee orchestrate status` reflect the changes.
+network/mount views reflect the changes.
 
 A child may send a revoke-only `rights` manifest for itself (omit `--child`
 or name itself). It cannot include `grant` or name another child; the refusal
@@ -394,6 +394,11 @@ and exits with status 75, and systemd starts it again on the new code;
 `make install` restarts it as well, which also covers a reinstall of the same
 version. A unit written by an older `jb setup` restarts it too, but logs the
 exit as a failure until `jb setup` rewrites the unit.
+
+The broker logs to the user journal (`journalctl --user -u jailbee-broker`).
+Each creation or restart worker it starts writes its own output to
+`~/.local/state/jailbee/logs/<container>-<timestamp>.log` (`$XDG_STATE_HOME`
+when set); a `failed` status whose worker left no error names that file.
 
 For each manifest the broker validates it, acts on it at most once, deletes
 it, and answers with a `status` message in the sender's inbox: `queued`,

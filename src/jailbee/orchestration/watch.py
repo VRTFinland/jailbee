@@ -66,6 +66,7 @@ class JobSnapshot:
     op_kind: str
     error_msg: str | None
     started_at: datetime
+    log_path: str | None = None
 
 
 def load_watch(root: Path) -> dict[str, list[WatchEntry]]:
@@ -191,7 +192,9 @@ def read_jobs() -> dict[str, JobSnapshot] | None:
 
         with Session(get_engine()) as session:
             return {
-                name: JobSnapshot(r.phase, r.pid, r.op_kind, r.error_msg, r.started_at)
+                name: JobSnapshot(
+                    r.phase, r.pid, r.op_kind, r.error_msg, r.started_at, r.log_path or None
+                )
                 for name, r in background.list_all_jobs(session).items()
             }
     except Exception as exc:  # best effort: unreadable means "wait"
@@ -221,12 +224,26 @@ def verdict(
             return None  # live worker, any phase
         if stale_ok:
             if job.phase in background.TERMINAL_PHASES:
-                reason = job.error_msg or "see the worker log"
+                reason = job.error_msg or " ".join(
+                    w for w in ("see the worker log", job.log_path) if w
+                )
                 detail = f"{noun} of child `{short}` failed: {reason}"
                 if spawn and child is None:
                     detail += " — the child was removed"
                 return failed(detail)
-            return failed(f"{noun} of child `{short}` stopped unexpectedly during {job.phase}")
+            # No error was recorded: the worker was killed, or died before it
+            # could write one. Say what it left behind, since a running child
+            # refuses a `restart` until it is stopped.
+            detail = f"{noun} of child `{short}` stopped unexpectedly during {job.phase}"
+            if child is None:
+                detail += " — the child was removed" if spawn else ""
+            elif child.running:
+                detail += " — the child was kept running; `stop` it before a `restart`"
+            else:
+                detail += " — the child was kept, stopped"
+            if job.log_path:
+                detail += f". Worker log on the host: {job.log_path}"
+            return failed(detail)
 
     if child is not None and child.config.get(labels.SPAWNED_BY) == orchestrator_full:
         return done(f"child `{short}` is ready") if spawn else DROP
