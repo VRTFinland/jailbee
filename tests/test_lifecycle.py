@@ -9115,16 +9115,29 @@ def test_branch_profile_selects_service_dependencies_for_assessment(make_cfg, tm
     from jailbee.branch_config import AutostartDeviation
 
     cfg, _ = _new_env(make_cfg, tmp_path, mocker)
-    branch = make_cfg(tmp_path, services={
-        "web": {"run": "web", "depends_on": {"db": {}}},
-        "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
-        "other": {"run": "other", "prepare": [{"run": "setup", "mounts": ["aws"]}]},
-    }, autostart={"on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}], "profiles": {"minimal": {"stages": ["setup"], "services": ["web"]}}, "default_profile": "minimal"})
-    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(branch, AutostartDeviation()))
+    branch = make_cfg(
+        tmp_path,
+        services={
+            "web": {"run": "web", "depends_on": {"db": {}}},
+            "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
+            "other": {"run": "other", "prepare": [{"run": "setup", "mounts": ["aws"]}]},
+        },
+        autostart={
+            "on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}],
+            "profiles": {"minimal": {"stages": ["setup"], "services": ["web"]}},
+            "default_profile": "minimal",
+        },
+    )
+    mocker.patch(
+        "jailbee.branch_config.load_branch_autostart",
+        return_value=_branch_result(branch, AutostartDeviation()),
+    )
     mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
     mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
     clone_ref = mocker.Mock(autostart_ref="branch", autostart_source_label="branch")
-    verdict = lifecycle.assess_branch_autostart(cfg, _branch_new_opts(untrusted_head=True), clone_ref).verdict
+    verdict = lifecycle.assess_branch_autostart(
+        cfg, _branch_new_opts(untrusted_head=True), clone_ref
+    ).verdict
     assert verdict is not None and verdict.widening_steps == ("service[db].prepare",)
     assert verdict.attached_mounts == ()
 
@@ -9134,13 +9147,18 @@ def test_branch_service_prepare_declined_before_create(make_cfg, tmp_path, mocke
     from jailbee.branch_config import AutostartDeviation
 
     cfg, incus = _new_env(make_cfg, tmp_path, mocker)
-    branch = make_cfg(tmp_path, services={"db": {"run": "db", "prepare": [{"run": "setup", **prepare}]}})
+    branch = make_cfg(
+        tmp_path, services={"db": {"run": "db", "prepare": [{"run": "setup", **prepare}]}}
+    )
     grafted = cfg.model_copy(update={"services": branch.services})
-    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(grafted, AutostartDeviation()))
+    mocker.patch(
+        "jailbee.branch_config.load_branch_autostart",
+        return_value=_branch_result(grafted, AutostartDeviation()),
+    )
     mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
     mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
     confirm = mocker.Mock(return_value=False)
-    with pytest.raises(ValueError, match="[Aa]borted"):
+    with pytest.raises(ValueError, match=r"[Aa]borted"):
         new_container(cfg, incus, _branch_new_opts(untrusted_head=True), confirm_fn=confirm)
     confirm.assert_called_once()
     incus.init.assert_not_called()

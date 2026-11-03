@@ -106,7 +106,8 @@ def run_services_stage(
                 denied.append("network loose")
             if denied:
                 raise autostart.AutostartStepError(
-                    container=container, step_name=f"prepare-{name}",
+                    container=container,
+                    step_name=f"prepare-{name}",
                     reason=f"service '{name}' prepare exceeds child rights: {', '.join(denied)}",
                 )
         for mount in elevation["mounts"]:

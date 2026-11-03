@@ -626,7 +626,10 @@ def _baseline_autostart(cfg: Config) -> tuple[Config, str]:
 
 
 def assess_escalation(
-    cfg: Config, branch: Autostart, *, untrusted: bool,
+    cfg: Config,
+    branch: Autostart,
+    *,
+    untrusted: bool,
     services: dict[str, Service] | None = None,
     selected_services: list[str] | None = None,
 ) -> EscalationVerdict:

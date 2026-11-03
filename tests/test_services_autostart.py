@@ -86,7 +86,11 @@ def test_child_prepare_refuses_ungranted_loose_before_stage(tmp_path, mocker, ma
     incus, values = labels()
     values[orch_labels.SPAWNED_BY] = "parent"
     values[orch_labels.RIGHTS] = ChildRights().to_label()
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     with pytest.raises(autostart.AutostartStepError, match="loose"):
         invoke(cfg, incus)
@@ -103,7 +107,11 @@ def test_child_prepare_refuses_ungranted_mount(tmp_path, mocker, make_cfg):
     values[orch_labels.RIGHTS] = ChildRights(loose=True).to_label()
     data = payload()
     data["services"][0]["elevation"]["mounts"] = ["aws"]
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     with pytest.raises(autostart.AutostartStepError, match="child rights: aws"):
         invoke(cfg, incus)
