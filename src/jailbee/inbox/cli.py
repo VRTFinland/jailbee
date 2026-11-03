@@ -29,6 +29,7 @@ from jailbee.inbox.render import (
 PROG = "jailbee inbox"
 USAGE = (
     "Usage: jailbee inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after DUR]\n"
+    "                          [--digest DUR]\n"
     "       jailbee inbox ls\n"
     "       jailbee inbox read <id> [--keep]\n"
     "       jailbee inbox runners [--json]\n"
@@ -47,6 +48,12 @@ USAGE = (
     "         first message after each start always wakes. Nothing is marked read.\n"
     "         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running,\n"
     "         not-done child is silent that long; needs fresh broker children.json (<=15m).\n"
+    "         A child's own activity (status.activity_at) counts as not silent.\n"
+    "         --digest DUR prints `digest` and the `status` table (exit 0) when DUR has\n"
+    "         passed since the last digest and a child is running and not done; the\n"
+    "         first digest is due DUR after the first `wait --digest` (stamp: digest-at).\n"
+    "         A real message or quiet-child wakeup wins; --wake-on does not apply.\n"
+    "         Needs fresh broker children.json (<=15m).\n"
     "         Only one wait may run; a second exits 2. Concurrent send --wait is\n"
     "         safe: wait skips its reserved statuses until that sender exits.\n"
     "  ls     One line per unread message, oldest first:\n"
@@ -519,10 +526,11 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
     timeout: int | None = 1800
     wake: frozenset[str] | None = None
     quiet = 0
+    digest = 0
     index = 0
     while index < len(args):
         option = args[index]
-        if option not in ("--timeout", "--wake-on", "--quiet-after"):
+        if option not in ("--timeout", "--wake-on", "--quiet-after", "--digest"):
             raise InboxUsage(f"unknown argument '{option}' (see --help)")
         if index + 1 == len(args):
             raise InboxUsage(f"{option} needs a value")
@@ -533,6 +541,10 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
             quiet = parse_duration(value)
             if not quiet:
                 raise InboxUsage("--quiet-after must be positive")
+        elif option == "--digest":
+            digest = parse_duration(value)
+            if not digest:
+                raise InboxUsage("--digest must be positive")
         else:
             tokens = value.split(",")
             if any(token not in WAKE_TOKENS for token in tokens):
@@ -546,12 +558,26 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise InboxUsage("another process is already waiting in this container") from None
-        rc, line = run_wait(settings, timeout=timeout, wake=wake, quiet=quiet)
+        rc, line = run_wait(settings, timeout=timeout, wake=wake, quiet=quiet, digest=digest)
+        if line == "digest":
+            return _print_digest(settings)
         if line is not None:
             print(line)
         return rc
     finally:
         os.close(fd)
+
+
+def _print_digest(settings: Settings) -> int:
+    from jailbee.inbox.waiting import last_from_child, write_digest_stamp
+
+    now = time.time()
+    write_digest_stamp(settings.base, now)
+    print("digest")
+    loaded = _load_snapshot(settings)
+    children: list[object] = list(loaded[1]["children"]) if loaded else []
+    print(render_status(children, now=now, from_child=last_from_child(settings.base)))
+    return 0
 
 
 def main(argv: list[str]) -> int:

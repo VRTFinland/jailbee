@@ -132,3 +132,208 @@ def test_settle_extends_on_new_arrival_and_caps_at_5s(tmp_path):
     settle(settings, 100, clock=clock, sleep=sleep)
     assert now == pytest.approx(5)
     assert next_arrival is None
+
+
+# --- #64: wait --digest and activity-based --quiet-after ---------------------
+
+NOW = 100_000.0
+
+
+def snapshot(base: Path, children: list[dict], updated_at: float = NOW) -> None:
+    put(base / "children.json", {"version": 1, "updated_at": updated_at, "children": children})
+
+
+def kid(name: str = "kid", *, running: bool = True, done: bool = False, **extra) -> dict:
+    return {
+        "name": name,
+        "running": running,
+        "done": done,
+        "started_at": NOW - 7200,
+        **extra,
+    }
+
+
+def test_quiet_after_uses_activity_at(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(status={"activity_at": NOW - 300})])
+    # started 2 h ago, no messages: only activity_at keeps it alive
+    assert select_wakeup(tmp_path, frozenset(), 3600, NOW) is None
+    assert select_wakeup(tmp_path, frozenset(), 200, NOW) == "quiet-child kid"
+
+
+def test_quiet_after_without_status_uses_messages(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(), kid("other", status=None), kid("third", status="junk")])
+    put(tmp_path / "inbox/read/a.json", {"type": "message", "from": "kid"}, NOW - 100)
+    put(tmp_path / "inbox/read/b.json", {"type": "message", "from": "other"}, NOW - 100)
+    put(tmp_path / "inbox/read/c.json", {"type": "message", "from": "third"}, NOW - 100)
+    assert select_wakeup(tmp_path, frozenset(), 3600, NOW) is None
+    assert select_wakeup(tmp_path, frozenset(), 50, NOW) == "quiet-child kid"
+
+
+def test_quiet_after_activity_at_done_child_stays_excluded(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(done=True, status={"activity_at": NOW - 5000})])
+    assert select_wakeup(tmp_path, frozenset(), 60, NOW) is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [float("nan"), float("inf"), "now", True, 1e300, None, [1], NOW + 3600],
+)
+def test_quiet_after_ignores_hostile_activity_at(tmp_path, bad):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(status={"activity_at": bad})])
+    # The hostile value must neither crash nor keep the child alive.
+    assert select_wakeup(tmp_path, frozenset(), 3600, NOW) == "quiet-child kid"
+
+
+def test_digest_first_call_creates_stamp_not_due(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid()])
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW, 60) is None
+    assert float((tmp_path / "digest-at").read_text()) == NOW
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW + 59, 60) is None
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW + 60, 60) == "digest"
+
+
+@pytest.mark.parametrize("content", ["garbage", "nan", "inf", str(NOW + 99999), ""])
+def test_digest_unusable_stamp_is_reset_not_due(tmp_path, content):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid()])
+    (tmp_path / "digest-at").write_text(content)
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW, 60) is None
+    assert float((tmp_path / "digest-at").read_text()) == NOW
+
+
+def test_digest_not_emitted_without_running_children_and_stamp_unchanged(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid(running=False), kid("fin", done=True)])
+    (tmp_path / "digest-at").write_text(str(NOW - 9999))
+    assert select_wakeup(tmp_path, frozenset(), 0, NOW, 60) is None
+    assert float((tmp_path / "digest-at").read_text()) == NOW - 9999
+
+
+def test_digest_message_wins(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid()])
+    (tmp_path / "digest-at").write_text(str(NOW - 9999))
+    message = put(tmp_path / "inbox/a.json", {"type": "message", "from": "kid", "kind": "note"})
+    assert select_wakeup(tmp_path, frozenset({"note"}), 0, NOW, 60) == str(message)
+
+
+def test_digest_quiet_child_wins(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid()])
+    (tmp_path / "digest-at").write_text(str(NOW - 9999))
+    assert select_wakeup(tmp_path, frozenset(), 60, NOW, 60) == "quiet-child kid"
+
+
+def test_digest_needs_fresh_snapshot_exit_2(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    snapshot(tmp_path, [kid()], updated_at=NOW - 2000)
+    with pytest.raises(InboxUsage, match=r"--digest needs a fresh broker children\.json"):
+        select_wakeup(tmp_path, frozenset(), 0, NOW, 60)
+    assert not (tmp_path / "digest-at").exists()
+
+
+def _settings(tmp_path: Path):
+    from jailbee.inbox import cli
+
+    return cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
+
+
+def fresh_snapshot(base: Path, children: list[dict]) -> None:
+    import time
+
+    now = time.time()
+    snapshot(
+        base,
+        [{**c, "started_at": now - 7200} for c in children],
+        updated_at=now,
+    )
+
+
+def test_cmd_wait_digest_rejects_bad_values(tmp_path):
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    for value in ("0", "-5", "abc"):
+        with pytest.raises(InboxUsage):
+            cli.cmd_wait(settings, ["--digest", value])
+    with pytest.raises(InboxUsage, match="--digest needs a value"):
+        cli.cmd_wait(settings, ["--digest"])
+
+
+def test_cmd_wait_digest_stale_snapshot_names_digest(tmp_path):
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    snapshot(tmp_path, [kid()], updated_at=1.0)
+    with pytest.raises(InboxUsage, match="--digest"):
+        cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"])
+
+
+def test_cmd_wait_digest_first_call_not_due_then_due_prints_table_and_restamps(tmp_path, capsys):
+    import time
+
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    fresh_snapshot(tmp_path, [kid("alpha")])
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 1
+    assert capsys.readouterr().out == ""
+    stamp = tmp_path / "digest-at"
+    assert stamp.is_file()
+    # Age the stamp: the period has elapsed.
+    stamp.write_text(str(time.time() - 120))
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "digest"
+    assert "alpha" in "\n".join(lines[1:])
+    assert time.time() - float(stamp.read_text()) < 5
+    assert not list(tmp_path.glob("digest-at.*")), "temp file left behind"
+    # Repeated wait inside the same period: nothing.
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_cmd_wait_digest_ignores_wake_on(tmp_path, capsys):
+    import time
+
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    fresh_snapshot(tmp_path, [kid("alpha")])
+    (tmp_path / "digest-at").write_text(str(time.time() - 120))
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--wake-on", "failed", "--timeout", "0"]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "digest"
+
+
+def test_cmd_wait_digest_message_wins_and_digest_follows(tmp_path, capsys):
+    import time
+
+    from jailbee.inbox import cli
+
+    settings = _settings(tmp_path)
+    fresh_snapshot(tmp_path, [kid("alpha")])
+    stamp = tmp_path / "digest-at"
+    old = time.time() - 120
+    stamp.write_text(str(old))
+    message = put(tmp_path / "inbox/a.json", {"type": "message", "from": "alpha", "kind": "note"})
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert capsys.readouterr().out.strip() == str(message)
+    assert float(stamp.read_text()) == old  # a message wakeup does not consume the digest
+    message.unlink()
+    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "digest"

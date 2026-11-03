@@ -93,9 +93,48 @@ def last_from_child(base: Path) -> dict[str, float]:
     return _newest_from_child(_records(base))
 
 
-def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: float) -> str | None:
+def _read_digest_stamp(base: Path, now: float) -> float | None:
+    """The last digest time, or None when missing, unreadable or in the future."""
+    path = base / "digest-at"
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        value = float(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+    return value if math.isfinite(value) and value <= now + 5 else None
+
+
+def write_digest_stamp(base: Path, now: float) -> None:
+    """Atomically record `now` as the last digest time (temp file + rename)."""
+    tmp = base / f".digest-at.{os.getpid()}.tmp"
+    try:
+        tmp.write_text(repr(float(now)))
+        os.replace(tmp, base / "digest-at")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _activity_at(child: dict[str, Any], now: float) -> float:
+    """A child's published `status.activity_at`, or 0.0 when absent or unusable.
+
+    Unusable is anything but a finite int/float no later than now + 5 s: a
+    future value would otherwise silence the watchdog for that long, so it is
+    ignored (not clamped). An old broker publishes no status at all.
+    """
+    status = child.get("status")
+    value: Any = status.get("activity_at") if isinstance(status, dict) else None
+    if not _number(value) or value > now + 5:
+        return 0.0
+    return float(value)
+
+
+def select_wakeup(
+    base: Path, wake: frozenset[str] | None, quiet: int, now: float, digest: int = 0
+) -> str | None:
     snapshot = _load(base / "children.json")
     children: dict[str, float] = {}
+    activity: dict[str, float] = {}
     running: set[str] = set()
     try:
         assert snapshot and snapshot["version"] == 1
@@ -109,12 +148,17 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
             assert isinstance(done, bool)
             assert _number(child["started_at"]) and child["started_at"] <= now + 5
             children[child["name"]] = child["started_at"]
+            activity[child["name"]] = _activity_at(child, now)
             if child["running"] and not done:
                 running.add(child["name"])
     except (AssertionError, KeyError, TypeError):
-        if quiet:
+        if quiet or digest:
+            names = " and ".join(
+                flag for flag, on in (("--quiet-after", quiet), ("--digest", digest)) if on
+            )
             raise InboxUsage(
-                "--quiet-after needs a fresh broker children.json (at most 15 minutes old)"
+                f"{names} {'need' if quiet and digest else 'needs'} a fresh broker "
+                "children.json (at most 15 minutes old)"
             ) from None
         children = {}
         running.clear()
@@ -130,7 +174,7 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
             if stamp / 1e9 >= children[name]:
                 first.setdefault(name, path)
     for name in latest:
-        latest[name] = max(latest[name], newest.get(name, 0.0))
+        latest[name] = max(latest[name], newest.get(name, 0.0), activity.get(name, 0.0))
 
     for path, data, _ in sorted(records, key=lambda r: r[0].name):
         if path.parent != base / "inbox":
@@ -148,6 +192,15 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
             if now - latest[name] >= quiet:
                 clean = "".join("?" if ord(c) < 32 or 127 <= ord(c) <= 159 else c for c in name)
                 return "quiet-child " + clean
+    if digest:
+        last = _read_digest_stamp(base, now)
+        if last is None:
+            try:
+                write_digest_stamp(base, now)
+            except OSError:
+                pass
+        elif running and now - last >= digest:
+            return "digest"
     return None
 
 
@@ -205,6 +258,7 @@ def run_wait(
     wake: frozenset[str] | None,
     quiet: int,
     status_ref: str | None = None,
+    digest: int = 0,
     watcher_factory: Callable[..., InboxWatcher] = InboxWatcher,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[int, str | None]:
@@ -217,18 +271,18 @@ def run_wait(
                 path = find_status(settings.inbox, status_ref)
                 first = str(path) if path is not None else None
             else:
-                first = select_wakeup(settings.base, wake, quiet, time.time())
+                first = select_wakeup(settings.base, wake, quiet, time.time(), digest)
             if first is not None:
                 if waited and status_ref is None:
                     settle(settings, deadline if deadline is not None else clock() + 5, clock=clock)
-                    first = select_wakeup(settings.base, wake, quiet, time.time())
+                    first = select_wakeup(settings.base, wake, quiet, time.time(), digest)
                     if first is None:
                         continue
                 return 0, first
             remaining = 10.0 if deadline is None else deadline - clock()
             if remaining <= 0:
                 return 1, None
-            watcher.wait(min(remaining, 1 if quiet else 10))
+            watcher.wait(min(remaining, 1 if quiet or digest else 10))
             waited = True
     finally:
         watcher.close()
