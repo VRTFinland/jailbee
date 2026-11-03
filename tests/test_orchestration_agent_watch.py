@@ -119,6 +119,19 @@ def test_done_suppresses_but_external_stop_reports() -> None:
     assert advance(supervised(confirmed=True), None, child=stopped)[1].state == "failed"
 
 
+@pytest.mark.parametrize("agent_only", [False, True])
+def test_done_before_confirmation_still_ends_the_ref(agent_only) -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus
+
+    done = Node("proj-kid", "kid", True, {labels.STATE: labels.STATE_DONE})
+    entry = supervised(agent_only=agent_only)
+    for status in (None, AgentStatus(False, rc=0)):
+        updated, outcome = advance(entry, status, child=done)
+        assert updated is None
+        assert outcome is not None and outcome.state == "done"
+        assert outcome.detail == "child `kid` is ready; it already reported done"
+
+
 @pytest.mark.parametrize(
     "state,subagents,expected",
     [
@@ -387,3 +400,26 @@ def test_agent_snapshot_adapter_error_keeps_alive(tmp_path, mocker):
         "last_event_at": None,
         "last_tool": None,
     }
+
+
+def test_agent_snapshot_never_recorded_agent_is_starting(tmp_path):
+    from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
+    from tests.conftest import make_config
+
+    snap = agent_snapshot(make_config(tmp_path), "kid", AgentStatus(False), now=NOW)
+    assert snap["alive"] is None
+    assert snap["state"] == "starting"
+
+
+@pytest.mark.parametrize(
+    "status_kwargs", [{"recorded": True}, {"recorded": True, "rc": 1}, {"rc": 0}]
+)
+def test_agent_snapshot_recorded_or_exited_agent_is_dead(tmp_path, status_kwargs):
+    from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
+    from tests.conftest import make_config
+
+    snap = agent_snapshot(
+        make_config(tmp_path), "kid", AgentStatus(False, **status_kwargs), now=NOW
+    )
+    assert snap["alive"] is False
+    assert snap["state"] is None

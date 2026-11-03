@@ -241,7 +241,9 @@ the log in the detail). `queued` means no slot is free, then `started` when
 launched later. The final `done` ("child `x` is ready; agent is alive")
 requires two live process observations at least two seconds apart after
 setup. Failed boot/setup, an immediate exit or no agent within 120 seconds
-after setup yields `failed` for the same ref. Subsequent agent death without
+after setup yields `failed` for the same ref. If the child already reported
+done before readiness is confirmed, the final `done` reads "child `x` is ready;
+it already reported done". Subsequent agent death without
 accepted child `done` yields a `blocked` message, including exit 0 and
 signals. Broker `stop`/`destroy` intentionally ends monitoring.
 

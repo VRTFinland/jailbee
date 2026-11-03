@@ -318,7 +318,7 @@ snapshot only warns on stderr there and still prints (exit 0), unlike
 - Look at it: agent alive but no activity and no CPU for about 30 minutes; one
   process in `LONGEST` (the longest-running tool process of the agent, by
   process name) running for hours; agent `dead` without done (also reported as
-  `blocked`); `waiting` (also reported as `idle`).
+  `blocked`; `starting` means the agent is not launched yet, not dead); `waiting` (also reported as `idle`).
 - Only then message the child.
 
 CPU is measured container-wide, so background services the container starts
@@ -353,7 +353,9 @@ Spawn and restart get `queued` or `started`, then final `done`
 (``child `<short>` is ready; agent is alive``) or `failed`. `started` is not
 proof the agent is working: the broker checks the real process twice, at
 least two seconds apart, after setup. A never-started agent fails after a
-120-second startup grace; immediate exits and failed setup also fail.
+120-second startup grace; immediate exits and failed setup also fail. A child
+that reports done before readiness is confirmed still gets a final `done`
+(``child `<short>` is ready; it already reported done``).
 On `failed`, read the detail and tell the human; respawn under a new id only
 when the cause is fixed. Still do not wait forever: if a `wait` times out
 and a started child has not reported, send it a `message`. A `message` to a
