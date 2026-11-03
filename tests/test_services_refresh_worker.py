@@ -508,18 +508,33 @@ def test_stale_pending_destroy_after_worker_resume(rig, mocker):
     job(path, elevated_plan=True)
     marker = "a" * 40
     orch = actions.Node("proj-o", "o", True, {})
-    child = actions.Node("proj-c", "c", True, {
-        labels.SPAWNED_BY: orch.full, labels.PENDING_DESTROY: marker,
-        labels.LAST_IMPORT: marker,
-    })
-    ctx = actions.ActionContext(cfg, GlobalConfig(), incus, path.parent, orch,
-                                {orch.full: orch, child.full: child}, datetime.now(UTC))
+    child = actions.Node(
+        "proj-c",
+        "c",
+        True,
+        {
+            labels.SPAWNED_BY: orch.full,
+            labels.PENDING_DESTROY: marker,
+            labels.LAST_IMPORT: marker,
+        },
+    )
+    ctx = actions.ActionContext(
+        cfg,
+        GlobalConfig(),
+        incus,
+        path.parent,
+        orch,
+        {orch.full: orch, child.full: child},
+        datetime.now(UTC),
+    )
     mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=Mock())
     mocker.patch.object(elevated, "foreign_agents", return_value=[])
     mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", return_value=None)
+
     def run(*args, **kwargs):
         kwargs["before_resume"]()
         return elevated.RefreshReport((), True, "resumed")
+
     mocker.patch.object(elevated, "run_refresh", side_effect=run)
     destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch.object(finishing, "_destroy_allowed", return_value=True)
