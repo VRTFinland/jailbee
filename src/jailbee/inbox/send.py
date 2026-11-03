@@ -7,7 +7,7 @@ import re
 import secrets
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
@@ -63,11 +63,62 @@ def parse_send(args: list[str]) -> SendRequest:
 
     require(bool(args), "send needs a type")
     t = args[0]
-    require(t in {"message", "spawn", "import", "update", "restart", "refresh", "stop", "destroy", "rights"}, f"unknown message type '{t}'")
+    require(
+        t
+        in {
+            "message",
+            "spawn",
+            "import",
+            "update",
+            "restart",
+            "refresh",
+            "stop",
+            "destroy",
+            "rights",
+        },
+        f"unknown message type '{t}'",
+    )
     values: dict[str, object] = {"type": t}
-    flags = {"--merge": "merge", "--wait": "wait", "--new": "new", "--loose": "loose", "--revoke-loose": "revoke_loose", "--force": "force", "--default-runner": "default_runner", "--agent-only": "agent_only", "-": "stdin"}
-    options = {"--text": "text", "--file": "file", "--to": "to", "--kind": "kind", "--reply-to": "reply_to", "--branch": "branch", "--base": "base_branch", "--ref": "ref", "--pr": "pr", "--mount": "mounts", "--egress": "egress", "--note": "note", "--child": "child", "--agent": "agent", "--profile": "profile", "--model": "model", "--on-done": "on_done", "--timeout": "timeout", "--for": "duration", "--revoke-mount": "revoke_mounts", "--revoke-egress": "revoke_egress", "--autostart-profile": "autostart_profile", "--services": "services", "--resume": "resume"}
-    lists: dict[str, list[str]] = {k: [] for k in ("mounts", "egress", "revoke_mounts", "revoke_egress")}
+    flags = {
+        "--merge": "merge",
+        "--wait": "wait",
+        "--new": "new",
+        "--loose": "loose",
+        "--revoke-loose": "revoke_loose",
+        "--force": "force",
+        "--default-runner": "default_runner",
+        "--agent-only": "agent_only",
+        "-": "stdin",
+    }
+    options = {
+        "--text": "text",
+        "--file": "file",
+        "--to": "to",
+        "--kind": "kind",
+        "--reply-to": "reply_to",
+        "--branch": "branch",
+        "--base": "base_branch",
+        "--ref": "ref",
+        "--pr": "pr",
+        "--mount": "mounts",
+        "--egress": "egress",
+        "--note": "note",
+        "--child": "child",
+        "--agent": "agent",
+        "--profile": "profile",
+        "--model": "model",
+        "--on-done": "on_done",
+        "--timeout": "timeout",
+        "--for": "duration",
+        "--revoke-mount": "revoke_mounts",
+        "--revoke-egress": "revoke_egress",
+        "--autostart-profile": "autostart_profile",
+        "--services": "services",
+        "--resume": "resume",
+    }
+    lists: dict[str, list[str]] = {
+        k: [] for k in ("mounts", "egress", "revoke_mounts", "revoke_egress")
+    }
     i = 1
     while i < len(args):
         opt = args[i]
@@ -90,15 +141,28 @@ def parse_send(args: list[str]) -> SendRequest:
     require(not r.merge or t == "update", "--merge only applies to update")
     if r.resume:
         require(t == "restart", "--resume only applies to restart")
-        require(bool(re.fullmatch(r"last|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", r.resume)), "--resume must be last or a lowercase UUID")
+        require(
+            bool(
+                re.fullmatch(
+                    r"last|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", r.resume
+                )
+            ),
+            "--resume must be last or a lowercase UUID",
+        )
     if r.agent_only:
         require(t == "restart", "--agent-only only applies to restart")
         require(not r.autostart_profile, "--agent-only cannot be combined with --autostart-profile")
         require(r.services is None, "--agent-only cannot be combined with --services")
     if r.services is not None:
-        require(t in {"spawn", "restart", "refresh"}, "--services only applies to spawn, restart and refresh")
+        require(
+            t in {"spawn", "restart", "refresh"},
+            "--services only applies to spawn, restart and refresh",
+        )
     if t == "refresh":
-        require(r.services is not None and any(s.strip() for s in r.services.split(",")), "refresh needs at least one service")
+        require(
+            r.services is not None and any(s.strip() for s in r.services.split(",")),
+            "refresh needs at least one service",
+        )
     if r.timeout:
         require(r.wait, "--timeout needs --wait")
         parse_timeout(r.timeout)
@@ -110,12 +174,35 @@ def parse_send(args: list[str]) -> SendRequest:
         require(sources == 1, f"{t} needs exactly one of --text, --file or -")
     else:
         require(sources == 0, f"{t} takes no text, file or stdin")
-    require(t == "message" or not (r.to or r.kind or r.reply_to), "--to, --kind and --reply-to only apply to message")
-    require(t == "spawn" or not (r.branch or r.new or r.pr or r.note or (t != "rights" and (r.loose or r.mounts or r.egress))), "--branch, --new, --mount, --loose, --egress and --note only apply to spawn")
-    require(t in {"spawn", "update"} or not (r.ref or r.base_branch), "--ref and --base only apply to spawn and update")
-    require(t != "update" or not (r.ref and r.base_branch), "--ref and --base are mutually exclusive")
-    require(t in {"destroy", "refresh"} or not r.force, "--force only applies to destroy and refresh")
-    require(t in {"spawn", "restart"} or not (r.agent or r.profile or r.model or r.default_runner), "--agent, --profile, --model and --default-runner only apply to spawn and restart")
+    require(
+        t == "message" or not (r.to or r.kind or r.reply_to),
+        "--to, --kind and --reply-to only apply to message",
+    )
+    require(
+        t == "spawn"
+        or not (
+            r.branch
+            or r.new
+            or r.pr
+            or r.note
+            or (t != "rights" and (r.loose or r.mounts or r.egress))
+        ),
+        "--branch, --new, --mount, --loose, --egress and --note only apply to spawn",
+    )
+    require(
+        t in {"spawn", "update"} or not (r.ref or r.base_branch),
+        "--ref and --base only apply to spawn and update",
+    )
+    require(
+        t != "update" or not (r.ref and r.base_branch), "--ref and --base are mutually exclusive"
+    )
+    require(
+        t in {"destroy", "refresh"} or not r.force, "--force only applies to destroy and refresh"
+    )
+    require(
+        t in {"spawn", "restart"} or not (r.agent or r.profile or r.model or r.default_runner),
+        "--agent, --profile, --model and --default-runner only apply to spawn and restart",
+    )
     if r.default_runner:
         require(t == "restart", "--default-runner only applies to restart")
         require(not r.agent, "--default-runner cannot be combined with --agent")
@@ -124,8 +211,14 @@ def parse_send(args: list[str]) -> SendRequest:
     else:
         require(not (r.profile or r.model), "--profile and --model need --agent")
     require(not r.profile or r.agent == "claude-jb", "--profile needs --agent claude-jb")
-    require(not r.model or r.model in {"fable", "opus", "sonnet", "haiku"}, "--model must be fable, opus, sonnet or haiku")
-    require(not r.autostart_profile or t in {"spawn", "restart"}, "--autostart-profile only applies to spawn and restart")
+    require(
+        not r.model or r.model in {"fable", "opus", "sonnet", "haiku"},
+        "--model must be fable, opus, sonnet or haiku",
+    )
+    require(
+        not r.autostart_profile or t in {"spawn", "restart"},
+        "--autostart-profile only applies to spawn and restart",
+    )
     if t in {"import", "update", "stop", "destroy", "restart", "refresh"}:
         require(bool(r.child), f"{t} needs --child")
     elif t != "rights":
@@ -142,7 +235,10 @@ def parse_send(args: list[str]) -> SendRequest:
         for item in r.egress:
             require(item not in r.revoke_egress, f"cannot grant and revoke egress {item}")
     else:
-        require(not (r.duration or r.revoke_loose or r.revoke_mounts or r.revoke_egress), "--for and --revoke-* only apply to rights")
+        require(
+            not (r.duration or r.revoke_loose or r.revoke_mounts or r.revoke_egress),
+            "--for and --revoke-* only apply to rights",
+        )
     if t == "spawn":
         require(not r.ref or not (r.pr or r.new), "--ref cannot be combined with --pr or --new")
         if r.pr:
@@ -150,11 +246,15 @@ def parse_send(args: list[str]) -> SendRequest:
             require(bool(re.fullmatch(r"[1-9][0-9]*", r.pr)), "--pr must be a positive integer")
             if not r.branch:
                 from dataclasses import replace
+
                 r = replace(r, branch="pr-placeholder")
         require(bool(r.branch), "spawn needs --branch")
         require(not r.base_branch or r.new, "--base needs --new")
     if t == "message" and r.kind:
-        require(r.kind in {"note", "question", "done", "blocked"}, "--kind must be note, question, done or blocked")
+        require(
+            r.kind in {"note", "question", "done", "blocked"},
+            "--kind must be note, question, done or blocked",
+        )
     return r
 
 
@@ -162,41 +262,84 @@ def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str,
     m: dict[str, object] = {"version": 2 if r.type == "spawn" else 1, "id": id_, "type": r.type}
     runner: dict[str, object] = {}
     if r.agent:
-        runner["runner"] = {"agent": r.agent, **({"profile": r.profile} if r.profile else {}), **({"model": r.model} if r.model else {})}
+        runner["runner"] = {
+            "agent": r.agent,
+            **({"profile": r.profile} if r.profile else {}),
+            **({"model": r.model} if r.model else {}),
+        }
     elif r.default_runner:
         runner["runner"] = None
-    for key, value in (("autostart_profile", r.autostart_profile), ("services", None if r.services is None else [s.strip() for s in r.services.split(",") if s.strip()]), ("agent_only", True if r.agent_only else None), ("resume", r.resume), ("on_done", r.on_done)):
+    for key, value in (
+        ("autostart_profile", r.autostart_profile),
+        (
+            "services",
+            None if r.services is None else [s.strip() for s in r.services.split(",") if s.strip()],
+        ),
+        ("agent_only", True if r.agent_only else None),
+        ("resume", r.resume),
+        ("on_done", r.on_done),
+    ):
         if value is not None and value != "":
             runner[key] = value
     if r.type == "message":
         m["body_file"] = body_name
         for key, value in (("to", r.to), ("kind", r.kind), ("in_reply_to", r.reply_to)):
-            if value: m[key] = value
+            if value:
+                m[key] = value
     elif r.type == "rights":
-        if r.child: m["child"] = r.child
+        if r.child:
+            m["child"] = r.child
         if r.loose or r.mounts or r.egress:
-            m["grant"] = {"loose": r.loose, "mounts": r.mounts, "egress": r.egress, "for": r.duration}
+            m["grant"] = {
+                "loose": r.loose,
+                "mounts": r.mounts,
+                "egress": r.egress,
+                "for": r.duration,
+            }
         if r.revoke_loose or r.revoke_mounts or r.revoke_egress:
-            m["revoke"] = {"loose": r.revoke_loose, "mounts": r.revoke_mounts, "egress": r.revoke_egress}
+            m["revoke"] = {
+                "loose": r.revoke_loose,
+                "mounts": r.revoke_mounts,
+                "egress": r.revoke_egress,
+            }
     elif r.type == "spawn":
-        m.update({"kind": "pr" if r.pr else "new" if r.new else "fork", "branch": r.branch, "prompt_file": body_name, "rights": {"version": 1, "mounts": r.mounts, "loose": r.loose, "egress": r.egress}})
-        for key, spawn_value in (("base", r.base_branch), ("ref", r.ref), ("pr", int(r.pr) if r.pr else None), ("note", r.note)):
-            if spawn_value: m[key] = spawn_value
+        m.update(
+            {
+                "kind": "pr" if r.pr else "new" if r.new else "fork",
+                "branch": r.branch,
+                "prompt_file": body_name,
+                "rights": {"version": 1, "mounts": r.mounts, "loose": r.loose, "egress": r.egress},
+            }
+        )
+        for key, spawn_value in (
+            ("base", r.base_branch),
+            ("ref", r.ref),
+            ("pr", int(r.pr) if r.pr else None),
+            ("note", r.note),
+        ):
+            if spawn_value:
+                m[key] = spawn_value
         m.update(runner)
     else:
         m["child"] = r.child
-        if r.type == "restart": m["prompt_file"] = body_name
-        if r.type in {"restart", "refresh"}: m.update(runner)
-        if r.type in {"refresh", "destroy"} and r.force: m["force"] = True
+        if r.type == "restart":
+            m["prompt_file"] = body_name
+        if r.type in {"restart", "refresh"}:
+            m.update(runner)
+        if r.type in {"refresh", "destroy"} and r.force:
+            m["force"] = True
         if r.type == "update":
-            if r.ref: m["ref"] = r.ref
-            if r.base_branch: m["base"] = r.base_branch
-            if r.merge: m["merge"] = True
+            if r.ref:
+                m["ref"] = r.ref
+            if r.base_branch:
+                m["base"] = r.base_branch
+            if r.merge:
+                m["merge"] = True
     return m
 
 
 def new_id(type_: str) -> str:
-    return f"{type_}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
+    return f"{type_}-{datetime.now(UTC):%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
 
 
 _reservations: list[int] = []
@@ -207,7 +350,10 @@ def publish(settings: "Settings", req: SendRequest) -> str:
     id_ = ""
     for _ in range(2):
         candidate = new_id(req.type)
-        if not (settings.outbox / f"{candidate}.json").exists() and not (settings.outbox / f"{candidate}.md").exists():
+        if (
+            not (settings.outbox / f"{candidate}.json").exists()
+            and not (settings.outbox / f"{candidate}.md").exists()
+        ):
             id_ = candidate
             break
     if not id_:
@@ -224,6 +370,7 @@ def publish(settings: "Settings", req: SendRequest) -> str:
                 body = req.text.encode()
             elif req.file is not None:
                 from pathlib import Path
+
                 path = Path(req.file)
                 try:
                     if not path.is_file() or not os.access(path, os.R_OK):
@@ -234,9 +381,13 @@ def publish(settings: "Settings", req: SendRequest) -> str:
             else:
                 body = sys.stdin.buffer.read()
             body_tmp.write_bytes(body)
-            if not body: raise InboxUsage(f"the {req.type} text is empty")
-            if len(body) > 65536: raise InboxUsage(f"the {req.type} text is {len(body)} bytes; the limit is 65536")
-        json_tmp.write_text(json.dumps(build_manifest(req, id_, body_name), ensure_ascii=False, indent=2) + "\n")
+            if not body:
+                raise InboxUsage(f"the {req.type} text is empty")
+            if len(body) > 65536:
+                raise InboxUsage(f"the {req.type} text is {len(body)} bytes; the limit is 65536")
+        json_tmp.write_text(
+            json.dumps(build_manifest(req, id_, body_name), ensure_ascii=False, indent=2) + "\n"
+        )
         if req.wait:
             lock_dir = settings.base / "status-waits"
             lock_dir.mkdir(parents=True, exist_ok=True)
