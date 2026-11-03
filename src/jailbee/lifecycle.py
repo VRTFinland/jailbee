@@ -2329,6 +2329,10 @@ def _new_container(
         )
         # Incus deletes empty values; a delimiter persists an empty attempted set.
         incus.config_set(name, CREATED_KEY, attempted or ",")
+    if opts.autostart_services is not None:
+        from jailbee.autostart_profiles import SERVICES_KEY, encode_names
+
+        incus.config_set(name, SERVICES_KEY, encode_names(opts.autostart_services))
     if opts.autostart:
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart

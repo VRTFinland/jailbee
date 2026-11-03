@@ -2054,6 +2054,13 @@ def new_cmd(
     autostart_profile: Annotated[
         str | None, typer.Option("--autostart-profile", help="Named autostart stage selection.")
     ] = None,
+    services: Annotated[
+        str | None,
+        typer.Option(
+            "--services",
+            help="Start only these services (comma-separated) plus their dependencies; an empty value starts none.",
+        ),
+    ] = None,
     mount: Annotated[
         bool,
         typer.Option(
@@ -2227,6 +2234,15 @@ def new_cmd(
         new_container,
         short_name,
     )
+
+    from jailbee import create_flow
+
+    selected_services = None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    try:
+        create_flow.validate_service_names(selected_services)
+    except create_flow.CreateError as e:
+        error(str(e))
+        raise typer.Exit(e.exit_code) from e
 
     cfg = _load_or_exit(config)
 
@@ -2631,6 +2647,7 @@ def new_cmd(
             clone=False,
             autostart=not no_autostart,
             autostart_profile=autostart_profile,
+            autostart_services=selected_services,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
@@ -2653,6 +2670,7 @@ def new_cmd(
             clone=not no_clone,
             autostart=not no_autostart,
             autostart_profile=autostart_profile,
+            autostart_services=selected_services,
             mirror_endpoint=mirror_endpoint,
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,

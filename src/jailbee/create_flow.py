@@ -76,6 +76,15 @@ class NeedsOperator(CreateError):  # noqa: N818 -- a request for a human, named 
         self.reason = reason
 
 
+def validate_service_names(names: list[str] | None) -> None:
+    """Validate syntax; the container resolves names against its own config."""
+    from jailbee.config.models_services import SERVICE_NAME_RE
+
+    for name in names or []:
+        if not SERVICE_NAME_RE.fullmatch(name):
+            raise CreateError(f"Invalid service name {name!r}", 2)
+
+
 # ---------------------------------------------------------------------------
 # Interaction
 # ---------------------------------------------------------------------------
@@ -622,6 +631,7 @@ def start_create(
     """
     from jailbee.lifecycle import derive_container_name, short_name
 
+    validate_service_names(opts.autostart_services)
     if opts.initial_prompt is not None:
         from jailbee import initial_prompt
 

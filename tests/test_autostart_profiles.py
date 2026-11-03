@@ -155,6 +155,25 @@ def test_new_stores_profile_and_seeds_created_empty_first(make_cfg, tmp_path, mo
     assert seen[0][1] == ["deps"]
 
 
+@pytest.mark.parametrize("selection,encoded", [(None, None), ([], ","), (["web", "db"], "web,db")])
+def test_new_stores_service_selection_before_autostart(make_cfg, tmp_path, mocker, selection, encoded):
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.autostart_profiles import SERVICES_KEY
+    from jailbee.lifecycle import new_container
+    from tests.test_lifecycle_autostart_detach import _cfg_for_new, _opts, _patch_new_container_deps
+
+    cfg = _cfg_for_new(make_cfg, tmp_path)
+    _patch_new_container_deps(mocker)
+    incus, state = state_incus(mocker)
+    incus.exists.return_value = False
+    observed = []
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=lambda *a, **kw: (observed.append(dict(state)), AutostartPlan([], []))[1])
+    new_container(cfg, incus, _opts(autostart_services=selection))
+    writes = [call.args[2] for call in incus.config_set.call_args_list if call.args[1] == SERVICES_KEY]
+    assert writes == ([] if encoded is None else [encoded])
+    assert observed and observed[0].get(SERVICES_KEY) == encoded
+
+
 def test_start_runs_missing_on_create_then_on_start(make_cfg, tmp_path, mocker):
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY

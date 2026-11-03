@@ -371,6 +371,32 @@ def test_cli_new_with_branch_and_current_uses_host_branch_as_base(tmp_path, mock
     assert opts.base == "feat/parent"
 
 
+@pytest.mark.parametrize("value,expected", [("web, db", ["web", "db"]), ("", []), ("unknown", ["unknown"])])
+def test_cli_new_services_option(tmp_path, mocker, value, expected):
+    from jailbee import cli as cli_mod
+    from jailbee.global_config import DockerRegistryMirror, GlobalConfig
+
+    cfg = load_config(FIXTURES / "full_config.yaml").model_copy(update={"repo_root": tmp_path})
+    (tmp_path / ".git").mkdir()
+    mocker.patch.object(cli_mod, "_load_or_exit", return_value=cfg)
+    mocker.patch.object(cli_mod, "_load_global", return_value=GlobalConfig(docker_registry_mirror=DockerRegistryMirror(enabled=False)))
+    mocker.patch("jailbee.incus.Incus")
+    create = mocker.patch("jailbee.lifecycle.new_container", return_value="feat-x")
+    result = CliRunner().invoke(app, ["new", "feat/x", "--no-autostart", "--services", value])
+    assert result.exit_code == 0, result.output
+    assert create.call_args.args[2].autostart_services == expected
+
+
+def test_cli_new_services_rejects_invalid_name(tmp_path, mocker):
+    from jailbee import cli as cli_mod
+
+    cfg = load_config(FIXTURES / "full_config.yaml").model_copy(update={"repo_root": tmp_path})
+    mocker.patch.object(cli_mod, "_load_or_exit", return_value=cfg)
+    result = CliRunner().invoke(app, ["new", "feat/x", "--services", "Bad/name"])
+    assert result.exit_code == 2
+    assert "Bad/name" in result.output
+
+
 def test_net_help() -> None:
     result = run_cli("net", "--help")
     assert result.returncode == 0

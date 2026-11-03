@@ -431,6 +431,25 @@ def _opts(**kw):
     return NewContainerOptions(**base)
 
 
+@pytest.mark.parametrize("selection", [["BAD"], ["web", "bad/name"], [""]])
+def test_start_create_rejects_invalid_service_name_before_host_work(tmp_path, mocker, selection):
+    cfg, incus, gcfg = _env(tmp_path, mocker)
+    host = mocker.patch("jailbee.create_flow.host_extras")
+    with pytest.raises(CreateError) as exc:
+        start_create(cfg, incus, gcfg, _opts(autostart_services=selection), interaction=Interaction.none(), config_path=None)
+    assert exc.value.exit_code == 2
+    assert repr(selection[-1]) in str(exc.value)
+    host.assert_not_called()
+
+
+def test_service_syntax_accepts_unknown_names():
+    from jailbee.create_flow import validate_service_names
+
+    validate_service_names(["unknown-service"])
+    validate_service_names([])
+    validate_service_names(None)
+
+
 def _assessment_with_prompting_verdict(mocker, cfg):
     verdict = EscalationVerdict(
         widening_steps=("seed",),
