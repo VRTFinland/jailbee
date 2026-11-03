@@ -74,10 +74,7 @@ def test_entry_dispatches_to_container(monkeypatch, mocker):
 
 
 def test_host_rejects_container_command(monkeypatch, mocker, capsys):
-    from jailbee import cli_context
-
     monkeypatch.setenv("JAILBEE_CONTEXT", "host")
-    monkeypatch.setattr(cli_context, "CONTAINER_COMMANDS", frozenset({"inbox"}))
     monkeypatch.setattr(sys, "argv", ["jailbee", "inbox"])
     host = mocker.patch("jailbee.macos.maybe_delegate")
     with pytest.raises(SystemExit) as exc:
