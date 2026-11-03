@@ -4,8 +4,8 @@ import fcntl
 import io
 import os
 import sys
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -104,7 +104,10 @@ def test_send_reserves_and_publishes_body_before_manifest(tmp_path, monkeypatch)
     monkeypatch.setattr(Path, "replace", check_order)
     before = len(send._reservations)
     try:
-        assert send.publish(settings, send.parse_send(["message", "--text", "hello", "--wait"])) == "fixed"
+        assert (
+            send.publish(settings, send.parse_send(["message", "--text", "hello", "--wait"]))
+            == "fixed"
+        )
         assert observed == [True]
     finally:
         for fd in send._reservations[before:]:

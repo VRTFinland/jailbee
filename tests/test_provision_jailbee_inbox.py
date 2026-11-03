@@ -1154,7 +1154,17 @@ def test_send_spawn_new_with_base_and_repeats(script, base, tmp_path):
     )
     _, m = manifest_of(base, r)
     assert m["kind"] == "new" and m["base"] == "main" and m["note"] == "why"
-    assert list(m) == ["version", "id", "type", "kind", "branch", "prompt_file", "rights", "base", "note"]
+    assert list(m) == [
+        "version",
+        "id",
+        "type",
+        "kind",
+        "branch",
+        "prompt_file",
+        "rights",
+        "base",
+        "note",
+    ]
     assert list(m["rights"]) == ["version", "mounts", "loose", "egress"]
     assert m["rights"] == {
         "version": 1,
