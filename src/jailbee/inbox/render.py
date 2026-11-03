@@ -14,6 +14,13 @@ def clean_c1(s: str) -> str:
     return re.sub(r"[\x80-\x9f]", "?", s)
 
 
+class SaturatedNumber:
+    """A jq decimal outside its supported exponent range."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
 def _number(value: float | Decimal) -> str:
     text = str(value)
     if isinstance(value, Decimal) and value.is_finite():
@@ -33,6 +40,8 @@ def _number(value: float | Decimal) -> str:
 
 
 def _json(v: object, indent: int | None = None, level: int = 0) -> str:
+    if isinstance(v, SaturatedNumber):
+        return v.text
     if isinstance(v, (float, Decimal)):
         return _number(v)
     if isinstance(v, (list, dict)):

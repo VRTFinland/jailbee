@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
-from jailbee.inbox.render import clean_c0c1, clean_c1, jq_tostring, ls_line, pretty, tsv
+from jailbee.inbox.render import SaturatedNumber, clean_c0c1, clean_c1, jq_tostring, ls_line, pretty, tsv
 
 PROG = "jailbee inbox"
 USAGE = (
@@ -140,8 +140,28 @@ def unread_files(inbox: Path) -> list[Path]:
     )
 
 
+def _parse_number(text: str) -> Decimal | SaturatedNumber:
+    mantissa, _, exponent = text.lower().partition("e")
+    digits = mantissa.lstrip("-").replace(".", "")
+    first = next((i for i, digit in enumerate(digits) if digit != "0"), len(digits))
+    sign = "-" if text.startswith("-") else ""
+    if exponent:
+        exp = int(exponent) if len(exponent.lstrip("+-0")) < 12 else (10**12 if not exponent.startswith("-") else -(10**12))
+        adjusted = exp + len(mantissa.lstrip("-").split(".")[0]) - first - 1
+        if first == len(digits):
+            if exp > 999999999:
+                return SaturatedNumber(sign + "0E+999999999")
+            if exp < -1147483646:
+                return SaturatedNumber(sign + "0E-1147483646")
+        elif adjusted > 999999999:
+            return SaturatedNumber(sign + "1.7976931348623157e+308")
+        elif adjusted < -1147483646:
+            return SaturatedNumber(sign + "0E-1147483646")
+    return Decimal(text)
+
+
 def _load(path: Path) -> object:
-    return json.loads(path.read_text(), parse_float=Decimal)
+    return json.loads(path.read_text(), parse_float=_parse_number, parse_int=_parse_number)
 
 
 def message_id(path: Path) -> str | None:
@@ -243,6 +263,7 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
     if int(time.time()) - doc["updated_at"] > 900:
         print(f"{PROG}: children.json heartbeat is stale (over 15 minutes old)", file=sys.stderr)
     children = doc["children"]
+    line = max(1, len(path.read_text().rstrip().splitlines()))
     if args:
         print(pretty(children))
     else:
@@ -251,7 +272,7 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
                 child = {}
             if not isinstance(child, dict):
                 print(
-                    f'jq: error (at {path}:1): Cannot index {_jq_type(child)} with string "name"',
+                    f'jq: error (at {path}:{line}): Cannot index {_jq_type(child)} with string "name"',
                     file=sys.stderr,
                 )
                 return 5
@@ -261,7 +282,7 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
             for value in (name, session):
                 if isinstance(value, (dict, list)):
                     print(
-                        f"jq: error (at {path}:1): {_jq_type(value)} ({jq_tostring(value)}) "
+                        f"jq: error (at {path}:{line}): {_jq_type(value)} ({jq_tostring(value)}) "
                         "is not valid in a csv row",
                         file=sys.stderr,
                     )
@@ -281,7 +302,7 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
 def _jq_type(value: object) -> str:
     if isinstance(value, bool):
         return "boolean"
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal, SaturatedNumber)):
         return "number"
     if isinstance(value, str):
         return "string"

@@ -2196,3 +2196,23 @@ def test_read_numeric_corpus_matches_jq(script, base, tmp_path, raw, expected):
     result = run(script, "read", "n", env=env_for(base, tmp_path))
     assert result.returncode == 0
     assert '"body": ' + expected in result.stdout
+
+
+@pytest.mark.parametrize("raw,expected", [("-0", "-0"), ("1e9999999999999999999", "1.7976931348623157e+308"), ("-1e9999999999999999999", "-1.7976931348623157e+308"), ("1e-9999999999999999999", "0E-1147483646"), ("-1e-9999999999999999999", "-0E-1147483646")])
+def test_extreme_numbers_ls_and_read(script, base, tmp_path, raw, expected):
+    (base / "inbox" / FIRST).write_text('{"id":"n","body":' + raw + '}')
+    env = env_for(base, tmp_path)
+    ls = run(script, "ls", env=env)
+    assert (ls.returncode, ls.stdout.split("\t")[-1]) == (0, expected + "\n")
+    read = run(script, "read", "n", env=env)
+    assert read.returncode == 0
+    assert '"body": ' + expected in read.stdout
+    assert "Traceback" not in ls.stderr + read.stderr
+
+
+def test_children_decimal_error_line(script, base, tmp_path):
+    (base / "children.json").write_text('{\n  "version": 1,\n  "updated_at": 9999999999,\n  "children": [\n    42.0\n  ]\n}\n')
+    result = run(script, "children", env=env_for(base, tmp_path))
+    assert result.returncode == 5
+    assert 'children.json:7): Cannot index number with string "name"' in result.stderr
+    assert "Traceback" not in result.stderr
