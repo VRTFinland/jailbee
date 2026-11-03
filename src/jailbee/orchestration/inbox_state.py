@@ -99,9 +99,7 @@ def _agent_host_pid(
     return None
 
 
-def _longest_command(
-    node: Node, agent: agent_watch.AgentStatus | None
-) -> dict[str, object] | None:
+def _longest_command(node: Node, agent: agent_watch.AgentStatus | None) -> dict[str, object] | None:
     if node.init_pid is None:
         raise ValueError("no init pid")
     samples = {}

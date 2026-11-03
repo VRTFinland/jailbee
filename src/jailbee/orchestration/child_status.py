@@ -65,8 +65,12 @@ def _is_waiter(comm: str, cmdline: str | None) -> bool:
     if cmdline is None:
         return False
     words = cmdline.split()
-    return bool(words) and "wait" in words and any(
-        word.rsplit("/", 1)[-1] in WAITER_COMMS or word == "jailbee.inbox" for word in words[:4]
+    return (
+        bool(words)
+        and "wait" in words
+        and any(
+            word.rsplit("/", 1)[-1] in WAITER_COMMS or word == "jailbee.inbox" for word in words[:4]
+        )
     )
 
 

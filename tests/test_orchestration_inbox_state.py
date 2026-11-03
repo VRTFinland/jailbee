@@ -499,9 +499,7 @@ def test_activity_at_counts_child_time_within_slack(tmp_path, probes, monkeypatc
     assert published_status(ctx)["activity_at"] == now + 4
 
 
-def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(
-    tmp_path, probes, monkeypatch
-):
+def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(tmp_path, probes, monkeypatch):
     ctx = context(tmp_path)
     now = ctx.now.timestamp()
     event = now - 30
