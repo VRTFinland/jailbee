@@ -345,6 +345,10 @@ def new_id(type_: str) -> str:
 _reservations: list[int] = []
 
 
+class PublishError(Exception):
+    """A send failed after validation, with exit status 1."""
+
+
 def publish(settings: "Settings", req: SendRequest) -> str:
     settings.outbox.mkdir(parents=True, exist_ok=True)
     id_ = ""
@@ -357,7 +361,7 @@ def publish(settings: "Settings", req: SendRequest) -> str:
             id_ = candidate
             break
     if not id_:
-        raise RuntimeError("could not find a free manifest id")
+        raise PublishError("could not find a free manifest id")
     body_name = f"{id_}.md" if req.type in {"message", "spawn", "restart"} else None
     body_tmp = settings.outbox / f".{id_}.md.tmp"
     json_tmp = settings.outbox / f".{id_}.json.tmp"
@@ -399,7 +403,10 @@ def publish(settings: "Settings", req: SendRequest) -> str:
         if body_name:
             body_tmp.replace(body_path)
             moved_body = True
-        json_tmp.replace(settings.outbox / f"{id_}.json")
+        try:
+            json_tmp.replace(settings.outbox / f"{id_}.json")
+        except OSError as exc:
+            raise PublishError("could not write the manifest") from exc
         if fd is not None:
             _reservations.append(fd)
             fd = None
