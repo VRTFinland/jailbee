@@ -853,7 +853,10 @@ class AutostartProfile(BaseModel):
 
     services: list[str] | None = Field(
         default=None,
-        description="Services to start with this profile (dependencies added automatically); null starts all.",
+        description=(
+            "Services to start with this profile (dependencies added automatically); "
+            "null starts all."
+        ),
     )
 
 
@@ -890,9 +893,14 @@ class Autostart(BaseModel):
 
     @model_validator(mode="after")
     def _validate_profiles(self) -> Self:
-        reserved_message = "`services` is a reserved autostart stage name — jailbee starts the `services:` block there"
+        reserved_message = (
+            "`services` is a reserved autostart stage name — "
+            "jailbee starts the `services:` block there"
+        )
         for entries in (self.on_create, self.on_start):
-            if any(isinstance(entry, AutostartStage) and entry.stage == "services" for entry in entries):
+            if any(
+                isinstance(entry, AutostartStage) and entry.stage == "services" for entry in entries
+            ):
                 raise ValueError(reserved_message)
         for profile in self.profiles.values():
             if profile != "all" and "services" in profile.stages:

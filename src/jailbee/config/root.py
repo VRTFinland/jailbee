@@ -577,7 +577,8 @@ class Config(BaseModel):
                 unknown = set(profile.services) - self.services.keys()
                 if unknown:
                     raise ValueError(
-                        f"autostart profile '{name}' names unknown services: {', '.join(sorted(unknown))}"
+                        f"autostart profile '{name}' names unknown services: "
+                        f"{', '.join(sorted(unknown))}"
                     )
 
         visited: set[str] = set()

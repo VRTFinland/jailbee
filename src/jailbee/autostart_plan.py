@@ -270,9 +270,7 @@ def plan_autostart(
                 position = boundary if already_detached else boundary - 1
         else:
             position = len(stages)
-        if position < boundary or (
-            position == boundary == len(stages) and not already_detached
-        ):
+        if position < boundary or (position == boundary == len(stages) and not already_detached):
             boundary += 1
         stages.insert(
             position,

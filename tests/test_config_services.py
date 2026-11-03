@@ -79,7 +79,11 @@ def test_full_fixture_has_services(tmp_path):
 
 def test_profile_services_must_exist(tmp_path):
     with pytest.raises(ConfigError, match="autostart profile 'p' names unknown services: missing"):
-        load("autostart: {profiles: {p: {stages: [agents], services: [missing]}}, default_profile: p}", tmp_path)
+        load(
+            "autostart: {profiles: {p: {stages: [agents], services: [missing]}}, "
+            "default_profile: p}",
+            tmp_path,
+        )
 
 
 def test_profile_services_none_means_all(tmp_path):
@@ -90,6 +94,11 @@ def test_profile_services_none_means_all(tmp_path):
 
 
 def test_profile_services_accepts_existing_and_empty(tmp_path):
-    cfg = load("services: {web: {run: x}}\nautostart: {profiles: {p: {stages: [agents], services: [web]}, q: {stages: [agents], services: []}}, default_profile: p}", tmp_path)
+    cfg = load(
+        "services: {web: {run: x}}\nautostart: {profiles: "
+        "{p: {stages: [agents], services: [web]}, q: {stages: [agents], services: []}}, "
+        "default_profile: p}",
+        tmp_path,
+    )
     assert cfg.autostart.profiles["p"].services == ["web"]
     assert cfg.autostart.profiles["q"].services == []
