@@ -82,6 +82,12 @@ CASES = [
     ["send", "spawn", "--text", "x", "--pr", "1", "--new"],
     ["send", "message", "--text", "x", "--to", ""],
     ["send", "message", "--text", "x", "--text", "x", "-"],
+    ["send", "message", "--text", "x", "--wait", "--timeout", "invalid"],
+    ["send", "message", "--file", "{missing}"],
+    ["send", "message", "--file", "{empty}"],
+    ["send", "message", "--file", "{large}"],
+    ["send", "message", "--file", "{body}"],
+    ["send", "message", "-"],
 ]
 
 
@@ -99,11 +105,21 @@ def test_impls_agree(tmp_path, args):
     script.write_text(
         importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
     )
+    for name, content in (("empty", ""), ("large", "x" * 65537), ("body", "hello")):
+        (tmp_path / name).write_text(content)
+    args = [arg.format(**{name: str(tmp_path / name) for name in ("missing", "empty", "large", "body")}) for arg in args]
+    config = tmp_path / "litellm.json"
+    config.write_text(json.dumps({"default_profile": "p", "profiles": {"p": {"tiers": {"opus": "alias\x7f\x9b"}}}}))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "claude").chmod(0o755)
     env = {
         **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
         "HOME": str(tmp_path),
         "JAILBEE_ORCHESTRATION_DIR": str(base),
-        "JAILBEE_LITELLM_CONFIG": str(tmp_path / "missing"),
+        "JAILBEE_LITELLM_CONFIG": str(config),
         "JAILBEE_INBOX_SETTLE": "0",
     }
     results = []
@@ -125,7 +141,11 @@ def test_impls_agree(tmp_path, args):
                 }
             )
         )
-        result = subprocess.run([*argv, *args], env=env, capture_output=True, text=True, timeout=30)
+        result = subprocess.run([*argv, *args], env=env, input="stdin body", capture_output=True, text=True, timeout=30)
+        if args == ["runners"]:
+            assert "alias??" in result.stdout
+        if args == ["runners", "--json"]:
+            assert "alias\\u007f?" in result.stdout
         files = sorted(
             (normalize(p.name), normalize(p.read_text())) for p in (base / "outbox").glob("*")
         )
