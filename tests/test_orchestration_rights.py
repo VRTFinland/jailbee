@@ -68,6 +68,7 @@ def test_grant_never_mount(rig):
     ctx, store, _, attach, *_ = rig
     result = actions.dispatch(ctx, manifest(grant={"mounts": ["aws"], "for": "never"}))
     assert result.state == "done"
+    assert "(no expiry)" in result.detail and "(never)" not in result.detail
     attach.assert_called_once_with(ctx.cfg, ctx.incus, "c", "aws", until=None)
     assert ChildRights.from_label(store[("c", labels.RIGHTS)]).mounts == ("aws",)
 

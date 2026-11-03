@@ -244,7 +244,7 @@ def _handle_rights_locked(ctx: ActionContext, m: RightsManifest) -> Outcome:
                 timed.pop(item, None)
             else:
                 timed[item] = until.isoformat()
-            changes.append(f"{pretty} ({'never' if until is None else 'for ' + m.grant.for_})")
+            changes.append(f"{pretty} ({'no expiry' if until is None else 'for ' + m.grant.for_})")
         _save(ctx, child, owned, timed)
     except Exception as exc:
         for item in reversed(undo):
