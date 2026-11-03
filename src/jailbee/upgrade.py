@@ -411,24 +411,16 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
         reason=(
-            "the golden image's jailbee-inbox lists children's agent sessions (`children`) "
-            "and can restart a child resuming one (`send restart --resume`)"
+            "the golden image no longer ships the `jailbee-inbox` helper; agents use "
+            "`jailbee inbox` from the in-container jailbee"
         ),
     ),
     UpgradeNote(
         version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
+        actions=frozenset({"apply"}),
         reason=(
-            "the golden image's jailbee-inbox supports named autostart profiles "
-            "for spawn and restart"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox gains `send rights`, so an agent can "
-            "grant or revoke a child's loose network, mounts and egress at runtime"
+            "`jailbee apply` syncs orchestration skills that use `jailbee inbox` "
+            "instead of `jailbee-inbox`"
         ),
     ),
     UpgradeNote(
@@ -450,26 +442,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     ),
     UpgradeNote(
         version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox gains `wait --wake-on` and "
-            "`--quiet-after`, and keeps `send --wait` replies from a concurrent `wait`"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills describing wake filters "
             "and the quiet-child watchdog for inbox waits"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox gains `send restart --agent-only` "
-            "to relaunch an idle running child's agent without boot or on_start"
         ),
     ),
     UpgradeNote(
@@ -482,26 +458,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     ),
     UpgradeNote(
         version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox gains `send update --ref` and "
-            "`--base` to transport a selected source into a running child"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills describing explicit "
             "update refs, commits and host base branches"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox accepts `wait --wake-on idle` "
-            "for broker reports of live prompted agents awaiting input"
         ),
     ),
     UpgradeNote(
@@ -514,26 +474,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     ),
     UpgradeNote(
         version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox accepts `--timeout none` for "
-            "`wait` and `send --wait`, waiting without a deadline"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox accepts `send update --merge` to merge "
-            "an update into a child's branch after a conflict check"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply` syncs orchestration skills telling children to keep "
-            "a background `jailbee-inbox wait --timeout none` running"
+            "a background `jailbee inbox wait --timeout none` running"
         ),
     ),
     UpgradeNote(
@@ -568,20 +512,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     ),
     UpgradeNote(
         version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason=(
-            "the golden image's jailbee-inbox can request a child service refresh (`send refresh`)"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
         actions=frozenset({"apply"}),
         reason="`jailbee apply` syncs orchestration skills describing service refresh requests",
-    ),
-    UpgradeNote(
-        version=(1, 8, 1),
-        actions=frozenset({"base_build"}),
-        reason="the golden image's jailbee-inbox accepts `send spawn|restart --services`",
     ),
     UpgradeNote(
         version=(1, 8, 1),

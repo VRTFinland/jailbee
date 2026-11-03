@@ -22,6 +22,10 @@ def main() -> NoReturn:
         if error:
             print(error, file=sys.stderr)
             raise SystemExit(2)
+    if sys.argv[1:2] == ["inbox"]:
+        from jailbee.inbox.cli import main as inbox_main
+
+        raise SystemExit(inbox_main(sys.argv[2:]))
     from jailbee.container_cli import container_app
 
     container_app()

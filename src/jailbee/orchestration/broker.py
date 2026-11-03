@@ -39,6 +39,7 @@ from jailbee.orchestration.outbox import (
     ensure_orchestration_env,
     flush_pending,
     grant_json_text,
+    has_container_jailbee,
     has_pending,
     read_outbox,
     write_grant_json,
@@ -347,7 +348,15 @@ def _settle_agent_watch(
                         ctx.incus.config_set(child.full, labels.AGENT_SESSIONS, json.dumps(history))
             except Exception:
                 log.debug("Could not record agent session for %s", child.full, exc_info=True)
-    updated, outcome = agent_watch.advance(entry, child, status, now=ctx.now)
+    updated, outcome = agent_watch.advance(
+        entry,
+        child,
+        status,
+        now=ctx.now,
+        has_jailbee=has_container_jailbee(ctx.incus, child.full)
+        if child and child.running
+        else False,
+    )
     if outcome is not None:
         if outcome.state == "failed" and child is not None and child.running:
             tail = agent_watch.output_tail(
@@ -529,8 +538,8 @@ def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> 
 def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Ensure each served container once per broker process; retry failures.
 
-    Upgrades restart the broker, pushing changed helpers then. Fork children
-    copy an ensured orchestrator; new children use the current golden image.
+    Fork children copy an ensured orchestrator; new children use the current
+    golden image.
     A vanished name is forgotten so a recreated older image is ensured again.
     """
     full = ctx.sender.full
@@ -541,7 +550,7 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     except IncusError as exc:
         memory.warn_once(
             f"env:{full}",
-            "broker: %s: could not install the orchestration inbox helper: %s",
+            "broker: %s: could not prepare the orchestration inbox: %s",
             full,
             exc,
         )

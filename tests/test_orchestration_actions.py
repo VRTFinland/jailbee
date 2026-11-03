@@ -63,7 +63,7 @@ def _spawn() -> SpawnManifest:
 
 
 def test_child_preamble_requests_background_waiter() -> None:
-    assert "jailbee-inbox wait --timeout none" in actions.child_preamble("orch")
+    assert "jailbee inbox wait --timeout none" in actions.child_preamble("orch")
 
 
 def test_child_preamble_discourages_progress_notes() -> None:

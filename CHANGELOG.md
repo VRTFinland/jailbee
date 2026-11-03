@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+- The standalone `jailbee-inbox` helper is replaced by `jailbee inbox`.
+
 ### Added
 
 - Managed repository services with dependency-aware start, restart, refresh and tmux logs, automatic preparation and startup, light container creation or orchestration with `--services`, and host-authorized or orchestrator-authorized elevated refresh that pauses and resumes the agent.
@@ -20,13 +22,13 @@ before editing `## Unreleased`.
   connected, `gpg.enabled` containers decrypt and sign with the client's keys
   (for example a YubiKey), falling back to the host's agent when it closes.
 
-- Orchestrators can reuse an idle RUNNING child with `jailbee-inbox send
+- Orchestrators can reuse an idle RUNNING child with `jailbee inbox send
   restart --agent-only`, selecting a runner and fresh prompt per task without
   container boot or `on_start`. Accepted `done` or an ended monitored agent
   is required; busy children are refused. Existing services stay running,
   no additional slot is needed, and the new session is monitored as usual.
 
-- `jailbee-inbox wait --wake-on` filters wakeups without marking any message
+- `jailbee inbox wait --wake-on` filters wakeups without marking any message
   read; a child's first report after spawn/restart always wakes. The
   `--quiet-after` watchdog names silent running children. Concurrent
   `send --wait` replies are reserved for their sender, and a second ordinary
@@ -40,7 +42,7 @@ before editing `## Unreleased`.
   egress rights at runtime, timed or permanent; children can relinquish their
   own access. Loose permission includes narrower egress within the repo cap.
   `jailbee net egress add --for` also schedules per-container egress expiry.
-  `jailbee-inbox send update --ref REF` transports a full ref or commit from
+  `jailbee inbox send update --ref REF` transports a full ref or commit from
   the orchestrator's repo; `--base BRANCH` resolves a host base as spawn does.
   Explicit updates use an isolated per-request ref without switching branches;
   omitting both options preserves the current-branch update.

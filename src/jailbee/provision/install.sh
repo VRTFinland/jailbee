@@ -100,7 +100,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ripgrep fd-find jq htop \
     openssh-server kitty-terminfo \
     apparmor \
-    inotify-tools python3-venv
+    python3-venv
 
 # Bake dependencies independently of the optional Python stack.
 python3 -m venv /opt/jailbee/venv
@@ -477,13 +477,6 @@ fi
 exec claude "${args[@]}"
 EOF
 chmod 0755 /usr/local/bin/claude-jb
-
-# jailbee-inbox: wait for, list and read the messages the orchestrator (or
-# the host broker) delivers to this container's inbox
-# (${JAILBEE_ORCHESTRATION_DIR:-~/.jailbee/orchestration}/inbox/*.json).
-# Unread = a regular, non-hidden inbox/*.json; read ones move to inbox/read/.
-# inotify-tools makes `wait` event-driven; without it `wait` polls.
-install -m 0755 "$JAILBEE_PROVISION_DIR/jailbee-inbox" /usr/local/bin/jailbee-inbox
 
 # Passwordless sudo for the dev user.
 echo "${CONTAINER_USER} ALL=(ALL) NOPASSWD:ALL" \

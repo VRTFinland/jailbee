@@ -104,7 +104,7 @@ on-done policy to keep. It sends an `adopted` inbox message to each side, but
 does not create an import baseline or runner, relaunch an agent, or start
 supervision. Destruction therefore requires an import first or `--force`.
 To supervise a hand-started agent, ask the user to close it before using
-`jailbee-inbox send restart --child C --agent-only`; otherwise a second agent
+`jailbee inbox send restart --child C --agent-only`; otherwise a second agent
 may be launched. `JAILBEE_ROLE=child` is set on the next agent launch, not in
 the existing session.
 
@@ -196,9 +196,9 @@ and repo cap, just like spawn; revoking requires an active grant but not the
 `rights` operation. A removed grant disables both.
 
 ```bash
-jailbee-inbox send rights --child fix-12 --egress pypi.org --for 5m --wait
-jailbee-inbox send rights --child fix-12 --mount aws --for never --wait
-jailbee-inbox send rights --child fix-12 --revoke-mount aws --wait
+jailbee inbox send rights --child fix-12 --egress pypi.org --for 5m --wait
+jailbee inbox send rights --child fix-12 --mount aws --for never --wait
+jailbee inbox send rights --child fix-12 --revoke-mount aws --wait
 ```
 
 Every grant requires `--for`: a positive duration, at most 24h, or `never`.
@@ -253,7 +253,7 @@ agent's environment.
 ## Autostart stage selection
 
 `spawn` and `restart` accept optional `autostart_profile: "NAME"`, also
-available as `jailbee-inbox send spawn|restart --autostart-profile NAME`.
+available as `jailbee inbox send spawn|restart --autostart-profile NAME`.
 Names are validated against the host repo's [autostart profiles](config.md#profiles).
 Spawn passes the choice to creation; restart stores it before booting, runs
 missing one-shot stages, then the selected start stages in a background boot
@@ -268,7 +268,7 @@ refused with ``autostart profile `NAME` is not defined``. This field selects
 stages, not the agent or its LiteLLM profile; omit it to use the creation
 default or keep a child's existing choice on restart.
 
-For a light child, `jailbee-inbox send spawn --branch task --services web --wait`
+For a light child, `jailbee inbox send spawn --branch task --services web --wait`
 starts only `web` and its dependencies; restart also accepts `--services`.
 The equivalent manifest field is `services: ["web"]` (at most 32 names).
 An empty list or `--services ''` starts none. Omission uses the profile or all
@@ -286,7 +286,7 @@ defers unprepared elevated services and their dependents until the next restart.
 ## Refresh a child's services
 
 After `update --merge` changes dependencies or migrations, or when a child asks,
-use `jailbee-inbox send refresh --child C --services db,web --wait`. The
+use `jailbee inbox send refresh --child C --services db,web --wait`. The
 `refresh` operation must be granted. For an existing grant without it, run
 `jb orchestrate grant ORCHESTRATOR --allow refresh` on the host; a bare grant
 preserves the existing operations. Final status reports per-service outcomes,
@@ -309,7 +309,7 @@ If restoration cannot be confirmed, resume is withheld and the failure reports
 recovery commands such as `jb net strict` and, when needed, mount removal. If
 supervision registration fails after restoration, resume is also withheld; the
 failure preserves service outcomes and reports a recovery command. Once safe,
-recover supervision with `jailbee-inbox send restart --child C --agent-only
+recover supervision with `jailbee inbox send restart --child C --agent-only
 --resume SESSION --text 'Continue your task.'`.
 
 The detached refresh worker continues across a broker restart; a final status
@@ -321,14 +321,14 @@ Durability across host power loss is not guaranteed.
 
 ## Reuse a running worker without autostart
 
-Use `jailbee-inbox send restart --child C --agent-only --text "Next task"`
+Use `jailbee inbox send restart --child C --agent-only --text "Next task"`
 (or manifest `"agent_only": true`) for a persistent worker kept with
 `on_done: "keep"`. The child must be RUNNING and idle: either its `done`
 was accepted, or its previous monitored agent has ended (the broker reported,
 or would report, `blocked`). A working child or uncertain agent liveness is
 refused; there is no force option. Active startup workers also prevent relaunch.
 Without the flag, a running child is still refused with "stop it first".
-A kept worker's agent keeps `jailbee-inbox wait --timeout none` in the
+A kept worker's agent keeps `jailbee inbox wait --timeout none` in the
 background between tasks, re-arming it after handling messages.
 
 Only the agent tmux window is replaced. Container boot, setup stages and all
@@ -370,7 +370,7 @@ shown on its dashboard card.
 A runner that cannot be honoured (Claude not enabled, no `prompt_args`, a
 command that is not `claude`/`claude-jb`, LiteLLM disabled, an unserved
 profile or a tier the profile lacks) is refused with the reason; it never falls
-back to the default. Orchestrators run `jailbee-inbox runners` first to see
+back to the default. Orchestrators run `jailbee inbox runners` first to see
 the configured default and available profiles and tiers. Omitting `runner` on
 spawn starts the default. They may choose a cheaper tier for routine,
 well-specified work or a stronger tier for hard or open-ended work, following
@@ -450,11 +450,11 @@ queue and are delivered when it runs again, also across broker restarts.
 
 Inside each orchestrator and child, `/home/dev/.jailbee/orchestration/` holds
 `outbox/` (container to host), `inbox/` (host to container) and, for an
-orchestrator, `grant.json`, a read-only copy of its limits. The broker installs
-both directories and the current `jailbee-inbox` helper into every orchestrator
-and child it serves, including containers from older images. `jb base build`
-bakes the same helper (`wait`, `ls`, `read`, `runners`, `children`, `send`) into new images
-so agents need not write JSON by hand. After `wait`, run `ls` and handle every
+orchestrator, `grant.json`, a read-only copy of its limits. The broker creates
+both directories in every orchestrator and child it serves. New images include
+`jailbee inbox` (`wait`, `ls`, `read`, `runners`, `children`, `send`), so agents
+need not write JSON by hand. For an old image without the container CLI, run
+`jb base build` on the host and recreate the container. After `wait`, run `ls` and handle every
 unread message. `JAILBEE_INBOX_SETTLE` controls the quiet window after an arrival
 (default 1 second, 0 disables), capped at 5 seconds and the wait timeout;
 messages already present return immediately. Use `send --wait` for spawn,
@@ -467,7 +467,7 @@ For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
 
 ```bash
-jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
+jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
 ```
 
 For a background orchestrator waiter, use `--timeout none` only together with

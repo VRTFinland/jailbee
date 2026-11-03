@@ -24,7 +24,12 @@ from jailbee.global_config import GlobalConfig
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
-from jailbee.orchestration.outbox import INBOX_DIR, INBOX_HELPER, OUTBOX_DIR
+from jailbee.orchestration.outbox import (
+    CONTAINER_JAILBEE,
+    INBOX_DIR,
+    LEGACY_INBOX_HELPER,
+    OUTBOX_DIR,
+)
 from jailbee.orchestration.state import load_queue, pending_dir
 from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config
@@ -93,6 +98,8 @@ class FakeIncus:
         if argv == ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR]:
             self.events.append(("mkdir", name, kw.get("uid")))
             return ""
+        if argv in (["test", "-x", CONTAINER_JAILBEE], ["rm", "-f", LEGACY_INBOX_HELPER]):
+            return ""
         if argv[:3] == ["rm", "-f", "--"]:
             journal = (self.root / JOURNAL_FILE).read_text()
             self.events.append(("rm", name, tuple(argv[3:]), journal.count("\n")))
@@ -110,10 +117,6 @@ class FakeIncus:
         return self
 
     def exec_with_input(self, name: str, argv: list[str], text: str, **kw: object) -> str:
-        if argv[:2] == ["sh", "-c"] and argv[3:] == ["sh", INBOX_HELPER]:
-            assert kw.get("uid") is None
-            self.events.append(("helper", name, text))
-            return ""
         directory, file_name = argv[-3], argv[-2]
         self.events.append(("write", name, directory, file_name, json.loads(text)))
         return ""
@@ -393,6 +396,57 @@ def test_orchestrator_import_records_and_reports_the_ref(
     assert IMPORT_REF in detail
     assert merge.call_args.kwargs["plain"] is True
     assert merge.call_args.kwargs["ff_local_branch"] is False
+
+
+def test_spawn_fails_when_alive_child_has_no_launcher(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.incus import IncusError
+    from jailbee.orchestration import agent_watch
+
+    incus: FakeIncus = world["incus"]
+    incus.set_running("proj-c1", False)
+    memory = broker.BrokerMemory()
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
+    original_exec = incus.exec
+
+    def exec_missing(name: str, argv: list[str], **kw: object) -> str:
+        if name == "proj-k1" and argv == ["test", "-x", CONTAINER_JAILBEE]:
+            raise IncusError("missing")
+        if name == "proj-k1" and argv[:2] == ["bash", "-lc"]:
+            return ""
+        return original_exec(name, argv, **kw)
+
+    monkeypatch.setattr(incus, "exec", exec_missing)
+    _manifest(
+        incus,
+        "proj-orch",
+        {
+            "version": 1,
+            "id": "sp1",
+            "type": "spawn",
+            "kind": "new",
+            "branch": "k1",
+            "prompt": "go",
+            "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+        },
+    )
+    _tick(world, memory)
+    incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})
+    _tick(world, memory, 5)
+    _tick(world, memory, 10)
+    assert _statuses(incus, "proj-orch") == [
+        ("sp1", "started", "creation of child `k1` started; on done: destroy"),
+        (
+            "sp1",
+            "failed",
+            "container image has no in-container jailbee (needed for `jailbee inbox`) — "
+            "run `jb base build` on the host, then recreate the container",
+        ),
+    ]
 
 
 def test_spawn_reports_ready_after_worker_finishes(

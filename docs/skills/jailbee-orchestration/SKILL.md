@@ -67,7 +67,7 @@ revoked grant; a request made after revocation is `refused` with
 An `adopted` inbox message means the host user attached an existing container
 as your child. It has no import baseline and its agent is not supervised or
 automatically relaunched. Ask the user to close a hand-started agent before
-using `jailbee-inbox send restart --child C --agent-only` to relaunch it under
+using `jailbee inbox send restart --child C --agent-only` to relaunch it under
 supervision; otherwise you may start a second agent.
 
 ## Runtime rights
@@ -75,7 +75,7 @@ supervision; otherwise you may start a second agent.
 Ask for the least: prefer an egress host over loose, and a timed grant over
 `never`; revoke when the need ends.
 
-Use `jailbee-inbox send rights --child C --egress pypi.org --for 5m --wait`
+Use `jailbee inbox send rights --child C --egress pypi.org --for 5m --wait`
 to grant access within your current grant and repo cap. Effective loose
 permission includes narrower egress within the repo cap. `--mount K` and
 `--loose` grant other items; each grant needs `--for` (max 24h or `never`).
@@ -112,7 +112,7 @@ Commit everything before you send `done`.
   the id. Give the prompt on stdin (`-`) or with `--text`:
 
 ```bash
-jailbee-inbox send spawn --branch fix/issue-12 --note "GitHub #12" --wait - <<'EOF'
+jailbee inbox send spawn --branch fix/issue-12 --note "GitHub #12" --wait - <<'EOF'
 Task: fix issue 12 ...
 EOF
 ```
@@ -174,7 +174,7 @@ Do not combine with `--agent-only`.
 ## Refreshing a child's services
 
 After `update --merge` changes dependencies or migrations, or the child asks, use
-`jailbee-inbox send refresh --child C --services db,web --wait`. The `refresh`
+`jailbee inbox send refresh --child C --services db,web --wait`. The `refresh`
 operation is required; on the host add it to an old grant with
 `jb orchestrate grant ORCHESTRATOR --allow refresh`; a bare grant preserves old operations.
 Final status gives per-service outcomes. Accepted child-edited commands run only
@@ -188,7 +188,7 @@ If the final status is missing and execution is uncertain, inspect manually befo
 retrying; prepare may have run. If restoration is unconfirmed, resume is withheld;
 follow the network and mount recovery commands. If supervision registration fails, resume is also
 withheld and service outcomes remain available. After restoring safety, use
-`jailbee-inbox send restart --child C --agent-only --resume SESSION --text 'Continue your task.'`.
+`jailbee inbox send restart --child C --agent-only --resume SESSION --text 'Continue your task.'`.
 
 ## Choosing the child's agent (`runner`)
 
@@ -196,7 +196,7 @@ A spawn may name an optional `runner`: `agent` (`claude` or `claude-jb`),
 `profile` (LiteLLM profile, `claude-jb` only) and `model` (tier `fable`,
 `opus`, `sonnet` or `haiku`).
 
-- Run `jailbee-inbox runners` first to see the user's default and the profiles
+- Run `jailbee inbox runners` first to see the user's default and the profiles
   and tiers you may name.
 - Omit `runner` to start the default. Choose per task: use a cheaper tier for
   routine, well-specified work and a stronger one for hard or open-ended work.
@@ -211,19 +211,21 @@ A spawn may name an optional `runner`: `agent` (`claude` or `claude-jb`),
 Examples:
 
 ```bash
-jailbee-inbox runners          # or --json
-jailbee-inbox send spawn --branch fix/issue-12 --agent claude-jb --profile grok --model sonnet - <<'EOF'
+jailbee inbox runners          # or --json
+jailbee inbox send spawn --branch fix/issue-12 --agent claude-jb --profile grok --model sonnet - <<'EOF'
 ...
 EOF
-jailbee-inbox send restart --child fix-issue-12 --agent claude --model opus - <<'EOF'
+jailbee inbox send restart --child fix-issue-12 --agent claude --model opus - <<'EOF'
 ...
 EOF
-jailbee-inbox send restart --child fix-issue-12 --default-runner --text "Try again."
+jailbee inbox send restart --child fix-issue-12 --default-runner --text "Try again."
 ```
 
 `--profile` and `--model` need `--agent`, and `--profile` needs `--agent
 claude-jb`; `--default-runner` is for `restart`
-only and excludes `--agent`.
+only and excludes `--agent`. A model tier may have the exact lowercase suffix
+`[1m]`, for example `--model 'opus[1m]'`; quote it to prevent shell globbing.
+For `claude-jb`, the profile must serve the base tier.
 
 A runner that cannot be honoured is `refused`, never replaced by the default.
 The detail is one of:
@@ -239,21 +241,24 @@ Fix the request or tell the human; do not retry with another model.
 
 ## The inbox loop
 
-If `jailbee-inbox`, `inbox/` or `outbox/` is missing just after a grant,
-wait briefly: the broker installs them on its next round, within a few
-seconds. Do not hand-roll the protocol. If they stay missing, tell the
-human; the broker may not be running (`jailbee orchestrate status` on the host).
+If `inbox/` or `outbox/` is missing just after a grant, wait briefly: the
+broker creates the directories on its next round. If they stay missing, tell
+the human; the broker may not be running (`jailbee orchestrate status` on the
+host). If `jailbee inbox` is missing, the broker never installs the command:
+ask the human to run `jb base build` on the host and recreate the container.
+The broker leaves the stale standalone helper that old images retain in place.
+Do not hand-roll the protocol.
 
 ```bash
-jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
+jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m
 ```
 
 It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
 error. Run it in the background if your agent supports it (for example
 Claude's background Bash), or use a /loop-style cycle. If you must poll, never poll
-more often than every 5 min. Handle each message (`jailbee-inbox read <id>`
+more often than every 5 min. Handle each message (`jailbee inbox read <id>`
 prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
-After `wait` returns, run `jailbee-inbox ls` and handle **every** unread
+After `wait` returns, run `jailbee inbox ls` and handle **every** unread
 message before waiting again: replies to several manifests arrive as a burst.
 For a background orchestrator waiter, use `--timeout none` only together with
 `--quiet-after` so silent children still wake it.
@@ -346,7 +351,7 @@ inbox is the one to use. Answer with a `message` to that child, setting
 `in_reply_to` to it:
 
 ```bash
-jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use the existing parser."
+jailbee inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use the existing parser."
 ```
 
 ## When a child says done
@@ -363,7 +368,7 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
    in the merged-fork workflow or publish its source manifest in the per-child
    PR workflow: the next child's `done` overwrites the ref.
 3. `on_done: destroy` schedules automatic cleanup after delivery. A done
-   `keep` child needs only `jailbee-inbox send destroy --child C --wait`, not
+   `keep` child needs only `jailbee inbox send destroy --child C --wait`, not
    a separate stop. Destroy refuses new commits, uncommitted changes and an
    unreadable working tree; `force` deliberately discards them. If work
    changes after done, automatic cleanup keeps the child and tells you.
@@ -371,7 +376,7 @@ jailbee-inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
 ## Rework
 
 For merged work, prefer a fresh fork for rework: it starts from your latest merged state. For independent PRs, use the ref or PR workflow above.
-For an existing `keep` child, `jailbee-inbox send update --child C --wait`
+For an existing `keep` child, `jailbee inbox send update --child C --wait`
 transports your branch and tells the child which ref to merge. To send a
 different source without switching your branch, add `--ref refs/heads/topic`
 (or a full 40-hex commit or imported `refs/jailbee/from/...` ref), or use
@@ -390,7 +395,7 @@ merge the imported ref again. Use plain update while the child is mid-task.
 For an idle RUNNING child, launch another session without repeating heavy startup:
 
 ```bash
-jailbee-inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
+jailbee inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
 ```
 
 Only accepted `done` or an ended monitored agent (reported/reportable as
@@ -407,10 +412,10 @@ agent exit yields `blocked`. Without `--agent-only`, stop the child first;
 ordinary restart runs boot/autostart and can queue.
 
 To resume a conversation, find the child's latest session with
-`jailbee-inbox children` (or `children --json`), then restart with a new prompt:
+`jailbee inbox children` (or `children --json`), then restart with a new prompt:
 
 ```bash
-jailbee-inbox send restart --child fix-issue-12 --resume last --agent-only --text "Continue the task."
+jailbee inbox send restart --child fix-issue-12 --resume last --agent-only --text "Continue the task."
 ```
 
 Use `--resume ID` for a specific session; only sessions recorded for that child

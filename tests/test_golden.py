@@ -1,7 +1,6 @@
 """Tests for golden image building."""
 
 import base64
-import importlib.resources
 import re
 from datetime import date
 from pathlib import Path
@@ -612,23 +611,17 @@ def _find_install_copy_call(incus):
     raise AssertionError("install.sh copy exec not found")
 
 
-def test_build_stages_jailbee_inbox_helper(make_cfg, tmp_path, mocker):
-    cfg = make_cfg(tmp_path)
+def test_golden_does_not_stage_inbox_helper(make_cfg, tmp_path, mocker):
     incus = _incus()
-    build_golden_image(cfg, incus)
-    staged = [
-        c
-        for c in incus.exec.call_args_list
-        if c.args[1][:2] == ["bash", "-c"]
-        and "base64 -d > /provision/jailbee-inbox" in c.args[1][2]
-    ]
-    assert len(staged) == 1
-    encoded = staged[0].args[1][2].split("'")[1]
-    assert base64.b64decode(encoded).decode() == (
-        importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
-    )
-    calls = incus.exec.call_args_list
-    assert calls.index(staged[0]) < calls.index(_find_install_run_call(incus))
+    build_golden_image(make_cfg(tmp_path), incus)
+    assert not any("/provision/jailbee-inbox" in str(c) for c in incus.exec.call_args_list)
+
+
+def test_install_sh_has_no_inbox_helper():
+    from pathlib import Path
+
+    install = Path(__file__).parents[1] / "src/jailbee/provision/install.sh"
+    assert "jailbee-inbox" not in install.read_text()
 
 
 def test_build_uses_custom_provision_script(make_cfg, tmp_path, mocker):

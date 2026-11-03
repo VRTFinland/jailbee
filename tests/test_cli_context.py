@@ -44,6 +44,13 @@ def test_wrong_side_message(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cli_context.wrong_side_message("unknown", "container") is None
 
 
+def test_host_refuses_inbox() -> None:
+    assert cli_context.CONTAINER_COMMANDS == frozenset({"inbox"})
+    assert cli_context.wrong_side_message("inbox", "host") == (
+        "`jailbee inbox` is only available inside a jailbee container."
+    )
+
+
 def test_import_time_version_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib.metadata
     import runpy

@@ -5938,7 +5938,7 @@ Never `tmux kill-server`. The private socket vanishes with its last session.
 > with `jailbee _broker`, not as the user unit). Everything below passed after
 > one fix: a child was labelled too late to count against the limit while it
 > was being created, so a queued spawn could start next to it. The inotify
-> branch of `jailbee-inbox wait` ran against a real `inotifywait`.
+> branch of the former standalone inbox helper ran against a real `inotifywait`.
 
 Needs a disposable nested rig (see the sections above), a registered repo
 with a running container `<c>`, and one optional mount `<m>` declared in the
@@ -6045,16 +6045,16 @@ in-container helper instead of hand-written manifests. In `child-b`, in the repo
 clone:
 
 ```bash
-jailbee-inbox send message --kind question --text "which file name?"   # prints the manifest id
+jailbee inbox send message --kind question --text "which file name?"   # prints the manifest id
 ```
 
-In the orchestrator, `jailbee-inbox wait` returns the path of the first unread
-message (it blocks on `inotifywait` when installed, polls every
+In the orchestrator, `jailbee inbox wait` returns the path of the first unread
+message (it uses inotify when available, polls every
 `JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and `read
 <id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
 messages read first, or `wait` returns at once.
 
-1. In the child, with real `inotifywait` installed and no unread messages, start `jailbee-inbox wait --timeout none`.
+1. In the child, with inotify available and no unread messages, start `jailbee inbox wait --timeout none`.
 2. Leave it waiting for more than 10 minutes, then send a message from the orchestrator.
 3. Expect the child waiter to wake promptly; read the message and start the waiter again.
 4. Interrupt it with Ctrl-C, then re-run it and verify it starts without exit 2.
@@ -6062,19 +6062,19 @@ messages read first, or `wait` returns at once.
 Reply:
 
 ```bash
-jailbee-inbox send message --to child-b --reply-to <id> --text "call it hello-b.txt"
+jailbee inbox send message --to child-b --reply-to <id> --text "call it hello-b.txt"
 ```
 
 expect: the child's `wait` returns the reply, whose `in_reply_to` is `<id>`, and
 the sender gets a `status` "delivered to ..." for each message.
 
-In `child-b` commit a file, then `jailbee-inbox send message --kind done --text
+In `child-b` commit a file, then `jailbee inbox send message --kind done --text
 "finished"`. The orchestrator receives it as a `message` with `kind: done`.
-Then, in the orchestrator, `jailbee-inbox send import --child child-b`:
+Then, in the orchestrator, `jailbee inbox send import --child child-b`:
 
 expect: `done`, "imported as refs/jailbee/from/child-b/<branch> at <sha>"; the
 orchestrator's own local branch of that name is not touched. Then
-`jailbee-inbox send stop --child child-b` and `... destroy --child child-b`
+`jailbee inbox send stop --child child-b` and `... destroy --child child-b`
 both succeed without `force`, while destroying a stopped child whose commits
 were never imported is refused until `--force`.
 

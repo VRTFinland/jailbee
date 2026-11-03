@@ -6,6 +6,25 @@ from pydantic import ValidationError
 from jailbee.orchestration.runner import Runner, parse_runner_label
 
 
+@pytest.mark.parametrize("agent", ["claude", "claude-jb"])
+@pytest.mark.parametrize("model", ["opus[1m]", "sonnet[1m]"])
+def test_runner_suffix_round_trip_and_shell_quoting(agent, model):
+    import shlex
+
+    runner = Runner(agent=agent, model=model)
+    assert Runner.from_label(runner.to_label()) == runner
+    command = runner_command("claude", runner)
+    assert command is not None
+    assert shlex.split(command)[-1] == model
+    assert "'" + model + "'" in command
+
+
+@pytest.mark.parametrize("model", ["OPUS[1m]", "opus[2m]", "opus[1M]", "opus [1m]"])
+def test_runner_rejects_invalid_suffix(model):
+    with pytest.raises(ValidationError):
+        Runner(agent="claude", model=model)
+
+
 def test_runner_profile_only_with_claude_jb() -> None:
     with pytest.raises(ValidationError):
         Runner(agent="claude", profile="grok")
@@ -124,6 +143,18 @@ def test_claude_jb_refused_for_missing_tier(tmp_path, mocker) -> None:
     _payload(mocker, {"grok": {"tiers": {"sonnet": "x"}}})
     runner = Runner(agent="claude-jb", profile="grok", model="opus")
     assert _problems(_cfg(tmp_path), runner) == ["LiteLLM profile `grok` has no `opus` tier"]
+
+
+def test_suffixed_model_looks_up_base_tier(tmp_path, mocker):
+    from jailbee.orchestration.runner_model import model_tier
+
+    _payload(mocker, {"grok": {"tiers": {"sonnet": "x"}}})
+    assert model_tier("sonnet[1m]") == "sonnet"
+    assert model_tier("opus") == "opus"
+    assert _problems(_cfg(tmp_path), Runner(agent="claude-jb", model="sonnet[1m]")) == []
+    assert _problems(_cfg(tmp_path), Runner(agent="claude-jb", model="opus[1m]")) == [
+        "LiteLLM profile `grok` has no `opus` tier"
+    ]
 
 
 def test_claude_jb_default_profile_checked(tmp_path, mocker) -> None:

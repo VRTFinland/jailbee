@@ -126,12 +126,21 @@ def test_orchestration_skill_names_the_protocol_paths() -> None:
         "~/.jailbee/orchestration/outbox",
         "~/.jailbee/orchestration/inbox",
         "grant.json",
-        "jailbee-inbox wait",
+        "jailbee inbox wait",
         "refs/jailbee/from/",
         "jailbee-pr-review",
         "5 min",
     ):
         assert needle in text, needle
+
+
+def test_orchestration_skill_explains_missing_inbox_recovery() -> None:
+    text = _skill_text(ORCH)
+    assert "broker creates the directories" in text
+    assert "broker never installs the command" in text
+    assert "`jb base build`" in text
+    assert "recreate the container" in text
+    assert "old images retain" in text
 
 
 def test_orchestration_skill_covers_review_focus() -> None:
@@ -147,7 +156,7 @@ def test_orchestration_skill_covers_review_focus() -> None:
 def test_orchestration_skill_describes_resuming_child_sessions() -> None:
     text = _skill_text(ORCH)
     for needle in (
-        "jailbee-inbox children",
+        "jailbee inbox children",
         "--resume last",
         "recorded for that child",
         "new turn",
@@ -174,7 +183,7 @@ def test_child_skill_limits_the_child() -> None:
     text = _skill_text(CHILD)
     for needle in (
         "~/.jailbee/orchestration/outbox",
-        "jailbee-inbox wait",
+        "jailbee inbox wait",
         '"kind": "done"',
         "question",
         "blocked",
@@ -191,7 +200,7 @@ def test_child_skill_limits_the_child() -> None:
 
 def test_child_skill_keeps_a_background_waiter() -> None:
     text = _skill_text(CHILD)
-    assert "jailbee-inbox wait --timeout none" in text
+    assert "jailbee inbox wait --timeout none" in text
     assert "background" in text
     assert "exit 2" in text or "exits 2" in text
     assert "re-arm" in text

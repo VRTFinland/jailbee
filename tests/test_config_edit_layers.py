@@ -413,6 +413,17 @@ def opened(tmp_path, monkeypatch, mocker):
     return _open
 
 
+@pytest.mark.parametrize("layer", ["repo", "global", "local"])
+def test_validate_runner_model_edits_in_each_layer(opened, layer):
+    got = opened()
+    agent = YamlChange(("orchestration", "default_runner", "agent"), "claude")
+    path = ("orchestration", "default_runner", "model")
+    assert layers.validate(got, layer, [agent, YamlChange(path, "sonnet[1m]")]) is None
+    error = layers.validate(got, layer, [agent, YamlChange(path, "sonnet[2m]")])
+    assert error is not None
+    assert "model" in error
+
+
 def test_validate_accepts_a_good_repo_change(opened):
     got = opened()
     assert layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)]) is None

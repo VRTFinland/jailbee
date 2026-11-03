@@ -1009,7 +1009,7 @@ def test_jailbee_inbox_upgrade_note_advises_base_build_only() -> None:
         n.version == (1, 8, 1)
         and n.actions == frozenset({"base_build"})
         and "jailbee-inbox" in n.reason
-        and "autostart profiles" in n.reason
+        and "no longer ships" in n.reason
         for n in UPGRADE_NOTES
     )
     assert any("jailbee-inbox" in reason for item in owed.actions for reason in item.reasons)
@@ -1058,7 +1058,7 @@ def test_inbox_wait_none_has_build_and_apply_notes() -> None:
 
     notes = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1)]
     assert any(
-        n.actions == frozenset({"base_build"}) and "--timeout none" in n.reason for n in notes
+        n.actions == frozenset({"base_build"}) and "no longer ships" in n.reason for n in notes
     )
     assert any(
         n.actions == frozenset({"apply"}) and "background" in n.reason and "wait" in n.reason
@@ -1069,9 +1069,15 @@ def test_inbox_wait_none_has_build_and_apply_notes() -> None:
 def test_runtime_rights_upgrade_notes_one_per_reason():
     from jailbee.upgrade import UPGRADE_NOTES
 
-    rights = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1) and "send rights" in n.reason]
+    rights = [
+        n
+        for n in UPGRADE_NOTES
+        if n.version == (1, 8, 1)
+        and n.actions == frozenset({"base_build"})
+        and "jailbee-inbox" in n.reason
+    ]
     assert len(rights) == 1
-    assert rights[0].actions == frozenset({"base_build"})
+    assert "no longer ships" in rights[0].reason
     skills = [n for n in UPGRADE_NOTES if n.version == (1, 8, 1) and "runtime rights" in n.reason]
     assert len(skills) == 1
     assert skills[0].actions == frozenset({"apply"})
@@ -1103,7 +1109,10 @@ def test_service_autostart_upgrade_notes_have_separate_reasons() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
     reasons = {
-        "the golden image's jailbee-inbox accepts `send spawn|restart --services`": "base_build",
+        (
+            "the golden image no longer ships the `jailbee-inbox` helper; agents use "
+            "`jailbee inbox` from the in-container jailbee"
+        ): "base_build",
         (
             "`jailbee apply` syncs skills describing autostart services and light spawn "
             "(`--services`)"

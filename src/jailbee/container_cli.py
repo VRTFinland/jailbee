@@ -60,6 +60,20 @@ def root(
         _check_version(expect_version)
 
 
+@container_app.command(
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        "help_option_names": [],
+    },
+    help="Orchestration inbox: wait for, list, read and send messages (see `jailbee inbox --help`)",
+)
+def inbox(ctx: typer.Context) -> None:
+    from jailbee.inbox.cli import main as inbox_main
+
+    raise typer.Exit(inbox_main(ctx.args))
+
+
 @container_app.command()
 def version() -> None:
     typer.echo(__version__)

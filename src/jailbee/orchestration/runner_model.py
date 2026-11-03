@@ -16,6 +16,11 @@ RUNNER_AGENTS = ("claude", "claude-jb")
 RUNNER_TIERS = ("fable", "opus", "sonnet", "haiku")
 
 
+def model_tier(model: str) -> str:
+    """Return the base tier of a validated model."""
+    return model.removesuffix("[1m]")
+
+
 class Runner(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -24,10 +29,21 @@ class Runner(BaseModel):
         default=None,
         description="LiteLLM profile for the `claude-jb` agent.",
     )
-    model: Literal["fable", "opus", "sonnet", "haiku"] | None = Field(
+    model: str | None = Field(
         default=None,
         description="Model tier requested for the runner.",
     )
+
+    @field_validator("model")
+    @classmethod
+    def _model(cls, v: str | None) -> str | None:
+        if (
+            v is not None
+            and v not in RUNNER_TIERS
+            and not (v.endswith("[1m]") and model_tier(v) in RUNNER_TIERS)
+        ):
+            raise ValueError("model must be a runner tier optionally followed by [1m]")
+        return v
 
     @field_validator("profile")
     @classmethod

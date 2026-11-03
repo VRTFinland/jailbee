@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.resources
 import json
 import logging
 from dataclasses import dataclass
@@ -31,18 +30,17 @@ _BASE = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration"
 OUTBOX_DIR = f"{_BASE}/outbox"
 INBOX_DIR = f"{_BASE}/inbox"
 GRANT_FILE = f"{_BASE}/grant.json"
-INBOX_HELPER = "/usr/local/bin/jailbee-inbox"
+LEGACY_INBOX_HELPER = "/usr/local/bin/jailbee-inbox"
+CONTAINER_JAILBEE = "/usr/local/bin/jailbee"
+MISSING_JAILBEE_MESSAGE = (
+    "container image has no in-container jailbee (needed for `jailbee inbox`) — "
+    "run `jb base build` on the host, then recreate the container"
+)
 
-_INSTALL_HELPER = """set -e
-dir=$(dirname "$1")
-tmp=$(mktemp "$dir/.jailbee-inbox.XXXXXX")
-trap 'rm -f "$tmp"' EXIT
-cat > "$tmp"
-if cmp -s "$tmp" "$1"; then exit 0; fi
-chmod 0755 "$tmp"
-mv -f "$tmp" "$1"
-trap - EXIT
-"""
+
+class ContainerJailbeeMissing(IncusError):  # noqa: N818 - public task interface
+    """The container image lacks the inbox-capable launcher."""
+
 
 MAX_MANIFESTS_PER_ROUND = 32
 MAX_FILE_BYTES = 128 * 1024
@@ -71,15 +69,21 @@ class RawManifest:
     files: Mapping[str, str]
 
 
-def helper_script() -> str:
-    """Read the packaged helper shared by golden builds and the broker."""
-    return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
+def has_container_jailbee(incus: Incus, full: str) -> bool:
+    """Check whether the in-container launcher is executable."""
+    try:
+        incus.exec(full, ["test", "-x", CONTAINER_JAILBEE])
+    except IncusError:
+        return False
+    return True
 
 
 def ensure_orchestration_env(incus: Incus, full: str, *, uid: int | None) -> None:
-    """Create user-owned inbox/outbox dirs and atomically install the helper as root."""
+    """Create user-owned directories and remove the obsolete helper when safe."""
     incus.exec(full, ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR], uid=uid)
-    incus.exec_with_input(full, ["sh", "-c", _INSTALL_HELPER, "sh", INBOX_HELPER], helper_script())
+    if not has_container_jailbee(incus, full):
+        raise ContainerJailbeeMissing(MISSING_JAILBEE_MESSAGE)
+    incus.exec(full, ["rm", "-f", LEGACY_INBOX_HELPER])
 
 
 def read_outbox(incus: Incus, full: str, *, uid: int | None) -> list[RawManifest]:

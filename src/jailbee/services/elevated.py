@@ -569,7 +569,7 @@ def run_refresh(
                 child = recovery_child or full
                 agent = (
                     f"resume withheld: could not register agent supervision ({_reason(exc)}); "
-                    f"recovery: jailbee-inbox send restart --child {child} --agent-only "
+                    f"recovery: jailbee inbox send restart --child {child} --agent-only "
                     f"--resume {paused.session} --text 'Continue your task.'"
                 )
                 ok = False

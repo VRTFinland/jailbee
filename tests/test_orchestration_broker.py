@@ -163,7 +163,22 @@ def test_ensure_env_failure_is_logged_once_and_retried(
     assert rig.ensure_env.call_count == 2
     assert rig.write_grant.call_count == 1
     assert rig.read_outbox.call_count == 2
-    assert len([r for r in caplog.records if "inbox helper" in r.getMessage()]) == 1
+    assert len([r for r in caplog.records if "orchestration inbox" in r.getMessage()]) == 1
+
+
+def test_broker_warns_once_for_old_image(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    from jailbee.orchestration.outbox import MISSING_JAILBEE_MESSAGE, ContainerJailbeeMissing
+
+    memory = broker.BrokerMemory()
+    rig.ensure_env.side_effect = ContainerJailbeeMissing(MISSING_JAILBEE_MESSAGE)
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    rig.tick(memory)
+    assert rig.ensure_env.call_count == 2
+    assert "proj-orch" not in memory.env_ensured
+    warnings = [r.getMessage() for r in caplog.records if "jb base build" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "install the orchestration inbox helper" not in warnings[0]
 
 
 def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
