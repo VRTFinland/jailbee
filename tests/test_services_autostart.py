@@ -90,15 +90,22 @@ def test_prepare_then_start_and_skip(tmp_path, mocker, make_cfg):
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
     metadata.assert_called_once_with(
-        cfg, incus, "box", ["service", "--repo", "/repo space", "plan", "--op", "start", "--json"],
-        uid=cfg.container_user.uid, cwd="/repo space",
-        env={"HOME": f"/home/{CONTAINER_USERNAME}"}, init_groups=True,
+        cfg,
+        incus,
+        "box",
+        ["service", "--repo", "/repo space", "plan", "--op", "start", "--json"],
+        uid=cfg.container_user.uid,
+        cwd="/repo space",
+        env={"HOME": f"/home/{CONTAINER_USERNAME}"},
+        init_groups=True,
     )
     assert [c.args[3].stage for c in run.call_args_list] == ["prepare-db", "services"]
     stage = run.call_args_list[0].args[3]
     assert stage.network == "loose" and stage.chains[0].steps[0].run == "setup"
     start = run.call_args_list[1].args[3].chains[0].steps[0]
-    assert start.run == "jailbee --expect-version '1.2 hash' service --repo '/repo space' start db web"
+    assert (
+        start.run == "jailbee --expect-version '1.2 hash' service --repo '/repo space' start db web"
+    )
     assert start.timeout == 60
     assert values[PREPARED_KEY] == "db"
     run.reset_mock()
@@ -129,7 +136,8 @@ def test_prepare_infrastructure_error_wrapped(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
     mocker.patch.object(
-        container_app, "run_in_container",
+        container_app,
+        "run_in_container",
         return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
     )
     error = IncusError("host mount path missing")
@@ -146,7 +154,8 @@ def test_prepare_cancellation_propagates_unchanged(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
     mocker.patch.object(
-        container_app, "run_in_container",
+        container_app,
+        "run_in_container",
         return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
     )
     error = autostart.AutostartCancelledError(container="box", signum=15)
