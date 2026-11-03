@@ -24,9 +24,7 @@ def test_send_id_exhaustion_exits_one_without_traceback(tmp_path, monkeypatch, c
 
 
 @pytest.mark.parametrize("stage", ["body", "manifest"])
-def test_send_publish_failure_cleans_files_and_releases_lock(
-    tmp_path, monkeypatch, capsys, stage
-):
+def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypatch, capsys, stage):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
     monkeypatch.setattr(send, "new_id", lambda _: "fixed")
     original = Path.replace
