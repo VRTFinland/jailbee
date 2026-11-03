@@ -476,6 +476,8 @@ def run_autostart(
     # A pending initial prompt puts the agents after every stage, detached
     # ones included: the prompted agent starts working at once, and must not
     # do so in a container whose autostart has not finished.
+    from jailbee.services.autostart import services_stage_wanted
+
     agent_steps, prompted = _on_start_agent_steps(cfg, incus, container, trigger)
     plan = plan_autostart(
         cfg.autostart,
@@ -484,6 +486,7 @@ def run_autostart(
         override=override,
         already_detached=already_detached,
         agents_last=prompted,
+        services_stage=trigger == AutostartTrigger.ON_START and services_stage_wanted(cfg, incus, container),
     )
     if not plan.blocking:
         return plan
@@ -562,6 +565,7 @@ def run_detached(
     :func:`_cancel_on_sigterm`.
     """
     from jailbee.autostart_plan import TRIGGER_ORDER
+    from jailbee.services.autostart import services_stage_wanted
 
     with _cancel_on_sigterm(spec.container_name):
         incus.config_set(
@@ -586,6 +590,7 @@ def run_detached(
                     trigger,
                     agent_steps=agent_steps,
                     agents_last=prompted,
+                    services_stage=trigger == AutostartTrigger.ON_START and services_stage_wanted(cfg, incus, spec.container_name),
                     # The override the foreground split on: `_boundary` branches
                     # on it, so recomputing without it can disagree with what was
                     # actually deferred. Inert for a later trigger, where
@@ -664,16 +669,23 @@ def run_stages(
     """Run ``stages`` in order, recording attempted one-shot setup."""
     for stage in stages:
         try:
-            run_stage(
-                cfg,
-                incus,
-                container,
-                stage,
-                repo_dir,
-                mirror_endpoint=mirror_endpoint,
-                on_progress=on_progress,
-                cas_restore=cas_restore,
-            )
+            from jailbee.autostart_plan import SERVICES_STAGE
+
+            if stage.stage == SERVICES_STAGE:
+                from jailbee.services.autostart import run_services_stage
+
+                run_services_stage(cfg, incus, container, repo_dir, mirror_endpoint=mirror_endpoint, on_progress=on_progress, cas_restore=cas_restore)
+            else:
+                run_stage(
+                    cfg,
+                    incus,
+                    container,
+                    stage,
+                    repo_dir,
+                    mirror_endpoint=mirror_endpoint,
+                    on_progress=on_progress,
+                    cas_restore=cas_restore,
+                )
         finally:
             if trigger is AutostartTrigger.ON_CREATE and cfg.autostart.profiles:
                 from jailbee.autostart_profiles import record_created

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from jailbee.autostart_plan import normalize_stages, select_profile
@@ -12,6 +12,16 @@ from jailbee.tui import warn
 
 PROFILE_KEY = "user.jailbee.autostart_profile"
 CREATED_KEY = "user.jailbee.autostart_created"
+SERVICES_KEY = "user.jailbee.autostart_services"
+PREPARED_KEY = "user.jailbee.services_prepared"
+
+
+def encode_names(names: Sequence[str]) -> str:
+    return ",".join(names) if names else ","
+
+
+def decode_names(value: str | None) -> list[str] | None:
+    return None if value is None else list(filter(None, value.split(",")))
 
 
 class ProfileError(ValueError):

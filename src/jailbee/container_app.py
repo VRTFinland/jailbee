@@ -107,6 +107,10 @@ def profile_device() -> dict[str, dict[str, str]]:
     }
 
 
+def expected_version() -> str:
+    return f"{__version__} {code_hash()}"
+
+
 def run_in_container(
     cfg: Config,
     incus: Incus,
@@ -118,7 +122,7 @@ def run_in_container(
     env: dict[str, str] | None = None,
     init_groups: bool = False,
 ) -> ExecResult:
-    expected = f"{__version__} {code_hash()}"
+    expected = expected_version()
     command = ["jailbee", "--expect-version", expected, *args]
     kwargs: dict[str, Any] = (
         {}
@@ -160,7 +164,7 @@ def run_in_container_interactive(
 ) -> int:
     from jailbee.config import CONTAINER_USERNAME
 
-    expected = f"{__version__} {code_hash()}"
+    expected = expected_version()
     command = ["jailbee", "--expect-version", expected, *args]
 
     def execute() -> int:
