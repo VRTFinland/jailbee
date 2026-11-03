@@ -211,13 +211,14 @@ def _track(
     `since` is `ctx.now`, the round's start: the job row a spawn creates exists
     only after that, so a genuine failure is never mistaken for a stale row.
     """
-    watches = watch.load_watch(ctx.root)
-    if any(e.ref == ref for e in watches.get(ctx.sender.full, [])):
-        return  # Actions registered the resolved name durably before launch.
-    mine = [e for e in watches.get(ctx.sender.full, []) if e.child_full != child_full]
-    mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat(), supervise=True))
-    watches[ctx.sender.full] = mine
-    watch.save_watch(ctx.root, watches)
+    with watch.locked(ctx.root):
+        watches = watch.load_watch(ctx.root)
+        if any(e.ref == ref for e in watches.get(ctx.sender.full, [])):
+            return  # Actions registered the resolved name durably before launch.
+        mine = [e for e in watches.get(ctx.sender.full, []) if e.child_full != child_full]
+        mine.append(watch.WatchEntry(ref, child_full, kind, ctx.now.isoformat(), supervise=True))
+        watches[ctx.sender.full] = mine
+        watch.save_watch(ctx.root, watches)
 
 
 def _track_restart(ctx: ActionContext, ref: str, child_full: str, outcome: Outcome) -> None:
@@ -253,28 +254,30 @@ def _settle_watches(
     """
     from jailbee.lifecycle import short_name
 
-    watches = watch.load_watch(ctx.root)
-    entries = watches.get(ctx.sender.full, [])
-    for entry in list(entries):
-        if jobs is None and (entry.supervise or (not entry.confirmed and not entry.agent_only)):
-            continue
-        if entry.supervise:
-            _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
-            continue
-        outcome = watch.verdict(
-            entry,
-            (jobs or {}).get(entry.child_full),
-            ctx.nodes.get(entry.child_full),
-            orchestrator_full=ctx.sender.full,
-            short=short_name(ctx.cfg, entry.child_full),
-            now=ctx.now,
-        )
-        if outcome is None:
-            continue
-        if outcome is not watch.DROP:
-            _reply(ctx, entry.ref, outcome, memory)
-        entries.remove(entry)
-        watch.save_watch(ctx.root, watches)
+    with watch.locked(ctx.root):
+        jobs = watch.read_jobs()
+        watches = watch.load_watch(ctx.root)
+        entries = watches.get(ctx.sender.full, [])
+        for entry in list(entries):
+            if jobs is None and (entry.supervise or (not entry.confirmed and not entry.agent_only)):
+                continue
+            if entry.supervise:
+                _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
+                continue
+            outcome = watch.verdict(
+                entry,
+                (jobs or {}).get(entry.child_full),
+                ctx.nodes.get(entry.child_full),
+                orchestrator_full=ctx.sender.full,
+                short=short_name(ctx.cfg, entry.child_full),
+                now=ctx.now,
+            )
+            if outcome is None:
+                continue
+            if outcome is not watch.DROP:
+                _reply(ctx, entry.ref, outcome, memory)
+            entries.remove(entry)
+            watch.save_watch(ctx.root, watches)
 
 
 def _settle_agent_watch(
@@ -793,13 +796,14 @@ def _settle_all_watches(
 
 def _forget_vanished_watches(root: Path, present: set[object]) -> None:
     """Drop the watch entries of orchestrators that no longer exist."""
-    watches = watch.load_watch(root)
-    gone = [full for full in watches if full not in present]
-    if gone:
-        for full in gone:
-            log.warning("broker: dropping the watches of vanished %s", full)
-            del watches[full]
-        watch.save_watch(root, watches)
+    with watch.locked(root):
+        watches = watch.load_watch(root)
+        gone = [full for full in watches if full not in present]
+        if gone:
+            for full in gone:
+                log.warning("broker: dropping the watches of vanished %s", full)
+                del watches[full]
+            watch.save_watch(root, watches)
 
 
 def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:

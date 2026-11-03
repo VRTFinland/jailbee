@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import fcntl
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
@@ -115,41 +118,55 @@ def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
     atomic_write_text(root / WATCH_FILE, json.dumps(payload, indent=2) + "\n")
 
 
+@contextmanager
+def locked(root: Path) -> Iterator[None]:
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / "watch.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def register(root: Path, orchestrator: str, entry: WatchEntry) -> None:
     """Persist before launching: a run must never start without durable supervision."""
-    watches = load_watch(root)
-    entries = [e for e in watches.get(orchestrator, []) if e.child_full != entry.child_full]
-    entries.append(entry)
-    watches[orchestrator] = entries
-    save_watch(root, watches)
+    with locked(root):
+        watches = load_watch(root)
+        entries = [e for e in watches.get(orchestrator, []) if e.child_full != entry.child_full]
+        entries.append(entry)
+        watches[orchestrator] = entries
+        save_watch(root, watches)
 
 
 def record_message(root: Path, orchestrator: str, child_full: str, kind: str, body: str) -> None:
     """Accepted child traffic resets the idle episode, not the supervision."""
-    watches = load_watch(root)
-    lines = body.splitlines()
-    line = "".join(ch for ch in (lines[0] if lines else "") if ch.isprintable())[:240]
-    watches[orchestrator] = [
-        replace(
-            e,
-            idle_since=None,
-            idle_reported_at=None,
-            idle_token=None,
-            last_message_kind=kind,
-            last_message_line=line,
-        )
-        if e.child_full == child_full
-        else e
-        for e in watches.get(orchestrator, [])
-    ]
-    save_watch(root, watches)
+    with locked(root):
+        watches = load_watch(root)
+        lines = body.splitlines()
+        line = "".join(ch for ch in (lines[0] if lines else "") if ch.isprintable())[:240]
+        watches[orchestrator] = [
+            replace(
+                e,
+                idle_since=None,
+                idle_reported_at=None,
+                idle_token=None,
+                last_message_kind=kind,
+                last_message_line=line,
+            )
+            if e.child_full == child_full
+            else e
+            for e in watches.get(orchestrator, [])
+        ]
+        save_watch(root, watches)
 
 
 def cancel(root: Path, orchestrator: str, child_full: str) -> None:
     """A successful broker stop/destroy intentionally ends this run."""
-    watches = load_watch(root)
-    watches[orchestrator] = [e for e in watches.get(orchestrator, []) if e.child_full != child_full]
-    save_watch(root, watches)
+    with locked(root):
+        watches = load_watch(root)
+        watches[orchestrator] = [e for e in watches.get(orchestrator, []) if e.child_full != child_full]
+        save_watch(root, watches)
 
 
 def read_jobs() -> dict[str, JobSnapshot] | None:

@@ -140,11 +140,18 @@ def test_delivery_failure_preserves_job(rig, mocker):
     cfg, engine, deliver, incus, path = rig
     job(path)
     deliver.side_effect = OSError("disk full")
-    mocker.patch.object(elevated, "run_plain_refresh", side_effect=RuntimeError("broken"))
+    execute = mocker.patch.object(elevated, "run_plain_refresh", side_effect=RuntimeError("broken"))
     assert elevated.run_job(cfg, incus, path) == 1
     assert path.exists()
     with Session(engine) as session:
         assert session.get(BackgroundJob, "proj-c") is None
+    saved_id = json.loads(path.read_text())["final_status"]["id"]
+    deliver.side_effect = None
+    assert elevated.run_job(cfg, incus, path) == 1
+    assert deliver.call_args.args[3].id == saved_id
+    assert execute.call_count == 1
+    assert "broken" in deliver.call_args.args[3].detail
+    assert not path.exists()
 
 
 def test_concurrent_claims_only_one_succeeds(rig, mocker):

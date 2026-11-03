@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 
 def _deliver(
-    cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str
+    cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str,
+    item: InboxStatus | None = None,
 ) -> int:
     try:
         try:
@@ -33,7 +34,7 @@ def _deliver(
             )
         except Exception:
             running = False
-        item = InboxStatus(
+        item = item or InboxStatus(
             version=1,
             id=new_host_id(),
             type="status",
@@ -77,6 +78,15 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
     except Exception as exc:
         print(f"invalid refresh job identity: {exc}")
         return 1
+    if "final_status" in job:
+        try:
+            final = InboxStatus.model_validate(job["final_status"])
+            if final.ref != ref or final.state not in ("done", "failed"):
+                raise ValueError("invalid final status")
+        except Exception as exc:
+            print(f"invalid saved refresh status: {exc}")
+            return 1
+        return _deliver(cfg, incus, path, owner, ref, ok=final.state == "done", detail=final.detail, item=final)
     try:
         if set(job) != {
             "child_full",
@@ -110,7 +120,7 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         engine = db.get_engine()
         if engine is None:
             raise elevated.RefreshError("job database unavailable")
-        with Session(engine) as session:
+        with watch.locked(state.state_root()), Session(engine) as session:
             claimed = background.claim_job(
                 session,
                 container_name=child,
@@ -199,6 +209,14 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
     except Exception as exc:
         detail = f"refresh of {', '.join(plan.named)} in {child} failed: {exc}"
     finally:
+        try:
+            final = InboxStatus(version=1, id=new_host_id(), type="status", ref=ref,
+                                state="done" if ok else "failed", detail=detail)
+            job["final_status"] = final.model_dump(mode="json")
+            state.atomic_write_text(path, json.dumps(job))
+        except Exception as exc:
+            print(f"could not persist refresh status: {exc}")
+            return 1
         if claimed and engine is not None:
             try:
                 with Session(engine) as session:
@@ -206,4 +224,4 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
             except Exception as exc:
                 ok = False
                 detail += f"; could not release refresh job: {exc}"
-    return _deliver(cfg, incus, path, owner, ref, ok=ok, detail=detail)
+    return _deliver(cfg, incus, path, owner, ref, ok=ok, detail=detail, item=final)
