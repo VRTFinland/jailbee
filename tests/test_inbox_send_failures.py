@@ -1,7 +1,10 @@
 """Failure handling for inbox send publication."""
 
 import fcntl
+import io
 import os
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -48,3 +51,62 @@ def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypat
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         os.close(fd)
+
+
+class BoundedReader(io.BytesIO):
+    def read(self, size=-1):
+        assert 0 < size <= 65536, f"unbounded read: {size}"
+        return super().read(size)
+
+
+@pytest.mark.parametrize("source", ["stdin", "file"])
+def test_send_reads_large_body_in_bounded_chunks(tmp_path, monkeypatch, capsys, source):
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+    payload = b"a" * 150001
+    if source == "stdin":
+        monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=BoundedReader(payload)))
+        args = ["-"]
+    else:
+        path = tmp_path / "input"
+        path.write_bytes(payload)
+        original = Path.open
+
+        def bounded_open(p, *args, **kwargs):
+            if p == path:
+                return BoundedReader(payload)
+            return original(p, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", bounded_open)
+        args = ["--file", str(path)]
+    assert cli.main(["send", "message", *args]) == 2
+    assert "the message text is 150001 bytes; the limit is 65536" in capsys.readouterr().err
+    assert list((tmp_path / "outbox").iterdir()) == []
+
+
+def test_send_reserves_and_publishes_body_before_manifest(tmp_path, monkeypatch):
+    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
+    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
+    original = Path.replace
+    observed = []
+
+    def check_order(path, target):
+        if path.name == ".fixed.json.tmp":
+            assert (settings.outbox / "fixed.md").read_bytes() == b"hello"
+            fd = os.open(settings.base / "status-waits" / "fixed.lock", os.O_WRONLY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+            observed.append(True)
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "replace", check_order)
+    before = len(send._reservations)
+    try:
+        assert send.publish(settings, send.parse_send(["message", "--text", "hello", "--wait"])) == "fixed"
+        assert observed == [True]
+    finally:
+        for fd in send._reservations[before:]:
+            os.close(fd)
+        del send._reservations[before:]

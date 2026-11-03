@@ -1062,6 +1062,7 @@ def test_send_message_writes_manifest_and_body(script, base, tmp_path):
         "in_reply_to": "h-0000aaaa",
         "body_file": f"{mid}.md",
     }
+    assert list(m) == ["version", "id", "type", "body_file", "kind", "in_reply_to"]
     assert (base / "outbox" / f"{mid}.md").read_text() == "which db?"
 
 
@@ -1153,6 +1154,8 @@ def test_send_spawn_new_with_base_and_repeats(script, base, tmp_path):
     )
     _, m = manifest_of(base, r)
     assert m["kind"] == "new" and m["base"] == "main" and m["note"] == "why"
+    assert list(m) == ["version", "id", "type", "kind", "branch", "prompt_file", "rights", "base", "note"]
+    assert list(m["rights"]) == ["version", "mounts", "loose", "egress"]
     assert m["rights"] == {
         "version": 1,
         "mounts": ["a", "b"],

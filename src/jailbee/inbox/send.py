@@ -1,6 +1,7 @@
 """Parse and publish orchestration requests without external dependencies."""
 
 import fcntl
+import io
 import json
 import os
 import re
@@ -8,7 +9,7 @@ import secrets
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
 
@@ -370,8 +371,9 @@ def publish(settings: "Settings", req: SendRequest) -> str:
     moved_body = False
     try:
         if body_name:
+            source: BinaryIO
             if req.text is not None:
-                body = req.text.encode()
+                source = io.BytesIO(req.text.encode())
             elif req.file is not None:
                 from pathlib import Path
 
@@ -379,16 +381,24 @@ def publish(settings: "Settings", req: SendRequest) -> str:
                 try:
                     if not path.is_file() or not os.access(path, os.R_OK):
                         raise OSError()
-                    body = path.read_bytes()
+                    source = path.open("rb")
                 except OSError:
                     raise InboxUsage(f"cannot read file '{req.file}'") from None
             else:
-                body = sys.stdin.buffer.read()
-            body_tmp.write_bytes(body)
-            if not body:
+                source = sys.stdin.buffer
+            size = 0
+            try:
+                with body_tmp.open("wb") as output:
+                    while chunk := source.read(65536):
+                        size += len(chunk)
+                        output.write(chunk)
+            finally:
+                if not req.stdin:
+                    source.close()
+            if not size:
                 raise InboxUsage(f"the {req.type} text is empty")
-            if len(body) > 65536:
-                raise InboxUsage(f"the {req.type} text is {len(body)} bytes; the limit is 65536")
+            if size > 65536:
+                raise InboxUsage(f"the {req.type} text is {size} bytes; the limit is 65536")
         json_tmp.write_text(
             json.dumps(build_manifest(req, id_, body_name), ensure_ascii=False, indent=2) + "\n"
         )
