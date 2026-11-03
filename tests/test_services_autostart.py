@@ -60,6 +60,14 @@ def payload():
     }
 
 
+def test_prepare_stage_rejects_hidden_elevation():
+    from jailbee.services.autostart import prepare_stage
+
+    step = payload()["services"][0]["prepare"][0] | {"network": "loose"}
+    with pytest.raises(autostart.AutostartStepError, match="unexpected"):
+        prepare_stage("box", "db", [step], network=None, mounts=[])
+
+
 def test_selection_and_presence(tmp_path, make_cfg):
     cfg = make_cfg(
         tmp_path,

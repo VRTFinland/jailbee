@@ -60,6 +60,44 @@ def _approved(raw: str) -> dict[str, Any]:
     return dict(data["services"])
 
 
+def prepare_stage(
+    container: str,
+    name: str,
+    prepare: list[dict[str, Any]],
+    *,
+    network: str | None,
+    mounts: list[str],
+) -> AutostartStage:
+    steps = []
+    for step in prepare:
+        allowed = {"name", "run", "env", "working_dir", "timeout", "continue_on_error"}
+        unexpected = set(step) - allowed
+        if unexpected:
+            raise autostart.AutostartStepError(
+                container=container,
+                step_name=f"prepare-{name}",
+                reason=f"unexpected service prepare fields: {', '.join(sorted(unexpected))}",
+            )
+        steps.append(
+            AutostartStep(
+                name=step["name"],
+                run=step["run"],
+                env=step["env"],
+                working_dir=step["working_dir"],
+                timeout=step["timeout"],
+                continue_on_error=step["continue_on_error"],
+            )
+        )
+    return AutostartStage.model_construct(
+        stage=f"prepare-{name}",
+        network=network,
+        mounts=list(mounts),
+        detach=False,
+        chains=[AutostartChain(name="main", steps=steps)],
+        steps=[],
+    )
+
+
 def selected_services(cfg: Config, incus: Incus, container: str) -> list[str] | None:
     names = decode_names(incus.config_get(container, SERVICES_KEY))
     if names is not None:
@@ -209,33 +247,12 @@ def run_services_stage(
         if not service["prepare"] or name in prepared:
             continue
         elevation = service["elevation"]
-        steps = []
-        for step in service["prepare"]:
-            allowed = {"name", "run", "env", "working_dir", "timeout", "continue_on_error"}
-            unexpected = set(step) - allowed
-            if unexpected:
-                raise autostart.AutostartStepError(
-                    container=container,
-                    step_name=f"prepare-{name}",
-                    reason=f"unexpected service prepare fields: {', '.join(sorted(unexpected))}",
-                )
-            steps.append(
-                AutostartStep(
-                    name=step["name"],
-                    run=step["run"],
-                    env=step["env"],
-                    working_dir=step["working_dir"],
-                    timeout=step["timeout"],
-                    continue_on_error=step["continue_on_error"],
-                )
-            )
-        stage = AutostartStage.model_construct(
-            stage=f"prepare-{name}",
+        stage = prepare_stage(
+            container,
+            name,
+            service["prepare"],
             network=elevation["network"],
-            mounts=list(elevation["mounts"]),
-            detach=False,
-            chains=[AutostartChain(name="main", steps=steps)],
-            steps=[],
+            mounts=elevation["mounts"],
         )
         try:
             autostart.run_stage(
