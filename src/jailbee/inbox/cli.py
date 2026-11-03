@@ -1,5 +1,6 @@
 """Standard-library command entry point for the inbox port."""
 
+import fcntl
 import json
 import os
 import re
@@ -451,6 +452,47 @@ def cmd_runners(settings: Settings, args: list[str]) -> int:
     return 0
 
 
+def cmd_wait(settings: Settings, args: list[str]) -> int:
+    from jailbee.inbox.waiting import WAKE_TOKENS, run_wait
+
+    timeout: int | None = 1800
+    wake: frozenset[str] | None = None
+    quiet = 0
+    index = 0
+    while index < len(args):
+        option = args[index]
+        if option not in ('--timeout', '--wake-on', '--quiet-after'):
+            raise InboxUsage(f"unknown argument '{option}' (see --help)")
+        if index + 1 == len(args):
+            raise InboxUsage(f'{option} needs a value')
+        value = args[index + 1]
+        if option == '--timeout':
+            timeout = parse_timeout(value)
+        elif option == '--quiet-after':
+            quiet = parse_duration(value)
+            if not quiet:
+                raise InboxUsage('--quiet-after must be positive')
+        else:
+            tokens = value.split(',')
+            if any(token not in WAKE_TOKENS for token in tokens):
+                raise InboxUsage('--wake-on needs comma-separated message kinds or status states')
+            wake = frozenset(tokens)
+        index += 2
+    settings.inbox.mkdir(parents=True, exist_ok=True)
+    fd = os.open(settings.base / 'wait.lock', os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise InboxUsage('another process is already waiting in this container') from None
+        rc, line = run_wait(settings, timeout=timeout, wake=wake, quiet=quiet)
+        if line is not None:
+            print(line)
+        return rc
+    finally:
+        os.close(fd)
+
+
 def main(argv: list[str]) -> int:
     try:
         settings = load_settings(os.environ)
@@ -471,6 +513,7 @@ def main(argv: list[str]) -> int:
             print(USAGE, end="")
             return 0
         commands = {
+            "wait": cmd_wait,
             "ls": cmd_ls,
             "read": cmd_read,
             "children": cmd_children,

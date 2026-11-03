@@ -12,6 +12,7 @@ from typing import Any
 
 from jailbee.inbox.cli import Settings, unread_files
 from jailbee.inbox.errors import InboxUsage
+from jailbee.inbox.watch import InboxWatcher
 
 WAKE_TOKENS = (
     "note",
@@ -157,3 +158,35 @@ def settle(
         if count > previous:
             quiet = clock() + interval
         previous = count
+
+
+def run_wait(
+    settings: Settings, *, timeout: int | None, wake: frozenset[str] | None,
+    quiet: int, status_ref: str | None = None,
+    watcher_factory: Callable[..., InboxWatcher] = InboxWatcher,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[int, str | None]:
+    deadline = None if timeout is None else clock() + timeout
+    watcher = watcher_factory(settings.inbox, poll=settings.poll)
+    waited = False
+    try:
+        while True:
+            if status_ref is not None:
+                path = find_status(settings.inbox, status_ref)
+                first = str(path) if path is not None else None
+            else:
+                first = select_wakeup(settings.base, wake, quiet, time.time())
+            if first is not None:
+                if waited and status_ref is None:
+                    settle(settings, deadline if deadline is not None else clock() + 5, clock=clock)
+                    first = select_wakeup(settings.base, wake, quiet, time.time())
+                    if first is None:
+                        continue
+                return 0, first
+            remaining = 10.0 if deadline is None else deadline - clock()
+            if remaining <= 0:
+                return 1, None
+            watcher.wait(min(remaining, 1 if quiet else 10))
+            waited = True
+    finally:
+        watcher.close()
