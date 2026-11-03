@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def advance(
-    entry: WatchEntry, child: Node | None, status: AgentStatus | None, *, now: datetime
+    entry: WatchEntry, child: Node | None, status: AgentStatus | None, *, now: datetime, has_jailbee: bool
 ) -> tuple[WatchEntry | None, Outcome | None]:
     """Pure durable state transition after boot work has finished."""
     from jailbee.orchestration import labels
@@ -42,6 +42,10 @@ def advance(
         if entry.live_since is None:
             return replace(entry, live_since=now.isoformat()), None
         if (now - datetime.fromisoformat(entry.live_since)).total_seconds() >= 2:
+            if not has_jailbee:
+                from jailbee.orchestration.outbox import MISSING_JAILBEE_MESSAGE
+
+                return None, failed(MISSING_JAILBEE_MESSAGE)
             return replace(entry, confirmed=True), done(
                 f"child `{child.short}` is ready; agent is alive"
             )

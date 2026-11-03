@@ -22,7 +22,7 @@ def advance(entry, status, *, seconds=0, child=None):
 
     if child is None:
         child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: "proj-orch"})
-    return step(entry, child, status, now=NOW + timedelta(seconds=seconds))
+    return step(entry, child, status, now=NOW + timedelta(seconds=seconds), has_jailbee=True)
 
 
 def test_idle_episode_threshold_repeat_and_activity_reset() -> None:
@@ -76,6 +76,16 @@ def test_alive_requires_two_separated_observations() -> None:
     e, out = advance(e, AgentStatus(True, "claude"), seconds=3)
     assert e.confirmed and out.state == "done" and "agent is alive" in out.detail
     assert advance(e, AgentStatus(True, "claude"), seconds=5)[1] is None
+
+
+def test_readiness_fails_without_container_jailbee() -> None:
+    from jailbee.orchestration.agent_watch import AgentStatus, advance as step
+
+    child = Node("proj-kid", "kid", True, {})
+    entry = supervised(live_since=NOW.isoformat())
+    _, outcome = step(entry, child, AgentStatus(True), now=NOW + timedelta(seconds=3), has_jailbee=False)
+    assert outcome.state == "failed"
+    assert "in-container jailbee" in outcome.detail
 
 
 @pytest.mark.parametrize("rc", [0, 1, 127, 137, 143])

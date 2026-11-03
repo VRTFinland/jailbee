@@ -24,7 +24,7 @@ from jailbee.global_config import GlobalConfig
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
-from jailbee.orchestration.outbox import INBOX_DIR, INBOX_HELPER, OUTBOX_DIR
+from jailbee.orchestration.outbox import CONTAINER_JAILBEE, INBOX_DIR, LEGACY_INBOX_HELPER, OUTBOX_DIR
 from jailbee.orchestration.state import load_queue, pending_dir
 from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config
@@ -93,6 +93,8 @@ class FakeIncus:
         if argv == ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR]:
             self.events.append(("mkdir", name, kw.get("uid")))
             return ""
+        if argv in (["test", "-x", CONTAINER_JAILBEE], ["rm", "-f", LEGACY_INBOX_HELPER]):
+            return ""
         if argv[:3] == ["rm", "-f", "--"]:
             journal = (self.root / JOURNAL_FILE).read_text()
             self.events.append(("rm", name, tuple(argv[3:]), journal.count("\n")))
@@ -110,10 +112,6 @@ class FakeIncus:
         return self
 
     def exec_with_input(self, name: str, argv: list[str], text: str, **kw: object) -> str:
-        if argv[:2] == ["sh", "-c"] and argv[3:] == ["sh", INBOX_HELPER]:
-            assert kw.get("uid") is None
-            self.events.append(("helper", name, text))
-            return ""
         directory, file_name = argv[-3], argv[-2]
         self.events.append(("write", name, directory, file_name, json.loads(text)))
         return ""

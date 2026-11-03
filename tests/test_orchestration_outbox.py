@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -106,45 +104,23 @@ def test_flush_quarantines_invalid_finish_and_continues(tmp_path: Path) -> None:
     assert path.with_name(path.name + ".bad").exists()
 
 
-def test_helper_script_is_packaged_file() -> None:
-    assert outbox.helper_script().startswith("#!/usr/bin/env bash")
-
-
-def test_ensure_env_makes_dirs_as_user_then_installs_as_root() -> None:
+def test_ensure_env_removes_legacy_helper_and_installs_nothing() -> None:
     incus = _incus()
     outbox.ensure_orchestration_env(incus, FULL, uid=1000)
-    incus.exec.assert_called_once_with(
-        FULL, ["mkdir", "-p", outbox.INBOX_DIR, outbox.OUTBOX_DIR], uid=1000
-    )
-    args, kwargs = incus.exec_with_input.call_args
-    assert args[0] == FULL
-    assert args[1][:2] == ["sh", "-c"] and args[1][3:] == ["sh", outbox.INBOX_HELPER]
-    assert args[2] == outbox.helper_script()
-    assert kwargs.get("uid") is None
-    assert [c[0] for c in incus.mock_calls] == ["exec", "exec_with_input"]
+    assert incus.exec.call_args_list == [
+        ((FULL, ["mkdir", "-p", outbox.INBOX_DIR, outbox.OUTBOX_DIR]), {"uid": 1000}),
+        ((FULL, ["test", "-x", "/usr/local/bin/jailbee"]), {}),
+        ((FULL, ["rm", "-f", "/usr/local/bin/jailbee-inbox"]), {}),
+    ]
+    incus.exec_with_input.assert_not_called()
 
 
-def test_ensure_env_script_replaces_only_when_different(tmp_path: Path) -> None:
-    target = tmp_path / "bin" / "jailbee-inbox"
-    target.parent.mkdir()
-
-    def install(text: str) -> None:
-        subprocess.run(
-            ["sh", "-c", outbox._INSTALL_HELPER, "sh", str(target)],
-            input=text,
-            text=True,
-            check=True,
-        )
-
-    install("v1\n")
-    assert target.read_text() == "v1\n"
-    assert target.stat().st_mode & 0o777 == 0o755
-    os.utime(target, (1, 1))
-    install("v1\n")
-    assert target.stat().st_mtime == 1
-    install("v2\n")
-    assert target.read_text() == "v2\n"
-    assert not list(target.parent.glob(".jailbee-inbox.*"))
+def test_ensure_env_missing_launcher_raises() -> None:
+    incus = _incus()
+    incus.exec.side_effect = [None, IncusError("missing")]
+    with pytest.raises(IncusError, match="jb base build"):
+        outbox.ensure_orchestration_env(incus, FULL, uid=1000)
+    assert len(incus.exec.call_args_list) == 2
 
 
 def test_read_outbox_caps_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
