@@ -79,11 +79,14 @@ def test_alive_requires_two_separated_observations() -> None:
 
 
 def test_readiness_fails_without_container_jailbee() -> None:
-    from jailbee.orchestration.agent_watch import AgentStatus, advance as step
+    from jailbee.orchestration.agent_watch import AgentStatus
+    from jailbee.orchestration.agent_watch import advance as step
 
     child = Node("proj-kid", "kid", True, {})
     entry = supervised(live_since=NOW.isoformat())
-    _, outcome = step(entry, child, AgentStatus(True), now=NOW + timedelta(seconds=3), has_jailbee=False)
+    _, outcome = step(
+        entry, child, AgentStatus(True), now=NOW + timedelta(seconds=3), has_jailbee=False
+    )
     assert outcome.state == "failed"
     assert "in-container jailbee" in outcome.detail
 

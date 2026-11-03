@@ -167,7 +167,7 @@ def test_ensure_env_failure_is_logged_once_and_retried(
 
 
 def test_broker_warns_once_for_old_image(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
-    from jailbee.orchestration.outbox import ContainerJailbeeMissing, MISSING_JAILBEE_MESSAGE
+    from jailbee.orchestration.outbox import MISSING_JAILBEE_MESSAGE, ContainerJailbeeMissing
 
     memory = broker.BrokerMemory()
     rig.ensure_env.side_effect = ContainerJailbeeMissing(MISSING_JAILBEE_MESSAGE)

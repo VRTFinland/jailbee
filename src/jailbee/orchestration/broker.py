@@ -349,8 +349,13 @@ def _settle_agent_watch(
             except Exception:
                 log.debug("Could not record agent session for %s", child.full, exc_info=True)
     updated, outcome = agent_watch.advance(
-        entry, child, status, now=ctx.now,
-        has_jailbee=has_container_jailbee(ctx.incus, child.full) if child and child.running else False,
+        entry,
+        child,
+        status,
+        now=ctx.now,
+        has_jailbee=has_container_jailbee(ctx.incus, child.full)
+        if child and child.running
+        else False,
     )
     if outcome is not None:
         if outcome.state == "failed" and child is not None and child.running:

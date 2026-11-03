@@ -24,7 +24,12 @@ from jailbee.global_config import GlobalConfig
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
-from jailbee.orchestration.outbox import CONTAINER_JAILBEE, INBOX_DIR, LEGACY_INBOX_HELPER, OUTBOX_DIR
+from jailbee.orchestration.outbox import (
+    CONTAINER_JAILBEE,
+    INBOX_DIR,
+    LEGACY_INBOX_HELPER,
+    OUTBOX_DIR,
+)
 from jailbee.orchestration.state import load_queue, pending_dir
 from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config

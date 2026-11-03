@@ -22,7 +22,12 @@ if TYPE_CHECKING:
 
 
 def advance(
-    entry: WatchEntry, child: Node | None, status: AgentStatus | None, *, now: datetime, has_jailbee: bool
+    entry: WatchEntry,
+    child: Node | None,
+    status: AgentStatus | None,
+    *,
+    now: datetime,
+    has_jailbee: bool,
 ) -> tuple[WatchEntry | None, Outcome | None]:
     """Pure durable state transition after boot work has finished."""
     from jailbee.orchestration import labels

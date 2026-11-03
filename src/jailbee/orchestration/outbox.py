@@ -38,7 +38,7 @@ MISSING_JAILBEE_MESSAGE = (
 )
 
 
-class ContainerJailbeeMissing(IncusError):
+class ContainerJailbeeMissing(IncusError):  # noqa: N818 - public task interface
     """The container image lacks the inbox-capable launcher."""
 
 
