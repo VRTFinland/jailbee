@@ -93,8 +93,13 @@ def test_refresh_order_prompt_and_prepared_preservation(refresh_setup):
     stage.side_effect = lambda *args, **kwargs: events.append("stage")
     resume.side_effect = lambda *args, **kwargs: events.append("resume")
     report = run_refresh(
-        cfg, incus, "box", plan, who="requested by orchestrator parent",
-        resume_prompt_prefix="preamble\n\n", before_resume=lambda: events.append("watch"),
+        cfg,
+        incus,
+        "box",
+        plan,
+        who="requested by orchestrator parent",
+        resume_prompt_prefix="preamble\n\n",
+        before_resume=lambda: events.append("watch"),
         mirror_endpoint=None,
     )
     assert report.ok
@@ -160,7 +165,8 @@ def test_refresh_existing_envelope_without_network(refresh_setup):
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
     assert report.ok
     assert json.loads(values["user.jailbee.services_approval"])["services"]["web"] == {
-        "network": None, "mounts": []
+        "network": None,
+        "mounts": [],
     }
     run.assert_called_once()
 
