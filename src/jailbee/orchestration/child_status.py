@@ -190,8 +190,9 @@ def _due(stamps: dict[str, float], full: str, now: float, interval: float) -> bo
 # $1 is the repo directory, passed as an argument so it is never parsed as shell.
 _HEAD_SCRIPT = r"""
 export GIT_OPTIONAL_LOCKS=0
-log=$(git --no-optional-locks -C "$1" log -1 --format=%H%x1f%ct%x1f%s 2>/dev/null) && printf '%s\n' "$log"
-if ! porcelain=$(git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=all 2>/dev/null); then
+g="git --no-optional-locks -C"
+log=$($g "$1" log -1 --format=%H%x1f%ct%x1f%s 2>/dev/null) && printf '%s\n' "$log"
+if ! porcelain=$($g "$1" status --porcelain --ignore-submodules=all 2>/dev/null); then
     echo ERROR
 elif [ -n "$porcelain" ]; then
     echo DIRTY

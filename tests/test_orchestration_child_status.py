@@ -86,8 +86,8 @@ def test_head_script_never_takes_the_index_lock() -> None:
     probe_head(incus, "kid", "/repo", uid=1)
     script = incus.exec.call_args.args[1][2]
     assert "GIT_OPTIONAL_LOCKS=0" in script
-    assert script.count("git --no-optional-locks") == 2
-    assert "git -C" not in script
+    assert 'g="git --no-optional-locks -C"' in script
+    assert "git -C" not in script and script.count("$g ") == 2
 
 
 def test_status_cache_prune_drops_vanished():
