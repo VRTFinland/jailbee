@@ -78,6 +78,38 @@ def test_selection_and_presence(tmp_path, make_cfg):
     assert decode_names(encode_names(["db", "web"])) == ["db", "web"]
 
 
+def test_child_prepare_refuses_ungranted_loose_before_stage(tmp_path, mocker, make_cfg):
+    from jailbee.orchestration import labels as orch_labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = make_cfg(tmp_path)
+    incus, values = labels()
+    values[orch_labels.SPAWNED_BY] = "parent"
+    values[orch_labels.RIGHTS] = ChildRights().to_label()
+    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    with pytest.raises(autostart.AutostartStepError, match="loose"):
+        invoke(cfg, incus)
+    run.assert_not_called()
+
+
+def test_child_prepare_refuses_ungranted_mount(tmp_path, mocker, make_cfg):
+    from jailbee.orchestration import labels as orch_labels
+    from jailbee.orchestration.grant import ChildRights
+
+    cfg = make_cfg(tmp_path)
+    incus, values = labels()
+    values[orch_labels.SPAWNED_BY] = "parent"
+    values[orch_labels.RIGHTS] = ChildRights(loose=True).to_label()
+    data = payload()
+    data["services"][0]["elevation"]["mounts"] = ["aws"]
+    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    with pytest.raises(autostart.AutostartStepError, match="child rights: aws"):
+        invoke(cfg, incus)
+    run.assert_not_called()
+
+
 def test_prepare_then_start_and_skip(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()

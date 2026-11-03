@@ -9110,6 +9110,42 @@ def test_widening_already_granted_by_the_baseline_is_not_reported(make_cfg, tmp_
     assert not any("widens privileges" in c.args[0] for c in warned.call_args_list)
 
 
+def test_branch_profile_selects_service_dependencies_for_assessment(make_cfg, tmp_path, mocker):
+    from jailbee import lifecycle
+    from jailbee.branch_config import AutostartDeviation
+
+    cfg, _ = _new_env(make_cfg, tmp_path, mocker)
+    branch = make_cfg(tmp_path, services={
+        "web": {"run": "web", "depends_on": {"db": {}}},
+        "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
+        "other": {"run": "other", "prepare": [{"run": "setup", "mounts": ["aws"]}]},
+    }, autostart={"on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}], "profiles": {"minimal": {"stages": ["setup"], "services": ["web"]}}, "default_profile": "minimal"})
+    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(branch, AutostartDeviation()))
+    mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
+    mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
+    clone_ref = mocker.Mock(autostart_ref="branch", autostart_source_label="branch")
+    verdict = lifecycle.assess_branch_autostart(cfg, _branch_new_opts(untrusted_head=True), clone_ref).verdict
+    assert verdict is not None and verdict.widening_steps == ("service[db].prepare",)
+    assert verdict.attached_mounts == ()
+
+
+@pytest.mark.parametrize("prepare", [{"network": "loose"}, {"mounts": ["aws"]}])
+def test_branch_service_prepare_declined_before_create(make_cfg, tmp_path, mocker, prepare):
+    from jailbee.branch_config import AutostartDeviation
+
+    cfg, incus = _new_env(make_cfg, tmp_path, mocker)
+    branch = make_cfg(tmp_path, services={"db": {"run": "db", "prepare": [{"run": "setup", **prepare}]}})
+    grafted = cfg.model_copy(update={"services": branch.services})
+    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(grafted, AutostartDeviation()))
+    mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
+    mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
+    confirm = mocker.Mock(return_value=False)
+    with pytest.raises(ValueError, match="[Aa]borted"):
+        new_container(cfg, incus, _branch_new_opts(untrusted_head=True), confirm_fn=confirm)
+    confirm.assert_called_once()
+    incus.init.assert_not_called()
+
+
 def test_network_widening_from_an_untrusted_head_prompts_and_proceeds_on_yes(
     make_cfg, tmp_path, mocker
 ):

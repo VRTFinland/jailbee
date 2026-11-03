@@ -1452,8 +1452,12 @@ def assess_branch_autostart(
     # this checkout — see branch_config's module docstring. A checkout that
     # merely lags `origin/<default_branch>` is not a privilege escalation, and
     # used to be treated as one.
+    profile_name = opts.autostart_profile or loaded.cfg.autostart.default_profile
+    profile = loaded.cfg.autostart.profiles.get(profile_name) if profile_name else None
+    selected_services = profile.services if profile is not None and profile != "all" else None
     verdict = branch_config.assess_escalation(
-        cfg, loaded.cfg.autostart, untrusted=opts.untrusted_head
+        cfg, loaded.cfg.autostart, untrusted=opts.untrusted_head,
+        services=loaded.cfg.services, selected_services=selected_services,
     )
     if verdict.any_widening:
         warn_plain(branch_config.format_escalation(verdict))

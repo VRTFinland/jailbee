@@ -42,6 +42,7 @@ from jailbee.config import AutostartStage
 
 if TYPE_CHECKING:
     from jailbee.config import Autostart, AutostartStep, Config
+    from jailbee.config.models_services import Service
 
 _TRIGGERS = ("on_create", "on_start")
 
@@ -546,6 +547,7 @@ class EscalationVerdict:
     attached_mounts: tuple[str, ...]
     baseline_source: str
     untrusted: bool
+    service_mounts: tuple[str, ...] = ()
 
     @property
     def any_widening(self) -> bool:
@@ -577,7 +579,7 @@ def _can_widen(autostart: Autostart) -> bool:
     )
 
 
-def _baseline_autostart(cfg: Config) -> tuple[Autostart, str]:
+def _baseline_autostart(cfg: Config) -> tuple[Config, str]:
     """The autostart the privilege gate measures against, plus its label.
 
     `refs/remotes/<upstream_remote>/<default_branch>` — what review and CI
@@ -609,8 +611,8 @@ def _baseline_autostart(cfg: Config) -> tuple[Autostart, str]:
                 f"Falling back to your checkout's autostart config, which is a "
                 f"weaker gate: it is not what review and CI approved."
             )
-            return cfg.autostart, f"your checkout ({ref} cannot be read)"
-        return cfg.autostart, f"your checkout ({ref} has no .jailbee/config.yaml)"
+            return cfg, f"your checkout ({ref} cannot be read)"
+        return cfg, f"your checkout ({ref} has no .jailbee/config.yaml)"
     text, config_rel = found
     try:
         baseline_cfg = load_config_from_text(text, cfg.repo_root / config_rel)
@@ -619,28 +621,57 @@ def _baseline_autostart(cfg: Config) -> tuple[Autostart, str]:
             f"Cannot use {ref} as the privilege baseline — it is not valid: {e}\n"
             f"Falling back to your checkout's autostart config."
         )
-        return cfg.autostart, f"your checkout ({ref} is not valid)"
-    return baseline_cfg.autostart, ref
+        return cfg, f"your checkout ({ref} is not valid)"
+    return baseline_cfg, ref
 
 
-def assess_escalation(cfg: Config, branch: Autostart, *, untrusted: bool) -> EscalationVerdict:
+def assess_escalation(
+    cfg: Config, branch: Autostart, *, untrusted: bool,
+    services: dict[str, Service] | None = None,
+    selected_services: list[str] | None = None,
+) -> EscalationVerdict:
     """Weigh `branch`'s autostart against the repo's reviewed baseline.
 
     `untrusted` marks a head nobody has vouched for — a `jailbee new --pr N` review
     container, whose head is arbitrary code from a PR (a fork's, most sharply).
     See `EscalationVerdict` for why that only matters for network widening.
     """
-    if not _can_widen(branch):
+    from jailbee.services.graph import elevation
+
+    services = services or {}
+    selected = set(services) if selected_services is None else set(selected_services)
+    pending = list(selected)
+    while pending:
+        service = services.get(pending.pop())
+        if service is not None:
+            for dependency in service.depends_on:
+                if dependency not in selected:
+                    selected.add(dependency)
+                    pending.append(dependency)
+    grants = {name: elevation(services[name]) for name in selected if name in services}
+    if not _can_widen(branch) and not any(grant.any for grant in grants.values()):
         return EscalationVerdict(
             widening_steps=(), attached_mounts=(), baseline_source="", untrusted=untrusted
         )
     baseline, source = _baseline_autostart(cfg)
-    dev = diff_autostart(baseline, branch)
+    dev = diff_autostart(baseline.autostart, branch)
+    widening = list(dev.widening_steps)
+    mounts = set(dev.attached_mounts)
+    service_mounts: list[str] = []
+    for name, grant in sorted(grants.items()):
+        old = baseline.services.get(name)
+        old_grant = elevation(old) if old is not None else None
+        if grant.network and (old_grant is None or not old_grant.network):
+            widening.append(f"service[{name}].prepare")
+        new_mounts = set(grant.mounts) - (set(old_grant.mounts) if old_grant else set())
+        mounts.update(new_mounts)
+        service_mounts.extend(f"service[{name}].prepare: {mount}" for mount in sorted(new_mounts))
     return EscalationVerdict(
-        widening_steps=dev.widening_steps,
-        attached_mounts=dev.attached_mounts,
+        widening_steps=tuple(widening),
+        attached_mounts=tuple(sorted(mounts)),
         baseline_source=source,
         untrusted=untrusted,
+        service_mounts=tuple(service_mounts),
     )
 
 
@@ -660,6 +691,8 @@ def format_escalation(verdict: EscalationVerdict) -> str:
         lines.append(f"  ⚠ network access 'loose' in: {', '.join(verdict.widening_steps)}")
     if verdict.attached_mounts:
         lines.append(f"  ⚠ attaches host mount(s): {', '.join(verdict.attached_mounts)}")
+    if verdict.service_mounts:
+        lines.append(f"  service prepare mounts: {', '.join(verdict.service_mounts)}")
     return "\n".join(lines)
 
 

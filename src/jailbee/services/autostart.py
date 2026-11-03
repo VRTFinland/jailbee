@@ -90,6 +90,25 @@ def run_services_stage(
         if not service["prepare"] or name in prepared:
             continue
         elevation = service["elevation"]
+        from jailbee.orchestration import labels
+        from jailbee.orchestration.grant import ChildRights, GrantError
+
+        if incus.config_get(container, labels.SPAWNED_BY):
+            raw_rights = incus.config_get(container, labels.RIGHTS)
+            try:
+                rights = ChildRights.from_label(raw_rights) if raw_rights else ChildRights()
+            except GrantError as exc:
+                raise autostart.AutostartStepError(
+                    container=container, step_name=f"prepare-{name}", reason=str(exc)
+                ) from exc
+            denied = sorted(set(elevation["mounts"]) - set(rights.mounts))
+            if elevation["network"] == "loose" and not rights.loose:
+                denied.append("network loose")
+            if denied:
+                raise autostart.AutostartStepError(
+                    container=container, step_name=f"prepare-{name}",
+                    reason=f"service '{name}' prepare exceeds child rights: {', '.join(denied)}",
+                )
         for mount in elevation["mounts"]:
             if mount not in cfg.optional_mounts:
                 raise autostart.AutostartStepError(

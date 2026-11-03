@@ -497,6 +497,37 @@ def _baseline(mocker, cfg, autostart: Autostart | None):
     return show
 
 
+def test_service_prepare_escalation_uses_reviewed_baseline(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    branch = make_cfg(tmp_path, services={"db": {"run": "db", "prepare": [{"run": "setup", "network": "loose", "mounts": ["aws"]}]}})
+    _baseline(mocker, cfg, Autostart())
+    verdict = assess_escalation(cfg, branch.autostart, untrusted=True, services=branch.services)
+    assert verdict.prompts
+    assert verdict.widening_steps == ("service[db].prepare",)
+    assert verdict.attached_mounts == ("aws",)
+    assert "service[db]" in format_escalation(verdict)
+
+
+def test_service_selection_includes_dependencies_and_reviewed_grants(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    branch = make_cfg(tmp_path, services={
+        "web": {"run": "web", "depends_on": {"db": {}}},
+        "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
+        "other": {"run": "other", "prepare": [{"run": "setup", "mounts": ["aws"]}]},
+    })
+    _baseline(mocker, cfg, Autostart())
+    verdict = assess_escalation(cfg, branch.autostart, untrusted=True, services=branch.services, selected_services=["web"])
+    assert verdict.widening_steps == ("service[db].prepare",)
+    assert verdict.attached_mounts == ()
+    mocker.patch("jailbee.config.load_config_from_text", return_value=branch)
+    verdict = assess_escalation(cfg, branch.autostart, untrusted=True, services=branch.services, selected_services=["web"])
+    assert not verdict.any_widening
+
+
 def test_baseline_is_the_default_branch_not_the_checkout(mocker, tmp_path):
     """The regression: a checkout older than origin/<default> is not an escalation.
 
