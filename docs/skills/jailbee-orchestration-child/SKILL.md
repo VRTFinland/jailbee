@@ -51,8 +51,17 @@ note describing the rights you gave up. Ask for more access with a
 ## Sending a message
 
 Four kinds: `note` (information), `question` (you need an answer), `blocked`
-(you cannot continue) and `done` (finished). Use a new id every time; ids are
-never reused. Prefer the helper, which writes the manifest atomically and
+(you cannot continue) and `done` (finished).
+
+Message your orchestrator only when it has to act or decide: a `question`,
+`blocked`, a change of scope or plan it should know about, and `done`. **Do
+not send progress notes** ("tests running", "task 3 started", "review
+underway"): every message wakes the orchestrator and costs it a full turn.
+The broker already reports idle and quiet children, and your final `done`
+carries the summary. Answer a status request from the orchestrator with one
+short note.
+
+Use a new id every time; ids are never reused. Prefer the helper, which writes the manifest atomically and
 prints the id:
 
 ```bash

@@ -88,7 +88,9 @@ arrives as a note so update your picture of its access.
 ## Writing a child prompt
 
 The child already receives a preamble that names its own skill, so do not
-repeat protocol rules. Give it:
+repeat protocol rules. Sparse messaging is the child's default (no progress
+notes; only `question`, `blocked`, scope changes and `done`), so you need not
+ask for it. Give it:
 
 ```text
 Task: <one sentence>

@@ -60,6 +60,10 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **Child containers message sparsely.** The child skill and spawn preamble tell
+  children to message their orchestrator only when it must act or decide
+  (question, blocked, scope change, done), not with progress notes that each
+  cost the orchestrator a turn. ([#62](https://github.com/VRTFinland/jailbee/issues/62))
 - PR agent generation now requires consent: one No-default question covers the
   configured title/description and branch-name proposal. `--ai` skips the
   question; `--no-ai` skips generation. Non-interactive runs require `--ai`,

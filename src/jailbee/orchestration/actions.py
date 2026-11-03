@@ -221,7 +221,9 @@ def child_preamble(orchestrator_short: str) -> str:
         f"You are a child container of orchestrator `{orchestrator_short}`. "
         "Use the `jailbee-orchestration-child` skill. "
         "Keep `jailbee-inbox wait --timeout none` running in the background "
-        "and re-arm it after handling messages."
+        "and re-arm it after handling messages. "
+        "Message the orchestrator only when it must act or decide "
+        "(question, blocked, a scope change, done); send no progress notes."
     )
 
 
