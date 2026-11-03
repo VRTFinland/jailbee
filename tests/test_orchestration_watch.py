@@ -138,7 +138,10 @@ def test_dead_worker_with_stopped_or_missing_child(alive: None) -> None:
 def test_failed_row_names_the_worker_log_when_known(alive: None) -> None:
     row = JobSnapshot("failed", 4242, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
     out = run(entry(), row, child())
-    assert out.detail == "creation of child `kid` failed: see the worker log /state/logs/proj-kid-1.log"
+    assert (
+        out.detail
+        == "creation of child `kid` failed: see the worker log /state/logs/proj-kid-1.log"
+    )
 
 
 def test_no_row_child_present_spawn_is_ready() -> None:
