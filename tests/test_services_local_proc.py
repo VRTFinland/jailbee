@@ -77,7 +77,9 @@ def test_shell_success_receives_environment(tmp_path, monkeypatch):
 
 def test_anchor_survives_pane_leader_and_checks_identity(tmp_path, monkeypatch):
     proc = LocalProc()
-    monkeypatch.setattr(proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 0, str(os.getpid()), "")))
+    monkeypatch.setattr(
+        proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 0, str(os.getpid()), ""))
+    )
     identity = tmp_path / "anchor.json"
     command = proc.service_command("sleep 60 & exit 42", identity)
     pane = subprocess.Popen(["bash", "-lc", command], start_new_session=True)
@@ -105,12 +107,21 @@ def test_signal_identity_refuses_tmux_server(tmp_path, monkeypatch):
         pid = server.pid
         stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
         identity = tmp_path / "server.json"
-        identity.write_text(json.dumps({
-            "pid": pid, "pgid": pid, "session": pid,
-            "start": stat[19], "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-        }))
+        identity.write_text(
+            json.dumps(
+                {
+                    "pid": pid,
+                    "pgid": pid,
+                    "session": pid,
+                    "start": stat[19],
+                    "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                }
+            )
+        )
         proc = LocalProc()
-        monkeypatch.setattr(proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 0, str(pid), "")))
+        monkeypatch.setattr(
+            proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 0, str(pid), ""))
+        )
         monkeypatch.setattr("os.killpg", kill := Mock())
         assert not proc.signal_identity(identity, 0)
         kill.assert_not_called()
@@ -121,12 +132,21 @@ def test_signal_identity_refuses_tmux_server(tmp_path, monkeypatch):
 
 def test_signal_identity_refuses_when_tmux_server_is_unknown(tmp_path, monkeypatch):
     identity = tmp_path / "anchor.json"
-    identity.write_text(json.dumps({
-        "pid": 123, "pgid": 123, "session": 123, "start": "1",
-        "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-    }))
+    identity.write_text(
+        json.dumps(
+            {
+                "pid": 123,
+                "pgid": 123,
+                "session": 123,
+                "start": "1",
+                "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            }
+        )
+    )
     proc = LocalProc()
-    monkeypatch.setattr(proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 1, "", "no server")))
+    monkeypatch.setattr(
+        proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 1, "", "no server"))
+    )
     monkeypatch.setattr("os.killpg", kill := Mock())
     assert not proc.signal_identity(identity, 0)
     kill.assert_not_called()
