@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+
 @dataclass
 class Impl:
     argv: list[str]
@@ -20,10 +21,6 @@ class Impl:
 
 FIRST = "20261025T100000Z-00000001-h-0000aaaa.json"
 SECOND = "20261025T100001Z-00000002-h-0000bbbb.json"
-
-
-
-
 
 
 @pytest.fixture
@@ -110,10 +107,6 @@ def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp
     assert out.strip().endswith(FIRST)
 
 
-
-
-
-
 def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
     child_snapshot(base, started=time.time())
     started = time.monotonic()
@@ -123,15 +116,11 @@ def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
     assert time.monotonic() - started < 3
 
 
-
-
 @pytest.mark.parametrize("dur", ["None", "NONE", "forever", "inf", "none5"])
 def test_wait_rejects_none_lookalikes(script, base, tmp_path, dur):
     r = run(script, "wait", "--timeout", dur, env=env_for(base, tmp_path))
     assert r.returncode == 2
     assert r.stderr.startswith(f"{script.prog}: ")
-
-
 
 
 def test_send_rejects_bad_none_timeout(script, base, tmp_path):
@@ -361,8 +350,6 @@ def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
     )
 
 
-
-
 def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
     write_inbox(base, FIRST, message("h-0000aaaa"))
     start = time.monotonic()
@@ -456,10 +443,6 @@ def test_wait_with_missing_inbox_dir_times_out(script, tmp_path):
     assert run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path)).returncode == 1
 
 
-
-
-
-
 def test_ls_empty_prints_nothing(script, base, tmp_path):
     r = run(script, "ls", env=env_for(base, tmp_path))
     assert (r.returncode, r.stdout) == (0, "")
@@ -520,20 +503,6 @@ def test_read_ignores_corrupt_and_already_read(script, base, tmp_path):
     env = env_for(base, tmp_path)
     assert run(script, "read", "h-0000aaaa", env=env).returncode == 0
     assert run(script, "read", "h-0000cccc", env=env).returncode == 1
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # --- send ---------------------------------------------------------------
@@ -885,8 +854,6 @@ def test_send_refuses_oversized_text(script, base, tmp_path):
     r = send(script, base, tmp_path, "message", "-", stdin="x" * 65537)
     assert r.returncode == 2 and "65536" in r.stderr
     assert len(os.listdir(base / "outbox")) == 2  # only the accepted one
-
-
 
 
 def test_send_output_parses_with_protocol(script, base, tmp_path):
@@ -1507,8 +1474,6 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
         assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
         assert path.exists()
     assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == str(path)
-
-
 
 
 def test_wait_poll_respects_timeout(script, base, tmp_path):
