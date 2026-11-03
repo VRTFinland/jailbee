@@ -12,7 +12,15 @@ from decimal import Decimal
 from pathlib import Path
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
-from jailbee.inbox.render import SaturatedNumber, clean_c0c1, clean_c1, jq_tostring, ls_line, pretty, tsv
+from jailbee.inbox.render import (
+    SaturatedNumber,
+    clean_c0c1,
+    clean_c1,
+    jq_tostring,
+    ls_line,
+    pretty,
+    tsv,
+)
 
 PROG = "jailbee inbox"
 USAGE = (
@@ -146,7 +154,11 @@ def _parse_number(text: str) -> Decimal | SaturatedNumber:
     first = next((i for i, digit in enumerate(digits) if digit != "0"), len(digits))
     sign = "-" if text.startswith("-") else ""
     if exponent:
-        exp = int(exponent) if len(exponent.lstrip("+-0")) < 12 else (10**12 if not exponent.startswith("-") else -(10**12))
+        exp = (
+            int(exponent)
+            if len(exponent.lstrip("+-0")) < 12
+            else (10**12 if not exponent.startswith("-") else -(10**12))
+        )
         adjusted = exp + len(mantissa.lstrip("-").split(".")[0]) - first - 1
         if first == len(digits):
             if exp > 999999999:
@@ -272,7 +284,8 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
                 child = {}
             if not isinstance(child, dict):
                 print(
-                    f'jq: error (at {path}:{line}): Cannot index {_jq_type(child)} with string "name"',
+                    f"jq: error (at {path}:{line}): Cannot index {_jq_type(child)} "
+                    'with string "name"',
                     file=sys.stderr,
                 )
                 return 5
