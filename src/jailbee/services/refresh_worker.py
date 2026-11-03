@@ -232,7 +232,16 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
                 state="done" if ok else "failed",
                 detail=detail,
             )
-            pending = final.model_copy(update={"state": "failed", "detail": detail + "; refresh job cleanup unconfirmed"}) if claimed else final
+            pending = (
+                final.model_copy(
+                    update={
+                        "state": "failed",
+                        "detail": detail + "; refresh job cleanup unconfirmed",
+                    }
+                )
+                if claimed
+                else final
+            )
             job["final_status"] = pending.model_dump(mode="json")
             state.atomic_write_text(path, json.dumps(job))
         except Exception as exc:

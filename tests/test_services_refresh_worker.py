@@ -157,15 +157,19 @@ def test_delivery_failure_preserves_job(rig, mocker):
 def test_final_persist_failure_never_reexecutes(rig, mocker):
     from jailbee.orchestration import state
 
-    cfg, engine, deliver, incus, path = rig
+    cfg, engine, _deliver, incus, path = rig
     job(path)
     original = state.atomic_write_text
+
     def write(target, text):
         if "final_status" in json.loads(text):
             raise OSError("disk full")
         original(target, text)
+
     mocker.patch.object(state, "atomic_write_text", side_effect=write)
-    execute = mocker.patch.object(elevated, "run_plain_refresh", return_value=elevated.RefreshReport((), True, "not running"))
+    execute = mocker.patch.object(
+        elevated, "run_plain_refresh", return_value=elevated.RefreshReport((), True, "not running")
+    )
     assert elevated.run_job(cfg, incus, path) == 1
     mocker.patch.object(background, "worker_alive", return_value=False)
     assert elevated.run_job(cfg, incus, path) == 1
@@ -175,9 +179,15 @@ def test_final_persist_failure_never_reexecutes(rig, mocker):
 
 
 def test_release_error_reports_failed_with_service_outcome(rig, mocker):
-    cfg, engine, deliver, incus, path = rig
+    cfg, _engine, deliver, incus, path = rig
     job(path)
-    mocker.patch.object(elevated, "run_plain_refresh", return_value=elevated.RefreshReport((elevated.ServiceOutcome("db", "restarted"),), True, "not running"))
+    mocker.patch.object(
+        elevated,
+        "run_plain_refresh",
+        return_value=elevated.RefreshReport(
+            (elevated.ServiceOutcome("db", "restarted"),), True, "not running"
+        ),
+    )
     mocker.patch.object(background, "release_job", side_effect=RuntimeError("release failed"))
     assert elevated.run_job(cfg, incus, path) == 1
     item = deliver.call_args.args[3]
@@ -186,9 +196,11 @@ def test_release_error_reports_failed_with_service_outcome(rig, mocker):
 
 
 def test_crash_before_cleanup_delivers_conservative_failure(rig, mocker):
-    cfg, engine, deliver, incus, path = rig
+    cfg, _engine, deliver, incus, path = rig
     job(path)
-    report = elevated.RefreshReport((elevated.ServiceOutcome("db", "restarted"),), True, "not running")
+    report = elevated.RefreshReport(
+        (elevated.ServiceOutcome("db", "restarted"),), True, "not running"
+    )
     execute = mocker.patch.object(elevated, "run_plain_refresh", return_value=report)
     release = mocker.patch.object(background, "release_job", side_effect=KeyboardInterrupt)
     with pytest.raises(KeyboardInterrupt):
