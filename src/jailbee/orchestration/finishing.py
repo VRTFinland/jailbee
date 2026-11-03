@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -165,6 +166,12 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
         marker = child.config.get(labels.PENDING_DESTROY)
         if not marker:
             continue
+        rows = ctx.incus.list_containers()
+        current = next((row for row in rows if row.get("name") == child.full), None)
+        config = current.get("config") if current else None
+        if not isinstance(config, dict) or config.get(labels.PENDING_DESTROY) != marker:
+            continue
+        child = replace(child, config=config)
         if reply_path(ctx, child).exists() or outbox.has_pending(ctx.root, child.full):
             continue
         if refresh_guard(child) is not None:

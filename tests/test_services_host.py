@@ -457,3 +457,61 @@ def test_host_refresh_release_failure_returns_error(
     assert "[red]failed[/red]" in captured.out
     assert "database failed" in captured.err
     assert release.call_args.args[1:] == ("one", __import__("os").getpid())
+
+
+def test_host_claim_waits_for_actual_stop_handler(make_cfg, tmp_path, monkeypatch):
+    import threading
+    from datetime import UTC, datetime
+
+    from sqlalchemy import create_engine
+    from sqlmodel import SQLModel
+
+    from jailbee import background, db
+    from jailbee.global_config import GlobalConfig
+    from jailbee.orchestration import actions, labels
+    from jailbee.orchestration.protocol import StopManifest
+    from jailbee.services import elevated
+
+    cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
+    engine = create_engine(f"sqlite:///{tmp_path / 'jobs.db'}")
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db, "get_engine", lambda: engine)
+    monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
+    monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **k: Mock())
+    monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
+    monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
+    monkeypatch.setattr(elevated, "run_refresh", lambda *a, **k: elevated.RefreshReport((), True, "none"))
+    orch = actions.Node("orch", "orch", True, {})
+    child = actions.Node("one", "one", True, {labels.SPAWNED_BY: "orch"})
+    ctx = actions.ActionContext(cfg, GlobalConfig(), incus, tmp_path, orch,
+                                {orch.full: orch, child.full: child}, datetime.now(UTC))
+    entered, release, claimed = threading.Event(), threading.Event(), threading.Event()
+    def head(*args):
+        entered.set()
+        assert release.wait(5)
+        return None
+    monkeypatch.setattr(actions, "_child_head", head)
+    monkeypatch.setattr(actions.lifecycle, "container_repo_dir", lambda *a: "/repo")
+    monkeypatch.setattr(actions.sync, "_container_dirty_quiet", lambda *a, **k: False)
+    monkeypatch.setattr("jailbee.stopping.stop_container", lambda *a, **k: None)
+    original = background.claim_job
+    def claim(*a, **k):
+        claimed.set()
+        return original(*a, **k)
+    monkeypatch.setattr(background, "claim_job", claim)
+    results = []
+    stop = threading.Thread(target=lambda: results.append(actions.handle_stop(
+        ctx, StopManifest(version=1, id="s1", type="stop", child="one"))))
+    refresh = threading.Thread(target=lambda: results.append(host.refresh(
+        cfg, incus, "one", ["web"], assume_yes=True)))
+    stop.start()
+    assert entered.wait(5)
+    refresh.start()
+    try:
+        assert not claimed.wait(0.5)
+    finally:
+        release.set()
+        stop.join(5)
+        refresh.join(5)
+    assert not stop.is_alive() and not refresh.is_alive()
+    assert claimed.is_set() and 0 in results

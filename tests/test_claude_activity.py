@@ -534,3 +534,20 @@ def test_recent_events_carry_the_time_of_their_record():
         None,
         None,
     ]
+
+
+@pytest.mark.parametrize("kind", ["malformed", "oversized", "directory"])
+def test_strict_adapter_rejects_invalid_session_records(tmp_path, kind):
+    from jailbee.accounts.adapters.claude import MAX_SESSION_FILE_BYTES
+
+    directory = tmp_path / "sessions"
+    directory.mkdir()
+    record = directory / "123.json"
+    if kind == "directory":
+        record.mkdir()
+    else:
+        record.write_bytes(b"{" if kind == "malformed" else b"x" * (MAX_SESSION_FILE_BYTES + 1))
+    adapter = ClaudeAdapter()
+    assert adapter.read_sessions(tmp_path) == []
+    with pytest.raises((OSError, ValueError)):
+        adapter.read_sessions_strict(tmp_path)

@@ -92,7 +92,11 @@ def refresh(
         engine = db.get_engine()
         if engine is None:
             raise elevated.RefreshError("job database unavailable")
-        with watch.locked(state.state_root()), Session(engine) as session:
+        with (
+            watch.mutation_locked(state.state_root()),
+            watch.locked(state.state_root()),
+            Session(engine) as session,
+        ):
             claimed = background.claim_job(
                 session,
                 container_name=full,

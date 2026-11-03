@@ -525,10 +525,15 @@ def read_session_files(home: Path, *, strict: bool = False) -> list[AgentSession
     for path in paths:
         raw = _read_small_regular_file(path, MAX_SESSION_FILE_BYTES, strict=strict)
         if raw is None:
+            if strict:
+                raise ValueError(f"invalid session record: {path}")
             continue
         session = _parse_session(raw)
-        if session is not None:
-            sessions.append(session)
+        if session is None:
+            if strict:
+                raise ValueError(f"invalid session record: {path}")
+            continue
+        sessions.append(session)
     return sessions
 
 

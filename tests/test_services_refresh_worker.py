@@ -148,6 +148,7 @@ def test_mutations_serialize_with_refresh_claim(rig, mocker, operation):
     def mutation(*args):
         entered.set()
         assert proceed.wait(5)
+        done.set()
         return actions.done("done") if operation != "pending" else None
 
     target, name, manifest = {
@@ -198,7 +199,6 @@ def test_mutations_serialize_with_refresh_claim(rig, mocker, operation):
                     "rights": "handle_rights",
                 }[operation],
             )(ctx, manifest)
-        done.set()
 
     results = []
     a = threading.Thread(target=invoke)
@@ -496,3 +496,34 @@ def test_tampered_elevation_never_executes(rig, mocker):
     run.assert_not_called()
     assert deliver.call_args.args[3].state == "failed"
     assert "elevation mismatch" in deliver.call_args.args[3].detail
+
+
+def test_stale_pending_destroy_after_worker_resume(rig, mocker):
+    from datetime import UTC, datetime
+
+    from jailbee.global_config import GlobalConfig
+    from jailbee.orchestration import actions, finishing
+
+    cfg, _, _, incus, path = rig
+    job(path, elevated_plan=True)
+    marker = "a" * 40
+    orch = actions.Node("proj-o", "o", True, {})
+    child = actions.Node("proj-c", "c", True, {
+        labels.SPAWNED_BY: orch.full, labels.PENDING_DESTROY: marker,
+        labels.LAST_IMPORT: marker,
+    })
+    ctx = actions.ActionContext(cfg, GlobalConfig(), incus, path.parent, orch,
+                                {orch.full: orch, child.full: child}, datetime.now(UTC))
+    mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=Mock())
+    mocker.patch.object(elevated, "foreign_agents", return_value=[])
+    mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", return_value=None)
+    def run(*args, **kwargs):
+        kwargs["before_resume"]()
+        return elevated.RefreshReport((), True, "resumed")
+    mocker.patch.object(elevated, "run_refresh", side_effect=run)
+    destroy = mocker.patch("jailbee.lifecycle.destroy_container")
+    mocker.patch.object(finishing, "_destroy_allowed", return_value=True)
+    mocker.patch.object(actions, "destroy_guard", return_value=None)
+    assert elevated.run_job(cfg, incus, path) == 0
+    finishing.settle_destroys(ctx)
+    destroy.assert_not_called()
