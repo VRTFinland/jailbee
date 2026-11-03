@@ -607,9 +607,7 @@ def launch_boot_background(
     return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
 
 
-def launch_refresh_background(
-    cfg: Config, *, container_name: str, job_path: Path
-) -> CreateStarted:
+def launch_refresh_background(cfg: Config, *, container_name: str, job_path: Path) -> CreateStarted:
     """Launch the refresh worker; it claims its own authoritative job row."""
     from datetime import datetime as _dt
 

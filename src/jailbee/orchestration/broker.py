@@ -285,14 +285,18 @@ def _settle_agent_watch(
     entries: list[watch.WatchEntry],
     entry: watch.WatchEntry,
 ) -> None:
+    from jailbee import background
+    from jailbee.db.models import JOB_REFRESH
     from jailbee.lifecycle import short_name
     from jailbee.orchestration import agent_watch
 
-    from jailbee import background
-    from jailbee.db.models import JOB_REFRESH
-
     job = jobs.get(entry.child_full)
-    if job is not None and job.op_kind == JOB_REFRESH and job.pid > 0 and not background.clearable(job.phase, job.pid):
+    if (
+        job is not None
+        and job.op_kind == JOB_REFRESH
+        and job.pid > 0
+        and not background.clearable(job.phase, job.pid)
+    ):
         return
     child = ctx.nodes.get(entry.child_full)
     status = None

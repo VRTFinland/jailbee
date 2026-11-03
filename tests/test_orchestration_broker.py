@@ -1544,17 +1544,27 @@ def test_confirmed_agent_watch_deferred_if_job_database_is_unreadable(
     assert _watches(rig) == [entry]
 
 
-@pytest.mark.parametrize("phase,pid,blocked", [("refresh", 123, False), ("failed", 123, True), ("refresh", 0, True)])
+@pytest.mark.parametrize(
+    "phase,pid,blocked", [("refresh", 123, False), ("failed", 123, True), ("refresh", 0, True)]
+)
 def test_refresh_job_suppresses_dead_agent_only_while_live(rig, monkeypatch, phase, pid, blocked):
-    from jailbee.orchestration import agent_watch
     from jailbee import background
+    from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
-    monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-kid": watch.JobSnapshot(phase, pid, "refresh", None, NOW)})
+    monkeypatch.setattr(
+        watch,
+        "read_jobs",
+        lambda: {"proj-kid": watch.JobSnapshot(phase, pid, "refresh", None, NOW)},
+    )
     monkeypatch.setattr(background, "worker_alive", lambda pid: True)
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 0))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 0)
+    )
     monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "")
     rig.tick()
     assert bool(rig.deliver.call_count) is blocked
