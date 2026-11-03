@@ -9,11 +9,11 @@ best effort and never raises.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
-import fcntl
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
@@ -165,7 +165,9 @@ def cancel(root: Path, orchestrator: str, child_full: str) -> None:
     """A successful broker stop/destroy intentionally ends this run."""
     with locked(root):
         watches = load_watch(root)
-        watches[orchestrator] = [e for e in watches.get(orchestrator, []) if e.child_full != child_full]
+        watches[orchestrator] = [
+            e for e in watches.get(orchestrator, []) if e.child_full != child_full
+        ]
         save_watch(root, watches)
 
 

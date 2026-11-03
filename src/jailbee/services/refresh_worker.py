@@ -23,7 +23,14 @@ if TYPE_CHECKING:
 
 
 def _deliver(
-    cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str,
+    cfg: "Config",
+    incus: "Incus",
+    path: Path,
+    owner: str,
+    ref: str,
+    *,
+    ok: bool,
+    detail: str,
     item: InboxStatus | None = None,
 ) -> int:
     try:
@@ -86,7 +93,9 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         except Exception as exc:
             print(f"invalid saved refresh status: {exc}")
             return 1
-        return _deliver(cfg, incus, path, owner, ref, ok=final.state == "done", detail=final.detail, item=final)
+        return _deliver(
+            cfg, incus, path, owner, ref, ok=final.state == "done", detail=final.detail, item=final
+        )
     try:
         if set(job) != {
             "child_full",
@@ -210,8 +219,14 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         detail = f"refresh of {', '.join(plan.named)} in {child} failed: {exc}"
     finally:
         try:
-            final = InboxStatus(version=1, id=new_host_id(), type="status", ref=ref,
-                                state="done" if ok else "failed", detail=detail)
+            final = InboxStatus(
+                version=1,
+                id=new_host_id(),
+                type="status",
+                ref=ref,
+                state="done" if ok else "failed",
+                detail=detail,
+            )
             job["final_status"] = final.model_dump(mode="json")
             state.atomic_write_text(path, json.dumps(job))
         except Exception as exc:

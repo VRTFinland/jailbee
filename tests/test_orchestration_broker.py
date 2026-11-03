@@ -1575,13 +1575,17 @@ def test_refresh_claim_after_initial_snapshot_is_rechecked(rig, monkeypatch):
     from jailbee import background
     from jailbee.orchestration import agent_watch
 
-    entry = watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True)
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
     watch.save_watch(rig.root, {"proj-orch": [entry]})
     rig.incus.list_containers.return_value = [_orch(), _child()]
     snapshots = iter([{}, {"proj-kid": watch.JobSnapshot("refresh", 123, "refresh", None, NOW)}])
     monkeypatch.setattr(watch, "read_jobs", lambda: next(snapshots))
     monkeypatch.setattr(background, "worker_alive", lambda pid: True)
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 0))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(False, "claude", 0)
+    )
     rig.tick()
     rig.deliver.assert_not_called()
     assert _watches(rig) == [entry]

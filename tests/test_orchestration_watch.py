@@ -64,9 +64,11 @@ def test_concurrent_registers_preserve_both(tmp_path, monkeypatch):
 
     barrier = Barrier(2)
     original = watch.load_watch
+
     def before_register(name):
         barrier.wait()
         watch.register(tmp_path, ORCH, WatchEntry(name, name, "restart", NOW.isoformat()))
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(before_register, ["child-a", "child-b"]))
     assert {item.child_full for item in original(tmp_path)[ORCH]} == {"child-a", "child-b"}
