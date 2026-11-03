@@ -22,6 +22,7 @@ from jailbee.inbox.render import (
     ls_line,
     pretty,
     render_status,
+    sanitize_json_value,
     tsv,
 )
 
@@ -355,7 +356,7 @@ def cmd_status(settings: Settings, args: list[str]) -> int:
             as_json = True
         elif arg == "--child":
             child = next(rest, None)
-            if child is None:
+            if child is None or child.startswith("--"):
                 raise InboxBadUsage("--child needs a name")
         else:
             raise InboxBadUsage("status accepts only --child C and --json")
@@ -377,7 +378,7 @@ def cmd_status(settings: Settings, args: list[str]) -> int:
                 stamp = from_child.get(name) if isinstance(name, str) else None
                 item = {**item, "last_from_child_at": stamp}
             items.append(item)
-        print(pretty(_clean_json(items)))
+        print(pretty(sanitize_json_value(items)))
     else:
         print(render_status(children, now=time.time(), from_child=from_child))
     return 0

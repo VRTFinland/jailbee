@@ -151,7 +151,7 @@ def _text(value: object, cap: int) -> str:
     """A child-supplied string, sanitised and capped; anything else is unknown."""
     if not isinstance(value, str):
         return "?"
-    return clean_c0c1(value[:cap]) or "?"
+    return clean_c0c1(_shorten(value, cap)) or "?"
 
 
 def _shorten(text: str, width: int) -> str:
@@ -176,7 +176,7 @@ def _memory(value: object) -> str:
     number = _num(value)
     if number is None or number < 0:
         return "?"
-    if number < 1024**3:
+    if round(number / 1024**2) < 1024:
         return f"{number / 1024**2:.0f}MiB"
     return f"{number / 1024**3:.1f}GiB"
 
@@ -256,3 +256,31 @@ def render_status(
         cells = [cell.ljust(widths[i]) for i, cell in enumerate(row[:-1])] + [row[-1]]
         lines.append("  ".join(cells))
     return "\n".join(lines)
+
+
+_JSON_CAPS: dict[tuple[str, ...], int] = {
+    ("name",): NAME_CAP,
+    ("status", "head", "subject"): SUBJECT_CAP,
+    ("status", "head", "sha"): 64,
+    ("status", "longest_command", "command"): COMMAND_CAP,
+    ("status", "agent", "state"): STATE_CAP,
+    ("status", "agent", "last_tool"): COMMAND_CAP,
+}
+_JSON_DEFAULT_CAP = 160
+
+
+def sanitize_json_value(value: object, path: tuple[str, ...] = ()) -> object:
+    """Cap and clean every string, and turn NaN/inf into null, for `status --json`."""
+    if isinstance(value, str):
+        cap = _JSON_CAPS.get(path, _JSON_DEFAULT_CAP)
+        return clean_c0c1(_shorten(value, cap))
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, list):
+        return [sanitize_json_value(v, path) for v in value]
+    if isinstance(value, dict):
+        return {
+            clean_c0c1(_shorten(str(k), NAME_CAP)): sanitize_json_value(v, (*path, str(k)))
+            for k, v in value.items()
+        }
+    return value

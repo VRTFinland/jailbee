@@ -1991,6 +1991,9 @@ def test_status_json_includes_last_from_child_at(script, base, tmp_path):
     assert items[0]["status"]["head"]["subject"] == "fix thing"
 
 
+BAD_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
 def test_status_sanitises_child_text(script, base, tmp_path):
     status_doc = _full_status()
     status_doc["head"] = {"sha": "abc\x1b[31m", "time": STATUS_NOW, "subject": "\x1b]0;pwn\x07"}
@@ -1998,15 +2001,87 @@ def test_status_sanitises_child_text(script, base, tmp_path):
     status_doc["agent"] = {"alive": True, "state": "b\x1bz", "last_tool": "\x07"}
     _write_snapshot(base, [_status_child("k\x1bid", status=status_doc)])
     env = env_for(base, tmp_path)
-    for args in ((), ("--json",)):
-        r = run(script, "status", *args, env=env)
-        assert r.returncode == 0, r.stderr
-        assert "\x1b" not in r.stdout
-        assert "\x07" not in r.stdout
-        assert "\x9b" not in r.stdout
-        assert "\x00" not in r.stdout
-    r = run(script, "status", env=env)
-    assert "k?id" in r.stdout
+    table = run(script, "status", env=env)
+    assert table.returncode == 0, table.stderr
+    assert not BAD_CHARS.search(table.stdout.replace("\n", ""))
+    row = _cells(table.stdout.splitlines()[1])
+    assert row[0] == "k?id"
+    assert row[2] == "alive:b?z"
+    assert row[6].startswith("abc?[31 ") and row[6].endswith("?]0;pwn?")
+    assert row[8] == "ls?? 5s"
+    js = run(script, "status", "--json", env=env)
+    assert js.returncode == 0, js.stderr
+    assert not BAD_CHARS.search(js.stdout.replace("\n", ""))
+    item = json.loads(js.stdout)[0]
+    assert item["name"] == "k?id"
+    assert item["status"]["head"]["subject"] == "?]0;pwn?"
+    assert item["status"]["longest_command"]["command"] == "ls??"
+    assert item["status"]["agent"]["state"] == "b?z"
+    assert item["status"]["agent"]["last_tool"] == "?"
+
+
+def test_status_caps_oversized_strings_in_table_and_json(script, base, tmp_path):
+    big = "x" * 10_000
+    status_doc = _full_status()
+    status_doc["head"] = {"sha": big, "time": STATUS_NOW, "subject": big}
+    status_doc["longest_command"] = {"command": big, "seconds": 5}
+    status_doc["agent"] = {"alive": True, "state": big, "last_tool": big}
+    child = _status_child(big, status=status_doc, session=big)
+    _write_snapshot(base, [child])
+    env = env_for(base, tmp_path)
+    table = run(script, "status", env=env)
+    assert table.returncode == 0, table.stderr
+    row = _cells(table.stdout.splitlines()[1])
+    assert len(row[0]) == 64 and row[0].endswith("…")
+    assert len(row[2]) == len("alive:") + 24
+    sha, _age, subject = row[6].split(" ")
+    assert len(sha) == 7 and len(subject) == 40
+    assert len(row[8].split(" ")[0]) == 40
+    js = run(script, "status", "--json", env=env)
+    assert js.returncode == 0, js.stderr
+    assert len(js.stdout) < 2000
+    item = json.loads(js.stdout)[0]
+    assert len(item["name"]) == 64
+    assert len(item["session"]) == 160
+    st = item["status"]
+    assert len(st["head"]["subject"]) == 120 and st["head"]["subject"].endswith("…")
+    assert len(st["head"]["sha"]) == 64
+    assert len(st["longest_command"]["command"]) == 160
+    assert len(st["agent"]["state"]) == 24
+    assert len(st["agent"]["last_tool"]) == 160
+
+
+def test_status_json_non_finite_numbers_become_null(script, base, tmp_path):
+    (base / "children.json").write_text(
+        '{"version":1,"updated_at":%s,"children":[{"name":"b","running":true,'
+        '"status":{"cpu_percent":NaN,"memory_bytes":Infinity,"activity_at":-Infinity}}]}'
+        % time.time()
+    )
+    r = run(script, "status", "--json", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    st = json.loads(r.stdout, parse_constant=lambda c: pytest.fail(c))[0]["status"]
+    assert st == {"cpu_percent": None, "memory_bytes": None, "activity_at": None}
+
+
+def test_status_child_value_looking_like_option_is_usage_error(script, base, tmp_path):
+    _write_snapshot(base, [_status_child("a")])
+    r = run(script, "status", "--child", "--json", env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert "--child needs a name" in r.stderr
+
+
+def test_status_memory_rounds_up_at_gib_boundary():
+    from jailbee.inbox.render import render_status
+
+    def mem(value: int) -> str:
+        doc = _full_status()
+        doc["memory_bytes"] = value
+        out = render_status([_status_child(status=doc)], now=STATUS_NOW, from_child={})
+        return _cells(out.splitlines()[1])[5]
+
+    assert mem(1024**3 - 1) == "1.0GiB"
+    assert mem(1024**3 - 400_000) == "1.0GiB"
+    assert mem(1023 * 1024**2) == "1023MiB"
 
 
 def test_status_hostile_values_do_not_raise():
@@ -2041,7 +2116,12 @@ def test_status_hostile_values_do_not_raise():
         },
     ]
     out = render_status(hostile, now=STATUS_NOW, from_child={"a": float("nan")})  # type: ignore[arg-type]
-    assert len(out.splitlines()) == 1 + len(hostile)
+    lines = out.splitlines()
+    assert len(lines) == 1 + len(hostile)
+    assert not BAD_CHARS.search(out.replace("\n", ""))
+    assert all(len(line) < 300 for line in lines)
+    assert _cells(lines[4])[:2] == ["?", "?"]  # {"name": 5, "running": "yes"}
+    assert _cells(lines[8])[0] == "c"
 
 
 @pytest.mark.parametrize("cpu", [float("nan"), float("inf"), float("-inf"), True, -1.0, "5", None])
