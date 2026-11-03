@@ -59,19 +59,36 @@ WAITER_COMMS = frozenset({"jailbee", "jailbee-inbox"})
 """Process names of the orchestration waiters, which are not work the child does."""
 
 
+_WAITER_MODULES = frozenset({"jailbee", "jailbee.container_main", "jailbee.inbox"})
+
+
 def _is_waiter(comm: str, cmdline: str | None) -> bool:
+    """True for `inbox wait` and `inbox send --wait`, however they were started.
+
+    In a container `jailbee` is a wrapper that execs
+    `python -P -m jailbee.container_main ...`, so the real process is named
+    `python` and only its command line says what it is. Matches an entry point
+    (`jailbee`, `jailbee-inbox` or `-m <jailbee module>`) anywhere in the
+    words, followed by an optional `inbox` and then `wait`, or `send` with
+    `--wait`. A tool such as `python -m pytest` never matches.
+    """
     if comm in WAITER_COMMS:
         return True
     if cmdline is None:
         return False
     words = cmdline.split()
-    return (
-        bool(words)
-        and "wait" in words
-        and any(
-            word.rsplit("/", 1)[-1] in WAITER_COMMS or word == "jailbee.inbox" for word in words[:4]
-        )
-    )
+    for index, word in enumerate(words):
+        if word.rsplit("/", 1)[-1] in WAITER_COMMS:
+            rest = words[index + 1 :]
+        elif word == "-m" and index + 1 < len(words) and words[index + 1] in _WAITER_MODULES:
+            rest = words[index + 2 :]
+        else:
+            continue
+        if rest[:1] == ["inbox"]:
+            rest = rest[1:]
+        if rest[:1] == ["wait"] or (rest[:1] == ["send"] and "--wait" in rest):
+            return True
+    return False
 
 
 def longest_command(

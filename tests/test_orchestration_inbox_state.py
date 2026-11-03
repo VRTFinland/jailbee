@@ -517,35 +517,40 @@ def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(tmp_path, p
     assert st["activity_at"] >= first
 
 
-def test_activity_at_is_monotonic_and_fresh_for_a_recreated_child(tmp_path, probes, monkeypatch):
+def test_activity_at_never_decreases_and_a_recreated_child_starts_fresh(
+    tmp_path, probes, monkeypatch
+):
     ctx = context(tmp_path)
     now = ctx.now.timestamp()
-    events = [now - 10, None]
+    cfg = {labels.SPAWNED_BY: "p-orch"}
+    ctx.nodes["p-kid"] = Node("p-kid", "kid", True, cfg, now - 1000)
+    events = [now - 10]
     monkeypatch.setattr(
         inbox_state.agent_watch,
         "agent_snapshot",
-        lambda *a, **k: {**AGENT, "last_event_at": events.pop(0)},
+        lambda *a, **k: {**AGENT, "last_event_at": events.pop(0) if events else None},
     )
     probes.head = (None, None)
     cache = _cache()
     inbox_state.sync_children(ctx, cache)
     first = published_status(ctx)["activity_at"]
-    assert first == now - 10 or first == now
-    # Drop the carried event time so only the monotonic floor can hold it up.
-    saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
+    assert first == now - 10
+    # The event ages out: no carried agent time, no head, no CPU; only the
+    # start time (now - 1000) is left, so only the floor holds activity up.
+    path = tmp_path / "inbox-state" / "p-orch.json"
+    saved = json.loads(path.read_text())
     saved["children"][0]["status"]["agent"] = None
-    (tmp_path / "inbox-state" / "p-orch.json").write_text(json.dumps(saved))
+    path.write_text(json.dumps(saved))
     ctx.now += timedelta(seconds=40)
     inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["activity_at"] >= first
-    # A recreated child (new key) starts fresh.
-    ctx.nodes["p-kid"] = Node(
-        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "new"}, now + 100
-    )
+    st = published_status(ctx)
+    assert st["agent"]["last_event_at"] is None
+    assert st["activity_at"] == first
+    # A recreated child (new key, earlier start) must not inherit that floor.
+    ctx.nodes["p-kid"] = Node("p-kid", "kid", True, {**cfg, "volatile.uuid": "new"}, now - 2000)
     ctx.now += timedelta(seconds=40)
-    events.append(None)
     inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["activity_at"] == now + 100
+    assert published_status(ctx)["activity_at"] == now - 2000
 
 
 def test_repo_dir_comes_from_node_config_without_an_incus_call(tmp_path, probes, monkeypatch):

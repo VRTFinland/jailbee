@@ -63,22 +63,48 @@ def test_longest_command_ignores_processes_outside_the_agent_tree():
     assert longest_command(samples, agent_pid=3, uptime=1100.0, clk_tck=100)["command"] == "pytest"
 
 
-def test_longest_command_excludes_inbox_waiters_by_comm_and_cmdline():
+WAITER_CMDLINES = [
+    "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox wait --timeout none",
+    "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox send --wait spawn.json",
+    "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox send spawn.json --wait",
+    "python3 /usr/local/bin/jailbee inbox wait --quiet-after 5m",
+    "/usr/bin/python3 /usr/local/bin/jailbee-inbox wait --digest 1h",
+    "python3 -m jailbee.inbox send --wait m.json",
+]
+
+
+@pytest.mark.parametrize("waiter", WAITER_CMDLINES)
+def test_longest_command_excludes_inbox_waiters_by_cmdline(waiter):
     samples = _tree()
-    samples[7] = ProcSample("jailbee-inbox", 0, 50, ppid=4)
-    samples[8] = ProcSample("python3", 0, 60, ppid=4)
-    cmd = {8: "/usr/bin/python3 /usr/local/bin/jailbee inbox wait --quiet-after 5m"}
+    samples[7] = ProcSample("python", 0, 50, ppid=4)
+    samples[8] = ProcSample("jailbee-inbox", 0, 45, ppid=4)
+    cmd = {7: waiter}
     got = longest_command(
         samples, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: cmd.get(pid)
     )
     assert got == {"command": "pytest", "seconds": 1099}
-    only_waiters = {k: samples[k] for k in (1, 2, 3, 4, 7, 8)}
+    only = {k: samples[k] for k in (1, 2, 3, 4, 7, 8)}
     assert (
-        longest_command(
-            only_waiters, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: cmd.get(pid)
-        )
-        is None
+        longest_command(only, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=cmd.get) is None
     )
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "/opt/jailbee/venv/bin/python -m pytest tests/ -k wait",
+        "python3 -m jailbee.container_main inbox send note.json",
+        "python3 -m jailbee.container_main inbox ls",
+        "python3 build.py inbox wait",
+    ],
+)
+def test_longest_command_keeps_real_tools_eligible(tool):
+    samples = {k: v for k, v in _tree().items() if k < 5}
+    samples[7] = ProcSample("python", 0, 50, ppid=4)
+    got = longest_command(
+        samples, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: tool
+    )
+    assert got == {"command": "python", "seconds": 1099}
 
 
 def test_head_script_never_takes_the_index_lock() -> None:
