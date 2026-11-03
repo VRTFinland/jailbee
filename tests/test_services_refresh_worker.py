@@ -173,7 +173,9 @@ def test_concurrent_claims_only_one_succeeds(rig, mocker):
         assert sorted(pool.map(claim, [12345, 12346])) == [False, True]
 
 
-@pytest.mark.parametrize("watch_fails,restore_fails", [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize(
+    "watch_fails,restore_fails", [(False, False), (True, False), (False, True)]
+)
 def test_real_sequence_uses_accepted_mixed_plan_and_supervision(
     rig, mocker, watch_fails, restore_fails
 ):
@@ -194,17 +196,24 @@ def test_real_sequence_uses_accepted_mixed_plan_and_supervision(
         snapshots[1] = RuntimeError("restore transport")
     mocker.patch.object(elevated, "_snapshot", side_effect=snapshots)
     pause = mocker.patch.object(
-        elevated, "pause_agent",
+        elevated,
+        "pause_agent",
         return_value=elevated.PausedAgent("claude", "11111111-1111-1111-1111-111111111111", None),
     )
-    resume = mocker.patch.object(elevated, "resume_agent", side_effect=lambda *a: events.append("resume"))
+    resume = mocker.patch.object(
+        elevated, "resume_agent", side_effect=lambda *a: events.append("resume")
+    )
+
     def register(*args):
         events.append("watch")
         if watch_fails:
             raise RuntimeError("watch disk")
+
     mocker.patch("jailbee.orchestration.watch.register", side_effect=register)
     stages = mocker.patch("jailbee.autostart.run_stage")
-    run = mocker.patch("jailbee.container_app.run_in_container", return_value=ExecResult(0, b"", b""))
+    run = mocker.patch(
+        "jailbee.container_app.run_in_container", return_value=ExecResult(0, b"", b"")
+    )
     result = elevated.run_job(cfg, incus, path)
     item = deliver.call_args.args[3]
     assert result == (1 if watch_fails or restore_fails else 0)
@@ -218,7 +227,11 @@ def test_real_sequence_uses_accepted_mixed_plan_and_supervision(
     if watch_fails:
         assert events == ["watch"]
         assert "resume withheld: could not register agent supervision (watch disk)" in item.detail
-        assert "jailbee-inbox send restart --child c --agent-only --resume 11111111-1111-1111-1111-111111111111 --text 'Continue your task.'" in item.detail
+        assert (
+            "jailbee-inbox send restart --child c --agent-only "
+            "--resume 11111111-1111-1111-1111-111111111111 --text 'Continue your task.'"
+            in item.detail
+        )
         resume.assert_not_called()
     elif restore_fails:
         assert "resume withheld: container may still be elevated" in item.detail
@@ -248,6 +261,7 @@ def test_grant_revocation_reports_failure(rig, mocker):
 
 def test_hidden_cli_delegates(rig, mocker):
     from typer.testing import CliRunner
+
     from jailbee.cli import app
 
     cfg, _, _, incus, path = rig

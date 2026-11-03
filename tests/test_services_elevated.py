@@ -206,7 +206,10 @@ def test_refresh_before_resume_error_withholds_resume(refresh_setup):
     report = run_refresh(
         cfg, incus, "box", plan, who="host", before_resume=fail, mirror_endpoint=None
     )
-    assert not report.ok and "resume withheld: could not register agent supervision (watch failed)" in report.agent
+    assert (
+        not report.ok
+        and "resume withheld: could not register agent supervision (watch failed)" in report.agent
+    )
     assert "db: prepared, restarted" in report.summary()
     resume.assert_not_called()
 

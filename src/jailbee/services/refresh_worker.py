@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 
-def _deliver(cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str) -> int:
+def _deliver(
+    cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *, ok: bool, detail: str
+) -> int:
     try:
         try:
             running = any(
@@ -32,12 +34,21 @@ def _deliver(cfg: "Config", incus: "Incus", path: Path, owner: str, ref: str, *,
         except Exception:
             running = False
         item = InboxStatus(
-            version=1, id=new_host_id(), type="status", ref=ref,
-            state="done" if ok else "failed", detail=detail,
+            version=1,
+            id=new_host_id(),
+            type="status",
+            ref=ref,
+            state="done" if ok else "failed",
+            detail=detail,
         )
         outbox.deliver(
-            incus, state.state_root(), owner, item, running=running,
-            uid=cfg.container_user.uid, now=datetime.now(UTC),
+            incus,
+            state.state_root(),
+            owner,
+            item,
+            running=running,
+            uid=cfg.container_user.uid,
+            now=datetime.now(UTC),
         )
         path.unlink(missing_ok=True)
     except Exception as exc:
@@ -67,7 +78,15 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         print(f"invalid refresh job identity: {exc}")
         return 1
     try:
-        if set(job) != {"child_full", "orchestrator_full", "manifest_id", "elevated", "payload", "names", "force"}:
+        if set(job) != {
+            "child_full",
+            "orchestrator_full",
+            "manifest_id",
+            "elevated",
+            "payload",
+            "names",
+            "force",
+        }:
             raise ValueError("invalid job schema")
         names = job["names"]
         if not isinstance(names, list) or not names or len(names) > 32:
@@ -78,7 +97,9 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         if plan.elevated != job["elevated"]:
             raise ValueError("elevation mismatch")
     except Exception as exc:
-        return _deliver(cfg, incus, path, owner, ref, ok=False, detail=f"invalid refresh job: {exc}")
+        return _deliver(
+            cfg, incus, path, owner, ref, ok=False, detail=f"invalid refresh job: {exc}"
+        )
 
     pid = os.getpid()
     claimed = False
