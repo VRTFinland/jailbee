@@ -81,6 +81,7 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
                 "--quiet-after needs a fresh broker children.json (at most 15 minutes old)"
             ) from None
         children = {}
+        running.clear()
 
     records: list[tuple[Path, dict[str, Any], int]] = []
     for directory in (base / "inbox", base / "inbox/read"):
