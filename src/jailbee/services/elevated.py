@@ -438,6 +438,8 @@ def run_refresh(
             if not service.will_prepare:
                 continue
             failure = None
+            if entry is not None:
+                restored = False
             try:
                 stage = service_autostart.prepare_stage(
                     full,
@@ -467,8 +469,9 @@ def run_refresh(
                             f"network {current[0]} (expected {entry[0]}), "
                             f"extra mounts: {', '.join(sorted(extra)) or 'none'}"
                         )
-                except Exception as exc:
-                    restored = False
+                    restored = True
+                except BaseException as exc:
+                    detail = _reason(exc) if isinstance(exc, Exception) else type(exc).__name__
                     commands = [
                         f"jb net strict {full}",
                         *(
@@ -477,7 +480,7 @@ def run_refresh(
                         ),
                     ]
                     agent = (
-                        f"resume withheld: container may still be elevated ({exc}); "
+                        f"resume withheld: container may still be elevated ({detail}); "
                         f"recovery: {'; '.join(commands)}"
                     )
                     results[service.name] = (
@@ -491,7 +494,7 @@ def run_refresh(
                 previous = grants.get(service.name, {"network": None, "mounts": []})
                 grants[service.name] = {
                     "network": "loose"
-                    if service.network == "loose" or previous["network"] == "loose"
+                    if service.network == "loose" or previous.get("network") == "loose"
                     else None,
                     "mounts": list(dict.fromkeys([*previous["mounts"], *service.mounts])),
                 }

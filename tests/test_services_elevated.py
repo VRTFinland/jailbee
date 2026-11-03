@@ -81,6 +81,32 @@ def test_refresh_mixed_and_approval_preserved(refresh_setup):
     resume.assert_called_once()
 
 
+def test_refresh_order_prompt_and_prepared_preservation(refresh_setup):
+    from jailbee.autostart_profiles import decode_names, encode_names
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, values, plan, stage, _, pause, resume = refresh_setup
+    values["user.jailbee.services_prepared"] = encode_names(["old"])
+    events = []
+    paused = pause.return_value
+    pause.side_effect = lambda *args, **kwargs: (events.append("pause"), paused)[1]
+    stage.side_effect = lambda *args, **kwargs: events.append("stage")
+    resume.side_effect = lambda *args, **kwargs: events.append("resume")
+    report = run_refresh(
+        cfg, incus, "box", plan, who="requested by orchestrator parent",
+        resume_prompt_prefix="preamble\n\n", before_resume=lambda: events.append("watch"),
+        mirror_endpoint=None,
+    )
+    assert report.ok
+    assert events == ["pause", "stage", "stage", "watch", "resume"]
+    assert decode_names(values["user.jailbee.services_prepared"]) == ["old", "db", "web"]
+    assert resume.call_args.args[4] == (
+        "preamble\n\nYour container's services were refreshed "
+        "(requested by orchestrator parent): db: prepared, restarted; web: prepared, restarted. "
+        "Continue your task; re-read files you had open if dependencies changed."
+    )
+
+
 def test_refresh_prepare_failure_resumes_and_skips(refresh_setup):
     from jailbee.autostart import AutostartStepError
     from jailbee.services.elevated import run_refresh
@@ -108,6 +134,35 @@ def test_refresh_unconfirmed_restore_withholds_resume(refresh_setup):
     assert stage.call_count == 1
     run.assert_not_called()
     resume.assert_not_called()
+
+
+def test_refresh_interrupted_snapshot_withholds_resume(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, stage, run, _, resume = refresh_setup
+    incus.config_show.side_effect = ["devices: {}\n", KeyboardInterrupt()]
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok
+    assert "resume withheld: container may still be elevated" in report.summary()
+    assert "KeyboardInterrupt" in report.summary() and "jb net strict box" in report.summary()
+    assert stage.call_count == 1
+    run.assert_not_called()
+    resume.assert_not_called()
+
+
+def test_refresh_existing_envelope_without_network(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, values, plan, _, run, _, _ = refresh_setup
+    values["user.jailbee.services_approval"] = json.dumps(
+        {"version": 1, "services": {"web": {"mounts": []}}}
+    )
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert report.ok
+    assert json.loads(values["user.jailbee.services_approval"])["services"]["web"] == {
+        "network": None, "mounts": []
+    }
+    run.assert_called_once()
 
 
 def test_refresh_invalid_envelope_refuses_before_pause(refresh_setup):
