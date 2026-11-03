@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.config import ConfigError
+from jailbee.config import OFFLINE_REMOVED_MSG, ConfigError
 from jailbee.config.loader import load_config_from_layers
 
 
@@ -60,8 +60,9 @@ def test_prepare_step_elevated(tmp_path):
 
 
 def test_prepare_offline_network_rejected(tmp_path):
-    with pytest.raises(ConfigError, match="offline"):
+    with pytest.raises(ConfigError) as exc:
         load("services: {web: {run: x, prepare: [{run: x, network: offline}]}}", tmp_path)
+    assert OFFLINE_REMOVED_MSG in str(exc.value)
 
 
 def test_prepare_mount_must_exist_on_host_load(tmp_path):

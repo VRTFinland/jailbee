@@ -83,6 +83,17 @@ class FakeProc(LocalProc):
     def killpg(self, pid, sig):
         self.signals.append((pid, sig))
 
+    def service_command(self, command, identity):
+        identity.parent.mkdir(parents=True, exist_ok=True)
+        identity.write_text("anchor")
+        return command
+
+    def signal_identity(self, identity, sig):
+        if identity.exists():
+            self.group_signals.append((1123, sig))
+            return True
+        return False
+
     def service_pgid(self, pid):
         return pid + 1000
 
@@ -115,6 +126,23 @@ def test_status_ground_truth(tmp_path):
     rt.state_dir.mkdir()
     (rt.state_dir / "state.json").write_text('{"web":{"state":"ready"}}')
     assert rt.status()[0].state == "stopped"
+
+
+def test_state_save_uses_atomic_replace(tmp_path, monkeypatch):
+    import os
+
+    rt, _ = runtime(tmp_path, {"web": {"run": "serve"}})
+    replace = os.replace
+    calls = []
+
+    def record(source, destination):
+        calls.append((source, destination))
+        replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", record)
+    rt._save("web", "ready")
+    assert len(calls) == 1 and calls[0][1] == rt.state_dir / "state.json"
+    assert json.loads(calls[0][1].read_text())["web"]["state"] == "ready"
 
 
 def test_start_window_and_session(tmp_path):
@@ -196,9 +224,11 @@ def test_stop_command_and_signal(tmp_path):
         },
     )
     proc.windows.update({"svc-a": (0, "", 1), "svc-b": (0, "", 2)})
+    proc.service_command("", rt._identity("a"))
+    proc.service_command("", rt._identity("b"))
     assert rt.stop(["a", "b"]).ok
     assert proc.shells[0][0] == "stop" and proc.shells[0][3] == 3
-    assert (1002, signal.SIGINT) in proc.group_signals
+    assert (1123, signal.SIGINT) in proc.group_signals
     assert proc.clock == 5
     assert all(
         "autostart:=svc-" in c[c.index("-t") + 1] for c in proc.commands if c[0] == "kill-window"
@@ -277,8 +307,23 @@ def test_hanging_stop_command_has_timeout(tmp_path):
 
 def test_stop_kills_group_even_when_leader_disappears(tmp_path):
     rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop_timeout": 1}})
+    proc.service_command("", rt._identity("web"))
     proc.windows["svc-web"] = (0, "", 123)
     assert rt.stop(["web"]).ok
+    assert (1123, signal.SIGKILL) in proc.group_signals
+
+
+def test_dead_pane_stop_and_replacement_cleanup_recorded_group(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "stop_timeout": 1}})
+    assert rt.start(["web"]).ok
+    proc.windows["svc-web"] = (1, 0, 123)
+    proc.group_signals.clear()
+    assert rt.stop(["web"]).ok
+    assert (1123, signal.SIGKILL) in proc.group_signals
+    assert rt.start(["web"]).ok
+    proc.windows["svc-web"] = (1, 0, 123)
+    proc.group_signals.clear()
+    assert rt.start(["web"]).ok
     assert (1123, signal.SIGKILL) in proc.group_signals
 
 
@@ -301,6 +346,39 @@ def test_unknown_names_do_not_mutate(tmp_path):
     with pytest.raises(ValueError):
         rt.stop(["a", "missing"])
     assert not proc.commands
+
+
+def test_logs_limits_output_and_reports_capture_errors(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 0, "one\ntwo\nthree\n", "")
+    assert rt.logs("web", 2) == "two\nthree\n"
+    proc.tmux = lambda args: subprocess.CompletedProcess(args, 1, "", "pane missing")
+    with pytest.raises(RuntimeError, match="pane missing"):
+        rt.logs("web", 2)
+
+
+def test_failed_start_tail_is_limited_and_capture_error_reported(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "exit 1"}})
+    proc.immediate_exit.add("svc-web")
+    original = proc.tmux
+
+    def capture(args):
+        if args[0] == "capture-pane":
+            return subprocess.CompletedProcess(args, 0, "".join(f"{i}\n" for i in range(40)), "")
+        return original(args)
+
+    proc.tmux = capture
+    report = rt.start(["web"])
+    assert report.tail.splitlines() == [str(i) for i in range(10, 40)]
+
+    def error(args):
+        if args[0] == "capture-pane":
+            return subprocess.CompletedProcess(args, 1, "", "window missing")
+        return original(args)
+
+    proc.tmux = error
+    report = rt.start(["web"])
+    assert not report.ok and "window missing" in report.tail
 
 
 def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
@@ -337,7 +415,7 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
     monkeypatch.setattr("jailbee.services.local_proc.subprocess.Popen", lambda *a, **kw: process)
     proc = LocalProc()
     monkeypatch.setattr(proc, "tmux", lambda args: subprocess.CompletedProcess(args, 0, "%7\n", ""))
-    assert list(proc.follow_pane("autostart:=svc-db", 30)) == ["OLD\nNEW\n", "same\nsame\n"]
+    assert list(proc.follow_pane("autostart:=svc-db", 1)) == ["NEW\n", "same\nsame\n"]
     assert process.returncode == 0
 
 

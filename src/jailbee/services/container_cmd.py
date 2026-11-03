@@ -145,11 +145,14 @@ def logs(
 ) -> None:
     rt = _runtime(ctx.obj)
     selected = _names(rt, [name] if name else None)[0]
-    if not follow:
-        typer.echo(rt.logs(selected, lines), nl=False)
-        return
     try:
+        if not follow:
+            typer.echo(rt.logs(selected, lines), nl=False)
+            return
         for chunk in rt.follow_logs(selected, lines):
             typer.echo(chunk, nl=False)
     except KeyboardInterrupt:
         return
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc

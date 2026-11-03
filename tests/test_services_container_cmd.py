@@ -93,6 +93,21 @@ def test_follow_repeated_lines_and_burst(tmp_path: Path, monkeypatch) -> None:
     assert result.stdout == "same\nsame\nnew\n"
 
 
+def test_logs_capture_error_exits_nonzero(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: sleep 1\n")
+    monkeypatch.setattr(
+        "jailbee.services.local_proc.LocalProc.tmux",
+        lambda self, args: subprocess.CompletedProcess(args, 1, "", "pane missing"),
+    )
+    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "logs", "db"])
+    assert result.exit_code == 1
+    assert "pane missing" in result.output
+
+
 def test_missing_config_and_unknown_plan(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(container_app, ["service", "--repo", str(tmp_path), "ls"])

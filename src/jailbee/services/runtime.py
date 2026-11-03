@@ -138,9 +138,12 @@ class ServiceRuntime:
 
     def logs(self, name: str, lines: int) -> str:
         topo_order(self.cfg.services, [name])
-        return self.proc.tmux(
+        result = self.proc.tmux(
             ["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"]
-        ).stdout
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or "failed to capture service window")
+        return "".join(result.stdout.splitlines(keepends=True)[-lines:])
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])
@@ -155,12 +158,21 @@ class ServiceRuntime:
             capture=capture,
         )
 
+    def _identity(self, name: str) -> Path:
+        return self.state_dir / f"anchor-{name}.json"
+
+    def _cleanup_group(self, name: str) -> None:
+        path = self._identity(name)
+        self.proc.signal_identity(path, signal.SIGKILL)
+        path.unlink(missing_ok=True)
+
     def _start_one(self, name: str) -> bool:
         service = self.cfg.services[name]
         target = self._target(name)
         existing = self._panes().get(WINDOW_PREFIX + name)
         if existing is not None:
             self.proc.tmux(["kill-window", "-t", target])
+        self._cleanup_group(name)
         if self.proc.tmux(["has-session", "-t", SESSION_NAME]).returncode:
             result = self.proc.tmux(
                 ["new-session", "-d", "-s", SESSION_NAME, "-x", "200", "-y", "50"]
@@ -195,7 +207,7 @@ class ServiceRuntime:
         respawn = ["respawn-pane", "-k", "-t", target]
         for key, value in service.env.items():
             respawn.extend(["-e", f"{key}={value}"])
-        respawn.extend(["bash", "-lc", service.run])
+        respawn.extend(["bash", "-lc", self.proc.service_command(service.run, self._identity(name))])
         spawned = self.proc.tmux(respawn)
         if spawned.returncode:
             self._save(name, "failed", spawned.stderr)
@@ -233,7 +245,11 @@ class ServiceRuntime:
             if next(s for s in self.status() if s.name == name).state == "ready":
                 continue
             if not self._start_one(name):
-                return RunReport(False, tuple(done), name, self.logs(name, 30))
+                try:
+                    tail = self.logs(name, 30)
+                except RuntimeError as exc:
+                    tail = f"failed to capture service logs: {exc}"
+                return RunReport(False, tuple(done), name, tail)
             done.append(name)
         return RunReport(True, tuple(done), None, "")
 
@@ -247,14 +263,14 @@ class ServiceRuntime:
         for name in reversed(order):
             pane = self._panes().get(WINDOW_PREFIX + name)
             if pane is None:
+                self._cleanup_group(name)
                 continue
             service = self.cfg.services[name]
-            pgid = self.proc.service_pgid(pane.pid) if not pane.dead else None
             if not pane.dead:
                 if service.stop:
                     self._shell(service, service.stop, service.stop_timeout, capture=False)
-                elif pgid is not None:
-                    self.proc.signal_group(pgid, signal.SIGINT)
+                else:
+                    self.proc.signal_identity(self._identity(name), signal.SIGINT)
                 deadline = self.proc.now() + service.stop_timeout
                 while self.proc.now() < deadline:
                     current = self._panes().get(WINDOW_PREFIX + name)
@@ -265,8 +281,7 @@ class ServiceRuntime:
                         break
                     self.proc.sleep(min(READY_POLL_S, remaining))
             self.proc.tmux(["kill-window", "-t", self._target(name)])
-            if pgid is not None:
-                self.proc.signal_group(pgid, signal.SIGKILL)
+            self._cleanup_group(name)
             self._save(name, "stopped")
             done.append(name)
         return RunReport(True, tuple(done), None, "")

@@ -39,6 +39,11 @@ def test_topo_prefers_first_available_in_config_order() -> None:
     assert topo_order(services, services) == ["other", "db", "web"]
 
 
+def test_newly_ready_earlier_service_precedes_ready_later_service() -> None:
+    services = {"a": service("b"), "b": service(), "c": service()}
+    assert topo_order(services, services) == ["b", "a", "c"]
+
+
 def test_with_dependencies_transitive() -> None:
     services = {"web": service("backend"), "backend": service("db"), "db": service()}
     assert with_dependencies(services, ["web"]) == {"web", "backend", "db"}

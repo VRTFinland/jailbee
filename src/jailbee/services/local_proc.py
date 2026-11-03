@@ -1,12 +1,35 @@
 """Container-side subprocess exception for service tmux and shell operations."""
 
 import codecs
+import json
 import os
 import re
 import signal
+import shlex
 import subprocess
+import sys
+from pathlib import Path
 import time
 from collections.abc import Iterator, Mapping, Sequence
+
+
+# The anchor publishes its identity before the service command starts. It stays
+# in the pane's process group after the pane shell exits.
+_ANCHOR = r'''import json, os, signal, sys, time
+from pathlib import Path
+for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, signal.SIG_IGN)
+pid = os.getpid()
+stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+data = {"boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "pid": pid, "start": stat[19], "pgid": int(stat[2]), "session": int(stat[3])}
+path = Path(sys.argv[1])
+tmp = path.with_name(path.name + "." + str(pid))
+tmp.write_text(json.dumps(data))
+os.replace(tmp, path)
+while True:
+    time.sleep(3600)
+'''
 
 
 class LocalProc:
@@ -38,7 +61,7 @@ class LocalProc:
                 if capture_id is not None and not streaming:
                     if line == b"%end " + capture_id:
                         streaming = True
-                        yield b"".join(snapshot).decode("utf-8", errors="replace")
+                        yield b"".join(snapshot[-lines:]).decode("utf-8", errors="replace")
                     elif line == b"%error " + capture_id:
                         raise RuntimeError("failed to capture service window")
                     else:
@@ -95,12 +118,50 @@ class LocalProc:
             self.killpg(process.pid, signal.SIGKILL)
             process.wait()
             return 124
+        except BaseException:
+            self.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
 
     def killpg(self, pid: int, sig: int) -> None:
         try:
             os.killpg(os.getpgid(pid), sig)
         except ProcessLookupError:
             pass
+
+    def service_command(self, command: str, identity: Path) -> str:
+        python = shlex.quote(sys.executable)
+        anchor = shlex.quote(_ANCHOR)
+        path = shlex.quote(str(identity))
+        run = shlex.quote(command)
+        # Wait for publication, and fail instead of running untracked if it fails.
+        return (
+            f"{python} -c {anchor} {path} & anchor=$!; "
+            f"while [ ! -f {path} ]; do "
+            'kill -0 "$anchor" 2>/dev/null || exit 125; sleep 0.01; done; '
+            f"bash -lc {run}; status=$?; exit \"$status\""
+        )
+
+    def signal_identity(self, identity: Path, sig: int) -> bool:
+        """Signal only the still-identical anchor's isolated process group."""
+        try:
+            data = json.loads(identity.read_text())
+            pid = int(data["pid"])
+            pgid = int(data["pgid"])
+            session = int(data["session"])
+            if pid <= 1 or pgid <= 1 or session <= 1 or pgid == os.getpgrp():
+                return False
+            if data["boot"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
+                return False
+            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            if (stat[0] == "Z" or stat[19] != data["start"]
+                or int(stat[2]) != pgid or int(stat[3]) != session
+                or pgid != session):
+                return False
+            os.killpg(pgid, sig)
+            return True
+        except (OSError, ValueError, KeyError, TypeError, IndexError, json.JSONDecodeError):
+            return False
 
     def service_pgid(self, pid: int) -> int | None:
         """Resolve only a pane-led group, never a shared caller/server group."""
