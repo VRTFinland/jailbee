@@ -100,6 +100,7 @@ def plan_payload(
         entries.append(
             {
                 "name": name,
+                "depends_on": list(service.depends_on),
                 "will_prepare": op == "refresh" and name in targets and bool(service.prepare),
                 "prepare": [
                     {

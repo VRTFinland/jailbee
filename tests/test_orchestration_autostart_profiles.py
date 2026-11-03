@@ -11,6 +11,16 @@ from tests.test_autostart_profiles import profile_cfg
 from tests.test_orchestration_spawn import _ctx, _m
 
 
+def test_raw_legacy_queue_without_services_loads(tmp_path):
+    import json
+
+    from jailbee.orchestration.state import load_queue
+
+    raw = {"version": 1, "queues": {"parent": [{"manifest_id": "m", "child_full": "c", "kind": "spawn", "queued_at": "now", "prompt": "go", "rights": {}, "commit": None, "branch": None, "base": None}]}}
+    (tmp_path / "queue.json").write_text(json.dumps(raw))
+    assert load_queue(tmp_path)["parent"][0].services is None
+
+
 def test_spawn_manifest_accepts_autostart_profile():
     raw = _m().model_dump(exclude_unset=True) | {"autostart_profile": "light"}
     assert SpawnManifest.model_validate(raw).autostart_profile == "light"
@@ -134,8 +144,10 @@ def test_manifest_rejects_invalid_service_selection(kind, services):
     raw = (_m() if kind == "spawn" else _restart()).model_dump(exclude_unset=True) | {
         "services": services
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc:
         (SpawnManifest if kind == "spawn" else type(_restart())).model_validate(raw)
+    assert any("services" in error["loc"] for error in exc.value.errors())
+    assert any(error["msg"] for error in exc.value.errors() if "services" in error["loc"])
 
 
 @pytest.mark.parametrize("services", [None, [], ["db", "web"]])

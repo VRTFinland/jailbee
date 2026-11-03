@@ -237,6 +237,32 @@ def test_new_flag_in_repo_without_profiles_exits_2(make_cfg, tmp_path, mocker):
         new_container(_cfg_for_new(make_cfg, tmp_path), incus, _opts(autostart_profile="bad"))
 
 
+def test_services_only_switch_runs_service_hook(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY, switch_profile
+
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}}, autostart={
+        "on_start": [{"stage": "setup"}],
+        "profiles": {"light": {"stages": ["setup"], "services": []}, "full": {"stages": ["setup"], "services": ["db"]}},
+        "default_profile": "light",
+    })
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "light"})
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", return_value=None)
+    run = mocker.patch("jailbee.services.autostart.run_services_stage")
+    switch_profile(cfg, incus, "c", "full", run=True)
+    run.assert_called_once()
+    assert run.call_args.kwargs["live_switch"] is True
+    from jailbee.autostart_profiles import SERVICES_KEY
+
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "light", SERVICES_KEY: ","})
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    run.reset_mock()
+    switch_profile(cfg, incus, "c", "full", run=True)
+    run.assert_not_called()
+
+
 def test_switch_to_heavier_runs_missing_on_create_then_new_on_start(make_cfg, tmp_path, mocker):
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY, switch_profile

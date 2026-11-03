@@ -14,8 +14,9 @@ from jailbee.services.autostart import run_services_stage, selected_services, se
 
 def labels():
     incus = MagicMock()
-    values = {}
+    values = {"user.jailbee.services_approval": json.dumps({"version": 1, "services": {"db": {"network": "loose", "mounts": ["missing"]}}})}
     incus.config_get.side_effect = lambda container, key: values.get(key)
+    incus.config_get_checked.side_effect = lambda container, key: values.get(key)
     incus.config_set.side_effect = lambda container, key, value: values.__setitem__(key, value)
     return incus, values
 
@@ -76,6 +77,71 @@ def test_selection_and_presence(tmp_path, make_cfg):
     assert decode_names(None) is None
     assert decode_names(encode_names([])) == []
     assert decode_names(encode_names(["db", "web"])) == ["db", "web"]
+
+
+def test_ordinary_container_rejects_runtime_elevation_outside_approval(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}})
+    incus, values = labels()
+    values["user.jailbee.services_approval"] = json.dumps({"version": 1, "services": {"db": {"network": None, "mounts": []}}})
+    data = payload()
+    data["services"][0]["elevation"]["mounts"] = ["aws"]
+    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    with pytest.raises(autostart.AutostartStepError, match="approved"):
+        invoke(cfg, incus)
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("raw", [None, "invalid", '{"version": 1, "services": {"db": {"network": "other", "mounts": []}}}'])
+def test_legacy_or_invalid_envelope_fails_closed(tmp_path, mocker, make_cfg, raw):
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}})
+    incus, values = labels()
+    if raw is None:
+        del values["user.jailbee.services_approval"]
+    else:
+        values["user.jailbee.services_approval"] = raw
+    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    with pytest.raises(autostart.AutostartStepError, match="approved"):
+        invoke(cfg, incus)
+    run.assert_not_called()
+
+
+def test_live_switch_defers_elevated_dependency_and_starts_safe_service(tmp_path, mocker, make_cfg):
+    from jailbee.services.graph import plan_payload
+
+    cfg = make_cfg(tmp_path, services={
+        "db": {"run": "db", "prepare": [{"run": "setup", "network": "loose"}]},
+        "web": {"run": "web", "depends_on": {"db": {}}},
+        "safe": {"run": "safe"},
+    })
+    data = plan_payload(cfg.services, [], "start", step_timeout=30)
+    incus, values = labels()
+    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    warning = mocker.patch("jailbee.services.autostart.warn")
+    run_services_stage(cfg, incus, "box", "/repo", mirror_endpoint=None, on_progress=None, cas_restore=False, live_switch=True)
+    assert run.call_count == 1
+    assert run.call_args.args[3].chains[0].steps[0].run.endswith("start safe")
+    assert "db" in warning.call_args.args[0] and "web" in warning.call_args.args[0]
+    values[PREPARED_KEY] = "db"
+    run.reset_mock()
+    run_services_stage(cfg, incus, "box", "/repo", mirror_endpoint=None, on_progress=None, cas_restore=False, live_switch=True)
+    assert run.call_args.args[3].chains[0].steps[0].run.endswith("start db web safe")
+
+
+def test_lineage_lookup_failure_aborts_before_prepare(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path)
+    incus, _ = labels()
+    incus.config_get_checked.side_effect = IncusError("metadata unavailable")
+    mocker.patch.object(
+        container_app, "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
+    run = mocker.patch.object(autostart, "run_stage")
+    with pytest.raises(IncusError, match="metadata unavailable"):
+        invoke(cfg, incus)
+    run.assert_not_called()
 
 
 def test_child_prepare_refuses_ungranted_loose_before_stage(tmp_path, mocker, make_cfg):
@@ -332,6 +398,24 @@ def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
     autostart.run_stages(cfg, incus, "box", [stage], "/repo")
     dispatch.assert_called_once()
     ordinary.assert_not_called()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_legacy_services_step_is_not_the_generated_hook(tmp_path, mocker, make_cfg, enabled):
+    from jailbee.autostart_plan import AutostartTrigger, plan_autostart
+    from jailbee.config import Autostart
+    from jailbee.services import autostart as service_autostart
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = labels()
+    dispatch = mocker.patch.object(service_autostart, "run_services_stage")
+    ordinary = mocker.patch.object(autostart, "run_stage")
+    block = Autostart.model_validate({"on_start": [{"name": "services", "run": "true"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=enabled)
+    autostart.run_stages(cfg, incus, "box", plan.blocking, "/repo")
+    assert ordinary.call_count == 1
+    assert ordinary.call_args.args[3].chains[0].steps[0].run == "true"
+    assert dispatch.call_count == int(enabled)
 
 
 def test_all_profile_and_explicit_selection_with_empty_host(tmp_path, make_cfg):

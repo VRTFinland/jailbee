@@ -453,6 +453,7 @@ def run_autostart(
     override: Literal["wait", "no_wait"] | None = None,
     already_detached: bool = False,
     on_progress: Callable[[str, str, str], None] | None = None,
+    skip_services: bool = False,
 ) -> AutostartPlan:
     """Run this trigger's blocking stages and return the plan.
 
@@ -486,7 +487,7 @@ def run_autostart(
         override=override,
         already_detached=already_detached,
         agents_last=prompted,
-        services_stage=trigger == AutostartTrigger.ON_START
+        services_stage=not skip_services and trigger == AutostartTrigger.ON_START
         and services_stage_wanted(cfg, incus, container),
     )
     if not plan.blocking:
@@ -675,7 +676,7 @@ def run_stages(
         try:
             from jailbee.autostart_plan import SERVICES_STAGE
 
-            if stage.stage == SERVICES_STAGE:
+            if stage.stage == SERVICES_STAGE and not stage.chains and not stage.steps:
                 from jailbee.services.autostart import run_services_stage
 
                 run_services_stage(

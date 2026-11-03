@@ -120,6 +120,16 @@ def switch_profile(
     validate_profile_name(cfg.autostart, name)
     refuse_while_running(cfg, container)
     previous = resolve_profile(cfg, incus, container)
+    override_services = decode_names(incus.config_get(container, SERVICES_KEY))
+
+    def profile_services(profile: str | None) -> set[str]:
+        selection = cfg.autostart.profiles.get(profile) if profile else None
+        names = selection.services if selection is not None and selection != "all" else list(cfg.services)
+        from jailbee.services.graph import with_dependencies
+
+        return with_dependencies(cfg.services, cfg.services if names is None else names)
+
+    services_added = override_services is None and bool(profile_services(name) - profile_services(previous))
     incus.config_set(container, PROFILE_KEY, name)
     running = any(
         c.get("name") == container and c.get("status") == "Running" for c in incus.list_containers()
@@ -132,7 +142,7 @@ def switch_profile(
     added = [s for s in normalize_stages(selected.on_start) if s.stage not in old_names]
     creates = tuple(s.stage for s in normalize_stages(missing.on_create))
     starts = tuple(s.stage for s in added)
-    if creates or starts:
+    if creates or starts or services_added:
         from jailbee.docker_daemon import mirror_endpoint_or_none
 
         mirror_endpoint = mirror_endpoint_or_none(cfg, incus)
@@ -161,5 +171,13 @@ def switch_profile(
                     override="wait",
                     on_progress=on_progress,
                     mirror_endpoint=mirror_endpoint,
+                    skip_services=True,
                 )
-    return SwitchResult(previous, name, creates, starts, not (creates or starts))
+        if services_added:
+            from jailbee.services.autostart import run_services_stage
+
+            run_services_stage(
+                cfg, incus, container, repo_dir, mirror_endpoint=mirror_endpoint,
+                on_progress=on_progress, cas_restore=False, live_switch=True,
+            )
+    return SwitchResult(previous, name, creates, starts, not (creates or starts or services_added))

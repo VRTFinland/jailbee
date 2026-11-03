@@ -2334,6 +2334,13 @@ def _new_container(
 
         incus.config_set(name, SERVICES_KEY, encode_names(opts.autostart_services))
     if opts.autostart:
+        from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope
+
+        profile = assessment.effective_cfg.autostart.profiles.get(selected_profile) if selected_profile else None
+        service_names = profile.services if profile is not None and profile != "all" else None
+        if opts.autostart_services is not None:
+            service_names = opts.autostart_services
+        incus.config_set(name, ENVELOPE_KEY, approval_envelope(assessment.effective_cfg, service_names))
         _phase("autostart")
         from jailbee.autostart import AutostartTrigger, run_autostart
 

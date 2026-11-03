@@ -273,9 +273,14 @@ starts only `web` and its dependencies; restart also accepts `--services`.
 The equivalent manifest field is `services: ["web"]` (at most 32 names).
 An empty list or `--services ''` starts none. Omission uses the profile or all
 services on spawn and preserves an explicit selection on restart. An explicit
-selection overrides the profile. Services are prepared once per container and
-service, including newly selected dependencies. Child preparation cannot exceed
-its stored rights. Neither `services` nor `--services` can be combined with
+selection overrides the profile's service set only; nonservice stages still follow
+the profile. Services are prepared once per container and service, including
+newly selected dependencies. Child preparation cannot exceed its stored rights.
+For ordinary containers, preparation cannot exceed the elevation approved at
+creation; legacy containers fall back to host-effective declarations. Re-assess
+the configuration to widen approval; elevated host or orchestrator refresh is
+planned, not yet available. An in-place profile switch starts safe services but
+defers unprepared elevated services and their dependents until the next restart. Neither `services` nor `--services` can be combined with
 `agent_only` / `--agent-only`.
 
 ## Reuse a running worker without autostart

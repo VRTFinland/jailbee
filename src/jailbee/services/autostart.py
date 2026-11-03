@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jailbee import autostart, container_app
 from jailbee.autostart_profiles import (
@@ -21,6 +21,35 @@ from jailbee.tui import warn
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+
+
+ENVELOPE_KEY = "user.jailbee.services_approval"
+
+
+def approval_envelope(cfg: Config, names: list[str] | None = None) -> str:
+    from jailbee.services.graph import elevation, with_dependencies
+
+    selected = with_dependencies(
+        cfg.services, cfg.services if names is None else [name for name in names if name in cfg.services]
+    )
+    grants = {}
+    for name in sorted(selected):
+        access = elevation(cfg.services[name])
+        grants[name] = {"network": access.network, "mounts": list(access.mounts)}
+    return json.dumps({"version": 1, "services": grants}, separators=(",", ":"))
+
+
+def _approved(raw: str) -> dict[str, Any]:
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("services"), dict):
+        raise ValueError("invalid service approval envelope")
+    for name, grant in data["services"].items():
+        if (not isinstance(name, str) or not isinstance(grant, dict)
+            or grant.get("network") not in (None, "loose")
+            or not isinstance(grant.get("mounts"), list)
+            or not all(isinstance(mount, str) for mount in grant["mounts"])):
+            raise ValueError("invalid service approval envelope")
+    return dict(data["services"])
 
 
 def selected_services(cfg: Config, incus: Incus, container: str) -> list[str] | None:
@@ -53,6 +82,7 @@ def run_services_stage(
     mirror_endpoint: tuple[str, int] | None,
     on_progress: Callable[[str, str, str], None] | None,
     cas_restore: bool,
+    live_switch: bool = False,
 ) -> None:
     names = selected_services(cfg, incus, container)
     if names == []:
@@ -84,7 +114,21 @@ def run_services_stage(
     if not order:
         return
     services = {item["name"]: item for item in payload["services"]}
-    prepared = decode_names(incus.config_get(container, PREPARED_KEY)) or []
+    prepared = decode_names(incus.config_get_checked(container, PREPARED_KEY)) or []
+    if live_switch:
+        deferred: set[str] = set()
+        for name in order:
+            service = services[name]
+            access = service["elevation"]
+            if (service["prepare"] and name not in prepared and (access["network"] == "loose" or access["mounts"])) or deferred.intersection(service.get("depends_on", [])):
+                deferred.add(name)
+        if deferred and any("depends_on" not in services[name] for name in order):
+            deferred.update(order)
+        if deferred:
+            warn(f"services deferred until next restart: {', '.join(name for name in order if name in deferred)}")
+            order = [name for name in order if name not in deferred]
+        if not order:
+            return
     for name in order:
         service = services[name]
         if not service["prepare"] or name in prepared:
@@ -93,8 +137,29 @@ def run_services_stage(
         from jailbee.orchestration import labels
         from jailbee.orchestration.grant import ChildRights, GrantError
 
-        if incus.config_get(container, labels.SPAWNED_BY):
-            raw_rights = incus.config_get(container, labels.RIGHTS)
+        spawned_by = incus.config_get_checked(container, labels.SPAWNED_BY)
+        if not spawned_by:
+            raw_envelope = incus.config_get_checked(container, ENVELOPE_KEY)
+            try:
+                grants = _approved(raw_envelope if raw_envelope is not None else approval_envelope(cfg))
+            except (ValueError, TypeError) as exc:
+                raise autostart.AutostartStepError(
+                    container=container, step_name=f"prepare-{name}",
+                    reason=f"invalid approved service elevation envelope: {exc}",
+                ) from exc
+            grant = grants.get(name, {"network": None, "mounts": []})
+            denied = sorted(set(elevation["mounts"]) - set(grant["mounts"]))
+            if elevation["network"] == "loose" and grant["network"] != "loose":
+                denied.append("network loose")
+            if denied:
+                raise autostart.AutostartStepError(
+                    container=container, step_name=f"prepare-{name}",
+                    reason=(f"service '{name}' exceeds approved elevation: {', '.join(denied)}; "
+                            "re-assess the configuration; host service refresh or orchestrator "
+                            "refresh will be available in a future release"),
+                )
+        if spawned_by:
+            raw_rights = incus.config_get_checked(container, labels.RIGHTS)
             try:
                 rights = ChildRights.from_label(raw_rights) if raw_rights else ChildRights()
             except GrantError as exc:
@@ -120,6 +185,11 @@ def run_services_stage(
                         "which this host does not define"
                     ),
                 )
+    for name in order:
+        service = services[name]
+        if not service["prepare"] or name in prepared:
+            continue
+        elevation = service["elevation"]
         steps = []
         for step in service["prepare"]:
             allowed = {"name", "run", "env", "working_dir", "timeout", "continue_on_error"}

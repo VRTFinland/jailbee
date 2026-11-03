@@ -194,19 +194,24 @@ def test_new_container_hands_the_on_start_stages_to_on_detach(tmp_path, make_cfg
     )
     incus = mocker.MagicMock()
     incus.exists.return_value = False
-    seen: list[tuple[str, str]] = []
+    seen: list[tuple[str, str, bool]] = []
+    cfg = _cfg_for_new(make_cfg, tmp_path)
+    from jailbee.lifecycle import BranchAutostartAssessment
+
+    branch_cfg = cfg.model_copy(update={"services": make_cfg(tmp_path, services={"db": {"run": "db"}}).services})
+    mocker.patch("jailbee.lifecycle.assess_branch_autostart", return_value=BranchAutostartAssessment(None, branch_cfg, None))
 
     new_container(
-        _cfg_for_new(make_cfg, tmp_path),
+        cfg,
         incus,
         _opts(),
         on_detach=lambda block, trigger, repo_dir, services_present: seen.append(
-            (trigger, repo_dir)
+            (trigger, repo_dir, services_present)
         ),
     )
 
     assert run_autostart.call_count == 2
-    assert [t for t, _ in seen] == ["on_start"]
+    assert [(t, present) for t, _, present in seen] == [("on_start", True)]
 
 
 def test_new_container_hands_off_from_on_create_without_running_on_start(

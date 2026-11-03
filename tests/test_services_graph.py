@@ -89,6 +89,7 @@ def test_plan_payload_refresh_prepares_only_named() -> None:
         "services": [
             {
                 "name": "db",
+                "depends_on": [],
                 "will_prepare": True,
                 "prepare": [
                     {
@@ -106,6 +107,7 @@ def test_plan_payload_refresh_prepares_only_named() -> None:
             },
             {
                 "name": "backend",
+                "depends_on": ["db"],
                 "will_prepare": False,
                 "prepare": [
                     {

@@ -2981,6 +2981,7 @@ def fork_cmd(
         no_clone=False,
         no_autostart=no_autostart,
         autostart_profile=None,
+        services=None,
         mount=False,
         attach=attach,
         no_attach=no_attach,

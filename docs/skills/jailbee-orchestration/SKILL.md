@@ -161,8 +161,13 @@ For light children, use `send spawn --services web --wait` or
 `send restart --child C --services web`: only the selected services and their
 dependencies start. `--services ''` starts none; omission uses the profile or
 all on spawn and retains the child's explicit selection on restart. Explicit
-selection wins over the profile. Prepare runs once per service/container, and
-cannot exceed the child's stored rights. Do not combine with `--agent-only`.
+selection overrides only the profile's service set; nonservice stages still follow
+the profile. Prepare runs once per service/container and cannot exceed the
+child's stored rights. Ordinary containers are bounded by creation-time approved
+elevation (legacy containers use host-effective declarations). Re-assessment is
+needed to widen it; elevated refresh is planned, not available yet. Live profile
+switches defer unprepared elevated services and their dependents until restart.
+Do not combine with `--agent-only`.
 
 ## Choosing the child's agent (`runner`)
 

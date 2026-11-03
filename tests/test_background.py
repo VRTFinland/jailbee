@@ -873,6 +873,15 @@ def test_job_codec_round_trips_autostart_services(services):
     assert restored.autostart_services == services
 
 
+def test_old_job_without_service_selection_defaults_to_none():
+    from jailbee.background import job_to_opts, op_to_job
+
+    job = op_to_job(_prompt_opts(), container_name="c", log_path="/l")
+    del job["opts"]["autostart_services"]
+    restored, _, _ = job_to_opts(job)
+    assert restored.autostart_services is None
+
+
 def test_job_codec_round_trips_initial_prompt():
     import json
 
