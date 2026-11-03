@@ -468,6 +468,14 @@ def live_job_kind(name: str) -> str | None:
     return job.op_kind
 
 
+def refresh_guard(child: Node) -> Outcome | None:
+    from jailbee.db.models import JOB_REFRESH
+
+    if live_job_kind(child.full) == JOB_REFRESH:
+        return refused(f"refresh is running in `{child.short}`; try again when it finishes")
+    return None
+
+
 def prune_reservations(root: Path) -> None:
     """Drop finished create workers across orchestrators, reaping our exited children."""
     reservations = load_reservations(root)
@@ -877,6 +885,8 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child
+    if (guard := refresh_guard(child)) is not None:
+        return guard
     if child.running:
         # Record HEAD while it can still be read: the destroy guard of a
         # stopped child compares it with LAST_IMPORT (spec 7.3).
@@ -1073,6 +1083,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child
+    if (guard := refresh_guard(child)) is not None:
+        return guard
     if child.running and not m.agent_only:
         return refused(f"child `{child.short}` is running; stop it first")
     if child.full in creating_children(ctx):
@@ -1191,6 +1203,8 @@ def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child
+    if (guard := refresh_guard(child)) is not None:
+        return guard
     if not m.force:
         reason = destroy_guard(ctx, child)
         if reason is not None:
@@ -1249,3 +1263,12 @@ def _handle_rights(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 HANDLERS["rights"] = _handle_rights
+
+
+def _handle_refresh(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.refresh import handle_refresh
+
+    return handle_refresh(ctx, m)
+
+
+HANDLERS["refresh"] = _handle_refresh

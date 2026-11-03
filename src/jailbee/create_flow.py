@@ -607,6 +607,31 @@ def launch_boot_background(
     return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
 
 
+def launch_refresh_background(
+    cfg: Config, *, container_name: str, job_path: Path
+) -> CreateStarted:
+    """Launch the refresh worker; it claims its own authoritative job row."""
+    from datetime import datetime as _dt
+
+    from jailbee.db import state_dir
+
+    log_dir = state_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _dt.now().strftime("%Y%m%d-%H%M%S-%f")
+    log_path = log_dir / f"{container_name}-refresh-{stamp}.log"
+    argv = [sys.executable, "-m", "jailbee", "_refresh-worker", "--job", str(job_path)]
+    with open(log_path, "w") as log_fh:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(cfg.repo_root),
+        )
+    return CreateStarted(container_name=container_name, pid=proc.pid, log_path=log_path)
+
+
 # ---------------------------------------------------------------------------
 # All in one
 # ---------------------------------------------------------------------------

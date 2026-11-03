@@ -256,7 +256,7 @@ def _settle_watches(
     watches = watch.load_watch(ctx.root)
     entries = watches.get(ctx.sender.full, [])
     for entry in list(entries):
-        if jobs is None and not entry.confirmed and not entry.agent_only:
+        if jobs is None and (entry.supervise or (not entry.confirmed and not entry.agent_only)):
             continue
         if entry.supervise:
             _settle_agent_watch(ctx, memory, jobs or {}, watches, entries, entry)
@@ -288,6 +288,12 @@ def _settle_agent_watch(
     from jailbee.lifecycle import short_name
     from jailbee.orchestration import agent_watch
 
+    from jailbee import background
+    from jailbee.db.models import JOB_REFRESH
+
+    job = jobs.get(entry.child_full)
+    if job is not None and job.op_kind == JOB_REFRESH and job.pid > 0 and not background.clearable(job.phase, job.pid):
+        return
     child = ctx.nodes.get(entry.child_full)
     status = None
     if child is not None and child.config.get(labels.SPAWNED_BY) != ctx.sender.full:

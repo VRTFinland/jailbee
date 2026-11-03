@@ -642,6 +642,23 @@ def test_launch_boot_background_forwards_prompt_and_tracks(mocker, tmp_path, mon
     assert started.log_path.is_file()
 
 
+def test_launch_refresh_background_is_detached_and_does_not_claim(mocker, tmp_path, monkeypatch):
+    from jailbee.create_flow import launch_refresh_background
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg, _incus, _gcfg = _env(tmp_path, mocker)
+    popen = mocker.patch("jailbee.create_flow.subprocess.Popen")
+    popen.return_value.pid = 4242
+    track = mocker.patch("jailbee.background.track_job")
+    job = tmp_path / "job.json"
+    started = launch_refresh_background(cfg, container_name="p-x", job_path=job)
+    assert popen.call_args.args[0][1:] == ["-m", "jailbee", "_refresh-worker", "--job", str(job)]
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert popen.call_args.kwargs["cwd"] == str(cfg.repo_root)
+    assert started.pid == 4242 and started.log_path.is_file()
+    track.assert_not_called()
+
+
 # ---- start_create
 
 

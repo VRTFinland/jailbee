@@ -142,7 +142,10 @@ def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
             return target
         child = target
     from jailbee import autostart_status
+    from jailbee.orchestration.actions import refresh_guard
 
+    if (guard := refresh_guard(child)) is not None:
+        return guard
     if autostart_status.live_run(ctx.cfg, child.full) is not None:
         return refused(
             f"autostart is running in `{child.short}`; send rights again when it finishes"

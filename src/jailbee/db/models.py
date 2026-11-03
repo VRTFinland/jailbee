@@ -130,6 +130,7 @@ JOB_AUTOSTART = "autostart"
 # A `jailbee stop` in progress. No worker of its own: the stopping command is
 # the row's process, and it deletes the row when the stop ends either way.
 JOB_STOP = "stop"
+JOB_REFRESH = "refresh"
 
 
 class BackgroundJob(SQLModel, table=True):
