@@ -21,7 +21,11 @@ def refresh_setup(tmp_path, mocker):
     from jailbee.services import elevated
 
     cfg, incus = make_config(tmp_path), mocker.Mock()
-    values = {"user.jailbee.services_approval": json.dumps({"version": 1, "services": {"old": {"network": None, "mounts": []}}})}
+    values = {
+        "user.jailbee.services_approval": json.dumps(
+            {"version": 1, "services": {"old": {"network": None, "mounts": []}}}
+        )
+    }
     incus.config_get_checked.side_effect = lambda _, key: values.get(key)
     incus.config_set.side_effect = lambda _, key, value: values.__setitem__(key, value)
     incus.list_containers.return_value = [{"name": "box", "profiles": ["jb-net-strict"]}]
@@ -29,14 +33,29 @@ def refresh_setup(tmp_path, mocker):
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     stage = mocker.patch("jailbee.autostart.run_stage")
-    run = mocker.patch("jailbee.container_app.run_in_container", return_value=ExecResult(0, b"", b""))
-    pause = mocker.patch.object(elevated, "pause_agent", return_value=elevated.PausedAgent("claude", SID, None))
+    run = mocker.patch(
+        "jailbee.container_app.run_in_container", return_value=ExecResult(0, b"", b"")
+    )
+    pause = mocker.patch.object(
+        elevated, "pause_agent", return_value=elevated.PausedAgent("claude", SID, None)
+    )
     resume = mocker.patch.object(elevated, "resume_agent", return_value=None)
-    step = {"name": "setup", "run": "true", "env": {}, "working_dir": "", "timeout": 3, "continue_on_error": False}
-    plan = elevated.Plan(("db", "web"), ("db", "web"), (
-        elevated.PlannedService("db", True, (step,), "loose", ()),
-        elevated.PlannedService("web", True, (step,), None, ()),
-    ))
+    step = {
+        "name": "setup",
+        "run": "true",
+        "env": {},
+        "working_dir": "",
+        "timeout": 3,
+        "continue_on_error": False,
+    }
+    plan = elevated.Plan(
+        ("db", "web"),
+        ("db", "web"),
+        (
+            elevated.PlannedService("db", True, (step,), "loose", ()),
+            elevated.PlannedService("web", True, (step,), None, ()),
+        ),
+    )
     return cfg, incus, values, plan, stage, run, pause, resume
 
 
@@ -44,11 +63,20 @@ def test_refresh_mixed_and_approval_preserved(refresh_setup):
     from jailbee.services.elevated import run_refresh
 
     cfg, incus, values, plan, stage, run, _, resume = refresh_setup
-    report = run_refresh(cfg, incus, "box", plan, who="requested by the user on the host", mirror_endpoint=None)
+    report = run_refresh(
+        cfg, incus, "box", plan, who="requested by the user on the host", mirror_endpoint=None
+    )
     assert report.ok
-    assert [(c.args[3].network, c.args[3].mounts) for c in stage.call_args_list] == [("loose", []), (None, [])]
+    assert [(c.args[3].network, c.args[3].mounts) for c in stage.call_args_list] == [
+        ("loose", []),
+        (None, []),
+    ]
     assert run.call_args.args[3][-3:] == ["restart", "db", "web"]
-    assert json.loads(values["user.jailbee.services_approval"])["services"] == {"old": {"network": None, "mounts": []}, "db": {"network": "loose", "mounts": []}, "web": {"network": None, "mounts": []}}
+    assert json.loads(values["user.jailbee.services_approval"])["services"] == {
+        "old": {"network": None, "mounts": []},
+        "db": {"network": "loose", "mounts": []},
+        "web": {"network": None, "mounts": []},
+    }
     assert "db" in values["user.jailbee.services_prepared"]
     resume.assert_called_once()
 
@@ -60,7 +88,11 @@ def test_refresh_prepare_failure_resumes_and_skips(refresh_setup):
     cfg, incus, _, plan, stage, run, _, resume = refresh_setup
     stage.side_effect = AutostartStepError(container="box", step_name="setup", reason="bad")
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
-    assert not report.ok and "db: prepare failed:" in report.summary() and "web: skipped" in report.summary()
+    assert (
+        not report.ok
+        and "db: prepare failed:" in report.summary()
+        and "web: skipped" in report.summary()
+    )
     run.assert_not_called()
     resume.assert_called_once()
 
@@ -106,9 +138,13 @@ def test_refresh_before_resume_error_still_attempts_resume(refresh_setup):
     from jailbee.services.elevated import run_refresh
 
     cfg, incus, _, plan, _, _, _, resume = refresh_setup
+
     def fail():
         raise RuntimeError("watch failed")
-    report = run_refresh(cfg, incus, "box", plan, who="host", before_resume=fail, mirror_endpoint=None)
+
+    report = run_refresh(
+        cfg, incus, "box", plan, who="host", before_resume=fail, mirror_endpoint=None
+    )
     assert not report.ok and report.agent == "resume failed: watch failed"
     assert "db: prepared, restarted" in report.summary()
     resume.assert_called_once()
@@ -120,7 +156,9 @@ def test_refresh_label_failure_resumes(refresh_setup):
     cfg, incus, _, plan, _, run, _, resume = refresh_setup
     incus.config_set.side_effect = RuntimeError("label error")
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
-    assert not report.ok and "label error" in report.summary() and "web: skipped" in report.summary()
+    assert (
+        not report.ok and "label error" in report.summary() and "web: skipped" in report.summary()
+    )
     resume.assert_called_once()
     run.assert_not_called()
 
@@ -129,7 +167,11 @@ def test_refresh_cascade_and_no_pause(refresh_setup):
     from jailbee.services.elevated import Plan, PlannedService, run_refresh
 
     cfg, incus, _, _, stage, _, pause, _ = refresh_setup
-    plan = Plan(("db", "web"), ("db",), (PlannedService("db", False, (), None, ()), PlannedService("web", False, (), None, ())))
+    plan = Plan(
+        ("db", "web"),
+        ("db",),
+        (PlannedService("db", False, (), None, ()), PlannedService("web", False, (), None, ())),
+    )
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
     assert report.ok and "web: restarted (cascade)" in report.summary()
     stage.assert_not_called()
@@ -165,10 +207,15 @@ def test_refresh_approval_preserves_existing_service_rights(refresh_setup):
     from jailbee.services.elevated import run_refresh
 
     cfg, incus, values, plan, _, _, _, _ = refresh_setup
-    values["user.jailbee.services_approval"] = json.dumps({"version": 1, "services": {"db": {"network": None, "mounts": ["old"]}}})
+    values["user.jailbee.services_approval"] = json.dumps(
+        {"version": 1, "services": {"db": {"network": None, "mounts": ["old"]}}}
+    )
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
     assert report.ok
-    assert json.loads(values["user.jailbee.services_approval"])["services"]["db"] == {"network": "loose", "mounts": ["old"]}
+    assert json.loads(values["user.jailbee.services_approval"])["services"]["db"] == {
+        "network": "loose",
+        "mounts": ["old"],
+    }
 
 
 def test_refresh_interrupt_checks_restoration_before_resume(refresh_setup):
@@ -209,7 +256,9 @@ def test_refresh_work_network_disagreement_withholds_resume(refresh_setup, mocke
 
     cfg, incus, _, plan, _, run, _, resume = refresh_setup
     incus.list_containers.return_value = [{"name": "box", "profiles": ["jb-net-work-strict"]}]
-    mocker.patch("jailbee.work_mode.work_mode_state", side_effect=[("strict", True), ("strict", False)])
+    mocker.patch(
+        "jailbee.work_mode.work_mode_state", side_effect=[("strict", True), ("strict", False)]
+    )
     report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
     assert not report.ok and "marker and ACL disagree" in report.summary()
     resume.assert_not_called()

@@ -324,12 +324,16 @@ class RefreshReport:
     agent: str
 
     def summary(self) -> str:
-        return "\n".join([*(f"{s.name}: {s.result}" for s in self.services), f"agent: {self.agent}"])
+        return "\n".join(
+            [*(f"{s.name}: {s.result}" for s in self.services), f"agent: {self.agent}"]
+        )
 
     def agent_text(self, who: str) -> str:
         details = "; ".join(f"{s.name}: {s.result}" for s in self.services)
-        return (f"Your container's services were refreshed ({who}): {details}. "
-                "Continue your task; re-read files you had open if dependencies changed.")
+        return (
+            f"Your container's services were refreshed ({who}): {details}. "
+            "Continue your task; re-read files you had open if dependencies changed."
+        )
 
 
 def _snapshot(cfg: "Config", incus: "Incus", full: str) -> tuple[str, set[str]]:
@@ -341,8 +345,10 @@ def _snapshot(cfg: "Config", incus: "Incus", full: str) -> tuple[str, set[str]]:
 
     rows = incus.list_containers()
     matches = [row for row in rows if isinstance(row, dict) and row.get("name") == full]
-    if len(matches) != 1 or not isinstance(matches[0].get("profiles"), list) or not all(
-        isinstance(p, str) for p in matches[0]["profiles"]
+    if (
+        len(matches) != 1
+        or not isinstance(matches[0].get("profiles"), list)
+        or not all(isinstance(p, str) for p in matches[0]["profiles"])
     ):
         raise RefreshError("container network state unavailable")
     row = matches[0]
@@ -363,13 +369,20 @@ def _snapshot(cfg: "Config", incus: "Incus", full: str) -> tuple[str, set[str]]:
     return mode, {k.removeprefix("optional-") for k in devices if k.startswith("optional-")}
 
 
-def _execute(cfg: "Config", incus: "Incus", full: str, repo: str, operation: str, names: Sequence[str]) -> "ExecResult":
+def _execute(
+    cfg: "Config", incus: "Incus", full: str, repo: str, operation: str, names: Sequence[str]
+) -> "ExecResult":
     from jailbee import container_app
     from jailbee.config import CONTAINER_USERNAME
 
     return container_app.run_in_container(
-        cfg, incus, full, ["service", "--repo", repo, operation, *names],
-        uid=cfg.container_user.uid, cwd=repo, env={"HOME": f"/home/{CONTAINER_USERNAME}"},
+        cfg,
+        incus,
+        full,
+        ["service", "--repo", repo, operation, *names],
+        uid=cfg.container_user.uid,
+        cwd=repo,
+        env={"HOME": f"/home/{CONTAINER_USERNAME}"},
         init_groups=True,
     )
 
@@ -378,14 +391,23 @@ def _reason(exc: Exception) -> str:
     from jailbee.autostart import AutostartStepError
 
     if isinstance(exc, AutostartStepError):
-        return f"{exc.step_name}: {exc.reason}" + (f" (exit {exc.exit_code})" if exc.exit_code is not None else "")
+        return f"{exc.step_name}: {exc.reason}" + (
+            f" (exit {exc.exit_code})" if exc.exit_code is not None else ""
+        )
     return str(exc) or type(exc).__name__
 
 
 def run_refresh(
-    cfg: "Config", incus: "Incus", full: str, plan: Plan, *, who: str,
-    resume_prompt_prefix: str = "", before_resume: Callable[[], None] | None = None,
-    mirror_endpoint: tuple[str, int] | None, on_progress: Callable[[str, str, str], None] | None = None,
+    cfg: "Config",
+    incus: "Incus",
+    full: str,
+    plan: Plan,
+    *,
+    who: str,
+    resume_prompt_prefix: str = "",
+    before_resume: Callable[[], None] | None = None,
+    mirror_endpoint: tuple[str, int] | None,
+    on_progress: Callable[[str, str, str], None] | None = None,
     force: bool = False,
 ) -> RefreshReport:
     from jailbee import autostart
@@ -404,7 +426,9 @@ def run_refresh(
         repo = container_repo_dir(cfg, incus, full)
     except Exception as exc:
         raise RefreshError(f"refresh preflight failed: {exc}") from exc
-    paused = pause_agent(cfg, incus, full, force=force, now=datetime.now(UTC)) if plan.elevated else None
+    paused = (
+        pause_agent(cfg, incus, full, force=force, now=datetime.now(UTC)) if plan.elevated else None
+    )
     results = {name: "skipped" for name in plan.order}
     agent = "not running" if paused is None else f"resumed {paused.session}"
     ok = False
@@ -416,12 +440,22 @@ def run_refresh(
             failure = None
             try:
                 stage = service_autostart.prepare_stage(
-                    full, service.name, [dict(s) for s in service.prepare],
+                    full,
+                    service.name,
+                    [dict(s) for s in service.prepare],
                     network=service.network if service.elevated else None,
                     mounts=list(service.mounts) if service.elevated else [],
                 )
-                autostart.run_stage(cfg, incus, full, stage, repo, mirror_endpoint=mirror_endpoint,
-                                    on_progress=on_progress, cas_restore=False)
+                autostart.run_stage(
+                    cfg,
+                    incus,
+                    full,
+                    stage,
+                    repo,
+                    mirror_endpoint=mirror_endpoint,
+                    on_progress=on_progress,
+                    cas_restore=False,
+                )
             except BaseException as exc:
                 failure = _reason(exc) if isinstance(exc, Exception) else type(exc).__name__
             if entry is not None:
@@ -429,12 +463,26 @@ def run_refresh(
                     current = _snapshot(cfg, incus, full)
                     extra = current[1] - entry[1]
                     if current[0] != entry[0] or extra:
-                        raise RefreshError(f"network {current[0]} (expected {entry[0]}), extra mounts: {', '.join(sorted(extra)) or 'none'}")
+                        raise RefreshError(
+                            f"network {current[0]} (expected {entry[0]}), "
+                            f"extra mounts: {', '.join(sorted(extra)) or 'none'}"
+                        )
                 except Exception as exc:
                     restored = False
-                    commands = [f"jb net strict {full}", *(f"jb unmount {m} {full}" for m in sorted(set(plan.declared().mounts) - entry[1]))]
-                    agent = f"resume withheld: container may still be elevated ({exc}); recovery: {'; '.join(commands)}"
-                    results[service.name] = f"prepare failed: {failure or 'restoration unconfirmed'}"
+                    commands = [
+                        f"jb net strict {full}",
+                        *(
+                            f"jb unmount {m} {full}"
+                            for m in sorted(set(plan.declared().mounts) - entry[1])
+                        ),
+                    ]
+                    agent = (
+                        f"resume withheld: container may still be elevated ({exc}); "
+                        f"recovery: {'; '.join(commands)}"
+                    )
+                    results[service.name] = (
+                        f"prepare failed: {failure or 'restoration unconfirmed'}"
+                    )
                     break
             if failure is not None:
                 results[service.name] = f"prepare failed: {failure}"
@@ -442,11 +490,16 @@ def run_refresh(
             try:
                 previous = grants.get(service.name, {"network": None, "mounts": []})
                 grants[service.name] = {
-                    "network": "loose" if service.network == "loose" or previous["network"] == "loose" else None,
+                    "network": "loose"
+                    if service.network == "loose" or previous["network"] == "loose"
+                    else None,
                     "mounts": list(dict.fromkeys([*previous["mounts"], *service.mounts])),
                 }
-                incus.config_set(full, service_autostart.ENVELOPE_KEY,
-                                 json.dumps({"version": 1, "services": grants}, separators=(",", ":")))
+                incus.config_set(
+                    full,
+                    service_autostart.ENVELOPE_KEY,
+                    json.dumps({"version": 1, "services": grants}, separators=(",", ":")),
+                )
                 if service.name not in prepared:
                     prepared.append(service.name)
                 incus.config_set(full, PREPARED_KEY, encode_names(prepared))
@@ -459,10 +512,18 @@ def run_refresh(
                 result = _execute(cfg, incus, full, repo, "restart", plan.named)
                 if result.returncode:
                     text = result.stderr.decode(errors="replace").strip().splitlines()
-                    raise RefreshError(f"{text[0] if text else 'container restart failed'} (exit {result.returncode})")
+                    raise RefreshError(
+                        f"{text[0] if text else 'container restart failed'} "
+                        f"(exit {result.returncode})"
+                    )
                 for name in plan.order:
-                    results[name] = ("prepared, restarted" if results[name] == "prepared" else
-                                     "restarted" if name in plan.named else "restarted (cascade)")
+                    results[name] = (
+                        "prepared, restarted"
+                        if results[name] == "prepared"
+                        else "restarted"
+                        if name in plan.named
+                        else "restarted (cascade)"
+                    )
                 ok = True
             except Exception as exc:
                 for name in plan.order:
@@ -475,9 +536,13 @@ def run_refresh(
             except Exception as exc:
                 agent = f"resume failed: {_reason(exc)}"
                 ok = False
-            report = RefreshReport(tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent)
+            report = RefreshReport(
+                tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent
+            )
             try:
-                error = resume_agent(cfg, incus, full, paused, resume_prompt_prefix + report.agent_text(who))
+                error = resume_agent(
+                    cfg, incus, full, paused, resume_prompt_prefix + report.agent_text(who)
+                )
             except Exception as exc:
                 error = _reason(exc)
             if error:
@@ -486,7 +551,9 @@ def run_refresh(
     return RefreshReport(tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent)
 
 
-def run_plain_refresh(cfg: "Config", incus: "Incus", full: str, names: Sequence[str]) -> RefreshReport:
+def run_plain_refresh(
+    cfg: "Config", incus: "Incus", full: str, names: Sequence[str]
+) -> RefreshReport:
     from jailbee.lifecycle import container_repo_dir
 
     try:
@@ -494,7 +561,11 @@ def run_plain_refresh(cfg: "Config", incus: "Incus", full: str, names: Sequence[
         result = _execute(cfg, incus, full, repo, "refresh", names)
         ok = result.returncode == 0
         output = (result.stderr or result.stdout).decode(errors="replace").strip()
-        detail = "prepared, restarted" if ok else f"failed: {output[-1000:] or f'exit {result.returncode}'}"
+        detail = (
+            "prepared, restarted"
+            if ok
+            else f"failed: {output[-1000:] or f'exit {result.returncode}'}"
+        )
     except Exception as exc:
         ok, detail = False, f"failed: {_reason(exc)}"
     return RefreshReport(tuple(ServiceOutcome(name, detail) for name in names), ok, "not running")
