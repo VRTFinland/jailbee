@@ -130,11 +130,16 @@ def run_services_stage(
                     step_name=f"prepare-{name}",
                     reason=f"unexpected service prepare fields: {', '.join(sorted(unexpected))}",
                 )
-            steps.append(AutostartStep(
-                name=step["name"], run=step["run"], env=step["env"],
-                working_dir=step["working_dir"], timeout=step["timeout"],
-                continue_on_error=step["continue_on_error"],
-            ))
+            steps.append(
+                AutostartStep(
+                    name=step["name"],
+                    run=step["run"],
+                    env=step["env"],
+                    working_dir=step["working_dir"],
+                    timeout=step["timeout"],
+                    continue_on_error=step["continue_on_error"],
+                )
+            )
         stage = AutostartStage.model_construct(
             stage=f"prepare-{name}",
             network=elevation["network"],

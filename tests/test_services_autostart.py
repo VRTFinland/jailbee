@@ -130,7 +130,11 @@ def test_child_rejects_privileges_hidden_in_prepare_step(tmp_path, mocker, make_
     data = payload()
     data["services"][0]["elevation"] = {"network": None, "mounts": []}
     data["services"][0]["prepare"][0][field] = value
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     with pytest.raises(autostart.AutostartStepError, match="unexpected"):
         invoke(cfg, incus)
@@ -146,7 +150,11 @@ def test_child_missing_or_invalid_rights_refuses_elevation(tmp_path, mocker, mak
     values[orch_labels.SPAWNED_BY] = "parent"
     if raw is not None:
         values[orch_labels.RIGHTS] = raw
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     with pytest.raises(autostart.AutostartStepError):
         invoke(cfg, incus)
@@ -164,7 +172,11 @@ def test_child_permitted_prepare_and_wider_restart(tmp_path, mocker, make_cfg):
     values[SERVICES_KEY] = "db"
     data = payload()
     data["order"] = ["db"]
-    plan = mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    plan = mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
     assert run.call_args_list[0].args[3].network == "loose"
