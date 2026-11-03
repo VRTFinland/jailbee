@@ -211,8 +211,8 @@ def run_services_stage(
                     step_name=f"prepare-{name}",
                     reason=(
                         f"service '{name}' exceeds approved elevation: {', '.join(denied)}; "
-                        "re-assess the configuration; host service refresh or orchestrator "
-                        "refresh will be available in a future release"
+                        "re-assess the configuration, then request a host or orchestrator "
+                        "service refresh"
                     ),
                 )
         if spawned_by:

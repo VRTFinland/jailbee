@@ -27,7 +27,7 @@ def elevation_refusal(cfg: Config, names: Sequence[str], hostname: str) -> str |
     return (
         f"refresh of {', '.join(elevated)} needs elevated access ({'; '.join(details)}) — "
         "the agent cannot grant that to itself. Ask the orchestrator: "
-        f"`jailbee-inbox send refresh --child {short} --services {selected} --wait`, "
+        f"`jailbee-inbox send refresh --child {short} --services {','.join(names)} --wait`, "
         f"or on the host: `jb service refresh {short} {selected}`"
     )
 

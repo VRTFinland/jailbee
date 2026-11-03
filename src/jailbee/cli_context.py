@@ -20,6 +20,7 @@ HOST_COMMANDS: frozenset[str] = frozenset(
         "_broker",
         "_destroy-worker",
         "_new-worker",
+        "_refresh-worker",
         "_remote-console",
         "_state-service",
         "account",

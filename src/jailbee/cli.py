@@ -3225,7 +3225,7 @@ def _destroy_worker(
 
 @app.command("_refresh-worker", hidden=True)
 def _refresh_worker(
-    job: Annotated[Path, typer.Option("--job")],
+    job: Annotated[Path, typer.Option("--job", help="Path to the JSON job file.")],
     config: ConfigOption = None,
 ) -> None:
     from jailbee.incus import Incus

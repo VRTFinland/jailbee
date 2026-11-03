@@ -105,8 +105,10 @@ def test_ordinary_container_rejects_runtime_elevation_outside_approval(tmp_path,
         return_value=ExecResult(0, json.dumps(data).encode(), b""),
     )
     run = mocker.patch.object(autostart, "run_stage")
-    with pytest.raises(autostart.AutostartStepError, match="approved"):
+    with pytest.raises(autostart.AutostartStepError, match="approved") as exc:
         invoke(cfg, incus)
+    assert "future release" not in str(exc.value)
+    assert "refresh" in str(exc.value)
     run.assert_not_called()
 
 
