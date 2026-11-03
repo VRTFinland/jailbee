@@ -67,7 +67,8 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
     m = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"], force=True)
     out = actions.dispatch(ctx, m)
     assert out.state == "started" and "/log" in out.detail
-    job = json.loads((tmp_path / "refresh-jobs/r1.json").read_text())
+    path = launch.call_args.kwargs["job_path"]
+    job = json.loads(path.read_text())
     assert job == {
         "child_full": "proj-c",
         "orchestrator_full": "proj-o",
@@ -77,7 +78,7 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
         "names": ["db"],
         "force": True,
     }
-    assert launch.call_args.kwargs["job_path"] == tmp_path / "refresh-jobs/r1.json"
+    assert path.parent == tmp_path / "refresh-jobs"
     assert run.call_args.args[3] == [
         "service",
         "--repo",
@@ -88,6 +89,24 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
         "--json",
         "db",
     ]
+
+
+def test_same_manifest_id_never_overwrites_another_job(refresh_rig, mocker):
+    from types import SimpleNamespace
+
+    ctx, _ = refresh_rig
+    launch = mocker.patch(
+        "jailbee.create_flow.launch_refresh_background",
+        return_value=SimpleNamespace(log_path=Path("/log")),
+    )
+    manifest = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"])
+    assert actions.dispatch(ctx, manifest).state == "started"
+    first = launch.call_args.kwargs["job_path"]
+    original = first.read_bytes()
+    launch.side_effect = OSError("launch failed")
+    assert actions.dispatch(ctx, manifest).state == "failed"
+    assert first.read_bytes() == original
+    assert launch.call_args.kwargs["job_path"] != first
 
 
 def test_plan_failure_and_launch_failure(refresh_rig, mocker, tmp_path):

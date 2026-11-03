@@ -67,29 +67,37 @@ def handle_refresh(ctx: actions.ActionContext, m: Manifest) -> actions.Outcome:
                 )
     except (container_app.ContainerJailbeeError, RefreshError) as exc:
         return actions.refused(str(exc))
+    import os
+    import tempfile
+    from pathlib import Path
+
     from jailbee.create_flow import launch_refresh_background
     from jailbee.db import state_dir
-    from jailbee.orchestration.state import atomic_write_text
 
-    path = state_dir() / "refresh-jobs" / f"{m.id}.json"
+    path: Path | None = None
     try:
-        atomic_write_text(
-            path,
-            json.dumps(
-                {
-                    "child_full": child.full,
-                    "orchestrator_full": ctx.sender.full,
-                    "manifest_id": m.id,
-                    "elevated": plan.elevated,
-                    "payload": plan.to_json(),
-                    "names": list(plan.named),
-                    "force": m.force,
-                }
-            ),
-        )
+        directory = state_dir() / "refresh-jobs"
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, filename = tempfile.mkstemp(prefix="refresh-", suffix=".json", dir=directory)
+        path = Path(filename)
+        with os.fdopen(fd, "w", encoding="utf-8") as job_file:
+            job_file.write(
+                json.dumps(
+                    {
+                        "child_full": child.full,
+                        "orchestrator_full": ctx.sender.full,
+                        "manifest_id": m.id,
+                        "elevated": plan.elevated,
+                        "payload": plan.to_json(),
+                        "names": list(plan.named),
+                        "force": m.force,
+                    }
+                ),
+            )
         worker = launch_refresh_background(ctx.cfg, container_name=child.full, job_path=path)
     except Exception as exc:
-        path.unlink(missing_ok=True)
+        if path is not None:
+            path.unlink(missing_ok=True)
         return actions.failed(f"could not launch refresh: {exc}")
     return actions.Outcome(
         "started",
