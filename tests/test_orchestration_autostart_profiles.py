@@ -2,6 +2,9 @@
 
 from dataclasses import replace
 
+import pytest
+from pydantic import ValidationError
+
 from jailbee.orchestration import actions
 from jailbee.orchestration.protocol import SpawnManifest
 from tests.test_autostart_profiles import profile_cfg
@@ -123,16 +126,14 @@ def test_profile_restart_reserves_queue_slot_before_setup_can_fail(make_cfg, tmp
     assert [q.child_full for q in load_queue(tmp_path)["proj-orch"]] == ["proj-c2"]
 
 
-import pytest
-from pydantic import ValidationError
-
-
 @pytest.mark.parametrize("kind", ["spawn", "restart"])
 @pytest.mark.parametrize("services", [["Bad"], ["a\n"], ["svc"] * 33])
 def test_manifest_rejects_invalid_service_selection(kind, services):
     from tests.test_orchestration_lifecycle_ops import _restart
 
-    raw = (_m() if kind == "spawn" else _restart()).model_dump(exclude_unset=True) | {"services": services}
+    raw = (_m() if kind == "spawn" else _restart()).model_dump(exclude_unset=True) | {
+        "services": services
+    }
     with pytest.raises(ValidationError):
         (SpawnManifest if kind == "spawn" else type(_restart())).model_validate(raw)
 
@@ -141,10 +142,17 @@ def test_manifest_rejects_invalid_service_selection(kind, services):
 def test_spawn_services_reach_options_and_keep_manifest_id(tmp_path, mocker, services):
     ctx = _ctx(tmp_path)
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
-    manifest = SpawnManifest.model_validate(_m().model_dump(exclude_unset=True) | {"services": services})
+    manifest = SpawnManifest.model_validate(
+        _m().model_dump(exclude_unset=True) | {"services": services}
+    )
     plan = actions.plan_spawn(ctx, manifest, queued_names=())
     assert plan.manifest_id == manifest.id
-    assert actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None).autostart_services == services
+    assert (
+        actions.child_options(
+            ctx.cfg, plan, orchestrator_full="proj-orch", fork=None
+        ).autostart_services
+        == services
+    )
 
 
 @pytest.mark.parametrize("services,encoded", [(None, None), ([], ","), (["db", "web"], "db,web")])
@@ -155,19 +163,25 @@ def test_restart_services_label_before_launch(tmp_path, mocker, services, encode
 
     rig = Rig(tmp_path)
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
+
     def launch(*args, **kwargs):
         calls = [c for c in rig.incus.config_set.call_args_list if c.args[1] == SERVICES_KEY]
         assert [c.args[2] for c in calls] == ([] if encoded is None else [encoded])
         return CreateStarted("proj-c1", 12345, tmp_path / "boot.log")
+
     mocker.patch("jailbee.create_flow.launch_boot_background", side_effect=launch)
-    manifest = type(_restart()).model_validate(_restart().model_dump(exclude_unset=True) | {"services": services})
+    manifest = type(_restart()).model_validate(
+        _restart().model_dump(exclude_unset=True) | {"services": services}
+    )
     assert actions.handle_restart(rig.ctx(), manifest).state == "started"
 
 
 def test_agent_only_refuses_explicit_empty_services(tmp_path):
     from tests.test_orchestration_lifecycle_ops import Rig, _restart
 
-    manifest = type(_restart()).model_validate(_restart().model_dump() | {"services": [], "agent_only": True})
+    manifest = type(_restart()).model_validate(
+        _restart().model_dump() | {"services": [], "agent_only": True}
+    )
     result = actions.handle_restart(Rig(tmp_path).ctx(), manifest)
     assert result.detail == "services cannot be combined with agent_only (no autostart runs)"
 
@@ -181,27 +195,41 @@ def test_queued_services_persist_and_reach_launch(tmp_path, mocker, services, ki
     from jailbee.orchestration.actions import Node
     from jailbee.orchestration.state import load_queue
     from tests.test_orchestration_lifecycle_ops import _restart
-    from tests.test_orchestration_queue import Rig, _m as queue_manifest
+    from tests.test_orchestration_queue import Rig
+    from tests.test_orchestration_queue import _m as queue_manifest
 
     rig = Rig(tmp_path, limit=1, running=1)
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
     if kind == "spawn":
-        manifest = SpawnManifest.model_validate(queue_manifest("new", kind="new").model_dump(exclude_unset=True) | {"services": services})
+        manifest = SpawnManifest.model_validate(
+            queue_manifest("new", kind="new").model_dump(exclude_unset=True)
+            | {"services": services}
+        )
         assert actions.handle_spawn(rig.ctx(), manifest).state == "queued"
     else:
         rig.children.append(Node("proj-c2", "c2", False, {labels.SPAWNED_BY: "proj-orch"}))
-        manifest = type(_restart()).model_validate(_restart("c2").model_dump(exclude_unset=True) | {"services": services})
+        manifest = type(_restart()).model_validate(
+            _restart("c2").model_dump(exclude_unset=True) | {"services": services}
+        )
         assert actions.handle_restart(rig.ctx(), manifest).state == "queued"
     assert load_queue(tmp_path)["proj-orch"][0].services == services
     rig.children = [c for c in rig.children if not c.running]
-    create = mocker.patch("jailbee.orchestration.actions.start_create", return_value=CreateStarted("proj-new", 123, tmp_path / "log"))
-    boot = mocker.patch("jailbee.create_flow.launch_boot_background", return_value=CreateStarted("proj-c2", 123, tmp_path / "log"))
+    create = mocker.patch(
+        "jailbee.orchestration.actions.start_create",
+        return_value=CreateStarted("proj-new", 123, tmp_path / "log"),
+    )
+    boot = mocker.patch(
+        "jailbee.create_flow.launch_boot_background",
+        return_value=CreateStarted("proj-c2", 123, tmp_path / "log"),
+    )
     assert [out.state for _, out in actions.drain_queue(rig.ctx())] == ["started"]
     if kind == "spawn":
         assert create.call_args.args[3].autostart_services == services
     else:
         boot.assert_called_once()
-        calls = [c.args[2] for c in rig.incus.config_set.call_args_list if c.args[1] == SERVICES_KEY]
+        calls = [
+            c.args[2] for c in rig.incus.config_set.call_args_list if c.args[1] == SERVICES_KEY
+        ]
         assert calls == ([] if services is None else [",".join(services) if services else ","])
 
 
