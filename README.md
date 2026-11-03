@@ -92,7 +92,8 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   autostart are configured once and baked into a reusable golden image —
   general development tools by default, language stacks and Docker opt-in.
   On a copy-on-write backend such as btrfs, new environments and snapshots
-  are cheap.
+  are cheap. A `services:` block declares the repository's own services, which
+  `jb service` starts, stops and logs; named autostart profiles pick what boots.
   [Stacks](https://jailbee.gisgro.io/docs/config/#golden) ·
   [Storage](https://jailbee.gisgro.io/docs/storage/)
 

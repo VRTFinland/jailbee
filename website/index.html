@@ -605,7 +605,9 @@
               <strong>A Compose stack per branch.</strong> Each branch runs its own Docker daemon
               and Compose project, so no port or database is shared. A browser inside the
               container reaches that branch on its own localhost
-              (<a href="docs/config/#golden">stacks</a>).
+              (<a href="docs/config/#golden">stacks</a>). Declared <code>services:</code>
+              are managed with <code>jailbee service</code>, and named autostart profiles
+              choose what boots.
             </p>
           </div>
           <div class="card">

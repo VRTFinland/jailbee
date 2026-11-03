@@ -544,11 +544,13 @@ fastest way to see the error without doing anything else. Rejected:
 ## Inside a JailBee container
 
 You may be reading this from **inside** a JailBee container (repo clone at
-`~/<container_prefix>`, no `jailbee` binary on `PATH`). You can still help with
-configuration: edit `.jailbee/config.yaml` and `install.d/` snippets directly in the
-clone. You **cannot** run `jailbee config validate` / `jailbee apply` / `jailbee new` here —
-those run on the host. After editing the config, tell the host operator to run
-`jailbee config validate` then `jailbee apply` (or recreate the container) to apply the
+`~/<container_prefix>`). Since 1.8.1 every container has a small in-container
+`jailbee` (the host's code, mounted read-only): `jailbee --version`,
+`jailbee config validate`, `jailbee service ...` and `jailbee inbox ...` work here.
+Edit `.jailbee/config.yaml` and `install.d/` snippets directly in the clone and
+check them with `jailbee config validate`. Everything else (`jailbee apply`,
+`jailbee new`, `jailbee doctor`, ...) is host-only. After editing the config, tell the
+host operator to run `jailbee apply` (or recreate the container) to apply the
 change.
 
 ## Further reference

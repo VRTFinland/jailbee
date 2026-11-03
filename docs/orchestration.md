@@ -455,7 +455,11 @@ Inside each orchestrator and child, `/home/dev/.jailbee/orchestration/` holds
 orchestrator, `grant.json`, a read-only copy of its limits. The broker creates
 both directories in every orchestrator and child it serves. New images include
 `jailbee inbox` (`wait`, `ls`, `read`, `runners`, `children`, `send`), so agents
-need not write JSON by hand. For an old image without the container CLI, run
+need not write JSON by hand. `jailbee inbox children [--json]` lists each child
+from the broker's `children.json` (it must be fresh, at most 15 minutes old): one
+line per child with its name, whether its container is running, its latest agent
+session (`-` if none) and whether its `done` report was accepted; `--json` prints
+the raw list. For an old image without the container CLI, run
 `jb base build` on the host and recreate the container. After `wait`, run `ls` and handle every
 unread message. `JAILBEE_INBOX_SETTLE` controls the quiet window after an arrival
 (default 1 second, 0 disables), capped at 5 seconds and the wait timeout;

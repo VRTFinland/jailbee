@@ -31,6 +31,17 @@ returns it to the built-in height; with the mouse on, drag the panel's top borde
 The table always keeps five rows and its header, and the panel at least two rows.
 The height is remembered with the rest of the view.
 
+## Inside a container
+
+Since 1.8.1 every container has a small `jailbee` (the host's code, mounted
+read-only at `/opt/jailbee/app`). Only these commands work there; everything else
+is host-only:
+
+- `jailbee --version`
+- `jailbee config validate` ([configuration](config.md))
+- `jailbee service ...` ([Services](#services))
+- `jailbee inbox ...` ([orchestration](orchestration.md))
+
 ## Services
 
 Inside a container use `jailbee service [ls] [--json]`, `jailbee service

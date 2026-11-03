@@ -115,6 +115,8 @@ jailbee destroy feat-foo --force
 (shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
 "Refresh from PR head" on a review container). Reach for it when juggling several
 containers; reach for `jailbee ls` for a one-shot snapshot or scripting (`-o json`).
+`jailbee ls` fits its columns to the terminal width, hiding low-priority ones with a
+notice; `jailbee ls --wide` (`-w`) shows every column regardless.
 
 Bare `jailbee` (or `jb`) on a terminal opens `default_command` from the host's
 `global.yaml` (`dashboard` by default; also `gui`, `console`, `help`); off a
@@ -1799,9 +1801,11 @@ for `jailbee git pull` / `jailbee pr push`.
 ## Inside a JailBee container
 
 You may be reading this from **inside** a JailBee container — the repo clone lives at
-`~/<container_prefix>` and there is no `jailbee` binary or Incus daemon on `PATH`. If
-so, you **cannot** run `jailbee ...` commands here; they all operate on the host.
-What you can still do from inside:
+`~/<container_prefix>` and there is no Incus daemon on `PATH`. Since 1.8.1 the container
+has an in-container `jailbee` (host code mounted read-only at `/opt/jailbee/app`), but
+only `jailbee --version`, `jailbee config validate`, `jailbee service ...` and
+`jailbee inbox ...` work here; every other command (`apply`, `new`, `doctor`, ...)
+operates on the host and is host-only. What you can do from inside:
 
 - Work in the repo clone, commit, run tests/builds — exactly as on a normal dev box.
 - Edit `.jailbee/config.yaml` and any `install.d/` snippets in the clone. Those
