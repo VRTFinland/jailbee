@@ -3,6 +3,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -13,10 +14,92 @@ from jailbee.orchestration.profiles import repo_cap
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.incus import Incus
+    from jailbee.orchestration.agent_watch import AgentStatus
+    from jailbee.orchestration.runner import Runner
 
 
 class RefreshError(RuntimeError):
     """A refresh plan cannot safely be accepted."""
+
+
+@dataclass(frozen=True)
+class PausedAgent:
+    agent: str
+    session: str
+    runner: "Runner | None"
+
+
+def pause_agent(
+    cfg: "Config", incus: "Incus", full: str, *, force: bool = False, now: datetime
+) -> PausedAgent | None:
+    from jailbee import tmux
+    from jailbee.accounts.adapters.base import get_adapter
+    from jailbee.incus import IncusError
+    from jailbee.orchestration import agent_watch, labels
+    from jailbee.orchestration.runner import parse_runner_label
+
+    status = agent_watch.probe(incus, full, uid=cfg.container_user.uid)
+    if status is None or not status.alive:
+        return None
+    try:
+        config = {key: incus.config_get_checked(full, key) or "" for key in (labels.AGENT_SESSIONS, labels.RUNNER)}
+    except IncusError as exc:
+        raise RefreshError(f"cannot read agent configuration: {exc}") from exc
+    session = agent_watch.current_session(cfg, full, status)
+    if not labels.valid_session_id(session):
+        history = labels.sessions_of(config)
+        session = history[-1] if history else None
+    if not isinstance(session, str) or not labels.valid_session_id(session):
+        raise RefreshError(f"the agent in {full} is running but its session id is unknown, so it could not be resumed — refresh refused")
+    if not force and agent_watch.idle_signal(cfg, full, status, now=now) is None:
+        raise RefreshError(f"the agent in {full} is working (not idle); refresh again when it waits for input, or pass force if it has said its work is paused")
+    try:
+        adapter = get_adapter(status.agent)
+        if adapter.resume_args(session) is None:
+            raise RefreshError(f"agent `{status.agent}` cannot resume a session")
+        if not adapter.session_exists(cfg, full, session):
+            raise RefreshError(f"session `{session}` has no transcript any more")
+    except (KeyError, LookupError) as exc:
+        raise RefreshError(f"agent `{status.agent}` cannot resume a session") from exc
+    runner = parse_runner_label(config[labels.RUNNER])
+    tmux.kill_window(incus, full, tmux.window_for(status.agent), checked=True)
+    return PausedAgent(status.agent, session, runner)
+
+
+def resume_agent(cfg: "Config", incus: "Incus", full: str, paused: PausedAgent, prompt: str) -> str | None:
+    from jailbee.orchestration import agent_session
+
+    try:
+        agent_session.relaunch(cfg, incus, full, prompt, runner=paused.runner, old_agent=paused.agent, resume=paused.session)
+    except Exception as exc:
+        return str(exc)
+    return None
+
+
+def foreign_agents(cfg: "Config", incus: "Incus", full: str, prompted: "AgentStatus | None") -> list[str]:
+    from jailbee import agent_status, lifecycle, procstat
+    from jailbee.incus import IncusError
+
+    try:
+        containers = incus.list_containers()
+    except (IncusError, ValueError) as exc:
+        raise RefreshError(f"cannot inspect container processes: {exc}") from exc
+    item = next ( (c for c in containers if c.get("name") == full), None)
+    state = item.get("state") if item else None
+    pid = state.get("pid") if isinstance(state, dict) else None
+    if type(pid) is not int or pid <= 0:
+        raise RefreshError(f"cannot inspect container processes in {full}")
+    sessions = agent_status._one_per_process(agent_status.read_sessions(lifecycle.agent_homes(cfg, [full])).get(full, ()))
+    by_start = {s.proc_start for s in sessions}
+    live = set()
+    for host_pid in procstat.read_container_pids(pid, full):
+        sample = procstat.read_process(host_pid)
+        if sample is not None and sample.starttime in by_start:
+            inner = procstat.read_nspid(host_pid)
+            live.add((inner, sample.starttime))
+    excluded = (prompted.pid, prompted.proc_start) if prompted and prompted.alive else None
+    return [f"{s.agent} (pid {s.pid})" for s in sessions if (s.pid, s.proc_start) in live and (s.pid, s.proc_start) != excluded]
 
 
 class _Strict(BaseModel):
