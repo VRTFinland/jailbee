@@ -111,14 +111,15 @@ class LocalProc:
             stderr=subprocess.DEVNULL if capture else None,
             start_new_session=True,
         )
+        pgid = process.pid  # start_new_session makes the child its group leader.
         try:
             return process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            self.killpg(process.pid, signal.SIGKILL)
+            self.signal_group(pgid, signal.SIGKILL)
             process.wait()
             return 124
         except BaseException:
-            self.killpg(process.pid, signal.SIGKILL)
+            self.signal_group(pgid, signal.SIGKILL)
             process.wait()
             raise
 
@@ -151,6 +152,16 @@ class LocalProc:
             if pid <= 1 or pgid <= 1 or session <= 1 or pgid == os.getpgrp():
                 return False
             if data["boot"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
+                return False
+            server = self.tmux(["display-message", "-p", "#{pid}"])
+            if server.returncode or not re.fullmatch(r"[0-9]+", server.stdout.strip()):
+                return False
+            server_pid = int(server.stdout.strip())
+            if server_pid <= 1:
+                return False
+            server_pgid = os.getpgid(server_pid)
+            server_session = os.getsid(server_pid)
+            if pid == server_pid or pgid == server_pgid or session == server_session:
                 return False
             stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
             if (
