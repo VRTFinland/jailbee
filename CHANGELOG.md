@@ -4,56 +4,29 @@ Each section is the difference between two released versions (the `v*` tags),
 as a user upgrading between them sees it — not a log of the work. Changes that
 were made and then corrected before ever being released appear only in their
 final form. Maintainers: see [docs/releasing.md](docs/releasing.md#what-belongs-in-the-unreleased-section)
-before editing `## Unreleased`.
-
-## Unreleased
-
-- The standalone `jailbee-inbox` helper is replaced by `jailbee inbox`.
+before editing `## Unreleased
 
 ### Added
 
-- Managed repository services with dependency-aware start, restart, refresh and tmux logs, automatic preparation and startup positioned with reserved `on_start` services stages (including disjoint subsets), light container creation or orchestration with `--services`, and host-authorized or orchestrator-authorized elevated refresh that pauses and resumes the agent.
+- **Managed repository services.** A repo's `services:` block declares
+  long-running processes with dependencies; `jailbee service` (inside a
+  container) and `jb service` (on the host) list, start, stop, restart,
+  refresh and tail them in tmux, in dependency order. Services are prepared
+  and started automatically by reserved `services` stages placed among the
+  `on_start` stages (several disjoint subsets allowed). `jb new --services`
+  creates a light container that starts only the named services, and
+  orchestrators can spawn children the same way. An elevated refresh, authorized
+  on the host or by an orchestrator's grant, pauses a running agent, runs the
+  prepare steps with the extra rights and resumes the same agent session.
 
-- Orchestration: `update --merge` merges the update into the child's branch after a conflict-free `merge-tree` check; conflicts refuse the update.
-- **In-container jailbee.** Validate the repo configuration from inside a container; host code is staged read-only and kept in sync.
+- **In-container jailbee.** Containers carry a `jailbee` of their own, running
+  the host's code mounted read-only at `/opt/jailbee/app`, so an agent can
+  run `jailbee config validate` against the repo configuration it edits.
 
 - **GPG keys over remote SSH.** With `remote.ssh.gpg`, a `jb remote ssh`
   client can forward its gpg-agent with one `RemoteForward` line; while
   connected, `gpg.enabled` containers decrypt and sign with the client's keys
   (for example a YubiKey), falling back to the host's agent when it closes.
-
-- Orchestrators can reuse an idle RUNNING child with `jailbee inbox send
-  restart --agent-only`, selecting a runner and fresh prompt per task without
-  container boot or `on_start`. Accepted `done` or an ended monitored agent
-  is required; busy children are refused. Existing services stay running,
-  no additional slot is needed, and the new session is monitored as usual.
-
-- `jailbee inbox wait --wake-on` filters wakeups without marking any message
-  read; a child's first report after spawn/restart always wakes. The
-  `--quiet-after` watchdog names running children that have not reported done
-  and show no activity (messages, agent events, commits or CPU);
-  `jailbee inbox children` lists each child's container state (`running`),
-  accepted `done` and latest session. Concurrent
-  `send --wait` replies are reserved for their sender, and a second ordinary
-  waiter is rejected. The broker also reports live prompted agents awaiting
-  input as `idle`, matchable with `--wake-on idle`: after 15 minutes by default,
-  repeated at the same interval (`orchestration.idle_after_seconds`). Reports
-  include the last child message and recent output; detection uses the agent's
-  session signal (currently Claude), not pane silence.
-  `jailbee inbox status` shows each child's agent state, activity, CPU,
-  memory, latest commit, longest-running command and last message exchange
-  without messaging it, and `jailbee inbox wait --digest DURATION` wakes the
-  orchestrator once per period with that table
-  ([#64](https://github.com/VRTFinland/jailbee/issues/64)).
-
-- Orchestrators can grant and revoke a child's network, optional mounts and
-  egress rights at runtime, timed or permanent; children can relinquish their
-  own access. Loose permission includes narrower egress within the repo cap.
-  `jailbee net egress add --for` also schedules per-container egress expiry.
-  `jailbee inbox send update --ref REF` transports a full ref or commit from
-  the orchestrator's repo; `--base BRANCH` resolves a host base as spawn does.
-  Explicit updates use an isolated per-request ref without switching branches;
-  omitting both options preserves the current-branch update.
 
 - **Named autostart profiles.** Repos can select startup stages with
   `autostart.profiles` and `default_profile`; `new --autostart-profile` remembers
@@ -62,22 +35,86 @@ before editing `## Unreleased`.
   a Lifecycle picker and optional PROFILE column; orchestration spawn/restart
   requests accept the same selection.
 
+- **Adopting and releasing children.** `jb orchestrate adopt ORCHESTRATOR
+  CHILD...` brings existing containers of the same repo, running or stopped,
+  under an orchestrator; `jb orchestrate release` detaches them again and
+  revokes the rights the orchestrator gave them. Both are in the dashboard's
+  Orchestration menu.
+
+- **Orchestration profiles from a grant.** `jb orchestrate profile save
+  CONTAINER PROFILE` (and the dashboard's Orchestration menu) saves a
+  container's grant as a global profile, and a profile can carry a
+  `default_runner` for its holder's children.
+
+- **Runtime rights for children.** Orchestrators can grant and revoke a child's
+  network, optional mounts and egress rights at runtime, timed or permanent;
+  children can relinquish their own access. Loose permission includes narrower
+  egress within the repo cap. `jailbee net egress add --for` also schedules
+  per-container egress expiry.
+
+- **Reusing and resuming children.** `jailbee inbox send restart --agent-only`
+  relaunches the agent of an idle running child with a new runner and prompt,
+  without a container boot or `on_start`; busy children are refused and
+  services stay running. `--resume ID|last` continues a recorded agent
+  session of that child instead of starting a fresh one, and
+  `jailbee inbox children` shows each child's latest session. Runner models
+  accept the `[1m]` suffix (for example `--model 'opus[1m]'`).
+
+- **More flexible updates.** `jailbee inbox send update --ref REF` transports
+  any ref or commit from the orchestrator's repo, and `--base BRANCH` a host
+  base branch as spawn resolves it; without either, the orchestrator's current
+  branch is sent as before. `--merge` merges the update into the child's branch
+  after a conflict-free `merge-tree` check; a conflict refuses the update.
+
+- **Waiting on children.** `jailbee inbox wait --wake-on` filters wakeups
+  (by kind, or `msg:`/`status:` prefixes) without marking any message read; a
+  child's first report after spawn or restart always wakes. `--timeout none`
+  waits without a deadline. The `--quiet-after` watchdog names running children
+  that have not reported done and show no activity (messages, agent events,
+  commits or CPU). The broker reports a live prompted agent that sits awaiting
+  input as `idle` — after 15 minutes by default, repeated at the same interval
+  (`orchestration.idle_after_seconds`) — with the child's last message and
+  recent output; detection uses the agent's session signal (currently Claude),
+  not pane silence. Concurrent `send --wait` replies are reserved for their
+  sender, and a second ordinary waiter is rejected.
+
+- **Child status at a glance.** `jailbee inbox status` shows each child's agent
+  state, activity, CPU, memory, latest commit, longest-running command and last
+  message exchange without messaging it, and `jailbee inbox wait --digest
+  DURATION` wakes the orchestrator once per period with that table
+  ([#64](https://github.com/VRTFinland/jailbee/issues/64)).
+
 - **Outbox: publish several proposals at once.** In the Outbox box and
   `jailbee outbox`, `Space` marks a row together with everything under it,
   and `p` publishes every marked proposal after one question showing each
   publication plan. Without marks `p` publishes the proposal under the cursor
-  as before.
+  as before. A manifest is no longer limited to 50 actions.
 
 ### Changed
 
-- **The built-in ChatGPT routes default to a 1,050,000-token context window** (was 272,000 since 1.7.0), which a ChatGPT subscription includes at no extra cost. `claude-jb -C 272k` still picks a smaller window for a session, and `context_window` on a route overrides the default. Run `jailbee apply` to update running containers.
+- **`jailbee inbox` replaces the `jailbee-inbox` helper** in containers, with
+  the same subcommands and options. Run `jailbee base build` and
+  `jailbee apply`; the bundled skills use the new name.
 
-- `jailbee tmux` and the dashboard attach through their own tmux session grouped with `autostart` (`tmux new-session -t autostart`), so each attached terminal keeps its own current window. The grouped session is removed on detach, and the next attach returns to the window last used.
+- **The built-in ChatGPT routes default to a 1,050,000-token context window**
+  (was 272,000 since 1.7.0), which a ChatGPT subscription includes at no extra
+  cost. `claude-jb -C 272k` still picks a smaller window for a session, and
+  `context_window` on a route overrides the default. Run `jailbee apply` to
+  update running containers.
+
+- `jailbee tmux` and the dashboard attach through their own tmux session
+  grouped with `autostart` (`tmux new-session -t autostart`), so each attached
+  terminal keeps its own current window. The grouped session is removed on
+  detach, and the next attach returns to the window last used.
 
 - **Child containers message sparsely.** The child skill and spawn preamble tell
   children to message their orchestrator only when it must act or decide
   (question, blocked, scope change, done), not with progress notes that each
   cost the orchestrator a turn. ([#62](https://github.com/VRTFinland/jailbee/issues/62))
+
+- The dashboard lists orchestration children indented under their
+  orchestrator; plain forks are no longer indented.
+
 - PR agent generation now requires consent: one No-default question covers the
   configured title/description and branch-name proposal. `--ai` skips the
   question; `--no-ai` skips generation. Non-interactive runs require `--ai`,
@@ -97,6 +134,13 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- An orchestrator now hears about a child agent that ends without reporting
+  done, including a clean exit or a signal, and every child restart is
+  verified to bring the agent up
+  ([#56](https://github.com/VRTFinland/jailbee/issues/56)).
+- An autostart stage naming an optional mount that is already attached no
+  longer fails on the duplicate device, and leaves the mount attached when it
+  ends.
 - Scrolling a short Outbox preview in a narrow terminal no longer crashes the
   terminal dashboard.
 
