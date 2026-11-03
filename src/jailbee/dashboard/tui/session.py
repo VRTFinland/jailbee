@@ -226,7 +226,7 @@ class _GrantPatch:
 
 log = logging.getLogger(__name__)
 
-_TOGGLE_OPERATIONS = ("import", "restart", "stop", "destroy")  # spawn/message are the baseline
+_TOGGLE_OPERATIONS = ("import", "refresh", "restart", "stop", "destroy")  # spawn/message baseline
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read

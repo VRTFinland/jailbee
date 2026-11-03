@@ -976,6 +976,7 @@ def test_orchestration_edit_entries_labels(mocker, tmp_path):
     assert [(e.label, e.value) for e in picker.entries] == [
         ("Children limit: 2…", "limit"),
         ("Allow import: off", "op:import"),
+        ("Allow refresh: off", "op:refresh"),
         ("Allow restart: on", "op:restart"),
         ("Allow stop: off", "op:stop"),
         ("Allow destroy: off", "op:destroy"),
@@ -995,6 +996,19 @@ def test_orchestration_mount_kinds_fall_back_to_repo(mocker, tmp_path):
     session.groups[0].optional_mounts = ("docs",)
     values = [e.value for e in session.open_orchestration("alpha-one").entries]
     assert "mount:docs" in values
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_toggle_refresh(mocker, tmp_path, enabled):
+    ops = ("spawn", "message", "refresh") if enabled else ("spawn", "message")
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, ops=ops)
+    picker = session.open_orchestration("alpha-one")
+    entry = next(e for e in picker.entries if e.value == "op:refresh")
+    assert entry.label == f"Allow refresh: {'on' if enabled else 'off'}"
+    session.submit_picker(picker, entry)
+    assert quiet.call_args.args[1] == [
+        "orchestrate", "grant", "--deny" if enabled else "--allow", "refresh", "--", "alpha-one"
+    ]
 
 
 def test_toggle_destroy_on(mocker, tmp_path):
@@ -1430,6 +1444,7 @@ def test_menu_locally_unchanged(mocker, tmp_path):
     assert [e.value for e in session.open_orchestration("alpha-one").entries] == [
         "limit",
         "op:import",
+        "op:refresh",
         "op:restart",
         "op:stop",
         "op:destroy",
