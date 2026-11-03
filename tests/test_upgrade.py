@@ -1104,7 +1104,10 @@ def test_service_autostart_upgrade_notes_have_separate_reasons() -> None:
 
     reasons = {
         "the golden image's jailbee-inbox accepts `send spawn|restart --services`": "base_build",
-        "`jailbee apply` syncs skills describing autostart services and light spawn (`--services`)": "apply",
+        (
+            "`jailbee apply` syncs skills describing autostart services and light spawn "
+            "(`--services`)"
+        ): "apply",
     }
     for reason, action in reasons.items():
         notes = [n for n in UPGRADE_NOTES if n.reason == reason]

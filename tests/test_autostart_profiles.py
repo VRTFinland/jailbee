@@ -240,11 +240,18 @@ def test_new_flag_in_repo_without_profiles_exits_2(make_cfg, tmp_path, mocker):
 def test_services_only_switch_runs_service_hook(make_cfg, tmp_path, mocker):
     from jailbee.autostart_profiles import PROFILE_KEY, switch_profile
 
-    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}}, autostart={
-        "on_start": [{"stage": "setup"}],
-        "profiles": {"light": {"stages": ["setup"], "services": []}, "full": {"stages": ["setup"], "services": ["db"]}},
-        "default_profile": "light",
-    })
+    cfg = make_cfg(
+        tmp_path,
+        services={"db": {"run": "db"}},
+        autostart={
+            "on_start": [{"stage": "setup"}],
+            "profiles": {
+                "light": {"stages": ["setup"], "services": []},
+                "full": {"stages": ["setup"], "services": ["db"]},
+            },
+            "default_profile": "light",
+        },
+    )
     incus, _ = state_incus(mocker, {PROFILE_KEY: "light"})
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     mocker.patch("jailbee.autostart_status.live_run", return_value=None)

@@ -352,18 +352,30 @@ def test_services_stage_ignored_on_create():
 def test_services_stage_false_is_unchanged():
     block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "b", "detach": True}]})
     agent = AutostartStep(name="agent", run="x")
-    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent], services_stage=False)
+    plan = plan_autostart(
+        block, AutostartTrigger.ON_START, agent_steps=[agent], services_stage=False
+    )
     assert _order(plan) == (["a", "agents"], ["b"])
 
 
-@pytest.mark.parametrize("override,detached,expected", [
-    ("wait", False, (["a", "b", "services", "agents"], [])),
-    ("no_wait", False, (["a", "services", "agents"], ["b"])),
-    (None, True, ([], ["services", "agents", "a", "b"])),
-])
+@pytest.mark.parametrize(
+    "override,detached,expected",
+    [
+        ("wait", False, (["a", "b", "services", "agents"], [])),
+        ("no_wait", False, (["a", "services", "agents"], ["b"])),
+        (None, True, ([], ["services", "agents", "a", "b"])),
+    ],
+)
 def test_services_boundary_overrides(override, detached, expected):
     block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "b", "detach": True}]})
-    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[AutostartStep(name="agent", run="x")], services_stage=True, override=override, already_detached=detached)
+    plan = plan_autostart(
+        block,
+        AutostartTrigger.ON_START,
+        agent_steps=[AutostartStep(name="agent", run="x")],
+        services_stage=True,
+        override=override,
+        already_detached=detached,
+    )
     assert _order(plan) == expected
 
 

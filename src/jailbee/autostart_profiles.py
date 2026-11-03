@@ -124,12 +124,18 @@ def switch_profile(
 
     def profile_services(profile: str | None) -> set[str]:
         selection = cfg.autostart.profiles.get(profile) if profile else None
-        names = selection.services if selection is not None and selection != "all" else list(cfg.services)
+        names = (
+            selection.services
+            if selection is not None and selection != "all"
+            else list(cfg.services)
+        )
         from jailbee.services.graph import with_dependencies
 
         return with_dependencies(cfg.services, cfg.services if names is None else names)
 
-    services_added = override_services is None and bool(profile_services(name) - profile_services(previous))
+    services_added = override_services is None and bool(
+        profile_services(name) - profile_services(previous)
+    )
     incus.config_set(container, PROFILE_KEY, name)
     running = any(
         c.get("name") == container and c.get("status") == "Running" for c in incus.list_containers()
@@ -177,7 +183,13 @@ def switch_profile(
             from jailbee.services.autostart import run_services_stage
 
             run_services_stage(
-                cfg, incus, container, repo_dir, mirror_endpoint=mirror_endpoint,
-                on_progress=on_progress, cas_restore=False, live_switch=True,
+                cfg,
+                incus,
+                container,
+                repo_dir,
+                mirror_endpoint=mirror_endpoint,
+                on_progress=on_progress,
+                cas_restore=False,
+                live_switch=True,
             )
     return SwitchResult(previous, name, creates, starts, not (creates or starts or services_added))

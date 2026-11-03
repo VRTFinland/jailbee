@@ -487,7 +487,8 @@ def run_autostart(
         override=override,
         already_detached=already_detached,
         agents_last=prompted,
-        services_stage=not skip_services and trigger == AutostartTrigger.ON_START
+        services_stage=not skip_services
+        and trigger == AutostartTrigger.ON_START
         and services_stage_wanted(cfg, incus, container),
     )
     if not plan.blocking:

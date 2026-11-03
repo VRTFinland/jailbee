@@ -198,8 +198,13 @@ def test_new_container_hands_the_on_start_stages_to_on_detach(tmp_path, make_cfg
     cfg = _cfg_for_new(make_cfg, tmp_path)
     from jailbee.lifecycle import BranchAutostartAssessment
 
-    branch_cfg = cfg.model_copy(update={"services": make_cfg(tmp_path, services={"db": {"run": "db"}}).services})
-    mocker.patch("jailbee.lifecycle.assess_branch_autostart", return_value=BranchAutostartAssessment(None, branch_cfg, None))
+    branch_cfg = cfg.model_copy(
+        update={"services": make_cfg(tmp_path, services={"db": {"run": "db"}}).services}
+    )
+    mocker.patch(
+        "jailbee.lifecycle.assess_branch_autostart",
+        return_value=BranchAutostartAssessment(None, branch_cfg, None),
+    )
 
     new_container(
         cfg,

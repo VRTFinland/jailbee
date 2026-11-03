@@ -30,7 +30,8 @@ def approval_envelope(cfg: Config, names: list[str] | None = None) -> str:
     from jailbee.services.graph import elevation, with_dependencies
 
     selected = with_dependencies(
-        cfg.services, cfg.services if names is None else [name for name in names if name in cfg.services]
+        cfg.services,
+        cfg.services if names is None else [name for name in names if name in cfg.services],
     )
     grants = {}
     for name in sorted(selected):
@@ -41,13 +42,20 @@ def approval_envelope(cfg: Config, names: list[str] | None = None) -> str:
 
 def _approved(raw: str) -> dict[str, Any]:
     data = json.loads(raw)
-    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("services"), dict):
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != 1
+        or not isinstance(data.get("services"), dict)
+    ):
         raise ValueError("invalid service approval envelope")
     for name, grant in data["services"].items():
-        if (not isinstance(name, str) or not isinstance(grant, dict)
+        if (
+            not isinstance(name, str)
+            or not isinstance(grant, dict)
             or grant.get("network") not in (None, "loose")
             or not isinstance(grant.get("mounts"), list)
-            or not all(isinstance(mount, str) for mount in grant["mounts"])):
+            or not all(isinstance(mount, str) for mount in grant["mounts"])
+        ):
             raise ValueError("invalid service approval envelope")
     return dict(data["services"])
 
@@ -120,12 +128,17 @@ def run_services_stage(
         for name in order:
             service = services[name]
             access = service["elevation"]
-            if (service["prepare"] and name not in prepared and (access["network"] == "loose" or access["mounts"])) or deferred.intersection(service.get("depends_on", [])):
+            if (
+                service["prepare"]
+                and name not in prepared
+                and (access["network"] == "loose" or access["mounts"])
+            ) or deferred.intersection(service.get("depends_on", [])):
                 deferred.add(name)
         if deferred and any("depends_on" not in services[name] for name in order):
             deferred.update(order)
         if deferred:
-            warn(f"services deferred until next restart: {', '.join(name for name in order if name in deferred)}")
+            names_deferred = ", ".join(name for name in order if name in deferred)
+            warn(f"services deferred until next restart: {names_deferred}")
             order = [name for name in order if name not in deferred]
         if not order:
             return
@@ -141,10 +154,13 @@ def run_services_stage(
         if not spawned_by:
             raw_envelope = incus.config_get_checked(container, ENVELOPE_KEY)
             try:
-                grants = _approved(raw_envelope if raw_envelope is not None else approval_envelope(cfg))
+                grants = _approved(
+                    raw_envelope if raw_envelope is not None else approval_envelope(cfg)
+                )
             except (ValueError, TypeError) as exc:
                 raise autostart.AutostartStepError(
-                    container=container, step_name=f"prepare-{name}",
+                    container=container,
+                    step_name=f"prepare-{name}",
                     reason=f"invalid approved service elevation envelope: {exc}",
                 ) from exc
             grant = grants.get(name, {"network": None, "mounts": []})
@@ -153,10 +169,13 @@ def run_services_stage(
                 denied.append("network loose")
             if denied:
                 raise autostart.AutostartStepError(
-                    container=container, step_name=f"prepare-{name}",
-                    reason=(f"service '{name}' exceeds approved elevation: {', '.join(denied)}; "
-                            "re-assess the configuration; host service refresh or orchestrator "
-                            "refresh will be available in a future release"),
+                    container=container,
+                    step_name=f"prepare-{name}",
+                    reason=(
+                        f"service '{name}' exceeds approved elevation: {', '.join(denied)}; "
+                        "re-assess the configuration; host service refresh or orchestrator "
+                        "refresh will be available in a future release"
+                    ),
                 )
         if spawned_by:
             raw_rights = incus.config_get_checked(container, labels.RIGHTS)

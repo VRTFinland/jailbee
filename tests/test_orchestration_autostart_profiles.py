@@ -16,7 +16,24 @@ def test_raw_legacy_queue_without_services_loads(tmp_path):
 
     from jailbee.orchestration.state import load_queue
 
-    raw = {"version": 1, "queues": {"parent": [{"manifest_id": "m", "child_full": "c", "kind": "spawn", "queued_at": "now", "prompt": "go", "rights": {}, "commit": None, "branch": None, "base": None}]}}
+    raw = {
+        "version": 1,
+        "queues": {
+            "parent": [
+                {
+                    "manifest_id": "m",
+                    "child_full": "c",
+                    "kind": "spawn",
+                    "queued_at": "now",
+                    "prompt": "go",
+                    "rights": {},
+                    "commit": None,
+                    "branch": None,
+                    "base": None,
+                }
+            ]
+        },
+    }
     (tmp_path / "queue.json").write_text(json.dumps(raw))
     assert load_queue(tmp_path)["parent"][0].services is None
 

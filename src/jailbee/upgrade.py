@@ -574,7 +574,10 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"apply"}),
-        reason="`jailbee apply` syncs skills describing autostart services and light spawn (`--services`)",
+        reason=(
+            "`jailbee apply` syncs skills describing autostart services and light spawn "
+            "(`--services`)"
+        ),
     ),
     UpgradeNote(
         version=(1, 8, 1),
