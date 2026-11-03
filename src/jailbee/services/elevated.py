@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -576,6 +577,12 @@ def run_plain_refresh(
 
 def orchestrator_policy(cfg: "Config", grant: Grant, plan: Plan) -> list[str]:
     return check_rights(grant, repo_cap(cfg), plan.declared(), cfg.optional_mounts.keys())
+
+
+def run_job(cfg: "Config", incus: "Incus", job_path: Path) -> int:
+    from jailbee.services.refresh_worker import run_job as worker
+
+    return worker(cfg, incus, job_path)
 
 
 def host_policy(cfg: "Config", plan: Plan) -> list[str]:

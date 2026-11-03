@@ -3223,6 +3223,17 @@ def _destroy_worker(
     )
 
 
+@app.command("_refresh-worker", hidden=True)
+def _refresh_worker(
+    job: Annotated[Path, typer.Option("--job")],
+    config: ConfigOption = None,
+) -> None:
+    from jailbee.incus import Incus
+    from jailbee.services.elevated import run_job
+
+    raise typer.Exit(run_job(_load_or_exit(config), Incus(), job))
+
+
 @app.command("_boot-worker", hidden=True)
 def _boot_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to boot.")],

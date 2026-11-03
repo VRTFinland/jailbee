@@ -219,8 +219,12 @@ def claim_job(
     dead row of the same kind (a stop that was killed) is replaced. Returns
     whether the row is now ours.
     """
+    from sqlalchemy import text
+
+    session.execute(text("BEGIN IMMEDIATE"))
     row = session.get(BackgroundJob, container_name)
     if row is not None and not (row.op_kind == op_kind and clearable(row.phase, row.pid)):
+        session.rollback()
         return False
     start_job(
         session,
