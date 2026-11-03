@@ -124,6 +124,15 @@ def run_services_stage(
                 exit_code=exc.exit_code,
                 original=exc.original,
             ) from exc
+        except autostart.AutostartCancelledError:
+            raise
+        except Exception as exc:
+            raise autostart.AutostartStepError(
+                container=container,
+                step_name=f"prepare-{name}",
+                reason=f"prepare infrastructure failed: {exc}",
+                original=exc,
+            ) from exc
         prepared.append(name)
         incus.config_set(container, PREPARED_KEY, encode_names(prepared))
     command = shlex.join(

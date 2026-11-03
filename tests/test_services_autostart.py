@@ -7,7 +7,8 @@ import pytest
 
 from jailbee import autostart, container_app
 from jailbee.autostart_profiles import PREPARED_KEY, SERVICES_KEY, decode_names, encode_names
-from jailbee.incus import ExecResult
+from jailbee.config import CONTAINER_USERNAME
+from jailbee.incus import ExecResult, IncusError
 from jailbee.services.autostart import run_services_stage, selected_services, services_stage_wanted
 
 
@@ -80,18 +81,24 @@ def test_selection_and_presence(tmp_path, make_cfg):
 def test_prepare_then_start_and_skip(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
-    mocker.patch.object(
+    metadata = mocker.patch.object(
         container_app,
         "run_in_container",
         return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
     )
+    mocker.patch.object(container_app, "expected_version", return_value="1.2 hash")
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
+    metadata.assert_called_once_with(
+        cfg, incus, "box", ["service", "--repo", "/repo space", "plan", "--op", "start", "--json"],
+        uid=cfg.container_user.uid, cwd="/repo space",
+        env={"HOME": f"/home/{CONTAINER_USERNAME}"}, init_groups=True,
+    )
     assert [c.args[3].stage for c in run.call_args_list] == ["prepare-db", "services"]
     stage = run.call_args_list[0].args[3]
     assert stage.network == "loose" and stage.chains[0].steps[0].run == "setup"
     start = run.call_args_list[1].args[3].chains[0].steps[0]
-    assert "service --repo '/repo space' start db web" in start.run
+    assert start.run == "jailbee --expect-version '1.2 hash' service --repo '/repo space' start db web"
     assert start.timeout == 60
     assert values[PREPARED_KEY] == "db"
     run.reset_mock()
@@ -116,6 +123,38 @@ def test_prepare_failure_not_recorded(tmp_path, mocker, make_cfg):
     assert caught.value.step_name == "prepare-db"
     assert caught.value.reason == "exit" and caught.value.exit_code == 2
     assert PREPARED_KEY not in values and run.call_count == 1
+
+
+def test_prepare_infrastructure_error_wrapped(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path)
+    incus, values = labels()
+    mocker.patch.object(
+        container_app, "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
+    error = IncusError("host mount path missing")
+    run = mocker.patch.object(autostart, "run_stage", side_effect=error)
+    with pytest.raises(autostart.AutostartStepError) as caught:
+        invoke(cfg, incus)
+    assert caught.value.step_name == "prepare-db"
+    assert "host mount path missing" in caught.value.reason
+    assert caught.value.original is error
+    assert PREPARED_KEY not in values and run.call_count == 1
+
+
+def test_prepare_cancellation_propagates_unchanged(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path)
+    incus, values = labels()
+    mocker.patch.object(
+        container_app, "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
+    error = autostart.AutostartCancelledError(container="box", signum=15)
+    mocker.patch.object(autostart, "run_stage", side_effect=error)
+    with pytest.raises(autostart.AutostartCancelledError) as caught:
+        invoke(cfg, incus)
+    assert caught.value is error
+    assert PREPARED_KEY not in values
 
 
 def test_unknown_mount(tmp_path, mocker, make_cfg):
