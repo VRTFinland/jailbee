@@ -569,7 +569,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
-        reason="the golden image's jailbee-inbox can request a child service refresh (`send refresh`)",
+        reason=(
+            "the golden image's jailbee-inbox can request a child service refresh (`send refresh`)"
+        ),
     ),
     UpgradeNote(
         version=(1, 8, 1),
