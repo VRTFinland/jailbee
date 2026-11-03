@@ -17,6 +17,31 @@ def _step(name: str, **kw: object) -> AutostartStep:
     return AutostartStep(name=name, **kw)  # type: ignore[arg-type]  # kwargs are field values
 
 
+def test_earlier_services_slot_subset_change_is_reported():
+    host = Autostart.model_validate({"on_start": [
+        {"stage": "services", "services": ["db"]}, {"stage": "services"},
+    ]})
+    branch = Autostart.model_validate({"on_start": [
+        {"stage": "services", "services": ["web"]}, {"stage": "services"},
+    ]})
+    dev = diff_autostart(host, branch)
+    assert [(c.name, c.fields) for c in dev.changed] == [
+        ("on_start<services#1>", ("services",))
+    ]
+    assert dev.any_change
+
+
+def test_services_slot_grants_do_not_collapse():
+    from jailbee.branch_config import _grants
+
+    block = Autostart.model_validate({"on_start": [
+        {"stage": "services", "services": ["db"]}, {"stage": "services"},
+    ]})
+    assert list(_grants(block.on_start, "on_start")) == [
+        "on_start<services#1>", "on_start<services#2>",
+    ]
+
+
 def test_identical_autostart_has_no_deviation():
     a = Autostart(on_create=[_step("build")])
     b = Autostart(on_create=[_step("build")])

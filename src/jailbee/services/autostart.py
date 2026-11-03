@@ -131,6 +131,7 @@ def run_services_stage(
     live_switch: bool = False,
     stage_services: list[str] | None = None,
     excluded_services: list[str] | tuple[str, ...] = (),
+    progress_stage: str = "services",
 ) -> None:
     names = selected_services(cfg, incus, container)
     if names == []:
@@ -162,7 +163,11 @@ def run_services_stage(
     if not order:
         return
     services = {item["name"]: item for item in payload["services"]}
-    if stage_services is not None or excluded_services:
+    # Old container versions cannot describe the graph. Keep the full order
+    # (and its prepare work) rather than silently omit a dependency's prepare.
+    if (stage_services is not None or excluded_services) and all(
+        "depends_on" in services[name] for name in order
+    ):
         targets = (
             set(order).intersection(stage_services)
             if stage_services is not None
@@ -322,7 +327,7 @@ def run_services_stage(
         timeout=sum(s["ready_timeout"] for s in payload["services"]) + 30,
     )
     stage = AutostartStage.model_construct(
-        stage="services",
+        stage=progress_stage,
         network=None,
         mounts=[],
         detach=False,

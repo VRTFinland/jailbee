@@ -651,11 +651,11 @@ def _build_config_from_dict(
         # chain, so uniqueness is load-bearing, not cosmetic.
         seen_step_names: set[str] = set()
         for stage in stages:
-            if stage.stage in seen_stage_names and not (
-                is_stage_form and trigger_name == "on_start" and stage.stage == "services"
-            ):
-                raise ConfigError(f"duplicate autostart.{trigger_name} stage name: '{stage.stage}'")
-            seen_stage_names.add(stage.stage)
+            is_slot = is_stage_form and trigger_name == "on_start" and stage.is_services_slot()
+            if not is_slot:
+                if stage.stage in seen_stage_names:
+                    raise ConfigError(f"duplicate autostart.{trigger_name} stage name: '{stage.stage}'")
+                seen_stage_names.add(stage.stage)
             if is_stage_form and stage.stage == AGENTS_STAGE and (stage.chains or stage.steps):
                 raise ConfigError(
                     f"autostart.{trigger_name} stage 'agents' may not carry `chains`/`steps` "

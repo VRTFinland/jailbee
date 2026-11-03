@@ -57,8 +57,16 @@ jailbee warns and skips services. See [service commands](commands.md#services).
 
 ### Placing service startup
 
-In stage-form `autostart.on_start`, `services` is reserved, like `agents`.
-It carries no `steps` or `chains`. Position it after the setup its processes need:
+In stage-form `autostart.on_start`, a `services` stage with no `steps` and no
+`chains` is a reserved service-startup slot. A legacy stage named `services`
+with its own steps/chains remains ordinary work in either trigger and can coexist
+with the slots or the generated stage. Two ordinary stages with that name are
+still duplicates. A `services:` subset list is invalid on an ordinary stage.
+A stepless `services` stage in `on_create` is invalid: move it to `on_start` or
+add steps/chains to make it ordinary work.
+
+Slots reject `network` and nonempty `mounts`: put elevation on service prepare
+steps instead. Position a slot after the setup its processes need:
 
 ```yaml
 autostart:
@@ -96,7 +104,14 @@ Dependencies start with their dependent when needed, even if explicitly placed
 in a later slot; their own later start is idempotent. Place dependencies earlier
 if they need separate prerequisites. Named autostart profiles always retain all
 reserved services slots, just as they retain agents; control service selection
-with the profile's `services:` field instead of its `stages:` list.
+with the profile's `services:` field instead of its `stages:` list. Ordinary
+stages named `services` still follow the profile's stage selection.
+
+Branch-config differences identify slots by occurrence (`services#1`,
+`services#2`, ...), so changing an earlier subset is visible. Multiple generated
+service stages also use those distinct labels in autostart status. Old container
+versions whose service plan lacks dependency metadata run the full selected plan
+at each slot, including all required preparation, rather than partition unsafely.
 
 ### Service example
 

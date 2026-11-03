@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jailbee.autostart_plan import normalize_stages
+from jailbee.autostart_plan import normalize_stages, stage_keys
 from jailbee.config import AutostartStage
 
 if TYPE_CHECKING:
@@ -191,7 +191,11 @@ def _declared_stages(
     """
     if not _is_stage_form(entries):
         return {}
-    return {_STAGE_KEY.format(trigger=trigger, name=s.stage): s for s in normalize_stages(entries)}
+    stages = normalize_stages(entries)
+    return {
+        _STAGE_KEY.format(trigger=trigger, name=key): s
+        for s, key in zip(stages, stage_keys(stages), strict=True)
+    }
 
 
 def _chain_layout(
@@ -274,8 +278,10 @@ def _grants(entries: list[AutostartStep] | list[AutostartStage], trigger: str) -
     """
     grants: dict[str, _Grant] = {}
     declared = _is_stage_form(entries)
-    for stage in normalize_stages(entries):
-        stage_key = _STAGE_KEY.format(trigger=trigger, name=stage.stage)
+    stages = normalize_stages(entries)
+    keys = stage_keys(stages) if declared else [stage.stage for stage in stages]
+    for stage, name in zip(stages, keys, strict=True):
+        stage_key = _STAGE_KEY.format(trigger=trigger, name=name)
         steps = [step for chain in stage.all_chains() for step in chain.steps]
         if declared and not steps:
             # A stage with no steps still switches the profile and attaches

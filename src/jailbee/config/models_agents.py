@@ -207,11 +207,17 @@ class AutostartStage(BaseModel):
 
     @model_validator(mode="after")
     def _services_slot(self) -> AutostartStage:
-        if self.stage == "services":
-            if self.steps or self.chains:
-                raise ValueError("reserved stage 'services' may not carry chains/steps")
+        if self.is_services_slot():
+            if self.network is not None or self.mounts:
+                raise ValueError(
+                    "reserved services slot may not set network/mounts; "
+                    "put elevation on the service's prepare steps"
+                )
         elif self.services is not None:
-            raise ValueError("stage services list is only allowed on stage 'services'")
+            raise ValueError(
+                "stage services list is only allowed on a stepless 'services' slot; "
+                "remove steps/chains or the services list"
+            )
         return self
 
     @field_validator("network", mode="before")
@@ -247,6 +253,10 @@ class AutostartStage(BaseModel):
                         f"for all of its chains"
                     )
         return self
+
+    def is_services_slot(self) -> bool:
+        """Stepless services stages are slots; legacy stages with work are not."""
+        return self.stage == "services" and not self.steps and not self.chains
 
     def all_chains(self) -> list[AutostartChain]:
         """The stage's chains, with the `steps:` shorthand expanded.
@@ -941,10 +951,13 @@ class Autostart(BaseModel):
         seen: set[str] = set()
         bare = False
         for entry in self.on_create:
-            if isinstance(entry, AutostartStage) and entry.stage == "services":
-                raise ValueError("reserved stage 'services' is only allowed in on_start")
+            if isinstance(entry, AutostartStage) and entry.is_services_slot():
+                raise ValueError(
+                    "stepless services slot is only allowed in on_start; "
+                    "move it there or add steps/chains for an ordinary stage"
+                )
         for entry in self.on_start:
-            if not isinstance(entry, AutostartStage) or entry.stage != "services":
+            if not isinstance(entry, AutostartStage) or not entry.is_services_slot():
                 continue
             if entry.services is None:
                 if bare:

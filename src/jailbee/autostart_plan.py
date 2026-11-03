@@ -28,6 +28,9 @@ class GeneratedServicesStage(AutostartStage):
     ``excluded_services`` (the services explicitly placed in other slots).
     """
 
+    progress_stage: str = Field(
+        default=SERVICES_STAGE, description="Unique progress label for this generated services slot."
+    )
     excluded_services: list[str] = Field(
         default_factory=list,
         description="Services explicitly placed in other slots, excluded from the remainder.",
@@ -119,6 +122,23 @@ def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> lis
     return stages
 
 
+def stage_keys(stages: list[AutostartStage]) -> list[str]:
+    """Keep ordinary stage names; identify reserved slots by occurrence.
+
+    Slot numbering is independent of ordinary stages named services. The same
+    labels identify branch diffs and progress rows across detach hand-offs.
+    """
+    occurrence = 0
+    keys: list[str] = []
+    for stage in stages:
+        if stage.is_services_slot():
+            occurrence += 1
+            keys.append(f"services#{occurrence}")
+        else:
+            keys.append(stage.stage)
+    return keys
+
+
 def profile_names(autostart: Autostart) -> tuple[str, ...]:
     return tuple(autostart.profiles)
 
@@ -129,11 +149,14 @@ def select_profile(autostart: Autostart, profile: str | None) -> Autostart:
         return autostart
     selection = autostart.profiles[profile]
     assert selection != "all"
-    names = set(selection.stages) | {AGENTS_STAGE, SERVICES_STAGE}
+    names = set(selection.stages) | {AGENTS_STAGE}
     return autostart.model_copy(
         update={
             trigger.value: [
-                s for s in normalize_stages(getattr(autostart, trigger.value)) if s.stage in names
+                s for s in normalize_stages(getattr(autostart, trigger.value))
+                if s.stage in names or (
+                    trigger == AutostartTrigger.ON_START and s.is_services_slot()
+                )
             ]
             for trigger in TRIGGER_ORDER
         }
@@ -223,7 +246,7 @@ def plan_autostart(
     is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
 
     service_slots = (
-        [s for s in stages if s.stage == SERVICES_STAGE]
+        [s for s in stages if s.is_services_slot()]
         if is_stage_form and trigger == AutostartTrigger.ON_START
         else []
     )
@@ -328,5 +351,13 @@ def plan_autostart(
                 excluded_services=placed,
             ),
         )
+
+    generated = [s for s in stages if isinstance(s, GeneratedServicesStage)]
+    if len(generated) > 1 or any(
+        s.stage == SERVICES_STAGE and not isinstance(s, GeneratedServicesStage) for s in stages
+    ):
+        for s, key in zip(stages, stage_keys(stages), strict=True):
+            if isinstance(s, GeneratedServicesStage):
+                s.progress_stage = key
 
     return AutostartPlan(blocking=stages[:boundary], detached=stages[boundary:])

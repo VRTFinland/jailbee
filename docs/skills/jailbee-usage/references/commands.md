@@ -41,7 +41,12 @@ place it without broadening selection. Slots may name disjoint `services: [names
 subsets; at most one bare slot starts the remainder. With only subset slots,
 unplaced services keep the default before-agents position (last without agents).
 Dependencies start with dependents even when placed later; slots after a detach
-boundary run detached. Profiles retain service slots like agents.
+boundary run detached. Profiles retain service slots like agents. Only stepless
+on_start services stages are slots; stages with steps/chains remain ordinary work
+and obey profile stage selection. Slots reject network/nonempty mounts (elevate
+service prepare instead). Multiple slots get separate services#N status rows.
+Old container plans without dependency metadata run all selected services and
+prepare work rather than partitioning.
 
 ## Global repository option
 

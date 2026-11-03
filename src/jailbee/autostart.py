@@ -690,6 +690,7 @@ def run_stages(
                     cas_restore=cas_restore,
                     stage_services=stage.services,
                     excluded_services=stage.excluded_services,
+                    progress_stage=stage.progress_stage,
                 )
             else:
                 run_stage(

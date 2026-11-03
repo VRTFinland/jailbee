@@ -115,6 +115,53 @@ def test_slots_partition_container_selection_and_include_dependencies(
         run.assert_not_called()
 
 
+def test_legacy_payload_without_dependencies_runs_full_plan_and_prepares(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path)
+    incus, _ = labels()
+    data = payload()  # Legacy payload has no depends_on key, including on db.
+    mocker.patch.object(container_app, "run_in_container",
+                        return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    run_services_stage(cfg, incus, "box", "/repo", mirror_endpoint=None,
+                       on_progress=None, cas_restore=False, stage_services=["web"])
+    assert [c.args[3].stage for c in run.call_args_list] == ["prepare-db", "services"]
+    assert run.call_args.args[3].all_chains()[0].steps[0].run.endswith("start db web")
+
+
+def test_multiple_slots_have_distinct_status_rows(tmp_path, mocker, make_cfg):
+    from jailbee.autostart_plan import AutostartTrigger, plan_autostart
+    from jailbee.autostart_progress import ProgressEntry
+    from jailbee.autostart_status import step_views
+    from jailbee.config import Autostart
+    from jailbee.config.models_services import Service
+    from jailbee.services.graph import plan_payload
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = labels()
+    data = plan_payload({"db": Service(run="db"), "web": Service(run="web")},
+                        [], "start", step_timeout=30)
+    mocker.patch.object(container_app, "run_in_container",
+                        return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    def execute(cfg, incus, container, stage, repo_dir, *, on_progress, **kwargs):
+        for chain in stage.all_chains():
+            for step in chain.steps:
+                on_progress(stage.stage, step.name, "start")
+                on_progress(stage.stage, step.name, "ok")
+    mocker.patch.object(autostart, "run_stage", side_effect=execute)
+    block = Autostart.model_validate({"on_start": [
+        {"stage": "services", "services": ["db"]}, {"stage": "services"},
+    ]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    entries = []
+    autostart.run_stages(cfg, incus, "box", plan.blocking, "/repo",
+                         on_progress=lambda stage, step, state: entries.append(
+                             ProgressEntry(stage, step, state, "now")))
+    views = step_views(entries, live=False)
+    assert [(v.stage, v.step, v.state) for v in views] == [
+        ("services#1", "services-start", "ok"), ("services#2", "services-start", "ok"),
+    ]
+
+
 def test_prepare_stage_rejects_hidden_elevation():
     from jailbee.services.autostart import prepare_stage
 

@@ -345,6 +345,9 @@ slot starts the remainder; without one, unplaced services keep the old generated
 position before agents (or last without agents). Slots inherit detachment from
 position. Profiles keep the slots; profile/CLI service selection decides which
 services run. Dependencies start with dependents even if placed later.
+Only stepless on_start services stages are slots: legacy services stages with
+steps/chains remain ordinary work in either trigger. Do not put subset lists on
+ordinary stages or network/mount elevation on slots; use service prepare instead.
 Use prepare for setup steps and `jailbee service refresh` to repeat them. Prepare
 with loose networking or mounts needs host/orchestrator authority; ask the
 orchestrator. See [`services` schema](references/config-schema.md#services).

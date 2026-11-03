@@ -463,8 +463,12 @@ Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 orchestrator authorization. Selected services prepare once per container and
 start automatically. Convert long-running `background: true` steps to services.
 
-Place `{stage: services}` in `autostart.on_start` after setup; no steps/chains of
-its own are allowed. Optional `services: [names]` places a subset of the selected
+Place stepless `{stage: services}` slots in `autostart.on_start` after setup.
+A stage named services with steps/chains remains ordinary work in either trigger
+and can coexist with slots; two ordinary services stages are still duplicates.
+Do not put a services subset list on an ordinary stage. A stepless services stage
+in on_create is invalid: move it to on_start or add work. Slots reject network and
+nonempty mounts; elevate service prepare steps instead. Optional `services: [names]` places a subset of the selected
 services; names must exist and cannot repeat across slots. Multiple disjoint
 slots are allowed, plus at most one bare/null slot for selected services not
 explicitly placed. With only subset slots, unplaced services start at the old
@@ -473,7 +477,10 @@ behavior. Slots inherit the detach boundary, including `detach: true` on the
 slot. Dependencies start with dependents even if placed later. Selection via
 CLI/profile/orchestration still decides which services run; slots only place
 the selected dependency-closed plan. An empty list at a slot starts none.
-Legacy flat steps named services stay ordinary steps.
+Legacy flat steps named services stay ordinary steps. Slots use occurrence keys
+in branch diffs, and multiple service-start stages have separate status rows
+(services#1, services#2, ...). A legacy container plan without depends_on metadata
+runs the full selected plan, including prepare, rather than partition unsafely.
 
 ## `autostart`
 
@@ -485,8 +492,8 @@ not here. The `autostart` block describes the in-container shell work, as
 Optional `profiles` maps names to `all` or `{stages: [NAME, ...]}`;
 `default_profile` is required with profiles and invalid without them.
 Profiles require stage-form triggers, nonempty lists and known stage names
-(`agents` and `services` are always allowed and never filtered); `all` is not a legal profile
-name. A name selects that stage in both triggers in config order.
+(`agents` and reserved services slots are never filtered; ordinary services
+stages still follow stage selection); `all` is not a legal profile name. A name selects that stage in both triggers in config order.
 `new --autostart-profile NAME` stores a selection; `autostart profile C NAME`
 switches it later, starting missing one-shot stages and newly selected start
 stages on a running container. Attempted one-shot stages are never rerun,

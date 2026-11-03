@@ -379,6 +379,42 @@ def test_services_boundary_overrides(override, detached, expected):
     assert _order(plan) == expected
 
 
+@pytest.mark.parametrize("trigger", ["on_create", "on_start"])
+@pytest.mark.parametrize("body", [
+    {"steps": [{"name": "up", "run": "x"}]},
+    {"chains": [{"name": "up", "steps": [{"name": "up", "run": "x"}]}]},
+])
+def test_user_stage_named_services_is_accepted(trigger, body):
+    block = Autostart.model_validate({trigger: [{"stage": "services", **body}]})
+    plan = plan_autostart(block, AutostartTrigger(trigger))
+    assert plan.blocking[0].all_chains()[0].steps[0].run == "x"
+
+
+def test_user_services_stage_and_generated_stage_coexist():
+    from jailbee.autostart_plan import GeneratedServicesStage
+
+    block = Autostart.model_validate({"on_start": [
+        {"stage": "services", "steps": [{"name": "up", "run": "x"}]},
+        {"stage": "services"},
+    ]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    assert [isinstance(s, GeneratedServicesStage) for s in plan.blocking] == [False, True]
+    implicit = Autostart.model_validate({"on_start": block.on_start[:1]})
+    plan = plan_autostart(implicit, AutostartTrigger.ON_START, services_stage=True)
+    assert [isinstance(s, GeneratedServicesStage) for s in plan.blocking] == [False, True]
+
+
+def test_profiles_do_not_preserve_ordinary_services_stage():
+    from jailbee.autostart_plan import select_profile
+
+    block = Autostart.model_validate({
+        "on_start": [{"stage": "services", "steps": [{"name": "up", "run": "x"}]},
+                     {"stage": "services"}],
+        "profiles": {"p": {"stages": ["agents"]}}, "default_profile": "p",
+    })
+    assert len(select_profile(block, "p").on_start) == 1
+
+
 def test_explicit_services_stage_runs_after_detached_setup():
     from jailbee.autostart_plan import GeneratedServicesStage
 
