@@ -197,7 +197,9 @@ def refresh_setup(make_cfg, tmp_path, monkeypatch, *, network="loose", mounts=()
     incus = Mock()
     monkeypatch.setattr("jailbee.lifecycle.container_repo_dir", lambda *args: "/repo")
     steps = [{"run": "setup", "network": network, "mounts": list(mounts)}]
-    payload = graph.plan_payload({"web": Service(run="web", prepare=steps)}, ["web"], "refresh", step_timeout=42)
+    payload = graph.plan_payload(
+        {"web": Service(run="web", prepare=steps)}, ["web"], "refresh", step_timeout=42
+    )
     run = Mock(return_value=ExecResult(0, json.dumps(payload).encode(), b""))
     monkeypatch.setattr("jailbee.container_app.run_in_container", run)
     return cfg, incus, run
@@ -205,6 +207,7 @@ def refresh_setup(make_cfg, tmp_path, monkeypatch, *, network="loose", mounts=()
 
 def test_host_refresh_elevated_runs_sequence(make_cfg, tmp_path, monkeypatch, db_engine):
     from sqlmodel import Session
+
     from jailbee import db
     from jailbee.db.models import BackgroundJob
     from jailbee.services import elevated
@@ -215,12 +218,14 @@ def test_host_refresh_elevated_runs_sequence(make_cfg, tmp_path, monkeypatch, db
     monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
     monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
     monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
+
     def sequence(*args, **kwargs):
         with Session(db_engine) as session:
             assert session.get(BackgroundJob, "one").op_kind == "refresh"
         assert kwargs["who"] == "requested by the user on the host"
         assert kwargs["force"] is True
         return elevated.RefreshReport((), True, "not running")
+
     monkeypatch.setattr(elevated, "run_refresh", sequence)
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=False, force=True) == 0
     with Session(db_engine) as session:
@@ -242,9 +247,12 @@ def test_host_refresh_unknown_mount(make_cfg, tmp_path, monkeypatch, capsys):
     assert "optional mount 'unknown'" in capsys.readouterr().err
 
 
-def test_host_refresh_foreign_agents_noninteractive(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+def test_host_refresh_foreign_agents_noninteractive(
+    make_cfg, tmp_path, monkeypatch, db_engine, capsys
+):
     from jailbee import db, prompting
     from jailbee.services import elevated
+
     cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
     monkeypatch.setattr(db, "get_engine", lambda: db_engine)
     monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
@@ -266,20 +274,34 @@ def test_host_refresh_foreign_agents_noninteractive(make_cfg, tmp_path, monkeypa
 
 def test_host_refresh_busy(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
     from datetime import UTC, datetime
+
     from sqlmodel import Session
+
     from jailbee import background, db
+
     cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
     monkeypatch.setattr(db, "get_engine", lambda: db_engine)
     monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
     with Session(db_engine) as session:
-        background.start_job(session, container_name="one", container_prefix=cfg.container_prefix, branch=None, pid=1, log_path="", now=datetime.now(UTC), op_kind="autostart")
+        background.start_job(
+            session,
+            container_name="one",
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=1,
+            log_path="",
+            now=datetime.now(UTC),
+            op_kind="autostart",
+        )
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
     assert "autostart running" in capsys.readouterr().err
 
 
 def test_cli_refresh_delegates_flags(make_cfg, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee import cli
+
     cfg = make_cfg(tmp_path)
     incus = Mock()
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: cfg)
@@ -293,24 +315,31 @@ def test_cli_refresh_delegates_flags(make_cfg, tmp_path, monkeypatch):
 
 def test_host_refresh_fails_closed_on_database_failure(make_cfg, tmp_path, monkeypatch, capsys):
     from jailbee import db
+
     cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
     monkeypatch.setattr(db, "get_engine", lambda: None)
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
     assert "database unavailable" in capsys.readouterr().err
 
 
-def test_host_refresh_releases_claim_after_refresh_error(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+def test_host_refresh_releases_claim_after_refresh_error(
+    make_cfg, tmp_path, monkeypatch, db_engine, capsys
+):
     from sqlmodel import Session
+
     from jailbee import db
     from jailbee.db.models import BackgroundJob
     from jailbee.services import elevated
+
     cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
     monkeypatch.setattr(db, "get_engine", lambda: db_engine)
     monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
     monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
     monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
     monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
-    monkeypatch.setattr(elevated, "run_refresh", Mock(side_effect=elevated.RefreshError("not idle")))
+    monkeypatch.setattr(
+        elevated, "run_refresh", Mock(side_effect=elevated.RefreshError("not idle"))
+    )
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
     assert "not idle" in capsys.readouterr().err
     with Session(db_engine) as session:

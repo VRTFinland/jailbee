@@ -18054,7 +18054,9 @@ def _service_command(
     names: list[str] | None,
     config: Path | None,
     extra: Sequence[str] = (),
-    *, assume_yes: bool = False, force: bool = False,
+    *,
+    assume_yes: bool = False,
+    force: bool = False,
 ) -> None:
     from jailbee import prompting
     from jailbee.container_app import ContainerJailbeeError
@@ -18129,7 +18131,9 @@ def service_refresh_cmd(
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow foreign agents during refresh.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Allow foreign agents during refresh.")
+    ] = False,
     force: Annotated[bool, typer.Option("--force", help="Skip the agent idle check.")] = False,
 ) -> None:
     """Prepare and restart services."""
