@@ -79,7 +79,9 @@ def count_children(
     return sum(1 for sample in procs.values() if sample.ppid == parent and sample.comm in comms)
 
 
-def read_process(pid: int, *, proc_root: Path = PROC_ROOT, strict: bool = False) -> ProcSample | None:
+def read_process(
+    pid: int, *, proc_root: Path = PROC_ROOT, strict: bool = False
+) -> ProcSample | None:
     """Read one process, or None if it is gone or unreadable.
 
     ``comm`` (field 2) is the one free-form field in ``stat``: it is wrapped
@@ -235,6 +237,7 @@ def read_container_pids(
     base = cgroup_root / rel
     pids: list[int] = []
     if strict:
+
         def fail(exc: OSError) -> None:
             raise exc
 

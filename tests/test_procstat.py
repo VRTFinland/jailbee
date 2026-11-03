@@ -47,7 +47,10 @@ def test_strict_container_pids_distinguishes_unreadable_and_empty(tmp_path):
     (proc / "10").mkdir(parents=True)
     (proc / "10" / "cgroup").write_text("0::/lxc.payload.box/init.scope\n")
     (cgroups / "lxc.payload.box").mkdir(parents=True)
-    assert procstat.read_container_pids(10, "box", proc_root=proc, cgroup_root=cgroups, strict=True) == []
+    assert (
+        procstat.read_container_pids(10, "box", proc_root=proc, cgroup_root=cgroups, strict=True)
+        == []
+    )
 
 
 def test_strict_process_read_rejects_malformed_data(tmp_path):

@@ -42,7 +42,9 @@ def pause_agent(
 
     status = agent_watch.probe(incus, full, uid=cfg.container_user.uid)
     if status is None:
-        raise RefreshError(f"could not determine whether an agent is running in {full}; refresh refused")
+        raise RefreshError(
+            f"could not determine whether an agent is running in {full}; refresh refused"
+        )
     if not status.alive:
         return None
     try:
@@ -77,8 +79,14 @@ def pause_agent(
     runner = parse_runner_label(config[labels.RUNNER])
     target = "claude" if runner is not None else primary_agent(cfg).name
     agent = cfg.agents.get(status.agent)
-    if (target != status.agent or agent is None or not agent.enabled
-            or not agent.command.strip() or not agent.prompt_args or not agent.prompt_args.strip()):
+    if (
+        target != status.agent
+        or agent is None
+        or not agent.enabled
+        or not agent.command.strip()
+        or not agent.prompt_args
+        or not agent.prompt_args.strip()
+    ):
         raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its session")
     steps = autostart.agent_autostart_steps(cfg, initial_prompt=True, runner=runner, resume=session)
     if not any(step.name == target and step.run for step in steps):

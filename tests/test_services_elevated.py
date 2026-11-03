@@ -22,23 +22,32 @@ def test_pause_no_agent(tmp_path, mocker):
 
     mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=None)
     kill = mocker.patch("jailbee.tmux.kill_window")
-    with pytest.raises(RefreshError, match="could not determine whether an agent is running in box; refresh refused"):
+    with pytest.raises(
+        RefreshError,
+        match="could not determine whether an agent is running in box; refresh refused",
+    ):
         elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC))
     kill.assert_not_called()
 
 
 def test_pause_dead_agent_is_noop(tmp_path, mocker):
     from datetime import datetime
+
     from jailbee.orchestration.agent_watch import AgentStatus
     from jailbee.services import elevated
+
     mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=AgentStatus(False))
     kill = mocker.patch("jailbee.tmux.kill_window")
-    assert elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC)) is None
+    assert (
+        elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC))
+        is None
+    )
     kill.assert_not_called()
 
 
 def test_generated_resume_step_contains_session(tmp_path):
     from jailbee.autostart import agent_autostart_steps
+
     cfg = make_config(tmp_path, agents={"claude": {"enabled": True}})
     steps = agent_autostart_steps(cfg, initial_prompt=True, resume=SID)
     step = next(s for s in steps if s.name == "claude")
@@ -197,14 +206,20 @@ def test_foreign_agents_excludes_prompted(paused_setup, mocker):
 
 def test_foreign_agents_rejects_wrong_process_identity(paused_setup, mocker):
     from types import SimpleNamespace
+
     from jailbee import agent_status, procstat
+
     cfg, incus, _, _, _, _, _, elevated = paused_setup
     incus.list_containers.return_value = [{"name": "box", "state": {"pid": 10}}]
     session = SimpleNamespace(pid=42, proc_start=77, agent="claude", updated_at=None)
     mocker.patch("jailbee.lifecycle.agent_homes", return_value=())
     mocker.patch.object(agent_status, "read_sessions", return_value={"box": [session]})
     mocker.patch.object(procstat, "read_container_pids", return_value=[100, 101])
-    mocker.patch.object(procstat, "read_process", side_effect=lambda p, **kw: SimpleNamespace(starttime=78 if p == 100 else 77))
+    mocker.patch.object(
+        procstat,
+        "read_process",
+        side_effect=lambda p, **kw: SimpleNamespace(starttime=78 if p == 100 else 77),
+    )
     mocker.patch.object(procstat, "read_nspid", return_value=43)
     assert elevated.foreign_agents(cfg, incus, "box", None) == []
 
