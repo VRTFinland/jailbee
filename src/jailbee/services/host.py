@@ -133,13 +133,20 @@ def refresh(
                     state.state_root(),
                     owner,
                     watch.WatchEntry(
-                        new_host_id(), full, "restart", datetime.now(UTC).isoformat(),
-                        supervise=True, agent_only=True,
+                        new_host_id(),
+                        full,
+                        "restart",
+                        datetime.now(UTC).isoformat(),
+                        supervise=True,
+                        agent_only=True,
                     ),
                 )
                 for key in (
-                    labels.STOPPED_HEAD, labels.DONE_SHA, labels.STATE,
-                    labels.PENDING_DESTROY, labels.STOPPED_DIRTY,
+                    labels.STOPPED_HEAD,
+                    labels.DONE_SHA,
+                    labels.STATE,
+                    labels.PENDING_DESTROY,
+                    labels.STOPPED_DIRTY,
                 ):
                     incus.config_unset_checked(full, key)
 

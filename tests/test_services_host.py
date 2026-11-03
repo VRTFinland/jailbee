@@ -372,10 +372,18 @@ def test_host_child_refresh_registers_before_resume(make_cfg, tmp_path, monkeypa
     monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
     monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
     monkeypatch.setattr("jailbee.autostart.run_stage", lambda *a, **kw: None)
-    monkeypatch.setattr(elevated, "pause_agent", lambda *a, **kw: elevated.PausedAgent("claude", "11111111-1111-1111-1111-111111111111", None))
+    monkeypatch.setattr(
+        elevated,
+        "pause_agent",
+        lambda *a, **kw: elevated.PausedAgent(
+            "claude", "11111111-1111-1111-1111-111111111111", None
+        ),
+    )
     run.side_effect = [run.return_value, ExecResult(0, b"", b"")]
     events = []
-    monkeypatch.setattr(watch, "register", lambda root, owner, entry: events.append(("watch", owner, entry)))
+    monkeypatch.setattr(
+        watch, "register", lambda root, owner, entry: events.append(("watch", owner, entry))
+    )
     resume = Mock(side_effect=lambda *a, **kw: events.append(("resume", a[4])))
     monkeypatch.setattr(elevated, "resume_agent", resume)
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 0
@@ -385,10 +393,13 @@ def test_host_child_refresh_registers_before_resume(make_cfg, tmp_path, monkeypa
     assert "parent" in events[1][1]
 
 
-def test_host_child_watch_failure_withholds_resume(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+def test_host_child_watch_failure_withholds_resume(
+    make_cfg, tmp_path, monkeypatch, db_engine, capsys
+):
     from jailbee import db
     from jailbee.orchestration import labels, watch
     from jailbee.services import elevated
+
     cfg, incus, run = refresh_setup(make_cfg, tmp_path, monkeypatch)
     values = {labels.SPAWNED_BY: "parent"}
     incus.config_get_checked.side_effect = lambda _, key: values.get(key)
@@ -402,7 +413,13 @@ def test_host_child_watch_failure_withholds_resume(make_cfg, tmp_path, monkeypat
     monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
     monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
     monkeypatch.setattr("jailbee.autostart.run_stage", lambda *a, **kw: None)
-    monkeypatch.setattr(elevated, "pause_agent", lambda *a, **kw: elevated.PausedAgent("claude", "11111111-1111-1111-1111-111111111111", None))
+    monkeypatch.setattr(
+        elevated,
+        "pause_agent",
+        lambda *a, **kw: elevated.PausedAgent(
+            "claude", "11111111-1111-1111-1111-111111111111", None
+        ),
+    )
     run.side_effect = [run.return_value, ExecResult(0, b"", b"")]
     monkeypatch.setattr(watch, "register", Mock(side_effect=RuntimeError("watch failed")))
     resume = Mock()
@@ -414,16 +431,25 @@ def test_host_child_watch_failure_withholds_resume(make_cfg, tmp_path, monkeypat
     resume.assert_not_called()
 
 
-def test_host_refresh_release_failure_returns_error(make_cfg, tmp_path, monkeypatch, db_engine, capsys):
+def test_host_refresh_release_failure_returns_error(
+    make_cfg, tmp_path, monkeypatch, db_engine, capsys
+):
     from jailbee import background, db
     from jailbee.services import elevated
+
     cfg, incus, _ = refresh_setup(make_cfg, tmp_path, monkeypatch)
     monkeypatch.setattr(db, "get_engine", lambda: db_engine)
     monkeypatch.setattr("jailbee.orchestration.state.state_root", lambda: tmp_path)
     monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **kw: Mock())
     monkeypatch.setattr(elevated, "foreign_agents", lambda *a: [])
     monkeypatch.setattr("jailbee.docker_daemon.mirror_endpoint_or_none", lambda *a: None)
-    monkeypatch.setattr(elevated, "run_refresh", lambda *a, **kw: elevated.RefreshReport((elevated.ServiceOutcome("web", "[red]failed[/red]"),), False, "not running"))
+    monkeypatch.setattr(
+        elevated,
+        "run_refresh",
+        lambda *a, **kw: elevated.RefreshReport(
+            (elevated.ServiceOutcome("web", "[red]failed[/red]"),), False, "not running"
+        ),
+    )
     release = Mock(side_effect=RuntimeError("database failed"))
     monkeypatch.setattr(background, "release_job", release)
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
