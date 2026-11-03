@@ -146,7 +146,11 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
         engine = db.get_engine()
         if engine is None:
             raise elevated.RefreshError("job database unavailable")
-        with watch.mutation_locked(state.state_root()), watch.locked(state.state_root()), Session(engine) as session:
+        with (
+            watch.mutation_locked(state.state_root()),
+            watch.locked(state.state_root()),
+            Session(engine) as session,
+        ):
             try:
                 if path.read_bytes() != raw:
                     return 1

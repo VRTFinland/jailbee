@@ -109,7 +109,9 @@ def pause_agent(
     tmux.kill_window(incus, full, tmux.window_for(status.agent), checked=True)
     deadline = time.monotonic() + _pause_wait_seconds
     while True:
-        state = agent_watch.process_identity_alive(incus, full, status.pid, status.proc_start, uid=cfg.container_user.uid)
+        state = agent_watch.process_identity_alive(
+            incus, full, status.pid, status.proc_start, uid=cfg.container_user.uid
+        )
         if state is False:
             break
         if state is None or time.monotonic() >= deadline:
@@ -155,7 +157,9 @@ def foreign_agents(
         raise RefreshError(f"cannot inspect container processes in {full}")
     try:
         sessions = agent_status._one_per_process(
-            agent_status.read_sessions(lifecycle.agent_homes(cfg, [full]), strict=True).get(full, ())
+            agent_status.read_sessions(lifecycle.agent_homes(cfg, [full]), strict=True).get(
+                full, ()
+            )
         )
     except Exception as exc:
         raise RefreshError(f"cannot inspect agent sessions: {exc}") from exc

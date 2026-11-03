@@ -210,7 +210,9 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
         return None
 
 
-def process_identity_alive(incus: Incus, name: str, pid: int, start: int, *, uid: int) -> bool | None:
+def process_identity_alive(
+    incus: Incus, name: str, pid: int, start: int, *, uid: int
+) -> bool | None:
     script = """import json, pathlib, sys
 p = pathlib.Path('/proc', sys.argv[1], 'stat')
 try:
@@ -222,7 +224,9 @@ except Exception:
     print('null')
 """
     try:
-        value = json.loads(incus.exec(name, ["python3", "-c", script, str(pid), str(start)], uid=uid, timeout=15))
+        value = json.loads(
+            incus.exec(name, ["python3", "-c", script, str(pid), str(start)], uid=uid, timeout=15)
+        )
         return value if isinstance(value, bool) else None
     except (IncusError, ValueError, TypeError):
         return None

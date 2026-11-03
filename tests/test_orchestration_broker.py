@@ -1053,9 +1053,21 @@ def _destroy_seams(monkeypatch: pytest.MonkeyPatch):
 
 def test_settle_watch_ignores_stale_finished_snapshot(rig: Rig, monkeypatch):
     orch = actions.Node("proj-orch", "orch", True, {})
-    child = actions.Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full, labels.STATE: labels.STATE_DONE})
-    ctx = actions.ActionContext(rig.cfg, GlobalConfig(), rig.incus, rig.root, orch, {orch.full: orch, child.full: child}, NOW)
-    entry = watch.WatchEntry("r1", child.full, "restart", NOW.isoformat(), supervise=True, agent_only=True)
+    child = actions.Node(
+        "proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full, labels.STATE: labels.STATE_DONE}
+    )
+    ctx = actions.ActionContext(
+        rig.cfg,
+        GlobalConfig(),
+        rig.incus,
+        rig.root,
+        orch,
+        {orch.full: orch, child.full: child},
+        NOW,
+    )
+    entry = watch.WatchEntry(
+        "r1", child.full, "restart", NOW.isoformat(), supervise=True, agent_only=True
+    )
     watch.register(rig.root, orch.full, entry)
     rig.incus.list_containers.return_value = [_orch(), _child()]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
@@ -1064,7 +1076,9 @@ def test_settle_watch_ignores_stale_finished_snapshot(rig: Rig, monkeypatch):
     assert watch.load_watch(rig.root)[orch.full] == [entry]
 
 
-def test_pending_destroy_waits_for_active_refresh(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pending_destroy_waits_for_active_refresh(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from jailbee.db.models import JOB_REFRESH
 
     _marked_child(rig)

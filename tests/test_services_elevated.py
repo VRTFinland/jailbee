@@ -402,7 +402,7 @@ def paused_setup(tmp_path, mocker):
 
 
 def test_pause_records_session_for_restart_validation(paused_setup):
-    from jailbee.orchestration import actions, labels
+    from jailbee.orchestration import actions
 
     cfg, incus, _, _, _, kill, now, elevated = paused_setup
     stored = {}
@@ -433,7 +433,9 @@ def test_pause_refuses_when_original_process_does_not_exit(paused_setup, mocker)
     kill.assert_called_once()
 
 
-@pytest.mark.parametrize("states,raises", [([None], True), ([True, False], False), ([False], False)])
+@pytest.mark.parametrize(
+    "states,raises", [([None], True), ([True, False], False), ([False], False)]
+)
 def test_pause_confirms_original_process_exit(paused_setup, mocker, states, raises):
     from jailbee.orchestration import agent_watch
 
@@ -636,7 +638,9 @@ def test_foreign_agents_refuses_unreadable_session_directory(paused_setup, mocke
     (tmp_path / "sessions").mkdir()
     mocker.patch("jailbee.lifecycle.agent_homes", return_value=[("box", "claude", tmp_path)])
     mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=ClaudeAdapter())
-    mocker.patch("jailbee.accounts.adapters.claude.os.scandir", side_effect=PermissionError("denied"))
+    mocker.patch(
+        "jailbee.accounts.adapters.claude.os.scandir", side_effect=PermissionError("denied")
+    )
     mocker.patch("jailbee.procstat.read_container_pids", return_value=[])
     with pytest.raises(RefreshError, match="denied"):
         elevated.foreign_agents(cfg, incus, "box", None)
