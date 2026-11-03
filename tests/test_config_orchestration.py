@@ -354,4 +354,5 @@ def test_default_runner_unknown_tier_rejected():
     errors = exc.value.errors()
     assert len(errors) == 1
     assert errors[0]["loc"] == ("default_runner", "model")
-    assert errors[0]["type"] == "literal_error"
+    assert errors[0]["type"] == "value_error"
+    assert "model must be a runner tier" in errors[0]["msg"]

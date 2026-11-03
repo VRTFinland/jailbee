@@ -852,7 +852,7 @@ def test_runner_config_is_editable_as_fields_in_each_layer():
     expected = {
         ("orchestration", "default_runner", "agent"): FieldKind.CHOICE,
         ("orchestration", "default_runner", "profile"): FieldKind.STR,
-        ("orchestration", "default_runner", "model"): FieldKind.CHOICE,
+        ("orchestration", "default_runner", "model"): FieldKind.STR,
     }
     for specs in (repo_specs(), global_specs(), local_specs()):
         by_path = {spec.path: spec for spec in specs}
