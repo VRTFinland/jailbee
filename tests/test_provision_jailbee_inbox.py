@@ -2,6 +2,9 @@
 orchestration directory. Needs bash and jq (both in the golden image)."""
 
 import ctypes
+import sys
+from dataclasses import dataclass
+from typing import Literal
 import importlib.resources
 import json
 import os
@@ -16,6 +19,126 @@ import pytest
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
 
+# PY_COUNTERPARTS (Tasks 5/6): burst settling, interrupt lock release,
+# missed event recheck, settle timeout, vanished reads, ID collision,
+# watchdog polling, and send --wait timeout none.
+PY_PENDING = frozenset({
+    "test_wait_timeout_none_outlives_a_finite_timeout_and_wakes",
+    "test_wait_timeout_none_with_quiet_after",
+    "test_wait_rejects_none_lookalikes",
+    "test_send_rejects_bad_none_timeout",
+    "test_inbox_helper_send_spawn_autostart_profile",
+    "test_send_services_selection",
+    "test_send_services_omitted",
+    "test_send_services_rejects_agent_only",
+    "test_send_services_rejects_other_types",
+    "test_send_refresh_writes_manifest",
+    "test_send_refresh_requires_services",
+    "test_send_update_source",
+    "test_send_update_merge_flag",
+    "test_merge_flag_only_for_update",
+    "test_send_update_ref_and_base_refused",
+    "test_update_selectors_not_valid_for_import",
+    "test_wait_settles_after_wakeup_and_returns_burst",
+    "test_wait_with_message_present_returns_without_settling",
+    "test_wait_settle_zero_disables",
+    "test_wait_returns_immediately_when_message_waiting",
+    "test_wait_prints_oldest_first",
+    "test_wait_sees_new_message_via_poll_fallback",
+    "test_wait_times_out_with_exit_1",
+    "test_wait_timeout_zero_checks_once",
+    "test_wait_accepts_duration_suffixes",
+    "test_wait_rejects_bad_timeout",
+    "test_wait_ignores_temp_read_dotfiles_and_symlinks",
+    "test_wait_with_missing_inbox_dir_times_out",
+    "test_ls_empty_prints_nothing",
+    "test_ls_lists_unread_oldest_first",
+    "test_ls_skips_corrupt_files_with_warning",
+    "test_read_prints_and_moves_to_read",
+    "test_read_keep_leaves_file",
+    "test_read_unknown_id_exits_1",
+    "test_read_ignores_corrupt_and_already_read",
+    "test_send_on_done",
+    "test_send_new_option_errors",
+    "test_send_update_writes_manifest",
+    "test_send_wait_reads_only_matching_status",
+    "test_send_wait_times_out_with_3",
+    "test_ls_marks_imported_and_failed_imports",
+    "test_ls_marks_kept_with_reason_and_read_shows_it",
+    "test_send_message_writes_manifest_and_body",
+    "test_send_message_minimal_and_to",
+    "test_send_spawn_v2_modes",
+    "test_send_spawn_rejects_invalid_modes",
+    "test_send_spawn_fork_with_rights",
+    "test_send_spawn_new_with_base_and_repeats",
+    "test_send_spawn_empty_rights_written_in_full",
+    "test_send_destroy_force",
+    "test_send_restart_import_stop",
+    "test_send_reads_stdin_dash",
+    "test_send_creates_outbox_and_leaves_no_temp_file",
+    "test_send_bad_usage_exits_2_and_writes_nothing",
+    "test_send_refuses_oversized_text",
+    "test_send_output_parses_with_protocol",
+    "test_wait_with_many_unread_messages_does_not_die_of_sigpipe",
+    "test_ls_neutralises_terminal_control_characters",
+    "test_ls_prints_dash_for_missing_cells",
+    "test_read_neutralises_terminal_control_characters",
+    "test_runners_shows_configured_default",
+    "test_runners_json_carries_default_and_source",
+    "test_runners_old_grant_json_keeps_omit_line",
+    "test_runners_default_neutralises_control_characters",
+    "test_runners_invalid_grant_falls_back",
+    "test_runners_lists_default_claude_and_profiles",
+    "test_runners_json_shape",
+    "test_runners_without_litellm_file_lists_only_claude",
+    "test_runners_without_claude_binary_lists_only_default",
+    "test_runners_reports_unknown_default_when_variable_unset",
+    "test_runners_neutralises_control_characters_in_profile_names",
+    "test_runners_rejects_arguments",
+    "test_send_spawn_with_runner_writes_runner",
+    "test_send_restart_runner_and_default_runner",
+    "test_send_restart_agent_only",
+    "test_send_agent_only_option_errors",
+    "test_send_restart_default_runner_writes_null",
+    "test_send_runner_option_errors",
+    "test_send_rights_grant_shape",
+    "test_send_rights_revoke_own",
+    "test_send_rights_usage_errors",
+    "test_send_rights_wait_uses_status_wait",
+    "test_wait_idle_filter_matches_host_report_without_consuming_notes",
+    "test_wait_filter_leaves_nonmatches_unread",
+    "test_wait_bad_wake_filter",
+    "test_wait_first_child_report_overrides_once_per_start",
+    "test_wait_quiet_child_counts_all_activity",
+    "test_wait_quiet_requires_fresh_state",
+    "test_wait_quiet_tolerates_one_slow_broker_round",
+    "test_wait_single_waiter_lock",
+    "test_wait_skips_reserved_status_until_sender_exits",
+    "test_wait_poll_respects_timeout",
+    "test_wait_filter_matches_status_state",
+    "test_send_reserves_status_before_publishing",
+    "test_wait_first_report_from_stopped_child",
+    "test_killed_send_releases_reply_reservation",
+    "test_children_lists_name_running_session",
+    "test_children_json_prints_array",
+    "test_children_stale_heartbeat_notes_on_stderr",
+    "test_children_missing_file_exits_1",
+    "test_send_restart_resume",
+    "test_send_resume_only_for_restart",
+    "test_send_restart_resume_rejects_garbage",
+})
+
+bash_only = pytest.mark.bash_only
+
+
+@dataclass
+class Impl:
+    kind: Literal["bash", "python"]
+    argv: list[str]
+    prog: str
+    pending: bool = False
+
+
 FIRST = "20261025T100000Z-00000001-h-0000aaaa.json"
 SECOND = "20261025T100001Z-00000002-h-0000bbbb.json"
 
@@ -28,12 +151,19 @@ def helper_text() -> str:
     return importlib.resources.files("jailbee.provision").joinpath("jailbee-inbox").read_text()
 
 
-@pytest.fixture
-def script(tmp_path: Path) -> Path:
+@pytest.fixture(params=["bash", "python"], ids=["bash", "py"])
+def script(request, tmp_path: Path) -> Impl:
+    if request.param == "python":
+        if request.node.get_closest_marker("bash_only"):
+            pytest.skip("bash-specific test")
+        if any(request.node.originalname == name for name in PY_PENDING):
+            request.applymarker(pytest.mark.xfail(reason="Python port pending", strict=True))
+        return Impl("python", [sys.executable, "-m", "jailbee.inbox"], "jailbee inbox",
+                    request.node.originalname in PY_PENDING)
     path = tmp_path / "jailbee-inbox"
     path.write_text(helper_text())
     path.chmod(0o755)
-    return path
+    return Impl("bash", ["/bin/bash", str(path)], "jailbee-inbox")
 
 
 @pytest.fixture
@@ -106,15 +236,18 @@ def env_for(base: Path, tmp_path: Path, path: str | None = None) -> dict[str, st
     }
 
 
-def run(script: Path, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["/bin/bash", str(script), *args], env=env, capture_output=True, text=True, timeout=30
+def run(script: Impl, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [*script.argv, *args], env=env, capture_output=True, text=True, timeout=30
     )
+    if script.pending:
+        assert "not implemented" not in result.stderr
+    return result
 
 
 def _popen_wait(script, env, *args):
     return subprocess.Popen(
-        ["bash", str(script), "wait", *args],
+        [*script.argv, "wait", *args],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -138,6 +271,7 @@ def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp
     assert out.strip().endswith(FIRST)
 
 
+@bash_only
 def test_wait_timeout_none_uses_full_watch_slices(script, base, tmp_path):
     log, counter = tmp_path / "t.log", tmp_path / "n"
     stubs = _stub(
@@ -155,6 +289,7 @@ def test_wait_timeout_none_uses_full_watch_slices(script, base, tmp_path):
     assert log.read_text().split() == ["10"] * 6
 
 
+@bash_only
 def test_wait_timeout_none_settles_burst(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
     ready = tmp_path / "watch-ready"
@@ -195,6 +330,7 @@ def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
     assert time.monotonic() - started < 3
 
 
+@bash_only
 def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
     ready = tmp_path / "watch-pid"
     stubs = _stub(tmp_path, f'echo $$ > "{ready}"\nexec sleep 30\n')
@@ -206,7 +342,7 @@ def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
     assert libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0) == 0
     assert libc.prctl(36, 1, 0, 0, 0) == 0
     proc = subprocess.Popen(
-        ["/bin/bash", str(script), "wait", "--timeout", "none"],
+        [*script.argv, "wait", "--timeout", "none"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -219,7 +355,7 @@ def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
             time.sleep(0.01)
         assert ready.exists(), "watcher did not start"
         watcher_pid = int(ready.read_text())
-        args = ["/bin/bash", str(script), "wait", "--timeout", "0"]
+        args = [*script.argv, "wait", "--timeout", "0"]
         assert subprocess.run(args, env=env, capture_output=True, timeout=2).returncode == 2
         proc.terminate()
         proc.wait(timeout=2)
@@ -247,9 +383,10 @@ def test_wait_timeout_none_interrupt_releases_lock(script, base, tmp_path):
 def test_wait_rejects_none_lookalikes(script, base, tmp_path, dur):
     r = run(script, "wait", "--timeout", dur, env=env_for(base, tmp_path))
     assert r.returncode == 2
-    assert r.stderr.startswith("jailbee-inbox: ")
+    assert r.stderr.startswith(f"{script.prog}: ")
 
 
+@bash_only
 def test_send_wait_timeout_none(script, base, tmp_path):
     unrelated = write_inbox(base, FIRST, message("h-other"))
     errors = []
@@ -275,7 +412,7 @@ def test_send_wait_timeout_none(script, base, tmp_path):
             [
                 "/bin/bash",
                 "-x",
-                str(script),
+                script.argv[1],
                 "send",
                 "message",
                 "--text",
@@ -521,6 +658,7 @@ def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
     assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
 
 
+@bash_only
 def test_wait_settle_respects_timeout(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
     log = tmp_path / "sleeps"
@@ -595,7 +733,7 @@ def test_wait_accepts_duration_suffixes(script, base, tmp_path):
 def test_wait_rejects_bad_timeout(script, base, tmp_path, dur):
     r = run(script, "wait", "--timeout", dur, env=env_for(base, tmp_path))
     assert r.returncode == 2
-    assert r.stderr.startswith("jailbee-inbox: ")
+    assert r.stderr.startswith(f"{script.prog}: ")
 
 
 def test_wait_rejects_bad_poll_and_usage(script, base, tmp_path):
@@ -629,6 +767,7 @@ def test_wait_with_missing_inbox_dir_times_out(script, tmp_path):
     assert run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path)).returncode == 1
 
 
+@bash_only
 def test_wait_uses_inotifywait_when_present(script, base, tmp_path):
     log = tmp_path / "inotify.log"
     stubs = tmp_path / "stubs"
@@ -653,6 +792,7 @@ def test_wait_uses_inotifywait_when_present(script, base, tmp_path):
     assert args[3:] == ["-e", "close_write,moved_to", str(base / "inbox")]
 
 
+@bash_only
 def test_wait_rechecks_after_inotifywait_returns_empty(script, base, tmp_path):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
@@ -736,14 +876,17 @@ def test_read_ignores_corrupt_and_already_read(script, base, tmp_path):
     assert run(script, "read", "h-0000cccc", env=env).returncode == 1
 
 
+@bash_only
 def test_install_sh_installs_inotify_tools():
     assert "inotify-tools" in install_sh_text()
 
 
+@bash_only
 def test_helper_is_a_bash_script() -> None:
     assert helper_text().startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
 
 
+@bash_only
 def test_install_sh_installs_packaged_helper() -> None:
     text = install_sh_text()
     assert (
@@ -762,6 +905,7 @@ def _stub(tmp_path: Path, body: str) -> Path:
     return stubs
 
 
+@bash_only
 def test_inotify_watch_is_capped_to_a_short_slice(script, base, tmp_path):
     log = tmp_path / "t.log"
     stubs = _stub(
@@ -777,6 +921,7 @@ def test_inotify_watch_is_capped_to_a_short_slice(script, base, tmp_path):
     assert int(log.read_text().split()[0]) <= 10
 
 
+@bash_only
 def test_wait_finds_message_that_landed_without_an_event(script, base, tmp_path):
     counter = tmp_path / "count"
     stubs = _stub(
@@ -801,6 +946,7 @@ def test_wait_finds_message_that_landed_without_an_event(script, base, tmp_path)
     assert r.stdout.strip().endswith(FIRST)
 
 
+@bash_only
 def test_read_of_a_file_that_vanishes_exits_1(script, base, tmp_path):
     path = write_inbox(base, FIRST, message("h-0000aaaa"))
     env = env_for(base, tmp_path)
@@ -825,21 +971,24 @@ SEND_ID_RE = r"^[a-z0-9][a-z0-9-]{0,63}$"
 
 
 def send(
-    script: Path,
+    script: Impl,
     base: Path,
     tmp_path: Path,
     *args: str,
     stdin: str | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["/bin/bash", str(script), "send", *args],
+    result = subprocess.run(
+        [*script.argv, "send", *args],
         env=env or env_for(base, tmp_path),
         capture_output=True,
         text=True,
         timeout=30,
         input=stdin,
     )
+    if script.pending:
+        assert "not implemented" not in result.stderr
+    return result
 
 
 def manifest_of(base: Path, r: subprocess.CompletedProcess[str]) -> tuple[str, dict[str, object]]:
@@ -1143,7 +1292,7 @@ def test_send_creates_outbox_and_leaves_no_temp_file(script, tmp_path):
 def test_send_bad_usage_exits_2_and_writes_nothing(script, base, tmp_path, args):
     r = send(script, base, tmp_path, *args)
     assert r.returncode == 2, r.stderr
-    assert r.stderr.startswith("jailbee-inbox: ")
+    assert r.stderr.startswith(f"{script.prog}: ")
     assert r.stdout == ""
     assert not list((base / "outbox").glob("*")) if (base / "outbox").exists() else True
 
@@ -1156,6 +1305,7 @@ def test_send_refuses_oversized_text(script, base, tmp_path):
     assert len(os.listdir(base / "outbox")) == 2  # only the accepted one
 
 
+@bash_only
 def test_send_refuses_to_overwrite_existing_id(script, base, tmp_path):
     shim = tmp_path / "shim"
     shim.mkdir()
@@ -1576,7 +1726,7 @@ def test_send_restart_default_runner_writes_null(script, base, tmp_path):
 def test_send_runner_option_errors(script, base, tmp_path, args):
     r = send(script, base, tmp_path, *args)
     assert r.returncode == 2, r.stderr
-    assert r.stderr.startswith("jailbee-inbox: ")
+    assert r.stderr.startswith(f"{script.prog}: ")
     assert not (base / "outbox").exists() or not list((base / "outbox").glob("*"))
 
 
@@ -1764,7 +1914,7 @@ def test_wait_quiet_tolerates_one_slow_broker_round(script, base, tmp_path):
 def test_wait_single_waiter_lock(script, base, tmp_path):
     env = env_for(base, tmp_path)
     with subprocess.Popen(
-        ["bash", str(script), "wait", "--timeout", "5"],
+        [*script.argv, "wait", "--timeout", "5"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1793,6 +1943,7 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
     assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == str(path)
 
 
+@bash_only
 def test_wait_watchdog_without_new_inbox_event(script, base, tmp_path):
     child_snapshot(base, started=time.time() + 2)
     env = env_for(base, tmp_path)
@@ -1836,7 +1987,7 @@ def test_send_reserves_status_before_publishing(script, base, tmp_path):
 
     env = env_for(base, tmp_path)
     with subprocess.Popen(
-        ["bash", str(script), "send", "message", "--text", "go", "--wait", "--timeout", "5"],
+        [*script.argv, "send", "message", "--text", "go", "--wait", "--timeout", "5"],
         env=env,
         text=True,
         stdout=subprocess.PIPE,
@@ -1880,7 +2031,7 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
     env = env_for(base, tmp_path)
     env["JAILBEE_INBOX_POLL"] = "0.1"
     proc = subprocess.Popen(
-        ["bash", str(script), "send", "message", "--text", "go", "--wait", "--timeout", "30"],
+        [*script.argv, "send", "message", "--text", "go", "--wait", "--timeout", "30"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1974,3 +2125,17 @@ def test_send_restart_resume_rejects_garbage(script, base, tmp_path):
     assert r.returncode == 2
     assert "--resume" in r.stderr
     assert not (base / "outbox").exists()
+
+
+@pytest.mark.parametrize("arg", ["help", "-h", "--help"])
+def test_help_prints_usage_and_exits_0(script, base, tmp_path, arg):
+    result = run(script, arg, env=env_for(base, tmp_path))
+    assert result.returncode == 0
+    assert result.stdout.startswith(f"Usage: {script.prog} wait")
+
+
+@pytest.mark.parametrize("args", [(), ("unknown",)])
+def test_no_args_and_unknown_subcommand_exit_2(script, base, tmp_path, args):
+    result = run(script, *args, env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert result.stderr.startswith(f"Usage: {script.prog} wait")
