@@ -484,8 +484,9 @@ After waking, list and handle all unread messages, including filtered notes.
 `--quiet-after` returns exit 0 with `quiet-child CHILD` instead of a path when
 a running child that has not reported done shows no activity for that duration.
 Activity is the latest of a message from the child (read or unread), an agent
-event, a commit on the child's branch and CPU use above 5% of one core, taken
-from the `status` object below; with no activity, time is measured from the
+event, a commit on the child's branch and CPU use at or above 5% of one core,
+taken from the `status` object below (the broker's own `idle`/`blocked` reports
+from `child.short` count as messages from the child, for `LAST-MSG` too); with no activity, time is measured from the
 child's start. A child whose `status` is missing (an older broker) is timed by
 messages alone. Stop or restart resets monitoring, and an overdue child keeps
 waking until activity or a lifecycle change. The broker publishes read-only
@@ -504,9 +505,12 @@ per period is emitted for all children together; the last time is stored
 atomically in `~/.jailbee/orchestration/digest-at`, and the first digest of a
 fresh container is due DURATION after its first `wait --digest`. A real message
 that is due at the same time wins and the digest follows at the next wait; a
-due digest ignores `--wake-on`. With no running child the stamp is left
-unchanged. Like `--quiet-after`, it needs a fresh `children.json` (exit 2
-otherwise).
+due digest ignores `--wake-on`. A due real message and a `quiet-child`
+wakeup both win over the digest. A missing, unreadable or future-dated stamp is
+created (reset) to now, which is not due, even with no running child; with a
+stale stamp the digest is due as soon as a child next runs, and with no running
+child an existing stamp is left unchanged. Like `--quiet-after`, it needs a
+fresh `children.json` (exit 2 otherwise).
 
 ### Child status
 
@@ -519,10 +523,13 @@ or `?`; `ACTIVE` is the age of `activity_at`; `LAST-MSG` shows the age of the
 last message from the child (`↑`, from its own inbox files) and the last
 delivery to it (`↓`). Unknown values print `?`. `--json` prints the items as
 published plus `last_from_child_at`. An unavailable or invalid snapshot, or an
-unknown `--child`, exits 1; a usage error exits 2.
+unknown `--child`, exits 1; a usage error exits 2. A stale (but valid) snapshot
+only warns on stderr and still prints with exit 0, unlike `wait --quiet-after`
+and `wait --digest`, which exit 2.
 
-Each child item in `children.json` carries `status` (object, or `null` for a
-stopped child; `version` stays 1 and every field is additive and optional, so
+Each child item in `children.json` carries `status` (an object for a running
+child; for a stopped one `{"head", "last_to_child_at"}` when it has either,
+`null` when neither; `version` stays 1 and every field is additive and optional, so
 older and newer readers and brokers interoperate):
 
 | Field | Meaning |
@@ -531,20 +538,25 @@ older and newer readers and brokers interoperate):
 | `agent` | `{"alive", "state", "since", "last_event_at", "last_tool"}`: the prompted agent's liveness and session state (currently Claude). |
 | `cpu_percent` | Container CPU over the last sample, in % of one core. |
 | `memory_bytes` | Container memory in bytes, net of page cache. |
-| `longest_command` | `{"command", "seconds"}` of the longest-running foreground process that is neither the agent nor a shell, or `null`. |
+| `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and `jailbee inbox wait` waiters; `null` if none or the agent is unknown. |
 | `head` | `{"sha", "time", "subject"}` of the newest commit on the child's branch (committer time), or `null` without commits. |
 | `dirty` | Uncommitted changes in the work tree, or `null` if unknown. |
 | `last_busy_at` | Last time `cpu_percent` was at least 5. Kept across broker restarts. |
 | `last_to_child_at` | Last time the broker accepted a message, update or restart for the child. |
-| `activity_at` | Latest of `agent.last_event_at`, `head.time`, `last_busy_at` and the start time. |
+| `activity_at` | Latest of `agent.last_event_at`, `head.time`, `last_busy_at` and the start time; never decreases for one child instance. Child-supplied times later than now + 5 s are ignored by the broker, and `wait` ignores an `activity_at` later than now + 5 s. |
 
-Host-side fields refresh at most every 30 seconds per child, the agent
-session probe and the git probe at most every 60 seconds; between refreshes the
-last values are republished with their `observed_at`. A stopped child has
-`status: null` apart from `head` and `last_to_child_at`, which are kept. Commit
-subjects and command lines come from the child and are untrusted: they are cut
-to 120 and 160 characters and control characters are replaced, in the broker
-and again when printed.
+Host-side fields, including the agent session fields, refresh at most every 30
+seconds per child; the liveness probe (`agent_watch.probe`) and the git probe
+run at most every 60 seconds; between refreshes the last values are republished
+with their `observed_at`. A session that cannot be read keeps the last known
+`last_event_at`. A stopped child publishes only `head` and `last_to_child_at`
+(`null` when it has neither). Commit subjects and process names come from the
+child and are untrusted: they are cut to 120 and 160 characters and control
+characters are replaced, in the broker and again when printed.
+
+`cpu_percent` and `last_busy_at` are container-wide, so autostarted background
+services (a JVM, a database, a file watcher, dockerd) can keep
+`--quiet-after` from ever firing for that child.
 
 One ordinary waiter per container is enforced with a process lock (a second
 exits 2). It may overlap `send --wait`: the sender reserves its status ref

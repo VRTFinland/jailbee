@@ -285,23 +285,9 @@ digest and a child is running, `wait` exits 0 printing `digest` on the first
 line, then the `jailbee inbox status` table. That is one wakeup per period for
 all running children (the time is kept in `~/.jailbee/orchestration/digest-at`;
 the first digest is due one period after the first `wait --digest`). A real
-message due at the same time wins; the digest comes at the next wait. It needs
-fresh `children.json` like `--quiet-after`.
-
-## Checking on children
-
-Before messaging a child to ask how it is doing, run `jailbee inbox status`
-(`--child C` for one, `--json` for the raw fields). It costs the child nothing.
-Columns: `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`; `?`
-means unknown, and a stopped child shows little more than `HEAD`.
-
-- Fine: a recent `ACTIVE` (agent events or CPU), recent commits, agent
-  `alive:busy`.
-- Look at it: agent alive but no activity and no CPU for about 30 minutes; one
-  command in `LONGEST` running for hours; agent `dead` without done (also
-  reported as `blocked`); `waiting` (also reported as `idle`).
-- Only then message the child.
-
+message due at the same time, or a `quiet-child` wakeup, wins; the digest comes
+at the next wait. It needs fresh `children.json` like `--quiet-after`. A
+`blocked` or `idle` report from the broker counts as a message from the child.
 
 `jailbee inbox children` (`--json` for the raw entries) shows each child's
 state from that file. `running` is the **container** state: a child that sent
@@ -317,6 +303,27 @@ on process exit, including crashes/timeouts; stale lock files do not hide
 replies. Do not explicitly `read` a pending sender's status from another
 session. After a wake, handle all other unread messages, including filtered
 notes, but leave reserved replies to their sender.
+
+## Checking on children
+
+Before messaging a child to ask how it is doing, run `jailbee inbox status`
+(`--child C` for one, `--json` for the raw fields). It costs the child nothing.
+Columns: `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`; `?`
+means unknown, and a stopped child shows little more than `HEAD`. A stale
+snapshot only warns on stderr there and still prints (exit 0), unlike
+`wait --quiet-after/--digest`, which exit 2.
+
+- Fine: a recent `ACTIVE` (agent events or CPU), recent commits, agent
+  `alive:busy`.
+- Look at it: agent alive but no activity and no CPU for about 30 minutes; one
+  process in `LONGEST` (the longest-running tool process of the agent, by
+  process name) running for hours; agent `dead` without done (also reported as
+  `blocked`); `waiting` (also reported as `idle`).
+- Only then message the child.
+
+CPU is measured container-wide, so background services the container starts
+(a JVM, a database, a file watcher, dockerd) can keep `--quiet-after` from ever
+firing for that child; judge such a child by `ACTIVE` agent events and commits.
 
 ## Status messages
 
