@@ -181,7 +181,9 @@ def match_sessions(
     return out
 
 
-def read_sessions(homes: Iterable[tuple[str, str, Path]]) -> dict[str, list[AgentSession]]:
+def read_sessions(
+    homes: Iterable[tuple[str, str, Path]], *, strict: bool = False
+) -> dict[str, list[AgentSession]]:
     """Each container's recorded sessions, from `(container, agent, session home)`.
 
     Each distinct triple is read once. Only containers with at least one
@@ -197,10 +199,20 @@ def read_sessions(homes: Iterable[tuple[str, str, Path]]) -> dict[str, list[Agen
         try:
             adapter = base.get_adapter(name)
         except KeyError:
+            if strict:
+                raise
             continue
         try:
-            found = adapter.read_sessions(home)
-        except Exception:  # see the docstring: never fail the tick over this
+            if strict:
+                reader = getattr(adapter, "read_sessions_strict", None)
+                if reader is None:
+                    raise RuntimeError(f"agent {name} does not support strict session discovery")
+                found = reader(home)
+            else:
+                found = adapter.read_sessions(home)
+        except Exception:  # dashboard reads are best-effort
+            if strict:
+                raise
             log.debug("reading %s sessions under %s failed", name, home, exc_info=True)
             continue
         if found:

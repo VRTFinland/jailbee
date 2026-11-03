@@ -1,6 +1,7 @@
 """Validate accepted refresh plans and their declared temporary rights."""
 
 import json
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from jailbee.incus import ExecResult, Incus
     from jailbee.orchestration.agent_watch import AgentStatus
     from jailbee.orchestration.runner import Runner
+
+
+_pause_wait_seconds = 5.0
 
 
 class RefreshError(RuntimeError):
@@ -94,7 +98,23 @@ def pause_agent(
     steps = autostart.agent_autostart_steps(cfg, initial_prompt=True, runner=runner, resume=session)
     if not any(step.name == target and step.run for step in steps):
         raise RefreshError(f"agent `{status.agent}` has no usable relaunch step")
+    updated_history = labels.with_session(labels.sessions_of(config), session)
+    if updated_history is not None:
+        try:
+            incus.config_set(full, labels.AGENT_SESSIONS, json.dumps(updated_history))
+        except Exception as exc:
+            raise RefreshError(f"cannot record agent session: {exc}") from exc
+    if status.pid is None or status.proc_start is None:
+        raise RefreshError("cannot determine agent process identity")
     tmux.kill_window(incus, full, tmux.window_for(status.agent), checked=True)
+    deadline = time.monotonic() + _pause_wait_seconds
+    while True:
+        state = agent_watch.process_identity_alive(incus, full, status.pid, status.proc_start, uid=cfg.container_user.uid)
+        if state is False:
+            break
+        if state is None or time.monotonic() >= deadline:
+            raise RefreshError("could not confirm agent process exit")
+        time.sleep(0.1)
     return PausedAgent(status.agent, session, runner)
 
 
@@ -133,9 +153,12 @@ def foreign_agents(
     pid = state.get("pid") if isinstance(state, dict) else None
     if type(pid) is not int or pid <= 0:
         raise RefreshError(f"cannot inspect container processes in {full}")
-    sessions = agent_status._one_per_process(
-        agent_status.read_sessions(lifecycle.agent_homes(cfg, [full])).get(full, ())
-    )
+    try:
+        sessions = agent_status._one_per_process(
+            agent_status.read_sessions(lifecycle.agent_homes(cfg, [full]), strict=True).get(full, ())
+        )
+    except Exception as exc:
+        raise RefreshError(f"cannot inspect agent sessions: {exc}") from exc
     by_start = {s.proc_start for s in sessions}
     live = set()
     try:

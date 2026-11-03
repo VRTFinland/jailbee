@@ -1,5 +1,7 @@
 """Detached broker refresh execution."""
 
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -66,6 +68,18 @@ def _deliver(
 
 
 def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
+    root = state.state_root()
+    root.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(os.fsencode(path.absolute())).hexdigest()
+    with (root / f"refresh-{digest}.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _run_job_locked(cfg, incus, path)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
     try:
         raw = path.read_bytes()
         if len(raw) > 300 * 1024:
@@ -132,7 +146,12 @@ def run_job(cfg: "Config", incus: "Incus", path: Path) -> int:
         engine = db.get_engine()
         if engine is None:
             raise elevated.RefreshError("job database unavailable")
-        with watch.locked(state.state_root()), Session(engine) as session:
+        with watch.mutation_locked(state.state_root()), watch.locked(state.state_root()), Session(engine) as session:
+            try:
+                if path.read_bytes() != raw:
+                    return 1
+            except FileNotFoundError:
+                return 1
             claimed = background.claim_job(
                 session,
                 container_name=child,

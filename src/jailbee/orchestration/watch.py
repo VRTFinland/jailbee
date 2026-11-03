@@ -119,6 +119,17 @@ def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
 
 
 @contextmanager
+def mutation_locked(root: Path) -> Iterator[None]:
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / "mutation.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
 def locked(root: Path) -> Iterator[None]:
     root.mkdir(parents=True, exist_ok=True)
     with (root / "watch.lock").open("a") as lock:

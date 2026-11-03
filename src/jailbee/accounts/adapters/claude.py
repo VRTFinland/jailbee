@@ -395,7 +395,7 @@ MAX_WAITING_FOR_CHARS = 200
 MAX_SESSION_ID_CHARS = 64
 
 
-def _read_small_regular_file(path: Path, limit: int) -> bytes | None:
+def _read_small_regular_file(path: Path, limit: int, *, strict: bool = False) -> bytes | None:
     """At most `limit` bytes of `path`, or None unless it is a small regular file.
 
     `O_NONBLOCK` and the `S_ISREG` check handle a FIFO or device a container
@@ -406,6 +406,8 @@ def _read_small_regular_file(path: Path, limit: int) -> bytes | None:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except OSError:
+        if strict:
+            raise
         return None
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -419,6 +421,8 @@ def _read_small_regular_file(path: Path, limit: int) -> bytes | None:
             chunks.append(chunk)
             size += len(chunk)
     except OSError:
+        if strict:
+            raise
         return None
     finally:
         os.close(fd)
@@ -501,15 +505,25 @@ def _parse_session(raw: bytes) -> AgentSession | None:
     )
 
 
-def read_session_files(home: Path) -> list[AgentSession]:
+def read_session_files(home: Path, *, strict: bool = False) -> list[AgentSession]:
     """Every session file under `home`, in filename order. See `AccountAdapter.read_sessions`."""
     try:
-        paths = sorted((home / SESSIONS_DIRNAME).glob("*.json"))
+        if strict:
+            directory = home / SESSIONS_DIRNAME
+            try:
+                with os.scandir(directory) as entries:
+                    paths = sorted(directory / e.name for e in entries if e.name.endswith(".json"))
+            except FileNotFoundError:
+                paths = []
+        else:
+            paths = sorted((home / SESSIONS_DIRNAME).glob("*.json"))
     except OSError:
+        if strict:
+            raise
         return []
     sessions: list[AgentSession] = []
     for path in paths:
-        raw = _read_small_regular_file(path, MAX_SESSION_FILE_BYTES)
+        raw = _read_small_regular_file(path, MAX_SESSION_FILE_BYTES, strict=strict)
         if raw is None:
             continue
         session = _parse_session(raw)
@@ -972,6 +986,9 @@ class ClaudeAdapter:
 
     def read_sessions(self, home: Path) -> list[AgentSession]:
         return read_session_files(home)
+
+    def read_sessions_strict(self, home: Path) -> list[AgentSession]:
+        return read_session_files(home, strict=True)
 
     def locate_activity(self, config_home: Path, session: AgentSession) -> ActivityPaths | None:
         return claude_activity.locate(config_home, session.session_id)

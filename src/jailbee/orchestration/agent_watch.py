@@ -210,6 +210,24 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
         return None
 
 
+def process_identity_alive(incus: Incus, name: str, pid: int, start: int, *, uid: int) -> bool | None:
+    script = """import json, pathlib, sys
+p = pathlib.Path('/proc', sys.argv[1], 'stat')
+try:
+    s = p.read_text().rsplit(')', 1)[1].split()
+    print(json.dumps(s[0] not in ('Z', 'X') and int(s[19]) == int(sys.argv[2])))
+except FileNotFoundError:
+    print('false')
+except Exception:
+    print('null')
+"""
+    try:
+        value = json.loads(incus.exec(name, ["python3", "-c", script, str(pid), str(start)], uid=uid, timeout=15))
+        return value if isinstance(value, bool) else None
+    except (IncusError, ValueError, TypeError):
+        return None
+
+
 def describe(status: AgentStatus) -> str:
     """Include the shell status and the conventional signal interpretation."""
     reason = "exit status unknown (process disappeared or never started)"

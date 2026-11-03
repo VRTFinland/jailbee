@@ -126,6 +126,13 @@ def _apply(ctx: ActionContext, child: Node, item: str, held: Held) -> None:
 
 
 def handle_rights(ctx: ActionContext, m: RightsManifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_rights_locked(ctx, m)
+
+
+def _handle_rights_locked(ctx: ActionContext, m: RightsManifest) -> Outcome:
     from jailbee.config import parse_ttl
     from jailbee.egress import is_wildcard_entry
     from jailbee.network_generation import generation_of

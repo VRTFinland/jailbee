@@ -797,7 +797,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    assert rig.incus.list_containers.call_count == 3  # round, cleanup, post-launch watch snapshot
+    assert rig.incus.list_containers.call_count == 4  # includes fresh supervised-watch snapshot
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
@@ -1049,6 +1049,29 @@ def _destroy_seams(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(actions.lifecycle, "container_repo_dir", MagicMock(return_value="/r"))
     monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=False))
     return destroy
+
+
+def test_settle_watch_ignores_stale_finished_snapshot(rig: Rig, monkeypatch):
+    orch = actions.Node("proj-orch", "orch", True, {})
+    child = actions.Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full, labels.STATE: labels.STATE_DONE})
+    ctx = actions.ActionContext(rig.cfg, GlobalConfig(), rig.incus, rig.root, orch, {orch.full: orch, child.full: child}, NOW)
+    entry = watch.WatchEntry("r1", child.full, "restart", NOW.isoformat(), supervise=True, agent_only=True)
+    watch.register(rig.root, orch.full, entry)
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **k: None)
+    broker._settle_watches(ctx, broker.BrokerMemory(), {})
+    assert watch.load_watch(rig.root)[orch.full] == [entry]
+
+
+def test_pending_destroy_waits_for_active_refresh(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.db.models import JOB_REFRESH
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    monkeypatch.setattr(actions, "live_job_kind", lambda _: JOB_REFRESH)
+    rig.tick()
+    destroy.assert_not_called()
 
 
 def test_tick_destroys_child_marked_for_destroy(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1493,6 +1516,7 @@ def test_startup_rechecks_container_after_queue_launch(rig: Rig, monkeypatch) ->
     rig.incus.list_containers.side_effect = [
         [_orch(), _child(running=False)],
         [_orch(), _child(running=False)],
+        [_orch(), _child()],
         [_orch(), _child()],
     ]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})

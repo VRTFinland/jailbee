@@ -258,6 +258,13 @@ def _settle_watches(
         jobs = watch.read_jobs()
         watches = watch.load_watch(ctx.root)
         entries = watches.get(ctx.sender.full, [])
+        if any(e.supervise for e in entries):
+            try:
+                fresh_nodes = _nodes(ctx.incus.list_containers(), {ctx.cfg.container_prefix: ctx.cfg})
+            except Exception:
+                log.exception("broker: could not refresh nodes for watch settlement")
+                return
+            ctx = replace(ctx, nodes=fresh_nodes)
         for entry in list(entries):
             if jobs is None and (entry.supervise or (not entry.confirmed and not entry.agent_only)):
                 continue

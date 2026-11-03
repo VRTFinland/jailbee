@@ -270,6 +270,10 @@ def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
 
     rig = Rig(tmp_path, running=True)
     ctx = rig.ctx()
+    rig.incus.list_containers.return_value = [
+        {"name": rig.child.full, "status": "Running", "config": rig.child.config},
+        {"name": rig.sender.full, "status": "Running", "config": rig.sender.config},
+    ]
     entry = WatchEntry(
         "r-new", rig.child.full, "restart", ctx.now.isoformat(), supervise=True, agent_only=True
     )

@@ -146,10 +146,17 @@ def park(ctx: ActionContext, orchestrator: Node, item: PendingFinish) -> Path:
 
 
 def settle_destroys(ctx: ActionContext) -> None:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        _settle_destroys_locked(ctx)
+
+
+def _settle_destroys_locked(ctx: ActionContext) -> None:
     """Destroy only after delivery, reply, journal and outbox cleanup finished."""
     from jailbee import lifecycle
     from jailbee.orchestration import outbox
-    from jailbee.orchestration.actions import destroy_guard
+    from jailbee.orchestration.actions import destroy_guard, refresh_guard
     from jailbee.orchestration.state import purge_pending
 
     if not ctx.sender.running or outbox.has_pending(ctx.root, ctx.sender.full):
@@ -159,6 +166,8 @@ def settle_destroys(ctx: ActionContext) -> None:
         if not marker:
             continue
         if reply_path(ctx, child).exists() or outbox.has_pending(ctx.root, child.full):
+            continue
+        if refresh_guard(child) is not None:
             continue
         reason: str | None
         if not _destroy_allowed(ctx, ctx.sender):

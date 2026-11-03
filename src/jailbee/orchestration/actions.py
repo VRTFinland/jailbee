@@ -880,6 +880,13 @@ HANDLERS["spawn"] = handle_spawn
 
 
 def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_stop_locked(ctx, m)
+
+
+def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     if not isinstance(m, StopManifest):
         return refused("not a stop manifest")
     child = ctx.child(m.child)
@@ -1065,6 +1072,13 @@ def _restart_agent(
 
 
 def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_restart_locked(ctx, m)
+
+
+def _handle_restart_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
     if not isinstance(m, RestartManifest):
         return refused("not a restart manifest")
@@ -1197,6 +1211,13 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
 
 
 def handle_destroy(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_destroy_locked(ctx, m)
+
+
+def _handle_destroy_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     # No drain here: the broker drains after every round and reports each outcome.
     if not isinstance(m, DestroyManifest):
         return refused("not a destroy manifest")

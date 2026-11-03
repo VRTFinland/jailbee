@@ -69,6 +69,111 @@ def job(path, *, elevated_plan=False, force=False, mixed=False):
     )
 
 
+def test_same_job_concurrent_workers_execute_once(rig, mocker):
+    import threading
+
+    cfg, _, _, incus, path = rig
+    job(path)
+    entered = threading.Event()
+    release = threading.Event()
+    report = elevated.RefreshReport((), True, "not running")
+
+    def execute(*args):
+        entered.set()
+        assert release.wait(5)
+        return report
+
+    run = mocker.patch.object(elevated, "run_plain_refresh", side_effect=execute)
+    results = []
+    second_read = threading.Event()
+    second_continue = threading.Event()
+    original_read = type(path).read_bytes
+
+    def read_bytes(p):
+        data = original_read(p)
+        if threading.current_thread().name == "second":
+            second_read.set()
+            assert second_continue.wait(5)
+        return data
+
+    mocker.patch.object(type(path), "read_bytes", read_bytes)
+    first = threading.Thread(target=lambda: results.append(elevated.run_job(cfg, incus, path)))
+    second = threading.Thread(
+        name="second", target=lambda: results.append(elevated.run_job(cfg, incus, path))
+    )
+    # Capture the original request in the second worker, before the first starts.
+    second.start()
+    assert second_read.wait(5)
+    first.start()
+    second_continue.set()
+    assert entered.wait(5)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert run.call_count == 1
+
+
+@pytest.mark.parametrize("operation", ["stop", "restart", "destroy", "rights", "pending"])
+def test_mutations_serialize_with_refresh_claim(rig, mocker, operation):
+    import threading
+    from datetime import UTC, datetime
+
+    from jailbee.global_config import GlobalConfig
+    from jailbee.orchestration import actions, finishing, rights
+    from jailbee.orchestration.protocol import DestroyManifest, RestartManifest, RightsManifest, StopManifest
+
+    cfg, _, _, incus, path = rig
+    job(path)
+    orch = actions.Node("proj-o", "o", True, {})
+    child = actions.Node("proj-c", "c", True, {labels.SPAWNED_BY: "proj-o"})
+    ctx = actions.ActionContext(cfg, GlobalConfig(), incus, path.parent, orch, {orch.full: orch, child.full: child}, datetime.now(UTC))
+    entered = threading.Event()
+    proceed = threading.Event()
+    done = threading.Event()
+
+    def mutation(*args):
+        entered.set()
+        assert proceed.wait(5)
+        return actions.done("done") if operation != "pending" else None
+
+    target, name, manifest = {
+        "stop": (actions, "_handle_stop_locked", StopManifest(version=1, id="s1", type="stop", child="c")),
+        "restart": (actions, "_handle_restart_locked", RestartManifest(version=1, id="r1", type="restart", child="c", prompt="p")),
+        "destroy": (actions, "_handle_destroy_locked", DestroyManifest(version=1, id="d1", type="destroy", child="c")),
+        "rights": (rights, "_handle_rights_locked", RightsManifest(version=1, id="x1", type="rights", child="c", revoke={"loose": True})),
+        "pending": (finishing, "_settle_destroys_locked", None),
+    }[operation]
+    mocker.patch.object(target, name, side_effect=mutation)
+    original = background.claim_job
+
+    def claim(*args, **kwargs):
+        assert done.is_set()
+        return original(*args, **kwargs)
+
+    mocker.patch.object(background, "claim_job", side_effect=claim)
+    mocker.patch.object(elevated, "run_plain_refresh", return_value=elevated.RefreshReport((), True, "none"))
+    def invoke():
+        if operation == "pending":
+            finishing.settle_destroys(ctx)
+        else:
+            getattr(target, {"stop": "handle_stop", "restart": "handle_restart", "destroy": "handle_destroy", "rights": "handle_rights"}[operation])(ctx, manifest)
+        done.set()
+
+    results = []
+    a = threading.Thread(target=invoke)
+    b = threading.Thread(target=lambda: results.append(elevated.run_job(cfg, incus, path)))
+    a.start()
+    assert entered.wait(5)
+    b.start()
+    proceed.set()
+    a.join(5)
+    b.join(5)
+    assert done.is_set() and not b.is_alive()
+    assert results == [0]
+    assert background.claim_job.called
+
+
 def test_plain_worker_delivers_and_releases(rig, mocker):
     cfg, engine, deliver, incus, path = rig
     job(path)
