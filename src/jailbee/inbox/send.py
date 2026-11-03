@@ -2,16 +2,17 @@
 
 import fcntl
 import io
-import json
 import os
 import re
 import secrets
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, BinaryIO
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.render import pretty
 
 if TYPE_CHECKING:
     from jailbee.inbox.cli import Settings
@@ -315,7 +316,7 @@ def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str,
         for key, spawn_value in (
             ("base", r.base_branch),
             ("ref", r.ref),
-            ("pr", int(r.pr) if r.pr else None),
+            ("pr", Decimal(r.pr) if r.pr else None),
             ("note", r.note),
         ):
             if spawn_value:
@@ -399,9 +400,7 @@ def publish(settings: "Settings", req: SendRequest) -> str:
                 raise InboxUsage(f"the {req.type} text is empty")
             if size > 65536:
                 raise InboxUsage(f"the {req.type} text is {size} bytes; the limit is 65536")
-        json_tmp.write_text(
-            json.dumps(build_manifest(req, id_, body_name), ensure_ascii=False, indent=2) + "\n"
-        )
+        json_tmp.write_text(pretty(build_manifest(req, id_, body_name)) + "\n")
         if req.wait:
             lock_dir = settings.base / "status-waits"
             lock_dir.mkdir(parents=True, exist_ok=True)

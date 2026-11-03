@@ -135,6 +135,20 @@ def find_status(inbox: Path, ref: str) -> Path | None:
     return None
 
 
+def wait_for_status(settings: Settings, ref: str, timeout: int | None) -> int:
+    from jailbee.inbox.cli import cmd_read, message_id
+
+    rc, selected = run_wait(settings, timeout=timeout, wake=None, quiet=0, status_ref=ref)
+    if rc or selected is None:
+        return 3
+    path = Path(selected)
+    data = _load(path)
+    ident = message_id(path)
+    if data is None or ident is None or cmd_read(settings, [ident]):
+        return 1
+    return 0 if data.get("state") in ("done", "queued", "started") else 1
+
+
 def settle(
     settings: Settings,
     deadline: float,

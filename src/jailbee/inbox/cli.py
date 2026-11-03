@@ -525,7 +525,13 @@ def main(argv: list[str]) -> int:
             from jailbee.inbox.send import PublishError, parse_send, publish
 
             try:
-                print(publish(settings, parse_send(argv[1:])))
+                request = parse_send(argv[1:])
+                ident = publish(settings, request)
+                print(ident, flush=True)
+                if request.wait:
+                    from jailbee.inbox.waiting import wait_for_status
+
+                    return wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
             except (PublishError, OSError) as exc:
                 if exc.__cause__ is not None:
                     print(f"{PROG}: {exc.__cause__}", file=sys.stderr)

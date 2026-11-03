@@ -22,15 +22,12 @@ pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not insta
 # PY_COUNTERPARTS (Tasks 5/6): burst settling, interrupt lock release,
 # missed event recheck, settle timeout, vanished reads, ID collision,
 # watchdog polling, and send --wait timeout none.
-PY_PENDING = frozenset(
-    {
-        "test_send_wait_reads_only_matching_status",
-        "test_send_wait_times_out_with_3",
-        "test_send_rights_wait_uses_status_wait",
-        "test_send_reserves_status_before_publishing",
-        "test_killed_send_releases_reply_reservation",
-    }
-)
+PY_PENDING: frozenset[str] = frozenset()
+
+
+def test_py_pending_is_empty():
+    assert not PY_PENDING
+
 
 bash_only = pytest.mark.bash_only
 
@@ -1992,6 +1989,54 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
         except ProcessLookupError:
             pass
         proc.wait(timeout=3)
+
+
+def test_send_wait_sigint_exits_130_without_traceback(base, tmp_path):
+    import select
+    import signal
+
+    env = env_for(base, tmp_path)
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "jailbee.inbox",
+            "send",
+            "message",
+            "--text",
+            "x",
+            "--wait",
+            "--timeout",
+            "30",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert select.select([proc.stdout], [], [], 5)[0]
+        mid = proc.stdout.readline().strip()
+        assert mid.startswith("message-")
+        proc.send_signal(signal.SIGINT)
+        _, stderr = proc.communicate(timeout=5)
+        assert proc.returncode == 130
+        assert "Traceback" not in stderr
+        path = write_inbox(base, FIRST, status("late", ref=mid))
+        result = subprocess.run(
+            [sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "0"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == str(path)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=5)
 
 
 def test_children_lists_name_running_session(script, base, tmp_path):
