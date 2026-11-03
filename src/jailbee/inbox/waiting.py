@@ -62,6 +62,37 @@ def _reserved(base: Path, ref: Any) -> bool:
         os.close(fd)
 
 
+def _records(base: Path) -> list[tuple[Path, dict[str, Any], int]]:
+    records: list[tuple[Path, dict[str, Any], int]] = []
+    for directory in (base / "inbox", base / "inbox/read"):
+        for path in directory.glob("*.json"):
+            if path.name.startswith("."):
+                continue
+            data = _load(path)
+            if data is None:
+                continue
+            try:
+                stamp = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            records.append((path, data, stamp))
+    return records
+
+
+def _newest_from_child(records: list[tuple[Path, dict[str, Any], int]]) -> dict[str, float]:
+    newest: dict[str, float] = {}
+    for _, data, stamp in records:
+        name = data.get("from")
+        if data.get("type") == "message" and isinstance(name, str):
+            newest[name] = max(newest.get(name, 0.0), stamp / 1e9)
+    return newest
+
+
+def last_from_child(base: Path) -> dict[str, float]:
+    """Newest mtime of each sender's `message` files in `inbox/` and `inbox/read/`."""
+    return _newest_from_child(_records(base))
+
+
 def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: float) -> str | None:
     snapshot = _load(base / "children.json")
     children: dict[str, float] = {}
@@ -88,29 +119,18 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
         children = {}
         running.clear()
 
-    records: list[tuple[Path, dict[str, Any], int]] = []
-    for directory in (base / "inbox", base / "inbox/read"):
-        for path in directory.glob("*.json"):
-            if path.name.startswith("."):
-                continue
-            data = _load(path)
-            if data is None:
-                continue
-            try:
-                stamp = path.stat().st_mtime_ns
-            except OSError:
-                continue
-            records.append((path, data, stamp))
+    records = _records(base)
 
     first: dict[str, Path] = {}
     latest = {name: children[name] for name in running}
+    newest = _newest_from_child(records)
     for path, data, stamp in sorted(records, key=lambda r: (r[2], r[0].name)):
         name = data.get("from")
         if data.get("type") == "message" and isinstance(name, str) and name in children:
             if stamp / 1e9 >= children[name]:
                 first.setdefault(name, path)
-                if name in latest:
-                    latest[name] = max(latest[name], stamp / 1e9)
+    for name in latest:
+        latest[name] = max(latest[name], newest.get(name, 0.0))
 
     for path, data, _ in sorted(records, key=lambda r: r[0].name):
         if path.parent != base / "inbox":

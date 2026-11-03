@@ -1868,3 +1868,229 @@ def test_children_decimal_error_line(script, base, tmp_path):
     assert result.returncode == 5
     assert 'children.json:7): Cannot index number with string "name"' in result.stderr
     assert "Traceback" not in result.stderr
+
+
+# --- inbox status (#64) -----------------------------------------------------
+
+STATUS_NOW = 100000.0
+
+
+def _full_status(now: float = STATUS_NOW) -> dict[str, object]:
+    return {
+        "observed_at": now,
+        "agent": {
+            "alive": True,
+            "state": "busy",
+            "since": now - 600,
+            "last_event_at": now - 30,
+            "last_tool": "Bash",
+        },
+        "cpu_percent": 12.4,
+        "memory_bytes": 1610612736,
+        "longest_command": {"command": "pytest -q", "seconds": 4320},
+        "head": {"sha": "abcdef1234567890", "time": now - 720, "subject": "fix thing"},
+        "dirty": True,
+        "last_busy_at": now - 60,
+        "last_to_child_at": now - 3600,
+        "activity_at": now - 240,
+    }
+
+
+def _status_child(name: str = "kid", **extra: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "name": name,
+        "running": True,
+        "done": False,
+        "session": None,
+        "started_at": 1,
+        "status": _full_status(),
+    }
+    item.update(extra)
+    return item
+
+
+def _cells(line: str) -> list[str]:
+    return re.split(r"\s{2,}", line.strip())
+
+
+def _write_snapshot(base: Path, children: list[object], updated: float | None = None) -> None:
+    (base / "children.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": time.time() if updated is None else updated,
+                "children": children,
+            }
+        )
+    )
+
+
+def test_status_table_running_child():
+    from jailbee.inbox.render import render_status
+
+    out = render_status(
+        [_status_child()], now=STATUS_NOW, from_child={"kid": STATUS_NOW - 720}
+    ).splitlines()
+    assert _cells(out[0]) == "NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG".split()
+    assert _cells(out[1]) == [
+        "kid",
+        "running",
+        "alive:busy",
+        "4m",
+        "12%",
+        "1.5GiB",
+        "abcdef1 12m fix thing",
+        "yes",
+        "pytest -q 1h12m",
+        "↑12m ↓1h0m",
+    ]
+
+
+def test_status_old_broker_without_status_prints_question_marks():
+    from jailbee.inbox.render import render_status
+
+    child = {"name": "old", "running": True, "session": None, "started_at": 1}
+    out = render_status([child], now=STATUS_NOW, from_child={}).splitlines()
+    assert _cells(out[1]) == ["old", "running", "?", "?", "?", "?", "?", "?", "?", "↑? ↓?"]
+
+
+def test_status_done_wins_over_running():
+    from jailbee.inbox.render import render_status
+
+    out = render_status([_status_child(done=True)], now=STATUS_NOW, from_child={})
+    assert _cells(out.splitlines()[1])[1] == "done"
+    out = render_status([_status_child(running=False)], now=STATUS_NOW, from_child={})
+    assert _cells(out.splitlines()[1])[1] == "stopped"
+
+
+def test_status_cli_child_filter_and_unknown_child_exit_1(script, base, tmp_path):
+    _write_snapshot(base, [_status_child("a"), _status_child("b")])
+    env = env_for(base, tmp_path)
+    r = run(script, "status", env=env)
+    assert r.returncode == 0, r.stderr
+    assert len(r.stdout.splitlines()) == 3
+    r = run(script, "status", "--child", "b", env=env)
+    assert r.returncode == 0, r.stderr
+    assert len(r.stdout.splitlines()) == 2
+    assert r.stdout.splitlines()[1].startswith("b ")
+    r = run(script, "status", "--child", "nope", env=env)
+    assert r.returncode == 1
+    assert "nope" in r.stderr
+    assert r.stdout == ""
+
+
+def test_status_json_includes_last_from_child_at(script, base, tmp_path):
+    _write_snapshot(base, [_status_child("kid"), _status_child("other")])
+    path = write_inbox(
+        base, FIRST, {**message("h-0000aaaa"), "from": "kid"}
+    )
+    os.utime(path, (1_700_000_000, 1_700_000_000))
+    r = run(script, "status", "--json", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    items = json.loads(r.stdout)
+    assert items[0]["last_from_child_at"] == 1_700_000_000
+    assert items[1]["last_from_child_at"] is None
+    assert items[0]["status"]["head"]["subject"] == "fix thing"
+
+
+def test_status_sanitises_child_text(script, base, tmp_path):
+    status_doc = _full_status()
+    status_doc["head"] = {"sha": "abc\x1b[31m", "time": STATUS_NOW, "subject": "\x1b]0;pwn\x07"}
+    status_doc["longest_command"] = {"command": "ls\x9b\x00", "seconds": 5}
+    status_doc["agent"] = {"alive": True, "state": "b\x1bz", "last_tool": "\x07"}
+    _write_snapshot(base, [_status_child("k\x1bid", status=status_doc)])
+    env = env_for(base, tmp_path)
+    for args in ((), ("--json",)):
+        r = run(script, "status", *args, env=env)
+        assert r.returncode == 0, r.stderr
+        assert "\x1b" not in r.stdout
+        assert "\x07" not in r.stdout
+        assert "\x9b" not in r.stdout
+        assert "\x00" not in r.stdout
+    r = run(script, "status", env=env)
+    assert "k?id" in r.stdout
+
+
+def test_status_hostile_values_do_not_raise():
+    from jailbee.inbox.render import render_status
+
+    hostile: list[object] = [
+        None,
+        42,
+        "str",
+        {},
+        {"name": 5, "running": "yes", "status": "x"},
+        {"name": "a", "status": None},
+        {"name": "b", "status": []},
+        {
+            "name": "c",
+            "running": 1,
+            "done": "no",
+            "status": {
+                "agent": [],
+                "cpu_percent": True,
+                "memory_bytes": "9",
+                "longest_command": {"command": 5, "seconds": [1]},
+                "head": {"sha": 7, "time": "x", "subject": None},
+                "dirty": "maybe",
+                "activity_at": {},
+                "last_to_child_at": True,
+            },
+        },
+        {
+            "name": "d",
+            "status": {"agent": {"alive": "yes", "state": 3}, "head": "abc", "longest_command": 5},
+        },
+    ]
+    out = render_status(hostile, now=STATUS_NOW, from_child={"a": float("nan")})  # type: ignore[arg-type]
+    assert len(out.splitlines()) == 1 + len(hostile)
+
+
+@pytest.mark.parametrize(
+    "cpu", [float("nan"), float("inf"), float("-inf"), True, -1.0, "5", None]
+)
+def test_status_non_finite_cpu_prints_question_mark(cpu):
+    from jailbee.inbox.render import render_status
+
+    doc = _full_status()
+    doc["cpu_percent"] = cpu
+    out = render_status([_status_child(status=doc)], now=STATUS_NOW, from_child={})
+    assert _cells(out.splitlines()[1])[4] == "?"
+
+
+def test_status_cli_tolerates_nan_and_status_null(script, base, tmp_path):
+    (base / "children.json").write_text(
+        '{"version":1,"updated_at":%s,"children":[{"name":"a","running":true,"status":null},'
+        '{"name":"b","running":true,"status":{"cpu_percent":NaN,"memory_bytes":Infinity}}]}'
+        % time.time()
+    )
+    r = run(script, "status", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_status_cli_errors_and_usage(script, base, tmp_path):
+    env = env_for(base, tmp_path)
+    assert run(script, "status", env=env).returncode == 1  # no snapshot
+    (base / "children.json").write_text("{not json")
+    r = run(script, "status", env=env)
+    assert r.returncode == 1 and "invalid children.json" in r.stderr
+    _write_snapshot(base, [], updated=time.time() - 901)
+    r = run(script, "status", env=env)
+    assert r.returncode == 0 and "stale" in r.stderr.lower()
+    for bad in (["--bogus"], ["extra"], ["--child"]):
+        assert run(script, "status", *bad, env=env).returncode == 2
+
+
+def test_last_from_child_newest_mtime_across_inbox_and_read(base):
+    from jailbee.inbox.waiting import last_from_child
+
+    (base / "inbox/read").mkdir()
+    a = write_inbox(base, FIRST, {**message("h-0000aaaa"), "from": "kid"})
+    b = base / "inbox/read" / SECOND
+    b.write_text(json.dumps({**message("h-0000bbbb"), "from": "kid"}))
+    other = write_inbox(base, "x.json", {**status("h-0000cccc"), "from": "kid"})
+    os.utime(a, (100, 100))
+    os.utime(b, (300, 300))
+    os.utime(other, (900, 900))
+    assert last_from_child(base) == {"kid": 300.0}

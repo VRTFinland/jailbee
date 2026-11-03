@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
 from jailbee.inbox.render import (
@@ -20,6 +21,7 @@ from jailbee.inbox.render import (
     jq_tostring,
     ls_line,
     pretty,
+    render_status,
     tsv,
 )
 
@@ -30,6 +32,7 @@ USAGE = (
     "       jailbee inbox read <id> [--keep]\n"
     "       jailbee inbox runners [--json]\n"
     "       jailbee inbox children [--json]\n"
+    "       jailbee inbox status [--child C] [--json]\n"
     "       jailbee inbox send <type> [options]\n"
     "\n"
     "  wait   Print the path of the oldest unread message (exit 0), waiting up to\n"
@@ -56,6 +59,13 @@ USAGE = (
     "\n"
     "  children [--json]  Each child: name, running (container state), latest agent\n"
     "         session, done (accepted done) — from the broker's children.json.\n"
+    "\n"
+    "  status [--child C] [--json]  One line per child from the broker's children.json:\n"
+    "         NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG (ages; unknown\n"
+    "         values print ?). LAST-MSG is up = last message from the child, down = last\n"
+    "         delivery to it. --json prints the items plus last_from_child_at. Exit 1\n"
+    "         for an unavailable/invalid snapshot or unknown --child. Use it instead of\n"
+    "         messaging a child to ask how it is doing.\n"
     "\n"
     "  send   Write a manifest for the orchestrator's host into outbox/ and print\n"
     "         its id. --wait [--timeout DUR|none] waits for its status (default 30m):\n"
@@ -263,13 +273,12 @@ def cmd_read(settings: Settings, args: list[str]) -> int:
     return 1
 
 
-def cmd_children(settings: Settings, args: list[str]) -> int:
-    if args not in ([], ["--json"]):
-        raise InboxBadUsage("children accepts only --json")
+def _load_snapshot(settings: Settings) -> tuple[Path, dict[str, Any]] | None:
+    """Read and validate children.json; print the reason and return None on failure."""
     path = settings.base / "children.json"
     if not path.is_file():
         print(f"{PROG}: children.json is unavailable", file=sys.stderr)
-        return 1
+        return None
     try:
         doc = _load(path)
         if (
@@ -283,9 +292,19 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
             raise ValueError("invalid snapshot")
     except (OSError, ValueError, UnicodeError):
         print(f"{PROG}: invalid children.json", file=sys.stderr)
-        return 1
+        return None
     if int(time.time()) - doc["updated_at"] > 900:
         print(f"{PROG}: children.json heartbeat is stale (over 15 minutes old)", file=sys.stderr)
+    return path, doc
+
+
+def cmd_children(settings: Settings, args: list[str]) -> int:
+    if args not in ([], ["--json"]):
+        raise InboxBadUsage("children accepts only --json")
+    loaded = _load_snapshot(settings)
+    if loaded is None:
+        return 1
+    path, doc = loaded
     children = doc["children"]
     line = max(1, len(path.read_text().rstrip().splitlines()))
     if args:
@@ -322,6 +341,45 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
                     ]
                 )
             )
+    return 0
+
+
+def cmd_status(settings: Settings, args: list[str]) -> int:
+    from jailbee.inbox.waiting import last_from_child
+
+    child: str | None = None
+    as_json = False
+    rest = iter(args)
+    for arg in rest:
+        if arg == "--json":
+            as_json = True
+        elif arg == "--child":
+            child = next(rest, None)
+            if child is None:
+                raise InboxBadUsage("--child needs a name")
+        else:
+            raise InboxBadUsage("status accepts only --child C and --json")
+    loaded = _load_snapshot(settings)
+    if loaded is None:
+        return 1
+    children: list[object] = list(loaded[1]["children"])
+    if child is not None:
+        children = [c for c in children if isinstance(c, dict) and c.get("name") == child]
+        if not children:
+            print(f"{PROG}: unknown child '{clean_c0c1(child)}'", file=sys.stderr)
+            return 1
+    from_child = last_from_child(settings.base)
+    if as_json:
+        items: list[object] = []
+        for item in children:
+            if isinstance(item, dict):
+                name = item.get("name")
+                stamp = from_child.get(name) if isinstance(name, str) else None
+                item = {**item, "last_from_child_at": stamp}
+            items.append(item)
+        print(pretty(_clean_json(items)))
+    else:
+        print(render_status(children, now=time.time(), from_child=from_child))
     return 0
 
 
@@ -504,6 +562,7 @@ def main(argv: list[str]) -> int:
             "read",
             "runners",
             "children",
+            "status",
             "send",
             "help",
             "-h",
@@ -519,6 +578,7 @@ def main(argv: list[str]) -> int:
             "ls": cmd_ls,
             "read": cmd_read,
             "children": cmd_children,
+            "status": cmd_status,
             "runners": cmd_runners,
         }
         if argv[0] in commands:
