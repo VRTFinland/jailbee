@@ -1,13 +1,17 @@
 """Standard-library command entry point for the inbox port."""
 
+import json
 import os
+import shutil
+import time
 import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from jailbee.inbox.errors import InboxUsage
+from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.render import clean_c0c1, clean_c1, jq_tostring, ls_line, pretty, tsv
 
 PROG = "jailbee inbox"
 USAGE = (
@@ -127,9 +131,189 @@ def parse_timeout(text: str) -> int | None:
     return None if text == "none" else parse_duration(text)
 
 
+def unread_files(inbox: Path) -> list[Path]:
+    return sorted(p for p in inbox.glob("*.json") if not p.name.startswith(".") and not p.is_symlink() and p.is_file())
+
+
+def _load(path: Path) -> object:
+    return json.loads(path.read_text())
+
+
+def message_id(path: Path) -> str | None:
+    try:
+        doc = _load(path)
+        if isinstance(doc, dict):
+            ident: object = doc.get("id")
+            if isinstance(ident, str):
+                return ident
+    except (OSError, ValueError, UnicodeError):
+        pass
+    return None
+
+
+def _warning(path: Path) -> None:
+    print(f"{PROG}: skipping unreadable message {path}", file=sys.stderr)
+
+
+def cmd_ls(settings: Settings, args: list[str]) -> int:
+    if args:
+        raise InboxUsage("ls takes no arguments")
+    for path in unread_files(settings.inbox):
+        try:
+            doc = _load(path)
+            if not isinstance(doc, dict):
+                raise ValueError("not an object")
+            print(ls_line(doc))
+        except (OSError, ValueError, UnicodeError, TypeError):
+            _warning(path)
+    return 0
+
+
+def _clean_json(value: object) -> object:
+    if isinstance(value, str):
+        return clean_c1(value)
+    if isinstance(value, list):
+        return [_clean_json(v) for v in value]
+    if isinstance(value, dict):
+        return {clean_c1(k): _clean_json(v) for k, v in value.items()}
+    return value
+
+
+def cmd_read(settings: Settings, args: list[str]) -> int:
+    ident = ""
+    keep = False
+    for arg in args:
+        if arg == "--keep":
+            keep = True
+        elif arg.startswith("-"):
+            raise InboxUsage(f"unknown option '{arg}' (see --help)")
+        elif ident:
+            raise InboxUsage("read takes one id")
+        else:
+            ident = arg
+    if not ident:
+        raise InboxUsage("read needs a message id")
+    for path in unread_files(settings.inbox):
+        fid = message_id(path)
+        if fid is None:
+            _warning(path)
+            continue
+        if fid != ident:
+            continue
+        try:
+            output = pretty(_clean_json(_load(path)))
+            if not keep:
+                dest = settings.inbox / "read"
+                dest.mkdir(parents=True, exist_ok=True)
+                path.rename(dest / path.name)
+        except (OSError, ValueError, UnicodeError):
+            continue
+        print(output)
+        return 0
+    print(f"{PROG}: no unread message with id {ident}", file=sys.stderr)
+    return 1
+
+
+def cmd_children(settings: Settings, args: list[str]) -> int:
+    if args not in ([], ["--json"]):
+        raise InboxBadUsage("children accepts only --json")
+    path = settings.base / "children.json"
+    if not path.is_file():
+        print(f"{PROG}: children.json is unavailable", file=sys.stderr)
+        return 1
+    try:
+        doc = _load(path)
+        if not isinstance(doc, dict) or doc.get("version") != 1 or isinstance(doc.get("updated_at"), bool) or not isinstance(doc.get("updated_at"), (int, float)) or not isinstance(doc.get("children"), list):
+            raise ValueError("invalid snapshot")
+    except (OSError, ValueError, UnicodeError):
+        print(f"{PROG}: invalid children.json", file=sys.stderr)
+        return 1
+    if int(time.time()) - doc["updated_at"] > 900:
+        print(f"{PROG}: children.json heartbeat is stale (over 15 minutes old)", file=sys.stderr)
+    children = doc["children"]
+    if args:
+        print(pretty(children))
+    else:
+        for child in children:
+            name = child.get("name")
+            session = child.get("session")
+            print(tsv(["" if name is None else jq_tostring(name), jq_tostring(child.get("running")), "-" if session is None or session is False else jq_tostring(session)]))
+    return 0
+
+
+def runners_json(settings: Settings) -> list[dict[str, object]]:
+    config = Path(os.environ.get("JAILBEE_LITELLM_CONFIG") or "/etc/jailbee/litellm.json")
+    try:
+        grant = _load(settings.base / "grant.json")
+    except (OSError, ValueError, UnicodeError):
+        grant = None
+    cfg: object = None
+    if os.access(config, os.R_OK):
+        try:
+            cfg = _load(config)
+        except (OSError, ValueError, UnicodeError):
+            print(f"{PROG}: cannot read {config} (not valid JSON); no claude-jb runners listed", file=sys.stderr)
+    runner = None
+    source = None
+    if isinstance(grant, dict):
+        candidate = grant.get("default_runner")
+        if isinstance(candidate, dict) and isinstance(candidate.get("agent"), str) and isinstance(grant.get("default_runner_source"), str) and all(candidate.get(k) is None or isinstance(candidate.get(k), str) for k in ("profile", "model")):
+            runner = {k: clean_c1(v) if isinstance(v, str) else v for k, v in candidate.items()}
+            source = clean_c1(grant["default_runner_source"])
+    result: list[dict[str, object]] = [{"runner": runner, "default": True, "agent": clean_c1(os.environ.get("JAILBEE_DEFAULT_AGENT") or "unknown"), "source": source}]
+    if not shutil.which("claude"):
+        return result
+    tiers = ["fable", "opus", "sonnet", "haiku"]
+    result.append({"runner": {"agent": "claude"}, "models": tiers})
+    if isinstance(cfg, dict) and isinstance(cfg.get("profiles"), dict):
+        for name, profile in sorted(cfg["profiles"].items()):
+            aliases = profile.get("tiers", {}) if isinstance(profile, dict) else {}
+            if not isinstance(aliases, dict):
+                aliases = {}
+            aliases = {k: clean_c1(jq_tostring(v)) for k, v in sorted(aliases.items()) if k in tiers}
+            result.append({"runner": {"agent": "claude-jb", "profile": clean_c1(name)}, "models": list(aliases), "aliases": aliases, "default_profile": name == cfg.get("default_profile")})
+    return result
+
+
+def cmd_runners(settings: Settings, args: list[str]) -> int:
+    for arg in args:
+        if arg != "--json":
+            raise InboxUsage(f"unknown argument '{arg}' (see --help)")
+    entries = runners_json(settings)
+    if args:
+        print(pretty(entries))
+        return 0
+    first = entries[0]
+    runner = first["runner"]
+    if runner is None:
+        print(f"default: omit runner ({clean_c0c1(str(first['agent']))})")
+    else:
+        assert isinstance(runner, dict)
+        line = "default: " + clean_c0c1(runner["agent"])
+        if runner.get("profile") is not None:
+            line += " -P " + clean_c0c1(runner["profile"])
+        if runner.get("model") is not None:
+            line += " " + clean_c0c1(runner["model"])
+        print(line + " (from " + clean_c0c1(str(first["source"])) + ")")
+    labels = []
+    for entry in entries[1:]:
+        r = entry["runner"]
+        assert isinstance(r, dict)
+        labels.append("claude" if r["agent"] == "claude" else "claude-jb -P " + clean_c0c1(r["profile"]) + (" (default)" if entry["default_profile"] else ""))
+    width = max(map(len, labels), default=0)
+    for label, entry in zip(labels, entries[1:], strict=True):
+        models = entry["models"]
+        assert isinstance(models, list)
+        aliases = entry.get("aliases")
+        assert aliases is None or isinstance(aliases, dict)
+        values = " ".join(m if aliases is None else m + "=" + clean_c0c1(aliases[m]) for m in models)
+        print(label.ljust(width) + "  models: " + values)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     try:
-        load_settings(os.environ)
+        settings = load_settings(os.environ)
         if not argv or argv[0] not in {
             "wait",
             "ls",
@@ -146,7 +330,14 @@ def main(argv: list[str]) -> int:
         if argv[0] in {"help", "-h", "--help"}:
             print(USAGE, end="")
             return 0
+        commands = {"ls": cmd_ls, "read": cmd_read, "children": cmd_children, "runners": cmd_runners}
+        if argv[0] in commands:
+            return commands[argv[0]](settings, argv[1:])
         raise InboxUsage("not implemented")
+    except InboxBadUsage as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        print(USAGE, end="", file=sys.stderr)
+        return 2
     except InboxUsage as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
