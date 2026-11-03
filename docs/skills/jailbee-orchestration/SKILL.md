@@ -272,11 +272,36 @@ prevents later notes from overriding again. Explicitly read messages by id,
 not filename, or a matching unread message keeps waking you.
 
 `--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
-when a running child that has not reported done has sent nothing for an hour. Check that child; the
-watchdog repeats until activity, stop or restart. Both read and unread reports
-count as activity; a child with no reports is timed from its start. The broker
-refreshes `children.json`; missing, corrupt or more than 15-minute-old state makes
-this watchdog exit 2, so check the host broker instead of assuming all is well.
+when a running child that has not reported done shows no activity for an hour.
+Activity is a message from the child (read or unread), an agent event, a commit
+or CPU use; a child with none is timed from its start. Check that child (see
+"Checking on children"); the watchdog repeats until activity, stop or restart.
+The broker refreshes `children.json`; missing, corrupt or more than
+15-minute-old state makes this watchdog exit 2, so check the host broker
+instead of assuming all is well.
+
+`--digest 60m` is an optional extra: when an hour has passed since the last
+digest and a child is running, `wait` exits 0 printing `digest` on the first
+line, then the `jailbee inbox status` table. That is one wakeup per period for
+all running children (the time is kept in `~/.jailbee/orchestration/digest-at`;
+the first digest is due one period after the first `wait --digest`). A real
+message due at the same time wins; the digest comes at the next wait. It needs
+fresh `children.json` like `--quiet-after`.
+
+## Checking on children
+
+Before messaging a child to ask how it is doing, run `jailbee inbox status`
+(`--child C` for one, `--json` for the raw fields). It costs the child nothing.
+Columns: `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`; `?`
+means unknown, and a stopped child shows little more than `HEAD`.
+
+- Fine: a recent `ACTIVE` (agent events or CPU), recent commits, agent
+  `alive:busy`.
+- Look at it: agent alive but no activity and no CPU for about 30 minutes; one
+  command in `LONGEST` running for hours; agent `dead` without done (also
+  reported as `blocked`); `waiting` (also reported as `idle`).
+- Only then message the child.
+
 
 `jailbee inbox children` (`--json` for the raw entries) shows each child's
 state from that file. `running` is the **container** state: a child that sent

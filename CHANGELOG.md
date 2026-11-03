@@ -30,8 +30,8 @@ before editing `## Unreleased`.
 
 - `jailbee inbox wait --wake-on` filters wakeups without marking any message
   read; a child's first report after spawn/restart always wakes. The
-  `--quiet-after` watchdog names silent running children that have not
-  reported done; `jailbee inbox children` lists each child's container state
+  `--quiet-after` watchdog names running children that have not reported done
+  and show no activity (messages, agent events, commits or CPU); `jailbee inbox children` lists each child's container state
   (`running`), accepted `done` and latest session. Concurrent
   `send --wait` replies are reserved for their sender, and a second ordinary
   waiter is rejected. The broker also reports live prompted agents awaiting
@@ -39,6 +39,11 @@ before editing `## Unreleased`.
   repeated at the same interval (`orchestration.idle_after_seconds`). Reports
   include the last child message and recent output; detection uses the agent's
   session signal (currently Claude), not pane silence.
+  `jailbee inbox status` shows each child's agent state, activity, CPU,
+  memory, latest commit, longest-running command and last message exchange
+  without messaging it, and `jailbee inbox wait --digest DURATION` wakes the
+  orchestrator once per period with that table
+  ([#64](https://github.com/VRTFinland/jailbee/issues/64)).
 
 - Orchestrators can grant and revoke a child's network, optional mounts and
   egress rights at runtime, timed or permanent; children can relinquish their
