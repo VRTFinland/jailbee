@@ -220,3 +220,87 @@ def test_live_job_kind_none_without_row(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("jailbee.db.get_engine", MagicMock())
     monkeypatch.setattr("jailbee.background.get_job", lambda _s, _n: None)
     assert actions.live_job_kind("proj-x") is None
+
+
+def _delivery_ctx(tmp_path: Path) -> ActionContext:
+    return _ctx(
+        tmp_path,
+        _node("proj-o", **{labels.GRANT: _grant()}),
+        [_node("proj-c", **{labels.SPAWNED_BY: "proj-o"})],
+    )
+
+
+def _stamp(tmp_path: Path) -> object:
+    import json
+
+    path = tmp_path / "inbox-state" / "proj-o.json"
+    if not path.exists():
+        return None
+    return {c["full"]: c.get("last_to_child_at") for c in json.loads(path.read_text())["children"]}
+
+
+@pytest.mark.parametrize("state", ["done", "queued", "started"])
+def test_dispatch_notes_delivery_on_accepted_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    monkeypatch.setitem(actions.HANDLERS, "message", MagicMock(return_value=Outcome(state, "x")))  # type: ignore[arg-type]
+    ctx = _delivery_ctx(tmp_path)
+    m = MessageManifest(version=1, id="m1", type="message", to="c", body="hi")
+    assert dispatch(ctx, m) == Outcome(state, "x")  # type: ignore[arg-type]
+    assert _stamp(tmp_path) == {"proj-c": ctx.now.timestamp()}
+
+
+def test_dispatch_notes_delivery_on_done_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(actions.HANDLERS, "message", MagicMock(return_value=actions.done("ok")))
+    ctx = _delivery_ctx(tmp_path)
+    dispatch(ctx, MessageManifest(version=1, id="m1", type="message", to="c", body="hi"))
+    assert _stamp(tmp_path) == {"proj-c": ctx.now.timestamp()}
+
+
+@pytest.mark.parametrize("kind", ["update", "restart"])
+def test_dispatch_notes_delivery_on_update_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from jailbee.orchestration.protocol import RestartManifest, UpdateManifest
+
+    monkeypatch.setitem(actions.HANDLERS, kind, MagicMock(return_value=actions.done("ok")))
+    ctx = _delivery_ctx(tmp_path)
+    m = (
+        UpdateManifest(version=1, id="u1", type="update", child="c")
+        if kind == "update"
+        else RestartManifest(version=1, id="r1", type="restart", child="c", prompt="go")
+    )
+    dispatch(ctx, m)
+    assert _stamp(tmp_path) == {"proj-c": ctx.now.timestamp()}
+
+
+@pytest.mark.parametrize("state", ["refused", "failed"])
+def test_dispatch_does_not_note_refused_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    from jailbee.orchestration.protocol import UpdateManifest
+
+    monkeypatch.setitem(actions.HANDLERS, "update", MagicMock(return_value=Outcome(state, "no")))  # type: ignore[arg-type]
+    ctx = _delivery_ctx(tmp_path)
+    dispatch(ctx, UpdateManifest(version=1, id="u1", type="update", child="c"))
+    assert _stamp(tmp_path) is None
+
+
+def test_dispatch_does_not_note_unknown_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(actions.HANDLERS, "message", MagicMock(return_value=actions.done("ok")))
+    ctx = _delivery_ctx(tmp_path)
+    dispatch(ctx, MessageManifest(version=1, id="m1", type="message", to="nobody", body="hi"))
+    assert _stamp(tmp_path) is None
+
+
+def test_dispatch_child_message_to_orchestrator_is_not_a_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(actions.HANDLERS, "message", MagicMock(return_value=actions.done("ok")))
+    ctx = _ctx(tmp_path, _node("proj-x", **{labels.SPAWNED_BY: "proj-p"}))
+    dispatch(ctx, MessageManifest(version=1, id="m1", type="message", body="hi"))
+    assert not (tmp_path / "inbox-state").exists()

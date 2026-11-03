@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+from jailbee.incus import IncusError
 from jailbee.orchestration.child_status import (
     GIT_INTERVAL,
     STATUS_INTERVAL,
@@ -9,6 +12,7 @@ from jailbee.orchestration.child_status import (
     activity_at,
     clean_text,
     longest_command,
+    probe_head,
 )
 from jailbee.procstat import ProcSample
 
@@ -57,3 +61,77 @@ def test_status_cache_intervals():
 def test_interval_constants():
     assert STATUS_INTERVAL == 30
     assert GIT_INTERVAL == 60
+
+
+def _head_incus(output=None, error=None):
+    incus = MagicMock()
+    if error:
+        incus.exec.side_effect = error
+    else:
+        incus.exec.return_value = output
+    return incus
+
+
+def test_probe_head_parses() -> None:
+    incus = _head_incus("abc\x1f1762160000\x1ffix: x\nDIRTY\n")
+    assert probe_head(incus, "kid", "/repo", uid=1000) == (
+        {"sha": "abc", "time": 1762160000.0, "subject": "fix: x"},
+        True,
+    )
+
+
+def test_probe_head_no_commits() -> None:
+    assert probe_head(_head_incus("CLEAN\n"), "kid", "/repo", uid=1000) == (None, False)
+
+
+def test_probe_head_exec_error() -> None:
+    assert probe_head(_head_incus(error=IncusError("x")), "kid", "/repo", uid=1000) == (None, None)
+
+
+def test_probe_head_unparseable() -> None:
+    assert probe_head(_head_incus("garbage"), "kid", "/repo", uid=1000) == (None, None)
+
+
+def test_probe_head_passes_repo_dir_as_argument() -> None:
+    incus = _head_incus("CLEAN\n")
+    probe_head(incus, "kid", "/repo; rm -rf /", uid=7)
+    args, kwargs = incus.exec.call_args
+    argv = args[1]
+    assert argv[:2] == ["sh", "-c"] and argv[3:] == ["sh", "/repo; rm -rf /"]
+    assert "/repo" not in argv[2]
+    assert kwargs["uid"] == 7
+
+
+def test_probe_head_error_sentinel_bare() -> None:
+    assert probe_head(_head_incus("ERROR\n"), "kid", "/repo", uid=1) == (None, None)
+
+
+def test_probe_head_error_sentinel_after_log_line() -> None:
+    out = "abc\x1f1762160000\x1fsubj\nERROR\n"
+    assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (None, None)
+
+
+def test_probe_head_hostile_subject_is_cleaned_and_capped() -> None:
+    subject = "\x1b[31m" + "A" * 10_000
+    head, dirty = probe_head(
+        _head_incus(f"abc\x1f1762160000\x1f{subject}\nCLEAN\n"), "k", "/r", uid=1
+    )
+    assert dirty is False
+    assert head is not None
+    text = head["subject"]
+    assert isinstance(text, str)
+    assert len(text) == 120 and text.endswith("…")
+    assert "\x1b" not in text and text.startswith("?[31m")
+
+
+def test_probe_head_non_integer_time() -> None:
+    out = "abc\x1fnow\x1fsubj\nCLEAN\n"
+    assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (None, None)
+
+
+def test_probe_head_clean_repo_with_commit() -> None:
+    out = "abc\x1f1762160000\x1fsubj\nCLEAN\n"
+    assert probe_head(_head_incus(out), "kid", "/repo", uid=1) == (
+        {"sha": "abc", "time": 1762160000.0, "subject": "subj"},
+        False,
+    )

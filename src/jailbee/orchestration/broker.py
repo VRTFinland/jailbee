@@ -32,6 +32,7 @@ from jailbee.orchestration.actions import (
     prune_reservations,
     refused,
 )
+from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal, manifest_digest
 from jailbee.orchestration.outbox import (
     delete_outbox_files,
@@ -96,6 +97,8 @@ class BrokerMemory:
     warned: set[str] = field(default_factory=set)
     # Inbox file sequence: orders the items emitted within one second.
     seq: Iterator[int] = field(default_factory=itertools.count)
+    # Probe cadence and CPU readings behind the published child status (#64).
+    status: StatusCache = field(default_factory=StatusCache)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -780,7 +783,7 @@ def tick(
             log.exception("broker: queue of %s failed", ctx.sender.full)
         if ctx.sender.running:
             try:
-                inbox_state.sync_children(ctx)
+                inbox_state.sync_children(ctx, memory.status)
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     for full in queues:

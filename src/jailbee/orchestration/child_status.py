@@ -22,6 +22,7 @@ from jailbee.incus import IncusError
 
 if TYPE_CHECKING:
     from jailbee.incus import Incus
+    from jailbee.orchestration.agent_watch import AgentStatus
 
 STATUS_INTERVAL = 30
 """Seconds between host-side status probes of one child."""
@@ -108,6 +109,8 @@ class StatusCache:
     host_at: dict[str, float] = field(default_factory=dict)
     exec_at: dict[str, float] = field(default_factory=dict)
     sampler: procstat.ActivitySampler = field(default_factory=procstat.ActivitySampler)
+    # The last agent probe result per child; the snapshot reads session files with it.
+    agent: dict[str, AgentStatus] = field(default_factory=dict)
 
     def host_due(self, full: str, now: float) -> bool:
         """True, and record `now`, when the host probe for `full` is due."""

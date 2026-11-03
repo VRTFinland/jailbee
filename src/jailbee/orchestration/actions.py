@@ -24,10 +24,12 @@ from jailbee.orchestration.protocol import (
     CHILD_TYPES,
     DestroyManifest,
     Manifest,
+    MessageManifest,
     RestartManifest,
     RightsManifest,
     SpawnManifest,
     StopManifest,
+    UpdateManifest,
     restart_sets_runner,
 )
 from jailbee.orchestration.runner import Runner, parse_runner_label, runner_problems
@@ -216,7 +218,33 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     handler = HANDLERS.get(manifest.type)
     if handler is None:
         return refused(f"`{manifest.type}` is not supported by this broker version")
-    return handler(ctx, manifest)
+    outcome = handler(ctx, manifest)
+    _note_delivery(ctx, manifest, outcome, role)
+    return outcome
+
+
+def _note_delivery(ctx: ActionContext, manifest: Manifest, outcome: Outcome, role: Role) -> None:
+    """Stamp `last_to_child_at` for a child the orchestrator just wrote to.
+
+    Only an accepted message, update or restart counts: a refused or failed
+    one never reached the child, and must not make a silent child look
+    recently spoken to.
+    """
+    if outcome.state not in ("done", "queued", "started"):
+        return
+    target: str | None = None
+    if isinstance(manifest, MessageManifest) and role == "orchestrator":
+        target = manifest.to
+    elif isinstance(manifest, UpdateManifest | RestartManifest):
+        target = manifest.child
+    if target is None:
+        return
+    child = ctx.child(target)
+    if isinstance(child, Outcome):
+        return
+    from jailbee.orchestration import inbox_state
+
+    inbox_state.note_delivery(ctx.root, ctx.sender.full, child.full, ctx.now.timestamp())
 
 
 def child_preamble(orchestrator_short: str) -> str:

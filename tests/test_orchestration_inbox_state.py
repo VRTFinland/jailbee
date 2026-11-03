@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -193,3 +194,275 @@ def test_snapshot_publishes_latest_session(tmp_path):
         json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())["children"][0]["session"]
         is None
     )
+
+
+# --- child status (#64) ---------------------------------------------------
+
+from jailbee.orchestration import child_status  # noqa: E402
+from jailbee.orchestration.agent_watch import AgentStatus  # noqa: E402
+from jailbee.procstat import ContainerActivity  # noqa: E402
+
+
+class FakeSampler:
+    def __init__(self, cpu):
+        self.cpu = cpu
+        self.calls = []
+
+    def sample(self, items):
+        self.calls.append(list(items))
+        return {i.name: ContainerActivity(cpu_percent=self.cpu) for i in items}
+
+
+HEAD = {"sha": "a" * 40, "time": 1_000.0, "subject": "feat: x"}
+AGENT = {
+    "alive": True,
+    "state": "busy",
+    "since": 1.0,
+    "last_event_at": 5_000.0,
+    "last_tool": "Bash",
+}
+
+
+@pytest.fixture
+def probes(monkeypatch):
+    class P:
+        head = (HEAD, False)
+        head_calls = 0
+        agent_calls = 0
+        agent_status = AgentStatus(True, "claude", pid=1, proc_start=2)
+        head_error = None
+        incus_used: ClassVar[list] = []
+
+    p = P()
+
+    def probe_head(incus, full, repo, *, uid):
+        p.head_calls += 1
+        p.incus_used.append(incus)
+        if p.head_error:
+            raise p.head_error
+        return p.head
+
+    def probe(incus, name, *, uid):
+        p.agent_calls += 1
+        p.incus_used.append(incus)
+        return p.agent_status
+
+    monkeypatch.setattr(inbox_state.child_status, "probe_head", probe_head)
+    monkeypatch.setattr(inbox_state.agent_watch, "probe", probe)
+    monkeypatch.setattr(inbox_state.agent_watch, "agent_snapshot", lambda *a, **k: dict(AGENT))
+    monkeypatch.setattr(inbox_state.lifecycle, "container_repo_dir", lambda *a: "/repo")
+    monkeypatch.setattr(inbox_state.procstat, "read_container_pids", lambda *a, **k: [])
+    monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: None)
+    monkeypatch.setattr(inbox_state, "_uptime", lambda: 1000.0)
+    return p
+
+
+def published_status(ctx):
+    return delivered(ctx)["children"][0].get("status")
+
+
+def _cache(cpu=None):
+    cache = child_status.StatusCache()
+    cache.sampler = FakeSampler(cpu)
+    return cache
+
+
+def test_sync_children_publishes_status_for_running_child(tmp_path, probes):
+    ctx = context(tmp_path)
+    ctx.nodes["p-kid"] = Node(
+        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, None, 77, 10, 5_000
+    )
+    cache = _cache(cpu=50.0)
+    inbox_state.sync_children(ctx, cache)
+    st = published_status(ctx)
+    assert set(st) == {
+        "observed_at",
+        "agent",
+        "cpu_percent",
+        "memory_bytes",
+        "longest_command",
+        "head",
+        "dirty",
+        "last_busy_at",
+        "last_to_child_at",
+        "activity_at",
+    }
+    now = ctx.now.timestamp()
+    assert st["cpu_percent"] == 50.0
+    assert st["last_busy_at"] == now
+    assert st["agent"] == AGENT
+    assert st["head"] == HEAD and st["dirty"] is False
+    assert st["memory_bytes"] == 5_000
+    assert st["activity_at"] == max(now, 5_000.0, 1_000.0)
+    assert st["last_to_child_at"] is None
+    assert cache.sampler.calls[0][0].init_pid == 77
+
+
+def test_sync_children_memory_subtracts_cache_and_clamps(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    ctx.nodes["p-kid"] = Node(
+        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, None, 77, 10, 5_000
+    )
+    monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: 2_000)
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["memory_bytes"] == 3_000
+    ctx.now += timedelta(seconds=100)
+    monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: 9_000)
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["memory_bytes"] == 0
+    ctx.now += timedelta(seconds=100)
+    monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: None)
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["memory_bytes"] == 5_000
+
+
+def test_sync_children_memory_none_without_usage(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["memory_bytes"] is None
+
+
+def test_sync_children_rate_limits_exec_probes(tmp_path, probes):
+    ctx = context(tmp_path)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    ctx.now += timedelta(seconds=10)
+    inbox_state.sync_children(ctx, cache)
+    assert probes.head_calls == 1
+    assert probes.agent_calls == 1
+    assert len(cache.sampler.calls) == 1
+    ctx.now += timedelta(seconds=60)
+    inbox_state.sync_children(ctx, cache)
+    assert probes.head_calls == 2
+
+
+def test_sync_children_exec_goes_through_bounded_incus(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx, _cache())
+    ctx.incus.with_exec_timeout.assert_called_with(inbox_state.STATUS_EXEC_TIMEOUT_S)
+    assert probes.incus_used
+    assert all(i is ctx.incus.with_exec_timeout.return_value for i in probes.incus_used)
+
+
+def test_sync_children_status_survives_broker_restart(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx, _cache(cpu=80.0))
+    busy_at = published_status(ctx)["last_busy_at"]
+    assert busy_at == ctx.now.timestamp()
+    probes.agent_status = None  # nothing known after the restart yet
+    probes.head = (None, None)
+    ctx.now += timedelta(seconds=300)
+    inbox_state.sync_children(ctx, _cache(cpu=None))  # fresh cache, cold sampler
+    st = published_status(ctx)
+    assert st["last_busy_at"] == busy_at
+    assert st["activity_at"] >= busy_at
+    assert st["head"] == HEAD
+    assert st["cpu_percent"] is None
+
+
+def test_sync_children_probe_failure_keeps_previous_head(tmp_path, probes):
+    ctx = context(tmp_path)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    probes.head_error = RuntimeError("boom")
+    ctx.now += timedelta(seconds=120)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["head"] == HEAD
+    assert probes.head_calls == 2
+
+
+def test_sync_children_exec_timeout_keeps_previous_and_does_not_raise(tmp_path, probes):
+    ctx = context(tmp_path)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    probes.head = (None, None)  # probe_head's answer to IncusError (timeout)
+    probes.agent_status = None  # agent_watch.probe's answer to IncusError
+    ctx.now += timedelta(seconds=120)
+    inbox_state.sync_children(ctx, cache)
+    st = published_status(ctx)
+    assert st["head"] == HEAD and st["dirty"] is False
+    assert st["agent"] == AGENT
+
+
+def test_sync_children_real_probe_head_timeout_keeps_previous(tmp_path, monkeypatch, probes):
+    ctx = context(tmp_path)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    monkeypatch.undo()  # real probe_head, with a hanging exec
+    monkeypatch.setattr(inbox_state.lifecycle, "container_repo_dir", lambda *a: "/repo")
+    monkeypatch.setattr(inbox_state.agent_watch, "agent_snapshot", lambda *a, **k: dict(AGENT))
+    monkeypatch.setattr(inbox_state, "_uptime", lambda: 1000.0)
+    monkeypatch.setattr(inbox_state.agent_watch, "probe", lambda *a, **k: None)
+    ctx.incus.with_exec_timeout.return_value.exec.side_effect = IncusError("timed out")
+    ctx.now += timedelta(seconds=120)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["head"] == HEAD
+
+
+def test_sync_children_stopped_child_keeps_head_only(tmp_path, probes):
+    ctx = context(tmp_path)
+    cache = _cache(cpu=10.0)
+    inbox_state.sync_children(ctx, cache)
+    ctx.nodes["p-kid"] = Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})
+    ctx.now += timedelta(seconds=300)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx) == {"head": HEAD, "last_to_child_at": None}
+
+
+def test_sync_children_never_observed_stopped_child_has_null_status(tmp_path, probes):
+    ctx = context(tmp_path)
+    ctx.nodes["p-kid"] = Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})
+    inbox_state.sync_children(ctx, _cache())
+    assert delivered(ctx)["children"][0]["status"] is None
+
+
+def test_sync_children_without_cache_has_no_status(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx)
+    assert "status" not in delivered(ctx)["children"][0]
+    assert probes.head_calls == 0
+
+
+def test_sync_children_without_cache_preserves_durable_status(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.sync_children(ctx, _cache(cpu=30.0))
+    inbox_state.sync_children(ctx)
+    saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
+    assert saved["children"][0]["status"]["head"] == HEAD
+
+
+def test_sync_children_published_json_has_no_raw_control_chars(tmp_path, probes):
+    ctx = context(tmp_path)
+    probes.head = ({"sha": "a", "time": 1.0, "subject": "x\x1b[2Jy"}, False)
+    inbox_state.sync_children(ctx, _cache())
+    text = ctx.incus.exec_with_input.call_args.args[2]
+    assert not any(ord(c) < 0x20 and c != "\n" for c in text)
+
+
+def test_note_delivery_creates_and_preserves(tmp_path):
+    inbox_state.note_delivery(tmp_path, "p-orch", "p-kid", 42.0)
+    path = tmp_path / "inbox-state" / "p-orch.json"
+    saved = json.loads(path.read_text())
+    assert saved["children"][0]["full"] == "p-kid"
+    assert saved["children"][0]["last_to_child_at"] == 42.0
+    saved["children"][0]["status"] = {"head": None}
+    saved["children"].append({"full": "p-other", "last_to_child_at": 1.0})
+    path.write_text(json.dumps(saved))
+    inbox_state.note_delivery(tmp_path, "p-orch", "p-kid", 50.0)
+    after = json.loads(path.read_text())
+    assert after["children"][0]["last_to_child_at"] == 50.0
+    assert after["children"][0]["status"] == {"head": None}
+    assert after["children"][1] == {"full": "p-other", "last_to_child_at": 1.0}
+
+
+def test_note_delivery_swallows_oserror(tmp_path):
+    (tmp_path / "inbox-state").write_text("a file, not a directory")
+    inbox_state.note_delivery(tmp_path, "p-orch", "p-kid", 1.0)
+
+
+def test_last_to_child_at_published_after_note_delivery(tmp_path, probes):
+    ctx = context(tmp_path)
+    inbox_state.note_delivery(tmp_path, "p-orch", "p-kid", 123.0)
+    inbox_state.sync_children(ctx, _cache())
+    assert published_status(ctx)["last_to_child_at"] == 123.0
+    assert published_status(ctx)["activity_at"] >= ctx.now.timestamp()
