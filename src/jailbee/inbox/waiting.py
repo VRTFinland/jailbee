@@ -13,7 +13,17 @@ from typing import Any
 from jailbee.inbox.cli import Settings, unread_files
 from jailbee.inbox.errors import InboxUsage
 
-WAKE_TOKENS = ("note", "question", "done", "blocked", "idle", "queued", "started", "refused", "failed")
+WAKE_TOKENS = (
+    "note",
+    "question",
+    "done",
+    "blocked",
+    "idle",
+    "queued",
+    "started",
+    "refused",
+    "failed",
+)
 
 
 def _load(path: Path) -> dict[str, Any] | None:
@@ -34,7 +44,9 @@ def _reserved(base: Path, ref: Any) -> bool:
     if not isinstance(ref, str) or not ref or "/" in ref or ref in (".", ".."):
         return False
     try:
-        fd = os.open(base / "status-waits" / (ref + ".lock"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(
+            base / "status-waits" / (ref + ".lock"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
     except OSError:
         return False
     try:
@@ -65,7 +77,9 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
                 running.add(child["name"])
     except (AssertionError, KeyError, TypeError):
         if quiet:
-            raise InboxUsage("--quiet-after needs a fresh broker children.json (at most 15 minutes old)")
+            raise InboxUsage(
+                "--quiet-after needs a fresh broker children.json (at most 15 minutes old)"
+            ) from None
         children = {}
 
     records: list[tuple[Path, dict[str, Any], int]] = []
@@ -119,7 +133,13 @@ def find_status(inbox: Path, ref: str) -> Path | None:
     return None
 
 
-def settle(settings: Settings, deadline: float, *, clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> None:
+def settle(
+    settings: Settings,
+    deadline: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     interval = min(settings.settle, 5.0)
     if interval <= 0:
         return
