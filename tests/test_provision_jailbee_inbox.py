@@ -661,7 +661,12 @@ def test_wait_settle_zero_disables(script, base, tmp_path):
 @pytest.mark.parametrize("settle", ["abc", "-1", "1e2", "."])
 def test_wait_rejects_bad_settle(script, base, tmp_path, settle):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": settle}
-    assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+    result = run(script, "wait", "--timeout", "0", env=env)
+    assert result.returncode == 2
+    assert result.stderr == (
+        f"{script.prog}: JAILBEE_INBOX_SETTLE must be a non-negative number of seconds, "
+        f"got '{settle}'\n"
+    )
 
 
 @bash_only
@@ -744,10 +749,14 @@ def test_wait_rejects_bad_timeout(script, base, tmp_path, dur):
 
 def test_wait_rejects_bad_poll_and_usage(script, base, tmp_path):
     env = env_for(base, tmp_path)
-    env["JAILBEE_INBOX_POLL"] = "0"
-    assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
-    env["JAILBEE_INBOX_POLL"] = "x"
-    assert run(script, "wait", "--timeout", "0", env=env).returncode == 2
+    for poll in ("0", "x"):
+        env["JAILBEE_INBOX_POLL"] = poll
+        result = run(script, "wait", "--timeout", "0", env=env)
+        assert result.returncode == 2
+        assert result.stderr == (
+            f"{script.prog}: JAILBEE_INBOX_POLL must be a positive number of seconds, "
+            f"got '{poll}'\n"
+        )
     env = env_for(base, tmp_path)
     assert run(script, env=env).returncode == 2
     assert run(script, "bogus", env=env).returncode == 2
