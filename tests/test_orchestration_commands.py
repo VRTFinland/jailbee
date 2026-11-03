@@ -118,7 +118,16 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
     data = yaml.safe_load(path.read_text())
     assert data["orchestration"]["profiles"]["reviewer"] == {
         "max_running_children": 3,
-        "operations": ["destroy", "import", "message", "refresh", "restart", "rights", "spawn", "stop"],
+        "operations": [
+            "destroy",
+            "import",
+            "message",
+            "refresh",
+            "restart",
+            "rights",
+            "spawn",
+            "stop",
+        ],
         "grantable": {"mounts": [], "loose": False, "egress": []},
     }
     assert saved.name == "reviewer" and saved.profile.max_running_children == 3
