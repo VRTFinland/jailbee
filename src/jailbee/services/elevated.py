@@ -142,9 +142,15 @@ class Plan:
                 or payload.order != [s.name for s in payload.services]
             ):
                 raise ValueError("invalid service order")
+            positions = {name: i for i, name in enumerate(payload.order)}
             for s in payload.services:
                 if (
                     any(not _name(n) for n in s.depends_on)
+                    or any(
+                        positions[dependency] >= positions[s.name]
+                        for dependency in s.depends_on
+                        if dependency in positions
+                    )
                     or any(not m for m in s.elevation.mounts)
                     or s.will_prepare != (s.name in targets and bool(s.prepare))
                 ):
@@ -162,7 +168,11 @@ class Plan:
                 )
                 for s in payload.services
             )
-            return cls(tuple(payload.order), targets, services)
+            plan = cls(tuple(payload.order), targets, services)
+            # The default JSON representation must also fit when persisted and reloaded.
+            if len(json.dumps(plan.to_json()).encode("utf-8")) > 256 * 1024:
+                raise ValueError("serialized payload exceeds size limit")
+            return plan
         except (ValueError, TypeError, UnicodeError, ValidationError, RecursionError) as exc:
             raise RefreshError(f"invalid refresh plan: {exc}") from exc
 

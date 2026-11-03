@@ -93,6 +93,53 @@ def test_rejects_malformed_payload(mutate):
         parse(p)
 
 
+def dependency_payload(names=()):
+    services = {
+        "db": Service(run="db", prepare=[{"run": "db-init"}]),
+        "api": Service(run="api", prepare=[{"run": "api-init"}], depends_on={"db": {}}),
+    }
+    return graph.plan_payload(services, names, "refresh", step_timeout=42)
+
+
+def test_rejects_reversed_dependency_order():
+    p = dependency_payload()
+    p["order"].reverse()
+    p["services"].reverse()
+    with pytest.raises(RefreshError):
+        parse(p)
+
+
+@pytest.mark.parametrize("dependency", ["db", "api"])
+def test_rejects_cycles_and_self_dependencies(dependency):
+    p = dependency_payload()
+    p["services"][0]["depends_on"] = [dependency]
+    with pytest.raises(RefreshError):
+        parse(p)
+
+
+def test_accepts_omitted_upstream_dependency():
+    p = dependency_payload(["api"])
+    assert parse(p, ["api"]).order == ("api",)
+
+
+def test_near_limit_compact_payload_roundtrip():
+    p = dependency_payload()
+    p["services"][0]["prepare"][0]["run"] = "x" * (256 * 1024 - 2000) + "ä\U0001f600"
+    raw = json.dumps(p, separators=(",", ":"), ensure_ascii=False)
+    assert len(raw.encode()) < 256 * 1024
+    plan = Plan.from_payload(raw, [])
+    assert Plan.from_payload(json.dumps(plan.to_json()), plan.named) == plan
+
+
+def test_rejects_compact_input_whose_roundtrip_exceeds_limit():
+    p = dependency_payload()
+    p["services"][0]["prepare"][0]["run"] = "ä" * 100000
+    raw = json.dumps(p, separators=(",", ":"), ensure_ascii=False)
+    assert len(raw.encode()) < 256 * 1024
+    with pytest.raises(RefreshError):
+        Plan.from_payload(raw, [])
+
+
 def test_rejects_unknown_named():
     with pytest.raises(RefreshError):
         parse(payload(), ["missing"])
