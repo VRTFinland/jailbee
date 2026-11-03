@@ -200,7 +200,9 @@ def test_new_container_hands_the_on_start_stages_to_on_detach(tmp_path, make_cfg
         _cfg_for_new(make_cfg, tmp_path),
         incus,
         _opts(),
-        on_detach=lambda block, trigger, repo_dir, services_present: seen.append((trigger, repo_dir)),
+        on_detach=lambda block, trigger, repo_dir, services_present: seen.append(
+            (trigger, repo_dir)
+        ),
     )
 
     assert run_autostart.call_count == 2

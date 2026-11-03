@@ -3374,7 +3374,9 @@ def _inline_autostart_handler(
     progress_path = autostart_progress.path_for_log(log_path)
     on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
 
-    def on_detach(block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None) -> None:
+    def on_detach(
+        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None
+    ) -> None:
         # The row this worker owns now tracks an autostart supervision run,
         # and its kind has to say so before the first stage phase lands on
         # it: `attachable`, `job_label` and the attach gate's failure
@@ -4620,7 +4622,9 @@ def _autostart_detach_handler(
     zero detached stages and exit 0 with every deferred stage unrun.
     """
 
-    def on_detach(block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None) -> None:
+    def on_detach(
+        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None
+    ) -> None:
         _spawn_autostart_worker(
             cfg,
             config_path,

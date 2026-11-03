@@ -1314,9 +1314,15 @@ def test_run_detached_with_pending_prompt_never_launches_the_agent_after_a_faile
 @pytest.mark.parametrize("presence", [True, False, None])
 def test_services_presence_job_roundtrip(presence):
     payload = bg.autostart_job_to_dict(
-        container_name="c1", autostart=Autostart(), from_trigger="on_create",
-        repo_dir="/r", mirror_endpoint=None, override=None, log_path="/tmp/x",
-        progress_path="/tmp/p", services_present=presence,
+        container_name="c1",
+        autostart=Autostart(),
+        from_trigger="on_create",
+        repo_dir="/r",
+        mirror_endpoint=None,
+        override=None,
+        log_path="/tmp/x",
+        progress_path="/tmp/p",
+        services_present=presence,
     )
     assert "services" not in payload
     assert bg.dict_to_autostart_job(payload).services_present is presence
@@ -1324,19 +1330,26 @@ def test_services_presence_job_roundtrip(presence):
     assert bg.dict_to_autostart_job(payload).services_present is None
 
 
-@pytest.mark.parametrize("host,branch,label,expected", [
-    (False, True, None, True),
-    (True, False, None, False),
-    (False, True, ",", False),
-])
-def test_detached_services_presence_overrides_host(tmp_path, mocker, make_cfg, host, branch, label, expected):
+@pytest.mark.parametrize(
+    "host,branch,label,expected",
+    [
+        (False, True, None, True),
+        (True, False, None, False),
+        (False, True, ",", False),
+    ],
+)
+def test_detached_services_presence_overrides_host(
+    tmp_path, mocker, make_cfg, host, branch, label, expected
+):
     from jailbee import autostart as autostart_mod
+
     block = Autostart()
     cfg = _cfg_with(make_cfg, tmp_path, block).model_copy(
         update={"services": {"db": object()} if host else {}}
     )
     spec = _spec(tmp_path, block, from_trigger="on_create")
     from dataclasses import replace
+
     spec = replace(spec, services_present=branch)
     incus = mocker.MagicMock()
     incus.config_get.return_value = label

@@ -347,8 +347,13 @@ def test_detach_handlers_forward_branch_services_presence(tmp_path, mocker, pres
 
     run = mocker.patch("jailbee.autostart.run_detached")
     inline = cli._inline_autostart_handler(
-        cfg, incus, engine=None, full_name="c", log_path=str(tmp_path / "log"),
-        mirror_endpoint=None, override=None,
+        cfg,
+        incus,
+        engine=None,
+        full_name="c",
+        log_path=str(tmp_path / "log"),
+        mirror_endpoint=None,
+        override=None,
     )
     inline(cfg.autostart, "on_create", "/r", presence)
     assert run.call_args.args[2].services_present is presence

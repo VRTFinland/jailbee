@@ -717,7 +717,9 @@ def load_branch_autostart(
         warn_plain(_fallback_warning(source_label, f"it is not valid: {e}"))
         return None
 
-    grafted = cfg.model_copy(update={"autostart": branch_cfg.autostart, "services": branch_cfg.services})
+    grafted = cfg.model_copy(
+        update={"autostart": branch_cfg.autostart, "services": branch_cfg.services}
+    )
 
     # Cross-config check: each config validated fine on its own, but the
     # *combination* may not — a branch step may name an optional_mount that

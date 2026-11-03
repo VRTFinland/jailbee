@@ -2358,7 +2358,9 @@ def _new_container(
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
-            on_detach(effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services))
+            on_detach(
+                effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services)
+            )
 
     return name
 
