@@ -1846,7 +1846,11 @@ def test_vanished_worker_log_path_goes_to_the_broker_log(
 ) -> None:
     watch.save_watch(
         rig.root,
-        {"proj-orch": [watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True)]},
+        {
+            "proj-orch": [
+                watch.WatchEntry("s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True)
+            ]
+        },
     )
     rig.incus.list_containers.return_value = [_orch(), _child()]
     row = watch.JobSnapshot("autostart", 7, JOB_CREATE, None, NOW, "/state/logs/proj-kid-1.log")
