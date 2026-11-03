@@ -410,13 +410,18 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
-        reason=("the golden image no longer ships the `jailbee-inbox` helper; agents use "
-                "`jailbee inbox` from the in-container jailbee"),
+        reason=(
+            "the golden image no longer ships the `jailbee-inbox` helper; agents use "
+            "`jailbee inbox` from the in-container jailbee"
+        ),
     ),
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"apply"}),
-        reason="`jailbee apply` syncs orchestration skills that use `jailbee inbox` instead of `jailbee-inbox`",
+        reason=(
+            "`jailbee apply` syncs orchestration skills that use `jailbee inbox` "
+            "instead of `jailbee-inbox`"
+        ),
     ),
     UpgradeNote(
         version=(1, 8, 1),
