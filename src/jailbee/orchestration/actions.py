@@ -240,6 +240,7 @@ class SpawnPlan:
     pr_base: str | None = None
     autostart_profile: str | None = None
     manifest_id: str = ""
+    services: list[str] | None = None
 
 
 def _profile_problem(cfg: Config, name: str | None) -> str | None:
@@ -325,6 +326,7 @@ def plan_spawn(
         pr_base,
         m.autostart_profile,
         m.id,
+        services=m.services,
     )
 
 
@@ -366,6 +368,7 @@ def child_options(
         runner=plan.runner,
         on_done=plan.on_done,
         autostart_profile=plan.autostart_profile,
+        autostart_services=plan.services,
         assume_yes=False,
     )
 
@@ -591,6 +594,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             runner_set=plan.runner is not None,
             on_done=plan.on_done,
             autostart_profile=plan.autostart_profile,
+            services=plan.services,
             ref=plan.ref,
             pr=plan.pr,
             pr_base=plan.pr_base,
@@ -625,6 +629,7 @@ def _boot(
     set_runner: bool = False,
     on_done: str | None = None,
     autostart_profile: str | None = None,
+    services: list[str] | None = None,
     manifest_id: str = "",
     resume: str | None = None,
 ) -> Outcome:
@@ -656,6 +661,10 @@ def _boot(
             from jailbee.autostart_profiles import PROFILE_KEY
 
             ctx.incus.config_set(child.full, PROFILE_KEY, autostart_profile)
+        if services is not None:
+            from jailbee.autostart_profiles import SERVICES_KEY, encode_names
+
+            ctx.incus.config_set(child.full, SERVICES_KEY, encode_names(services))
     except Exception as e:
         return refused(f"child `{child.short}` could not be restarted: {e}")
     try:
@@ -734,6 +743,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         clone_commit=req.commit if req.kind == "pr" else None,
         pr_base=req.pr_base,
         autostart_profile=req.autostart_profile,
+        services=req.services,
         manifest_id=req.manifest_id,
         on_done=(
             "destroy"
@@ -804,6 +814,7 @@ def _start_restart(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         set_runner=req.runner_set,
         on_done=policy,
         autostart_profile=req.autostart_profile,
+        services=req.services,
         manifest_id=req.manifest_id,
         resume=req.resume,
     )
@@ -1048,6 +1059,8 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
         return refused("not a restart manifest")
     if m.agent_only and m.autostart_profile is not None:
         return refused("autostart_profile cannot be combined with agent_only (no autostart runs)")
+    if m.agent_only and m.services is not None:
+        return refused("services cannot be combined with agent_only (no autostart runs)")
     problem = _profile_problem(ctx.cfg, m.autostart_profile)
     if problem is not None:
         return refused(problem)
@@ -1096,6 +1109,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             set_runner=set_runner,
             on_done=m.on_done,
             autostart_profile=m.autostart_profile,
+            services=m.services,
             manifest_id=m.id,
             resume=resume,
         )
@@ -1115,6 +1129,7 @@ def handle_restart(ctx: ActionContext, m: Manifest) -> Outcome:
             resume=resume,
             on_done=m.on_done,
             autostart_profile=m.autostart_profile,
+            services=m.services,
         )
     )
     _store(ctx, queued)

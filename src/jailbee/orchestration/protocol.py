@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from jailbee.config.models_services import SERVICE_NAME_RE
 from jailbee.orchestration.grant import ChildRights
 from jailbee.orchestration.runner import Runner
 
@@ -112,7 +113,22 @@ class _Manifest(BaseModel):
         return _checked_id(v)
 
 
-class SpawnManifest(_Manifest):
+class _ServicesManifest(_Manifest):
+    services: list[str] | None = None
+
+    @field_validator("services")
+    @classmethod
+    def _services(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            if len(value) > 32:
+                raise ValueError("at most 32 services are allowed")
+            for name in value:
+                if not SERVICE_NAME_RE.fullmatch(name):
+                    raise ValueError(f"invalid service name: {name!r}")
+        return value
+
+
+class SpawnManifest(_ServicesManifest):
     # Only spawn changed in v2; v1 remains valid for legacy fork/new requests.
     version: Literal[1, 2]
     type: Literal["spawn"]
@@ -258,7 +274,7 @@ class UpdateManifest(_Manifest):
         return self
 
 
-class RestartManifest(_Manifest):
+class RestartManifest(_ServicesManifest):
     version: Literal[1]
     type: Literal["restart"]
     child: str
@@ -336,6 +352,7 @@ class InboxMessage(BaseModel):
     import_error: str | None = None
     on_done: OnDone | None = None
     autostart_profile: str | None = None
+    services: list[str] | None = None
     on_done_reason: str | None = None
 
     @model_serializer(mode="wrap")
