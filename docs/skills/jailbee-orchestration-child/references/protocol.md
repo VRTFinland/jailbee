@@ -23,7 +23,7 @@ host validates every manifest; one that does not match is answered with a
 - Write atomically: write `.<id>.json.tmp` (and the body file first), then
   `mv` it to `<id>.json`. Hidden files are ignored by the broker.
 - The broker deletes the manifest and its body file after acting on it.
-- `jailbee-inbox send message ...` does all of this and prints the id.
+- `jailbee inbox send message ...` does all of this and prints the id.
   Unknown keys in a manifest are refused.
 
 ## Envelope
@@ -46,7 +46,7 @@ it to match replies.
  "in_reply_to": null}
 ```
 
-CLI: `jailbee-inbox send message [--kind K] [--reply-to ID] --wait --text T`
+CLI: `jailbee inbox send message [--kind K] [--reply-to ID] --wait --text T`
 (or `-` for stdin; `--file` only with an absolute path outside the repo).
 Never leave summary files in the repo work tree: they make your `done`
 refused. Note the id the helper prints (`<type>-<UTC time>-<hex>`).
@@ -84,7 +84,7 @@ broker replies `children may only revoke their own rights`.
  "revoke": {"loose": true, "mounts": ["aws"], "egress": ["pypi.org"]}}
 ```
 
-At least one item is required. CLI: `jailbee-inbox send rights --revoke-loose
+At least one item is required. CLI: `jailbee inbox send rights --revoke-loose
 --revoke-mount aws --revoke-egress pypi.org --wait`. A successful revoke replies
 `done` and sends the parent a `note` such as `fix-12 gave up: loose`.
 Hand-added rights not owned by orchestration are left as is with a detail,
@@ -102,7 +102,7 @@ never sends the grant block.
 
 Files are named `<UTC yyyymmddThhmmssZ>-<seq>-<id>.json`, so a plain sort is
 emission order. Host-generated ids look like `h-<8 hex>`. Move a handled
-message to `inbox/read/` (or use `jailbee-inbox read <id>`).
+message to `inbox/read/` (or use `jailbee inbox read <id>`).
 
 A `message` from your orchestrator (`from` is its short name):
 

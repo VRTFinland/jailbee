@@ -427,7 +427,7 @@ def test_host_child_watch_failure_withholds_resume(
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 1
     text = capsys.readouterr().out
     assert "resume withheld: could not register agent supervision" in text
-    assert "jailbee-inbox send restart --child one --agent-only --resume" in text
+    assert "jailbee inbox send restart --child one --agent-only --resume" in text
     resume.assert_not_called()
 
 

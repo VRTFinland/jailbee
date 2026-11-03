@@ -26,7 +26,7 @@ names** (the branch-level name, never one prefixed with the repo).
 - Write atomically: write `.<id>.json.tmp` (and the body file first), then
   `mv` it to `<id>.json`. Hidden files are ignored by the broker.
 - The broker deletes the manifest and its body file after acting on it.
-- `jailbee-inbox send <type> ...` does all of this and prints the id.
+- `jailbee inbox send <type> ...` does all of this and prints the id.
   Unknown keys in a manifest are refused.
 
 ## Envelope
@@ -39,7 +39,7 @@ spawn also supports version `2`. The type is one of
 
 ### `refresh`
 
-Refresh services in a child with `jailbee-inbox send refresh --child C
+Refresh services in a child with `jailbee inbox send refresh --child C
 --services db,web [--force] [--wait] [--timeout DUR]`. The `services` array
 requires 1 to 32 valid service names; duplicates are removed in order. `force`
 defaults to false and skips the idle gate when true. Existing stored grants do
@@ -135,14 +135,14 @@ the default). Details:
 - ``LiteLLM profile `P` is not served (configured: ...; run `jailbee litellm up`)``
 - ``LiteLLM profile `P` has no `M` tier``
 
-CLI: `jailbee-inbox send spawn [--branch fix/issue-12]
+CLI: `jailbee inbox send spawn [--branch fix/issue-12]
 [--new [--base main] | --ref REF | --pr N] [--mount M]... [--loose] [--egress H]... [--note T] [--agent A [--profile P] [--model M]] -` with the prompt on
 stdin (or `--text T`; `--file` only with an absolute path outside the repo).
 `--profile` and `--model` need `--agent`, and `--profile` needs
 `--agent claude-jb`. Model tiers `fable`, `opus`, `sonnet`, and `haiku` may
 optionally carry the exact suffix `[1m]`; quote shell arguments such as
 `--model 'sonnet[1m]'`. LiteLLM profile validation uses the base tier.
-`jailbee-inbox runners [--json]` lists the runners you may name and what
+`jailbee inbox runners [--json]` lists the runners you may name and what
 omitting one starts: `default: omit runner (<agent>)`, then one line per
 `claude` and per `claude-jb -P <profile>` with its models. The default agent is named only when
 known; otherwise it reads `unknown` and you simply omit `runner`.
@@ -177,7 +177,7 @@ runs again.
  "in_reply_to": "h-3fa9c012"}
 ```
 
-CLI: `jailbee-inbox send message --to C [--kind K] [--reply-to ID] --text T`.
+CLI: `jailbee inbox send message --to C [--kind K] [--reply-to ID] --text T`.
 
 ### `import`
 
@@ -229,7 +229,7 @@ coordinate before applying changes. An update message with optional `merged_head
 reports the resulting child HEAD: the child must re-read files and must not
 merge `imported_ref` again. Without it, the child merges manually.
 
-CLI: `jailbee-inbox send update --child C [--ref REF | --base BRANCH] [--merge] --wait`.
+CLI: `jailbee inbox send update --child C [--ref REF | --base BRANCH] [--merge] --wait`.
 For example, use `--ref refs/jailbee/from/worker/fix` to reuse imported work,
 or `--base release/1` to deliver a host-resolved release branch.
 
@@ -266,7 +266,7 @@ marker.
  "child": "fix-issue-12", "prompt": "Try again.", "runner": null}
 ```
 
-CLI: `jailbee-inbox send restart --child C [--agent-only] [--agent A [--profile P] [--model M] | --default-runner]` with the prompt on stdin or `--text`.
+CLI: `jailbee inbox send restart --child C [--agent-only] [--agent A [--profile P] [--model M] | --default-runner]` with the prompt on stdin or `--text`.
 
 Optional `agent_only: true` (`--agent-only`) instead requires a RUNNING child.
 It replaces only the agent tmux window with a fresh prompted, monitored session,
@@ -334,7 +334,7 @@ manifest is journalled. A child's revoke sends its parent a `note`, e.g.
 `fix-12 gave up: loose`. Stopped children take network changes on start and
 mounts as devices. Wildcard egress requires the work network.
 
-CLI: `jailbee-inbox send rights --child C [--loose] [--mount K]...
+CLI: `jailbee inbox send rights --child C [--loose] [--mount K]...
 [--egress H]... --for T [--revoke-loose] [--revoke-mount K]...
 [--revoke-egress H]... [--wait]`. Revoke-only omits `--for`.
 
@@ -377,7 +377,7 @@ keeps the child. Report with `send message --kind done --wait`.
 
 Files are named `<UTC yyyymmddThhmmssZ>-<seq>-<id>.json`, so a plain sort is
 emission order. Host-generated ids look like `h-<8 hex>`. Move a handled
-message to `inbox/read/` (or use `jailbee-inbox read <id>`).
+message to `inbox/read/` (or use `jailbee inbox read <id>`).
 
 A `message` from a child:
 
@@ -403,7 +403,7 @@ exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
 timeout (default 30m). `none` waits without a deadline and never exits 3.
 Recommend it for spawn, update and destroy.
 
-For waits, use `jailbee-inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m`.
+For waits, use `jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m`.
 The broker may send a host-only `message` of kind `idle`, with the child's
 short name in `from` and the spawn/restart ref in `in_reply_to`. Its body names
 the child, elapsed wait, last accepted child message kind and bounded first

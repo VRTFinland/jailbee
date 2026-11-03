@@ -51,7 +51,7 @@ def test_refusal_and_unknown_never_run_commands(tmp_path: Path, monkeypatch) -> 
         container_app, ["service", "--repo", str(tmp_path), "refresh", "backend"]
     )
     assert result.exit_code == 3
-    assert "jailbee-inbox send refresh --child feat-x --services backend --wait" in result.output
+    assert "jailbee inbox send refresh --child feat-x --services backend --wait" in result.output
     assert "jb service refresh feat-x backend" in result.output
     result = runner.invoke(
         container_app, ["service", "--repo", str(tmp_path), "refresh", "backend", "missing"]

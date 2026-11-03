@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+- The standalone `jailbee-inbox` helper is replaced by `jailbee inbox`.
+
 ### Added
 
 - Managed repository services with dependency-aware start, restart, refresh and tmux logs, automatic preparation and startup, light container creation or orchestration with `--services`, and host-authorized or orchestrator-authorized elevated refresh that pauses and resumes the agent.

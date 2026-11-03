@@ -28,19 +28,19 @@ own instructions.
 
 ## Stay reachable
 
-At session start, run `jailbee-inbox wait --timeout none` in the background;
+At session start, run `jailbee inbox wait --timeout none` in the background;
 with Claude, use Bash `run_in_background`. When it exits 0, run
-`jailbee-inbox ls`, handle and `jailbee-inbox read <id>` every unread message,
+`jailbee inbox ls`, handle and `jailbee inbox read <id>` every unread message,
 including status replies, then re-arm the waiter. Exit 2 means a waiter already
 runs: do not start another, and never run a foreground ordinary `wait` alongside
 it. `send --wait` is safe alongside the waiter. After an accepted `done` in a
 kept child, keep the waiter armed between tasks. If background commands are not
-available, run `jailbee-inbox wait --timeout 30m` in a loop and re-run it on
+available, run `jailbee inbox wait --timeout 30m` in a loop and re-run it on
 exit 1.
 
 ## Give up access
 
-When access is no longer needed, use `jailbee-inbox send rights
+When access is no longer needed, use `jailbee inbox send rights
 --revoke-loose --revoke-mount aws --revoke-egress pypi.org --wait` (include
 only items to give up). Omit `--child` or name yourself. Never include a
 `grant` block: children may only revoke their own rights. Rights a human
@@ -56,9 +56,9 @@ never reused. Prefer the helper, which writes the manifest atomically and
 prints the id:
 
 ```bash
-jailbee-inbox send message --kind question --text "Which parser do you mean?"
-jailbee-inbox send message --kind blocked --text "Tests need network access I do not have."
-jailbee-inbox send message --kind done --wait - <<'EOF'
+jailbee inbox send message --kind question --text "Which parser do you mean?"
+jailbee inbox send message --kind blocked --text "Tests need network access I do not have."
+jailbee inbox send message --kind done --wait - <<'EOF'
 Fixed the parser; tests pass. Everything is committed.
 EOF
 ```
@@ -159,8 +159,8 @@ it is not needed by a child waiting for its parent.
 
 ## Checking the inbox while working
 
-At natural checkpoints (a finished step), run `jailbee-inbox ls`. The
-orchestrator may refine the task. `jailbee-inbox read <id>` prints a message
+At natural checkpoints (a finished step), run `jailbee inbox ls`. The
+orchestrator may refine the task. `jailbee inbox read <id>` prints a message
 and moves it to `inbox/read/`; or `mv` the file there yourself.
 
 ## Status messages for you

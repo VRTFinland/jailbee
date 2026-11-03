@@ -26,7 +26,7 @@ def test_mixed_refresh_refuses_before_lock_or_commands(tmp_path: Path) -> None:
     )
     assert (
         message
-        and "jailbee-inbox send refresh --child feat-x --services safe,backend --wait" in message
+        and "jailbee inbox send refresh --child feat-x --services safe,backend --wait" in message
     )
     assert "jb service refresh feat-x safe backend" in message
     with pytest.raises(ValueError, match="elevated"):

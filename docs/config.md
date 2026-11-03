@@ -1934,7 +1934,7 @@ control agent, IDE, browser or app autostart settings.
 The terminal dashboard offers **Lifecycle → Autostart profile…**; the
 optional `autostart_profile` / **PROFILE** column is off by default.
 Orchestration spawn/restart manifests accept `autostart_profile`, or
-`jailbee-inbox send spawn|restart --autostart-profile NAME`.
+`jailbee inbox send spawn|restart --autostart-profile NAME`.
 
 #### Stages and chains
 

@@ -439,7 +439,7 @@ def test_real_sequence_uses_accepted_mixed_plan_and_supervision(
         assert events == ["watch"]
         assert "resume withheld: could not register agent supervision (watch disk)" in item.detail
         assert (
-            "jailbee-inbox send restart --child c --agent-only "
+            "jailbee inbox send restart --child c --agent-only "
             "--resume 11111111-1111-1111-1111-111111111111 --text 'Continue your task.'"
             in item.detail
         )
