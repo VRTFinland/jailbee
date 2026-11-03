@@ -239,10 +239,13 @@ Fix the request or tell the human; do not retry with another model.
 
 ## The inbox loop
 
-If `jailbee inbox`, `inbox/` or `outbox/` is missing just after a grant,
-wait briefly: the broker installs them on its next round, within a few
-seconds. Do not hand-roll the protocol. If they stay missing, tell the
-human; the broker may not be running (`jailbee orchestrate status` on the host).
+If `inbox/` or `outbox/` is missing just after a grant, wait briefly: the
+broker creates the directories on its next round. If they stay missing, tell
+the human; the broker may not be running (`jailbee orchestrate status` on the
+host). If `jailbee inbox` is missing, the broker never installs the command:
+ask the human to run `jb base build` on the host and recreate the container.
+The broker leaves the stale standalone helper that old images retain in place.
+Do not hand-roll the protocol.
 
 ```bash
 jailbee inbox wait --wake-on done,question,blocked,idle,failed,refused --quiet-after 60m --timeout 30m

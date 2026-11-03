@@ -165,6 +165,7 @@ def test_adopt_notifies_both_without_watching(cfg, rig, tmp_path, mocker):
     assert (child.kind, child.from_) == ("adopted", "o")
     assert (parent.kind, parent.from_) == ("adopted", "a")
     assert child.body == adoption.ADOPTED_CHILD_BODY.format(orchestrator="o")
+    assert "background `jailbee inbox wait`" in child.body
     assert parent.body == adoption.ADOPTED_ORCHESTRATOR_BODY.format(child="a")
     assert "close" in parent.body and "send restart --child a --agent-only" in parent.body
     assert [c.kwargs for c in deliver.call_args_list] == [

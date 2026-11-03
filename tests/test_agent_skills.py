@@ -134,6 +134,15 @@ def test_orchestration_skill_names_the_protocol_paths() -> None:
         assert needle in text, needle
 
 
+def test_orchestration_skill_explains_missing_inbox_recovery() -> None:
+    text = _skill_text(ORCH)
+    assert "broker creates the directories" in text
+    assert "broker never installs the command" in text
+    assert "`jb base build`" in text
+    assert "recreate the container" in text
+    assert "old images retain" in text
+
+
 def test_orchestration_skill_covers_review_focus() -> None:
     text = _skill_text(ORCH)
     assert "short name" in text

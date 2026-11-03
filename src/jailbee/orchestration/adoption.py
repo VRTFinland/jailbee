@@ -37,7 +37,7 @@ CHILD_STATE_LABELS = (
 ADOPTED_CHILD_BODY = (
     "You are now a child container of `{orchestrator}` (adopted by the host user). "
     "Follow the jailbee-orchestration-child skill: report with "
-    "`jailbee inbox send message --kind done|question|blocked` and keep a background"
+    "`jailbee inbox send message --kind done|question|blocked` and keep a background "
     "`jailbee inbox wait` running."
 )
 ADOPTED_ORCHESTRATOR_BODY = (
