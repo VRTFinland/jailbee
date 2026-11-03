@@ -9133,7 +9133,10 @@ def test_branch_explicit_services_override_profile(
             "default_profile": "minimal",
         },
     )
-    mocker.patch("jailbee.branch_config.load_branch_autostart", return_value=_branch_result(branch, AutostartDeviation()))
+    mocker.patch(
+        "jailbee.branch_config.load_branch_autostart",
+        return_value=_branch_result(branch, AutostartDeviation()),
+    )
     mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
     mocker.patch("jailbee.config.load_config_from_text", return_value=cfg)
     clone_ref = mocker.Mock(autostart_ref="branch", autostart_source_label="branch")
