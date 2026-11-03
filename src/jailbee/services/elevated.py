@@ -1,9 +1,9 @@
 """Validate accepted refresh plans and their declared temporary rights."""
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -14,7 +14,7 @@ from jailbee.orchestration.profiles import repo_cap
 
 if TYPE_CHECKING:
     from jailbee.config import Config
-    from jailbee.incus import Incus
+    from jailbee.incus import ExecResult, Incus
     from jailbee.orchestration.agent_watch import AgentStatus
     from jailbee.orchestration.runner import Runner
 
@@ -309,6 +309,195 @@ class Plan:
             return plan
         except (ValueError, TypeError, UnicodeError, ValidationError, RecursionError) as exc:
             raise RefreshError(f"invalid refresh plan: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class ServiceOutcome:
+    name: str
+    result: str
+
+
+@dataclass(frozen=True)
+class RefreshReport:
+    services: tuple[ServiceOutcome, ...]
+    ok: bool
+    agent: str
+
+    def summary(self) -> str:
+        return "\n".join([*(f"{s.name}: {s.result}" for s in self.services), f"agent: {self.agent}"])
+
+    def agent_text(self, who: str) -> str:
+        details = "; ".join(f"{s.name}: {s.result}" for s in self.services)
+        return (f"Your container's services were refreshed ({who}): {details}. "
+                "Continue your task; re-read files you had open if dependencies changed.")
+
+
+def _snapshot(cfg: "Config", incus: "Incus", full: str) -> tuple[str, set[str]]:
+    import yaml
+
+    from jailbee.lifecycle import current_network_mode
+    from jailbee.network_generation import generation_of
+    from jailbee.work_mode import work_mode_state
+
+    rows = incus.list_containers()
+    matches = [row for row in rows if isinstance(row, dict) and row.get("name") == full]
+    if len(matches) != 1 or not isinstance(matches[0].get("profiles"), list) or not all(
+        isinstance(p, str) for p in matches[0]["profiles"]
+    ):
+        raise RefreshError("container network state unavailable")
+    row = matches[0]
+    if generation_of(cfg, row) == "work":
+        mode, agrees = work_mode_state(cfg, row, incus)
+        if not agrees:
+            raise RefreshError("work network marker and ACL disagree")
+    else:
+        mode = current_network_mode(cfg, incus, full)
+    if mode not in ("strict", "loose"):
+        raise RefreshError("container network mode unavailable")
+    data = yaml.safe_load(incus.config_show(full, expanded=True))
+    if not isinstance(data, dict) or not isinstance(data.get("devices"), dict):
+        raise RefreshError("container devices unavailable")
+    devices = data["devices"]
+    if not all(isinstance(k, str) and isinstance(v, dict) for k, v in devices.items()):
+        raise RefreshError("invalid container devices")
+    return mode, {k.removeprefix("optional-") for k in devices if k.startswith("optional-")}
+
+
+def _execute(cfg: "Config", incus: "Incus", full: str, repo: str, operation: str, names: Sequence[str]) -> "ExecResult":
+    from jailbee import container_app
+    from jailbee.config import CONTAINER_USERNAME
+
+    return container_app.run_in_container(
+        cfg, incus, full, ["service", "--repo", repo, operation, *names],
+        uid=cfg.container_user.uid, cwd=repo, env={"HOME": f"/home/{CONTAINER_USERNAME}"},
+        init_groups=True,
+    )
+
+
+def _reason(exc: Exception) -> str:
+    from jailbee.autostart import AutostartStepError
+
+    if isinstance(exc, AutostartStepError):
+        return f"{exc.step_name}: {exc.reason}" + (f" (exit {exc.exit_code})" if exc.exit_code is not None else "")
+    return str(exc) or type(exc).__name__
+
+
+def run_refresh(
+    cfg: "Config", incus: "Incus", full: str, plan: Plan, *, who: str,
+    resume_prompt_prefix: str = "", before_resume: Callable[[], None] | None = None,
+    mirror_endpoint: tuple[str, int] | None, on_progress: Callable[[str, str, str], None] | None = None,
+    force: bool = False,
+) -> RefreshReport:
+    from jailbee import autostart
+    from jailbee.autostart_profiles import PREPARED_KEY, decode_names, encode_names
+    from jailbee.lifecycle import container_repo_dir
+    from jailbee.services import autostart as service_autostart
+
+    try:
+        raw = incus.config_get_checked(full, service_autostart.ENVELOPE_KEY)
+        grants = service_autostart._approved(raw) if raw is not None else {}
+    except Exception as exc:
+        raise RefreshError(f"invalid approved service elevation envelope: {exc}") from exc
+    try:
+        entry = _snapshot(cfg, incus, full) if plan.elevated else None
+        prepared = decode_names(incus.config_get_checked(full, PREPARED_KEY)) or []
+        repo = container_repo_dir(cfg, incus, full)
+    except Exception as exc:
+        raise RefreshError(f"refresh preflight failed: {exc}") from exc
+    paused = pause_agent(cfg, incus, full, force=force, now=datetime.now(UTC)) if plan.elevated else None
+    results = {name: "skipped" for name in plan.order}
+    agent = "not running" if paused is None else f"resumed {paused.session}"
+    ok = False
+    restored = True
+    try:
+        for service in plan.services:
+            if not service.will_prepare:
+                continue
+            failure = None
+            try:
+                stage = service_autostart.prepare_stage(
+                    full, service.name, [dict(s) for s in service.prepare],
+                    network=service.network if service.elevated else None,
+                    mounts=list(service.mounts) if service.elevated else [],
+                )
+                autostart.run_stage(cfg, incus, full, stage, repo, mirror_endpoint=mirror_endpoint,
+                                    on_progress=on_progress, cas_restore=False)
+            except BaseException as exc:
+                failure = _reason(exc) if isinstance(exc, Exception) else type(exc).__name__
+            if entry is not None:
+                try:
+                    current = _snapshot(cfg, incus, full)
+                    extra = current[1] - entry[1]
+                    if current[0] != entry[0] or extra:
+                        raise RefreshError(f"network {current[0]} (expected {entry[0]}), extra mounts: {', '.join(sorted(extra)) or 'none'}")
+                except Exception as exc:
+                    restored = False
+                    commands = [f"jb net strict {full}", *(f"jb unmount {m} {full}" for m in sorted(set(plan.declared().mounts) - entry[1]))]
+                    agent = f"resume withheld: container may still be elevated ({exc}); recovery: {'; '.join(commands)}"
+                    results[service.name] = f"prepare failed: {failure or 'restoration unconfirmed'}"
+                    break
+            if failure is not None:
+                results[service.name] = f"prepare failed: {failure}"
+                break
+            try:
+                previous = grants.get(service.name, {"network": None, "mounts": []})
+                grants[service.name] = {
+                    "network": "loose" if service.network == "loose" or previous["network"] == "loose" else None,
+                    "mounts": list(dict.fromkeys([*previous["mounts"], *service.mounts])),
+                }
+                incus.config_set(full, service_autostart.ENVELOPE_KEY,
+                                 json.dumps({"version": 1, "services": grants}, separators=(",", ":")))
+                if service.name not in prepared:
+                    prepared.append(service.name)
+                incus.config_set(full, PREPARED_KEY, encode_names(prepared))
+                results[service.name] = "prepared"
+            except Exception as exc:
+                results[service.name] = f"prepare failed: {_reason(exc)}"
+                break
+        else:
+            try:
+                result = _execute(cfg, incus, full, repo, "restart", plan.named)
+                if result.returncode:
+                    text = result.stderr.decode(errors="replace").strip().splitlines()
+                    raise RefreshError(f"{text[0] if text else 'container restart failed'} (exit {result.returncode})")
+                for name in plan.order:
+                    results[name] = ("prepared, restarted" if results[name] == "prepared" else
+                                     "restarted" if name in plan.named else "restarted (cascade)")
+                ok = True
+            except Exception as exc:
+                for name in plan.order:
+                    results[name] = f"restart failed: {_reason(exc)}"
+    finally:
+        if paused is not None and restored:
+            try:
+                if before_resume is not None:
+                    before_resume()
+            except Exception as exc:
+                agent = f"resume failed: {_reason(exc)}"
+                ok = False
+            report = RefreshReport(tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent)
+            try:
+                error = resume_agent(cfg, incus, full, paused, resume_prompt_prefix + report.agent_text(who))
+            except Exception as exc:
+                error = _reason(exc)
+            if error:
+                agent = f"resume failed: {error}"
+                ok = False
+    return RefreshReport(tuple(ServiceOutcome(n, results[n]) for n in plan.order), ok, agent)
+
+
+def run_plain_refresh(cfg: "Config", incus: "Incus", full: str, names: Sequence[str]) -> RefreshReport:
+    from jailbee.lifecycle import container_repo_dir
+
+    try:
+        repo = container_repo_dir(cfg, incus, full)
+        result = _execute(cfg, incus, full, repo, "refresh", names)
+        ok = result.returncode == 0
+        output = (result.stderr or result.stdout).decode(errors="replace").strip()
+        detail = "prepared, restarted" if ok else f"failed: {output[-1000:] or f'exit {result.returncode}'}"
+    except Exception as exc:
+        ok, detail = False, f"failed: {_reason(exc)}"
+    return RefreshReport(tuple(ServiceOutcome(name, detail) for name in names), ok, "not running")
 
 
 def orchestrator_policy(cfg: "Config", grant: Grant, plan: Plan) -> list[str]:

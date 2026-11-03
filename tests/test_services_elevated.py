@@ -15,6 +15,219 @@ from tests.conftest import make_config
 SID = "11111111-1111-1111-1111-111111111111"
 
 
+@pytest.fixture
+def refresh_setup(tmp_path, mocker):
+    from jailbee.incus import ExecResult
+    from jailbee.services import elevated
+
+    cfg, incus = make_config(tmp_path), mocker.Mock()
+    values = {"user.jailbee.services_approval": json.dumps({"version": 1, "services": {"old": {"network": None, "mounts": []}}})}
+    incus.config_get_checked.side_effect = lambda _, key: values.get(key)
+    incus.config_set.side_effect = lambda _, key, value: values.__setitem__(key, value)
+    incus.list_containers.return_value = [{"name": "box", "profiles": ["jb-net-strict"]}]
+    incus.config_show.return_value = "devices: {}\n"
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    stage = mocker.patch("jailbee.autostart.run_stage")
+    run = mocker.patch("jailbee.container_app.run_in_container", return_value=ExecResult(0, b"", b""))
+    pause = mocker.patch.object(elevated, "pause_agent", return_value=elevated.PausedAgent("claude", SID, None))
+    resume = mocker.patch.object(elevated, "resume_agent", return_value=None)
+    step = {"name": "setup", "run": "true", "env": {}, "working_dir": "", "timeout": 3, "continue_on_error": False}
+    plan = elevated.Plan(("db", "web"), ("db", "web"), (
+        elevated.PlannedService("db", True, (step,), "loose", ()),
+        elevated.PlannedService("web", True, (step,), None, ()),
+    ))
+    return cfg, incus, values, plan, stage, run, pause, resume
+
+
+def test_refresh_mixed_and_approval_preserved(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, values, plan, stage, run, _, resume = refresh_setup
+    report = run_refresh(cfg, incus, "box", plan, who="requested by the user on the host", mirror_endpoint=None)
+    assert report.ok
+    assert [(c.args[3].network, c.args[3].mounts) for c in stage.call_args_list] == [("loose", []), (None, [])]
+    assert run.call_args.args[3][-3:] == ["restart", "db", "web"]
+    assert json.loads(values["user.jailbee.services_approval"])["services"] == {"old": {"network": None, "mounts": []}, "db": {"network": "loose", "mounts": []}, "web": {"network": None, "mounts": []}}
+    assert "db" in values["user.jailbee.services_prepared"]
+    resume.assert_called_once()
+
+
+def test_refresh_prepare_failure_resumes_and_skips(refresh_setup):
+    from jailbee.autostart import AutostartStepError
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, stage, run, _, resume = refresh_setup
+    stage.side_effect = AutostartStepError(container="box", step_name="setup", reason="bad")
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "db: prepare failed:" in report.summary() and "web: skipped" in report.summary()
+    run.assert_not_called()
+    resume.assert_called_once()
+
+
+def test_refresh_unconfirmed_restore_withholds_resume(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, stage, run, _, resume = refresh_setup
+    incus.config_show.side_effect = ["devices: {}\n", RuntimeError("transport")]
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "resume withheld: container may still be elevated" in report.summary()
+    assert "jb net strict box" in report.summary()
+    assert stage.call_count == 1
+    run.assert_not_called()
+    resume.assert_not_called()
+
+
+def test_refresh_invalid_envelope_refuses_before_pause(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, values, plan, stage, _, pause, _ = refresh_setup
+    values["user.jailbee.services_approval"] = "invalid"
+    with pytest.raises(RefreshError, match="envelope"):
+        run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    pause.assert_not_called()
+    stage.assert_not_called()
+
+
+def test_refresh_restart_failure_and_resume_failure(refresh_setup):
+    from jailbee.incus import ExecResult
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, _, run, _, resume = refresh_setup
+    run.return_value = ExecResult(7, b"", b"bad restart\nmore")
+    resume.return_value = "boom"
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok
+    assert "restart failed: bad restart (exit 7)" in report.summary()
+    assert report.agent == "resume failed: boom"
+
+
+def test_refresh_before_resume_error_still_attempts_resume(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, _, _, _, resume = refresh_setup
+    def fail():
+        raise RuntimeError("watch failed")
+    report = run_refresh(cfg, incus, "box", plan, who="host", before_resume=fail, mirror_endpoint=None)
+    assert not report.ok and report.agent == "resume failed: watch failed"
+    assert "db: prepared, restarted" in report.summary()
+    resume.assert_called_once()
+
+
+def test_refresh_label_failure_resumes(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, _, run, _, resume = refresh_setup
+    incus.config_set.side_effect = RuntimeError("label error")
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "label error" in report.summary() and "web: skipped" in report.summary()
+    resume.assert_called_once()
+    run.assert_not_called()
+
+
+def test_refresh_cascade_and_no_pause(refresh_setup):
+    from jailbee.services.elevated import Plan, PlannedService, run_refresh
+
+    cfg, incus, _, _, stage, _, pause, _ = refresh_setup
+    plan = Plan(("db", "web"), ("db",), (PlannedService("db", False, (), None, ()), PlannedService("web", False, (), None, ())))
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert report.ok and "web: restarted (cascade)" in report.summary()
+    stage.assert_not_called()
+    pause.assert_not_called()
+
+
+def test_plain_refresh_output_tail(refresh_setup):
+    from jailbee.incus import ExecResult
+    from jailbee.services.elevated import run_plain_refresh
+
+    cfg, incus, _, _, _, run, pause, _ = refresh_setup
+    assert run_plain_refresh(cfg, incus, "box", ["db"]).ok
+    run.return_value = ExecResult(3, b"", b"refused")
+    report = run_plain_refresh(cfg, incus, "box", ["db"])
+    assert not report.ok and "failed: refused" in report.summary()
+    pause.assert_not_called()
+
+
+def test_refresh_new_mount_not_removed_withholds_resume(refresh_setup):
+    from jailbee.services.elevated import Plan, PlannedService, run_refresh
+
+    cfg, incus, _, plan, _, run, _, resume = refresh_setup
+    first = plan.services[0]
+    plan = Plan(("db",), ("db",), (PlannedService("db", True, first.prepare, None, ("aws",)),))
+    incus.config_show.side_effect = ["devices: {}\n", "devices:\n  optional-aws: {type: disk}\n"]
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "jb unmount aws box" in report.summary()
+    resume.assert_not_called()
+    run.assert_not_called()
+
+
+def test_refresh_approval_preserves_existing_service_rights(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, values, plan, _, _, _, _ = refresh_setup
+    values["user.jailbee.services_approval"] = json.dumps({"version": 1, "services": {"db": {"network": None, "mounts": ["old"]}}})
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert report.ok
+    assert json.loads(values["user.jailbee.services_approval"])["services"]["db"] == {"network": "loose", "mounts": ["old"]}
+
+
+def test_refresh_interrupt_checks_restoration_before_resume(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, stage, run, _, resume = refresh_setup
+    stage.side_effect = KeyboardInterrupt()
+    incus.config_show.side_effect = ["devices: {}\n", RuntimeError("transport")]
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "resume withheld" in report.summary()
+    run.assert_not_called()
+    resume.assert_not_called()
+
+
+def test_refresh_unexpected_stage_error_resumes(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, stage, run, _, resume = refresh_setup
+    stage.side_effect = RuntimeError("infrastructure failed")
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "infrastructure failed" in report.summary()
+    run.assert_not_called()
+    resume.assert_called_once()
+
+
+def test_refresh_success_resume_failure_preserves_outcomes(refresh_setup):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, _, _, _, resume = refresh_setup
+    resume.return_value = "boom"
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and report.agent == "resume failed: boom"
+    assert "db: prepared, restarted" in report.summary()
+
+
+def test_refresh_work_network_disagreement_withholds_resume(refresh_setup, mocker):
+    from jailbee.services.elevated import run_refresh
+
+    cfg, incus, _, plan, _, run, _, resume = refresh_setup
+    incus.list_containers.return_value = [{"name": "box", "profiles": ["jb-net-work-strict"]}]
+    mocker.patch("jailbee.work_mode.work_mode_state", side_effect=[("strict", True), ("strict", False)])
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert not report.ok and "marker and ACL disagree" in report.summary()
+    resume.assert_not_called()
+    run.assert_not_called()
+
+
+def test_refresh_preexisting_mount_is_preserved(refresh_setup):
+    from jailbee.services.elevated import Plan, PlannedService, run_refresh
+
+    cfg, incus, _, plan, _, _, _, resume = refresh_setup
+    first = plan.services[0]
+    plan = Plan(("db",), ("db",), (PlannedService("db", True, first.prepare, None, ("aws",)),))
+    incus.config_show.return_value = "devices:\n  optional-aws: {type: disk}\n"
+    report = run_refresh(cfg, incus, "box", plan, who="host", mirror_endpoint=None)
+    assert report.ok
+    resume.assert_called_once()
+
+
 def test_pause_no_agent(tmp_path, mocker):
     from datetime import datetime
 
