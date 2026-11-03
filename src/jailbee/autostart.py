@@ -592,7 +592,9 @@ def run_detached(
                     agent_steps=agent_steps,
                     agents_last=prompted,
                     services_stage=trigger == AutostartTrigger.ON_START
-                    and services_stage_wanted(cfg, incus, spec.container_name),
+                    and services_stage_wanted(
+                        cfg, incus, spec.container_name, services_present=spec.services_present
+                    ),
                     # The override the foreground split on: `_boundary` branches
                     # on it, so recomputing without it can disagree with what was
                     # actually deferred. Inert for a later trigger, where

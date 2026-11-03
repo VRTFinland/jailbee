@@ -1572,7 +1572,7 @@ def new_container(
     *,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
-    on_detach: Callable[[Autostart, str, str], None] | None = None,
+    on_detach: Callable[[Autostart, str, str, bool], None] | None = None,
 ) -> str:
     """Create a new container from the golden. Returns container name.
 
@@ -1614,7 +1614,7 @@ def _new_container(
     progress: _CreateProgress,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
-    on_detach: Callable[[Autostart, str, str], None] | None = None,
+    on_detach: Callable[[Autostart, str, str, bool], None] | None = None,
 ) -> str:
     """Create a new container from the golden. Returns container name.
 
@@ -1639,7 +1639,7 @@ def _new_container(
     host mount it attaches). The detached background worker injects one that
     always declines, so it never blocks on stdin; tests inject their own.
 
-    ``on_detach(autostart_block, trigger, repo_dir)``, if given, is invoked
+    ``on_detach(autostart_block, trigger, repo_dir, services_present)``, if given, is invoked
     once when a stage deferred the rest of the run — the caller then decides
     who finishes it (the CLI spawns `_autostart-worker`; a background worker
     carries on in-process). ``lifecycle`` must not import ``cli``, which is
@@ -2358,7 +2358,7 @@ def _new_container(
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
-            on_detach(effective_cfg.autostart, detached_from, repo_dir)
+            on_detach(effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services))
 
     return name
 

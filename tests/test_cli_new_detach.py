@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.autostart_plan import AutostartPlan
@@ -329,3 +330,25 @@ def test_background_boot_worker_does_not_spawn_a_supervisor(tmp_path, mocker):
     assert spec.container_name == "myrepo-feat-a"
     assert spec.from_trigger == "on_start"
     assert spec.repo_dir == "/home/dev/myrepo"
+
+
+@pytest.mark.parametrize("presence", [True, False])
+def test_detach_handlers_forward_branch_services_presence(tmp_path, mocker, presence):
+    from jailbee import cli
+
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    handler = cli._autostart_detach_handler(
+        cfg, incus, config_path=None, full_name="c", mirror_endpoint=None, override=None
+    )
+    handler(cfg.autostart, "on_create", "/r", presence)
+    assert spawn.call_args.kwargs["services_present"] is presence
+
+    run = mocker.patch("jailbee.autostart.run_detached")
+    inline = cli._inline_autostart_handler(
+        cfg, incus, engine=None, full_name="c", log_path=str(tmp_path / "log"),
+        mirror_endpoint=None, override=None,
+    )
+    inline(cfg.autostart, "on_create", "/r", presence)
+    assert run.call_args.args[2].services_present is presence

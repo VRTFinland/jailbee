@@ -1309,3 +1309,39 @@ def test_run_detached_with_pending_prompt_never_launches_the_agent_after_a_faile
         autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block, from_trigger="on_create"))
 
     assert [c.args[3][0].stage for c in ran.call_args_list] == ["deps", "seed"]
+
+
+@pytest.mark.parametrize("presence", [True, False, None])
+def test_services_presence_job_roundtrip(presence):
+    payload = bg.autostart_job_to_dict(
+        container_name="c1", autostart=Autostart(), from_trigger="on_create",
+        repo_dir="/r", mirror_endpoint=None, override=None, log_path="/tmp/x",
+        progress_path="/tmp/p", services_present=presence,
+    )
+    assert "services" not in payload
+    assert bg.dict_to_autostart_job(payload).services_present is presence
+    del payload["services_present"]
+    assert bg.dict_to_autostart_job(payload).services_present is None
+
+
+@pytest.mark.parametrize("host,branch,label,expected", [
+    (False, True, None, True),
+    (True, False, None, False),
+    (False, True, ",", False),
+])
+def test_detached_services_presence_overrides_host(tmp_path, mocker, make_cfg, host, branch, label, expected):
+    from jailbee import autostart as autostart_mod
+    block = Autostart()
+    cfg = _cfg_with(make_cfg, tmp_path, block).model_copy(
+        update={"services": {"db": object()} if host else {}}
+    )
+    spec = _spec(tmp_path, block, from_trigger="on_create")
+    from dataclasses import replace
+    spec = replace(spec, services_present=branch)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = label
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    run = mocker.patch("jailbee.autostart.run_stages")
+    autostart_mod.run_detached(cfg, incus, spec)
+    names = [call.args[3][0].stage for call in run.call_args_list]
+    assert ("services" in names) is expected

@@ -1292,3 +1292,18 @@ def test_adding_a_step_to_a_stage_names_the_stage_that_gained_it():
 
     assert dev.added == ("on_create[b]",)
     assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]
+
+
+def test_graft_services_from_branch_without_mutating_host(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    from jailbee.config.models_services import Service
+
+    branch = cfg.model_copy(update={"services": {"db": Service(run="true")}})
+    mocker.patch("jailbee.git.show_file_at_ref", return_value="services: {}")
+    mocker.patch("jailbee.config.load_config_from_text", return_value=branch)
+    result = load_branch_autostart(cfg, "refs/heads/f", source_label="f")
+    assert result is not None
+    assert result.cfg.services == branch.services
+    assert cfg.services == {}

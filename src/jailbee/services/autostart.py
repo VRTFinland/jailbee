@@ -35,9 +35,13 @@ def selected_services(cfg: Config, incus: Incus, container: str) -> list[str] | 
     return None
 
 
-def services_stage_wanted(cfg: Config, incus: Incus, container: str) -> bool:
+def services_stage_wanted(
+    cfg: Config, incus: Incus, container: str, *, services_present: bool | None = None
+) -> bool:
     names = decode_names(incus.config_get(container, SERVICES_KEY))
-    return bool(cfg.services) if names is None else bool(names)
+    if names is not None:
+        return bool(names)
+    return bool(cfg.services) if services_present is None else services_present
 
 
 def run_services_stage(

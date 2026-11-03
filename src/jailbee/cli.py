@@ -3353,7 +3353,7 @@ def _inline_autostart_handler(
     log_path: str,
     mirror_endpoint: tuple[str, int] | None,
     override: Literal["wait", "no_wait"] | None,
-) -> "Callable[[Autostart, str, str], None]":
+) -> "Callable[[Autostart, str, str, bool], None]":
     """The `on_detach` a *background worker* hands down.
 
     Counterpart to `_autostart_detach_handler`, which spawns a supervisor.
@@ -3374,7 +3374,7 @@ def _inline_autostart_handler(
     progress_path = autostart_progress.path_for_log(log_path)
     on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
 
-    def on_detach(block: "Autostart", trigger: str, repo_dir: str) -> None:
+    def on_detach(block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None) -> None:
         # The row this worker owns now tracks an autostart supervision run,
         # and its kind has to say so before the first stage phase lands on
         # it: `attachable`, `job_label` and the attach gate's failure
@@ -3405,6 +3405,7 @@ def _inline_autostart_handler(
                 override=override,
                 log_path=log_path,
                 progress_path=str(progress_path),
+                services_present=services_present,
             ),
             on_phase=on_phase,
             on_progress=on_progress,
@@ -3494,6 +3495,7 @@ def _spawn_autostart_worker(
     repo_dir: str,
     mirror_endpoint: tuple[str, int] | None,
     override: "Literal['wait', 'no_wait'] | None" = None,
+    services_present: bool | None = None,
 ) -> None:
     """Hand the detached stages to a `_autostart-worker` and record its row.
 
@@ -3564,6 +3566,7 @@ def _spawn_autostart_worker(
                 override=override,
                 log_path=str(log_path),
                 progress_path=str(progress_path),
+                services_present=services_present,
             )
         )
     )
@@ -4431,7 +4434,7 @@ def _post_start_actions(
     *,
     no_autostart: bool,
     override: Literal["wait", "no_wait"] | None = None,
-    on_detach: "Callable[[Autostart, str, str], None] | None" = None,
+    on_detach: "Callable[[Autostart, str, str, bool], None] | None" = None,
 ) -> None:
     """Shared post-boot flow for `start` and `restart`.
 
@@ -4512,7 +4515,7 @@ def _post_start_actions(
     _post_create_gui_launches(cfg, incus, name)
 
     if plan.detached and on_detach is not None:
-        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir)
+        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services))
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -4595,7 +4598,7 @@ def _autostart_detach_handler(
     full_name: str,
     mirror_endpoint: tuple[str, int] | None,
     override: Literal["wait", "no_wait"] | None,
-) -> "Callable[[Autostart, str, str], None]":
+) -> "Callable[[Autostart, str, str, bool], None]":
     """The `on_detach` callback the foreground commands hand down.
 
     `new_container` and `_post_start_actions` compute the deferred stages but
@@ -4617,7 +4620,7 @@ def _autostart_detach_handler(
     zero detached stages and exit 0 with every deferred stage unrun.
     """
 
-    def on_detach(block: "Autostart", trigger: str, repo_dir: str) -> None:
+    def on_detach(block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None) -> None:
         _spawn_autostart_worker(
             cfg,
             config_path,
@@ -4628,6 +4631,7 @@ def _autostart_detach_handler(
             repo_dir=repo_dir,
             mirror_endpoint=mirror_endpoint,
             override=override,
+            services_present=services_present,
         )
 
     return on_detach
