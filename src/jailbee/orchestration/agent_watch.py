@@ -34,7 +34,11 @@ def advance(
     from jailbee.orchestration.actions import done, failed
 
     if child is not None and child.config.get(labels.STATE) == labels.STATE_DONE:
-        return None, None
+        if entry.confirmed:
+            return None, None  # Readiness was already reported; nothing left to say.
+        # A fast child can finish before readiness is confirmed; the spawn or
+        # restart ref still needs its final status.
+        return None, done(f"child `{child.short}` is ready; it already reported done")
     if child is None or not child.running:
         return None, failed("[jailbee] child stopped or disappeared without accepted done")
     if status is None:
@@ -143,9 +147,12 @@ def agent_snapshot(
     """
     from jailbee.orchestration.child_status import clean_text
 
+    # No pid ever recorded and no exit status: the agent is not launched yet
+    # (create or restart still running), which is not the same as dead.
+    starting = not status.alive and not status.recorded and status.rc is None
     snap: dict[str, object] = {
-        "alive": status.alive,
-        "state": None,
+        "alive": None if starting else status.alive,
+        "state": "starting" if starting else None,
         "since": None,
         "last_event_at": None,
         "last_tool": None,

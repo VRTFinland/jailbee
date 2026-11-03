@@ -204,6 +204,8 @@ def _status_row(child: object, now: float, from_child: Mapping[str, float]) -> l
         agent_cell = "alive:" + _text(agent.get("state"), STATE_CAP)
     elif agent is not None and alive is False:
         agent_cell = "dead"
+    elif agent is not None and alive is None and agent.get("state") == "starting":
+        agent_cell = "starting"
     else:
         agent_cell = "?"
     cpu = _num(status.get("cpu_percent"))

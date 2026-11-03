@@ -402,7 +402,9 @@ return `started` (or `queued`, then `started`), followed by `done`
 (``child `<short>` is ready; agent is alive``) only after setup finishes and
 the actual prompted process survives two observations at least two seconds
 apart. Failure to start within 120 seconds after setup, an immediate exit,
-or a failed boot/setup returns a final `failed` for the same ref.
+or a failed boot/setup returns a final `failed` for the same ref. A child that
+already reported done before readiness was confirmed still gets a final `done`
+(``child `<short>` is ready; it already reported done``), so the ref always ends.
 
 The broker continues monitoring that process. Any exit without an accepted
 child `done` sends the orchestrator a `blocked` message, including exit 0,
@@ -518,8 +520,9 @@ fresh `children.json` (exit 2 otherwise).
 without asking it. It reads `children.json` (same validation and 15-minute
 staleness rule as `children`) and prints one line per child:
 `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`. `STATE` is
-`running`, `stopped` or `done` (done wins); `AGENT` is `alive:<state>`, `dead`
-or `?`; `ACTIVE` is the age of `activity_at`; `LAST-MSG` shows the age of the
+`running`, `stopped` or `done` (done wins); `AGENT` is `alive:<state>`, `starting`
+(the agent has not been launched yet: create or restart still running), `dead`
+(a recorded agent is gone) or `?`; `ACTIVE` is the age of `activity_at`; `LAST-MSG` shows the age of the
 last message from the child (`↑`, from its own inbox files) and the last
 delivery to it (`↓`). Unknown values print `?`. `--json` prints the items as
 published plus `last_from_child_at`. An unavailable or invalid snapshot, or an
@@ -536,7 +539,7 @@ readers and brokers interoperate):
 | Field | Meaning |
 |---|---|
 | `observed_at` | Epoch seconds the object was last refreshed. |
-| `agent` | `{"alive", "state", "since", "last_event_at", "last_tool"}`: the prompted agent's liveness and session state (currently Claude). |
+| `agent` | `{"alive", "state", "since", "last_event_at", "last_tool"}`: the prompted agent's liveness and session state (currently Claude). `alive` is `null` with `state: "starting"` while no agent has been recorded yet. |
 | `cpu_percent` | Container CPU over the last sample, in % of one core. |
 | `memory_bytes` | Container memory in bytes, net of page cache. |
 | `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and any `jailbee inbox wait` or `inbox send --wait` waiter (recognised by its command line, e.g. `python -m jailbee.container_main inbox wait`); `null` if none or the agent is unknown. |

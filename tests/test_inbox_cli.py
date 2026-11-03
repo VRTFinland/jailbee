@@ -1946,6 +1946,24 @@ def test_status_table_running_child():
     ]
 
 
+@pytest.mark.parametrize(
+    ("agent", "cell"),
+    [
+        ({"alive": None, "state": "starting"}, "starting"),
+        ({"alive": False, "state": None}, "dead"),
+        ({"alive": None, "state": None}, "?"),
+    ],
+)
+def test_status_table_agent_cell_starting_vs_dead(agent, cell):
+    from jailbee.inbox.render import render_status
+
+    status = {**_full_status(), "agent": agent}
+    out = render_status(
+        [_status_child(status=status)], now=STATUS_NOW, from_child={}
+    ).splitlines()
+    assert _cells(out[1])[2] == cell
+
+
 def test_status_old_broker_without_status_prints_question_marks():
     from jailbee.inbox.render import render_status
 
