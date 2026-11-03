@@ -197,6 +197,23 @@ class AutostartStage(BaseModel):
         ),
     )
 
+    services: list[str] | None = Field(
+        default=None,
+        description=(
+            "Only for the reserved on_start services stage: names to place here. "
+            "Null places selected services not named by another services stage."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _services_slot(self) -> AutostartStage:
+        if self.stage == "services":
+            if self.steps or self.chains:
+                raise ValueError("reserved stage 'services' may not carry chains/steps")
+        elif self.services is not None:
+            raise ValueError("stage services list is only allowed on stage 'services'")
+        return self
+
     @field_validator("network", mode="before")
     @classmethod
     def _no_offline(cls, v: object) -> object:
@@ -848,7 +865,7 @@ class AutostartProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stages: list[str] = Field(
         min_length=1,
-        description="Stage names selected in both autostart triggers; agents always runs.",
+        description="Stage names selected in both triggers; agents and services slots are retained.",
     )
 
     services: list[str] | None = Field(
@@ -901,7 +918,7 @@ class Autostart(BaseModel):
             raise ValueError("autostart profile name 'all' is reserved")
         if self.default_profile not in self.profiles:
             raise ValueError(f"default_profile {self.default_profile!r} must name a profile")
-        names = {"agents"}
+        names = {"agents", "services"}
         for trigger in ("on_create", "on_start"):
             for entry in getattr(self, trigger):
                 if not isinstance(entry, AutostartStage):
@@ -915,6 +932,27 @@ class Autostart(BaseModel):
                         f"autostart profile {name!r} names unknown stages: "
                         f"{', '.join(sorted(unknown))}"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_services_slots(self) -> Self:
+        seen: set[str] = set()
+        bare = False
+        for entry in self.on_create:
+            if isinstance(entry, AutostartStage) and entry.stage == "services":
+                raise ValueError("reserved stage 'services' is only allowed in on_start")
+        for entry in self.on_start:
+            if not isinstance(entry, AutostartStage) or entry.stage != "services":
+                continue
+            if entry.services is None:
+                if bare:
+                    raise ValueError("at most one bare services stage is allowed")
+                bare = True
+            else:
+                for name in entry.services:
+                    if name in seen:
+                        raise ValueError(f"service '{name}' placed more than once")
+                    seen.add(name)
         return self
 
     @field_validator("on_create", "on_start", mode="before")

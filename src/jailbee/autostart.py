@@ -688,6 +688,8 @@ def run_stages(
                     mirror_endpoint=mirror_endpoint,
                     on_progress=on_progress,
                     cas_restore=cas_restore,
+                    stage_services=stage.services,
+                    excluded_services=stage.excluded_services,
                 )
             else:
                 run_stage(

@@ -459,10 +459,21 @@ before start; `{restart: true}` cascades restarts.
 
 Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 (list), `env`, `working_dir`, `timeout` (default autostart step timeout), and
-`continue_on_error` (false). Loose network or nonempty mounts require elevation,
-unavailable until the orchestrated refresh path is implemented. Convert
-long-running `background: true` autostart steps to foreground services where
-appropriate; starting services remains a separate operation.
+`continue_on_error` (false). Loose network or nonempty mounts require host or
+orchestrator authorization. Selected services prepare once per container and
+start automatically. Convert long-running `background: true` steps to services.
+
+Place `{stage: services}` in `autostart.on_start` after setup; no steps/chains of
+its own are allowed. Optional `services: [names]` places a subset of the selected
+services; names must exist and cannot repeat across slots. Multiple disjoint
+slots are allowed, plus at most one bare/null slot for selected services not
+explicitly placed. With only subset slots, unplaced services start at the old
+generated position before agents (last without agents); no slots keeps the old
+behavior. Slots inherit the detach boundary, including `detach: true` on the
+slot. Dependencies start with dependents even if placed later. Selection via
+CLI/profile/orchestration still decides which services run; slots only place
+the selected dependency-closed plan. An empty list at a slot starts none.
+Legacy flat steps named services stay ordinary steps.
 
 ## `autostart`
 
@@ -474,7 +485,7 @@ not here. The `autostart` block describes the in-container shell work, as
 Optional `profiles` maps names to `all` or `{stages: [NAME, ...]}`;
 `default_profile` is required with profiles and invalid without them.
 Profiles require stage-form triggers, nonempty lists and known stage names
-(`agents` is always allowed and never filtered); `all` is not a legal profile
+(`agents` and `services` are always allowed and never filtered); `all` is not a legal profile
 name. A name selects that stage in both triggers in config order.
 `new --autostart-profile NAME` stores a selection; `autostart profile C NAME`
 switches it later, starting missing one-shot stages and newly selected start

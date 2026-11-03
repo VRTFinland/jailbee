@@ -129,6 +129,8 @@ def run_services_stage(
     on_progress: Callable[[str, str, str], None] | None,
     cas_restore: bool,
     live_switch: bool = False,
+    stage_services: list[str] | None = None,
+    excluded_services: list[str] | tuple[str, ...] = (),
 ) -> None:
     names = selected_services(cfg, incus, container)
     if names == []:
@@ -160,6 +162,23 @@ def run_services_stage(
     if not order:
         return
     services = {item["name"]: item for item in payload["services"]}
+    if stage_services is not None or excluded_services:
+        targets = (
+            set(order).intersection(stage_services)
+            if stage_services is not None else set(order).difference(excluded_services)
+        )
+        # Partition the container's selected plan, not the host definitions:
+        # a cloned branch may define a different service graph. Dependencies
+        # follow their dependant even if another slot places them later.
+        pending = list(targets)
+        while pending:
+            for dependency in services[pending.pop()].get("depends_on", []):
+                if dependency in services and dependency not in targets:
+                    targets.add(dependency)
+                    pending.append(dependency)
+        order = [name for name in order if name in targets]
+        if not order:
+            return
     prepared = decode_names(incus.config_get_checked(container, PREPARED_KEY)) or []
     if live_switch:
         deferred: set[str] = set()

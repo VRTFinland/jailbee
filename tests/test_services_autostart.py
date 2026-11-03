@@ -60,6 +60,51 @@ def payload():
     }
 
 
+@pytest.mark.parametrize(
+    "selection, subset, excluded, expected",
+    [
+        (None, ["web"], [], ["db", "web"]),
+        (["db"], ["web"], [], []),
+        (["web"], ["db"], [], ["db"]),
+        (None, None, ["web"], ["db", "worker"]),
+        (None, [], [], []),
+        (None, None, ["db", "web", "worker"], []),
+    ],
+)
+def test_slots_partition_container_selection_and_include_dependencies(
+    tmp_path, mocker, make_cfg, selection, subset, excluded, expected
+):
+    from jailbee.services.graph import plan_payload
+    from jailbee.config.models_services import Service
+
+    # Deliberately no host services: the selected branch owns the actual plan.
+    cfg = make_cfg(tmp_path)
+    incus, values = labels()
+    if selection is not None:
+        values[SERVICES_KEY] = encode_names(selection)
+    definitions = {
+        "db": Service(run="db"),
+        "web": Service(run="web", depends_on={"db": {}}),
+        "worker": Service(run="worker"),
+    }
+    data = plan_payload(definitions, selection or [], "start", step_timeout=30)
+    mocker.patch.object(container_app, "run_in_container",
+                        return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    run = mocker.patch.object(autostart, "run_stage")
+    run_services_stage(
+        cfg, incus, "box", "/repo", mirror_endpoint=None, on_progress=None,
+        cas_restore=False, stage_services=subset, excluded_services=excluded,
+    )
+    if expected:
+        import shlex
+
+        command = run.call_args.args[3].all_chains()[0].steps[0].run
+        assert shlex.split(command)[-len(expected):] == expected
+        assert run.call_count == 1
+    else:
+        run.assert_not_called()
+
+
 def test_prepare_stage_rejects_hidden_elevation():
     from jailbee.services.autostart import prepare_stage
 
@@ -454,10 +499,13 @@ def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
     dispatch = mocker.patch.object(service_autostart, "run_services_stage")
     ordinary = mocker.patch.object(autostart, "run_stage")
     stage = GeneratedServicesStage.model_construct(
-        stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
+        stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[],
+        services=["web"], excluded_services=["db"],
     )
     autostart.run_stages(cfg, incus, "box", [stage], "/repo")
     dispatch.assert_called_once()
+    assert dispatch.call_args.kwargs["stage_services"] == ["web"]
+    assert dispatch.call_args.kwargs["excluded_services"] == ["db"]
     ordinary.assert_not_called()
     # A user's own (even empty) stage named `services` is an ordinary stage.
     dispatch.reset_mock()
