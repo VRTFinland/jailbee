@@ -107,9 +107,16 @@ def test_impls_agree(tmp_path, args):
     )
     for name, content in (("empty", ""), ("large", "x" * 65537), ("body", "hello")):
         (tmp_path / name).write_text(content)
-    args = [arg.format(**{name: str(tmp_path / name) for name in ("missing", "empty", "large", "body")}) for arg in args]
+    args = [
+        arg.format(**{name: str(tmp_path / name) for name in ("missing", "empty", "large", "body")})
+        for arg in args
+    ]
     config = tmp_path / "litellm.json"
-    config.write_text(json.dumps({"default_profile": "p", "profiles": {"p": {"tiers": {"opus": "alias\x7f\x9b"}}}}))
+    config.write_text(
+        json.dumps(
+            {"default_profile": "p", "profiles": {"p": {"tiers": {"opus": "alias\x7f\x9b"}}}}
+        )
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "claude").write_text("#!/bin/sh\nexit 0\n")
@@ -141,7 +148,9 @@ def test_impls_agree(tmp_path, args):
                 }
             )
         )
-        result = subprocess.run([*argv, *args], env=env, input="stdin body", capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            [*argv, *args], env=env, input="stdin body", capture_output=True, text=True, timeout=30
+        )
         if args == ["runners"]:
             assert "alias??" in result.stdout
         if args == ["runners", "--json"]:
