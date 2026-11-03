@@ -486,7 +486,8 @@ def run_autostart(
         override=override,
         already_detached=already_detached,
         agents_last=prompted,
-        services_stage=trigger == AutostartTrigger.ON_START and services_stage_wanted(cfg, incus, container),
+        services_stage=trigger == AutostartTrigger.ON_START
+        and services_stage_wanted(cfg, incus, container),
     )
     if not plan.blocking:
         return plan
@@ -590,7 +591,8 @@ def run_detached(
                     trigger,
                     agent_steps=agent_steps,
                     agents_last=prompted,
-                    services_stage=trigger == AutostartTrigger.ON_START and services_stage_wanted(cfg, incus, spec.container_name),
+                    services_stage=trigger == AutostartTrigger.ON_START
+                    and services_stage_wanted(cfg, incus, spec.container_name),
                     # The override the foreground split on: `_boundary` branches
                     # on it, so recomputing without it can disagree with what was
                     # actually deferred. Inert for a later trigger, where
@@ -674,7 +676,15 @@ def run_stages(
             if stage.stage == SERVICES_STAGE:
                 from jailbee.services.autostart import run_services_stage
 
-                run_services_stage(cfg, incus, container, repo_dir, mirror_endpoint=mirror_endpoint, on_progress=on_progress, cas_restore=cas_restore)
+                run_services_stage(
+                    cfg,
+                    incus,
+                    container,
+                    repo_dir,
+                    mirror_endpoint=mirror_endpoint,
+                    on_progress=on_progress,
+                    cas_restore=cas_restore,
+                )
             else:
                 run_stage(
                     cfg,

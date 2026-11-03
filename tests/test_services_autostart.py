@@ -20,18 +20,50 @@ def labels():
 
 
 def invoke(cfg, incus):
-    run_services_stage(cfg, incus, "box", "/repo space", mirror_endpoint=None, on_progress=None, cas_restore=False)
+    run_services_stage(
+        cfg, incus, "box", "/repo space", mirror_endpoint=None, on_progress=None, cas_restore=False
+    )
 
 
 def payload():
-    return {"order": ["db", "web"], "services": [
-        {"name": "db", "prepare": [{"name": "prep", "run": "setup", "env": {}, "working_dir": "", "timeout": 3, "continue_on_error": False}], "elevation": {"network": "loose", "mounts": []}, "ready_timeout": 10},
-        {"name": "web", "prepare": [], "elevation": {"network": None, "mounts": []}, "ready_timeout": 20},
-    ]}
+    return {
+        "order": ["db", "web"],
+        "services": [
+            {
+                "name": "db",
+                "prepare": [
+                    {
+                        "name": "prep",
+                        "run": "setup",
+                        "env": {},
+                        "working_dir": "",
+                        "timeout": 3,
+                        "continue_on_error": False,
+                    }
+                ],
+                "elevation": {"network": "loose", "mounts": []},
+                "ready_timeout": 10,
+            },
+            {
+                "name": "web",
+                "prepare": [],
+                "elevation": {"network": None, "mounts": []},
+                "ready_timeout": 20,
+            },
+        ],
+    }
 
 
 def test_selection_and_presence(tmp_path, make_cfg):
-    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}}, autostart={"on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}], "profiles": {"p": {"stages": ["setup"], "services": ["db"]}}, "default_profile": "p"})
+    cfg = make_cfg(
+        tmp_path,
+        services={"db": {"run": "db"}},
+        autostart={
+            "on_start": [{"stage": "setup", "steps": [{"name": "x", "run": "true"}]}],
+            "profiles": {"p": {"stages": ["setup"], "services": ["db"]}},
+            "default_profile": "p",
+        },
+    )
     incus, values = labels()
     assert selected_services(cfg, incus, "box") == ["db"]
     assert services_stage_wanted(cfg, incus, "box")
@@ -48,7 +80,11 @@ def test_selection_and_presence(tmp_path, make_cfg):
 def test_prepare_then_start_and_skip(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
     assert [c.args[3].stage for c in run.call_args_list] == ["prepare-db", "services"]
@@ -66,8 +102,14 @@ def test_prepare_then_start_and_skip(tmp_path, mocker, make_cfg):
 def test_prepare_failure_not_recorded(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(payload()).encode(), b""))
-    error = autostart.AutostartStepError(container="box", step_name="prep", reason="exit", exit_code=2)
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(payload()).encode(), b""),
+    )
+    error = autostart.AutostartStepError(
+        container="box", step_name="prep", reason="exit", exit_code=2
+    )
     run = mocker.patch.object(autostart, "run_stage", side_effect=error)
     with pytest.raises(autostart.AutostartStepError) as caught:
         invoke(cfg, incus)
@@ -81,7 +123,11 @@ def test_unknown_mount(tmp_path, mocker, make_cfg):
     incus, _ = labels()
     data = payload()
     data["services"][0]["elevation"]["mounts"] = ["missing"]
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     with pytest.raises(autostart.AutostartStepError, match="optional mount 'missing'"):
         invoke(cfg, incus)
 
@@ -89,7 +135,11 @@ def test_unknown_mount(tmp_path, mocker, make_cfg):
 def test_old_image_and_plan_error_and_empty(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, _ = labels()
-    call = mocker.patch.object(container_app, "run_in_container", side_effect=container_app.ContainerJailbeeError("old image"))
+    call = mocker.patch.object(
+        container_app,
+        "run_in_container",
+        side_effect=container_app.ContainerJailbeeError("old image"),
+    )
     warn = mocker.patch("jailbee.services.autostart.warn")
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
@@ -113,7 +163,9 @@ def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
     incus, _ = labels()
     dispatch = mocker.patch.object(service_autostart, "run_services_stage")
     ordinary = mocker.patch.object(autostart, "run_stage")
-    stage = AutostartStage.model_construct(stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[])
+    stage = AutostartStage.model_construct(
+        stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
+    )
     autostart.run_stages(cfg, incus, "box", [stage], "/repo")
     dispatch.assert_called_once()
     ordinary.assert_not_called()
@@ -132,9 +184,22 @@ def test_wider_selection_prepares_only_new_service(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path)
     incus, values = labels()
     data = payload()
-    data["services"][1]["prepare"] = [{"name": "web-prep", "run": "setup web", "env": {}, "working_dir": "", "timeout": 3, "continue_on_error": False}]
+    data["services"][1]["prepare"] = [
+        {
+            "name": "web-prep",
+            "run": "setup web",
+            "env": {},
+            "working_dir": "",
+            "timeout": 3,
+            "continue_on_error": False,
+        }
+    ]
     values[PREPARED_KEY] = "db"
-    mocker.patch.object(container_app, "run_in_container", return_value=ExecResult(0, json.dumps(data).encode(), b""))
+    mocker.patch.object(
+        container_app,
+        "run_in_container",
+        return_value=ExecResult(0, json.dumps(data).encode(), b""),
+    )
     run = mocker.patch.object(autostart, "run_stage")
     invoke(cfg, incus)
     assert [c.args[3].stage for c in run.call_args_list] == ["prepare-web", "services"]
