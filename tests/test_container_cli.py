@@ -68,10 +68,14 @@ def test_container_cli_inbox_help_and_version_gate(monkeypatch, tmp_path):
     identity.write_text("1.8.1 aaaa\n")
     monkeypatch.setattr(container_cli, "VERSION_FILE", identity)
     runner = CliRunner()
-    result = runner.invoke(container_cli.container_app, ["--expect-version", "1.8.1 aaaa", "inbox", "--help"])
+    result = runner.invoke(
+        container_cli.container_app, ["--expect-version", "1.8.1 aaaa", "inbox", "--help"]
+    )
     assert result.exit_code == 0
     assert "Usage: jailbee inbox" in result.output
-    result = runner.invoke(container_cli.container_app, ["--expect-version", "wrong", "inbox", "--help"])
+    result = runner.invoke(
+        container_cli.container_app, ["--expect-version", "wrong", "inbox", "--help"]
+    )
     assert result.exit_code == 86
     assert "version mismatch" in result.output
 
