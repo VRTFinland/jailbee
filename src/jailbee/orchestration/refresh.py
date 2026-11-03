@@ -99,7 +99,9 @@ def handle_refresh(ctx: actions.ActionContext, m: Manifest) -> actions.Outcome:
         if path is not None:
             path.unlink(missing_ok=True)
         return actions.failed(f"could not launch refresh: {exc}")
-    actions.log.info("refresh of %s in %s started; log: %s", plan.named, child.full, worker.log_path)
+    actions.log.info(
+        "refresh of %s in %s started; log: %s", plan.named, child.full, worker.log_path
+    )
     return actions.Outcome(
         "started",
         f"refresh of {', '.join(plan.named)} in `{child.short}` started",
