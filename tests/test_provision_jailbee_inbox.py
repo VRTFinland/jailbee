@@ -2140,7 +2140,9 @@ def test_children_null_entry_and_boolean_version(script, base, tmp_path):
 
 
 def test_children_composite_name_rejected(script, base, tmp_path):
-    (base / "children.json").write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": [{"name": {}}]}))
+    (base / "children.json").write_text(
+        json.dumps({"version": 1, "updated_at": time.time(), "children": [{"name": {}}]})
+    )
     result = run(script, "children", env=env_for(base, tmp_path))
     assert result.returncode == 5
     assert result.stdout == ""
@@ -2178,9 +2180,19 @@ def test_numeric_and_del_rendering_parity(script, base, tmp_path):
     assert '"n": 1E-7' in result.stdout
 
 
-@pytest.mark.parametrize("raw, expected", [("1e-7", "1E-7"), ("1e-6", "0.000001"), ("1.2300e5", "1.2300E+5"), ("123e5", "1.23E+7"), ("-0.0", "-0.0"), ("1.0e0", "1.0")])
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("1e-7", "1E-7"),
+        ("1e-6", "0.000001"),
+        ("1.2300e5", "1.2300E+5"),
+        ("123e5", "1.23E+7"),
+        ("-0.0", "-0.0"),
+        ("1.0e0", "1.0"),
+    ],
+)
 def test_read_numeric_corpus_matches_jq(script, base, tmp_path, raw, expected):
-    (base / "inbox" / FIRST).write_text('{"id":"n","body":' + raw + '}')
+    (base / "inbox" / FIRST).write_text('{"id":"n","body":' + raw + "}")
     result = run(script, "read", "n", env=env_for(base, tmp_path))
     assert result.returncode == 0
     assert '"body": ' + expected in result.stdout

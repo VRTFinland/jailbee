@@ -250,16 +250,31 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
             if child is None:
                 child = {}
             if not isinstance(child, dict):
-                print(f'jq: error (at {path}:1): Cannot index {_jq_type(child)} with string "name"', file=sys.stderr)
+                print(
+                    f'jq: error (at {path}:1): Cannot index {_jq_type(child)} with string "name"',
+                    file=sys.stderr,
+                )
                 return 5
             name = child.get("name")
             session = child.get("session")
             session = "-" if session is None or session is False else session
             for value in (name, session):
                 if isinstance(value, (dict, list)):
-                    print(f"jq: error (at {path}:1): {_jq_type(value)} ({jq_tostring(value)}) is not valid in a csv row", file=sys.stderr)
+                    print(
+                        f"jq: error (at {path}:1): {_jq_type(value)} ({jq_tostring(value)}) "
+                        "is not valid in a csv row",
+                        file=sys.stderr,
+                    )
                     return 5
-            print(tsv(["" if name is None else jq_tostring(name), jq_tostring(child.get("running")), jq_tostring(session)]))
+            print(
+                tsv(
+                    [
+                        "" if name is None else jq_tostring(name),
+                        jq_tostring(child.get("running")),
+                        jq_tostring(session),
+                    ]
+                )
+            )
     return 0
 
 

@@ -41,13 +41,23 @@ def _json(v: object, indent: int | None = None, level: int = 0) -> str:
             return "{}" if isinstance(v, dict) else "[]"
         parts = []
         for key, value in items:
-            prefix = _json(key) + (": " if indent is not None else ":") if isinstance(v, dict) else ""
+            prefix = (
+                _json(key) + (": " if indent is not None else ":") if isinstance(v, dict) else ""
+            )
             parts.append(prefix + _json(value, indent, level + 1))
         opening, closing = ("{", "}") if isinstance(v, dict) else ("[", "]")
         if indent is None:
             return opening + ",".join(parts) + closing
         pad = " " * (indent * (level + 1))
-        return opening + "\n" + pad + (",\n" + pad).join(parts) + "\n" + " " * (indent * level) + closing
+        return (
+            opening
+            + "\n"
+            + pad
+            + (",\n" + pad).join(parts)
+            + "\n"
+            + " " * (indent * level)
+            + closing
+        )
     return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
