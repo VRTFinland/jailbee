@@ -138,9 +138,7 @@ class ServiceRuntime:
 
     def logs(self, name: str, lines: int) -> str:
         topo_order(self.cfg.services, [name])
-        result = self.proc.tmux(
-            ["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"]
-        )
+        result = self.proc.tmux(["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"])
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "failed to capture service window")
         return "".join(result.stdout.splitlines(keepends=True)[-lines:])
@@ -207,7 +205,9 @@ class ServiceRuntime:
         respawn = ["respawn-pane", "-k", "-t", target]
         for key, value in service.env.items():
             respawn.extend(["-e", f"{key}={value}"])
-        respawn.extend(["bash", "-lc", self.proc.service_command(service.run, self._identity(name))])
+        respawn.extend(
+            ["bash", "-lc", self.proc.service_command(service.run, self._identity(name))]
+        )
         spawned = self.proc.tmux(respawn)
         if spawned.returncode:
             self._save(name, "failed", spawned.stderr)

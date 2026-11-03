@@ -3,8 +3,8 @@
 import json
 import os
 import signal
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -67,7 +67,10 @@ def test_shell_success_receives_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("SERVICE_PARENT_TEST", "parent")
     result = LocalProc().run_shell(
         'test "$SERVICE_PARENT_TEST:$SERVICE_CHILD_TEST" = parent:child',
-        cwd=str(tmp_path), env={"SERVICE_CHILD_TEST": "child"}, timeout=5, capture=True,
+        cwd=str(tmp_path),
+        env={"SERVICE_CHILD_TEST": "child"},
+        timeout=5,
+        capture=True,
     )
     assert result == 0
 

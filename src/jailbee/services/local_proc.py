@@ -4,18 +4,17 @@ import codecs
 import json
 import os
 import re
-import signal
 import shlex
+import signal
 import subprocess
 import sys
-from pathlib import Path
 import time
 from collections.abc import Iterator, Mapping, Sequence
-
+from pathlib import Path
 
 # The anchor publishes its identity before the service command starts. It stays
 # in the pane's process group after the pane shell exits.
-_ANCHOR = r'''import json, os, signal, sys, time
+_ANCHOR = r"""import json, os, signal, sys, time
 from pathlib import Path
 for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
     signal.signal(sig, signal.SIG_IGN)
@@ -29,7 +28,7 @@ tmp.write_text(json.dumps(data))
 os.replace(tmp, path)
 while True:
     time.sleep(3600)
-'''
+"""
 
 
 class LocalProc:
@@ -139,7 +138,7 @@ class LocalProc:
             f"{python} -c {anchor} {path} & anchor=$!; "
             f"while [ ! -f {path} ]; do "
             'kill -0 "$anchor" 2>/dev/null || exit 125; sleep 0.01; done; '
-            f"bash -lc {run}; status=$?; exit \"$status\""
+            f'bash -lc {run}; status=$?; exit "$status"'
         )
 
     def signal_identity(self, identity: Path, sig: int) -> bool:
@@ -154,9 +153,13 @@ class LocalProc:
             if data["boot"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
                 return False
             stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-            if (stat[0] == "Z" or stat[19] != data["start"]
-                or int(stat[2]) != pgid or int(stat[3]) != session
-                or pgid != session):
+            if (
+                stat[0] == "Z"
+                or stat[19] != data["start"]
+                or int(stat[2]) != pgid
+                or int(stat[3]) != session
+                or pgid != session
+            ):
                 return False
             os.killpg(pgid, sig)
             return True
