@@ -893,18 +893,6 @@ class Autostart(BaseModel):
 
     @model_validator(mode="after")
     def _validate_profiles(self) -> Self:
-        reserved_message = (
-            "`services` is a reserved autostart stage name — "
-            "jailbee starts the `services:` block there"
-        )
-        for entries in (self.on_create, self.on_start):
-            if any(
-                isinstance(entry, AutostartStage) and entry.stage == "services" for entry in entries
-            ):
-                raise ValueError(reserved_message)
-        for profile in self.profiles.values():
-            if profile != "all" and "services" in profile.stages:
-                raise ValueError(reserved_message)
         if not self.profiles:
             if self.default_profile is not None:
                 raise ValueError("default_profile requires autostart.profiles")

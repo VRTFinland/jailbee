@@ -123,7 +123,7 @@ triggers and known names; config order wins and `agents` always stays.
 already running work. Profiles may include `services: [web]` (defined in the
 repo's `services:` block), or `services: []` for none; omitted means all.
 Explicit `new --services web` overrides that list and adds dependencies;
-`--services ''` disables services. `services` is a reserved stage name.
+`--services ''` disables services.
 Prepare runs once per service/container; broader selections prepare new services.
 Branch elevation follows autostart consent and child preparation stays within
 stored rights. Do not use these profiles to control agent/app autostart.

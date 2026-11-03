@@ -445,7 +445,7 @@ def test_old_image_and_plan_error_and_empty(tmp_path, mocker, make_cfg):
 
 
 def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
-    from jailbee.autostart_plan import SERVICES_STAGE
+    from jailbee.autostart_plan import SERVICES_STAGE, GeneratedServicesStage
     from jailbee.config import AutostartStage
     from jailbee.services import autostart as service_autostart
 
@@ -453,12 +453,18 @@ def test_dispatch_services_stage(tmp_path, mocker, make_cfg):
     incus, _ = labels()
     dispatch = mocker.patch.object(service_autostart, "run_services_stage")
     ordinary = mocker.patch.object(autostart, "run_stage")
-    stage = AutostartStage.model_construct(
+    stage = GeneratedServicesStage.model_construct(
         stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
     )
     autostart.run_stages(cfg, incus, "box", [stage], "/repo")
     dispatch.assert_called_once()
     ordinary.assert_not_called()
+    # A user's own (even empty) stage named `services` is an ordinary stage.
+    dispatch.reset_mock()
+    user = AutostartStage.model_validate({"stage": "services"})
+    autostart.run_stages(cfg, incus, "box", [user], "/repo")
+    dispatch.assert_not_called()
+    ordinary.assert_called_once()
 
 
 @pytest.mark.parametrize("enabled", [False, True])

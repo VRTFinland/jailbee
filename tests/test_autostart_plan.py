@@ -379,18 +379,25 @@ def test_services_boundary_overrides(override, detached, expected):
     assert _order(plan) == expected
 
 
-def test_user_stage_named_services_rejected():
-    import pytest
-
+def test_user_stage_named_services_is_accepted():
+    """Configs written before managed services may already have a stage
+    called `services`; it stays valid and is not the generated stage."""
     for trigger in ("on_create", "on_start"):
-        with pytest.raises(ValueError, match="reserved autostart stage name"):
-            Autostart.model_validate({trigger: [{"stage": "services"}]})
+        Autostart.model_validate({trigger: [{"stage": "services"}]})
+    Autostart.model_validate(
+        {
+            "on_start": [{"stage": "services", "steps": [{"name": "up", "run": "x"}]}],
+            "profiles": {"p": {"stages": ["services"]}},
+            "default_profile": "p",
+        }
+    )
 
 
-def test_profile_stage_named_services_rejected():
-    import pytest
+def test_user_services_stage_and_generated_stage_coexist():
+    from jailbee.autostart_plan import GeneratedServicesStage
 
-    with pytest.raises(ValueError, match="reserved autostart stage name"):
-        Autostart.model_validate(
-            {"profiles": {"p": {"stages": ["services"]}}, "default_profile": "p"}
-        )
+    block = Autostart.model_validate({"on_start": [{"stage": "services"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    stages = [*plan.blocking, *plan.detached]
+    assert [s.stage for s in stages] == ["services", "services"]
+    assert [isinstance(s, GeneratedServicesStage) for s in stages] == [False, True]

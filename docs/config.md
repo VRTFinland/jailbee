@@ -36,7 +36,7 @@ Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 only prepare can be elevated. Elevated refresh requires host or orchestrator authority.
 Dependencies must exist, be acyclic, and be ready before the dependent starts.
 `restart: true` cascades restarts to the dependent; `{}` does not.
-On startup, the reserved `services` stage prepares and starts selected services
+On startup, a generated `services` stage prepares and starts selected services
 and their dependencies before the agent stage, waiting for readiness. Successful
 prepare is recorded per service and container; later starts do not repeat it,
 and a wider selection prepares newly selected services. This record is never
@@ -1902,8 +1902,8 @@ from **both** triggers, in config order; the reserved `agents` stage always
 stays selected, even when not listed. Profiles require stage-form triggers,
 a defined `default_profile`, and known stage names. The profile name `all`
 is reserved. Without `profiles`, `default_profile` is invalid and autostart
-behaves exactly as before. `services` is also a reserved stage name and cannot
-appear in either trigger or a profile's `stages` list.
+behaves exactly as before. A stage of your own named `services` is an ordinary
+stage and runs beside jailbee's generated services stage.
 
 A profile may specify `services: [web]` to start those known services and their
 dependencies, or `services: []` for none; omitted or null means all. An explicit

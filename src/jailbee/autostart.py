@@ -675,9 +675,9 @@ def run_stages(
     """Run ``stages`` in order, recording attempted one-shot setup."""
     for stage in stages:
         try:
-            from jailbee.autostart_plan import SERVICES_STAGE
+            from jailbee.autostart_plan import GeneratedServicesStage
 
-            if stage.stage == SERVICES_STAGE and not stage.chains and not stage.steps:
+            if isinstance(stage, GeneratedServicesStage):
                 from jailbee.services.autostart import run_services_stage
 
                 run_services_stage(

@@ -15,6 +15,16 @@ from typing import Literal
 from jailbee.config import Autostart, AutostartChain, AutostartStage, AutostartStep
 
 SERVICES_STAGE = "services"
+"""Display name of the stage jailbee inserts to start the `services:` block."""
+
+
+class GeneratedServicesStage(AutostartStage):
+    """The stage `plan_autostart` inserts to start the `services:` block.
+
+    Recognised by type, never by name: configs written before managed
+    services may have a stage of their own called `services`, and it stays
+    an ordinary stage beside this one.
+    """
 
 AGENTS_STAGE = "agents"
 """Reserved stage name whose steps jailbee generates from `agents`."""
@@ -274,7 +284,7 @@ def plan_autostart(
             boundary += 1
         stages.insert(
             position,
-            AutostartStage.model_construct(
+            GeneratedServicesStage.model_construct(
                 stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
             ),
         )
