@@ -255,6 +255,7 @@ def test_restart_boots_with_preambled_prompt(
     rig = Rig(tmp_path, limit=2)
     out = actions.handle_restart(rig.ctx(), _restart())
     assert out.state == "started" and "restarting" in out.detail
+    assert "/tmp/boot.log" not in out.detail and "log:" not in out.detail
     launch.assert_called_once_with(
         rig.cfg,
         container_name="proj-c1",

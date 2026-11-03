@@ -736,7 +736,8 @@ def _boot(
             save_reservations(ctx.root, reservations)
         except OSError as exc:
             log.warning("could not reserve booting child %s: %s", child.full, exc)
-        return Outcome("started", f"child `{child.short}` restarting; log: {worker.log_path}")
+        log.info("restart of %s started; boot log: %s", child.full, worker.log_path)
+        return Outcome("started", f"child `{child.short}` restarting")
     except Exception as e:
         _drop_watch(ctx, child.full)
         return refused(f"child `{child.short}` could not be restarted: {e}")
