@@ -14,6 +14,8 @@ from typing import Literal
 
 from jailbee.config import Autostart, AutostartChain, AutostartStage, AutostartStep
 
+SERVICES_STAGE = "services"
+
 AGENTS_STAGE = "agents"
 """Reserved stage name whose steps jailbee generates from `agents`."""
 
@@ -169,6 +171,7 @@ def plan_autostart(
     override: Literal["wait", "no_wait"] | None = None,
     already_detached: bool = False,
     agents_last: bool = False,
+    services_stage: bool = False,
 ) -> AutostartPlan:
     """Plan one trigger's run.
 
@@ -256,5 +259,26 @@ def plan_autostart(
             stages.insert(boundary, _agents_stage(steps))
             if not already_detached:
                 boundary += 1
+
+    if services_stage and trigger == AutostartTrigger.ON_START:
+        if steps:
+            if agents_last:
+                position = len(stages) - 1
+            elif explicit:
+                position = explicit[0]
+            else:
+                position = boundary if already_detached else boundary - 1
+        else:
+            position = len(stages)
+        if position < boundary or (
+            position == boundary == len(stages) and not already_detached
+        ):
+            boundary += 1
+        stages.insert(
+            position,
+            AutostartStage.model_construct(
+                stage=SERVICES_STAGE, network=None, mounts=[], detach=False, chains=[], steps=[]
+            ),
+        )
 
     return AutostartPlan(blocking=stages[:boundary], detached=stages[boundary:])

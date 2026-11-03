@@ -44,13 +44,13 @@ def test_detach_splits_at_the_first_marked_stage():
             "on_create": [
                 {"stage": "schema", "steps": [{"name": "m", "run": "true"}]},
                 {"stage": "deps", "detach": True, "steps": [{"name": "d", "run": "true"}]},
-                {"stage": "services", "steps": [{"name": "s", "run": "true"}]},
+                {"stage": "server", "steps": [{"name": "s", "run": "true"}]},
             ]
         }
     )
     plan = plan_autostart(block, AutostartTrigger.ON_CREATE)
     assert [s.stage for s in plan.blocking] == ["schema"]
-    assert [s.stage for s in plan.detached] == ["deps", "services"]
+    assert [s.stage for s in plan.detached] == ["deps", "server"]
 
 
 def test_agents_stage_is_inserted_at_the_boundary_and_is_blocking():
@@ -291,3 +291,58 @@ def test_agents_last_with_no_wait_detaches_everything_before_the_agent():
         override="no_wait",
     )
     assert _order(plan) == (["db"], ["seed", "agents"])
+
+
+def test_services_stage_before_agents():
+    block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "b"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[AutostartStep(name="agent", run="x")], services_stage=True)
+    assert [s.stage for s in plan.blocking] == ["a", "b", "services", "agents"]
+    assert plan.detached == []
+
+
+def test_services_stage_without_agents_is_last():
+    block = Autostart.model_validate({"on_start": [{"stage": "a"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, services_stage=True)
+    assert [s.stage for s in plan.blocking] == ["a", "services"]
+    assert plan.detached == []
+
+
+def test_services_stage_before_explicit_agents_stage():
+    block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "agents"}, {"stage": "b"}]})
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[AutostartStep(name="agent", run="x")], services_stage=True)
+    assert [s.stage for s in plan.blocking] == ["a", "services", "agents", "b"]
+
+
+def test_services_stage_follows_agents_into_detached_side():
+    block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "b", "detach": True}]})
+    agent = AutostartStep(name="agent", run="x")
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent], services_stage=True)
+    assert [s.stage for s in plan.blocking] == ["a", "services", "agents"]
+    assert [s.stage for s in plan.detached] == ["b"]
+    plan = plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent], services_stage=True, agents_last=True)
+    assert [s.stage for s in plan.blocking] == ["a"]
+    assert [s.stage for s in plan.detached] == ["b", "services", "agents"]
+
+
+def test_services_stage_ignored_on_create():
+    block = Autostart.model_validate({"on_create": [{"stage": "a"}]})
+    assert plan_autostart(block, AutostartTrigger.ON_CREATE, services_stage=True) == plan_autostart(block, AutostartTrigger.ON_CREATE)
+
+
+def test_services_stage_false_is_unchanged():
+    block = Autostart.model_validate({"on_start": [{"stage": "a"}, {"stage": "b", "detach": True}]})
+    agent = AutostartStep(name="agent", run="x")
+    assert plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent], services_stage=False) == plan_autostart(block, AutostartTrigger.ON_START, agent_steps=[agent])
+
+
+def test_user_stage_named_services_rejected():
+    import pytest
+    for trigger in ("on_create", "on_start"):
+        with pytest.raises(ValueError, match="reserved autostart stage name"):
+            Autostart.model_validate({trigger: [{"stage": "services"}]})
+
+
+def test_profile_stage_named_services_rejected():
+    import pytest
+    with pytest.raises(ValueError, match="reserved autostart stage name"):
+        Autostart.model_validate({"profiles": {"p": {"stages": ["services"]}}, "default_profile": "p"})

@@ -75,3 +75,21 @@ def test_prepare_mount_must_exist_on_host_load(tmp_path):
 def test_full_fixture_has_services(tmp_path):
     text = (Path(__file__).parent / "fixtures" / "full_config.yaml").read_text()
     assert len(load(text, tmp_path).services) >= 2
+
+
+def test_profile_services_must_exist(tmp_path):
+    with pytest.raises(ConfigError, match="autostart profile 'p' names unknown services: missing"):
+        load("autostart: {profiles: {p: {stages: [agents], services: [missing]}}, default_profile: p}", tmp_path)
+
+
+def test_profile_services_none_means_all(tmp_path):
+    cfg = load("autostart: {profiles: {p: {stages: [agents]}}, default_profile: p}", tmp_path)
+    profile = cfg.autostart.profiles["p"]
+    assert profile != "all"
+    assert profile.services is None
+
+
+def test_profile_services_accepts_existing_and_empty(tmp_path):
+    cfg = load("services: {web: {run: x}}\nautostart: {profiles: {p: {stages: [agents], services: [web]}, q: {stages: [agents], services: []}}, default_profile: p}", tmp_path)
+    assert cfg.autostart.profiles["p"].services == ["web"]
+    assert cfg.autostart.profiles["q"].services == []

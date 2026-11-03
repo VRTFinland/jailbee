@@ -572,6 +572,14 @@ class Config(BaseModel):
                         f"service '{name}' references unknown dependency '{dependency}'"
                     )
 
+        for name, profile in self.autostart.profiles.items():
+            if profile != "all" and profile.services is not None:
+                unknown = set(profile.services) - self.services.keys()
+                if unknown:
+                    raise ValueError(
+                        f"autostart profile '{name}' names unknown services: {', '.join(sorted(unknown))}"
+                    )
+
         visited: set[str] = set()
         active: list[str] = []
 
