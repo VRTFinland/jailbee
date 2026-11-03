@@ -44,8 +44,11 @@ USAGE = (
     "         After an arrival, wait briefly for the burst to settle; then use ls to\n"
     "         handle every unread message.\n"
     "         --wake-on LIST filters comma-separated message kinds/status states\n"
-    "         (note,question,done,blocked,idle,queued,started,failed,refused). A child's\n"
-    "         first message after each start always wakes. Nothing is marked read.\n"
+    "         (note,question,done,blocked,idle,queued,started,failed,refused). A bare\n"
+    "         word matches a message kind or a status state; msg:<kind> matches only a\n"
+    "         message, status:<state> only a status reply (e.g. msg:done,question,\n"
+    "         blocked,idle,status:failed,status:refused skips `delivered to` acks).\n"
+    "         A child's first message after each start always wakes. Nothing is marked read.\n"
     "         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running,\n"
     "         not-done child is silent that long; needs fresh broker children.json (<=15m).\n"
     "         A child's own activity (status.activity_at) counts as not silent.\n"
@@ -521,7 +524,7 @@ def cmd_runners(settings: Settings, args: list[str]) -> int:
 
 
 def cmd_wait(settings: Settings, args: list[str]) -> int:
-    from jailbee.inbox.waiting import WAKE_TOKENS, run_wait
+    from jailbee.inbox.waiting import run_wait, valid_wake_token
 
     timeout: int | None = 1800
     wake: frozenset[str] | None = None
@@ -547,8 +550,11 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
                 raise InboxUsage("--digest must be positive")
         else:
             tokens = value.split(",")
-            if any(token not in WAKE_TOKENS for token in tokens):
-                raise InboxUsage("--wake-on needs comma-separated message kinds or status states")
+            if not all(valid_wake_token(token) for token in tokens):
+                raise InboxUsage(
+                    "--wake-on needs comma-separated message kinds or status states "
+                    "(optionally msg:<kind> or status:<state>)"
+                )
             wake = frozenset(tokens)
         index += 2
     settings.inbox.mkdir(parents=True, exist_ok=True)

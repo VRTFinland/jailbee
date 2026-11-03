@@ -14,17 +14,21 @@ from jailbee.inbox.cli import Settings, unread_files
 from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.watch import InboxWatcher
 
-WAKE_TOKENS = (
-    "note",
-    "question",
-    "done",
-    "blocked",
-    "idle",
-    "queued",
-    "started",
-    "refused",
-    "failed",
-)
+MESSAGE_KINDS = ("note", "question", "done", "blocked", "idle")
+STATUS_STATES = ("queued", "started", "done", "refused", "failed")
+# A bare token matches a message kind or a status state; `msg:<kind>` and
+# `status:<state>` match only their own record type.
+WAKE_TOKENS = tuple(dict.fromkeys((*MESSAGE_KINDS, *STATUS_STATES)))
+MSG_PREFIX = "msg:"
+STATUS_PREFIX = "status:"
+
+
+def valid_wake_token(token: str) -> bool:
+    if token.startswith(MSG_PREFIX):
+        return token[len(MSG_PREFIX) :] in MESSAGE_KINDS
+    if token.startswith(STATUS_PREFIX):
+        return token[len(STATUS_PREFIX) :] in STATUS_STATES
+    return token in WAKE_TOKENS
 
 
 def _load(path: Path) -> dict[str, Any] | None:
@@ -185,7 +189,13 @@ def select_wakeup(
         token = data.get("state") if is_status else data.get("kind")
         name = data.get("from")
         is_first = isinstance(name, str) and first.get(name) == path
-        if wake is None or (isinstance(token, str) and token in wake) or is_first:
+        prefix = STATUS_PREFIX if is_status else MSG_PREFIX
+        matches = (
+            wake is not None
+            and isinstance(token, str)
+            and (token in wake or prefix + token in wake)
+        )
+        if wake is None or matches or is_first:
             return str(path)
     if quiet:
         for name in sorted(latest, key=lambda n: (latest[n], n)):

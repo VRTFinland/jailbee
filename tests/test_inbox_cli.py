@@ -1416,6 +1416,57 @@ def test_wait_filter_leaves_nonmatches_unread(script, base, tmp_path):
     assert not (base / "inbox/read").exists()
 
 
+def test_wait_msg_prefix_ignores_status_ack_but_wakes_on_message(script, base, tmp_path):
+    ack = write_inbox(base, FIRST, {**status("s"), "state": "done", "detail": "delivered to kid"})
+    r = run(script, "wait", "--wake-on", "msg:done", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 1
+    done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})
+    r = run(script, "wait", "--wake-on", "msg:done", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(done)
+    assert ack.exists()
+
+
+def test_wait_status_prefix_ignores_message_of_same_word(script, base, tmp_path):
+    write_inbox(base, FIRST, {**message("d"), "kind": "done"})
+    env = env_for(base, tmp_path)
+    r = run(script, "wait", "--wake-on", "status:done", "--timeout", "0", env=env)
+    assert r.returncode == 1
+    refused = write_inbox(base, SECOND, {**status("s"), "state": "refused"})
+    r = run(script, "wait", "--wake-on", "status:refused", "--timeout", "0", env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(refused)
+
+
+def test_wait_recommended_filter_skips_acks_wakes_on_failures(script, base, tmp_path):
+    flt = "msg:done,question,blocked,idle,status:failed,status:refused"
+    write_inbox(base, FIRST, {**status("a"), "state": "done"})
+    write_inbox(base, SECOND, {**status("b", "m-2"), "state": "started"})
+    env = env_for(base, tmp_path)
+    assert run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env).returncode == 1
+    failed = write_inbox(base, "20260101T000003Z-c.json", {**status("c", "m-3"), "state": "failed"})
+    r = run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env)
+    assert r.stdout.strip() == str(failed)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "msg:failed",
+        "status:question",
+        "msg:",
+        "status:nope",
+        "msg:msg:done",
+        "foo:done",
+        "MSG:done",
+    ],
+)
+def test_wait_prefixed_token_validated_against_its_enum(script, base, tmp_path, value):
+    r = run(script, "wait", "--wake-on", value, "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert "wake-on" in r.stderr
+
+
 @pytest.mark.parametrize("value", ["", "done,", "done,nope", ",note", "done,,note"])
 def test_wait_bad_wake_filter(script, base, tmp_path, value):
     r = run(script, "wait", "--wake-on", value, "--timeout", "0", env=env_for(base, tmp_path))
