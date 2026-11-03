@@ -620,7 +620,9 @@ def test_send_wait_timeout_none_reads_delayed_matching_status(script, base, tmp_
     thread = threading.Thread(target=reply)
     thread.start()
     try:
-        result = send(script, base, tmp_path, "message", "--text", "x", "--wait", "--timeout", "none")
+        result = send(
+            script, base, tmp_path, "message", "--text", "x", "--wait", "--timeout", "none"
+        )
     finally:
         thread.join()
     assert not errors
