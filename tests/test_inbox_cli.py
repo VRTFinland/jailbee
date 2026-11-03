@@ -598,6 +598,38 @@ def test_send_wait_reads_only_matching_status(script, base, tmp_path, state, cod
     assert unrelated.exists()
 
 
+def test_send_wait_timeout_none_reads_delayed_matching_status(script, base, tmp_path):
+    unrelated = write_inbox(base, FIRST, message("h-other"))
+    errors = []
+
+    def reply():
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                files = list((base / "outbox").glob("*.json"))
+                if files:
+                    mid = json.loads(files[0].read_text())["id"]
+                    time.sleep(0.5)
+                    write_inbox(base, SECOND, status("h-reply", ref=mid))
+                    return
+                time.sleep(0.01)
+            errors.append("sender did not publish")
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=reply)
+    thread.start()
+    try:
+        result = send(script, base, tmp_path, "message", "--text", "x", "--wait", "--timeout", "none")
+    finally:
+        thread.join()
+    assert not errors
+    assert result.returncode == 0, result.stderr
+    assert '"state": "done"' in result.stdout
+    assert (base / "inbox" / "read" / SECOND).exists()
+    assert unrelated.exists()
+
+
 def test_send_wait_times_out_with_3(script, base, tmp_path):
     r = send(script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "1")
     assert r.returncode == 3
