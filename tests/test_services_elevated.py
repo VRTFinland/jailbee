@@ -99,6 +99,22 @@ def test_pause_preserves_runner_and_checked_read_failure(paused_setup):
     kill.assert_not_called()
 
 
+def test_pause_refuses_runner_with_unrewritable_command(paused_setup):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner_model import Runner
+
+    cfg, incus, _, _, _, kill, now, elevated = paused_setup
+    agent = cfg.agents["claude"].model_copy(update={"command": "env claude"})
+    cfg = cfg.model_copy(update={"agents": {"claude": agent}})
+    runner = Runner(agent="claude-jb", profile="work", model="sonnet")
+    incus.config_get_checked.side_effect = lambda _, key: (
+        runner.to_label() if key == labels.RUNNER else None
+    )
+    with pytest.raises(RefreshError, match="runner"):
+        elevated.pause_agent(cfg, incus, "box", now=now)
+    kill.assert_not_called()
+
+
 @pytest.mark.parametrize("change", ["different", "missing", "disabled", "empty", "prompt"])
 def test_pause_refuses_unusable_relaunch(paused_setup, change):
     cfg, incus, _, _, _, kill, now, elevated = paused_setup

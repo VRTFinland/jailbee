@@ -38,7 +38,7 @@ def pause_agent(
     from jailbee.agents import primary_agent
     from jailbee.incus import IncusError
     from jailbee.orchestration import agent_watch, labels
-    from jailbee.orchestration.runner import parse_runner_label
+    from jailbee.orchestration.runner import parse_runner_label, runner_command
 
     status = agent_watch.probe(incus, full, uid=cfg.container_user.uid)
     if status is None:
@@ -88,6 +88,8 @@ def pause_agent(
         or not agent.prompt_args.strip()
     ):
         raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its session")
+    if runner is not None and runner_command(agent.command, runner) is None:
+        raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its runner")
     steps = autostart.agent_autostart_steps(cfg, initial_prompt=True, runner=runner, resume=session)
     if not any(step.name == target and step.run for step in steps):
         raise RefreshError(f"agent `{status.agent}` has no usable relaunch step")
