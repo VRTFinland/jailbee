@@ -478,6 +478,11 @@ def main(argv: list[str]) -> int:
         }
         if argv[0] in commands:
             return commands[argv[0]](settings, argv[1:])
+        if argv[0] == "send":
+            from jailbee.inbox.send import parse_send, publish
+
+            print(publish(settings, parse_send(argv[1:])))
+            return 0
         raise InboxUsage("not implemented")
     except InboxBadUsage as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
