@@ -29,8 +29,11 @@ On the host: `jb service ls [CONTAINER] [--json]`, `jb service
 start|stop|restart|refresh [CONTAINER] [SERVICE...]`, and `jb service logs
 [CONTAINER] [SERVICE] [-n N] [--follow]`. Pickers require a terminal.
 Start includes dependencies; restart cascades only on `restart: true`;
-refresh prepares named services only. Elevated refresh is not yet available:
-ask the orchestrator when it is refused.
+refresh prepares named services only. Elevated refresh requires the host or
+orchestrator; container refusal exits 3. It pauses an idle managed agent and
+resumes its session after confirmed restoration. `--force` skips only the idle
+check; host `--yes` consents only to foreign agents remaining active. Restricted
+SSH cannot run refresh, even with network and mount unlocks.
 
 ## Global repository option
 

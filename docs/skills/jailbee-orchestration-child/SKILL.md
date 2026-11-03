@@ -105,6 +105,10 @@ session in a kept RUNNING child, with a new runner and prompt. It does not
 boot the container or repeat `on_start`; existing services stay running.
 Children cannot request this restart themselves.
 
+For non-elevated service preparation, run `jailbee service refresh SERVICE`.
+If it exits 3 because elevation is needed, send the orchestrator a `question`
+naming the services; do not attempt to grant yourself elevation.
+
 If you need an answer, send `question`, never a progress `note`, before
 waiting. A live agent awaiting input without accepted done may trigger a
 broker-generated `idle` report to your orchestrator (default 15 minutes,

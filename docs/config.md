@@ -33,7 +33,7 @@ or `-`, and are at most 63 characters.
 Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 (list), `env`, `working_dir`, `timeout` (default autostart step timeout), and
 `continue_on_error` (false). Loose network or nonempty mounts requires elevation;
-only prepare can be elevated. Elevated refresh is not yet available.
+only prepare can be elevated. Elevated refresh requires host or orchestrator authority.
 Dependencies must exist, be acyclic, and be ready before the dependent starts.
 `restart: true` cascades restarts to the dependent; `{}` does not.
 On startup, the reserved `services` stage prepares and starts selected services
@@ -42,7 +42,10 @@ prepare is recorded per service and container; later starts do not repeat it,
 and a wider selection prepares newly selected services. This record is never
 automatically reset. Elevated prepare uses the autostart network/mount safeguards:
 branch changes require the usual consent or refusal, and child preparation cannot
-exceed its stored rights. Elevated refresh is not supported.
+exceed its stored rights. An accepted host or orchestrator refresh may update the
+approved envelope for successfully prepared services. The accepted plan contains
+container-edited prepare commands: the external authority accepts that risk,
+bounded by the child's grant and repository cap for network and mounts.
 
 The stage is enabled by the host-effective `services:` block (including the
 branch graft on creation) or an explicit nonempty selection. Adding services only

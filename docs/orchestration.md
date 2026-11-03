@@ -278,10 +278,35 @@ the profile. Services are prepared once per container and service, including
 newly selected dependencies. Child preparation cannot exceed its stored rights.
 For ordinary containers, preparation cannot exceed the elevation approved at
 creation; legacy containers fall back to host-effective declarations. Re-assess
-the configuration to widen approval; elevated host or orchestrator refresh is
-planned, not yet available. An in-place profile switch starts safe services but
+the configuration and use an accepted host or orchestrator refresh to widen
+approval for successfully prepared services. An in-place profile switch starts safe services but
 defers unprepared elevated services and their dependents until the next restart. Neither `services` nor `--services` can be combined with
 `agent_only` / `--agent-only`.
+
+## Refresh a child's services
+
+After `update --merge` changes dependencies or migrations, or when a child asks,
+use `jailbee-inbox send refresh --child C --services db,web --wait`. The
+`refresh` operation must be granted; existing stored grants must be re-granted.
+Final status reports per-service outcomes, including cascaded restarts. The
+accepted plan may contain child-edited commands: the orchestrator authorizes
+their execution within the grant and repository cap. Restricted SSH cannot run
+host service refresh, even with network and mount unlocks.
+
+An elevated refresh requires a known agent session and an idle agent, pauses it,
+restores the network and mounts, then resumes the same session, even if prepare
+failed. Unknown agent state or session, insufficient rights, a busy child or a
+foreign live agent causes refusal. Use `--force` only after the child confirms
+its work is paused or stopped; it bypasses only the idle check. It never permits
+interrupting a working child. On the host `--yes` only consents to foreign
+agents remaining active during elevation; it does not force the idle check.
+
+If restoration cannot be confirmed, resume is withheld and the failure reports
+recovery commands such as `jb net strict` and, when needed, mount removal. If
+supervision registration fails after restoration, resume is also withheld; the
+failure preserves service outcomes and reports a recovery command. Once safe,
+recover supervision with `jailbee-inbox send restart --child C --agent-only
+--resume SESSION --text 'Continue your task.'`.
 
 ## Reuse a running worker without autostart
 

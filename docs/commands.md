@@ -48,8 +48,14 @@ the container worktree, not the host checkout.
 Start includes dependencies and waits for readiness; stop does not stop
 dependents. Restart cascades only over `restart: true` edges. Refresh prepares
 only named services before restarting them and their cascaded dependents;
-start and restart never prepare. Elevated refresh is not yet available: ask
-the orchestrator if refused. Logs use tmux scrollback, not durable or
+start and restart never prepare. An elevated container refresh exits 3: ask the
+orchestrator or run `jb service refresh CONTAINER SERVICE...` on the host.
+Elevated refresh pauses an idle managed agent and resumes its session after
+restoration, including after an ordinary prepare failure. `--force` skips only
+the idle check; use it only when work has stopped. Host `--yes` consents to
+foreign agents remaining active during elevation, not to interrupting work.
+Restricted SSH cannot run service refresh, even with network and mount unlocks;
+run it on the host. Logs use tmux scrollback, not durable or
 byte-perfect capture: a line matching the exact tmux control-protocol snapshot
 trailer can truncate the snapshot or end following.
 

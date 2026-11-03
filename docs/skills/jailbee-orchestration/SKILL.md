@@ -165,9 +165,26 @@ selection overrides only the profile's service set; nonservice stages still foll
 the profile. Prepare runs once per service/container and cannot exceed the
 child's stored rights. Ordinary containers are bounded by creation-time approved
 elevation (legacy containers use host-effective declarations). Re-assessment is
-needed to widen it; elevated refresh is planned, not available yet. Live profile
+needed to widen it; an accepted host or orchestrator refresh can update it. Live profile
 switches defer unprepared elevated services and their dependents until restart.
 Do not combine with `--agent-only`.
+
+## Refreshing a child's services
+
+After `update --merge` changes dependencies or migrations, or the child asks, use
+`jailbee-inbox send refresh --child C --services db,web --wait`. The `refresh`
+operation is required; re-grant old stored grants. Final status gives per-service
+outcomes. An accepted plan may contain child-edited commands: authorize them only
+within the grant and repository cap. Elevated refresh pauses an idle agent and
+resumes the same session after restoration, even on ordinary prepare failure.
+Unknown session or agent state, insufficient rights, a busy child, or foreign
+live agents cause refusal. Use `--force` only after the child says its work is
+paused or stopped; never interrupt a working child. Host `--yes` only consents
+to foreign agents, not force. Restricted SSH cannot run host refresh.
+If restoration is unconfirmed, resume is withheld; follow the reported network
+and mount recovery commands. If supervision registration fails, resume is also
+withheld and service outcomes remain available. After restoring safety, use
+`jailbee-inbox send restart --child C --agent-only --resume SESSION --text 'Continue your task.'`.
 
 ## Choosing the child's agent (`runner`)
 

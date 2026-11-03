@@ -43,7 +43,7 @@ Inside a container, use `jailbee service ls` and `jailbee service restart X`
 instead of guessing how a configured service starts. `start`, `stop`,
 `refresh`, and `logs X --follow` are also available. Refresh runs prepare;
 if it requests elevated access, ask the orchestrator rather than attempting
-to grant access yourself. Elevated refresh is not yet available. On the host,
+to grant access yourself. The host or orchestrator can authorize it. On the host,
 include the container before service names, e.g. `jb service restart C X`.
 See [service commands](references/commands.md#services).
 
