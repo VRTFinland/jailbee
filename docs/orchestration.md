@@ -44,7 +44,7 @@ cannot widen its own grant. It holds:
 
 ```yaml
 max_running_children: 4
-operations: [spawn, message, import, restart, stop, destroy, rights]
+operations: [spawn, message, import, restart, stop, destroy, rights, refresh]
 grantable:
   mounts: [data, docs]                  # names of the repo's optional mounts
   loose: false                          # may set a child to loose network
@@ -55,7 +55,7 @@ grantable:
 `--profile` starts from the configured
 [`orchestration.default_profile`](config.md#orchestration), so the defaults are
 yours to set. Without one, fields you omit default to 4 running children,
-operations `spawn message import restart stop destroy rights`, nothing grantable.
+operations `spawn message import restart stop destroy rights refresh`, nothing grantable.
 Leave `destroy` out with `--deny destroy`.
 
 ```bash
@@ -287,16 +287,20 @@ defers unprepared elevated services and their dependents until the next restart.
 
 After `update --merge` changes dependencies or migrations, or when a child asks,
 use `jailbee-inbox send refresh --child C --services db,web --wait`. The
-`refresh` operation must be granted; existing stored grants must be re-granted.
-Final status reports per-service outcomes, including cascaded restarts. The
+`refresh` operation must be granted. For an existing grant without it, run
+`jb orchestrate grant ORCHESTRATOR --allow refresh` on the host; a bare grant
+preserves the existing operations. Final status reports per-service outcomes,
+including cascaded restarts. The
 accepted plan may contain child-edited commands: the orchestrator authorizes
 their execution within the grant and repository cap. Restricted SSH cannot run
 host service refresh, even with network and mount unlocks.
 
 If a managed agent is running, an elevated refresh requires its known session and
 idle state, pauses it, restores the network and mounts, then resumes the same
-session, even if prepare failed. Unknown agent state or session, insufficient rights, a busy child or a
-foreign live agent causes refusal. Use `--force` only after the child confirms
+session, even if prepare failed. A failed prepare skips later prepares and the
+restart; the resumed agent receives the outcomes and a continuation prompt.
+Unknown agent state or session, insufficient rights, a busy child or a foreign
+live agent causes refusal. Use `--force` only after the child confirms
 its work is paused or stopped; it bypasses only the idle check. It never permits
 interrupting a working child. On the host `--yes` only consents to foreign
 agents remaining active during elevation; it does not force the idle check.
@@ -307,6 +311,13 @@ supervision registration fails after restoration, resume is also withheld; the
 failure preserves service outcomes and reports a recovery command. Once safe,
 recover supervision with `jailbee-inbox send restart --child C --agent-only
 --resume SESSION --text 'Continue your task.'`.
+
+The detached refresh worker continues across a broker restart; a final status
+for a stopped orchestrator is parked for delivery. A retry of a saved final
+status retries delivery only, not prepare. If execution was interrupted and its
+outcome is uncertain, inspect the child and its services manually before sending
+another refresh: prepare commands such as migrations might already have run.
+Durability across host power loss is not guaranteed.
 
 ## Reuse a running worker without autostart
 
