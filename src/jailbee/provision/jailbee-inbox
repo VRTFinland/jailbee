@@ -46,14 +46,15 @@ Usage: jailbee-inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after D
                     [--reply-to ID] + text
            spawn    [--branch B] [--new [--base B] | --ref REF | --pr N]
                     [--mount M]... [--loose] [--egress H]... [--note T]
-                    [--on-done destroy|keep] [--autostart-profile NAME] [runner] + text
+                    [--on-done destroy|keep] [--autostart-profile NAME] [--services LIST] [runner] + text
                     --branch is required except for --pr; the broker derives
                     the branch from the PR and ignores any supplied branch.
-           restart  --child C [--on-done destroy|keep] [--autostart-profile NAME]
+           restart  --child C [--on-done destroy|keep] [--autostart-profile NAME] [--services LIST]
                     [--agent-only] [--resume ID|last] [runner | --default-runner] + text
                     --resume continues a recorded agent session (see children).
                     --agent-only relaunches an idle RUNNING child's agent only;
-                    no boot/on_start, no extra slot, cannot use --autostart-profile.
+                    no boot/on_start, no extra slot, cannot use --autostart-profile or --services.
+                    --services selects comma-separated services; an empty list starts none.
            update   --child C [--ref REF | --base BRANCH] [--merge]
                     --merge merges the update into the child's branch after a
                     conflict check; a conflict refuses it.
@@ -585,7 +586,7 @@ cmd_send() {
         *) bad_usage "unknown message type '$type'" ;;
     esac
     local to="" kind="" reply_to="" branch="" new=0 base_branch="" loose=0 note="" child="" force=0
-    local autostart_profile="" agent_only=0 merge=0 resume=""
+    local autostart_profile="" services="" services_set=0 agent_only=0 merge=0 resume=""
     local agent="" profile="" model="" default_runner=0 on_done="" wait=0 timeout="" ref="" pr=""
     local text="" text_set=0 file="" file_set=0 stdin=0
     local -a mounts=() egress=() revoke_mounts=() revoke_egress=()
@@ -603,10 +604,10 @@ cmd_send() {
             --default-runner) default_runner=1; shift; continue ;;
             --agent-only) agent_only=1; shift; continue ;;
             -) stdin=1; shift; continue ;;
-            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress|--autostart-profile|--resume)
+            --text|--file|--to|--kind|--reply-to|--branch|--base|--ref|--pr|--mount|--egress|--note|--child|--agent|--profile|--model|--on-done|--timeout|--for|--revoke-mount|--revoke-egress|--autostart-profile|--services|--resume)
                 [ $# -ge 2 ] || bad_usage "$1 needs a value"
                 opt_val="$2"
-                if [ "$1" != "--text" ] && [ -z "$opt_val" ]; then
+                if [ "$1" != "--text" ] && [ "$1" != "--services" ] && [ -z "$opt_val" ]; then
                     bad_usage "$1 needs a non-empty value"
                 fi
                 ;;
@@ -634,6 +635,7 @@ cmd_send() {
             --model) model="$opt_val" ;;
             --on-done) on_done="$opt_val" ;;
             --autostart-profile) autostart_profile="$opt_val" ;;
+            --services) services="$opt_val"; services_set=1 ;;
             --resume) resume="$opt_val" ;;
             --timeout) timeout="$opt_val" ;;
         esac
@@ -648,6 +650,10 @@ cmd_send() {
     if [ "$agent_only" -eq 1 ]; then
         [ "$type" = "restart" ] || bad_usage "--agent-only only applies to restart"
         [ -z "$autostart_profile" ] || bad_usage "--agent-only cannot be combined with --autostart-profile"
+        [ "$services_set" -eq 0 ] || bad_usage "--agent-only cannot be combined with --services"
+    fi
+    if [ "$services_set" -eq 1 ]; then
+        [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--services only applies to spawn and restart"
     fi
     if [ -n "$timeout" ]; then
         [ "$wait" -eq 1 ] || bad_usage "--timeout needs --wait"
@@ -721,6 +727,9 @@ cmd_send() {
     if [ -n "$autostart_profile" ]; then
         [ "$type" = "spawn" ] || [ "$type" = "restart" ] || bad_usage "--autostart-profile only applies to spawn and restart"
         runner_json="$(jq -c --arg p "$autostart_profile" '. + {autostart_profile: $p}' <<<"$runner_json")"
+    fi
+    if [ "$services_set" -eq 1 ]; then
+        runner_json="$(jq -c --arg s "$services" '. + {services: [$s | split(",")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0)]}' <<<"$runner_json")"
     fi
     if [ "$agent_only" -eq 1 ]; then
         runner_json="$(jq -c '. + {agent_only: true}' <<<"$runner_json")"

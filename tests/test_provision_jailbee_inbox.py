@@ -321,6 +321,41 @@ def test_inbox_helper_send_spawn_autostart_profile(script, base, tmp_path, kind)
     assert manifest["autostart_profile"] == "light"
 
 
+@pytest.mark.parametrize("kind", ["spawn", "restart"])
+@pytest.mark.parametrize("value,expected", [(" web , db ", ["web", "db"]), ("", [])])
+def test_send_services_selection(script, base, tmp_path, kind, value, expected):
+    args = ["--branch", "topic"] if kind == "spawn" else ["--child", "worker"]
+    result = run(script, "send", kind, *args, "--services", value, "--text", "go", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
+    assert manifest["services"] == expected
+
+
+@pytest.mark.parametrize("kind", ["spawn", "restart"])
+def test_send_services_omitted(script, base, tmp_path, kind):
+    args = ["--branch", "topic"] if kind == "spawn" else ["--child", "worker"]
+    result = run(script, "send", kind, *args, "--text", "go", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(next((base / "outbox").glob("*.json")).read_text())
+    assert "services" not in manifest
+
+
+@pytest.mark.parametrize("value", ["web", ""])
+def test_send_services_rejects_agent_only(script, base, tmp_path, value):
+    result = run(script, "send", "restart", "--child", "worker", "--agent-only", "--services", value, "--text", "go", env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert "--agent-only cannot be combined with --services" in result.stderr
+    assert not list((base / "outbox").glob("*"))
+
+
+@pytest.mark.parametrize("kind", ["message", "import", "update", "stop", "destroy", "rights"])
+def test_send_services_rejects_other_types(script, base, tmp_path, kind):
+    result = run(script, "send", kind, "--services", "", env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert "--services only applies to spawn and restart" in result.stderr
+    assert not list((base / "outbox").glob("*"))
+
+
 @pytest.mark.parametrize(
     "source", [[], ["--ref", "refs/heads/topic"], ["--ref", "a" * 40], ["--base", "release/1"]]
 )
