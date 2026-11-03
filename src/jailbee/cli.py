@@ -18054,6 +18054,7 @@ def _service_command(
     names: list[str] | None,
     config: Path | None,
     extra: Sequence[str] = (),
+    *, assume_yes: bool = False, force: bool = False,
 ) -> None:
     from jailbee import prompting
     from jailbee.container_app import ContainerJailbeeError
@@ -18073,11 +18074,9 @@ def _service_command(
                 )
             ]
         if op == "refresh":
-            refusal = host.elevated_refresh_refusal(cfg, incus, full, selected)
-            if refusal:
-                error_plain(refusal)
-                raise typer.Exit(1)
-        code = host.run_op(cfg, incus, full, op, selected, extra=extra)
+            code = host.refresh(cfg, incus, full, selected, assume_yes=assume_yes, force=force)
+        else:
+            code = host.run_op(cfg, incus, full, op, selected, extra=extra)
     except ContainerJailbeeError as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
@@ -18130,9 +18129,11 @@ def service_refresh_cmd(
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow foreign agents during refresh.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Skip the agent idle check.")] = False,
 ) -> None:
     """Prepare and restart services."""
-    _service_command("refresh", name, names, config)
+    _service_command("refresh", name, names, config, assume_yes=yes, force=force)
 
 
 @service_app.command("logs")

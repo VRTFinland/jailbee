@@ -1801,3 +1801,11 @@ def test_orchestrate_adopt_is_a_host_command_unless_the_feature_is_on(monkeypatc
     assert (
         policy_allows(argv, FULL, unlocks=RemoteUnlocks(orchestration=True)) == "orchestrate adopt"
     )
+
+
+@pytest.mark.parametrize("network", [False, True])
+@pytest.mark.parametrize("mounts", [False, True])
+def test_service_refresh_is_host_only_with_all_unlocks(network, mounts):
+    with pytest.raises(RouteError):
+        policy_allows(["service", "refresh", "box", "web"], FULL, restrict_host=True,
+                      unlocks=RemoteUnlocks(network=network, mounts=mounts))
