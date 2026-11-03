@@ -79,7 +79,29 @@ def _memory_bytes(node: Node) -> int | None:
     return usage if cache is None else max(0, usage - cache)
 
 
-def _longest_command(node: Node) -> dict[str, object] | None:
+def _cmdline(pid: int) -> str | None:
+    try:
+        raw = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return None
+    return raw.replace(b"\0", b" ").decode("utf-8", "replace")
+
+
+def _agent_host_pid(
+    samples: dict[int, procstat.ProcSample], agent: agent_watch.AgentStatus | None
+) -> int | None:
+    """The host pid of the monitored agent, matched on namespace pid and start tick."""
+    if agent is None or agent.pid is None or agent.proc_start is None:
+        return None
+    for pid, sample in samples.items():
+        if sample.starttime == agent.proc_start and procstat.read_nspid(pid) == agent.pid:
+            return pid
+    return None
+
+
+def _longest_command(
+    node: Node, agent: agent_watch.AgentStatus | None
+) -> dict[str, object] | None:
     if node.init_pid is None:
         raise ValueError("no init pid")
     samples = {}
@@ -87,7 +109,13 @@ def _longest_command(node: Node) -> dict[str, object] | None:
         sample = procstat.read_process(pid)
         if sample is not None:
             samples[pid] = sample
-    return child_status.longest_command(samples, uptime=_uptime(), clk_tck=os.sysconf("SC_CLK_TCK"))
+    return child_status.longest_command(
+        samples,
+        agent_pid=_agent_host_pid(samples, agent),
+        uptime=_uptime(),
+        clk_tck=os.sysconf("SC_CLK_TCK"),
+        cmdline=_cmdline,
+    )
 
 
 def _refresh_agent(
@@ -97,9 +125,18 @@ def _refresh_agent(
     if agent is None:
         return
     try:
-        work["agent"] = agent_watch.agent_snapshot(ctx.cfg, node.full, agent, now=ctx.now)
+        snap = agent_watch.agent_snapshot(ctx.cfg, node.full, agent, now=ctx.now)
     except Exception:
         log.debug("agent snapshot of %s failed", node.full, exc_info=True)
+        return
+    # A session that could not be read this time is not a child that stopped
+    # writing: keep the last event time we knew.
+    earlier = work.get("agent")
+    if snap.get("last_event_at") is None and isinstance(earlier, dict):
+        known = _number(earlier.get("last_event_at"))
+        if known is not None:
+            snap = {**snap, "last_event_at": known}
+    work["agent"] = snap
 
 
 def _collect_exec(
@@ -117,7 +154,9 @@ def _collect_exec(
     try:
         if bounded is None:
             return
-        repo = lifecycle.container_repo_dir(ctx.cfg, bounded, node.full)
+        repo = node.config.get("user.jailbee.repo_dir") or lifecycle.container_repo_dir(
+            ctx.cfg, bounded, node.full
+        )
         head, dirty = child_status.probe_head(bounded, node.full, repo, uid=uid)
         # (None, None) is a failed probe; a repo with no commits is (None, bool).
         if head is not None or dirty is not None:
@@ -158,31 +197,38 @@ def _collect_host(
         except Exception:
             log.debug("memory of %s failed", node.full, exc_info=True)
         try:
-            work["longest_command"] = _longest_command(node)
+            work["longest_command"] = _longest_command(node, cache.agent.get(node.full))
         except Exception:
             log.debug("process scan of %s failed", node.full, exc_info=True)
         _refresh_agent(ctx, cache, node, work)
 
 
-def _activity(started: float, work: dict[str, object], now: float) -> float:
-    """`activity_at` with child-supplied times clamped to `now`.
+FUTURE_SLACK_S = 5
+"""How far ahead of the broker's clock a child-supplied time may be and still count."""
 
-    A commit dated in the future (or a forged session event) must not pin the
-    child as active forever.
+
+def _activity(started: float, work: dict[str, object], now: float, previous: float | None) -> float:
+    """`activity_at`, from the child's signals and never lower than `previous`.
+
+    A child-supplied time more than `FUTURE_SLACK_S` ahead of `now` (a commit
+    with a skewed or forged date, a forged session event) is unknown, not
+    clamped: clamping would make the child look active every round. Unknown
+    signals never lower an earlier reading either.
     """
     agent = work.get("agent")
     head = work.get("head")
 
     def seen(value: object) -> float | None:
         number = _number(value)
-        return None if number is None else min(number, now)
+        return None if number is None or number > now + FUTURE_SLACK_S else number
 
-    return child_status.activity_at(
+    computed = child_status.activity_at(
         started_at=started,
         agent_last_event_at=seen(agent.get("last_event_at")) if isinstance(agent, dict) else None,
         head_time=seen(head.get("time")) if isinstance(head, dict) else None,
         last_busy_at=seen(work.get("last_busy_at")),
     )
+    return computed if previous is None else max(previous, computed)
 
 
 def sync_children(ctx: ActionContext, cache: child_status.StatusCache | None = None) -> None:
@@ -261,7 +307,13 @@ def sync_children(ctx: ActionContext, cache: child_status.StatusCache | None = N
             work = working[child.full]
             if child.running:
                 work["last_to_child_at"] = delivered_at
-                work["activity_at"] = _activity(started, work, now)
+                last = old.get("status")
+                work["activity_at"] = _activity(
+                    started,
+                    work,
+                    now,
+                    _number(last.get("activity_at")) if isinstance(last, dict) else None,
+                )
                 item["status"] = entry["status"] = work
             else:
                 # Stopped: only what outlives the container. The durable record

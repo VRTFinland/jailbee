@@ -2063,3 +2063,15 @@ def test_nodes_carry_state_sampling_fields() -> None:
     assert nodes["proj-c"].init_pid is None
     assert nodes["proj-c"].cpu_usage_ns is None
     assert nodes["proj-c"].memory_usage is None
+
+
+def test_tick_prunes_status_cache_of_vanished_containers(rig: Rig) -> None:
+    memory = broker.BrokerMemory()
+    memory.status.host_at.update({"proj-kid": 1.0, "proj-gone": 1.0})
+    memory.status.exec_at.update({"proj-gone": 1.0})
+    memory.status.sampler_for("proj-gone-orch")
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    rig.tick(memory)
+    assert set(memory.status.host_at) == {"proj-kid"}
+    assert set(memory.status.exec_at) == {"proj-kid"}
+    assert "proj-gone-orch" not in memory.status.samplers

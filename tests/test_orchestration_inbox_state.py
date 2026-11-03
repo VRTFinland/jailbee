@@ -469,7 +469,7 @@ def test_cpu_threshold_boundary(tmp_path, probes, cpu, busy):
     assert published_status(ctx)["last_busy_at"] == expected
 
 
-def test_activity_at_clamps_child_supplied_future_times(tmp_path, probes, monkeypatch):
+def test_activity_at_ignores_far_future_child_supplied_times(tmp_path, probes, monkeypatch):
     ctx = context(tmp_path)
     now = ctx.now.timestamp()
     probes.head = ({**HEAD, "time": now + 10_000}, False)
@@ -478,8 +478,116 @@ def test_activity_at_clamps_child_supplied_future_times(tmp_path, probes, monkey
         "agent_snapshot",
         lambda *a, **k: {**AGENT, "last_event_at": now + 20_000},
     )
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["activity_at"] < now + 1
+    # Not clamped to now: it stays at the unknown-signals floor round after round.
+    ctx.now += timedelta(seconds=120)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["activity_at"] < now + 1
+
+
+def test_activity_at_counts_child_time_within_slack(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    now = ctx.now.timestamp()
+    monkeypatch.setattr(
+        inbox_state.agent_watch,
+        "agent_snapshot",
+        lambda *a, **k: {**AGENT, "last_event_at": now + 4},
+    )
     inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["activity_at"] == now
+    assert published_status(ctx)["activity_at"] == now + 4
+
+
+def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(
+    tmp_path, probes, monkeypatch
+):
+    ctx = context(tmp_path)
+    now = ctx.now.timestamp()
+    event = now - 30
+    snaps = [{**AGENT, "last_event_at": event}, {**AGENT, "state": None, "last_event_at": None}]
+    monkeypatch.setattr(inbox_state.agent_watch, "agent_snapshot", lambda *a, **k: snaps.pop(0))
+    probes.head = (None, None)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    first = published_status(ctx)["activity_at"]
+    assert first == max(now, 0) or first >= event
+    ctx.now += timedelta(seconds=40)
+    inbox_state.sync_children(ctx, cache)
+    st = published_status(ctx)
+    assert st["agent"]["last_event_at"] == event
+    assert st["activity_at"] >= first
+
+
+def test_activity_at_is_monotonic_and_fresh_for_a_recreated_child(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    now = ctx.now.timestamp()
+    events = [now - 10, None]
+    monkeypatch.setattr(
+        inbox_state.agent_watch,
+        "agent_snapshot",
+        lambda *a, **k: {**AGENT, "last_event_at": events.pop(0)},
+    )
+    probes.head = (None, None)
+    cache = _cache()
+    inbox_state.sync_children(ctx, cache)
+    first = published_status(ctx)["activity_at"]
+    assert first == now - 10 or first == now
+    # Drop the carried event time so only the monotonic floor can hold it up.
+    saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
+    saved["children"][0]["status"]["agent"] = None
+    (tmp_path / "inbox-state" / "p-orch.json").write_text(json.dumps(saved))
+    ctx.now += timedelta(seconds=40)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["activity_at"] >= first
+    # A recreated child (new key) starts fresh.
+    ctx.nodes["p-kid"] = Node(
+        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "new"}, now + 100
+    )
+    ctx.now += timedelta(seconds=40)
+    events.append(None)
+    inbox_state.sync_children(ctx, cache)
+    assert published_status(ctx)["activity_at"] == now + 100
+
+
+def test_repo_dir_comes_from_node_config_without_an_incus_call(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    ctx.nodes["p-kid"] = Node(
+        "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "user.jailbee.repo_dir": "/r/x"}
+    )
+    calls = []
+    monkeypatch.setattr(
+        inbox_state.lifecycle, "container_repo_dir", lambda *a: calls.append(a) or "/fallback"
+    )
+    seen = []
+    monkeypatch.setattr(
+        inbox_state.child_status,
+        "probe_head",
+        lambda incus, full, repo, *, uid: seen.append(repo) or (HEAD, False),
+    )
+    inbox_state.sync_children(ctx, _cache())
+    assert seen == ["/r/x"] and calls == []
+
+
+def test_repo_dir_falls_back_to_bounded_incus_when_label_missing(tmp_path, probes, monkeypatch):
+    ctx = context(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        inbox_state.lifecycle, "container_repo_dir", lambda *a: calls.append(a) or "/fallback"
+    )
+    inbox_state.sync_children(ctx, _cache())
+    assert len(calls) == 1 and calls[0][1] is ctx.incus.with_exec_timeout.return_value
+
+
+def test_agent_host_pid_matches_nspid_and_start(monkeypatch):
+    from jailbee.procstat import ProcSample
+
+    samples = {10: ProcSample("claude", 0, 77), 11: ProcSample("claude", 0, 78)}
+    monkeypatch.setattr(inbox_state.procstat, "read_nspid", lambda pid: {10: 5, 11: 5}[pid])
+    agent = AgentStatus(True, "claude", pid=5, proc_start=78)
+    assert inbox_state._agent_host_pid(samples, agent) == 11
+    assert inbox_state._agent_host_pid(samples, None) is None
+    assert inbox_state._agent_host_pid(samples, AgentStatus(True, "claude")) is None
 
 
 def _orch_context(tmp_path, orch, kid):

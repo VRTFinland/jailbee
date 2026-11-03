@@ -786,6 +786,7 @@ def tick(
                 inbox_state.sync_children(ctx, memory.status)
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
+    memory.status.prune(set(nodes), seen)
     for full in queues:
         if full in seen:
             continue

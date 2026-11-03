@@ -13,7 +13,7 @@ wherever it is printed.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -37,7 +37,7 @@ SUBJECT_LIMIT = 120
 """Longest commit subject kept, in characters."""
 
 COMMAND_LIMIT = 160
-"""Longest command line kept, in characters."""
+"""Longest process name kept, in characters."""
 
 # C0 controls (incl. ESC and TAB), DEL, and the C1 range.
 _SHA = re.compile(r"[0-9a-f]{40,64}")
@@ -55,20 +55,60 @@ def clean_text(value: str, limit: int) -> str:
     return text
 
 
-def longest_command(
-    samples: Mapping[int, procstat.ProcSample], *, uptime: float, clk_tck: int
-) -> dict[str, object] | None:
-    """The oldest non-shell process started directly by a shell in `samples`.
+WAITER_COMMS = frozenset({"jailbee", "jailbee-inbox"})
+"""Process names of the orchestration waiters, which are not work the child does."""
 
-    `uptime` and `clk_tck` turn the process's start tick into seconds since
-    boot; the result is how long that command has been running. None when no
-    process qualifies.
+
+def _is_waiter(comm: str, cmdline: str | None) -> bool:
+    if comm in WAITER_COMMS:
+        return True
+    if cmdline is None:
+        return False
+    words = cmdline.split()
+    return bool(words) and "wait" in words and any(
+        word.rsplit("/", 1)[-1] in WAITER_COMMS or word == "jailbee.inbox" for word in words[:4]
+    )
+
+
+def longest_command(
+    samples: Mapping[int, procstat.ProcSample],
+    *,
+    agent_pid: int | None,
+    uptime: float,
+    clk_tck: int,
+    cmdline: Callable[[int], str | None] | None = None,
+) -> dict[str, object] | None:
+    """The oldest non-shell process a shell started below the agent in `samples`.
+
+    `agent_pid` is the agent's pid as `samples` keys it; the agent itself and
+    anything outside its process tree is never reported, nor are the
+    `jailbee inbox wait` waiters (found by name, or by `cmdline(pid)`) and what
+    they started. With no known agent the answer is None: unknown, never the
+    agent. `uptime` and `clk_tck` turn the start tick into seconds since boot;
+    the result is how long that process has been running.
     """
+    if agent_pid is None or agent_pid not in samples:
+        return None
+    children: dict[int, list[int]] = {}
+    for pid, sample in samples.items():
+        children.setdefault(sample.ppid, []).append(pid)
+    below: list[int] = []
+    pending = list(children.get(agent_pid, ()))
+    seen = {agent_pid}
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        if _is_waiter(samples[pid].comm, cmdline(pid) if cmdline is not None else None):
+            continue
+        below.append(pid)
+        pending.extend(children.get(pid, ()))
     candidates = [
-        sample
-        for sample in samples.values()
-        if sample.comm not in procstat.SHELL_COMMS
-        and (parent := samples.get(sample.ppid)) is not None
+        samples[pid]
+        for pid in below
+        if samples[pid].comm not in procstat.SHELL_COMMS
+        and (parent := samples.get(samples[pid].ppid)) is not None
         and parent.comm in procstat.SHELL_COMMS
     ]
     if not candidates:
@@ -122,6 +162,14 @@ class StatusCache:
             sampler = self.samplers[orchestrator] = procstat.ActivitySampler()
         return sampler
 
+    def prune(self, children: Collection[str], orchestrators: Collection[str]) -> None:
+        """Forget what is kept for containers that no longer exist."""
+        for per_child in (self.host_at, self.exec_at, self.agent):
+            for full in [f for f in per_child if f not in children]:
+                del per_child[full]
+        for full in [f for f in self.samplers if f not in orchestrators]:
+            del self.samplers[full]
+
     def host_due(self, full: str, now: float) -> bool:
         """True, and record `now`, when the host probe for `full` is due."""
         return _due(self.host_at, full, now, STATUS_INTERVAL)
@@ -141,8 +189,9 @@ def _due(stamps: dict[str, float], full: str, now: float, interval: float) -> bo
 
 # $1 is the repo directory, passed as an argument so it is never parsed as shell.
 _HEAD_SCRIPT = r"""
-log=$(git -C "$1" log -1 --format=%H%x1f%ct%x1f%s 2>/dev/null) && printf '%s\n' "$log"
-if ! porcelain=$(git -C "$1" status --porcelain --ignore-submodules=all 2>/dev/null); then
+export GIT_OPTIONAL_LOCKS=0
+log=$(git --no-optional-locks -C "$1" log -1 --format=%H%x1f%ct%x1f%s 2>/dev/null) && printf '%s\n' "$log"
+if ! porcelain=$(git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=all 2>/dev/null); then
     echo ERROR
 elif [ -n "$porcelain" ]; then
     echo DIRTY

@@ -28,23 +28,78 @@ def test_clean_text_replaces_del_and_c1_controls():
     assert clean_text("a\x7fb\x9bc", 120) == "a?b?c"
 
 
-def test_longest_command_picks_oldest_child_of_a_shell():
-    samples = {
+def _tree():
+    # sh(2) -> claude(3, the agent) -> bash(4) -> pytest(5), sleep(6)
+    return {
         1: ProcSample("tmux", 0, 10),
-        2: ProcSample("bash", 0, 20, ppid=1),
-        3: ProcSample("pytest", 0, 100, ppid=2),
-        4: ProcSample("sleep", 0, 300, ppid=2),
-        5: ProcSample("bash", 0, 50, ppid=2),
-        6: ProcSample("node", 0, 30, ppid=1),
+        2: ProcSample("sh", 0, 20, ppid=1),
+        3: ProcSample("claude", 0, 30, ppid=2),
+        4: ProcSample("bash", 0, 40, ppid=3),
+        5: ProcSample("pytest", 0, 100, ppid=4),
+        6: ProcSample("sleep", 0, 300, ppid=4),
     }
-    assert longest_command(samples, uptime=1100.0, clk_tck=100) == {
+
+
+def test_longest_command_picks_oldest_tool_under_the_agent():
+    assert longest_command(_tree(), agent_pid=3, uptime=1100.0, clk_tck=100) == {
         "command": "pytest",
         "seconds": 1099,
     }
 
 
-def test_longest_command_none_without_shell_children():
-    assert longest_command({1: ProcSample("claude", 0, 5)}, uptime=10.0, clk_tck=100) is None
+def test_longest_command_excludes_agent_that_is_child_of_a_shell():
+    samples = {k: v for k, v in _tree().items() if k < 4}
+    assert longest_command(samples, agent_pid=3, uptime=1100.0, clk_tck=100) is None
+
+
+def test_longest_command_unknown_agent_is_none_not_the_agent():
+    assert longest_command(_tree(), agent_pid=None, uptime=1100.0, clk_tck=100) is None
+    assert longest_command(_tree(), agent_pid=99, uptime=1100.0, clk_tck=100) is None
+
+
+def test_longest_command_ignores_processes_outside_the_agent_tree():
+    samples = {**_tree(), 7: ProcSample("old", 0, 1, ppid=2), 8: ProcSample("bash", 0, 5, ppid=1)}
+    samples[9] = ProcSample("older", 0, 2, ppid=8)
+    assert longest_command(samples, agent_pid=3, uptime=1100.0, clk_tck=100)["command"] == "pytest"
+
+
+def test_longest_command_excludes_inbox_waiters_by_comm_and_cmdline():
+    samples = _tree()
+    samples[7] = ProcSample("jailbee-inbox", 0, 50, ppid=4)
+    samples[8] = ProcSample("python3", 0, 60, ppid=4)
+    cmd = {8: "/usr/bin/python3 /usr/local/bin/jailbee inbox wait --quiet-after 5m"}
+    got = longest_command(
+        samples, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: cmd.get(pid)
+    )
+    assert got == {"command": "pytest", "seconds": 1099}
+    only_waiters = {k: samples[k] for k in (1, 2, 3, 4, 7, 8)}
+    assert (
+        longest_command(
+            only_waiters, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: cmd.get(pid)
+        )
+        is None
+    )
+
+
+def test_head_script_never_takes_the_index_lock() -> None:
+    incus = _head_incus("CLEAN\n")
+    probe_head(incus, "kid", "/repo", uid=1)
+    script = incus.exec.call_args.args[1][2]
+    assert "GIT_OPTIONAL_LOCKS=0" in script
+    assert script.count("git --no-optional-locks") == 2
+    assert "git -C" not in script
+
+
+def test_status_cache_prune_drops_vanished():
+    cache = StatusCache()
+    cache.host_at.update({"a": 1.0, "b": 1.0})
+    cache.exec_at.update({"a": 1.0, "b": 1.0})
+    cache.agent.update({"a": MagicMock(), "b": MagicMock()})
+    cache.sampler_for("o1")
+    cache.sampler_for("o2")
+    cache.prune({"a"}, {"o1"})
+    assert set(cache.host_at) == set(cache.exec_at) == set(cache.agent) == {"a"}
+    assert set(cache.samplers) == {"o1"}
 
 
 def test_activity_at_ignores_unknown():
