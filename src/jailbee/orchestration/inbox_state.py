@@ -35,17 +35,19 @@ def sync_children(ctx: ActionContext) -> None:
                 value = old.get("started_at")
                 if isinstance(value, (int, float)):
                     started = value
-        # A finished child may keep running until import/destroy; it must not
-        # trip the helper's quiet watchdog, so it is published as not running.
+        # `running` is the container state (#63). A finished child may keep
+        # running until import/destroy; `done` says so, and the inbox's quiet
+        # watchdog skips done children.
         sessions = labels.sessions_of(child.config)
         item = {
             "name": child.short,
-            "running": child.running and not labels.is_finished(child.config),
+            "running": child.running,
+            "done": labels.is_finished(child.config),
             "started_at": started,
             "session": sessions[-1] if sessions else None,
         }
         children.append(item)
-        durable.append({**item, "running": child.running, "full": child.full, "key": child.key})
+        durable.append({**item, "full": child.full, "key": child.key})
     atomic_write_text(path, json.dumps({"owner": ctx.sender.key, "children": durable}))
     # Stamped now, not with `ctx.now`: that is the round's start, and a round
     # can run long (child imports, slow `incus exec`), which would make the

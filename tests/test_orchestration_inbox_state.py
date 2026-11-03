@@ -33,7 +33,13 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
     inbox_state.sync_children(ctx)
     first = delivered(ctx)
     assert first["children"] == [
-        {"name": "kid", "running": True, "started_at": ctx.now.timestamp(), "session": None}
+        {
+            "name": "kid",
+            "running": True,
+            "done": False,
+            "started_at": ctx.now.timestamp(),
+            "session": None,
+        }
     ]
     ctx.now += timedelta(minutes=10)
     inbox_state.sync_children(ctx)
@@ -114,16 +120,16 @@ def _kid_with(ctx, config):
 
 
 @pytest.mark.parametrize(
-    ("config", "published"),
+    ("config", "done"),
     [
-        ({labels.STATE: labels.STATE_DONE}, False),
+        ({labels.STATE: labels.STATE_DONE}, True),
         (
             {
                 labels.STATE: labels.STATE_IMPORTED,
                 labels.DONE_SHA: "a" * 40,
                 labels.LAST_IMPORT: "a" * 40,
             },
-            False,
+            True,
         ),
         (
             {
@@ -131,16 +137,33 @@ def _kid_with(ctx, config):
                 labels.DONE_SHA: "a" * 40,
                 labels.LAST_IMPORT: "b" * 40,
             },
-            True,
+            False,
         ),
-        ({labels.STATE: "working"}, True),
+        ({labels.STATE: "working"}, False),
     ],
 )
-def test_snapshot_finished_child_is_not_published_running(tmp_path, config, published):
+def test_snapshot_running_is_container_state_and_done_is_separate(tmp_path, config, done):
+    # #63: a finished child whose container is up must read running=true;
+    # `done` carries the finished state the quiet watchdog needs.
     ctx = context(tmp_path)
     _kid_with(ctx, config)
     inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["running"] is published
+    child = delivered(ctx)["children"][0]
+    assert child["running"] is True
+    assert child["done"] is done
+
+
+def test_snapshot_stopped_finished_child(tmp_path):
+    ctx = context(tmp_path)
+    ctx.nodes = {
+        "p-orch": ctx.sender,
+        "p-kid": Node(
+            "p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch", labels.STATE: labels.STATE_DONE}
+        ),
+    }
+    inbox_state.sync_children(ctx)
+    child = delivered(ctx)["children"][0]
+    assert (child["running"], child["done"]) == (False, True)
 
 
 def test_snapshot_finished_child_keeps_start_time(tmp_path):

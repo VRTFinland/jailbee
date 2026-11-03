@@ -567,6 +567,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "only when the orchestrator must act, without progress notes"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills explaining that a child's "
+            "`running` is its container state and `done` is reported separately"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

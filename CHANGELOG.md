@@ -30,7 +30,9 @@ before editing `## Unreleased`.
 
 - `jailbee inbox wait --wake-on` filters wakeups without marking any message
   read; a child's first report after spawn/restart always wakes. The
-  `--quiet-after` watchdog names silent running children. Concurrent
+  `--quiet-after` watchdog names silent running children that have not
+  reported done; `jailbee inbox children` lists each child's container state
+  (`running`), accepted `done` and latest session. Concurrent
   `send --wait` replies are reserved for their sender, and a second ordinary
   waiter is rejected. The broker also reports live prompted agents awaiting
   input as `idle`, matchable with `--wake-on idle`: after 15 minutes by default,

@@ -485,9 +485,11 @@ After waking, list and handle all unread messages, including filtered notes.
 a running child that has not reported done has sent nothing for that duration. Read and unread reports
 both count; with no reports, time is measured from the child's start. Stop or
 restart resets monitoring, and an overdue child keeps waking until activity
-or a lifecycle change. The broker publishes read-only `children.json` with
-running children (finished ones count as not running) and start times. Requested quiet monitoring exits 2 if the
-snapshot is absent, malformed or older than 60 seconds; check the broker.
+or a lifecycle change. The broker publishes read-only `children.json`: per child its
+name, `running` (the container state), `done` (an accepted `done`; a done child
+may keep running until it is stopped or destroyed), start time and latest agent
+session. Quiet monitoring watches running children that are not done. Requested quiet monitoring exits 2 if the
+snapshot is absent, malformed or older than 15 minutes; check the broker.
 Without quiet monitoring, filtering still works if that snapshot is missing,
 but the first-report override needs fresh child state.
 

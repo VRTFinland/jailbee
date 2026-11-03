@@ -1376,7 +1376,7 @@ def test_help_documents_send_rights(script, base, tmp_path):
         assert text in out
 
 
-def child_snapshot(base, *, started=None, running=True, updated=None):
+def child_snapshot(base, *, started=None, running=True, updated=None, done=None):
     (base / "children.json").write_text(
         json.dumps(
             {
@@ -1387,6 +1387,7 @@ def child_snapshot(base, *, started=None, running=True, updated=None):
                         "name": "kid",
                         "running": running,
                         "started_at": time.time() - 120 if started is None else started,
+                        **({} if done is None else {"done": done}),
                     }
                 ],
             }
@@ -1457,6 +1458,23 @@ def test_wait_quiet_child_counts_all_activity(script, base, tmp_path, read):
     assert run(script, *args, env=env).stdout.strip() == "quiet-child kid"
     child_snapshot(base, running=False)
     assert run(script, *args, env=env).returncode == 1
+
+
+def test_wait_quiet_ignores_done_running_child(script, base, tmp_path):
+    # #63: running is the container state; a done child stays up but is not watched.
+    args = ("wait", "--wake-on", "done", "--quiet-after", "60s", "--timeout", "0")
+    env = env_for(base, tmp_path)
+    child_snapshot(base, done=True)
+    assert run(script, *args, env=env).returncode == 1
+    child_snapshot(base, done=False)
+    assert run(script, *args, env=env).stdout.strip() == "quiet-child kid"
+
+
+def test_wait_quiet_rejects_non_boolean_done(script, base, tmp_path):
+    child_snapshot(base, done="yes")
+    r = run(script, "wait", "--quiet-after", "1m", "--timeout", "0", env=env_for(base, tmp_path))
+    assert r.returncode == 2
+    assert "children.json" in r.stderr
 
 
 @pytest.mark.parametrize("state", [None, "bad", "stale"])
@@ -1670,8 +1688,18 @@ def test_children_lists_name_running_session(script, base, tmp_path):
     r = run(script, "children", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
     assert len(r.stdout.splitlines()) == 2
-    assert r.stdout.splitlines()[0].split() == ["alpha", "true", "abc"]
-    assert r.stdout.splitlines()[1].split() == ["beta", "false", "-"]
+    assert r.stdout.splitlines()[0].split() == ["alpha", "true", "abc", "false"]
+    assert r.stdout.splitlines()[1].split() == ["beta", "false", "-", "false"]
+
+
+def test_children_lists_done_column(script, base, tmp_path):
+    children = [{"name": "kid", "running": True, "done": True, "session": None}]
+    (base / "children.json").write_text(
+        json.dumps({"version": 1, "updated_at": time.time(), "children": children})
+    )
+    r = run(script, "children", env=env_for(base, tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["kid", "true", "-", "true"]
 
 
 def test_children_json_prints_array(script, base, tmp_path):
@@ -1740,7 +1768,7 @@ def test_children_null_entry_and_boolean_version(script, base, tmp_path):
     path = base / "children.json"
     path.write_text(json.dumps({"version": 1, "updated_at": time.time(), "children": [None]}))
     result = run(script, "children", env=env_for(base, tmp_path))
-    assert (result.returncode, result.stdout) == (0, "\tnull\t-\n")
+    assert (result.returncode, result.stdout) == (0, "\tnull\t-\tfalse\n")
     path.write_text(json.dumps({"version": True, "updated_at": time.time(), "children": []}))
     result = run(script, "children", env=env_for(base, tmp_path))
     assert result.returncode == 1

@@ -41,8 +41,8 @@ USAGE = (
     "         --wake-on LIST filters comma-separated message kinds/status states\n"
     "         (note,question,done,blocked,idle,queued,started,failed,refused). A child's\n"
     "         first message after each start always wakes. Nothing is marked read.\n"
-    "         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running\n"
-    "         child is silent that long; needs fresh broker children.json (<=15m).\n"
+    "         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running,\n"
+    "         not-done child is silent that long; needs fresh broker children.json (<=15m).\n"
     "         Only one wait may run; a second exits 2. Concurrent send --wait is\n"
     "         safe: wait skips its reserved statuses until that sender exits.\n"
     "  ls     One line per unread message, oldest first:\n"
@@ -54,8 +54,8 @@ USAGE = (
     "         (--agent/--profile/--model of send). --json prints one array.\n"
     "         Listed model tiers also accept the [1m] suffix.\n"
     "\n"
-    "  children [--json]  Each child: name, running, latest agent session (from the\n"
-    "         broker's children.json).\n"
+    "  children [--json]  Each child: name, running (container state), latest agent\n"
+    "         session, done (accepted done) — from the broker's children.json.\n"
     "\n"
     "  send   Write a manifest for the orchestrator's host into outbox/ and print\n"
     "         its id. --wait [--timeout DUR|none] waits for its status (default 30m):\n"
@@ -318,6 +318,7 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
                         "" if name is None else jq_tostring(name),
                         jq_tostring(child.get("running")),
                         jq_tostring(session),
+                        jq_tostring(child.get("done") is True),
                     ]
                 )
             )

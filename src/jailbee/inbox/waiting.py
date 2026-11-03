@@ -72,9 +72,13 @@ def select_wakeup(base: Path, wake: frozenset[str] | None, quiet: int, now: floa
         assert isinstance(snapshot["children"], list)
         for child in snapshot["children"]:
             assert isinstance(child["name"], str) and isinstance(child["running"], bool)
+            # `done` is absent from pre-#63 brokers, whose `running` already
+            # excluded finished children.
+            done = child.get("done", False)
+            assert isinstance(done, bool)
             assert _number(child["started_at"]) and child["started_at"] <= now + 5
             children[child["name"]] = child["started_at"]
-            if child["running"]:
+            if child["running"] and not done:
                 running.add(child["name"])
     except (AssertionError, KeyError, TypeError):
         if quiet:

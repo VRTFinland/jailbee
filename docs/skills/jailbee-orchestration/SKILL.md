@@ -278,6 +278,13 @@ count as activity; a child with no reports is timed from its start. The broker
 refreshes `children.json`; missing, corrupt or more than 15-minute-old state makes
 this watchdog exit 2, so check the host broker instead of assuming all is well.
 
+`jailbee inbox children` (`--json` for the raw entries) shows each child's
+state from that file. `running` is the **container** state: a child that sent
+`done` with `on_done: keep` stays `running: true` until it is stopped or
+destroyed, and its services stay available. `done: true` means its `done` was
+accepted (its agent has usually exited). Never report a child as stopped
+because it is done.
+
 Only one ordinary `wait` may run per container; another exits 2. Concurrent
 `send --wait` is supported: it reserves its status ref before publishing and
 ordinary `wait` skips that ref while the sender lives. Reservations disappear
