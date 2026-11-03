@@ -24,7 +24,7 @@ or `-`, and are at most 63 characters.
 | Field | Meaning and default |
 |---|---|
 | `run` | Required nonempty foreground command. |
-| `prepare` | Serial steps, default `[]`, executed only on refresh. |
+| `prepare` | Serial steps, default `[]`; run once on first selected autostart and explicitly on refresh. |
 | `ready`, `ready_timeout` | Optional probe and positive timeout in seconds (120). |
 | `stop`, `stop_timeout` | Optional stop command and positive timeout in seconds (10). |
 | `working_dir`, `env` | Repo-relative directory (`""`) and environment (`{}`). |
@@ -36,7 +36,19 @@ Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 only prepare can be elevated. Elevated refresh is not yet available.
 Dependencies must exist, be acyclic, and be ready before the dependent starts.
 `restart: true` cascades restarts to the dependent; `{}` does not.
-See [service commands](commands.md#services).
+On startup, the reserved `services` stage prepares and starts selected services
+and their dependencies before the agent stage, waiting for readiness. Successful
+prepare is recorded per service and container; later starts do not repeat it,
+and a wider selection prepares newly selected services. This record is never
+automatically reset. Elevated prepare uses the autostart network/mount safeguards:
+branch changes require the usual consent or refusal, and child preparation cannot
+exceed its stored rights. Elevated refresh is not supported.
+
+The stage is enabled by the host-effective `services:` block (including the
+branch graft on creation) or an explicit nonempty selection. Adding services only
+inside a container does not enable autostart; they remain manually startable.
+Definitions are read from the container. An old image without in-container
+jailbee warns and skips services. See [service commands](commands.md#services).
 
 ### Service example
 
@@ -1869,6 +1881,7 @@ autostart:
     full: all
     frontend:
       stages: [deps, frontend-dev]
+      services: [web]
   on_create:
     - stage: deps
       steps: [{name: install, run: "pnpm install"}]
@@ -1886,7 +1899,15 @@ from **both** triggers, in config order; the reserved `agents` stage always
 stays selected, even when not listed. Profiles require stage-form triggers,
 a defined `default_profile`, and known stage names. The profile name `all`
 is reserved. Without `profiles`, `default_profile` is invalid and autostart
-behaves exactly as before.
+behaves exactly as before. `services` is also a reserved stage name and cannot
+appear in either trigger or a profile's `stages` list.
+
+A profile may specify `services: [web]` to start those known services and their
+dependencies, or `services: []` for none; omitted or null means all. An explicit
+`jailbee new --services web,db` overrides the profile, and `--services ''`
+starts none. The explicit selection is remembered for later starts and takes
+precedence over profile services; without it, the profile wins over all services.
+Define each example service in the top-level `services:` block.
 
 `jailbee new --autostart-profile frontend` remembers the selection for later
 starts and restarts. An absent selection uses the default; a stored name

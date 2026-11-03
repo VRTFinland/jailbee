@@ -47,6 +47,13 @@ the named profile for creation. Restart stores it before booting and runs
 missing one-shot setup before the profile's `on_start` stages. Omission keeps
 the normal default on spawn and the child's stored selection on restart.
 
+Both also accept `services: ["web"]` (up to 32 names), or helper
+`--services web,db`; dependencies are included. `[]` / `--services ''` starts
+none. Explicit services override the profile; omission uses the profile or all
+on spawn and retains an explicit selection on restart. Prepare is tracked per
+service/container, and cannot exceed stored child rights. `services` is
+incompatible with `agent_only`.
+
 Spawn requests support version 2; legacy version 1 remains valid for fork/new
 without `ref` or `pr`. Other messages, inbox, grant and finish envelopes
 remain version 1.

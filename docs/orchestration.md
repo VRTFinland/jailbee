@@ -268,6 +268,16 @@ refused with ``autostart profile `NAME` is not defined``. This field selects
 stages, not the agent or its LiteLLM profile; omit it to use the creation
 default or keep a child's existing choice on restart.
 
+For a light child, `jailbee-inbox send spawn --branch task --services web --wait`
+starts only `web` and its dependencies; restart also accepts `--services`.
+The equivalent manifest field is `services: ["web"]` (at most 32 names).
+An empty list or `--services ''` starts none. Omission uses the profile or all
+services on spawn and preserves an explicit selection on restart. An explicit
+selection overrides the profile. Services are prepared once per container and
+service, including newly selected dependencies. Child preparation cannot exceed
+its stored rights. Neither `services` nor `--services` can be combined with
+`agent_only` / `--agent-only`.
+
 ## Reuse a running worker without autostart
 
 Use `jailbee-inbox send restart --child C --agent-only --text "Next task"`

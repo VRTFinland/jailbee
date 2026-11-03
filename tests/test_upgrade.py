@@ -1099,6 +1099,20 @@ def test_service_upgrade_notes_have_separate_reasons() -> None:
         assert notes[0].actions == frozenset({action})
 
 
+def test_service_autostart_upgrade_notes_have_separate_reasons() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    reasons = {
+        "the golden image's jailbee-inbox accepts `send spawn|restart --services`": "base_build",
+        "`jailbee apply` syncs skills describing autostart services and light spawn (`--services`)": "apply",
+    }
+    for reason, action in reasons.items():
+        notes = [n for n in UPGRADE_NOTES if n.reason == reason]
+        assert len(notes) == 1
+        assert notes[0].version == (1, 8, 1)
+        assert notes[0].actions == frozenset({action})
+
+
 def test_adoption_upgrade_note_is_apply_only():
     from jailbee.upgrade import UPGRADE_NOTES
 

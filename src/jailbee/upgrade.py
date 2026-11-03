@@ -569,6 +569,16 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
         version=(1, 8, 1),
         actions=frozenset({"base_build"}),
+        reason="the golden image's jailbee-inbox accepts `send spawn|restart --services`",
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"apply"}),
+        reason="`jailbee apply` syncs skills describing autostart services and light spawn (`--services`)",
+    ),
+    UpgradeNote(
+        version=(1, 8, 1),
+        actions=frozenset({"base_build"}),
         reason=(
             "the in-container jailbee venv adds questionary and prompt-toolkit "
             "for `jailbee service` pickers"

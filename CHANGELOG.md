@@ -10,7 +10,7 @@ before editing `## Unreleased`.
 
 ### Added
 
-- Managed repository services with dependency-aware start, restart, refresh and tmux logs.
+- Managed repository services with dependency-aware start, restart, refresh and tmux logs, automatic preparation and startup, and light container creation or orchestration with `--services`.
 
 - Orchestration: `update --merge` merges the update into the child's branch after a conflict-free `merge-tree` check; conflicts refuse the update.
 - **In-container jailbee.** Validate the repo configuration from inside a container; host code is staged read-only and kept in sync.

@@ -120,7 +120,13 @@ For large projects, offer named `autostart.profiles` with a required
 triggers and known names; config order wins and `agents` always stays.
 `jailbee new --autostart-profile frontend` remembers the choice;
 `jailbee autostart profile CONTAINER NAME` switches it later without stopping
-already running work. Do not use these profiles to control agent/app autostart.
+already running work. Profiles may include `services: [web]` (defined in the
+repo's `services:` block), or `services: []` for none; omitted means all.
+Explicit `new --services web` overrides that list and adds dependencies;
+`--services ''` disables services. `services` is a reserved stage name.
+Prepare runs once per service/container; broader selections prepare new services.
+Branch elevation follows autostart consent and child preparation stays within
+stored rights. Do not use these profiles to control agent/app autostart.
 
 For mounts only some containers need (e.g. AWS for ECR pulls during
 provisioning), use `optional_mounts` and attach one from the enclosing

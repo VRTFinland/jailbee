@@ -157,6 +157,12 @@ not retain the ref; a later import can move it.
 
 Spawn and restart may also name `--autostart-profile NAME` to select the repo's
 startup stages; this is separate from the runner's LiteLLM `--profile`.
+For light children, use `send spawn --services web --wait` or
+`send restart --child C --services web`: only the selected services and their
+dependencies start. `--services ''` starts none; omission uses the profile or
+all on spawn and retains the child's explicit selection on restart. Explicit
+selection wins over the profile. Prepare runs once per service/container, and
+cannot exceed the child's stored rights. Do not combine with `--agent-only`.
 
 ## Choosing the child's agent (`runner`)
 
