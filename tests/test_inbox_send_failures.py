@@ -88,7 +88,9 @@ def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypat
         os.close(fd)
 
 
-def test_interrupt_after_manifest_rename_keeps_request_and_releases_lock(tmp_path, monkeypatch, capsys):
+def test_interrupt_after_manifest_rename_keeps_request_and_releases_lock(
+    tmp_path, monkeypatch, capsys
+):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
     monkeypatch.setattr(send, "new_id", lambda _: "fixed")
     original = Path.replace

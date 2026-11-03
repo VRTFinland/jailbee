@@ -408,7 +408,9 @@ def test_spawn_fails_when_alive_child_has_no_launcher(
     incus.set_running("proj-c1", False)
     memory = broker.BrokerMemory()
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
-    monkeypatch.setattr(agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude"))
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
     original_exec = incus.exec
 
     def exec_missing(name: str, argv: list[str], **kw: object) -> str:
@@ -419,18 +421,31 @@ def test_spawn_fails_when_alive_child_has_no_launcher(
         return original_exec(name, argv, **kw)
 
     monkeypatch.setattr(incus, "exec", exec_missing)
-    _manifest(incus, "proj-orch", {
-        "version": 1, "id": "sp1", "type": "spawn", "kind": "new", "branch": "k1",
-        "prompt": "go", "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
-    })
+    _manifest(
+        incus,
+        "proj-orch",
+        {
+            "version": 1,
+            "id": "sp1",
+            "type": "spawn",
+            "kind": "new",
+            "branch": "k1",
+            "prompt": "go",
+            "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+        },
+    )
     _tick(world, memory)
     incus.add("proj-k1", running=True, **{labels.SPAWNED_BY: "proj-orch"})
     _tick(world, memory, 5)
     _tick(world, memory, 10)
     assert _statuses(incus, "proj-orch") == [
         ("sp1", "started", "creation of child `k1` started; on done: destroy"),
-        ("sp1", "failed", "container image has no in-container jailbee (needed for `jailbee inbox`) — "
-         "run `jb base build` on the host, then recreate the container"),
+        (
+            "sp1",
+            "failed",
+            "container image has no in-container jailbee (needed for `jailbee inbox`) — "
+            "run `jb base build` on the host, then recreate the container",
+        ),
     ]
 
 
