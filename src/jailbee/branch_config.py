@@ -728,7 +728,10 @@ def load_branch_autostart(
     # us — validate_runtime() returns advisory issues, not exceptions, and a
     # non-empty list is not itself a failure: only issues the graft
     # *introduces* (present in `grafted` but not already in `cfg`) matter.
-    new_issues = set(grafted.validate_runtime()) - set(cfg.validate_runtime())
+    # Service preparation is validated against the host when the container
+    # plans it; branch service definitions here are presence metadata only.
+    checked = grafted.model_copy(update={"services": cfg.services})
+    new_issues = set(checked.validate_runtime()) - set(cfg.validate_runtime())
     if new_issues:
         detail = "\n".join(f"  - {i}" for i in sorted(new_issues))
         warn_plain(_fallback_warning(source_label, f"it does not fit your host config:\n{detail}"))
