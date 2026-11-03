@@ -22,11 +22,27 @@ def test_pause_no_agent(tmp_path, mocker):
 
     mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=None)
     kill = mocker.patch("jailbee.tmux.kill_window")
-    assert (
+    with pytest.raises(RefreshError, match="could not determine whether an agent is running in box; refresh refused"):
         elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC))
-        is None
-    )
     kill.assert_not_called()
+
+
+def test_pause_dead_agent_is_noop(tmp_path, mocker):
+    from datetime import datetime
+    from jailbee.orchestration.agent_watch import AgentStatus
+    from jailbee.services import elevated
+    mocker.patch("jailbee.orchestration.agent_watch.probe", return_value=AgentStatus(False))
+    kill = mocker.patch("jailbee.tmux.kill_window")
+    assert elevated.pause_agent(make_config(tmp_path), mocker.Mock(), "box", now=datetime.now(UTC)) is None
+    kill.assert_not_called()
+
+
+def test_generated_resume_step_contains_session(tmp_path):
+    from jailbee.autostart import agent_autostart_steps
+    cfg = make_config(tmp_path, agents={"claude": {"enabled": True}})
+    steps = agent_autostart_steps(cfg, initial_prompt=True, resume=SID)
+    step = next(s for s in steps if s.name == "claude")
+    assert f"--resume {SID}" in step.run
 
 
 @pytest.fixture
@@ -36,7 +52,7 @@ def paused_setup(tmp_path, mocker):
     from jailbee.orchestration import agent_watch
     from jailbee.services import elevated
 
-    cfg, incus = make_config(tmp_path), mocker.Mock()
+    cfg, incus = make_config(tmp_path, agents={"claude": {"enabled": True}}), mocker.Mock()
     incus.config_get_checked.return_value = None
     status = agent_watch.AgentStatus(True, "claude", pid=42, proc_start=77)
     mocker.patch.object(agent_watch, "probe", return_value=status)
@@ -70,6 +86,27 @@ def test_pause_preserves_runner_and_checked_read_failure(paused_setup):
     kill.reset_mock()
     incus.config_get_checked.side_effect = IncusError("transport")
     with pytest.raises(RefreshError, match="transport"):
+        elevated.pause_agent(cfg, incus, "box", now=now)
+    kill.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["different", "missing", "disabled", "empty", "prompt"])
+def test_pause_refuses_unusable_relaunch(paused_setup, change):
+    cfg, incus, _, _, _, kill, now, elevated = paused_setup
+    agent = cfg.agents["claude"]
+    agents = dict(cfg.agents)
+    if change == "different":
+        cfg = cfg.model_copy(update={"primary_agent": "other"})
+    elif change == "missing":
+        agents.clear()
+    elif change == "disabled":
+        agents["claude"] = agent.model_copy(update={"enabled": False})
+    elif change == "empty":
+        agents["claude"] = agent.model_copy(update={"command": " "})
+    else:
+        agents["claude"] = agent.model_copy(update={"prompt_args": None})
+    cfg = cfg.model_copy(update={"agents": agents})
+    with pytest.raises(RefreshError):
         elevated.pause_agent(cfg, incus, "box", now=now)
     kill.assert_not_called()
 
@@ -111,11 +148,11 @@ def test_pause_unknown_session_refuses_before_kill(paused_setup, force):
     kill.assert_not_called()
 
 
-@pytest.mark.parametrize("failure", ["unsupported", "missing"])
+@pytest.mark.parametrize("failure", ["unsupported", "empty", "missing"])
 def test_pause_refuses_unresumable_session(paused_setup, failure):
     cfg, incus, _, _, adapter, kill, now, elevated = paused_setup
-    if failure == "unsupported":
-        adapter.resume_args.return_value = None
+    if failure in ("unsupported", "empty"):
+        adapter.resume_args.return_value = None if failure == "unsupported" else ""
     else:
         adapter.session_exists.return_value = False
     with pytest.raises(RefreshError, match=r"resum|transcript"):
@@ -152,10 +189,32 @@ def test_foreign_agents_excludes_prompted(paused_setup, mocker):
     mocker.patch.object(agent_status, "read_sessions", return_value={"box": sessions})
     mocker.patch.object(procstat, "read_container_pids", return_value=[142, 143])
     mocker.patch.object(
-        procstat, "read_process", side_effect=lambda p: SimpleNamespace(starttime=p - 65)
+        procstat, "read_process", side_effect=lambda p, **kw: SimpleNamespace(starttime=p - 65)
     )
-    mocker.patch.object(procstat, "read_nspid", side_effect=lambda p: p - 100)
+    mocker.patch.object(procstat, "read_nspid", side_effect=lambda p, **kw: p - 100)
     assert elevated.foreign_agents(cfg, incus, "box", status) == ["claude (pid 43)"]
+
+
+def test_foreign_agents_rejects_wrong_process_identity(paused_setup, mocker):
+    from types import SimpleNamespace
+    from jailbee import agent_status, procstat
+    cfg, incus, _, _, _, _, _, elevated = paused_setup
+    incus.list_containers.return_value = [{"name": "box", "state": {"pid": 10}}]
+    session = SimpleNamespace(pid=42, proc_start=77, agent="claude", updated_at=None)
+    mocker.patch("jailbee.lifecycle.agent_homes", return_value=())
+    mocker.patch.object(agent_status, "read_sessions", return_value={"box": [session]})
+    mocker.patch.object(procstat, "read_container_pids", return_value=[100, 101])
+    mocker.patch.object(procstat, "read_process", side_effect=lambda p, **kw: SimpleNamespace(starttime=78 if p == 100 else 77))
+    mocker.patch.object(procstat, "read_nspid", return_value=43)
+    assert elevated.foreign_agents(cfg, incus, "box", None) == []
+
+
+def test_foreign_agents_refuses_unreadable_processes(paused_setup, mocker):
+    cfg, incus, _, _, _, _, _, elevated = paused_setup
+    incus.list_containers.return_value = [{"name": "box", "state": {"pid": 10}}]
+    mocker.patch("jailbee.procstat.read_container_pids", side_effect=PermissionError("denied"))
+    with pytest.raises(RefreshError, match="denied"):
+        elevated.foreign_agents(cfg, incus, "box", None)
 
 
 def payload():

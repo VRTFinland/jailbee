@@ -39,6 +39,28 @@ def write_stat(
     (d / "stat").write_text(f"{pid} ({comm}) " + " ".join(parts) + "\n")
 
 
+def test_strict_container_pids_distinguishes_unreadable_and_empty(tmp_path):
+    proc = tmp_path / "proc"
+    cgroups = tmp_path / "cgroups"
+    with pytest.raises(OSError):
+        procstat.read_container_pids(10, "box", proc_root=proc, cgroup_root=cgroups, strict=True)
+    (proc / "10").mkdir(parents=True)
+    (proc / "10" / "cgroup").write_text("0::/lxc.payload.box/init.scope\n")
+    (cgroups / "lxc.payload.box").mkdir(parents=True)
+    assert procstat.read_container_pids(10, "box", proc_root=proc, cgroup_root=cgroups, strict=True) == []
+
+
+def test_strict_process_read_rejects_malformed_data(tmp_path):
+    (tmp_path / "9").mkdir()
+    (tmp_path / "9" / "stat").write_text("bad")
+    with pytest.raises(OSError):
+        procstat.read_process(9, proc_root=tmp_path, strict=True)
+    (tmp_path / "9" / "status").write_text("bad")
+    with pytest.raises(OSError):
+        procstat.read_nspid(9, proc_root=tmp_path, strict=True)
+    assert procstat.read_process(99, proc_root=tmp_path, strict=True) is None
+
+
 def test_read_process_returns_summed_cpu_ticks(tmp_path):
     write_stat(tmp_path, 42, comm="pytest", utime=700, stime=300, starttime=99)
 

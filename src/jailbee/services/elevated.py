@@ -33,14 +33,17 @@ class PausedAgent:
 def pause_agent(
     cfg: "Config", incus: "Incus", full: str, *, force: bool = False, now: datetime
 ) -> PausedAgent | None:
-    from jailbee import tmux
+    from jailbee import autostart, tmux
     from jailbee.accounts.adapters.base import get_adapter
+    from jailbee.agents import primary_agent
     from jailbee.incus import IncusError
     from jailbee.orchestration import agent_watch, labels
     from jailbee.orchestration.runner import parse_runner_label
 
     status = agent_watch.probe(incus, full, uid=cfg.container_user.uid)
-    if status is None or not status.alive:
+    if status is None:
+        raise RefreshError(f"could not determine whether an agent is running in {full}; refresh refused")
+    if not status.alive:
         return None
     try:
         config = {
@@ -65,13 +68,21 @@ def pause_agent(
         )
     try:
         adapter = get_adapter(status.agent)
-        if adapter.resume_args(session) is None:
+        if not adapter.resume_args(session):
             raise RefreshError(f"agent `{status.agent}` cannot resume a session")
         if not adapter.session_exists(cfg, full, session):
             raise RefreshError(f"session `{session}` has no transcript any more")
     except (KeyError, LookupError) as exc:
         raise RefreshError(f"agent `{status.agent}` cannot resume a session") from exc
     runner = parse_runner_label(config[labels.RUNNER])
+    target = "claude" if runner is not None else primary_agent(cfg).name
+    agent = cfg.agents.get(status.agent)
+    if (target != status.agent or agent is None or not agent.enabled
+            or not agent.command.strip() or not agent.prompt_args or not agent.prompt_args.strip()):
+        raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its session")
+    steps = autostart.agent_autostart_steps(cfg, initial_prompt=True, runner=runner, resume=session)
+    if not any(step.name == target and step.run for step in steps):
+        raise RefreshError(f"agent `{status.agent}` has no usable relaunch step")
     tmux.kill_window(incus, full, tmux.window_for(status.agent), checked=True)
     return PausedAgent(status.agent, session, runner)
 
@@ -116,11 +127,14 @@ def foreign_agents(
     )
     by_start = {s.proc_start for s in sessions}
     live = set()
-    for host_pid in procstat.read_container_pids(pid, full):
-        sample = procstat.read_process(host_pid)
-        if sample is not None and sample.starttime in by_start:
-            inner = procstat.read_nspid(host_pid)
-            live.add((inner, sample.starttime))
+    try:
+        for host_pid in procstat.read_container_pids(pid, full, strict=True):
+            sample = procstat.read_process(host_pid, strict=True)
+            if sample is not None and sample.starttime in by_start:
+                inner = procstat.read_nspid(host_pid, strict=True)
+                live.add((inner, sample.starttime))
+    except OSError as exc:
+        raise RefreshError(f"cannot inspect container processes: {exc}") from exc
     excluded = (prompted.pid, prompted.proc_start) if prompted and prompted.alive else None
     return [
         f"{s.agent} (pid {s.pid})"

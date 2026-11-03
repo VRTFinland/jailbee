@@ -79,7 +79,7 @@ def count_children(
     return sum(1 for sample in procs.values() if sample.ppid == parent and sample.comm in comms)
 
 
-def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
+def read_process(pid: int, *, proc_root: Path = PROC_ROOT, strict: bool = False) -> ProcSample | None:
     """Read one process, or None if it is gone or unreadable.
 
     ``comm`` (field 2) is the one free-form field in ``stat``: it is wrapped
@@ -92,11 +92,17 @@ def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
         # `errors="replace"`: comm is arbitrary bytes, and a strict decode
         # raised out of the whole sample. Only comm can be non-ASCII.
         raw = (proc_root / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return None
     except OSError:
+        if strict:
+            raise
         return None
     open_at = raw.find("(")
     close_at = raw.rfind(")")
     if open_at < 0 or close_at < open_at:
+        if strict:
+            raise OSError(f"invalid process stat for {pid}")
         return None
     comm = raw[open_at + 1 : close_at]
     # `rest` starts at field 3, so field N sits at index N - 3:
@@ -114,11 +120,13 @@ def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
             ppid=int(rest[1]),
             rss_pages=rss,
         )
-    except (IndexError, ValueError):
+    except (IndexError, ValueError) as exc:
+        if strict:
+            raise OSError(f"invalid process stat for {pid}") from exc
         return None
 
 
-def read_nspid(pid: int, *, proc_root: Path = PROC_ROOT) -> int | None:
+def read_nspid(pid: int, *, proc_root: Path = PROC_ROOT, strict: bool = False) -> int | None:
     """The pid `pid` has in its innermost pid namespace, or None.
 
     The `NSpid:` line of /proc/<pid>/status lists the process's pid in every
@@ -131,15 +139,23 @@ def read_nspid(pid: int, *, proc_root: Path = PROC_ROOT) -> int | None:
     """
     try:
         raw = (proc_root / str(pid) / "status").read_bytes()
+    except FileNotFoundError:
+        return None
     except OSError:
+        if strict:
+            raise
         return None
     for line in raw.splitlines():
         if line.startswith(b"NSpid:"):
             fields = line.split()[1:]
             try:
                 return int(fields[-1])
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as exc:
+                if strict:
+                    raise OSError(f"invalid namespace pid for {pid}") from exc
                 return None
+    if strict:
+        raise OSError(f"missing namespace pid for {pid}")
     return None
 
 
@@ -185,6 +201,7 @@ def read_container_pids(
     *,
     proc_root: Path = PROC_ROOT,
     cgroup_root: Path = CGROUP_ROOT,
+    strict: bool = False,
 ) -> list[int]:
     """Every pid inside the container whose init process is ``init_pid``.
 
@@ -207,12 +224,28 @@ def read_container_pids(
     try:
         raw = (proc_root / str(init_pid) / "cgroup").read_text(encoding="utf-8", errors="replace")
     except OSError:
+        if strict:
+            raise
         return []
     rel = _container_cgroup(raw, container)
     if rel is None:
+        if strict:
+            raise OSError(f"cannot locate cgroup for {container}")
         return []
     base = cgroup_root / rel
     pids: list[int] = []
+    if strict:
+        def fail(exc: OSError) -> None:
+            raise exc
+
+        for directory, _, files in os.walk(base, onerror=fail):
+            if "cgroup.procs" in files:
+                text = (Path(directory) / "cgroup.procs").read_text()
+                try:
+                    pids.extend(int(token) for token in text.split())
+                except ValueError as exc:
+                    raise OSError("invalid cgroup process list") from exc
+        return pids
     try:
         procs_files = sorted(base.rglob("cgroup.procs"))
     except OSError:
