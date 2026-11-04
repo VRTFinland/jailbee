@@ -35,12 +35,17 @@ def run_json(argv: list[str], *, cwd: str | None = None) -> object:
             argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=30
         )
     except FileNotFoundError as exc:
+        if cwd is not None and exc.filename == cwd:
+            raise GhError(f"cannot use working directory {cwd!r}: {exc.strerror}") from exc
         raise GhError("gh not found") from exc
     except subprocess.TimeoutExpired as exc:
         raise GhError(f"gh timed out; retry `{ ' '.join(argv) }`") from exc
+    except OSError as exc:
+        if cwd is not None and exc.filename == cwd:
+            raise GhError(f"cannot use working directory {cwd!r}: {exc.strerror}") from exc
+        raise GhError(f"cannot run gh: {exc}") from exc
     if result.returncode:
-        detail = result.stderr.strip() or "gh failed"
-        raise GhError(f"{detail}; retry `{ ' '.join(argv) }` from the same directory")
+        raise GhError(result.stderr.strip() or "gh failed")
     try:
         return json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -84,6 +89,8 @@ def issue_view(repo: str | None, number: int) -> IssueView:
         if not isinstance(title, str) or not isinstance(body, str):
             raise ValueError("invalid issue fields")
         return IssueView(title, body, names, normalized_state)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{ ' '.join(argv) }`") from exc
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise GhError(f"invalid issue response; retry `{ ' '.join(argv) }`: {exc}") from exc
 
@@ -103,10 +110,14 @@ def pr_view(number: int | None) -> PrView:
         parsed = urlparse(url)
         parts = parsed.path.strip("/").split("/")
         if (
-            not isinstance(pr_number, int) or not isinstance(head_sha, str)
+            not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number < 1
+            or not isinstance(head_sha, str) or not isinstance(url, str)
             or parsed.hostname != "github.com" or len(parts) < 4 or parts[2] != "pull"
+            or not parts[0] or not parts[1]
         ):
             raise ValueError("invalid number, head SHA, or GitHub PR URL")
         return PrView(pr_number, head_sha, f"{parts[0]}/{parts[1]}")
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{ ' '.join(argv) }`") from exc
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise GhError(f"invalid PR response; retry `{ ' '.join(argv) }`: {exc}") from exc
