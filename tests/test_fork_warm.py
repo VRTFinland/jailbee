@@ -268,11 +268,22 @@ def test_snapshot_moved_after_preflight_skips_copy(warm_rig, mocker):
     incus.snapshot_delete.assert_called_once()
 
 
+def test_directory_ignore_pattern_matches_absent_child_directory(warm_rig):
+    incus = warm_rig[1]
+    def execute(name, argv, **kwargs):
+        if "check-ignore" in argv and not argv[-1].endswith("/"):
+            raise IncusError("directory-only ignore needs slash on missing path")
+        return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+    incus.exec.side_effect = execute
+    assert seed(warm_rig).seeded == ["app/build", ".gradle"]
+    assert any("check-ignore" in c.args[1] and c.args[1][-1] == "app/build/" for c in incus.exec.call_args_list)
+
+
 def test_source_only_ignore_rule_does_not_dirty_child(warm_rig):
     incus = warm_rig[1]
 
     def execute(name, argv, **kwargs):
-        if "check-ignore" in argv and argv[-1] == "app/build":
+        if "check-ignore" in argv and argv[-1].rstrip("/") == "app/build":
             raise IncusError("not ignored in child")
         return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
 

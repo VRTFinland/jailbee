@@ -143,7 +143,9 @@ def _seed(
         ],
         uid=uid,
     )
-    paths, unmatched = match_patterns(patterns, [p for p in listing.split("\0") if p])
+    entries = [p for p in listing.split("\0") if p]
+    directories = {p.rstrip("/") for p in entries if p.endswith("/")}
+    paths, unmatched = match_patterns(patterns, entries)
     if unmatched:
         warn(f"Warm paths matched no ignored entries: {', '.join(unmatched)}")
     if not paths:
@@ -185,7 +187,8 @@ def _seed(
             target = f"{child_repo}/{path}"
             try:
                 incus.exec(
-                    child, ["git", "-C", child_repo, "check-ignore", "-q", "--", path], uid=uid
+                    child, ["git", "-C", child_repo, "check-ignore", "-q", "--",
+                            path + "/" if path in directories else path], uid=uid
                 )
                 incus.exec(
                     child,
