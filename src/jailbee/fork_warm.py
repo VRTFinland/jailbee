@@ -187,8 +187,17 @@ def _seed(
             target = f"{child_repo}/{path}"
             try:
                 incus.exec(
-                    child, ["git", "-C", child_repo, "check-ignore", "-q", "--",
-                            path + "/" if path in directories else path], uid=uid
+                    child,
+                    [
+                        "git",
+                        "-C",
+                        child_repo,
+                        "check-ignore",
+                        "-q",
+                        "--",
+                        path + "/" if path in directories else path,
+                    ],
+                    uid=uid,
                 )
                 incus.exec(
                     child,
