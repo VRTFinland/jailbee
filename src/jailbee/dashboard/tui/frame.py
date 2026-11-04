@@ -133,6 +133,8 @@ def help_lines() -> list[str]:
         "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
+        "Outbox box: Tab switches Outbox/Sent; in Sent, o opens the URL (or shows it), v preview.",
+        "Repo menu Sent…: the repo's sent timeline; † marks a destroyed or recreated container.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",

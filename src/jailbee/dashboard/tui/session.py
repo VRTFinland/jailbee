@@ -10,12 +10,13 @@ Container state is read ONLY through the shared state service.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
@@ -425,7 +426,9 @@ class DashboardSession:
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
         # The open Outbox box's controller and the menu its Esc returns to.
         self.outbox: OutboxController | None = None
-        self.outbox_parent: MenuState | None = None
+        # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
+        self.url_opener: Callable[[str], object] | None = None
+        self.outbox_parent: MenuState | RepoMenuState | None = None
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
@@ -1769,10 +1772,64 @@ class DashboardSession:
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
         )
+        info = next((c for g in self.groups for c in g.containers if c.name == container), None)
+        if info is not None and info.sent_count:
+            # Rows are read here, on opening (the snapshot only counts them): this
+            # container's current incarnation, the creation time as the gatherer keys it.
+            created = info.created_at.astimezone(UTC) if info.created_at is not None else None
+            prefix = group.prefix if group is not None else ""
+            controller.sent_loader = lambda: dob.read_sent(
+                prefix, instance=container, created=created, scope=self.scope
+            )
+            controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
         self.outbox = controller
         controller.load_later()
         return controller.state
+
+    def open_sent(self, prefix: str) -> OutboxState | None:
+        """The repo's Sent timeline (all containers, destroyed ones too); None after a notice."""
+        group = target_group(self.groups, prefix, "repo")
+        if group is None:
+            self.set_notice(f"'{prefix}' is gone")
+            return None
+        live = {
+            c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
+            for c in group.containers
+        }
+        controller = OutboxController(
+            SessionOutboxRunner(self, ""),
+            title=prefix,
+            container=None,
+            prefix=prefix,
+            standalone=False,
+            on_change=lambda _state: None,  # nothing is on screen yet
+            sent_loader=lambda: dob.read_sent(prefix, live=live, scope=self.scope),
+            sent_only=True,
+        )
+        controller.load_sent()
+        controller.on_change = self._outbox_listener(controller)
+        self.outbox = controller
+        return controller.state
+
+    def open_sent_url(self, row: dob.RowKey | None) -> None:
+        """`o` on a Sent row: the browser on a local desktop, else the URL as a notice."""
+        state = self.overlay
+        item = dob.find_sent(state, row) if isinstance(state, OutboxState) else None
+        if item is None:
+            return
+        url = item.row.url
+        if not url:
+            self.set_notice("This record has no URL")
+            return
+        local = not self.over_ssh and bool(
+            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+        )
+        if local and self.url_opener is not None:
+            self.url_opener(url)
+            self.set_notice(f"Opening {url}")
+        else:
+            self.set_notice(url, seconds=FAILURE_NOTICE_SECONDS)
 
     def _outbox_listener(self, controller: OutboxController) -> Callable[[OutboxState], None]:
         """``controller``'s `on_change`: the box while it is open, else a notice."""
@@ -1807,6 +1864,9 @@ class DashboardSession:
             return
         if name == "cancel" and state.question is None:
             self.overlay_cancel()
+            return
+        if name == "open":
+            self.open_sent_url(row)
             return
         controller.intent(name, row, value)
 
@@ -2590,6 +2650,8 @@ class DashboardSession:
             self.selected = Row("repo", self.overlay.repo)
         elif isinstance(self.overlay, OutboxState) and self.overlay.scope_name is not None:
             self.selected = Row("container", self.overlay.scope_name)
+        elif isinstance(self.overlay, OutboxState) and self.overlay.sent_repo:
+            self.selected = Row("repo", self.overlay.prefix)
         elif egress_panel is not None:
             # A question asked from the Egress panel keeps the panel's
             # row, so the cursor does not jump to the repo header.
@@ -2779,10 +2841,8 @@ class DashboardSession:
             elif verb == dact.REPO_PRUNE:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
             elif verb == dact.REPO_SENT:
-                # The timeline view is not built yet; `jailbee outbox sent ls` lists it.
-                self.set_notice(
-                    f"Sent view not available here yet: jailbee outbox sent ls --repo {target}"
-                )
+                self.outbox_parent = repo_parent
+                self.overlay = self.open_sent(target)
             elif verb == "fold":
                 self.folded = toggle_folded(self.folded, target)
                 self._recompute_shown()
