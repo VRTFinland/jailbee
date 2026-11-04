@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from jailbee.config.models_orchestration import GrantableConfig, OrchestrationProfile
+from jailbee.config.models_orchestration import GrantableConfig, OrchestrationProfile, PublishRightsConfig
 from jailbee.orchestration.grant import Grant, Grantable, GrantError, Operation, PublishRights, RepoCap
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
@@ -26,7 +26,7 @@ def _grant_of(profile: OrchestrationProfile) -> Grant:
             egress=tuple(g.egress),
         ),
         default_runner=profile.default_runner,
-        publish=profile.publish or PublishRights(),
+        publish=profile.publish.to_rights() if profile.publish is not None else PublishRights(),
     )
 
 
@@ -41,7 +41,7 @@ def profile_of(grant: Grant) -> OrchestrationProfile:
             egress=list(grant.grantable.egress),
         ),
         default_runner=grant.default_runner,
-        publish=grant.publish,
+        publish=PublishRightsConfig.model_validate(grant.publish.model_dump(mode="json")),
     )
 
 
@@ -86,5 +86,5 @@ def repo_cap(cfg: Config) -> RepoCap:
         mounts=_tuple(repo.mounts),
         egress=_tuple(repo.egress),
         loose=repo.loose,
-        publish=repo.publish,
+        publish=repo.publish.to_rights() if isinstance(repo.publish, PublishRightsConfig) else repo.publish,
     )

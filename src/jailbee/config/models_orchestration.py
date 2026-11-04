@@ -15,6 +15,7 @@ from jailbee.orchestration.grant import (
     DEFAULT_OPERATIONS,
     IMPLIED_OPERATIONS,
     OPERATIONS,
+    ISSUE_ACTION_KINDS,
     PublishRights,
 )
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
@@ -53,6 +54,50 @@ class GrantableConfig(BaseModel):
         return _check_egress(v) or []
 
 
+class ForeignIssueRightsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repos: list[str] = Field(default_factory=list, description="Foreign owner/name repositories, or '*' alone for any repository.")
+    actions: list[str] = Field(default_factory=list, description="Allowed issue action kinds on the listed foreign repositories.")
+
+    @field_validator("repos")
+    @classmethod
+    def _repos(cls, values: list[str]) -> list[str]:
+        from jailbee.orchestration.grant import ForeignIssueRights
+        return list(ForeignIssueRights(repos=tuple(values)).repos)
+
+    @field_validator("actions")
+    @classmethod
+    def _actions(cls, values: list[str]) -> list[str]:
+        return _publish_kinds(values)
+
+
+def _publish_kinds(values: list[str]) -> list[str]:
+    unknown = sorted(set(values) - set(ISSUE_ACTION_KINDS))
+    if unknown:
+        raise ValueError(f"unknown issue action(s): {', '.join(unknown)}")
+    return sorted(set(values))
+
+
+class PublishRightsConfig(BaseModel):
+    """Editor-friendly lists; frozen tuple grant models are built at the boundary."""
+    model_config = ConfigDict(extra="forbid")
+
+    issues: list[str] = Field(default_factory=list, description="Issue action kinds allowed on the own repository and declared submodules.")
+    foreign_issues: ForeignIssueRightsConfig = Field(default_factory=ForeignIssueRightsConfig, description="Additional rights on explicitly listed foreign repositories.")
+    pull_requests: bool = Field(default=False, description="Publish source manifests for the orchestrator's own PR branches.")
+    pr_reviews: bool = Field(default=False, description="Publish reviews and descriptions on bound PRs.")
+    max_actions_per_hour: int = Field(default=30, ge=1, le=500, description="Maximum reserved actions in a sliding hour.")
+
+    @field_validator("issues")
+    @classmethod
+    def _issues(cls, values: list[str]) -> list[str]:
+        return _publish_kinds(values)
+
+    def to_rights(self) -> PublishRights:
+        return PublishRights.model_validate(self.model_dump())
+
+
 class OrchestrationProfile(BaseModel):
     """A named set of orchestration rights."""
 
@@ -73,7 +118,7 @@ class OrchestrationProfile(BaseModel):
         description="What the holder may hand on to the children it spawns.",
     )
 
-    publish: PublishRights | None = None
+    publish: PublishRightsConfig | None = Field(default=None, description="Opt-in rights to publish this orchestrator's own issue and PR outbox manifests.")
 
     default_runner: Runner | None = Field(
         default=None, description="Default runner for children of a container granted this profile."
@@ -137,7 +182,7 @@ class RepoOrchestration(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    publish: PublishRights | Literal[False] | None = None
+    publish: PublishRightsConfig | Literal[False] | None = Field(default=None, description="Narrow the host's publish rights; false forbids all publishing in this repo.")
 
     idle_after_seconds: int = Field(
         default=900,

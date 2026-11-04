@@ -100,8 +100,8 @@ ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = ("comment", "create", "edit", 
 class ForeignIssueRights(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    repos: tuple[str, ...] = ()
-    actions: tuple[IssueActionKind, ...] = ()
+    repos: tuple[str, ...] = Field(default=(), description="Foreign owner/name repositories, or '*' alone for any repository.")
+    actions: tuple[IssueActionKind, ...] = Field(default=(), description="Issue action kinds permitted on the listed foreign repositories.")
 
     @field_validator("repos")
     @classmethod
@@ -123,11 +123,11 @@ class ForeignIssueRights(BaseModel):
 class PublishRights(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    issues: tuple[IssueActionKind, ...] = ()
-    foreign_issues: ForeignIssueRights = ForeignIssueRights()
-    pull_requests: bool = False
-    pr_reviews: bool = False
-    max_actions_per_hour: int = Field(default=30, ge=1, le=500)
+    issues: tuple[IssueActionKind, ...] = Field(default=(), description="Issue actions allowed on the own repository and declared submodules.")
+    foreign_issues: ForeignIssueRights = Field(default=ForeignIssueRights(), description="Additional issue rights for explicitly listed foreign repositories.")
+    pull_requests: bool = Field(default=False, description="Publish source manifests for the orchestrator's own PR branches.")
+    pr_reviews: bool = Field(default=False, description="Publish comments, replies and descriptions on bound PRs.")
+    max_actions_per_hour: int = Field(default=30, ge=1, le=500, description="Maximum reserved publish actions per orchestrator in a sliding hour.")
 
     @field_validator("issues")
     @classmethod

@@ -29,7 +29,7 @@ def test_idle_threshold_is_positive_and_configurable():
 
 def test_publish_config_blocks():
     profile = OrchestrationProfile.model_validate({"publish": {"issues": ["comment"]}})
-    assert profile.publish.issues == ("comment",)
+    assert profile.publish.issues == ["comment"]
     assert RepoOrchestration(publish=False).publish is False
     with pytest.raises(ValidationError):
         OrchestrationProfile.model_validate({"publish": {"unknown": True}})

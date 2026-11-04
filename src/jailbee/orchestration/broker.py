@@ -19,7 +19,7 @@ from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import finishing, inbox_state, labels, watch
+from jailbee.orchestration import finishing, inbox_state, labels, publishing, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -51,6 +51,7 @@ from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
     MessageManifest,
+    PublishManifest,
     RestartManifest,
     SpawnManifest,
     StopManifest,
@@ -529,6 +530,8 @@ def _handle_raw(
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
         _reply(ctx, ref, outcome, memory)
     delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+    if isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started":
+        publishing.start(ctx, manifest)
 
 
 def _refresh_children_snapshot(
@@ -601,6 +604,7 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
         saved = json.loads(path.read_text())
         if saved.get("ref"):
             _reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
+    publishing.settle(ctx, lambda ref, out: _reply(ctx, ref, out, memory))
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
         _handle_raw(ctx, raw, journal, memory)
 
@@ -704,6 +708,7 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
+    publishes = publishing.inflight(root)
     parked = [
         e["name"]
         for e in raw
@@ -714,7 +719,7 @@ def tick(
     ]
     # Before the early return: a later namesake must not inherit stale entries.
     _forget_vanished_watches(root, present)
-    if not candidates and not queues and not parked:
+    if not candidates and not queues and not parked and not publishes:
         return False
 
     try:
@@ -756,6 +761,10 @@ def tick(
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
+            if node.full in publishes:
+                publish_ctx = context(node)
+                if publish_ctx is not None:
+                    publishing.settle(publish_ctx, lambda ref, out: _reply(publish_ctx, ref, out, memory))
             # A revoked grant leaves no label; parked messages still get delivered.
             if node.running and has_pending(root, node.full):
                 _flush_unlabelled(node, context, root, incus)
@@ -961,6 +970,7 @@ def run_broker(incus: Incus) -> int:
     memory = BrokerMemory()
     try:
         journal = Journal(root)
+        publishing.recover(root)
         log.info("orchestration broker starting")
         _stage_container_app(memory)
         while not stop.requested:
