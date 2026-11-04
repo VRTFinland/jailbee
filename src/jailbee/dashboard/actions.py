@@ -28,7 +28,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
-    from jailbee.dashboard.model import RepoAdvisory, RepoGroup, RepoTarget
+    from jailbee.dashboard.model import RepoAdvisory, RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.orchestration.runner_model import Runner
 
