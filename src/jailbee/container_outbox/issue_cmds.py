@@ -347,9 +347,7 @@ def assign(
         store = _guard()
         target = _parse_target(issue)
         if not (me or unassign_me or add or remove):
-            raise OutboxCommandError(
-                "choose --me, --unassign-me, --add or --remove", 2
-            )
+            raise OutboxCommandError("choose --me, --unassign-me, --add or --remove", 2)
         add_list = ([ASSIGNEE_ME] if me else []) + list(add or [])
         remove_list = ([ASSIGNEE_ME] if unassign_me else []) + list(remove or [])
         view = _view(repo, target)
