@@ -112,6 +112,19 @@ def test_open_disabled_without_url(dialog, mocker):
     opened.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "url", ["file:///tmp/private", "http://github.com/o/r", "javascript:alert(1)"]
+)
+def test_open_refuses_non_https_url(dialog, mocker, url):
+    _rec("unsafe", url=url)
+    opened = mocker.patch("jailbee.qtui.outbox.QDesktopServices.openUrl")
+    dialog.sent_button.setChecked(True)
+    dialog.sent_tree.setCurrentItem(dialog.sent_tree.topLevelItem(0))
+    dialog.open_sent_url()
+    opened.assert_not_called()
+    assert not dialog.open_button.isEnabled()
+
+
 def test_uncertain_row_is_marked(dialog):
     _rec("maybe", state="uncertain", url=None)
     dialog.sent_button.setChecked(True)
@@ -137,11 +150,12 @@ def test_whole_repo_shows_other_containers_and_marks_stale(dialog):
     assert by_summary["body of earlier"].text(0).startswith("†")
 
 
-def test_refresh_rereads_the_log(dialog):
+def test_refresh_rereads_the_log(dialog, qtbot):
     dialog.sent_button.setChecked(True)
     assert _texts(dialog) == []
     _rec("late")
     dialog.refresh()
+    qtbot.waitUntil(lambda: not dialog.busy)
     assert _texts(dialog) == ["body of late"]
 
 

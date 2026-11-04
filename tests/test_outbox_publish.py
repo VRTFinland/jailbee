@@ -1683,12 +1683,6 @@ def test_published_actions_recorded_with_publisher(env, kind, publisher):
     assert all(r.state == "applied" and r.url for r in rows)
 
 
-def test_publish_options_default_is_user():
-    from jailbee.outbox.publish import PublishOptions
-
-    assert PublishOptions(publisher="user").publisher == "user"
-
-
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_publish_survives_sent_record_failure_selected(env, kind, mocker, caplog):
     mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))

@@ -327,7 +327,9 @@ class OutboxDialog(QDialog):
         selected = self._selected()
         enabled = not self.busy and not self.closing
         sent = self._selected_sent()
-        self.open_button.setEnabled(bool(sent and sent.row.url))
+        self.open_button.setEnabled(
+            bool(sent and sent.row.url and sent.row.url.startswith("https://"))
+        )
         self.sent_button.setEnabled(enabled)
         self.repo_check.setEnabled(enabled)
         self.refresh_button.setEnabled(enabled)
@@ -453,7 +455,7 @@ class OutboxDialog(QDialog):
     @Slot()
     def open_sent_url(self) -> None:
         item = self._selected_sent()
-        if item is None or not item.row.url:
+        if item is None or not item.row.url or not item.row.url.startswith("https://"):
             return
         QDesktopServices.openUrl(QUrl(item.row.url))
 

@@ -78,6 +78,14 @@ def test_uncertain_then_mark_applied_sets_state_and_url() -> None:
     assert row.publisher == "orchestrator" and row.sent_at == T0
 
 
+def test_successful_retry_replaces_uncertain_attempt_provenance() -> None:
+    _rec(_action(), "uncertain", publisher="user")
+    success_time = T0 + timedelta(minutes=5)
+    _rec(_action(url="https://github.com/o/r/issues/5"), publisher="orchestrator", now=success_time)
+    (row,) = sent.list_records()
+    assert (row.state, row.publisher, row.sent_at) == ("applied", "orchestrator", success_time)
+
+
 def test_applied_is_never_downgraded() -> None:
     _rec(_action(url="u"), "applied")
     _rec(_action(), "uncertain")

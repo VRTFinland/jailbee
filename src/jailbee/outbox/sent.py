@@ -10,7 +10,9 @@ callers decide how to degrade.
 One row per action, keyed by `dedup_key` (instance, `container_created`,
 outbox, manifest, proposal digest, action index) so a retried or resumed
 publish updates its row instead of adding one, while a reused manifest name
-with different content gets rows of its own. All datetimes are UTC.
+with different content gets rows of its own. Source publications qualify the
+proposal digest with create/update, keeping the create receipt when the same
+proposal is later used to update a PR. All datetimes are UTC.
 """
 
 from __future__ import annotations
@@ -215,7 +217,9 @@ def _upsert(
                 )
             )
         else:
-            # sent_at and publisher keep the first attempt's provenance.
+            if existing.state == "uncertain" and state == "applied":
+                existing.publisher = publisher
+                existing.sent_at = _utc(now) or now
             if existing.state != "applied":
                 existing.state = state
             existing.url = action.url or existing.url
@@ -232,18 +236,19 @@ def record(
     container_prefix: str,
     container_created: datetime | None,
     publisher: Publisher,
-    action: SentAction,
+    action: SentAction | Callable[[], SentAction],
     state: State,
     now: datetime | None = None,
 ) -> None:
-    """Upsert the row for `action`; an `applied` row is never downgraded. Best effort."""
-    key = dedup_key(
-        instance, container_created, action.outbox, action.manifest, action.digest, action.index
-    )
-    stamp = now if now is not None else datetime.now(UTC)
+    """Upsert without downgrading applied rows; a factory builds the action best effort too."""
 
     def run() -> None:
-        args = (key, state, action, instance, container_prefix, container_created, publisher, stamp)
+        built = action() if callable(action) else action
+        key = dedup_key(
+            instance, container_created, built.outbox, built.manifest, built.digest, built.index
+        )
+        stamp = now if now is not None else datetime.now(UTC)
+        args = (key, state, built, instance, container_prefix, container_created, publisher, stamp)
         try:
             _upsert(*args)
         except IntegrityError:

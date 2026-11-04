@@ -23,6 +23,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from rich.markup import escape
@@ -1104,13 +1105,14 @@ def apply_manifest(
             failure = str(e)
             break
         assert target.pr is not None
+        pr_number = target.pr.number
         sent.record(
             instance=container,
             container_prefix=cfg.container_prefix,
             container_created=container_created,
             publisher=publisher,
-            action=_sent_action(
-                manifest, sent_digest, index, manifest.actions[index], url, target.pr.number
+            action=partial(
+                _sent_action, manifest, sent_digest, index, manifest.actions[index], url, pr_number
             ),
             state="applied",
         )

@@ -2543,6 +2543,27 @@ def test_publish_survives_sent_record_failure_issue(execution, mocker, caplog):
     assert len(caplog.records) == 1 and "disk gone" in caplog.records[0].getMessage()
 
 
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_issue_publish_survives_sent_construction_failure(execution, mocker, uncertain):
+    from jailbee import issue_outbox
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_comment()]})
+    mocker.patch("jailbee.issue_outbox._sent_action", side_effect=OSError("snapshot unavailable"))
+    if uncertain:
+        execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+            "timeout", uncertain=True
+        )
+    report = _apply(execution, batch)
+    if uncertain:
+        assert report.failure.uncertain
+        key = issue_outbox.journal_key(batch.identity, "a.json")
+        assert execution["store"].load(key).actions[0].state == "uncertain"
+    else:
+        assert report.failure is None and report.cleaned == ("a.json",)
+        assert len(report.applied) == 1
+
+
 def test_resolve_applied_updates_uncertain_row_with_url(execution):
     from jailbee import issue_outbox
     from jailbee.issue_github import IssueGithubMutationError
@@ -2568,7 +2589,10 @@ def test_resolve_applied_updates_uncertain_row_with_url(execution):
     assert row.sent_at == before.sent_at and row.id == before.id
 
 
-def test_retry_then_success_updates_the_same_row(execution):
+def test_retry_then_broker_success_updates_the_same_row_and_provenance(execution, mocker):
+    from datetime import datetime, timedelta
+    from unittest.mock import Mock
+
     from jailbee import issue_outbox
     from jailbee.issue_github import IssueGithubMutationError, MutationReceipt
 
@@ -2578,15 +2602,30 @@ def test_retry_then_success_updates_the_same_row(execution):
     )
     assert _apply(execution, batch).failure.uncertain
     _reconcile(execution, batch, issue_outbox.RetryResolution())
-    assert [r.state for r in _sent_rows()] == ["uncertain"]
+    (before,) = _sent_rows()
+    assert before.state == "uncertain" and before.publisher == "user"
     execution["mutations"]["add_comment"].side_effect = None
     execution["mutations"]["add_comment"].return_value = MutationReceipt(
         7, "https://github.com/acme/app/issues/7#issuecomment-1"
     )
+    success_time = before.sent_at + timedelta(minutes=5)
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = success_time
+    mocker.patch("jailbee.outbox.sent.datetime", clock)
     batch = execution["batch"]({"a.json": [_comment(issue=7)]})
-    assert _apply(execution, batch).failure is None
+    report = issue_outbox.apply_batch(
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
+        container_prefix="app",
+        publisher="orchestrator",
+    )
+    assert report.failure is None
     (row,) = _sent_rows()
     assert row.state == "applied" and row.url.endswith("#issuecomment-1")
+    assert row.id == before.id
+    assert (row.publisher, row.sent_at) == ("orchestrator", success_time)
 
 
 def test_drop_after_retry_forgets_uncertain_row(execution):
