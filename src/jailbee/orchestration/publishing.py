@@ -370,6 +370,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 own_branches_only=True,
                 result_sink=lines.append,
                 audit_sink=actual.append,
+                publisher="orchestrator",
             )
         else:
             if entry["kind"] == "review":
@@ -388,7 +389,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 full,
                 ProposalId(entry["outbox"], entry["manifest"]),
                 journal_store=JournalStore(),
-                options=PublishOptions(foreign=entry["foreign"]),
+                options=PublishOptions(foreign=entry["foreign"], publisher="orchestrator"),
                 confirm=lambda n: True,
                 confirm_foreign=lambda q: False,
                 raise_errors=True,

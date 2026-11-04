@@ -41,7 +41,8 @@ from jailbee.update_check import UpdateNotice
 # 17 adds gathered job liveness.
 # 18 adds profile-aware autostart re-run eligibility.
 # 19 combines these with service choices and built-in autostart profiles.
-PROTOCOL = 19
+# 20 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
+PROTOCOL = 20
 
 
 class ProtocolError(ValueError):

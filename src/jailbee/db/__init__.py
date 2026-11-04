@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 
 
 def state_dir() -> Path:
@@ -281,6 +281,11 @@ def _migrate_to_v19(conn: Connection) -> None:
         conn.exec_driver_sql("ALTER TABLE view_prefs ADD COLUMN details_rows INTEGER")
 
 
+def _migrate_to_v20(conn: Connection) -> None:
+    """v19 -> v20 adds the `sent_record` table (the outbox Sent log) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -301,6 +306,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     17: _migrate_to_v17,
     18: _migrate_to_v18,
     19: _migrate_to_v19,
+    20: _migrate_to_v20,
 }
 
 

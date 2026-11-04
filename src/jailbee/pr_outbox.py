@@ -33,6 +33,7 @@ from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
+from jailbee.outbox import sent
 from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.markdown_view import print_lines, render_markdown
@@ -1288,6 +1289,54 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
         assert_never(action)
 
 
+def manifest_digest(manifest: Manifest) -> str:
+    """A content digest of a parsed manifest, for callers without its raw text.
+
+    Progress lives in the container's sidecar, not the manifest, so the digest
+    is the same on every resume of one proposal.
+    """
+    from dataclasses import asdict
+
+    blob = json.dumps(asdict(manifest), sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def proposal_files_digest(files: Mapping[str, str], name: str) -> str:
+    """`proposal_digest` of the stored manifest `name` and the bodies it references."""
+    from jailbee.outbox_io import proposal_digest
+
+    raw = files[name]
+    return proposal_digest(name, raw, {n: files[n] for n in _body_references(raw) if n in files})
+
+
+def _sent_action(
+    manifest: Manifest, digest: str, index: int, action: Action, receipt_url: str, number: int
+) -> sent.SentAction:
+    """The Sent-log entry of one accepted PR action, from the manifest snapshot in hand."""
+    kind = type(action).__name__.lower().removesuffix("action")
+    title: str | None = None
+    if isinstance(action, ReviewAction):
+        parts = [action.body] if action.body else []
+        parts.extend(f"{c.path}:{c.line}\n{c.body}" for c in action.comments)
+        content = "\n\n".join(parts)
+    elif isinstance(action, DescriptionAction):
+        content, title = action.body, action.title
+    else:
+        content = action.body
+    return sent.SentAction(
+        outbox="review",
+        manifest=manifest.name,
+        index=index,
+        kind=kind,
+        repo=manifest.repo,
+        target=number,
+        url=receipt_url or f"https://github.com/{manifest.repo}/pull/{number}",
+        title=title,
+        content=content,
+        digest=digest,
+    )
+
+
 def apply_manifest(
     cfg: Config,
     incus: Incus,
@@ -1299,10 +1348,19 @@ def apply_manifest(
     indices: frozenset[int] | None = None,
     draft: bool = False,
     before_action: Callable[[], None] | None = None,
+    publisher: sent.Publisher,
+    container_created: datetime | None,
+    digest: str | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
 
     Call `before_action` immediately before each attempted action, if provided.
+
+    Each action GitHub accepts is recorded in the outbox Sent log (best effort)
+    right away, before the sidecar write, so a later container-side failure
+    still leaves the record. `publisher` says who published it. `digest` is the
+    proposal's content digest (it keeps a reused manifest name's rows apart);
+    left out, it is derived from the parsed manifest.
 
     Order: the review (if any) first — one atomic call carrying every line
     comment — then replies and general comments in manifest order, then the
@@ -1356,6 +1414,7 @@ def apply_manifest(
         )
 
     manifest = target.manifest
+    sent_digest = digest if digest is not None else manifest_digest(manifest)
     sidecar_path = f"{outbox_dir()}/{manifest.name}.progress.json"
 
     applied: list[int] = []
@@ -1379,6 +1438,17 @@ def apply_manifest(
         except pr.PrError as e:
             failure = str(e)
             break
+        assert target.pr is not None
+        sent.record(
+            instance=container,
+            container_prefix=cfg.container_prefix,
+            container_created=container_created,
+            publisher=publisher,
+            action=_sent_action(
+                manifest, sent_digest, index, manifest.actions[index], url, target.pr.number
+            ),
+            state="applied",
+        )
         applied.append(index)
         urls.append(url)
         running_applied.add(index)
@@ -2725,6 +2795,7 @@ def offer_pending_comments(
     result_sink: Callable[[str], None] | None = None,
     action_limit: int | None = None,
     audit_sink: Callable[[dict[str, str]], None] | None = None,
+    publisher: sent.Publisher,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2738,6 +2809,7 @@ def offer_pending_comments(
     container's own; only the unified outbox passes it.
     plan_sink (one selected manifest, dry run only) receives the plan as JSON
     and nothing is printed.
+    publisher is recorded in the Sent log with every action published.
     """
     from jailbee.outbox import io as store_io
     from jailbee.outbox.inspect import pr_progress_evidence
@@ -2815,6 +2887,7 @@ def offer_pending_comments(
                 result_sink=result_sink,
                 action_limit=action_limit,
                 audit_sink=audit_sink,
+                publisher=publisher,
             )
     except (
         OutboxReadError,
@@ -2982,6 +3055,7 @@ def _offer_locked(
     result_sink: Callable[[str], None] | None = None,
     action_limit: int | None = None,
     audit_sink: Callable[[dict[str, str]], None] | None = None,
+    publisher: sent.Publisher,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -3224,6 +3298,9 @@ def _offer_locked(
                 indices=idx,
                 draft=draft,
                 before_action=tick,
+                publisher=publisher,
+                container_created=sent.parse_created(identity.created_at),
+                digest=proposal_files_digest(outbox.files, target.manifest.name),
             )
             if audit_sink is not None:
                 for index in outcome.applied:

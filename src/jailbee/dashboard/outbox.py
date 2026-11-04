@@ -15,9 +15,16 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal
 
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from jailbee.outbox.sent import SentRow
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
 class OutboxLoadError(Exception):
@@ -163,6 +170,19 @@ class Abilities:
 
 
 @dataclass(frozen=True)
+class SentItem:
+    """One Sent record as the box shows it.
+
+    ``gone`` is None for a record of the container as it is now; otherwise why
+    it is marked: the container was destroyed, or recreated since (an earlier
+    incarnation under the same name).
+    """
+
+    row: SentRow
+    gone: str | None = None
+
+
+@dataclass(frozen=True)
 class OutboxState:
     title: str
     containers: tuple[ContainerListing, ...]
@@ -178,6 +198,12 @@ class OutboxState:
     all_repos: bool = False
     prefix: str = ""  # dashboard: the container's repo prefix; standalone: ""
     scope_name: str | None = None  # dashboard: the one container; standalone: None
+    # The Sent log: a tab of the box, or (``sent_repo``) the whole box for a repo timeline.
+    tab: Literal["outbox", "sent"] = "outbox"
+    sent: tuple[SentItem, ...] = ()
+    sent_cursor: RowKey | None = None
+    sent_repo: bool = False
+    tab_touched: bool = False  # the user chose a tab: never switch it for them
 
 
 @dataclass(frozen=True)
@@ -188,7 +214,7 @@ class Row:
     depth: int
     text: Text
     markable: bool
-    role: Literal["header", "proposal", "action", "comment", "note"]
+    role: Literal["header", "proposal", "action", "comment", "note", "sent"]
 
 
 def _str(value: object, default: str = "") -> str:
@@ -453,7 +479,116 @@ def _comment_row(
     return Row(key, 2, _fit(text, width, 2), action.delete_scope is not None, "comment")
 
 
+def active_cursor(state: OutboxState) -> RowKey | None:
+    """The cursor of whichever tab is showing."""
+    return state.sent_cursor if state.tab == "sent" else state.cursor
+
+
+# ---------------------------------------------------------------------------
+# Sent log: rows and preview
+# ---------------------------------------------------------------------------
+
+SENT_EMPTY = "(nothing sent yet)"
+
+
+def sent_key(item: SentItem) -> RowKey:
+    return ("", "sent", item.row.id, None)
+
+
+def sent_items(
+    rows: Sequence[SentRow], live: Mapping[str, datetime | None] | None = None
+) -> tuple[SentItem, ...]:
+    """``rows`` as items; with ``live`` (instance -> creation time), mark stale incarnations.
+
+    A row is current when its instance is in ``live`` with the same creation
+    time. Without ``live`` every row is current (the per-container tab already
+    filtered to the live incarnation).
+    """
+    items: list[SentItem] = []
+    for row in rows:
+        gone = None
+        if live is not None:
+            if row.instance not in live:
+                gone = "container destroyed"
+            elif live[row.instance] != row.container_created:
+                gone = "earlier incarnation (container recreated)"
+        items.append(SentItem(row, gone))
+    return tuple(items)
+
+
+def read_sent(
+    prefix: str,
+    *,
+    instance: str | None = None,
+    created: datetime | None = None,
+    live: Mapping[str, datetime | None] | None = None,
+    scope: RemoteRepoScope | None = None,
+) -> tuple[SentItem, ...]:
+    """Read the Sent records on demand: one container's current incarnation, or a repo's all.
+
+    With ``instance`` the rows are that container's incarnation created at
+    ``created``; otherwise every row of ``prefix``, marked against ``live``
+    (instance -> creation time of the containers that exist now).
+    """
+    from jailbee.outbox import sent, sent_view
+
+    rows = sent.list_records(container_prefix=prefix, instance=instance, container_created=created)
+    return sent_items(sent_view.in_scope(rows, scope), live)
+
+
+def _sent_when(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%m-%d %H:%M")
+
+
+def _sent_target(row: SentRow) -> str:
+    return f"{row.repo}#{row.target}" if row.target is not None else row.repo
+
+
+def _sent_row(item: SentItem, state: OutboxState, width: int) -> Row:
+    from jailbee.outbox import sent_view
+
+    row = item.row
+    mark = "†" if item.gone else " "
+    flag = "?" if row.state == "uncertain" else " "
+    by = "orch" if row.publisher == "orchestrator" else "user"
+    parts = [f"{mark}{flag}{_sent_when(row.sent_at)}", by.ljust(4)]
+    if state.sent_repo:
+        parts.append(_clean(row.container or row.instance))
+    parts += [f"{row.outbox}/{row.kind}", _clean(_sent_target(row)), sent_view.summary(row)]
+    text = Text("  ".join(parts), no_wrap=True)
+    if row.state == "uncertain":
+        text.append("  ⚠ uncertain", style="yellow")
+    if item.gone:
+        text.stylize("dim")
+    return Row(sent_key(item), 0, _fit(text, width, 0), False, "sent")
+
+
+def sent_rows(state: OutboxState, width: int) -> tuple[Row, ...]:
+    return tuple(_sent_row(item, state, width) for item in state.sent)
+
+
+def find_sent(state: OutboxState, key: RowKey | None) -> SentItem | None:
+    if key is None or key[1] != "sent":
+        return None
+    return next((i for i in state.sent if i.row.id == key[2]), None)
+
+
+def sent_preview_lines(state: OutboxState, key: RowKey | None) -> list[Text]:
+    """The full record of the cursor row: its fields, the URL and the whole content."""
+    from jailbee.outbox import sent_view
+
+    item = find_sent(state, key)
+    if item is None:
+        return []
+    lines = [Text(line) for line in sent_view.show_lines(item.row)]
+    if item.gone:
+        lines.insert(1, Text(f"Note:       {item.gone}", style="yellow"))
+    return lines
+
+
 def visible_rows(state: OutboxState, width: int) -> tuple[Row, ...]:
+    if state.tab == "sent":
+        return sent_rows(state, width)
     rows: list[Row] = []
     many = len(state.containers) > 1
     for container in state.containers:
@@ -514,6 +649,12 @@ def _comment_preview(comment: CommentItem, width: int) -> list[Text]:
 
 def preview_lines(state: OutboxState, key: RowKey | None, width: int) -> tuple[Text, ...]:
     lines: list[Text] = []
+    if state.tab == "sent" and state.question is None:
+        lines.extend(sent_preview_lines(state, key))
+        if state.status:
+            lines.append(Text(""))
+            lines.extend(Text(_clean(line)) for line in state.status)
+        return tuple(lines)
     found = find_proposal(state, key)
     if state.question is not None:
         lines.extend(Text(_clean(line)) for line in state.question.lines)
@@ -586,9 +727,16 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
     if state.question is not None:
         return "↑/↓ choose · Enter confirm · Esc cancel"
     ab = state.abilities
+    if state.tab == "sent":
+        parts = ["↑/↓ move", "o open URL", "v preview"]
+        if not state.sent_repo:
+            parts.append("Tab Outbox")
+        return " · ".join([*parts, "r refresh", "Esc close"])
     if standalone:
         return _standalone_hint(ab)
     parts = ["↑/↓ move", "Enter open", "Space mark"]
+    if state.sent:
+        parts.append("Tab Sent")
     if ab.delete:
         parts.append("d delete")
     if ab.publish or ab.publish_hand_off:

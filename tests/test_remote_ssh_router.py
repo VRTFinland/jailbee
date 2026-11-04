@@ -1820,3 +1820,21 @@ def test_autostart_run_is_container_scoped():
 
     assert "autostart run" in _CONTAINER_COMMANDS
     assert not is_host_command("autostart run")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [("outbox", "sent", "ls"), ("outbox", "sent", "show", "1"), ("outbox", "sent", "clear", "-y")],
+)
+def test_outbox_sent_leaves_are_container_commands_under_repo_scope(argv):
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    path = " ".join(argv[:3])
+    assert command_path(argv) == path
+    scope = RemoteRepoScope(frozenset({"secret"}))
+    assert policy_allows(argv, FULL, scope=scope) == path
+    assert policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=[path])) == path
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=["outbox ls"]))
+    with pytest.raises(RouteError, match="config"):
+        policy_allows((*argv, "--config", "/etc/passwd"), FULL)

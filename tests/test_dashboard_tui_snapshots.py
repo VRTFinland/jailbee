@@ -190,6 +190,47 @@ def test_snapshot_outbox_box_alone_question(snap_compare):
     assert snap_compare(_outbox_alone(spec), terminal_size=(100, 30))
 
 
+def _sent_state(**over):
+    from dataclasses import replace
+
+    from jailbee.dashboard import outbox as dob
+    from tests.test_dashboard_outbox_sent import T0, _item
+
+    items = (
+        _item(
+            id=3,
+            sent_at=T0 + timedelta(minutes=9),
+            publisher="orchestrator",
+            state="uncertain",
+            target=None,
+            title="Add [red]retry[/red] to the sync",
+            content="body of the new issue\nsecond line",
+            url=None,
+        ),
+        _item(id=2, sent_at=T0 + timedelta(minutes=5), content="LGTM, thanks"),
+        _item(
+            id=1,
+            sent_at=T0,
+            container="old",
+            instance="alpha-old",
+            kind="review",
+            gone="container destroyed",
+            content="needs a test",
+        ),
+    )
+    state = dob.OutboxState("alpha-x", (), tab="sent", sent=items, **over)
+    return replace(state, sent_cursor=dob.sent_key(items[1]))
+
+
+def test_snapshot_outbox_sent_tab(snap_compare):
+    assert snap_compare(_outbox_alone(_sent_state()), terminal_size=(110, 24))
+
+
+def test_snapshot_outbox_sent_repo_timeline(snap_compare):
+    spec = _sent_state(sent_repo=True)
+    assert snap_compare(_outbox_alone(spec), terminal_size=(110, 24))
+
+
 def _outbox_in_dashboard(mocker, groups):
     from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
 

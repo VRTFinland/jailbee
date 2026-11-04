@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
+from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.markdown_view import print_lines
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PublishOptions:
+    # Who is publishing, recorded in the Sent log. Required so no entry point
+    # silently records an orchestrator publish as "user" (or the reverse).
+    publisher: sent.Publisher
     dry_run: bool = False
     force: bool = False
     # Consent to a PR the container does not own (in any repository, its own
@@ -318,6 +322,7 @@ def publish_selected(
                     result_sink=result_sink,
                     action_limit=action_limit,
                     audit_sink=audit_sink,
+                    publisher=options.publisher,
                 )
 
             batch = issue_outbox.prepare_batch(
@@ -418,6 +423,8 @@ def publish_selected(
                     uid=cfg.container_user.uid,
                     journal_store=journal_store,
                     before_action=tick,
+                    container_prefix=cfg.container_prefix,
+                    publisher=options.publisher,
                 )
             if audit_sink is not None:
                 for name, receipt in report.applied:

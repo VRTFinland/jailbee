@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.outbox.sent import Publisher
     from jailbee.pr import PrInfo
     from jailbee.pr_outbox import Manifest
 
@@ -128,6 +129,18 @@ def _check_own_source(
             )
 
 
+def _source_sent_content(
+    verb: str, title: str | None, body: str | None, head: str, head_sha: str
+) -> str:
+    """Sent-log text of a source publication: header, title, body, head branch and SHA."""
+    lines = [f"{verb} pull request", f"head: {head} @ {head_sha}"]
+    if title:
+        lines.append(f"title: {title}")
+    if body:
+        lines.extend(["", body])
+    return "\n".join(lines)
+
+
 def publish_source_manifest(
     cfg: Config,
     incus: Incus,
@@ -140,8 +153,13 @@ def publish_source_manifest(
     own_branches_only: bool = False,
     result_sink: Callable[[str], None] | None = None,
     audit_sink: Callable[[dict[str, str]], None] | None = None,
+    publisher: Publisher,
 ) -> int:
-    """Publish a pinned container source without changing the container's own PR."""
+    """Publish a pinned container source without changing the container's own PR.
+
+    The accepted PR create/update is recorded in the outbox Sent log (best
+    effort) before the container-side bookkeeping; `publisher` says by whom.
+    """
     from jailbee import git, lifecycle, pr, pr_flow, pr_outbox, sync
     from jailbee.incus import IncusError
     from jailbee.outbox.io import PrManagement
@@ -341,6 +359,33 @@ def publish_source_manifest(
                 authored = own_branches_only
             if audit_sink is not None:
                 audit_sink({"kind": "source", "repo": manifest.repo})
+            from jailbee.outbox import sent
+
+            sent.record(
+                instance=full,
+                container_prefix=cfg.container_prefix,
+                container_created=sent.parse_created(snapshot.identity.created_at),
+                publisher=publisher,
+                action=sent.SentAction(
+                    outbox="source",
+                    manifest=manifest_name,
+                    index=0,
+                    kind="pr",
+                    repo=repo,
+                    target=number,
+                    url=url,
+                    title=title if target is None else (action.title if action else None),
+                    content=_source_sent_content(
+                        "create" if target is None else "update",
+                        title if target is None else (action.title if action else None),
+                        body if target is None else (action.body if action else None),
+                        head,
+                        manifest.source_sha,
+                    ),
+                    digest=pr_outbox.proposal_files_digest(snapshot.files, manifest_name),
+                ),
+                state="applied",
+            )
             validate()
             bindings.put(
                 BranchPr(

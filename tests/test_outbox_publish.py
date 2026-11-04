@@ -207,7 +207,7 @@ def test_existing_whitespace_receipt_refuses_actual_selected_replay(env, name, s
             IDENTITY.full_name,
             ProposalId("pr", name),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=lambda count: True,
         )
         == 1
@@ -294,7 +294,7 @@ def test_ambiguous_longer_name_with_valid_sidecar_keeps_existing_progress_rules(
             IDENTITY.full_name,
             ProposalId("pr", name),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=lambda count: True,
         )
         == 0
@@ -354,7 +354,7 @@ def selected(
         IDENTITY.full_name,
         ProposalId(kind, "001.json"),
         journal_store=journals,
-        options=PublishOptions(**options),
+        options=PublishOptions(**{"publisher": "user", **options}),
         confirm=confirm,
         expected_revision=revision,
         raise_errors=raise_errors,
@@ -378,7 +378,7 @@ def test_policy_refusal_applies_nothing(env, kind):
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
             policy=refuse,
@@ -399,7 +399,7 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
             policy=seen.append,
@@ -441,7 +441,7 @@ def test_policy_not_reached_when_confirmation_rewrites_manifest(env, kind):
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=confirm,
             raise_errors=True,
             policy=seen.append,
@@ -529,7 +529,7 @@ def test_review_budget_checks_the_progress_that_will_be_applied(env):
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
             journal_store=env[3],
-            options=PublishOptions(),
+            options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
             action_limit=1,
@@ -875,7 +875,7 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
             journal_store=journals,
-            options=PublishOptions(draft=True),
+            options=PublishOptions(publisher="user", draft=True),
             confirm=lambda n: False,
             choose_mode=callback,
         )
@@ -1115,6 +1115,7 @@ def test_review_apply_keeps_the_repository_lock_even_with_foreign(env, capsys):
         confirm=lambda count: True,
         outbox=pr_outbox.Outbox(files=env[2]["pr"].as_dict()),
         allow_foreign=True,
+        publisher="user",
     )
 
     # 002.json, for the container's own repository, still publishes.
@@ -1434,7 +1435,7 @@ def _sink_publish(env, kind, sink, *, options=None, raise_errors=False, expected
         IDENTITY.full_name,
         ProposalId(kind, "001.json"),
         journal_store=journals,
-        options=options or PublishOptions(dry_run=True, foreign=True),
+        options=options or PublishOptions(publisher="user", dry_run=True, foreign=True),
         confirm=lambda n: pytest.fail("a plan never asks"),
         raise_errors=raise_errors,
         expected_revision=expected_revision,
@@ -1548,7 +1549,10 @@ def test_plan_sink_reports_stale_refusal(env, mocker, capsys):
     got = []
     assert (
         _sink_publish(
-            env, "pr", got.append, options=PublishOptions(dry_run=True, foreign=True, force=False)
+            env,
+            "pr",
+            got.append,
+            options=PublishOptions(publisher="user", dry_run=True, foreign=True, force=False),
         )
         == 1
     )
@@ -1578,7 +1582,7 @@ def test_plan_sink_pr_draft_with_nothing_draftable_is_an_error(env):
     from jailbee.outbox.publish import PublishOptions
 
     got = []
-    options = PublishOptions(dry_run=True, foreign=True, draft=True)
+    options = PublishOptions(publisher="user", dry_run=True, foreign=True, draft=True)
     with pytest.raises(OutboxError, match="nothing here can be a draft review"):
         _sink_publish(env, "pr", got.append, options=options, raise_errors=True)
     assert got == []
@@ -1603,6 +1607,7 @@ def test_plan_sink_requires_one_selected_manifest(env):
             management=env[7],
             raise_errors=True,
             plan_sink=lambda d: None,
+            publisher="user",
         )
 
 
@@ -1662,3 +1667,33 @@ def test_plan_sink_outbox_changed_still_propagates(env):
     with pytest.raises(OutboxChanged):
         _sink_publish(env, "issue", got.append, expected_revision="stale-token", raise_errors=True)
     assert got == []
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("publisher", ["user", "orchestrator"])
+def test_published_actions_recorded_with_publisher(env, kind, publisher):
+    from jailbee.outbox import sent
+
+    assert selected(env, kind, publisher=publisher) == 0
+    rows = sent.list_records()
+    assert rows
+    assert {r.publisher for r in rows} == {publisher}
+    assert {r.outbox for r in rows} == {"issue" if kind == "issue" else "review"}
+    assert {r.instance for r in rows} == {IDENTITY.full_name}
+    assert all(r.state == "applied" and r.url for r in rows)
+
+
+def test_publish_options_default_is_user():
+    from jailbee.outbox.publish import PublishOptions
+
+    assert PublishOptions(publisher="user").publisher == "user"
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_publish_survives_sent_record_failure_selected(env, kind, mocker, caplog):
+    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
+        assert selected(env, kind) == 0
+    assert "001.json" not in env[2][kind].as_dict()
+    assert caplog.records
+    assert all("disk gone" in r.getMessage() for r in caplog.records)

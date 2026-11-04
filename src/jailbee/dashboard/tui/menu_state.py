@@ -185,6 +185,10 @@ def open_repo_menu(
             actions.append(("Accounts…", "accounts"))
         if permitted(["net", "egress", "ls", "--repo"], ssh_policy, over_ssh=over_ssh):
             actions.append(MenuGroup("Network →", (("Egress…", "net egress ls"),)))
+        if group.sent_count and permitted(
+            ["outbox", "sent", "ls", "--repo", "x"], ssh_policy, over_ssh=over_ssh
+        ):
+            actions.append(("Sent…", dact.REPO_SENT))
         extras = dact.repo_extras(ssh_policy, over_ssh=over_ssh)
         if extras.apply is not None:
             actions.append(extras.apply)
@@ -318,6 +322,7 @@ _MENU_KEYS: dict[str, str] = {
     dact.REPO_UPGRADE_ALL: "U",
     dact.DIAGNOSTICS_LABEL: "d",
     dact.REPO_PRUNE: "X",
+    dact.REPO_SENT: "s",
     "fold": "f",
     # Diagnostics →
     dact.REPO_DOCTOR: "d",

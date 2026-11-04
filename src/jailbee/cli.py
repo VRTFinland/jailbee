@@ -8414,6 +8414,7 @@ def _offer_outbox_comments(
         can_prompt=prompting.is_interactive(),
         choose_mode=ask_publish_mode if prompting.is_interactive() else None,
         management=management,
+        publisher="user",
     )
 
 
@@ -8655,6 +8656,7 @@ def pr_push_cmd(
             force=force,
             yes=yes,
             confirm=lambda question: prompting.confirm(question, default=False),
+            publisher="user",
         )
         if result:
             raise typer.Exit(result)
@@ -14057,6 +14059,7 @@ def review_apply_cmd(
         # A PR the container does not own is warned about in the plan; the
         # prompt below the plan is consent only when someone reads it.
         allow_foreign=foreign or (prompting.is_interactive() and not yes),
+        publisher="user",
     ):
         raise typer.Exit(1)
 
@@ -14897,6 +14900,8 @@ def issue_apply_cmd(
             uid=cfg.container_user.uid,
             journal_store=journal_store,
             before_action=tick,
+            container_prefix=cfg.container_prefix,
+            publisher="user",
         )
     _report_issue_apply_outcome(batch, report)
     if report.failure is not None:

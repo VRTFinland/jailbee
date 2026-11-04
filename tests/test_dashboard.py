@@ -1569,6 +1569,37 @@ def test_an_empty_outbox_is_not_offered(mode):
     assert actions[:2] == [("Attach tmux", "tmux"), ("Open shell", "shell")]
 
 
+def test_sent_records_keep_the_outbox_offered_when_both_outboxes_are_empty():
+    empty = _dirty(pending_pr_actions=0, pending_issue_actions=0)
+    actions = dmenus.menu_actions(_ctx(git_status=empty, sent_count=2))
+    assert actions[:3] == [
+        ("Attach tmux", "tmux"),
+        ("Open shell", "shell"),
+        ("Outbox", "outbox browse"),
+    ]
+    assert "outbox clear" not in {v for _, v in actions}
+
+
+def test_pending_label_keeps_priority_over_sent_records():
+    status = _dirty(pending_pr_actions=1, pending_issue_actions=2)
+    actions = dmenus.menu_actions(_ctx(git_status=status, sent_count=4))
+    assert actions[0] == ("Outbox (3 pending)", "outbox browse")
+
+
+def test_repo_menu_offers_sent_only_when_the_repo_has_records():
+    def labels(count):
+        group = tmenu_group(count)
+        menu = tmenu.open_repo_menu([group], "alpha", frozenset())
+        return [i[0] if isinstance(i, tuple) else i.label for i in menu.actions]
+
+    assert "Sent…" in labels(3)
+    assert "Sent…" not in labels(0)
+
+
+def tmenu_group(sent_count):
+    return dmodel.RepoGroup("alpha", "/r", Path("/r/c.yaml"), [], sent_count=sent_count)
+
+
 @pytest.mark.parametrize(("pr", "issue"), [(0, None), (None, 0)])
 def test_one_unknown_outbox_count_still_offers_the_outbox(pr, issue):
     status = _dirty(pending_pr_actions=pr, pending_issue_actions=issue)
@@ -1876,12 +1907,14 @@ def test_menu_hotkeys_cover_the_repo_menu():
             dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
             ("Apply config…", "apply"),
             dmenus.MenuGroup("Diagnostics →", (("Doctor", "doctor"), ("Disk usage", "disk-usage"))),
+            ("Sent…", "sent"),
             ("Prune stale containers…", "prune"),
             ("Fold", "fold"),
         ],
     )
 
     assert _hotkeys(menu) == {
+        "Sent…": "s",
         "New container…": "n",
         "New from PR…": "p",
         "Credential group…": "c",

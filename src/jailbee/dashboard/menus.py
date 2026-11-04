@@ -71,6 +71,7 @@ class MenuContext:
     alias: str | None = None
     memory_limit: str | None = None
     memory_override: bool = False
+    sent_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -290,7 +291,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
 
     "Outbox" (``outbox browse``) is offered on addressable running containers,
     including mount mode, unless the probe counted no manifest in both
-    outboxes; an unknown count still offers it. Its fixed stores do not require
+    outboxes and the container has no Sent records (``ctx.sent_count``); an
+    unknown count still offers it. Its fixed stores do not require
     a clone or an existing PR. The Qt dashboard opens its own
     window for it; the terminal dashboard its Outbox box
     (`jailbee.dashboard.tui.outbox_box`).
@@ -317,7 +319,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
                     *session,
                 ]
             )
-        elif _outbox_empty(ctx.git_status):
+        elif _outbox_empty(ctx.git_status) and not ctx.sent_count:
             actions.extend(session)
         else:
             actions.extend([*session, ("Outbox", "outbox browse")])
@@ -486,6 +488,7 @@ def actions_for_container(
             alias=container.alias,
             memory_limit=container.memory_limit,
             memory_override=container.memory_override,
+            sent_count=container.sent_count,
         )
     )
     if over_ssh:

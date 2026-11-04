@@ -213,6 +213,9 @@ class RepoGroup:
     default_runner: str | None = None
     default_runner_source: str | None = None
     runner_profiles: tuple[str, ...] = ()
+    # Outbox "Sent" log records of every container of this repo (destroyed ones
+    # included); set by the state service's gatherer, 0 = none.
+    sent_count: int = 0
 
 
 @dataclass(frozen=True)

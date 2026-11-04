@@ -124,6 +124,10 @@ A bare `grant` keeps existing publish rights. `show` and `ls` display them.
 Profiles may carry the same block; the repo cap intersects rights and takes
 the smaller rate, while `publish: false` forbids publication.
 
+Every publication the broker performs is recorded in the Sent log with publisher
+`orchestrator` (`jb outbox sent ls`; see
+[git-bridge](git-bridge.md#the-sent-log)).
+
 After staging a manifest in its own issue or PR outbox, the orchestrator sends:
 
 ```bash

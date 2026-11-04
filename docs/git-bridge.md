@@ -1272,6 +1272,32 @@ actions as pending, held back, or published without changing GitHub. This
 GitHub write path has not yet been verified against a real host PR; see the
 host-only recipe in [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md#draft-review-publication).
 
+#### The Sent log
+
+Every action JailBee publishes from an outbox is recorded locally in the host
+state database (`sent_record`): `review apply`, `issue apply`/`resolve`,
+`pr push` (including source publications), the dashboard Outbox `p` and the
+orchestrator broker's [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
+A record carries the publisher (`user` or `orchestrator`), the state
+(`applied`, or `uncertain` when GitHub may have accepted it; resolving it as
+applied updates the record, dropping it deletes the record), the content and the
+GitHub URL. Records outlive the container. Recording is best effort: a database
+error warns and never fails a publish that GitHub accepted, and a retry never
+duplicates a row.
+
+```bash
+jb outbox sent ls [CONTAINER] [--repo PREFIX] [-o table|json] [--limit N]
+jb outbox sent show ID [-o table|json]
+jb outbox sent clear [--repo PREFIX] [--before DATE] [-y]
+```
+
+`sent clear` only deletes local records. The terminal dashboard shows the log as
+a Sent tab in the Outbox box (`o` opens the URL in the desktop browser, or
+shows a notice over remote SSH) and as a repo-header `Sent…` timeline, where
+`†` marks destroyed or earlier incarnations of a container. The Qt outbox
+dialog has Sent and Whole repo toggles and an Open in browser button. Over
+remote SSH, `sent ls`/`show` are limited to the repositories the SSH session may see, and `sent clear` deletes local records only for those repositories.
+
 A PR manifest normally names a PR the container owns: the one it was created
 from (`jb new --pr`), opened (`jb pr push`), bound (`jb pr bind <container> N`) or stacked
 (`--stacked`). It may also name **any other PR of the same repository** — a

@@ -24,6 +24,11 @@ before editing `## Unreleased`.
   `fork.warm_paths` and overridden with repeatable `--warm PATH` or
   `--no-warm`. Other storage pools skip seeding with a note
   ([#72](https://github.com/VRTFinland/jailbee/issues/72)).
+- Outbox Sent log: every review, reply, issue action, PR description and source
+  PR published from an outbox (by you or by an orchestrator's publish grant) is
+  recorded locally with its GitHub URL. Browse it with `jailbee outbox sent
+  ls|show|clear`, the terminal dashboard's Sent tab and repo `Sent…` timeline
+  (`o` opens the URL), or the Qt outbox dialog's Sent toggle.
 - Opt-in orchestrator publish grants: request host-broker publication of the
   orchestrator's own issue actions, source PRs and bound-PR reviews, with
   per-kind/repository rights, repo caps, a sliding-hour rate budget and an

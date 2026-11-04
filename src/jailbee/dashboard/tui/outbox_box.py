@@ -27,9 +27,11 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from jailbee.dashboard.outbox import (
+    SENT_EMPTY,
     OutboxState,
     Row,
     RowKey,
+    active_cursor,
     has_children,
     outbox_hint,
     preview_lines,
@@ -74,6 +76,8 @@ _INTENT_KEYS: dict[str, IntentName] = {
     "m": "raw",
     "r": "refresh",
     "a": "scope",
+    "o": "open",
+    "tab": "tab",
 }
 _PREVIEW_SCROLL = {
     "up": "scroll_up",
@@ -188,7 +192,14 @@ class OutboxBox(OverlayBox):
         self._last_sent: RowKey | None = None
         self._asked: object = None
         self.set_class(standalone, "-standalone")
-        self.border_title = _title(f"Outbox · {spec.title}")
+        self.border_title = self._title_for(spec)
+
+    @staticmethod
+    def _title_for(spec: OutboxState) -> Text:
+        if spec.sent_repo:
+            return _title(f"Sent · {spec.title}")
+        suffix = " · Sent" if spec.tab == "sent" else ""
+        return _title(f"Outbox · {spec.title}{suffix}")
 
     # -- geometry -----------------------------------------------------------
 
@@ -238,7 +249,8 @@ class OutboxBox(OverlayBox):
 
     def _options(self) -> list[Option]:
         options = [Option(row.text, disabled=row.key is None) for row in self._rows]
-        return options or [Option(_line("(the outbox is empty)", "dim"), disabled=True)]
+        empty = SENT_EMPTY if self.panel.tab == "sent" else "(the outbox is empty)"
+        return options or [Option(_line(empty, "dim"), disabled=True)]
 
     @property
     def _list(self) -> OverlayList:
@@ -269,7 +281,7 @@ class OutboxBox(OverlayBox):
         return min(picks, key=lambda i: abs(i - (index or 0)))
 
     def _ready(self) -> None:
-        self._apply(cursor=self._index_of(self.panel.cursor), rebuild=True)
+        self._apply(cursor=self._index_of(active_cursor(self.panel)), rebuild=True)
 
     def _apply(self, *, cursor: int | None, rebuild: bool) -> None:
         """Lay the panel out for the current width; ``rebuild`` repopulates the row list."""
@@ -359,8 +371,11 @@ class OutboxBox(OverlayBox):
         before = self.content_rows()
         old_key = self._cursor_key()
         old_index = self._list.highlighted if self.is_mounted else None
-        old_cursor = self.panel.cursor
+        old_cursor = active_cursor(self.panel)
+        old_tab = self.panel.tab
         self.panel = spec
+        self.border_title = self._title_for(spec)
+        new_cursor = active_cursor(spec)
         if not self.is_mounted:
             self._rows = visible_rows(spec, self._list_width() if self._width else 80)
             return
@@ -368,15 +383,15 @@ class OutboxBox(OverlayBox):
         # unchanged one (a repaint) is stale, and one that is just what this box last
         # sent is an echo (the user may have moved since); any other is a move.
         self._rows = visible_rows(spec, self._list_width())
-        fresh = spec.cursor not in (old_cursor, self._last_sent)
-        moved = spec.cursor if fresh else None
+        fresh = new_cursor not in (old_cursor, self._last_sent) or spec.tab != old_tab
+        moved = new_cursor if fresh else None
         cursor = next(
             (
                 i
                 for i in (
                     self._index_of(moved),
                     self._index_of(old_key),
-                    self._index_of(spec.cursor),
+                    self._index_of(new_cursor),
                 )
                 if i is not None
             ),
@@ -433,6 +448,8 @@ class OutboxBox(OverlayBox):
             "create-pr": ab.create_pr,
             "clear": ab.clear,
             "scope": ab.scope and self.standalone,
+            "open": self.panel.tab == "sent",
+            "tab": not self.panel.sent_repo and (self.panel.tab == "sent" or bool(self.panel.sent)),
         }.get(name, True)
 
     def _question_key(self, event: events.Key) -> KeyOutcome:

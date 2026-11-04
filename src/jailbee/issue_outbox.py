@@ -39,6 +39,7 @@ from jailbee.issue_manifest import (
     parse_manifest,
 )
 from jailbee.outbox import io as store_io
+from jailbee.outbox import sent
 from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.markdown_view import render_markdown
 from jailbee.outbox.models import OutboxExecutionError, StoreSnapshot
@@ -1067,6 +1068,51 @@ def pending_action_count(batch: PreparedBatch) -> int:
     return sum(a.status == "pending" for m in batch.manifests for a in m.actions)
 
 
+def _sent_action(
+    manifest: str,
+    digest: str,
+    resolved: ResolvedAction,
+    *,
+    target: int | None,
+    url: str | None,
+) -> sent.SentAction:
+    """The Sent-log entry of one dispatched issue action, from the prepared snapshot."""
+    action = resolved.action
+    title: str | None = None
+    if isinstance(action, CreateAction):
+        kind, title = "create", action.title
+        content = action.title + (f"\n\n{action.body}" if action.body else "")
+        if resolved.labels:
+            content += f"\n\nlabels: {', '.join(resolved.labels)}"
+    elif isinstance(action, EditAction):
+        kind, title = "edit", action.title
+        content = "\n\n".join(p for p in (action.title, action.body) if p)
+    elif isinstance(action, CommentAction):
+        kind, content = "comment", action.body
+    elif isinstance(action, LabelsAction):
+        kind = "labels"
+        changes = [f"+{label}" for label in action.add]
+        changes += [f"\u2212{label}" for label in action.remove]
+        content = "labels " + " ".join(changes)
+    elif isinstance(action, StateAction):
+        kind = "state"
+        content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
+    else:
+        assert_never(action)
+    return sent.SentAction(
+        outbox="issue",
+        manifest=manifest,
+        index=resolved.index,
+        kind=kind,
+        repo=resolved.repo.slug,
+        target=target,
+        url=url,
+        title=title,
+        content=content,
+        digest=digest,
+    )
+
+
 def apply_batch(
     batch: PreparedBatch,
     *,
@@ -1074,10 +1120,17 @@ def apply_batch(
     uid: int | None,
     journal_store: JournalStore,
     before_action: Callable[[], None] | None = None,
+    container_prefix: str,
+    publisher: sent.Publisher,
 ) -> ApplyReport:
     """Apply every pending action of `batch`, in the exact order it was shown.
 
     Call `before_action` immediately before each attempted action, if provided.
+
+    Every action GitHub may have accepted is recorded in the outbox Sent log
+    (best effort) as soon as `_execute_one` returns or fails uncertainly,
+    before the journal is written: `applied` on success, `uncertain` when the
+    outcome is unknown. `publisher` says who published it.
 
     Two passes. The first re-verifies every manifest — the container's
     identity, each manifest's exact text (by recomputed digest), and its
@@ -1211,6 +1264,7 @@ def apply_batch(
             journal = journals[name]
             receipts = {a.index: a for a in journal.actions}
             created_issue_numbers: dict[str, int] = {}
+            created_at = sent.parse_created(batch.identity.created_at)
             for resolved in prepared.actions:
                 current = receipts.get(resolved.index)
                 if current is not None:
@@ -1241,6 +1295,22 @@ def apply_batch(
                         )
                     except IssueGithubMutationError as exc:
                         recorded = True
+                        if exc.uncertain:
+                            sent.record(
+                                instance=batch.container,
+                                container_prefix=container_prefix,
+                                container_created=created_at,
+                                publisher=publisher,
+                                action=_sent_action(
+                                    name,
+                                    prepared.digest,
+                                    resolved,
+                                    target=resolved.issue.number
+                                    or created_issue_numbers.get(resolved.issue.ref or ""),
+                                    url=None,
+                                ),
+                                state="uncertain",
+                            )
                         try:
                             if exc.uncertain:
                                 journal_store.mark_uncertain(
@@ -1256,6 +1326,16 @@ def apply_batch(
                             exc.uncertain or not recorded,
                             _apply_failure_detail(str(exc), uncertain=exc.uncertain),
                         )
+                    sent.record(
+                        instance=batch.container,
+                        container_prefix=container_prefix,
+                        container_created=created_at,
+                        publisher=publisher,
+                        action=_sent_action(
+                            name, prepared.digest, resolved, target=receipt.issue, url=receipt.url
+                        ),
+                        state="applied",
+                    )
                     try:
                         updated = journal_store.mark_applied(
                             key,
@@ -1407,6 +1487,16 @@ def reconcile_action(
             raise JournalError("receipt URL does not match this action's issue")
 
     journal_store.resolve_applied(key, index, url=resolution.url, issue=resolution.issue)
+    sent.mark_applied(
+        instance=key.identity.full_name,
+        container_created=sent.parse_created(key.identity.created_at),
+        outbox="issue",
+        manifest=key.manifest_name,
+        digest=digest,
+        index=index,
+        url=resolution.url,
+        target=url_number,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1531,5 +1621,20 @@ def drop_manifest(
 
         if archive_journal and journal is not None and journal.actions:
             journal_store.archive(key)
+
+        if parsed is not None:
+            # An action without a journal record was never settled: a retried
+            # uncertain one still has its `uncertain` Sent-log row, which goes.
+            recorded = {a.index for a in journal.actions} if journal is not None else set()
+            for index in range(len(parsed.actions)):
+                if index not in recorded:
+                    sent.forget(
+                        instance=identity.full_name,
+                        container_created=sent.parse_created(identity.created_at),
+                        outbox="issue",
+                        manifest=manifest_name,
+                        digest=recorded_digest,
+                        index=index,
+                    )
 
         return tuple(names)

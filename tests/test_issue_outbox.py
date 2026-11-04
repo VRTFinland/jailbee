@@ -1243,7 +1243,12 @@ def _apply(execution, batch):
     from jailbee import issue_outbox
 
     return issue_outbox.apply_batch(
-        batch, incus=execution["incus"], uid=1000, journal_store=execution["store"]
+        batch,
+        incus=execution["incus"],
+        uid=1000,
+        journal_store=execution["store"],
+        container_prefix="app",
+        publisher="user",
     )
 
 
@@ -1336,6 +1341,8 @@ def test_apply_batch_calls_before_action_per_executed_action(execution):
         uid=1000,
         journal_store=execution["store"],
         before_action=lambda: events.append("hook"),
+        container_prefix="app",
+        publisher="user",
     )
     assert report.failure is None
     assert events == ["hook", "post", "hook", "post"]
@@ -1356,6 +1363,8 @@ def test_before_action_failure_does_not_leave_uncertain_receipt(execution):
             uid=1000,
             journal_store=execution["store"],
             before_action=fail,
+            container_prefix="app",
+            publisher="user",
         )
     assert execution["mutations"]["replace_labels"].call_count == 0
     report = _apply(execution, batch)
@@ -1379,6 +1388,8 @@ def test_pending_action_count_matches_apply_batch_attempts(execution):
         uid=1000,
         journal_store=execution["store"],
         before_action=lambda: events.append("hook"),
+        container_prefix="app",
+        publisher="user",
     )
     assert report.failure is None
     assert count == 1 == len(events)
@@ -2443,3 +2454,211 @@ def test_resolve_repo_targets_uses_located_gitdir(tmp_path, mocker, make_cfg):
     assert target.repo_root == root
     assert target.slug == "acme/lib"
     locate.assert_called_once_with(tmp_path, "lib")
+
+
+def _sent_rows():
+    from jailbee.outbox import sent
+
+    return sorted(sent.list_records(), key=lambda r: (r.manifest, r.index))
+
+
+def test_apply_records_every_issue_action_in_sent_log(execution):
+    from datetime import UTC, datetime
+
+    from jailbee.issue_github import MutationReceipt
+
+    batch = execution["batch"](
+        {
+            "a.json": [
+                _create(labels=("bug",)),
+                {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"},
+                _labels(issue=27),
+                _state(),
+            ]
+        }
+    )
+    execution["mutations"]["create_issue"].return_value = MutationReceipt(
+        901, "https://github.com/acme/app/issues/901"
+    )
+    assert _apply(execution, batch).failure is None
+    rows = _sent_rows()
+    assert [r.kind for r in rows] == ["create", "comment", "labels", "state"]
+    assert all(r.outbox == "issue" and r.manifest == "a.json" for r in rows)
+    assert all(r.publisher == "user" and r.state == "applied" for r in rows)
+    assert all(r.instance == "test-box" and r.container_prefix == "app" for r in rows)
+    assert all(r.container_created == datetime(2026, 9, 18, tzinfo=UTC) for r in rows)
+    assert rows[0].target == 901 and rows[0].url == "https://github.com/acme/app/issues/901"
+    assert rows[0].title == "New title" and "Second line" in rows[0].content
+    assert rows[1].content == "Next"
+    assert rows[2].content == "labels +feature \u2212bug"
+    assert rows[3].content == "state closed (completed)"
+    assert all(r.repo == "acme/app" for r in rows)
+
+
+def test_apply_records_uncertain_row_for_uncertain_outcome(execution):
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_comment(issue=7, body="maybe")]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, batch).failure.uncertain
+    (row,) = _sent_rows()
+    assert (row.state, row.kind, row.target, row.url, row.content) == (
+        "uncertain",
+        "comment",
+        7,
+        None,
+        "maybe",
+    )
+
+
+def test_apply_does_not_record_certain_failure(execution):
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_comment()]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "rejected", uncertain=False
+    )
+    assert _apply(execution, batch).failure is not None
+    assert _sent_rows() == []
+
+
+def test_issue_record_survives_journal_failure(execution, mocker):
+    from jailbee.outbox_io import JournalError
+
+    batch = execution["batch"]({"a.json": [_comment()]})
+    mocker.patch.object(execution["store"], "mark_applied", side_effect=JournalError("full"))
+    assert _apply(execution, batch).failure.uncertain
+    (row,) = _sent_rows()
+    assert row.state == "applied"
+
+
+def test_publish_survives_sent_record_failure_issue(execution, mocker, caplog):
+    batch = execution["batch"]({"a.json": [_comment()]})
+    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
+        report = _apply(execution, batch)
+    assert report.failure is None and report.cleaned == ("a.json",)
+    assert len(caplog.records) == 1 and "disk gone" in caplog.records[0].getMessage()
+
+
+def test_resolve_applied_updates_uncertain_row_with_url(execution):
+    from jailbee import issue_outbox
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_create()]})
+    execution["mutations"]["create_issue"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, batch).failure.uncertain
+    (before,) = _sent_rows()
+    assert before.state == "uncertain" and before.target is None and before.url is None
+    _reconcile(
+        execution,
+        batch,
+        issue_outbox.AppliedResolution("https://github.com/acme/app/issues/123", issue=123),
+    )
+    (row,) = _sent_rows()
+    assert (row.state, row.target, row.url) == (
+        "applied",
+        123,
+        "https://github.com/acme/app/issues/123",
+    )
+    assert row.sent_at == before.sent_at and row.id == before.id
+
+
+def test_retry_then_success_updates_the_same_row(execution):
+    from jailbee import issue_outbox
+    from jailbee.issue_github import IssueGithubMutationError, MutationReceipt
+
+    batch = execution["batch"]({"a.json": [_comment(issue=7)]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, batch).failure.uncertain
+    _reconcile(execution, batch, issue_outbox.RetryResolution())
+    assert [r.state for r in _sent_rows()] == ["uncertain"]
+    execution["mutations"]["add_comment"].side_effect = None
+    execution["mutations"]["add_comment"].return_value = MutationReceipt(
+        7, "https://github.com/acme/app/issues/7#issuecomment-1"
+    )
+    batch = execution["batch"]({"a.json": [_comment(issue=7)]})
+    assert _apply(execution, batch).failure is None
+    (row,) = _sent_rows()
+    assert row.state == "applied" and row.url.endswith("#issuecomment-1")
+
+
+def test_drop_after_retry_forgets_uncertain_row(execution):
+    from jailbee import issue_outbox
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_comment()]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, batch).failure.uncertain
+    _reconcile(execution, batch, issue_outbox.RetryResolution())
+    assert len(_sent_rows()) == 1
+    _drop(execution, batch)
+    assert _sent_rows() == []
+
+
+def test_drop_keeps_applied_rows(execution):
+    batch = execution["batch"]({"a.json": [_comment(), _comment()]})
+    _seed_execution(execution, batch)
+    from jailbee.outbox import sent
+
+    sent.record(
+        instance="test-box",
+        container_prefix="app",
+        container_created=sent.parse_created("2026-09-18"),
+        publisher="user",
+        action=sent.SentAction(
+            "issue",
+            "a.json",
+            0,
+            "comment",
+            "acme/app",
+            7,
+            None,
+            None,
+            "x",
+            batch.manifests[0].digest,
+        ),
+        state="applied",
+    )
+    _drop(execution, batch, archive_journal=True)
+    assert [r.index for r in _sent_rows()] == [0]
+
+
+def test_reused_manifest_name_keeps_the_earlier_sent_rows(execution):
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    assert _apply(execution, second).failure is None
+    rows = sorted(_sent_rows(), key=lambda r: r.id)
+    assert [r.content for r in rows] == ["First", "Second"]
+    assert all(r.state == "applied" for r in rows)
+
+
+def test_uncertain_reuse_does_not_touch_the_earlier_applied_row(execution):
+    from jailbee.issue_github import IssueGithubMutationError
+
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, second).failure.uncertain
+    rows = sorted(_sent_rows(), key=lambda r: r.id)
+    assert [(r.content, r.state) for r in rows] == [("First", "applied"), ("Second", "uncertain")]
+
+
+def test_dropping_a_reused_manifest_name_keeps_the_earlier_applied_row(execution):
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    _drop(execution, second)
+    assert [(r.content, r.state) for r in _sent_rows()] == [("First", "applied")]

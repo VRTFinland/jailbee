@@ -127,6 +127,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             scope=scope,
             auto_optimize=auto_optimize,
         )
+        self.session.url_opener = self.open_url
         self._tick_seconds = tick_seconds
         self._painted: tuple[DashboardView, Size] | None = None
         self._last_title: str | None = None

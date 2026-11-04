@@ -370,3 +370,39 @@ class UpdateCheckState(SQLModel, table=True):
         sa_column=Column(_UTCDateTime, nullable=True),
     )
     hint_shown_version: str | None = None
+
+
+class SentRecord(SQLModel, table=True):
+    """One outbox action GitHub accepted (or may have accepted): the Sent log.
+
+    Written by `jailbee.outbox.sent`, best effort, by the shared host publish
+    code. `dedup_key` (instance + `container_created` + outbox + manifest +
+    proposal digest + action index) is unique, so a retried or resumed publish updates its row
+    instead of adding one. `state` is `applied` or `uncertain`; `publisher`
+    is `user` or `orchestrator`. `container_created` is the Incus creation
+    time of the instance at publish time (NULL when unknown) and separates
+    incarnations of a re-created container name.
+    """
+
+    __tablename__ = "sent_record"
+
+    id: int | None = Field(default=None, primary_key=True)
+    dedup_key: str = Field(unique=True, index=True)
+    sent_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    container_prefix: str = Field(index=True)
+    container: str
+    instance: str = Field(index=True)
+    container_created: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )
+    publisher: str
+    state: str
+    outbox: str
+    manifest: str
+    action_index: int = Field(sa_column=Column(Integer, nullable=False))
+    kind: str
+    repo: str
+    target: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    url: str | None = None
+    title: str | None = None
+    content: str = ""

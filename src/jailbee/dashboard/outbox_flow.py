@@ -45,6 +45,8 @@ Intent = Literal[
     "scope",
     "answer",
     "cancel",
+    "tab",
+    "open",
 ]
 
 _Preview = Literal["auto", "on", "off"]
@@ -340,12 +342,25 @@ class OutboxController:
         prefix: str = "",
         standalone: bool,
         on_change: Callable[[dob.OutboxState], None],
+        sent_loader: Callable[[], tuple[dob.SentItem, ...]] | None = None,
+        sent_only: bool = False,
     ) -> None:
         self.runner = runner
         self.container = container
         self.standalone = standalone
         self.on_change = on_change
-        self.state = dob.OutboxState(title, (), prefix=prefix, scope_name=container)
+        # Reads the Sent records on demand (never from the gatherer); ``sent_only``
+        # is the repo timeline: the Sent view alone, no proposals and no runner use.
+        self.sent_loader = sent_loader
+        self.sent_only = sent_only
+        self.state = dob.OutboxState(
+            title,
+            (),
+            prefix=prefix,
+            scope_name=container,
+            tab="sent" if sent_only else "outbox",
+            sent_repo=sent_only,
+        )
         self._publish_token: object | None = None
         # The batch being planned; dropped by a reload or a cancel, so late plans do nothing.
         self._batch_token: object | None = None
@@ -420,8 +435,14 @@ class OutboxController:
         # A marked proposal or action also covers the rows listed under it since.
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
+        # Every proposals listing re-reads the Sent log too: a publish just added records.
+        sent_state = self._fresh_sent()
+        # Nothing pending but records sent: open on the Sent tab, unless the user chose.
+        empty = not any(c.proposals for c in containers)
+        tab = "sent" if sent_state.sent and empty and not sent_state.tab_touched else sent_state.tab
         return replace(
-            self.state,
+            sent_state,
+            tab=tab,
             containers=containers,
             expanded=frozenset(k for k in self.state.expanded if k in keys),
             marks=frozenset(marks),
@@ -429,6 +450,20 @@ class OutboxController:
             status=status,
             abilities=self._abilities(containers),
         )
+
+    def _fresh_sent(self) -> dob.OutboxState:
+        """``state`` with the Sent records re-read (unchanged without a loader or on a failure)."""
+        if self.sent_loader is None or self.sent_only:
+            return self.state
+        try:
+            items = self.sent_loader()
+        except Exception:  # the listing still shows; `r` on the Sent tab says why
+            return self.state
+        keys = {dob.sent_key(i) for i in items}
+        cursor = self.state.sent_cursor
+        if cursor not in keys:
+            cursor = dob.sent_key(items[0]) if items else None
+        return replace(self.state, sent=items, sent_cursor=cursor)
 
     def _reloaded(
         self, *, cursor: dob.RowKey | None = None, status: tuple[str, ...] = ()
@@ -493,6 +528,22 @@ class OutboxController:
         self._set(state)
         return ok
 
+    def load_sent(self) -> bool:
+        """(Re-)read the Sent records into the state; False when the read failed."""
+        if self.sent_loader is None:
+            return False
+        try:
+            items = self.sent_loader()
+        except Exception as exc:  # a DB problem is a status line, never a crash
+            self._set(replace(self.state, status=(f"could not read the Sent log: {exc}",)))
+            return False
+        keys = {dob.sent_key(i) for i in items}
+        cursor = self.state.sent_cursor
+        if cursor not in keys:
+            cursor = dob.sent_key(items[0]) if items else None
+        self._set(replace(self.state, sent=items, sent_cursor=cursor, status=()))
+        return True
+
     def load_later(self, *, cursor: dob.RowKey | None = None) -> None:
         """`load`, with the listing read off the UI thread; the state is busy meanwhile.
 
@@ -502,6 +553,9 @@ class OutboxController:
         child is running (a publish) it is a plain `load`, so that child's busy
         line is never replaced.
         """
+        if self.sent_only:
+            self.load_sent()
+            return
         if self.state.busy == _LOADING:
             self.on_change(self.state)  # already on its way
             return
@@ -538,7 +592,30 @@ class OutboxController:
             return
         self.on_change(self.state)
 
+    def _sent_intent(self, name: Intent, key: dob.RowKey | None, value: str | None) -> None:
+        """Keys in the Sent view: it only scrolls, previews, refreshes and switches tabs."""
+        if key is not None and name not in ("answer", "cancel"):
+            self.state = replace(self.state, sent_cursor=key)
+        if name == "preview":
+            toggled: _Preview = "on" if self.state.preview == "off" else "off"
+            self._set(replace(self.state, preview=_PREVIEW_MODES.get(value or "", toggled)))
+        elif name == "refresh":
+            self.load_sent()
+        elif name == "tab" and not self.sent_only:
+            self._set(replace(self.state, tab="outbox", tab_touched=True, status=()))
+        else:
+            self._set(self.state)
+
     def intent(self, name: Intent, key: dob.RowKey | None, value: str | None = None) -> None:
+        if self.state.tab == "sent":
+            self._sent_intent(name, key, value)
+            return
+        if name == "tab":
+            if self.state.sent:
+                self._set(replace(self.state, tab="sent", tab_touched=True, status=()))
+            else:
+                self._status("no Sent records")
+            return
         if key is not None and name not in ("answer", "cancel"):
             self.state = replace(self.state, cursor=key)
         key = key if key is not None else self.state.cursor
