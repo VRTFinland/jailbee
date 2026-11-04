@@ -369,13 +369,12 @@ def test_failed_refresh_invalidates_old_binding(tmp_path, monkeypatch):
 
 def test_destroy_serializes_waiting_refresh_without_recreating_metadata(make_cfg, tmp_path, mocker):
     import fcntl
-
-    from jailbee.lifecycle import destroy_container
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
     from jailbee import container_bindings
     from jailbee.container_locks import locked
+    from jailbee.lifecycle import destroy_container
     from jailbee.paths import xdg_data_home
 
     full = "proj-waiting"
@@ -397,6 +396,7 @@ def test_destroy_serializes_waiting_refresh_without_recreating_metadata(make_cfg
         lock = xdg_data_home() / f"jailbee/container-locks/{full}.lock"
         inode = lock.stat().st_ino
     with ThreadPoolExecutor(1) as workers:
+
         def refresh():
             started.set()
             container_bindings.sync(incus, full)

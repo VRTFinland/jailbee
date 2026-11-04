@@ -81,8 +81,12 @@ class Rig:
         self.incus = MagicMock()
         self.incus.list_containers.return_value = []
         self.incus.config_get_checked.side_effect = lambda full, key: next(
-            (row["config"].get(key) for row in self.incus.list_containers.return_value
-             if row["name"] == full), None
+            (
+                row["config"].get(key)
+                for row in self.incus.list_containers.return_value
+                if row["name"] == full
+            ),
+            None,
         )
         self.incus.exists.return_value = False
         self.outboxes: dict[str, list[RawManifest] | Exception] = {}
@@ -189,7 +193,9 @@ def test_ensure_env_reads_checked_labels_without_per_node_inventory(rig: Rig) ->
     rig.tick(memory)
     assert rig.incus.list_containers.call_count == 2
     assert memory.env_roles == {
-        "proj-orch": "orchestrator", "proj-kid": "child", "proj-other": "child"
+        "proj-orch": "orchestrator",
+        "proj-kid": "child",
+        "proj-other": "child",
     }
 
 

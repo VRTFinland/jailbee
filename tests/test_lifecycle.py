@@ -5673,7 +5673,9 @@ def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
 
 
 @pytest.mark.parametrize("running", [False, True])
-def test_destroy_removes_only_own_metadata_and_keeps_lock_inode(make_cfg, tmp_path, mocker, running):
+def test_destroy_removes_only_own_metadata_and_keeps_lock_inode(
+    make_cfg, tmp_path, mocker, running
+):
     from jailbee import container_bindings
     from jailbee.container_locks import locked
     from jailbee.paths import xdg_data_home
@@ -11826,9 +11828,7 @@ def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_p
     from jailbee.orchestration.labels import ROLE_MARKER_PATH
 
     assert ROLE_MARKER_PATH == "/home/dev/.jailbee/orchestration/role"
-    marker_calls = [
-        c for c in incus.exec.call_args_list if c.args[1][-1] == ROLE_MARKER_PATH
-    ]
+    marker_calls = [c for c in incus.exec.call_args_list if c.args[1][-1] == ROLE_MARKER_PATH]
     assert len(marker_calls) == 1
     assert marker_calls[0].kwargs["uid"] == cfg.container_user.uid
     assert marker_calls[0].args[0] == "myrepo-feat-foo"

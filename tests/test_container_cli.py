@@ -23,10 +23,19 @@ def test_host_commands_snapshot():
 @pytest.mark.parametrize(
     "args",
     [
-        ["pr", "push"], ["pr", "bind", "dev", "42"], ["pr", "unbind"],
-        ["pr", "ls"], ["pr", "open"], ["issue", "apply"], ["issue", "resolve"],
-        ["outbox", "apply"], ["outbox", "browse"], ["outbox", "clear"],
-        ["config", "edit", "schema"], ["config", "show"], ["config", "migrate"],
+        ["pr", "push"],
+        ["pr", "bind", "dev", "42"],
+        ["pr", "unbind"],
+        ["pr", "ls"],
+        ["pr", "open"],
+        ["issue", "apply"],
+        ["issue", "resolve"],
+        ["outbox", "apply"],
+        ["outbox", "browse"],
+        ["outbox", "clear"],
+        ["config", "edit", "schema"],
+        ["config", "show"],
+        ["config", "migrate"],
         ["config", "init"],
     ],
 )
@@ -39,8 +48,16 @@ def test_shared_host_subcommands_get_host_hint(args):
     assert "No such command" not in result.output
 
 
-@pytest.mark.parametrize("args", [["pr", "psuh"], ["issue", "aply"], ["outbox", "aply"],
-                                  ["pr", "review", "aply"], ["config", "edti"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pr", "psuh"],
+        ["issue", "aply"],
+        ["outbox", "aply"],
+        ["pr", "review", "aply"],
+        ["config", "edti"],
+    ],
+)
 def test_shared_group_typos_stay_unknown_commands(args):
     from jailbee.container_cli import container_app
 
@@ -50,9 +67,16 @@ def test_shared_group_typos_stay_unknown_commands(args):
     assert "runs on the host" not in result.output
 
 
-@pytest.mark.parametrize("args", [["pr", "review", "add"], ["issue", "create"],
-                                  ["outbox", "submit"], ["service", "refresh"],
-                                  ["config", "validate"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pr", "review", "add"],
+        ["issue", "create"],
+        ["outbox", "submit"],
+        ["service", "refresh"],
+        ["config", "validate"],
+    ],
+)
 def test_shared_container_subcommands_still_resolve(args):
     from jailbee.container_cli import container_app
 
