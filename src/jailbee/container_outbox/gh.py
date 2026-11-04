@@ -97,9 +97,26 @@ def issue_view(repo: str | None, number: int) -> IssueView:
         raise GhError(f"invalid issue response; retry `{' '.join(argv)}`: {exc}") from exc
 
 
-def pr_body(number: int) -> str:
+def repo_view() -> str:
+    """Resolve the repository without requiring a branch or an existing PR."""
+    from jailbee.github_repo import is_github_slug
+
+    argv = ["gh", "repo", "view", "--json", "nameWithOwner"]
+    try:
+        value = run_json(argv)
+        repo = value.get("nameWithOwner") if isinstance(value, dict) else None
+        if not isinstance(repo, str) or not is_github_slug(repo):
+            raise ValueError("invalid repository name")
+        return repo
+    except (GhError, ValueError) as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}` or supply --repo owner/name") from exc
+
+
+def pr_body(number: int, *, repo: str | None = None) -> str:
     """Read the current replacement body for a title-only description edit."""
     argv = ["gh", "pr", "view", str(number), "--json", "body"]
+    if repo is not None:
+        argv.extend(["-R", repo])
     try:
         value = run_json(argv)
         if not isinstance(value, dict):
@@ -112,13 +129,13 @@ def pr_body(number: int) -> str:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
 
 
-def pr_view(number: int | None) -> PrView:
+def pr_view(number: int | None, *, cwd: str | None = None) -> PrView:
     argv = ["gh", "pr", "view"]
     if number is not None:
         argv.append(str(number))
     argv.extend(["--json", "number,headRefOid,url"])
     try:
-        value = run_json(argv)
+        value = run_json(argv, cwd=cwd)
         if not isinstance(value, dict):
             raise ValueError("response must be an object")
         pr_number = value["number"]

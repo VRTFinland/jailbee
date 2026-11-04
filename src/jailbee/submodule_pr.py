@@ -502,8 +502,13 @@ class SubmodulePrState:
 
             default_context = f"Could not record the submodule PR decision for '{self._subpath}'"
             warn(f"{context or default_context}: {exc}")
+            from jailbee.container_bindings import refresh
+
+            refresh(self._incus, self._full)
             return False
-        return True
+        from jailbee.container_bindings import refresh
+
+        return refresh(self._incus, self._full)
 
     def clear(self) -> bool:
         """Remove only this binding, reporting whether persistence succeeded."""
@@ -518,8 +523,13 @@ class SubmodulePrState:
             from jailbee.tui import warn
 
             warn(f"Could not clear the submodule PR decision for '{self._subpath}': {exc}")
+            from jailbee.container_bindings import refresh
+
+            refresh(self._incus, self._full)
             return False
-        return True
+        from jailbee.container_bindings import refresh
+
+        return refresh(self._incus, self._full)
 
 
 if TYPE_CHECKING:

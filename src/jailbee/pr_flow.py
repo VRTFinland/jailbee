@@ -1066,9 +1066,14 @@ class ContainerLabelState:
             if number is not None:
                 self._incus.config_set(self._full, self._prefix, str(number))
         except IncusError as exc:
+            from jailbee.container_bindings import refresh
+
+            refresh(self._incus, self._full)
             warn(f"{context or 'Could not record the PR decision'}: {exc}")
             return False
-        return True
+        from jailbee.container_bindings import refresh
+
+        return refresh(self._incus, self._full)
 
     def clear(self) -> bool:
         """Remove this label set, reporting whether every unset succeeded."""
@@ -1079,9 +1084,14 @@ class ContainerLabelState:
             for suffix in ("_author", "_adopted", "_base", "_branch", ""):
                 self._incus.config_unset_checked(self._full, f"{self._prefix}{suffix}")
         except IncusError as exc:
+            from jailbee.container_bindings import refresh
+
+            refresh(self._incus, self._full)
             warn(f"Could not clear the PR decision: {exc}")
             return False
-        return True
+        from jailbee.container_bindings import refresh
+
+        return refresh(self._incus, self._full)
 
 
 @dataclass(frozen=True)

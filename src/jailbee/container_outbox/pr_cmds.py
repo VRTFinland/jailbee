@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import typer
 
-from jailbee.container_outbox import gh
+from jailbee.container_outbox import bindings, gh
 from jailbee.container_outbox.issue_cmds import _body, _guard, _run
 from jailbee.container_outbox.store import OutboxCommandError, Store
 
@@ -26,17 +26,19 @@ def _number(value: str | None) -> int | None:
 
 def _view(value: str | None) -> gh.PrView:
     number = _number(value)
-    try:
-        return gh.pr_view(number)
-    except gh.GhError as exc:
-        if number is None:
-            raise OutboxCommandError(f"{exc}; name the PR number", 2) from exc
-        raise
+    binding = bindings.resolve(number)
+    if binding is not None:
+        view = gh.pr_view(binding.number, cwd=binding.cwd)
+    else:
+        view = gh.pr_view(number)
+    if view.number != (binding.number if binding else number):
+        raise OutboxCommandError("GitHub returned a different PR than the requested binding", 2)
+    return view
 
 
 def _envelope(view: gh.PrView | None, repo: str | None = None) -> dict[str, object]:
     if view is None and not repo:
-        repo = gh.pr_view(None).repo
+        repo = gh.repo_view()
     return {
         "version": 1,
         "repo": view.repo if view else repo,
@@ -180,18 +182,24 @@ def description(
     branch: str | None = None,
     repo: str | None = None,
     batch: str | None = None,
+    new: bool = False,
 ) -> None:
     def run() -> None:
         store = _guard()
+        if new and pr is not None:
+            raise OutboxCommandError("--new cannot be combined with a PR number", 2)
         text = _body(body, body_file, False)
         if text is None and title is None:
             raise OutboxCommandError("missing title or body", 2)
-        view = _view(pr) if pr is not None else None
+        binding = None if new else bindings.resolve(_number(pr), allow_new=True)
+        view = _view(pr) if pr is not None or binding is not None else None
+        if view is not None and repo is not None and repo != view.repo:
+            raise OutboxCommandError("--repo does not match the existing PR repository", 2)
         if text is None:
             # A title edit must not turn the full replacement body into an empty one.
             if view is None:
                 raise OutboxCommandError("missing body for a new PR description", 2)
-            text = gh.pr_body(view.number)
+            text = gh.pr_body(view.number, repo=view.repo)
         _stage(
             store,
             _envelope(view, repo),
@@ -328,7 +336,7 @@ def source(
         text = _body(body, body_file, False)
         if text is None and (title is not None or branch is not None or number is None):
             raise OutboxCommandError("missing body for source description", 2)
-        resolved_repo = repo if repo else _view(pr).repo
+        resolved_repo = repo if repo else (_view(pr).repo if pr is not None else gh.repo_view())
         manifest = _envelope(None, resolved_repo)
         manifest.update(pr=number, source=ref, source_sha=sha)
         if base is not None:

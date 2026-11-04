@@ -1384,6 +1384,9 @@ def test_new_container_sets_default_base_branch_label(make_cfg, tmp_path, mocker
     calls = [c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.base_branch"]
     assert len(calls) == 1
     assert calls[0].args[2] == "main"
+    from jailbee import container_bindings
+
+    container_bindings.sync.assert_called_once_with(incus, "myrepo-feat-foo")
 
 
 def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, tmp_path, mocker):
@@ -5403,6 +5406,9 @@ def test_boot_container_syncs_instructions_before_allocation(
 
     sync.assert_called_once_with(cfg)
     assert events == ["sync", "allocate", "detach", *operation, "attach"]
+    from jailbee import container_bindings
+
+    container_bindings.sync.assert_called_once_with(incus, "feat-x")
 
 
 @pytest.mark.parametrize("restart", [False, True])

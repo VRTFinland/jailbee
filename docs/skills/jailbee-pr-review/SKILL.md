@@ -115,7 +115,12 @@ describe the change accurately.
 
 Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 --body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.
-For a new PR description omit N and use `--repo owner/name` when needed.
+Omitting N selects the unique actual container binding (primary, stacked,
+imported-head or submodule), never the currently checked-out branch. Multiple
+bindings require N. For a new PR description use `--new` to bypass an existing
+binding; without any bindings omission already means new. Repository discovery
+uses read-only `gh repo view`, not an existing PR; `--repo owner/name` overrides
+that discovery for new descriptions. Title-only edits preserve the existing body.
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
 outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.

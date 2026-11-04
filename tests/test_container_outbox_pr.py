@@ -84,6 +84,7 @@ def test_three_comments_one_review_fresh_head_and_body_files(monkeypatch, tmp_pa
         (
             (
                 "description",
+                "--new",
                 "--repo",
                 "acme/widgets",
                 "--title",
@@ -246,9 +247,12 @@ def test_child_all_commands_guard_before_missing_options(monkeypatch, tmp_path, 
         ("review", "discard"),
     ],
 )
-def test_omitted_number_resolves_current_branch(monkeypatch, tmp_path, command):
-    def view(number):
-        assert number is None
+def test_omitted_number_resolves_bound_pr(monkeypatch, tmp_path, command):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}))
+    def view(number, *, cwd=None):
+        assert number == 1234 and cwd == "/repo"
         return gh.PrView(1234, "head", "acme/widgets")
 
     monkeypatch.setattr(gh, "pr_view", view)
@@ -266,8 +270,9 @@ def test_lookup_failure_distinguishes_missing_target(monkeypatch, tmp_path, expl
     monkeypatch.setattr(gh, "pr_view", fail)
     result = invoke("comment", *(("1234",) if explicit else ()), "--body", "hello")
     assert result.exit_code == code, result.output
-    assert "lookup failed" in result.output
-    if not explicit:
+    if explicit:
+        assert "lookup failed" in result.output
+    else:
         assert "name the PR number" in result.output
     assert not (tmp_path / ".jailbee").exists()
 
@@ -278,7 +283,7 @@ def test_title_only_description_preserves_current_body(monkeypatch, tmp_path):
         "run_json",
         lambda argv, **kw: (
             {"body": "Original\nbody\n"}
-            if argv == ["gh", "pr", "view", "1234", "--json", "body"]
+            if argv == ["gh", "pr", "view", "1234", "--json", "body", "-R", "acme/widgets"]
             else pytest.fail(str(argv))
         ),
     )
@@ -368,7 +373,7 @@ def test_missing_values_name_value(tmp_path, args, missing):
     [
         ("comment", "1234", "--body", "inline", "--body-file", "missing"),
         ("comment", "1234", "--body-file", "missing"),
-        ("description", "--repo", "acme/widgets", "--title", "Only title"),
+        ("description", "--new", "--repo", "acme/widgets", "--title", "Only title"),
         (
             "source",
             "--repo",
@@ -805,6 +810,112 @@ def test_positive_ids_and_lines_before_lookup(monkeypatch, tmp_path, option, val
     assert result.exit_code == 2, result.output
     assert "positive" in result.output
     assert not (tmp_path / ".jailbee").exists()
+
+
+def binding_snapshot(tmp_path, config):
+    path = tmp_path / "bindings.json"
+    path.write_text(json.dumps(config))
+    return path
+
+
+@pytest.mark.parametrize("branch", ["", "unrelated-checkout"])
+def test_omitted_pr_uses_binding_not_checkout(monkeypatch, tmp_path, branch):
+    from jailbee.container_outbox import bindings
+
+    path = binding_snapshot(tmp_path, {"user.jailbee.pr": "42", "user.jailbee.repo_dir": "/repo", "user.jailbee.branch": branch})
+    monkeypatch.setattr(bindings, "SNAPSHOT", path)
+    def view(number, *, cwd=None):
+        assert number == 42 and cwd == "/repo"
+        return gh.PrView(42, "fresh", "acme/widgets")
+    monkeypatch.setattr(gh, "pr_view", view)
+    result = invoke("comment", "--body", "bound")
+    assert result.exit_code == 0, result.output
+    assert published(tmp_path)[0]["pr"] == 42
+
+
+@pytest.mark.parametrize("config", [{}, {"user.jailbee.pr": "42", "user.jailbee.stacked_pr": "43"}, {"user.jailbee.pr": "42", "user.jailbee.sub_pr": '{"lib":{"pr":42}}'}, {"user.jailbee.pr": "42", "user.jailbee.branch_prs": '{"head":{"pr":43}}'}])
+def test_omitted_pr_requires_unique_actual_binding(monkeypatch, tmp_path, config):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", **config}))
+    monkeypatch.setattr(gh, "pr_view", lambda *a, **kw: pytest.fail("ambiguous binding lookup"))
+    result = invoke("comment", "--body", "x")
+    assert result.exit_code == 2, result.output
+    assert "name the PR number" in result.output
+
+
+@pytest.mark.parametrize("key,value,cwd", [("user.jailbee.stacked_pr", "43", "/repo"), ("user.jailbee.sub_pr", '{"lib":{"pr":43}}', "/repo/lib")])
+def test_omitted_pr_resolves_stacked_or_submodule(monkeypatch, tmp_path, key, value, cwd):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", key: value}))
+    def view(number, **kwargs):
+        assert number == 43 and kwargs == {"cwd": cwd}
+        return gh.PrView(43, "fresh", "acme/lib")
+    monkeypatch.setattr(gh, "pr_view", view)
+    result = invoke("description", "--body", "Existing")
+    assert result.exit_code == 0, result.output
+    assert published(tmp_path)[0]["pr"] == 43
+
+
+def test_bound_title_only_description_preserves_body(monkeypatch, tmp_path):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "42"}))
+    monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "fresh", "acme/widgets"))
+    monkeypatch.setattr(gh, "pr_body", lambda n, **kw: "original")
+    result = invoke("description", "--title", "New title")
+    assert result.exit_code == 0, result.output
+    raw, parsed, _ = published(tmp_path)
+    assert raw["pr"] == 42 and parsed.actions[0].body == "original"
+
+
+@pytest.mark.parametrize("explicit_new", [True, False])
+def test_new_description_repo_lookup_does_not_need_pr(monkeypatch, tmp_path, explicit_new):
+    from jailbee.container_outbox import bindings
+
+    config = {"user.jailbee.repo_dir": "/repo"}
+    if explicit_new:
+        config["user.jailbee.pr"] = "42"
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, config))
+    monkeypatch.setattr(gh, "pr_view", lambda *a, **kw: pytest.fail("new description needs no PR"))
+    monkeypatch.setattr(gh, "run_json", lambda argv, **kw: {"nameWithOwner": "acme/widgets"} if argv == ["gh", "repo", "view", "--json", "nameWithOwner"] else pytest.fail(str(argv)))
+    result = invoke("description", *(("--new",) if explicit_new else ()), "--title", "New", "--body", "Body")
+    assert result.exit_code == 0, result.output
+    assert published(tmp_path)[0]["pr"] is None
+
+
+@pytest.mark.parametrize("config", [{"user.jailbee.pr": "bad"}, {"user.jailbee.sub_pr": '{"../outside":{"pr":1}}'}, {"user.jailbee.sub_pr": "[]"}, {"error": "unavailable"}])
+def test_invalid_binding_snapshot_fails_closed(monkeypatch, tmp_path, config):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", **config}))
+    monkeypatch.setattr(gh, "pr_view", lambda *a, **kw: pytest.fail("invalid snapshot lookup"))
+    result = invoke("comment", "--body", "x")
+    assert result.exit_code == 2, result.output
+
+
+def test_same_actual_pr_binding_is_unique(monkeypatch, tmp_path):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "42", "user.jailbee.stacked_pr": "42"}))
+    monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "fresh", "acme/widgets"))
+    assert invoke("comment", "--body", "x").exit_code == 0
+    assert published(tmp_path)[0]["pr"] == 42
+
+
+def test_missing_snapshot_never_assumes_new_description(monkeypatch, tmp_path):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(bindings, "SNAPSHOT", tmp_path / "absent")
+    result = invoke("description", "--body", "x")
+    assert result.exit_code == 2 and "bindings" in result.output
+    assert not (tmp_path / ".jailbee/pr-outbox").exists()
+
+
+def test_description_rejects_new_with_number(tmp_path):
+    result = invoke("description", "1234", "--new", "--body", "x")
+    assert result.exit_code == 2 and "--new" in result.output
 
 
 def test_real_entry_dispatches_pr(monkeypatch, tmp_path, capsys):

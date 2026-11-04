@@ -12,6 +12,11 @@ from jailbee.incus import IncusError
 from tests.conftest import make_cfg
 
 
+@pytest.fixture(autouse=True)
+def _snapshot_refresh(mocker):
+    mocker.patch("jailbee.container_bindings.refresh", return_value=True)
+
+
 def _line(path, commits="2", branch="feat/foo", dirty="", head="aaa", recorded="aaa", subject="s"):
     return "\t".join([path, commits, branch, dirty, head, recorded, subject])
 

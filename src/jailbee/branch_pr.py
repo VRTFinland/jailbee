@@ -445,6 +445,9 @@ class BranchPrMap:
             self._write(entries)
         else:
             self._incus.config_unset_checked(self._full, BRANCH_PRS_LABEL)
+            from jailbee.container_bindings import refresh
+
+            refresh(self._incus, self._full)
         return True
 
     def numbers(self) -> frozenset[int]:
@@ -456,3 +459,6 @@ class BranchPrMap:
             BRANCH_PRS_LABEL,
             json.dumps({head: asdict(entry) for head, entry in entries.items()}, sort_keys=True),
         )
+        from jailbee.container_bindings import refresh
+
+        refresh(self._incus, self._full)

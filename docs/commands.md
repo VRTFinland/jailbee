@@ -40,6 +40,23 @@ commands accept `--repo` (default `.`), while PR source and new descriptions
 accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.
 
+An omitted PR selects exactly one actual container binding (primary, stacked,
+imported-head or submodule), independent of the checkout branch or detached HEAD.
+With multiple bindings, name the PR number. Host creation, start and PR bind/unbind
+operations refresh a minimal read-only snapshot at
+`/opt/jailbee/metadata/bindings.json`; existing containers acquire it on `jb start`
+without rebuilding the golden image. An unavailable snapshot never falls back to
+`gh pr view` on the current branch. A numbered command without a matching binding
+uses the current repository for its explicit number.
+
+`jailbee pr description [N]` updates the bound existing PR by default, including
+preserving its body on a title-only edit. With no bindings it stages a new PR;
+`--new` explicitly requests a new description even when a PR is bound. New
+repository discovery uses read-only `gh repo view` without requiring an existing
+PR; `--repo owner/name` overrides it. As with the unchanged manifest schema,
+`--new` writes `pr: null`: it is a proposal, not a host-side force-create switch.
+Both outboxes cap pending manifests at 20; issue batches cap actions at 100.
+
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,
 `jailbee outbox submit NAME --kind issue|pr` to submit a batch, and

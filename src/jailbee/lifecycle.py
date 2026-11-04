@@ -2074,6 +2074,10 @@ def _new_container(
             },
         )
 
+    from jailbee.container_bindings import sync as sync_pr_bindings
+
+    sync_pr_bindings(incus, name)
+
     # Before `start`: the credential mount and its env key must be in place
     # when autostart first runs the agent, or the container's first session
     # authenticates against the repo's group and only picks up the override
@@ -2839,6 +2843,10 @@ def boot_container(
             "cannot start: the agent-instructions directory the container mounts is "
             f"missing and could not be created: {', '.join(str(p) for p in missing)}"
         )
+
+    from jailbee.container_bindings import sync as sync_pr_bindings
+
+    sync_pr_bindings(incus, name)
 
     # Idempotent: this is also how a container created before pooling
     # existed acquires its slot.
