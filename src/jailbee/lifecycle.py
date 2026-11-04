@@ -3001,6 +3001,10 @@ def destroy_container(
     _phase("deleting")
     incus.delete(name, force=force)
 
+    from jailbee import autostart_outcomes
+
+    autostart_outcomes.remove(name)
+
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login
     # this container was actually using instead. Gated on the override so a

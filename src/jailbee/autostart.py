@@ -673,6 +673,14 @@ def run_stages(
     trigger: AutostartTrigger | None = None,
 ) -> None:
     """Run ``stages`` in order, recording attempted one-shot setup."""
+    from jailbee import autostart_outcomes
+
+    def record_progress(stage_name: str, step: str, state: str) -> None:
+        if on_progress is not None:
+            on_progress(stage_name, step, state)
+        if trigger is not None:
+            autostart_outcomes.record(container, trigger.value, stage_name, step, state)
+
     for stage in stages:
         try:
             from jailbee.autostart_plan import GeneratedServicesStage
@@ -700,7 +708,7 @@ def run_stages(
                     stage,
                     repo_dir,
                     mirror_endpoint=mirror_endpoint,
-                    on_progress=on_progress,
+                    on_progress=record_progress if trigger is not None and stage.stage != AGENTS_STAGE else on_progress,
                     cas_restore=cas_restore,
                 )
         finally:

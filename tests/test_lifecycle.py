@@ -12038,3 +12038,18 @@ def test_boot_staging_failure_is_value_error(tmp_path, mocker):
     with pytest.raises(ValueError, match="stage broke"):
         boot_container(cfg, incus, "feat-x", restart=False)
     incus.start.assert_not_called()
+
+
+def test_destroy_container_removes_outcome_file(tmp_path, mocker, monkeypatch):
+    from jailbee import autostart_outcomes
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": "x", "status": "Stopped"}]
+    autostart_outcomes.record("x", "on_start", "s", "a", "fail")
+    path = autostart_outcomes.outcomes_path("x")
+    assert path.exists()
+    destroy_container(cfg, incus, "x", force=True)
+    assert not path.exists()
