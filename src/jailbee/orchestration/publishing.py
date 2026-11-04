@@ -64,7 +64,8 @@ def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.Prepare
         return "assign"
     add, remove = issue_outbox.resolved_assignees(action, login)
     mine = login.casefold()
-    return "assign_self" if all(x.casefold() == mine for x in (*add, *remove)) else "assign"
+    logins = (*add, *remove)
+    return "assign_self" if logins and all(x.casefold() == mine for x in logins) else "assign"
 
 
 def _coverage(rights: PublishRights, kind: str, target: issue_outbox.RepoTarget) -> None:

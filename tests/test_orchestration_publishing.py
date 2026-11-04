@@ -580,20 +580,25 @@ def test_broker_source_publish_records_orchestrator(rig, mocker):
     assert source.call_args.kwargs["publisher"] == "orchestrator"
 
 
-def _assign_batch(rig, add=(), remove=(), login="alice"):
-    from types import SimpleNamespace
+def _assign_action(rig, add=(), remove=()):
 
     from jailbee.issue_manifest import AssigneesAction, ExistingIssue
     from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
 
-    action = ResolvedAction(
+    return ResolvedAction(
         0,
         AssigneesAction(".", ExistingIssue(12), tuple(add), tuple(remove), ()),
         issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
         ResolvedIssue(12),
         "pending",
     )
-    return SimpleNamespace(login=login, manifests=(SimpleNamespace(actions=(action,)),))
+
+
+def _assign_batch(rig, add=(), remove=(), login="alice", extra=()):
+    from types import SimpleNamespace
+
+    actions = (*extra, _assign_action(rig, add, remove))
+    return SimpleNamespace(login=login, manifests=(SimpleNamespace(actions=actions),))
 
 
 def _check(rig, kinds, **kw):
@@ -626,11 +631,58 @@ def test_assign_self_with_unknown_login_covers_nothing(rig):
         _check(rig, ("assign_self",), add=("@me",), login="")
 
 
+def _comment_action(rig):
+    from jailbee.issue_manifest import CommentAction, ExistingIssue
+    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
+
+    return ResolvedAction(
+        1,
+        CommentAction(".", ExistingIssue(12), "hi"),
+        issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
+        ResolvedIssue(12),
+        "pending",
+    )
+
+
 def test_issue_policy_refuses_uncovered_assign(rig):
+    batch = _assign_batch(rig, add=("@me",), extra=(_comment_action(rig),))
+    # the covered comment alone passes; the uncovered assign refuses the whole batch
+    from types import SimpleNamespace
+
+    only_comment = SimpleNamespace(
+        login="alice", manifests=(SimpleNamespace(actions=(_comment_action(rig),)),)
+    )
+    publishing._issue_policy(PublishRights(issues=("comment",)), 2)(only_comment)
     with pytest.raises(issue_outbox.IssueGateError, match="assign"):
-        _check(rig, ("comment", "state", "labels"), add=("@me",))
+        publishing._issue_policy(PublishRights(issues=("comment", "state", "labels")), 2)(batch)
     with pytest.raises(issue_outbox.IssueGateError, match="assign"):
         _check(rig, (), add=("alice",))
+
+
+def test_assign_self_grant_refuses_batch_mixing_self_and_other_actions(rig):
+    from types import SimpleNamespace
+
+    mine = _assign_action(rig, add=("@me",))
+    theirs = _assign_action(rig, add=("bob",))
+    batch = SimpleNamespace(login="alice", manifests=(SimpleNamespace(actions=(mine, theirs)),))
+    rights = PublishRights(issues=("assign_self",))
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        publishing._issue_policy(rights, 2)(batch)
+    ok = SimpleNamespace(login="alice", manifests=(SimpleNamespace(actions=(mine,)),))
+    publishing._issue_policy(rights, 2)(ok)
+
+
+def test_needed_kind_distinguishes_self_other_and_empty(rig):
+    def need(**kw):
+        batch = _assign_batch(rig, **kw)
+        return publishing._needed_kind(batch.manifests[0].actions[0].action, batch)
+
+    assert need(add=("@me",)) == "assign_self"
+    assert need(add=("ALICE",), remove=("alice",)) == "assign_self"
+    assert need(add=("bob",)) == "assign"
+    assert need(add=("@me",), remove=("bob",)) == "assign"
+    assert need(add=("@me",), login="") == "assign"
+    assert need() == "assign"  # nothing to compare fails closed
 
 
 @pytest.mark.parametrize(

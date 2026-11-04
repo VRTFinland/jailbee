@@ -329,3 +329,49 @@ def test_no_loose_no_egress() -> None:
 
 def test_rights_in_default_operations() -> None:
     assert "rights" in Grant().operations
+
+
+def _rights(issues=(), foreign=()):
+    from jailbee.orchestration.grant import PublishRights
+
+    return PublishRights.model_validate(
+        {
+            "issues": list(issues),
+            "foreign_issues": {"repos": ["org/lib"] if foreign else [], "actions": list(foreign)},
+        }
+    )
+
+
+def test_narrowed_assign_degrades_to_assign_self_under_self_cap():
+    narrowed = _rights(("assign",), ("assign",)).narrowed(_rights(("assign_self",), ("assign_self",)))
+    assert narrowed.issues == ("assign_self",)
+    assert narrowed.foreign_issues.actions == ("assign_self",)
+    assert not narrowed.covers_issue("assign", "org/repo", foreign=False)
+    assert not narrowed.covers_issue("assign", "org/lib", foreign=True)
+    assert narrowed.covers_issue("assign_self", "org/lib", foreign=True)
+
+
+def test_narrowed_assign_self_survives_assign_cap():
+    narrowed = _rights(("assign_self",), ("assign_self",)).narrowed(_rights(("assign",), ("assign",)))
+    assert narrowed.issues == ("assign_self",)
+    assert narrowed.foreign_issues.actions == ("assign_self",)
+
+
+def test_narrowed_assign_with_assign_cap_stays_assign_and_unrelated_kind_is_dropped():
+    narrowed = _rights(("assign", "state")).narrowed(_rights(("assign",)))
+    assert narrowed.issues == ("assign",)
+
+
+def test_cap_excess_reports_assign_above_assign_self_cap():
+    cap = RepoCap(publish=_rights(("assign_self",), ("assign_self",)))
+    messages = cap_excess(Grant(publish=_rights(("assign",), ("assign",))), cap)
+    assert any("issues: assign`" in m for m in messages)
+    assert any("foreign_issues: org/lib:assign`" in m for m in messages)
+
+
+def test_cap_excess_allows_assign_self_under_assign_cap_and_assign_under_assign_cap():
+    cap = RepoCap(publish=_rights(("assign",), ("assign",)))
+    assert cap_excess(Grant(publish=_rights(("assign_self",), ("assign_self",))), cap) == []
+    assert cap_excess(Grant(publish=_rights(("assign",), ("assign",))), cap) == []
+    own_self = RepoCap(publish=_rights(("assign_self",), ("assign_self",)))
+    assert cap_excess(Grant(publish=_rights(("assign_self",), ("assign_self",))), own_self) == []
