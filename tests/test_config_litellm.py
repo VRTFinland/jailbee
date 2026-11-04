@@ -559,12 +559,18 @@ def test_route_description_accepts_2kib_and_editor_multiline():
 
 def test_overlay_description_replaces_and_inherits():
     host = LiteLLMConfig.model_validate({"routes": {"sol-high": {"description": "host"}}})
-    assert host.with_overlay(_overlay(routes={"sol-high": {"effort": "max"}})).effective_routes()[
-        "sol-high"
-    ].description == "host"
-    assert host.with_overlay(_overlay(routes={"sol-high": {"description": "repo"}})).effective_routes()[
-        "sol-high"
-    ].description == "repo"
+    assert (
+        host.with_overlay(_overlay(routes={"sol-high": {"effort": "max"}}))
+        .effective_routes()["sol-high"]
+        .description
+        == "host"
+    )
+    assert (
+        host.with_overlay(_overlay(routes={"sol-high": {"description": "repo"}}))
+        .effective_routes()["sol-high"]
+        .description
+        == "repo"
+    )
 
 
 def test_overlay_null_description_removed():
@@ -577,12 +583,18 @@ def test_profile_model_map_default_and_overlay():
     assert LiteLLMConfig().effective_profiles()["codex"].model_map is True
     host = LiteLLMConfig.model_validate({"profiles": {"codex": {"model_map": False}}})
     assert host.effective_profiles()["codex"].model_map is False
-    assert host.with_overlay(_overlay(profiles={"codex": {"effort": "high"}})).effective_profiles()[
-        "codex"
-    ].model_map is False
-    assert host.with_overlay(_overlay(profiles={"codex": {"model_map": True}})).effective_profiles()[
-        "codex"
-    ].model_map is True
+    assert (
+        host.with_overlay(_overlay(profiles={"codex": {"effort": "high"}}))
+        .effective_profiles()["codex"]
+        .model_map
+        is False
+    )
+    assert (
+        host.with_overlay(_overlay(profiles={"codex": {"model_map": True}}))
+        .effective_profiles()["codex"]
+        .model_map
+        is True
+    )
 
 
 def test_overlay_stacks_on_the_global_route_field_by_field():
