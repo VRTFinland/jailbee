@@ -73,7 +73,8 @@ def test_spawn_passes_profile_to_new_options(make_cfg, tmp_path, mocker):
     assert options.autostart_profile == "light"
 
 
-def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
+@pytest.mark.parametrize("profile", ["full", "none"])
+def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker, profile):
     from jailbee.autostart_profiles import PROFILE_KEY
     from tests.test_orchestration_lifecycle_ops import Rig, _restart
 
@@ -87,7 +88,7 @@ def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
     from jailbee.orchestration.state import load_reservations
 
     def launch(*args, **kwargs):
-        rig.incus.config_set.assert_any_call("proj-c1", PROFILE_KEY, "full")
+        rig.incus.config_set.assert_any_call("proj-c1", PROFILE_KEY, profile)
         assert kwargs["initial_prompt"].endswith("go on")
         return CreateStarted("proj-c1", 12345, tmp_path / "boot.log")
 
@@ -96,7 +97,7 @@ def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
     )
     boot = mocker.patch("jailbee.lifecycle.boot_container")
     result = actions.handle_restart(
-        rig.ctx(), _restart().model_copy(update={"autostart_profile": "full"})
+        rig.ctx(), _restart().model_copy(update={"autostart_profile": profile})
     )
     assert result.state == "started", result.detail
     launch_mock.assert_called_once()
@@ -211,6 +212,34 @@ def test_restart_services_label_before_launch(tmp_path, mocker, services, encode
         _restart().model_dump(exclude_unset=True) | {"services": services}
     )
     assert actions.handle_restart(rig.ctx(), manifest).state == "started"
+
+
+@pytest.mark.parametrize("services,expected", [(None, "db,web"), ([], ",")])
+def test_restart_none_preserves_or_replaces_explicit_services(tmp_path, mocker, services, expected):
+    from jailbee.autostart_profiles import PROFILE_KEY, SERVICES_KEY
+    from jailbee.create_flow import CreateStarted
+    from tests.test_autostart_profiles import state_incus
+    from tests.test_orchestration_lifecycle_ops import Rig, _restart
+
+    rig = Rig(tmp_path, config={PROFILE_KEY: "all", SERVICES_KEY: "db,web"})
+    rig.incus, state = state_incus(mocker, {PROFILE_KEY: "all", SERVICES_KEY: "db,web"})
+    mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
+
+    def launch(*args, **kwargs):
+        assert state[PROFILE_KEY] == "none"
+        assert state[SERVICES_KEY] == expected
+        return CreateStarted("proj-c1", 12345, tmp_path / "boot.log")
+
+    boot = mocker.patch("jailbee.create_flow.launch_boot_background", side_effect=launch)
+    manifest = _restart().model_copy(update={"autostart_profile": "none", "services": services})
+    result = actions.handle_restart(rig.ctx(), manifest)
+    assert result.state == "started", result.detail
+    boot.assert_called_once()
+    assert state[SERVICES_KEY] == expected
+    assert all(
+        call.args[1] != SERVICES_KEY for call in rig.incus.config_unset_checked.call_args_list
+    )
+    assert all(call.args[1] != SERVICES_KEY for call in rig.incus.config_unset.call_args_list)
 
 
 def test_agent_only_refuses_explicit_empty_services(tmp_path):

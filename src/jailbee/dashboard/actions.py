@@ -28,7 +28,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
-    from jailbee.dashboard.model import RepoAdvisory, RepoGroup, RepoTarget
+    from jailbee.dashboard.model import RepoAdvisory, RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.orchestration.runner_model import Runner
 
@@ -189,15 +189,6 @@ def autostart_choice_args(
     if services is not None:
         args.extend(("--services", ",".join(services)))
     return args
-
-
-def restart_with_argv(target: RepoTarget, container: str, extra: Sequence[str]) -> list[str]:
-    from jailbee.dashboard.bulk import bulk_argv
-
-    return [
-        "jailbee",
-        *addressed(bulk_argv("restart", container, extra), target.flags(), over_ssh=False),
-    ]
 
 
 AUTOSTART_STATUS = "autostart-status"
