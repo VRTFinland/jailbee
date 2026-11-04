@@ -5267,6 +5267,29 @@ def _clone_commit_opts(**overrides):
     return NewContainerOptions(**defaults)
 
 
+@pytest.mark.parametrize("warm, source", [(["*/build"], "repo-source"), ([], "repo-source"), (None, "repo-source"), (["*/build"], None)])
+def test_warm_fork_runs_between_clone_and_mounts(tmp_path, mocker, warm, source):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
+    order = []
+    mocker.patch("jailbee.lifecycle._clone_repo_in_container", side_effect=lambda *a, **k: order.append("clone"))
+    seeder = mocker.patch("jailbee.fork_warm.seed_warm_paths", side_effect=lambda *a, **k: order.append("warm"))
+    mocker.patch("jailbee.lifecycle._attach_under_repo_host_mounts", side_effect=lambda *a: order.append("mount"))
+    phases = []
+    new_container(cfg, incus, _clone_commit_opts(fork_of=source, warm_paths=warm), on_phase=phases.append)
+    if warm and source:
+        assert order == ["clone", "warm", "mount"]
+        seeder.assert_called_once_with(cfg, incus, child=f"{cfg.container_prefix}-feat-foo", source=source, commit="beefcafe1234", patterns=warm)
+        assert phases.index("cloning") < phases.index("warming")
+    else:
+        assert order == ["clone", "mount"]
+        seeder.assert_not_called()
+        assert "warming" not in phases
+
+
 def test_new_container_clone_commit_checks_out_that_commit(tmp_path, mocker):
     """`clone_commit` pins the clone to a raw SHA — no `--branch` resolution."""
     cfg = _cfg_for_new(tmp_path)

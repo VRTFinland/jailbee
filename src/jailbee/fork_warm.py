@@ -45,6 +45,11 @@ def validate_pattern(pattern: str) -> str:
     return value
 
 
+def resolve_warm_paths(cfg: Config, override: Sequence[str] | None) -> list[str]:
+    """Resolve a per-fork replacement without mutating configuration."""
+    return list(cfg.fork.warm_paths) if override is None else [validate_pattern(p) for p in override]
+
+
 def seed_warm_paths(
     cfg: Config, incus: Incus, *, child: str, source: str, commit: str, patterns: Sequence[str]
 ) -> WarmResult:

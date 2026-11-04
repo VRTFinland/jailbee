@@ -39,6 +39,15 @@ def test_match_drops_descendant():
     assert match_patterns(["app", "app/build"], ["app/build/", "app/", "app/"])[0] == ["app"]
 
 
+@pytest.mark.parametrize("override, expected", [(None, [".gradle"]), ([], []), (["build/"], ["build"])])
+def test_resolve_warm_paths(tmp_path, override, expected):
+    from jailbee.fork_warm import resolve_warm_paths
+    cfg = make_cfg(tmp_path).model_copy(update={"fork": ForkConfig(warm_paths=[".gradle"])})
+    assert resolve_warm_paths(cfg, override) == expected
+    with pytest.raises(ValueError):
+        resolve_warm_paths(cfg, ["/bad"])
+
+
 def test_fork_config():
     assert ForkConfig().warm_paths == []
     assert ForkConfig(warm_paths=["build/"]).warm_paths == ["build"]

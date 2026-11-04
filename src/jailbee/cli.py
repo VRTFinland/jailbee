@@ -2149,6 +2149,8 @@ def new_cmd(
             autocompletion=completion.complete_container,
         ),
     ] = None,
+    warm: Annotated[list[str] | None, typer.Option("--warm", hidden=True, help="Internal, set by jailbee fork")] = None,
+    no_warm: Annotated[bool, typer.Option("--no-warm", hidden=True, help="Internal, set by jailbee fork")] = False,
     credential_group: Annotated[
         str | None,
         typer.Option(
@@ -2398,6 +2400,20 @@ def new_cmd(
     # `jailbee fork` lands here. The source container's HEAD is fetched to the
     # host and the clone is pinned to it, exactly like a PR head; everything
     # else is an ordinary clone-mode `new`.
+    from jailbee.fork_warm import resolve_warm_paths
+
+    if warm is not None and no_warm:
+        error("--warm and --no-warm are mutually exclusive.")
+        raise typer.Exit(2)
+    if (warm is not None or no_warm) and fork_of is None:
+        error("--warm and --no-warm require --fork-of.")
+        raise typer.Exit(2)
+    try:
+        warm_paths = resolve_warm_paths(cfg, [] if no_warm else warm) if fork_of is not None else None
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
     fork_source: ForkSource | None = None
     if fork_of is not None:
         conflicting = [
@@ -2693,6 +2709,7 @@ def new_cmd(
             or (fork_source is not None and fork_source.untrusted),
             clone_commit=(fork_source.commit if fork_source is not None else pr_clone_commit),
             fork_of=fork_source.full_name if fork_source is not None else None,
+            warm_paths=warm_paths,
             inherited_labels=(fork_source.pr_labels or None) if fork_source else None,
             assume_yes=yes,
             credential_group=resolved_credential_group,
@@ -2927,6 +2944,8 @@ def fork_cmd(
             metavar="FILE|-",
         ),
     ] = None,
+    warm: Annotated[list[str] | None, typer.Option("--warm", help="Seed this git-ignored path from SOURCE (repeatable; replaces fork.warm_paths)")] = None,
+    no_warm: Annotated[bool, typer.Option("--no-warm", help="Do not seed fork.warm_paths into this fork")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Create a container from another container's committed state.
@@ -2936,6 +2955,7 @@ def fork_cmd(
     its upstream: the dashboards name it in the container's details, and
     `jailbee merge` offers SOURCE first.
     SOURCE must be running and have no uncommitted changes.
+    Configured fork.warm_paths seed ignored build outputs by btrfs reflink.
 
     Examples:
 
@@ -2990,6 +3010,8 @@ def fork_cmd(
         pr=None,
         no_fetch=False,
         fork_of=short_name(cfg, source_full),
+        warm=warm,
+        no_warm=no_warm,
         credential_group=credential_group,
         claude_group=None,
         yes=yes,
