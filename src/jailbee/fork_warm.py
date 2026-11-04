@@ -106,9 +106,7 @@ def _seed(
 
     patterns = [validate_pattern(p) for p in patterns]
     containers = incus.list_containers()
-    if not any(
-        c.get("name") == source and c.get("status") == "Running" for c in containers
-    ):
+    if not any(c.get("name") == source and c.get("status") == "Running" for c in containers):
         return _skip("Warm paths skipped: source is not running")
     if incus.current_project() != "default":
         return _skip("Warm paths skipped: only the default Incus project is supported")
@@ -155,7 +153,10 @@ def _seed(
     local = cfg.share_local_mount()
     if local is not None:
         mounts.append(PurePosixPath(local.container))
-    mounts.extend(PurePosixPath(c.container_path.replace("~", f"/home/{CONTAINER_USERNAME}", 1)) for c in cfg.effective_shared_caches())
+    mounts.extend(
+        PurePosixPath(c.container_path.replace("~", f"/home/{CONTAINER_USERNAME}", 1))
+        for c in cfg.effective_shared_caches()
+    )
     selected = []
     for path in paths:
         candidate = PurePosixPath(child_repo) / path
@@ -174,7 +175,10 @@ def _seed(
     existing = {c.get("name") for c in containers}
     for old in incus.snapshot_list(source):
         old_name = old.get("name", "")
-        if old_name == snap or (old_name.startswith(SNAPSHOT_PREFIX) and old_name[len(SNAPSHOT_PREFIX):] not in existing):
+        if old_name == snap or (
+            old_name.startswith(SNAPSHOT_PREFIX)
+            and old_name[len(SNAPSHOT_PREFIX) :] not in existing
+        ):
             try:
                 incus.snapshot_delete(source, old_name)
             except Exception:
@@ -249,7 +253,9 @@ def _seed(
             except IncusError:
                 failed.append(path)
                 try:
-                    incus.exec(child, ["rm", "-rf", "--", target], uid=uid, gid=gid, timeout=EXEC_TIMEOUT)
+                    incus.exec(
+                        child, ["rm", "-rf", "--", target], uid=uid, gid=gid, timeout=EXEC_TIMEOUT
+                    )
                 except Exception as exc:
                     warn(f"Warm path partial result could not be removed: {path}: {exc}")
     finally:
@@ -268,7 +274,11 @@ def _seed(
             except Exception as exc:
                 warn(f"Warm paths snapshot cleanup failed: {exc}")
         else:
-            warn(f"Warm paths device cleanup failed ({cleanup_error}); snapshot retained. Run `incus config device remove {child} {DEVICE_NAME}` then `incus snapshot delete {source} {snap}`")
+            warn(
+                f"Warm paths device cleanup failed ({cleanup_error}); snapshot retained. "
+                f"Run `incus config device remove {child} {DEVICE_NAME}` then "
+                f"`incus snapshot delete {source} {snap}`"
+            )
     if failed:
         warn(f"Warm paths could not be reflinked: {', '.join(failed)}")
     if seeded:

@@ -162,7 +162,9 @@ def test_happy_path_order(warm_rig):
                 "readonly": "true",
             },
         ),
-        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo/app"], uid=uid, gid=gid, timeout=120),
+        call.exec(
+            "repo-child", ["mkdir", "-p", "--", "/home/dev/repo/app"], uid=uid, gid=gid, timeout=120
+        ),
         call.exec(
             "repo-child",
             [
@@ -177,7 +179,9 @@ def test_happy_path_order(warm_rig):
             gid=gid,
             timeout=120,
         ),
-        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo"], uid=uid, gid=gid, timeout=120),
+        call.exec(
+            "repo-child", ["mkdir", "-p", "--", "/home/dev/repo"], uid=uid, gid=gid, timeout=120
+        ),
         call.exec(
             "repo-child",
             [
@@ -200,9 +204,19 @@ def test_happy_path_order(warm_rig):
     assert writes == expected
     commands = [c.args[1] for c in incus.exec.call_args_list]
     for path in ("app/build", ".gradle"):
-        copy_index = next(i for i, argv in enumerate(commands) if argv[0] == "cp" and argv[-1] == f"/home/dev/repo/{path}")
-        ignore_index = next(i for i, argv in enumerate(commands) if "check-ignore" in argv and argv[-1] == path + "/")
-        safety_index = next(i for i, argv in enumerate(commands) if argv[0] == "python3" and argv[-1] == path)
+        copy_index = next(
+            i
+            for i, argv in enumerate(commands)
+            if argv[0] == "cp" and argv[-1] == f"/home/dev/repo/{path}"
+        )
+        ignore_index = next(
+            i
+            for i, argv in enumerate(commands)
+            if "check-ignore" in argv and argv[-1] == path + "/"
+        )
+        safety_index = next(
+            i for i, argv in enumerate(commands) if argv[0] == "python3" and argv[-1] == path
+        )
         assert ignore_index < safety_index < copy_index
 
 
@@ -403,9 +417,16 @@ def test_device_cleanup_retry_then_deletes_snapshot(warm_rig):
 def test_reclaims_snapshots_only_for_missing_children(warm_rig):
     incus = warm_rig[1]
     incus.list_containers.return_value += [{"name": "repo-other", "status": "Running"}]
-    incus.snapshot_list.return_value = [{"name": "jailbee-warm-repo-gone"}, {"name": "jailbee-warm-repo-other"}, {"name": "user-snap"}]
+    incus.snapshot_list.return_value = [
+        {"name": "jailbee-warm-repo-gone"},
+        {"name": "jailbee-warm-repo-other"},
+        {"name": "user-snap"},
+    ]
     seed(warm_rig)
-    assert incus.snapshot_delete.call_args_list == [call("repo-source", "jailbee-warm-repo-gone"), call("repo-source", "jailbee-warm-repo-child")]
+    assert incus.snapshot_delete.call_args_list == [
+        call("repo-source", "jailbee-warm-repo-gone"),
+        call("repo-source", "jailbee-warm-repo-child"),
+    ]
 
 
 def test_snapshot_dirty_skips_copy(warm_rig, mocker):
@@ -418,10 +439,12 @@ def test_snapshot_dirty_skips_copy(warm_rig, mocker):
 
 def test_python_missing_has_specific_advisory(warm_rig, mocker):
     incus = warm_rig[1]
+
     def execute(name, argv, **kwargs):
         if argv[:2] == ["python3", "--version"]:
             raise IncusError("executable not found")
         return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+
     incus.exec.side_effect = execute
     warn = mocker.patch("jailbee.fork_warm.warn")
     assert seed(warm_rig).skipped
@@ -432,12 +455,14 @@ def test_python_missing_has_specific_advisory(warm_rig, mocker):
 
 def test_stalled_exec_has_bounded_timeout(warm_rig):
     incus = warm_rig[1]
+
     def execute(name, argv, **kwargs):
         if argv[0] in {"python3", "mkdir", "cp", "rm"}:
             assert 0 < kwargs.get("timeout", 0) <= 300
         if argv[0] == "cp" and argv[-1].endswith("app/build"):
             raise IncusError("timed out")
         return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+
     incus.exec.side_effect = execute
     assert seed(warm_rig).seeded == [".gradle"]
 
@@ -446,15 +471,23 @@ def test_stalled_exec_has_bounded_timeout(warm_rig):
 def test_skip_paths_shadowed_by_later_mount(warm_rig, tmp_path, kind, mocker):
     from jailbee.config import HostMount, SharedCache
     from jailbee.config.models_host import PoolSpec
+
     cfg, incus = warm_rig
     target = "/home/dev/repo/app/build"
     updates = {}
     if kind == "host":
         updates["host_mounts"] = [HostMount(host=tmp_path, container=target)]
     elif kind == "local":
-        mocker.patch.object(type(cfg), "share_local_mount", return_value=HostMount(host=tmp_path, container=target))
+        mocker.patch.object(
+            type(cfg), "share_local_mount", return_value=HostMount(host=tmp_path, container=target)
+        )
     else:
-        cache = SharedCache(name="outputs", host_subpath="outputs", container_path=target, pool=PoolSpec() if kind == "pool" else None)
+        cache = SharedCache(
+            name="outputs",
+            host_subpath="outputs",
+            container_path=target,
+            pool=PoolSpec() if kind == "pool" else None,
+        )
         updates["shared_caches"] = [cache]
     cfg = cfg.model_copy(update=updates)
     incus.exec.return_value = "app/build/\0app/build/nested/\0.gradle/\0"
