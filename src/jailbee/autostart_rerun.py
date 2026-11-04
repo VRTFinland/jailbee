@@ -244,22 +244,16 @@ def _command(
             console.print(table)
         return
     refuse_while_running(cfg, container)
-    # The supervisor row is best-effort; its Incus PID claim also guards
-    # the handoff when the state database is unavailable. "1" is a stale
-    # pre-handoff sentinel once the rerun lock has been acquired.
-    from jailbee.background import worker_alive
+    # Foreground lifecycle runs have no job row and hold the literal "1".
+    # Unknown/dead claims also fail closed: only their owner may release them.
     from jailbee.incus import IncusError
 
     try:
         claim = incus.config_get_checked(container, "user.jailbee.autostart_in_progress")
     except IncusError as exc:
         raise RuntimeError(f"Cannot check autostart worker claim: {exc}") from exc
-    try:
-        pid = int(claim or "")
-    except ValueError:
-        pid = 0
-    if pid > 1 and worker_alive(pid):
-        raise RuntimeError(f"Autostart is already running for '{container}' (pid {pid})")
+    if claim:
+        raise RuntimeError(f"Autostart is already running for '{container}' (claim {claim})")
     targets = resolve_rerun(
         effective.autostart, stages=stages, steps=steps, trigger=selected_trigger
     )
@@ -300,12 +294,15 @@ def _command(
     if wait:
         run_foreground(cfg, incus, container, block)
     else:
+        import os
+
         key = "user.jailbee.autostart_in_progress"
-        incus.config_set(container, key, "1")
+        own_claim = f"rerun:{os.getpid()}"
+        incus.config_set(container, key, own_claim)
         try:
             spawn(effective, block)
         except BaseException:
-            if incus.config_get(container, key) == "1":
+            if incus.config_get(container, key) == own_claim:
                 incus.config_unset(container, key)
             raise
         info(

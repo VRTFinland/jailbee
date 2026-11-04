@@ -504,7 +504,8 @@ def test_status_without_name_and_no_autostart_jobs_exits_2(tmp_path, mocker) -> 
 
 
 def test_run_requires_selector_off_terminal(tmp_path, mocker):
-    _setup(tmp_path, mocker)
+    _, incus = _setup(tmp_path, mocker)
+    incus.config_get_checked.return_value = None
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["autostart", "run", "feat-a"])
     assert result.exit_code == 2
@@ -632,13 +633,15 @@ def test_run_background_forwards_combined_targets(tmp_path, mocker):
     assert spawn.call_args.kwargs["from_trigger"] == "on_start"
     block = spawn.call_args.kwargs["autostart"]
     assert [s.name for c in block.on_start[0].all_chains() for s in c.steps] == ["npm", "other"]
-    incus.config_set.assert_called_with("myrepo-feat-a", "user.jailbee.autostart_in_progress", "1")
+    incus.config_set.assert_called_with(
+        "myrepo-feat-a", "user.jailbee.autostart_in_progress", f"rerun:{os.getpid()}"
+    )
 
 
 def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
     _, incus = _rerun_setup(tmp_path, mocker)
     incus.config_get.side_effect = lambda name, key: (
-        "1" if key.endswith("autostart_in_progress") else ""
+        f"rerun:{os.getpid()}" if key.endswith("autostart_in_progress") else ""
     )
     mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("live job"))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
