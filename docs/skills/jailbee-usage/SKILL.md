@@ -1318,7 +1318,7 @@ command ran in the foreground or was backgrounded.
   `--step STAGE/STEP`, or `--failed`, or choose interactively. Use
   `--trigger on_create|on_start` for ambiguous stage names. Runs are detached
   by default; `--wait` waits. See [command details](references/commands.md#jailbee-autostart-runcancelstatus-name).
-- The terminal dashboard has `Autostart →` (`u`) and `Services…` (`v`)
+- The terminal dashboard has `Autostart →` (`u`) and `Services…` (`V`)
   menus for eligible containers; Qt is unchanged. Remote SSH policy applies.
 - `jailbee autostart status [<name>]` — one row per step, grouped by stage,
   for the run a detached supervisor is (or was) working through.

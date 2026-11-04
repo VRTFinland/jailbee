@@ -42,7 +42,7 @@ is host-only:
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md))
 
-The terminal dashboard container menu offers `Autostart →` (`u`): `Re-run…` (`r`), `Status` (`T`), `Cancel…` (`C`), and `Profile…` (`p`) when applicable. The re-run picker puts failures first and asks for confirmation; failed or interrupted outcomes also mark the container row. `Services…` (`v`) on running containers lists services and offers start or stop/restart as appropriate, refresh and logs; an empty list is reported. Entries honor remote SSH policy; elevated service refresh may require the host. These new menus are terminal-only; Qt is unchanged.
+The terminal dashboard container menu offers `Autostart →` (`u`): `Re-run…` (`r`), `Status` (`T`), `Cancel…` (`C`), and `Profile…` (`p`) when applicable. The re-run picker puts failures first and asks for confirmation; failed or interrupted outcomes also mark the container row. `Services…` (`V`) on running containers lists services and offers start or stop/restart as appropriate, refresh and logs; an empty list is reported. Entries honor remote SSH policy; elevated service refresh may require the host. These new menus are terminal-only; Qt is unchanged.
 
 ## Services
 

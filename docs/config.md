@@ -2090,13 +2090,19 @@ agent support](agents.md)).
 for stage and step outcomes. Select with repeatable `--stage NAME`,
 `--step STAGE/STEP`, or `--failed` (selectors combine), or choose interactively
 when none is supplied. If a stage name occurs in both triggers, specify
-`--trigger on_create` or `--trigger on_start`. The container must be running.
+`--trigger on_create` or `--trigger on_start`. Execution requires a running
+container; `--list` also works while it is stopped.
 
 Re-runs use the same host-effective configuration and stored profile as `restart`,
 not branch-only additions. Agents and generated or reserved services slots are
 never re-run; use `jailbee service` for services. Ordinary stages named
 `services` with steps remain eligible. A legacy flat group normalized to the
 name `agents` is also excluded: rename its first step or use restart instead.
+Steps whose sanitized tmux window identity matches a configured agent or service
+are protected: their stages are omitted from listing, the picker and `--failed`,
+and explicit selections containing such steps are refused. Creation-only
+configurations with those names remain valid. A safe step in the same stage
+can still be selected explicitly with `--step`.
 A `background: true` step restarts its tmux window. Stage network and mount
 wrappers still apply and are cleaned up, including on cancellation.
 

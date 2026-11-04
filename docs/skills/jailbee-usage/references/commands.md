@@ -527,14 +527,19 @@ omitted; `--clear` and `ALIAS` are mutually exclusive.
 `jailbee autostart run [NAME] --list [--json]` lists eligible stages (JSON
 includes steps and outcomes). Re-run with repeatable `--stage NAME`,
 `--step STAGE/STEP`, and/or `--failed`, or select interactively. Use
-`--trigger on_create|on_start` when a stage name is ambiguous. The container
-must be running. Runs detach by default; `--wait` runs in the foreground.
+`--trigger on_create|on_start` when a stage name is ambiguous. Execution requires
+a running container; `--list` also works while stopped. Runs detach by default;
+`--wait` runs in the foreground.
 
 Re-runs use restart's host-effective config and stored profile, not branch-only
 additions. Agents and generated/reserved service slots are excluded; ordinary
 `services` stages with steps remain eligible. A legacy flat group normalized as
 `agents` is excluded too: rename its first step or use restart. A background
 step restarts its tmux window; stage network/mount wrappers and cleanup apply.
+Steps colliding with configured agent/service window identities (after tmux name
+sanitization) are protected. Their stages are omitted from listing, the picker
+and `--failed`; explicit selections containing them are refused. Creation-only
+configs remain valid; safe steps in those stages can be selected with `--step`.
 Failed and started-but-unfinished outcomes count for `--failed`; missing or
 unreadable records count as no outcome. Last outcomes are stored best-effort in
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.
@@ -543,7 +548,7 @@ coordinate them. A live autostart run is refused.
 
 In the terminal dashboard, `Autostart →` (`u`) offers `Re-run…` (`r`),
 `Status` (`T`), `Cancel…` (`C`) and `Profile…` (`p`) when applicable; failures
-lead the picker and a confirmation precedes execution. `Services…` (`v`)
+lead the picker and a confirmation precedes execution. `Services…` (`V`)
 lists services for running containers with state-dependent start, stop/restart,
 refresh and logs; no services produces a notice. SSH policy controls entries,
 and elevated refresh may require the host. Qt is unchanged.
