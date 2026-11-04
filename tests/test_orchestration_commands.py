@@ -40,10 +40,32 @@ def test_build_grant_sets_issue_kinds(cfg):
     ).publish.issues == ("comment", "state")
     with pytest.raises(
         GrantError,
-        match="unknown issue action 'close'; known: comment, create, edit, labels, state",
+        match="unknown issue action 'close'; known: assign, assign_self, comment, create, edit, labels, state",
     ):
         commands.build_grant(cfg, None, GrantFlags(publish_issues=("close",)))
     assert commands.build_grant(cfg, None, GrantFlags(publish_issues=("none",))).publish.empty()
+
+
+def test_build_grant_accepts_assign_kinds(cfg):
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_issues=("assign_self", "comment"))
+    ).publish
+    assert rights.issues == ("assign_self", "comment")
+    assert "assign issues to itself" in commands.PublishRights.model_fields["issues"].description
+    foreign = commands.build_grant(
+        cfg, None, GrantFlags(publish_foreign_issues=("org/lib:assign",))
+    ).publish
+    assert foreign.foreign_issues.actions == ("assign",)
+
+
+def test_assign_implies_assign_self_in_rights():
+    from jailbee.orchestration.grant import PublishRights
+
+    r = PublishRights(issues=("assign",))
+    assert r.covers_issue("assign_self", "org/repo", foreign=False)
+    assert not PublishRights(issues=("assign_self",)).covers_issue(
+        "assign", "org/repo", foreign=False
+    )
 
 
 def test_build_grant_foreign_issues_parse(cfg):
@@ -122,6 +144,40 @@ def test_remote_unchanged_or_narrowed_publish_needs_no_manual_permission(cfg, in
         Grant(publish=PublishRights(issues=("comment",), max_actions_per_hour=10)),
     ):
         commands._check_remote_bound(cfg, incus, "myrepo-a", new, current, remote)
+
+
+@pytest.mark.parametrize(
+    "had,new",
+    [
+        ([], ["assign_self"]),
+        ([], ["assign"]),
+        (["assign_self"], ["assign"]),
+        (["comment"], ["comment", "assign_self"]),
+    ],
+)
+def test_remote_assign_widening_requires_permission(cfg, incus, had, new):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.orchestration.grant import PublishRights
+
+    remote = RemoteSSHConfig(
+        orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    current = Grant(publish=PublishRights(issues=tuple(had)))
+    wider = Grant(publish=PublishRights(issues=tuple(new)))
+    with pytest.raises(GrantError, match="permission"):
+        commands._check_remote_bound(cfg, incus, "myrepo-a", wider, current, remote)
+
+
+def test_remote_assign_narrowing_needs_no_permission(cfg, incus):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.orchestration.grant import PublishRights
+
+    remote = RemoteSSHConfig(
+        orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    current = Grant(publish=PublishRights(issues=("assign",)))
+    narrower = Grant(publish=PublishRights(issues=("assign_self",)))
+    commands._check_remote_bound(cfg, incus, "myrepo-a", narrower, current, remote)
 
 
 @pytest.mark.parametrize("addition", ["issue", "foreign", "rate"])

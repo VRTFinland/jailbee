@@ -578,3 +578,80 @@ def test_broker_source_publish_records_orchestrator(rig, mocker):
     source = mocker.patch.object(publishing.branch_pr, "publish_source_manifest", return_value=0)
     accept((ctx, m.model_copy(update={"outbox": "pr"}), *rig[2:]))
     assert source.call_args.kwargs["publisher"] == "orchestrator"
+
+
+def _assign_batch(rig, add=(), remove=(), login="alice"):
+    from types import SimpleNamespace
+
+    from jailbee.issue_manifest import AssigneesAction, ExistingIssue
+    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
+
+    action = ResolvedAction(
+        0,
+        AssigneesAction(".", ExistingIssue(12), tuple(add), tuple(remove), ()),
+        issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
+        ResolvedIssue(12),
+        "pending",
+    )
+    return SimpleNamespace(login=login, manifests=(SimpleNamespace(actions=(action,)),))
+
+
+def _check(rig, kinds, **kw):
+    publishing._issue_policy(PublishRights(issues=kinds), 1)(_assign_batch(rig, **kw))
+
+
+def test_assign_self_refuses_other_login(rig):
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        _check(rig, ("assign_self",), add=("bob",))
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        _check(rig, ("assign_self",), remove=("bob",))
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        _check(rig, ("assign_self",), add=("@me",), remove=("bob",))
+
+
+def test_assign_self_accepts_resolved_login(rig):
+    _check(rig, ("assign_self",), add=("@me",))
+    _check(rig, ("assign_self",), add=("Alice",))  # literal publisher login, any case
+    _check(rig, ("assign_self",), remove=("alice",))
+    _check(rig, ("assign_self",), add=("@me",), remove=())
+
+
+def test_assign_grant_covers_self_and_other(rig):
+    _check(rig, ("assign",), add=("@me",))
+    _check(rig, ("assign",), add=("bob",), remove=("carol",))
+
+
+def test_assign_self_with_unknown_login_covers_nothing(rig):
+    with pytest.raises(issue_outbox.IssueGateError):
+        _check(rig, ("assign_self",), add=("@me",), login="")
+
+
+def test_issue_policy_refuses_uncovered_assign(rig):
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        _check(rig, ("comment", "state", "labels"), add=("@me",))
+    with pytest.raises(issue_outbox.IssueGateError, match="assign"):
+        _check(rig, (), add=("alice",))
+
+
+@pytest.mark.parametrize(
+    "kinds,state",
+    [(("assign_self",), "started"), (("assign",), "started"), (("comment",), "refused")],
+)
+def test_precheck_requires_some_assign_right(rig, kinds, state):
+    ctx, m, files, *_ = rig
+    files["a.json"] = json.dumps(
+        {
+            "version": 1,
+            "actions": [
+                {
+                    "type": "assignees",
+                    "repo": ".",
+                    "issue": 12,
+                    "add": ["@me"],
+                    "expected": {"assignees": []},
+                }
+            ],
+        }
+    )
+    ctx.sender.config[labels.GRANT] = Grant(publish=PublishRights(issues=kinds)).to_label()
+    assert publishing.handle_publish(ctx, m).state == state

@@ -93,8 +93,34 @@ class Grantable(BaseModel):
         return _checked_egress(v)
 
 
-IssueActionKind = Literal["create", "edit", "comment", "labels", "state"]
-ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = ("comment", "create", "edit", "labels", "state")
+IssueActionKind = Literal[
+    "create", "edit", "comment", "labels", "state", "assign_self", "assign"
+]
+ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
+    "assign",
+    "assign_self",
+    "comment",
+    "create",
+    "edit",
+    "labels",
+    "state",
+)
+
+
+def kind_granted(kind: str, granted: Iterable[str]) -> bool:
+    """Whether ``granted`` issue kinds cover ``kind``; `assign` implies `assign_self`."""
+    held = set(granted)
+    return kind in held or (kind == "assign_self" and "assign" in held)
+
+
+def narrow_kinds(
+    kinds: tuple[IssueActionKind, ...], cap: tuple[IssueActionKind, ...]
+) -> tuple[IssueActionKind, ...]:
+    """The kinds of ``kinds`` that ``cap`` covers, `assign` degrading to `assign_self`."""
+    out = {k for k in kinds if kind_granted(k, cap)}
+    if "assign" in kinds and "assign" not in cap and "assign_self" in cap:
+        out.add("assign_self")
+    return tuple(sorted(out))
 
 
 class ForeignIssueRights(BaseModel):
@@ -104,7 +130,10 @@ class ForeignIssueRights(BaseModel):
         default=(), description="Foreign owner/name repositories, or '*' alone for any repository."
     )
     actions: tuple[IssueActionKind, ...] = Field(
-        default=(), description="Issue action kinds permitted on the listed foreign repositories."
+        default=(), description=(
+            "Issue action kinds permitted on the listed foreign repositories "
+            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+        ),
     )
 
     @field_validator("repos")
@@ -129,7 +158,10 @@ class PublishRights(BaseModel):
 
     issues: tuple[IssueActionKind, ...] = Field(
         default=(),
-        description="Issue actions allowed on the own repository and declared submodules.",
+        description=(
+            "Issue actions allowed on the own repository and declared submodules "
+            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+        ),
     )
     foreign_issues: ForeignIssueRights = Field(
         default=ForeignIssueRights(),
@@ -164,9 +196,9 @@ class PublishRights(BaseModel):
 
     def covers_issue(self, kind: str, slug: str, *, foreign: bool) -> bool:
         if not foreign:
-            return kind in self.issues
+            return kind_granted(kind, self.issues)
         f = self.foreign_issues
-        return kind in f.actions and ("*" in f.repos or slug.casefold() in f.repos)
+        return kind_granted(kind, f.actions) and ("*" in f.repos or slug.casefold() in f.repos)
 
     def narrowed(self, cap: PublishRights | None) -> PublishRights:
         if cap is None:
@@ -179,9 +211,9 @@ class PublishRights(BaseModel):
         else:
             repos = tuple(r for r in f.repos if r in c.repos)
         return PublishRights(
-            issues=tuple(k for k in self.issues if k in cap.issues),
+            issues=narrow_kinds(self.issues, cap.issues),
             foreign_issues=ForeignIssueRights(
-                repos=repos, actions=tuple(k for k in f.actions if k in c.actions)
+                repos=repos, actions=narrow_kinds(f.actions, c.actions)
             ),
             pull_requests=self.pull_requests and cap.pull_requests,
             pr_reviews=self.pr_reviews and cap.pr_reviews,
@@ -292,7 +324,7 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
         requested = grant.publish
         narrowed = PublishRights() if cap.publish is False else requested.narrowed(cap.publish)
         for kind in requested.issues:
-            if kind not in narrowed.issues:
+            if not kind_granted(kind, narrowed.issues):
                 out.append(f"publish right `issues: {kind}` is above the repo cap")
         for repo in requested.foreign_issues.repos:
             for kind in requested.foreign_issues.actions:

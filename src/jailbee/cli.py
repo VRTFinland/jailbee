@@ -13071,7 +13071,7 @@ def orchestrate_grant_cmd(
     ] = False,
     publish_issues: Annotated[
         str | None,
-        typer.Option("--publish-issues", help="Issue action kinds, comma-separated; none clears."),
+        typer.Option("--publish-issues", help="Issue action kinds, comma-separated (assign_self: only the publisher; assign: anyone); none clears."),
     ] = None,
     publish_foreign_issues: Annotated[
         list[str] | None,
