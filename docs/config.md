@@ -3230,7 +3230,9 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 | `routes` | five built-in routes | Named models; same-name entries overlay the built-in route field by field. |
 | `profiles` | built-in `codex` | Named maps of `fable`, `opus`, `sonnet`, `haiku` tiers to routes; same-name entries overlay individual tiers. |
 
-Routes accept `model` (required for new routes), `effort` (fixed),
+Routes accept `model` (required for new routes), `description` (optional model
+strengths and intended use in the generated map; non-blank, at most 2 KiB UTF-8;
+a higher layer replaces it, `null` removes it), `effort` (fixed),
 `min_effort` (floor; mutually exclusive with `effort`), `context_window`
 (required for unknown models, default `1050000` (included in a ChatGPT subscription) for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
 `max_context_window` (the most `claude-jb --context` may select; default `1050000` for those three models, otherwise `context_window`; never below it),
@@ -3248,8 +3250,10 @@ changes nothing else needs `jailbee litellm up`. Subscription routes
 (`chatgpt/` or `oauth: true`) also accept `account`, defaulting to the first
 entry in `accounts`. All subscription routes in one profile must use the same
 account. Profiles derive their account from those routes and reject a profile-level
-`account` key. They accept `effort` as the default session effort and
-`instructions` (model-policy text appended to Claude Code's system prompt; see
+`account` key. They accept `effort` as the default session effort,
+`model_map` (default `true`; `false` disables the generated tier-to-model map)
+and `instructions` (model-policy text appended after that map to Claude Code's
+system prompt; see [Model map](litellm.md#model-map) and
 [Profile instructions](litellm.md#profile-instructions)). `jailbee litellm up` renders changes
 and restarts the instance if needed; `jailbee apply` reconciles an enabled,
 already-running proxy, but does not start a missing or stopped one. Use

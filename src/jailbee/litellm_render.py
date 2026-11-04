@@ -1,6 +1,7 @@
 """`litellm:` config → the files the LiteLLM container and `claude-jb` read.
 
-Pure: no Incus, no filesystem. `litellm` pushes what this returns.
+No Incus or filesystem access. `litellm` pushes what this returns; oversized
+profile instructions produce a warning on stderr.
 
 One LiteLLM process per account (`CHATGPT_TOKEN_DIR` is process-wide), so
 everything here is rendered per account. An instance serves every API-key
@@ -46,7 +47,13 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from jailbee.config.models_litellm import PROVIDER_HOSTS, XAI_AUTH_HOST, api_base_endpoint
+from jailbee import tui
+from jailbee.config.models_litellm import (
+    INSTRUCTIONS_MAX_BYTES,
+    PROVIDER_HOSTS,
+    XAI_AUTH_HOST,
+    api_base_endpoint,
+)
 from jailbee.egress import parse_egress_entry
 
 if TYPE_CHECKING:
@@ -404,6 +411,65 @@ def render_instance_files(
     )
 
 
+def render_model_map(
+    name: str,
+    profile: ResolvedProfile,
+    routes: Mapping[str, ResolvedRoute],
+    *,
+    descriptions: bool = True,
+) -> str:
+    lines = [
+        f"## Model map (claude-jb profile `{name}`)",
+        "Claude Code's tier names are aliases here; each runs the backend model below.",
+    ]
+    for tier in TIER_LEVELS:
+        if tier not in profile.tiers:
+            continue
+        route = routes[profile.tiers[tier]]
+        details = [f"route `{route.name}`"]
+        effort = route.effort or profile.effort
+        if effort:
+            details.append(f"effort {effort}")
+        if route.min_effort:
+            details.append(f"min effort {route.min_effort}")
+        whole, fraction = divmod(route.context_window, 1000)
+        context = f"{whole}k" if fraction == 0 else f"{whole}.{fraction:03d}k"
+        details.append(f"context {context}")
+        lines.append(f"- {tier} → `{route.model}` ({'; '.join(details)})")
+        if descriptions and route.description:
+            lines.extend(f"  {line}" for line in route.description.splitlines())
+    unmapped = [tier for tier in TIER_LEVELS if tier not in profile.tiers]
+    if unmapped:
+        lines.append(f"Unmapped tiers: {', '.join(unmapped)} (not available in this session).")
+    return "\n".join(lines)
+
+
+def _profile_instructions(
+    name: str, profile: ResolvedProfile, routes: Mapping[str, ResolvedRoute]
+) -> str | None:
+    if not profile.model_map:
+        return profile.instructions
+
+    def combine(model_map: str) -> str:
+        return "\n\n".join(part for part in (model_map, profile.instructions) if part)
+
+    text = combine(render_model_map(name, profile, routes))
+    if len(text.encode()) <= INSTRUCTIONS_MAX_BYTES:
+        return text
+    tui.warn_plain(
+        f"Model map for profile '{name}' exceeds the instructions limit; dropping descriptions.",
+        stderr=True,
+    )
+    text = combine(render_model_map(name, profile, routes, descriptions=False))
+    if len(text.encode()) <= INSTRUCTIONS_MAX_BYTES:
+        return text
+    tui.warn_plain(
+        f"Model map for profile '{name}' still exceeds the instructions limit; omitting the map.",
+        stderr=True,
+    )
+    return profile.instructions
+
+
 def container_profiles(
     cfg: LiteLLMConfig, *, base_urls: Mapping[str, str], scope: str | None = None
 ) -> dict[str, dict[str, object]]:
@@ -418,7 +484,7 @@ def container_profiles(
             "base_url": base_urls[account],
             "key_file": container_key_file(account),
             "effort": profile.effort,
-            "instructions": profile.instructions,
+            "instructions": _profile_instructions(name, profile, routes),
             "tiers": {t: tier_alias(scope, name, t) for t in profile.tiers},
             # One value for the whole session, whichever tier is in use: the
             # smallest, so no tier is filled past what its backend accepts.

@@ -133,7 +133,14 @@ host-local `litellm:` override may change it for that repo's containers).
 Overrides are edited on the host (`jailbee config edit --local`) and take effect
 with `jailbee apply`, which reloads route and profile changes into the running proxy and restarts an
 instance only for secrets, `extra` outside its `model_list`, settings or an unconfirmed reload
-(`--no-restart` defers only the restarts). A profile's `instructions` text is appended to the session's system prompt; your own `--append-system-prompt[-file]` is merged after it. `litellm.autostart` starts the Claude
+(`--no-restart` defers only the restarts). By default, a generated tier-to-backend
+model map precedes the profile's `instructions` in the appended system prompt;
+your own `--append-system-prompt[-file]` is merged after them. Set a route's
+`description` to describe its strengths and intended use in the map, or set
+`model_map: false` on a profile to disable the map while keeping instructions.
+If the combined text exceeds 64 KiB, JailBee warns and drops descriptions;
+if it still does not fit, it omits the map and preserves instructions. Changes
+reach new sessions after `jailbee apply`. `litellm.autostart` starts the Claude
 autostart window with `claude-jb`.
 
 ## Remote SSH

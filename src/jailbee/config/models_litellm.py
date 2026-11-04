@@ -248,6 +248,14 @@ class LiteLLMRoute(BaseModel):
             "`openrouter/moonshotai/kimi-k3`. Required for a route jailbee does not ship."
         ),
     )
+    description: str | None = Field(
+        default=None,
+        description=(
+            "What this model is like and when to use it (at most 2 KiB). "
+            "A higher layer replaces it whole; `null` removes it."
+        ),
+        json_schema_extra={"multiline": True},
+    )
     effort: EffortLevel | None = Field(
         default=None,
         description=(
@@ -330,6 +338,16 @@ class LiteLLMRoute(BaseModel):
         ),
     )
 
+    @field_validator("description")
+    @classmethod
+    def _description_usable(cls, value: str | None) -> str | None:
+        if value is not None:
+            if not value.strip():
+                raise ValueError("is empty; write `null` to remove it")
+            if len(value.encode()) > 2048:
+                raise ValueError("exceeds 2 KiB")
+        return value
+
     @field_validator("api_key")
     @classmethod
     def _api_key_is_a_name(cls, value: str | None) -> str | None:
@@ -370,6 +388,10 @@ class LiteLLMProfile(BaseModel):
             "Session default effort: `claude-jb` passes `--effort <value>` unless "
             "you pass `--effort` yourself."
         ),
+    )
+    model_map: bool = Field(
+        default=True,
+        description="Include the generated model map in the session's system prompt.",
     )
     instructions: str | None = Field(
         default=None,
@@ -455,6 +477,7 @@ class ResolvedRoute:
     egress: tuple[str, ...] = ()
     oauth: bool = False
     account: str | None = None
+    description: str | None = None
 
     @property
     def provider(self) -> str:
@@ -484,6 +507,7 @@ class ResolvedProfile:
     effort: str | None
     account: str
     instructions: str | None = None
+    model_map: bool = True
 
 
 def _overlay(builtin: dict[str, object], user: BaseModel | None) -> dict[str, object]:
@@ -750,6 +774,7 @@ class LiteLLMConfig(BaseModel):
                 egress=tuple(str(e) for e in egress),
                 oauth=oauth,
                 account=(account or self.accounts[0]) if subscription else None,
+                description=_optional_str(raw.get("description")),
             )
         return out
 
@@ -765,6 +790,7 @@ class LiteLLMConfig(BaseModel):
                 effort=_optional_str(raw.get("effort")),
                 account=_profile_account(name, tiers, routes, self.accounts[0]),
                 instructions=_optional_str(raw.get("instructions")),
+                model_map=raw.get("model_map", True) is True,
             )
         return out
 
