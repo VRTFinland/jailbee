@@ -84,6 +84,10 @@ class FakeIncus:
         self.set_running(name, False)
 
     def exec_capped(self, name: str, argv: list[str], **kw: object) -> str:
+        if argv[:3] == ["python3", "-I", "-c"]:
+            return json.dumps({"issue": [], "pr": []})
+        if argv[4] != OUTBOX_DIR:
+            return base64.b64encode(bytes(1024)).decode()
         assert argv[4] == OUTBOX_DIR
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tar:
@@ -95,6 +99,9 @@ class FakeIncus:
         return base64.b64encode(buf.getvalue()).decode()
 
     def exec(self, name: str, argv: list[str], **kw: object) -> str:
+        if argv[:2] == ["sh", "-c"] and argv[-1] == "/home/dev/.jailbee/orchestration/role":
+            self.events.append(("role", name, kw.get("uid")))
+            return ""
         if argv == ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR]:
             self.events.append(("mkdir", name, kw.get("uid")))
             return ""
