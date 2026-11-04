@@ -112,9 +112,39 @@ def test_issue_management_skill_routes_writes_through_host() -> None:
 @pytest.mark.parametrize("name", ["jailbee-issue-management", "jailbee-pr-review", "jailbee-bug-report", "jailbee-orchestration-child"])
 def test_github_skills_redirect_children(name: str) -> None:
     text = (Path(agent_skills._skills_root()) / name / "SKILL.md").read_text()
-    assert "JAILBEE_ROLE=child" in text
-    assert "jailbee inbox send message --text" in text
-    assert "mkdir -p ~/.jailbee/pr-outbox" not in text
+    first_rule = text.split("**First:**", 1)[1].split("\n\n", 1)[0]
+    for needle in (
+        "JAILBEE_ROLE=child",
+        "role marker",
+        "refuses you as a child",
+        "do not stage GitHub writes",
+        "exact repository, target, title, body and action content",
+        "jailbee inbox send message --text",
+        "--kind question",
+        "Do not write GitHub outbox files or directories by hand",
+    ):
+        assert needle in first_rule, (name, needle)
+    assert not re.search(r"mkdir[^\n]*(?:pr-outbox|issue-outbox)", text)
+    assert "writing a manifest by hand" not in text
+
+
+def test_orchestration_source_example_stages_new_pr(tmp_path: Path, monkeypatch) -> None:
+    import shlex
+
+    from typer.testing import CliRunner
+
+    from jailbee.container_cli import container_app
+
+    text = (Path(agent_skills._skills_root()) / "jailbee-orchestration" / "SKILL.md").read_text()
+    match = re.search(r"```bash\n(jailbee pr source [^\n]+)\n```", text)
+    assert match, "missing runnable source example"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("JAILBEE_ROLE", raising=False)
+    args = shlex.split(match.group(1))[1:]
+    args = [arg.replace("REF", "refs/heads/feature").replace("SHA", "a" * 40) for arg in args]
+    result = CliRunner().invoke(container_app, args)
+    assert result.exit_code == 0, result.output
+    assert list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
 
 
 ORCH = "jailbee-orchestration"

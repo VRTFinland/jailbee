@@ -151,15 +151,25 @@ outbox state and is conservatively kept.
 
 For independent PRs, spawn each child with `--new --base main` (replace
 `main` with the upstream base), not a fork of your work. This keeps
-orchestrator commits out of the child PR. On `done`, use `imported_ref` and
-`imported_sha` to stage one source manifest with `jailbee pr source --ref REF --sha SHA --repo owner/name` (and a description for a new PR); do **not**
-merge the import. See the [source examples](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
+orchestrator commits out of the child PR. On `done`, substitute `imported_ref`
+and `imported_sha` in this command to stage a new PR source and description;
+do **not** merge the import:
+
+```bash
+jailbee pr source --ref REF --sha SHA --repo owner/name --body "Describe the change"
+```
+
+See the [source examples](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
 The host publishes each with `jb pr push <orchestrator> --source-manifest
 <file>`. Let `on_done: destroy` clean up after import.
 
 For rework, spawn with `--ref refs/jailbee/from/<child>/<branch>` or a local
 branch as `--ref refs/heads/<name>`, or use `--pr N`. Import the result and
-stage a numbered `pr: N` source manifest. Children cannot stage GitHub proposals; relay their exact content into your own outbox with `jailbee issue` or `jailbee pr`. Before reusing an
+stage a numbered source with `jailbee pr source --ref REF --sha SHA --repo
+owner/name --pr N`. A description is optional for a numbered PR; add `--body`
+or `--body-file` when replacing it. Children cannot stage GitHub proposals;
+relay their exact content into your own outbox with `jailbee issue` or
+`jailbee pr`. Before reusing an
 imported ref, publish its source manifest or preserve the commit under a
 separate persistent ref and use that ref in the manifest. Staging alone does
 not retain the ref; a later import can move it.

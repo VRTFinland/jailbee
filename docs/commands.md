@@ -68,6 +68,7 @@ is host-only:
 - `jailbee config validate` ([configuration](config.md))
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md))
+- `jailbee issue ...`, `jailbee pr ...`, `jailbee outbox ...` ([outbox commands](#in-container-outbox-commands))
 
 ## Services
 
