@@ -11110,13 +11110,13 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 @autostart_app.command("run")
 def autostart_run_cmd(
     container: AutostartNameArg = None,
-    stage: Annotated[list[str] | None, typer.Option("--stage")] = None,
-    step: Annotated[list[str] | None, typer.Option("--step")] = None,
-    failed: Annotated[bool, typer.Option("--failed")] = False,
-    trigger: Annotated[str | None, typer.Option("--trigger")] = None,
-    wait: Annotated[bool, typer.Option("--wait")] = False,
-    listing: Annotated[bool, typer.Option("--list")] = False,
-    json_output: Annotated[bool, typer.Option("--json")] = False,
+    stage: Annotated[list[str] | None, typer.Option("--stage", help="Re-run a named stage; repeat to select more.")] = None,
+    step: Annotated[list[str] | None, typer.Option("--step", help="Re-run a STAGE/STEP; repeat to select more.")] = None,
+    failed: Annotated[bool, typer.Option("--failed", help="Include failed or interrupted steps.")] = False,
+    trigger: Annotated[str | None, typer.Option("--trigger", help="Select on_create or on_start.")] = None,
+    wait: Annotated[bool, typer.Option("--wait", help="Run in the foreground.")] = False,
+    listing: Annotated[bool, typer.Option("--list", help="List re-runnable stages.")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output the list as JSON.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Re-run configured stages or steps in a running container."""
