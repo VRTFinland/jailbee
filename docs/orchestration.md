@@ -150,8 +150,10 @@ this container. New PRs use the default base; bound updates keep that PR's
 base. Updates require an authored `BranchPrMap` binding created by this
 container's source publication; review-only PR/stacked labels and adopted
 bindings do not authorize pushes. PRs opened here retain authorship for later
-updates. Updating any PR opened some other way remains a host step. Reviews, replies and description rewrites target only bound PRs
-in the own repository, never foreign repositories or submodules.
+updates. Updating any PR opened some other way remains a host step. Review comments and replies target only bound PRs in the own repository,
+never foreign repositories or submodules. Description rewrites additionally
+require an authored, non-adopted source-PR binding; review-only labels do not
+authorize editing someone else's title or body.
 
 Only one publish runs per orchestrator. Its full pending-action count is
 reserved against a sliding-hour cap before starting, including failed or
@@ -161,6 +163,12 @@ an already accepted worker finishes and reports its result.
 The broker writes finished requests, action kinds/repos, URLs and outcome to
 `publish-log.jsonl` under its state root (`~/.local/state/jailbee/orchestration/`).
 Existing outbox receipts and history remain available through `jb outbox`.
+A worker shutdown that leaves a review outcome uncertain also leaves a
+host-side block for that instance and manifest name: further broker requests
+for it are refused until the human resolves the outbox on the host. A manual
+host publication is not subject to this broker block. Do not rename and
+resubmit an uncertain manifest. The broker waits up to 25 seconds for workers
+on shutdown/upgrade; later recovery never automatically retries a cut request.
 
 Over SSH, granting publish rights requires the session's command policy to
 permit the equivalent manual operation: `issue apply`, `pr push

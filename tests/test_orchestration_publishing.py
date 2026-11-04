@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from jailbee import issue_outbox, pr_outbox
+from jailbee import branch_pr, issue_outbox, pr_outbox
 from jailbee.orchestration import labels, publishing
 from jailbee.orchestration.actions import dispatch
 from jailbee.orchestration.grant import Grant, PublishRights
@@ -106,6 +106,74 @@ def test_uncertain_uncovered_action_is_checked(rig):
     batch = SimpleNamespace(manifests=(SimpleNamespace(actions=(action,)),))
     with pytest.raises(issue_outbox.IssueGateError, match="state"):
         publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
+
+
+@pytest.mark.parametrize("binding,description,allowed", [("label", True, False), ("adopted", True, False), ("authored", True, True), ("label", False, True)])
+def test_review_description_requires_authored_binding(rig, mocker, binding, description, allowed):
+    ctx = rig[0]
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    entries = {"topic": {"head": "topic", "pr": 12, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40, "author": True, "adopted": binding == "adopted"}}
+    ctx.incus.config_get_checked.side_effect = lambda full, key: json.dumps(entries) if key == branch_pr.BRANCH_PRS_LABEL and binding != "label" else "12" if key == "user.jailbee.pr" else None
+    payload = {"version": 1, "repo": "org/repo", "pr": 12, "head_sha": "a" * 40, "actions": [{"type": "description" if description else "comment", "body": "body"}]}
+    manifest = pr_outbox.parse_manifest("a.json", json.dumps(payload), {})
+    check = publishing._review_policy(PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(manifest)
+    else:
+        with pytest.raises(pr_outbox.GateError, match="authored"):
+            check(manifest)
+
+
+def test_recovered_uncertain_review_blocks_new_request(rig, mocker):
+    ctx, m, *_ = rig
+    m = m.model_copy(update={"outbox": "pr"})
+    mocker.patch.object(publishing, "_precheck", return_value=("review", [{"kind": "comment", "repo": "org/repo"}], False))
+    assert publishing.handle_publish(ctx, m).state == "started"
+    publishing.recover(ctx.root)
+    publishing.settle(ctx, lambda *args: None)
+    out = publishing.handle_publish(ctx, m.model_copy(update={"id": "pub-2"}))
+    assert out.state == "refused" and "uncertain" in out.detail
+
+
+def test_cut_worker_recovery_reports_uncertain(rig):
+    ctx, m, *_ = rig
+    assert publishing.handle_publish(ctx, m).state == "started"
+    # A joined-but-still-running worker has not written any result at exit.
+    publishing.recover(ctx.root)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert len(replies) == 1 and replies[0].state == "failed"
+    assert "outcome uncertain" in replies[0].detail
+
+
+def test_settle_without_prune_refuses_namesake(rig):
+    accept(rig)
+    ctx = rig[0]
+    ctx.sender = replace(ctx.sender, config={"volatile.uuid": "new-uuid"})
+    publishing.settle(ctx, lambda *args: pytest.fail("old result delivered to namesake"))
+
+
+def test_abandoned_worker_late_result_is_audited(rig):
+    ctx, m, _, threads, _ = rig
+    publishing.handle_publish(ctx, m)
+    publishing.start(ctx, m)
+    publishing.prune(ctx.root, {}, ctx.now)
+    threads[0].target(*threads[0].args)
+    publishing.prune(ctx.root, {}, ctx.now)
+    rows = [json.loads(line) for line in (ctx.root / "publish-log.jsonl").read_text().splitlines()]
+    assert any(row["outcome"] == "abandoned-result" for row in rows)
+    assert not list((ctx.root / "publish-results").glob("*.json"))
+
+
+def test_worker_transport_refuses_namesake_before_sidecar_write(mocker):
+    from jailbee.incus import Incus, IncusError
+    import subprocess
+    transport = mocker.patch("jailbee.incus.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="new-uuid\n", stderr=""))
+    incus = Incus()
+    incus.guard_instance("proj-o", "old-uuid")
+    with pytest.raises(IncusError, match="identity"):
+        incus.exec_with_input("proj-o", ["bash", "-c", "write sidecar"], "receipt")
+    assert all("exec" not in call.args[0] for call in transport.call_args_list)
 
 
 def test_audit_uses_actual_domain_actions_not_precheck(rig):

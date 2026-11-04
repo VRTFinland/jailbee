@@ -124,6 +124,18 @@ def test_remote_unchanged_or_narrowed_publish_needs_no_manual_permission(cfg, in
         commands._check_remote_bound(cfg, incus, "myrepo-a", new, current, remote)
 
 
+@pytest.mark.parametrize("addition", ["issue", "foreign", "rate"])
+def test_remote_publish_widening_still_requires_permission(cfg, incus, addition):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.orchestration.grant import PublishRights
+    remote = RemoteSSHConfig(orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
+    current = Grant(publish=PublishRights.model_validate({"issues": ["comment"], "foreign_issues": {"repos": ["org/lib"], "actions": ["comment"]}}))
+    changes = {"issues": ["comment", "state"]} if addition == "issue" else {"foreign_issues": {"repos": ["org/lib", "org/new"], "actions": ["comment"]}} if addition == "foreign" else {"max_actions_per_hour": 31}
+    new = Grant(publish=PublishRights.model_validate(current.publish.model_dump() | changes))
+    with pytest.raises(GrantError, match="permission"):
+        commands._check_remote_bound(cfg, incus, "myrepo-a", new, current, remote)
+
+
 def test_no_publish_clears_all(cfg):
     from jailbee.orchestration.grant import PublishRights
 

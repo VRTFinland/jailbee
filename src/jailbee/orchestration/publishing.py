@@ -86,7 +86,9 @@ def _review_policy(
         _own_review_repo(cfg, manifest)
         from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
 
-        bound = {entry.pr for entry in branch_pr.BranchPrMap(incus, full).read().values()}
+        entries = branch_pr.BranchPrMap(incus, full).read().values()
+        bound = {entry.pr for entry in entries}
+        authored = {entry.pr for entry in entries if entry.author and not entry.adopted}
         for label in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
             value = incus.config_get_checked(full, label)
             if value and value.isdigit():
@@ -96,6 +98,9 @@ def _review_policy(
                 raise pr_outbox.GateError(f"PR #{manifest.pr} is not bound to this container")
         elif len(bound) != 1:
             raise pr_outbox.GateError("review needs exactly one explicitly bound PR")
+        target_number = manifest.pr if manifest.pr is not None else next(iter(bound))
+        if any(isinstance(action, pr_outbox.DescriptionAction) for action in manifest.actions) and target_number not in authored:
+            raise pr_outbox.GateError("description rewrite requires an authored, non-adopted PR binding")
 
     return check
 
@@ -222,6 +227,13 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
         del current[full]
         path.unlink(missing_ok=True)
     _save(root, "publish-inflight.json", current)
+    active_results = {_result(root, entry.get("container_key", full), entry["ref"]) for full, entry in current.items()}
+    for path in (root / "publish-results").glob("*.json"):
+        if path in active_results:
+            continue
+        result = json.loads(path.read_text())
+        _audit(root, {"time": now.isoformat(), "orchestrator": result.get("orchestrator", "unknown"), "ref": result.get("ref"), "actions": result.get("actions", []), "urls": result.get("urls", []), "outcome": "abandoned-result"})
+        path.unlink(missing_ok=True)
     known = _load(root, "publish-known.json")
     _save(
         root,
@@ -251,8 +263,15 @@ def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     return outcome
 
 
+def _review_marker(root: Path, key: str, name: str) -> Path:
+    digest = hashlib.sha256(f"{key}\0{name}".encode()).hexdigest()
+    return root / "publish-review-uncertain" / f"{digest}.json"
+
+
 def _handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     assert isinstance(m, PublishManifest)
+    if m.outbox == "pr" and _review_marker(ctx.root, ctx.sender.key, m.manifest).exists():
+        return refused("outcome uncertain: review publication requires human resolution with `jb outbox` on the host")
     current = inflight(ctx.root)
     if ctx.sender.full in current:
         return refused(f"a publish is already running (ref {current[ctx.sender.full]['ref']})")
@@ -313,6 +332,9 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
     actual: list[dict[str, str]] = []
     try:
         incus = Incus()
+        key = entry.get("container_key", full)
+        if key != full:
+            incus.guard_instance(full, key)
         rights = PublishRights.model_validate(entry["rights"])
         count = len(entry["actions"])
         if entry["kind"] == "source":
@@ -329,6 +351,8 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 audit_sink=actual.append,
             )
         else:
+            if entry["kind"] == "review":
+                atomic_write_text(_review_marker(root, entry.get("container_key", full), entry["manifest"]), json.dumps({"ref": entry["ref"], "manifest": entry["manifest"]}))
             policy = (
                 _issue_policy(rights, count)
                 if entry["kind"] == "issue"
@@ -352,6 +376,8 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
         if result:
             raise RuntimeError("publication failed; check `jb outbox` on the host")
         state, detail = "done", "\n".join(lines) or "nothing pending"
+        if entry["kind"] == "review":
+            _review_marker(root, entry.get("container_key", full), entry["manifest"]).unlink(missing_ok=True)
     except Exception as e:
         state, detail = "failed", str(e)
         if "uncertain" in detail.lower():
@@ -362,6 +388,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
             json.dumps(
                 {
                     "ref": entry["ref"],
+                    "orchestrator": full,
                     "state": state,
                     "detail": detail[:4000],
                     "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
@@ -412,6 +439,8 @@ def recover(root: Path) -> None:
     for full, entry in inflight(root).items():
         path = _result(root, entry.get("container_key", full), entry["ref"])
         if not path.exists():
+            if entry.get("kind") == "review":
+                atomic_write_text(_review_marker(root, entry.get("container_key", full), entry["manifest"]), json.dumps({"ref": entry["ref"]}))
             atomic_write_text(
                 path,
                 json.dumps(
