@@ -95,6 +95,21 @@ def issue_view(repo: str | None, number: int) -> IssueView:
         raise GhError(f"invalid issue response; retry `{ ' '.join(argv) }`: {exc}") from exc
 
 
+def pr_body(number: int) -> str:
+    """Read the current replacement body for a title-only description edit."""
+    argv = ["gh", "pr", "view", str(number), "--json", "body"]
+    try:
+        value = run_json(argv)
+        if not isinstance(value, dict):
+            raise ValueError("response must be an object")
+        body = value.get("body")
+        if not isinstance(body, str):
+            raise ValueError("body must be text")
+        return body
+    except (GhError, ValueError) as exc:
+        raise GhError(f"{exc}; retry `{ ' '.join(argv) }`") from exc
+
+
 def pr_view(number: int | None) -> PrView:
     argv = ["gh", "pr", "view"]
     if number is not None:

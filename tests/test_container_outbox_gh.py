@@ -54,6 +54,20 @@ def test_issue_view_uses_submodule_as_cwd(mocker: pytest.MockerFixture) -> None:
     assert "-R" not in run.call_args.args[0]
 
 
+@pytest.mark.parametrize("response", [{"body": "Original\nbody"}, {"body": ""}])
+def test_pr_body_reads_only_current_body(mocker: pytest.MockerFixture, response: dict[str, str]) -> None:
+    run = mocker.patch.object(gh.subprocess, "run", return_value=completed(json.dumps(response)))
+    assert gh.pr_body(7) == response["body"]
+    assert run.call_args.args[0] == ["gh", "pr", "view", "7", "--json", "body"]
+
+
+@pytest.mark.parametrize("stdout", ["{}", '{"body":null}', "[]", "not-json"])
+def test_pr_body_rejects_invalid_response(mocker: pytest.MockerFixture, stdout: str) -> None:
+    mocker.patch.object(gh.subprocess, "run", return_value=completed(stdout))
+    with pytest.raises(gh.GhError, match="retry.*gh pr view 7"):
+        gh.pr_body(7)
+
+
 def test_pr_view_builds_repo_from_url_and_omits_missing_number(mocker: pytest.MockerFixture) -> None:
     run = mocker.patch.object(gh.subprocess, "run", return_value=completed(
         '{"number":7,"headRefOid":"abc123","url":"https://github.com/acme/widget/pull/7"}'

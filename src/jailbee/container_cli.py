@@ -10,6 +10,7 @@ from typer.core import TyperGroup
 from jailbee import __version__, cli_context
 from jailbee.services.container_cmd import service_app
 from jailbee.container_outbox.issue_cmds import issue_app
+from jailbee.container_outbox.pr_cmds import pr_app
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
@@ -45,6 +46,7 @@ config_app = typer.Typer(no_args_is_help=True)
 container_app.add_typer(config_app, name="config")
 container_app.add_typer(service_app, name="service")
 container_app.add_typer(issue_app, name="issue")
+container_app.add_typer(pr_app, name="pr")
 
 
 def _version(value: bool) -> None:

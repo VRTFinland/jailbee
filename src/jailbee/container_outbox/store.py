@@ -9,7 +9,7 @@ import os
 import re
 import stat
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -194,7 +194,10 @@ class Store:
             raise OutboxCommandError("slug must match [a-z0-9-]{1,80}", 2)
         _validate(kind, f"{slug}.json", manifest, bodies)
         self.require_writable()
-        with _directory(self.outbox(kind)) as fd:
+        publication_lock = self._draft_lock(kind, "outbox-publication", publication=True) if kind == "pr" else nullcontext()
+        with publication_lock, _directory(self.outbox(kind)) as fd:
+            if kind == "pr" and sum(_is_manifest(name) for name in os.listdir(fd)) >= 20:
+                raise OutboxCommandError("PR outbox already has the cap of 20 pending manifests", 2)
             numbers = [
                 int(match[1]) for name in os.listdir(fd)
                 if (match := re.match(r"\.?([0-9]+)-", name))
@@ -324,10 +327,11 @@ class Store:
         return cast(dict[str, object], draft["manifest"]), cast(dict[str, str], draft["bodies"])
 
     @contextmanager
-    def _draft_lock(self, kind: Kind, name: str) -> Iterator[None]:
+    def _draft_lock(self, kind: Kind, name: str, *, publication: bool = False) -> Iterator[None]:
         _draft_name(name)
         self.outbox(kind)
-        path = self.home / ".jailbee/outbox-draft-locks" / kind
+        directory = "outbox-publication-locks" if publication else "outbox-draft-locks"
+        path = self.home / ".jailbee" / directory / kind
         with _directory(path, create=True) as directory_fd:
             fd = os.open(
                 f"{name}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -382,16 +386,36 @@ class Store:
             with _directory(self.drafts(kind), create=True) as fd:
                 _atomic_write(fd, f"{name}.json", text)
 
-    def draft_submit(self, kind: Kind, name: str, slug: str) -> str:
+    def draft_update(
+        self, kind: Kind, name: str,
+        update: Callable[[dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]],
+        *, initial: dict[str, object],
+    ) -> None:
+        """Validate and save a complete draft edit under its shared writer lock."""
+        self._require_role()
+        with self._draft_lock(kind, name):
+            state = self.draft_load_state(kind, name)
+            manifest, bodies = update(*(state if state is not None else (initial, {})))
+            _validate(kind, f"{name}.json", manifest, bodies)
+            text = json.dumps({"manifest": manifest, "bodies": bodies})
+            self.require_writable()
+            with _directory(self.drafts(kind), create=True) as fd:
+                _atomic_write(fd, f"{name}.json", text)
+
+    def draft_submit(
+        self, kind: Kind, name: str, slug: str,
+        *, prepare: Callable[[dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]] | None = None,
+    ) -> str:
         self._require_role()
         with self._draft_lock(kind, name):
             draft = self._draft(kind, name)
             if draft is None:
                 raise OutboxCommandError(f"draft {name!r} not found", 2)
-            result = self.write_manifest(
-                kind, slug, cast(dict[str, object], draft["manifest"]),
-                cast(Mapping[str, str], draft["bodies"]),
-            )
+            manifest = cast(dict[str, object], draft["manifest"])
+            bodies = cast(dict[str, str], draft["bodies"])
+            if prepare is not None:
+                manifest, bodies = prepare(manifest, bodies)
+            result = self.write_manifest(kind, slug, manifest, bodies)
             with _directory(self.drafts(kind)) as fd:
                 _unlink(fd, f"{name}.json")
             return result
