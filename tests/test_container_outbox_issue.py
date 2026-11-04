@@ -465,9 +465,7 @@ def test_assign_accepts_underscore_logins(monkeypatch, tmp_path):
         ({"add": ["bob"], "expected": {"assignees": "alice"}}, "expected"),
     ],
 )
-def test_assign_ref_with_malformed_raw_action_exits_2_without_traceback(
-    tmp_path, fields, message
-):
+def test_assign_ref_with_malformed_raw_action_exits_2_without_traceback(tmp_path, fields, message):
     from jailbee.container_outbox import issue_cmds
 
     assert (
