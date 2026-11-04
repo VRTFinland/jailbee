@@ -184,8 +184,15 @@ def _seed(
         for path in paths:
             target = f"{child_repo}/{path}"
             try:
-                incus.exec(child, ["git", "-C", child_repo, "check-ignore", "-q", "--", path], uid=uid)
-                incus.exec(child, ["python3", "-c", _PATH_SAFETY_SCRIPT, MOUNT_PATH, child_repo, path], uid=uid, gid=gid)
+                incus.exec(
+                    child, ["git", "-C", child_repo, "check-ignore", "-q", "--", path], uid=uid
+                )
+                incus.exec(
+                    child,
+                    ["python3", "-c", _PATH_SAFETY_SCRIPT, MOUNT_PATH, child_repo, path],
+                    uid=uid,
+                    gid=gid,
+                )
             except IncusError:
                 warn(f"Warm path skipped: {path} is not ignored in the child or is unsafe to copy")
                 continue

@@ -270,22 +270,29 @@ def test_snapshot_moved_after_preflight_skips_copy(warm_rig, mocker):
 
 def test_source_only_ignore_rule_does_not_dirty_child(warm_rig):
     incus = warm_rig[1]
+
     def execute(name, argv, **kwargs):
         if "check-ignore" in argv and argv[-1] == "app/build":
             raise IncusError("not ignored in child")
         return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+
     incus.exec.side_effect = execute
     assert seed(warm_rig).seeded == [".gradle"]
-    assert not any(c.args[1][0] == "cp" and c.args[1][-1].endswith("app/build") for c in incus.exec.call_args_list)
+    assert not any(
+        c.args[1][0] == "cp" and c.args[1][-1].endswith("app/build")
+        for c in incus.exec.call_args_list
+    )
     assert not any(c.args[1][0] == "rm" for c in incus.exec.call_args_list)
 
 
 def test_symlink_or_existing_target_is_not_copied_or_removed(warm_rig):
     incus = warm_rig[1]
+
     def execute(name, argv, **kwargs):
         if argv[0] == "python3" and argv[-1] == "app/build":
             raise IncusError("unsafe symlink or existing destination")
         return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+
     incus.exec.side_effect = execute
     assert seed(warm_rig).seeded == [".gradle"]
     assert not any(c.args[1][0] == "rm" for c in incus.exec.call_args_list)
@@ -295,7 +302,9 @@ def test_symlink_or_existing_target_is_not_copied_or_removed(warm_rig):
 def test_path_safety_script_refuses_unsafe_tree(tmp_path, monkeypatch, link):
     import os
     import sys
+
     from jailbee.fork_warm import _PATH_SAFETY_SCRIPT
+
     source, target, shared = [tmp_path / p for p in ("source", "target", "shared")]
     for directory in (source, target, shared):
         directory.mkdir()
@@ -320,7 +329,9 @@ def test_path_safety_script_refuses_unsafe_tree(tmp_path, monkeypatch, link):
 
 def test_path_safety_script_accepts_independent_tree(tmp_path, monkeypatch):
     import sys
+
     from jailbee.fork_warm import _PATH_SAFETY_SCRIPT
+
     source, target = tmp_path / "source", tmp_path / "target"
     (source / "build").mkdir(parents=True)
     (source / "build" / "output").write_text("artifact")
