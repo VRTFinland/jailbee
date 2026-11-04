@@ -1962,7 +1962,9 @@ from **both** triggers, in config order; the reserved `agents` and `services`
 stages always stay selected, even when not listed. Profiles require stage-form triggers,
 a defined `default_profile`, and known stage names. The names `none` and `all`
 are reserved for built-in profiles and cannot be defined in `profiles`:
-`none` selects no autostart stages or services, while `all` selects everything.
+`none` selects no configured stages or profile services (an explicit service
+selection can still override the profile), while the generated `agents` stage
+remains selected; `all` selects every configured stage and service.
 Without `profiles`, `default_profile` is invalid and autostart behaves exactly
 as before. The reserved `services` slots determine placement, not selection;
 see [placing service startup](#placing-service-startup).
@@ -1975,9 +1977,10 @@ precedence over profile services; without it, the profile wins over all services
 Define each example service in the top-level `services:` block.
 
 `jailbee new --autostart-profile frontend` remembers the selection for later
-starts and restarts. The built-in `none` profile skips repository autostart
-stages and services but does not disable agent startup; `--no-autostart` also
-suppresses agents. An absent selection uses the default; a stored name removed
+starts and restarts. The built-in `none` profile selects no configured repository stages or profile
+services (an explicit service selection can still override it), while the
+generated `agents` stage remains selected; `--no-autostart` also suppresses
+agents. An absent selection uses the default; a stored name removed
 from config warns and falls back to the default. Creation uses the target
 branch's autostart block; later commands use the host config.
 

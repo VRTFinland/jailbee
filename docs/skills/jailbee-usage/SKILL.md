@@ -174,8 +174,11 @@ groups remain view-only and cannot create containers.
 Repos may define `autostart.profiles` and `default_profile` to select stages.
 `new --autostart-profile NAME` remembers that choice; later starts/restarts
 run missing one-shot setup before the selected start stages. Built-in `none`
-skips repository stages and services but preserves agent startup; `all` selects
-everything, while `--no-autostart` also skips agents. `autostart profile
+selects no configured repository stages or services unless an explicit service
+selection overrides the profile; the generated `agents` stage remains selected.
+On restart, `--autostart-profile none` alone preserves explicit services; use
+`--reset-services` to clear that selection. `all` selects every
+configured stage, while `--no-autostart` also skips agents. `autostart profile
 CONTAINER` shows the choice; append NAME to switch (or `--no-run` to store
 only). A running switch starts missing setup and newly selected start stages,
 never stops existing work, and refuses during a detached run. One-shot stages
@@ -1122,12 +1125,13 @@ import, stop and destroy children, within the grant and the repo's caps.
 - **Fork:** `jailbee fork <source> <name> [--branch <b>]` creates a container at `<source>`'s HEAD commit (same branch unless `--branch`); `<source>` must be running with no uncommitted changes. The fork remembers its source: BASE still shows the base branch, the dashboards name `<source>` in the container's details (`⑂ forked from <source>`), and `jailbee merge` offers `<source>` first. `--prompt FILE|-` starts the primary agent in the fork with an initial prompt (see `jailbee new`).
 - **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it. When `<alias>` is omitted, the prompt starts with the current alias or the container's short name. Ctrl-R clears an existing alias immediately in that CLI prompt; the shortcut hint appears only when an alias exists. Empty text submitted with Enter is not a clear request in the CLI. The dashboard's **Rename…** uses the same default and stays a single menu action; the terminal dashboard's rename prompt also supports Ctrl-R and an empty Enter response to clear. **Clear name** is offered in the multi-selection menu, skipping containers without aliases; **Merge into…** leads that menu and Destroy stays last.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
-  autostart, accept `--autostart-profile NAME` to store the boot profile,
-  `--services NAMES` to explicitly select services, and `--reset-services` to
-  clear that override so the profile's service selection applies. A profile
-  flag alone preserves explicit services; `--services` and `--reset-services`
-  are mutually exclusive. Built-in profiles are `none` (no repository stages
-  or services, agents still start) and `all`; `--no-autostart` skips agents too.
+  autostart; `restart` also accepts `--autostart-profile NAME` to store the boot
+  profile, `--services NAMES` to explicitly select services, and
+  `--reset-services` to clear that override so the profile's service selection
+  applies. A profile flag alone preserves explicit services; `--services` and
+  `--reset-services` are mutually exclusive. Built-in profiles are `none` (no
+  configured repository stages or services unless explicit services override;
+  the generated agents stage remains selected) and `all`; `--no-autostart` skips agents too.
   Both take `--background`/`-b` to detach that run and
   `--wait`/`--no-wait` to override a `detach: true` autostart stage for this
   run (see [Background operations](#background-operations) and
