@@ -281,6 +281,8 @@ def publish_source_manifest(
 
             validate()
             remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
+            if own_branches_only and target is None and remote_sha is not None:
+                raise pr.PrError(f"branch `{head}` already exists upstream and is not bound to this container")
             if remote_sha is None or remote_sha.lower() != manifest.source_sha:
                 if (
                     target is not None
@@ -299,6 +301,7 @@ def publish_source_manifest(
                     force=force,
                     expected_sha=manifest.source_sha,
                     on_before_push=validate,
+                    **({"require_absent": True} if own_branches_only and target is None else {}),
                 )
             validate()
             if target is None:

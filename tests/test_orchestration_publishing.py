@@ -212,6 +212,15 @@ def test_review_policy_refuses_submodule_repository(rig, mocker):
         )
 
 
+def test_review_policy_requires_explicit_binding_not_discovery(rig, mocker):
+    ctx = rig[0]
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.return_value = None
+    manifest = pr_outbox.parse_manifest("a.json", json.dumps({"version": 1, "repo": "org/repo", "pr": 12, "head_sha": "a" * 40, "actions": [{"type": "comment", "body": "x"}]}), {})
+    with pytest.raises(pr_outbox.GateError, match="bound"):
+        publishing._review_policy(PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full)(manifest)
+
+
 def test_rate_budget_prunes_expired_reservations(rig):
     ctx, m, *_ = rig
     (ctx.root / "publish-budget.json").write_text(
@@ -258,12 +267,15 @@ def test_revoked_or_cleared_grant_still_settles_inflight(rig, revoke):
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "done"
     out = dispatch(ctx, rig[1].model_copy(update={"id": "pub-2"}))
-    assert out is None if revoke else out.state == "refused"
+    assert out.state == "refused"
 
 
 @pytest.mark.parametrize("source", [True, False])
 def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     ctx, m, *_ = rig
+    worker_incus = Mock()
+    worker_incus.config_get_checked.side_effect = lambda full, key: "12" if key == "user.jailbee.pr" else None
+    mocker.patch.object(publishing, "Incus", return_value=worker_incus)
     rights = PublishRights(pull_requests=source, pr_reviews=not source)
     ctx.sender = replace(ctx.sender, config={labels.GRANT: Grant(publish=rights).to_label()})
     manifest = {

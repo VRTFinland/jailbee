@@ -83,10 +83,18 @@ def _review_policy(
         if pr_outbox.is_source_manifest(manifest) or not rights.pr_reviews:
             raise pr_outbox.GateError("pr_reviews is not granted for this manifest")
         _own_review_repo(cfg, manifest)
-        snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
-        progress = pr_outbox._publication_progress(snapshot, manifest.name, len(manifest.actions))
-        if len(pr_outbox.pending_indices(manifest, progress)) > count:
-            raise pr_outbox.GateError("review actions exceed the reserved publish budget")
+        from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
+
+        bound = {entry.pr for entry in branch_pr.BranchPrMap(incus, full).read().values()}
+        for label in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
+            value = incus.config_get_checked(full, label)
+            if value and value.isdigit():
+                bound.add(int(value))
+        if manifest.pr is not None:
+            if manifest.pr not in bound:
+                raise pr_outbox.GateError(f"PR #{manifest.pr} is not bound to this container")
+        elif len(bound) != 1:
+            raise pr_outbox.GateError("review needs exactly one explicitly bound PR")
 
     return check
 
@@ -158,6 +166,29 @@ def _precheck(
     )
 
 
+def known_senders(root: Path) -> set[str]:
+    """Instances previously served, so revocation still gets a refusal reply."""
+    return set(_load(root, "publish-known.json"))
+
+
+def remember(ctx: ActionContext) -> None:
+    known = _load(ctx.root, "publish-known.json")
+    if known.get(ctx.sender.full) != ctx.sender.key:
+        known[ctx.sender.full] = ctx.sender.key
+        _save(ctx.root, "publish-known.json", known)
+
+
+def was_accepted(ctx: ActionContext, ref: str) -> bool:
+    return ref in _load(ctx.root, "publish-accepted.json").get(ctx.sender.key, [])
+
+
+def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
+    entry = inflight(ctx.root).get(ctx.sender.full)
+    if entry is not None and entry["ref"] == ref:
+        atomic_write_text(_result(ctx.root, ctx.sender.full, ref), json.dumps({
+            "ref": ref, "state": "failed", "detail": detail}))
+
+
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     assert isinstance(m, PublishManifest)
     current = inflight(ctx.root)
@@ -179,6 +210,7 @@ def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
         _save(ctx.root, "publish-budget.json", budget)
         current[ctx.sender.full] = {
             "ref": m.id,
+            "container_key": ctx.sender.key,
             "outbox": m.outbox,
             "manifest": m.manifest,
             "started_at": ctx.now.isoformat(),
@@ -242,6 +274,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 raise_errors=True,
                 policy=policy,
                 result_sink=lines.append,
+                action_limit=count,
             )
         if result:
             raise RuntimeError("publication failed; check `jb outbox` on the host")
@@ -275,6 +308,12 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     if not path.exists():
         return
     result = json.loads(path.read_text())
+    accepted = _load(ctx.root, "publish-accepted.json")
+    key = entry.get("container_key", ctx.sender.key)
+    refs = accepted.setdefault(key, [])
+    if entry["ref"] not in refs:
+        refs.append(entry["ref"])
+        _save(ctx.root, "publish-accepted.json", accepted)
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     audit = {
         "time": ctx.now.isoformat(),

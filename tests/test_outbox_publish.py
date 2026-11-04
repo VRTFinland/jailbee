@@ -448,6 +448,46 @@ def test_policy_not_reached_when_confirmation_rewrites_manifest(env, kind):
         mutation.assert_not_called()
 
 
+def test_broker_rewrite_after_precheck_is_refused_by_real_issue_policy(env, tmp_path, mocker):
+    from jailbee.orchestration import publishing, labels
+    from jailbee.orchestration.grant import Grant, PublishRights
+    from jailbee.orchestration.protocol import PublishManifest
+    from tests.test_orchestration_actions import _ctx, _node
+    cfg, incus, stores, journals, *_ = env
+    files = {"001.json": json.dumps({"version": 1, "actions": [{"type": "comment", "repo": ".", "issue": 42, "body": "hello"}]})}
+    stores["issue"] = store("issue", files)
+    grant = Grant(publish=PublishRights(issues=("comment",)))
+    ctx = _ctx(tmp_path / "broker", _node(IDENTITY.full_name, **{labels.GRANT: grant.to_label()}))
+    ctx.cfg, ctx.incus = cfg, incus
+    ctx.root.mkdir(parents=True, exist_ok=True)
+    mocker.patch.object(publishing, "container_identity", return_value=IDENTITY)
+    mocker.patch.object(publishing, "JournalStore", return_value=journals)
+    mocker.patch.object(publishing, "Incus", return_value=incus)
+    mocker.patch.object(issue_outbox, "read_issue_outbox", side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(stores["issue"].as_dict()))
+    request = PublishManifest(version=1, type="publish", id="pub-1", outbox="issue", manifest="001.json")
+    assert publishing.handle_publish(ctx, request).state == "started"
+    stores["issue"] = store("issue", {"001.json": json.dumps({"version": 1, "actions": [{"type": "state", "repo": ".", "issue": 42, "state": "closed", "reason": "completed", "expected": {"state": "open"}}]})})
+    publishing._run(cfg, ctx.root, ctx.sender.full, ctx.sender.short, publishing.inflight(ctx.root)[ctx.sender.full])
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "failed" and "state" in replies[0].detail
+    for mutation in env[4].values():
+        mutation.assert_not_called()
+
+
+def test_review_budget_checks_the_progress_that_will_be_applied(env):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+    from jailbee.outbox.models import OutboxError
+    with pytest.raises(OutboxError, match="budget"):
+        publish_selected(env[0], env[1], IDENTITY.full_name, ProposalId("pr", "001.json"),
+            journal_store=env[3], options=PublishOptions(), confirm=lambda n: True,
+            raise_errors=True, action_limit=1,
+            policy=lambda manifest: env[2].__setitem__("pr", store("pr", env[2]["pr"].as_dict() | {
+                "001.json.progress.json": json.dumps({"applied": [0], "urls": {"0": "https://old"}})
+            })))
+    env[4]["pr_comment"].assert_not_called()
+
+
 def test_issue_publish_reports_progress(env, monkeypatch, capsys):
     monkeypatch.setenv("JAILBEE_PROGRESS_LINES", "1")
     assert selected(env, "issue") == 0

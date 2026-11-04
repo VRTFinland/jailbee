@@ -268,6 +268,23 @@ def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
     assert json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]["pr"] == 42
 
 
+def test_own_source_rechecks_new_remote_and_uses_absent_lease(source_publisher):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.pr import PrError
+    p = source_publisher
+    p["remote"].side_effect = [None, "b" * 40]
+    with pytest.raises(PrError, match="already exists"):
+        publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: False, own_branches_only=True)
+    p["push"].assert_not_called()
+
+
+def test_own_new_source_push_requires_remote_absence(source_publisher):
+    from jailbee.branch_pr import publish_source_manifest
+    p = source_publisher
+    assert publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: False, own_branches_only=True) == 0
+    assert p["push"].call_args.kwargs["require_absent"] is True
+
+
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 

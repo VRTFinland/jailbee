@@ -188,7 +188,7 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     """
     role = ctx.role()
     if role == "none":
-        return None
+        return refused(NOT_ALLOWED) if manifest.type == "publish" else None
     if role == "child":
         if isinstance(manifest, RightsManifest):
             if "grant" in manifest.model_fields_set or manifest.child not in (

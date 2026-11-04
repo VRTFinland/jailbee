@@ -2723,6 +2723,7 @@ def offer_pending_comments(
     plan_sink: PlanSink | None = None,
     policy: Callable[[Manifest], None] | None = None,
     result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2811,6 +2812,7 @@ def offer_pending_comments(
                 revisions=revisions,
                 policy=policy,
                 result_sink=result_sink,
+                action_limit=action_limit,
             )
     except (
         OutboxReadError,
@@ -2976,6 +2978,7 @@ def _offer_locked(
     revisions: Mapping[str, str] | None = None,
     policy: Callable[[Manifest], None] | None = None,
     result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -3203,6 +3206,8 @@ def _offer_locked(
         for target, _, _ in plans:
             policy(target.manifest)
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
+    if action_limit is not None and total > action_limit:
+        raise GateError("review actions exceed the reserved publish budget")
     with ExitStack() as stack:
         tick = stack.enter_context(reporting(total))
         for position, (target, progress, idx) in enumerate(plans):

@@ -250,6 +250,7 @@ def publish_selected(
     | Callable[[pr_outbox.Manifest], None]
     | None = None,
     result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
 
@@ -314,6 +315,7 @@ def publish_selected(
                     allow_foreign_repo=options.foreign,
                     policy=cast("Callable[[pr_outbox.Manifest], None] | None", policy),
                     result_sink=result_sink,
+                    action_limit=action_limit,
                 )
 
             batch = issue_outbox.prepare_batch(

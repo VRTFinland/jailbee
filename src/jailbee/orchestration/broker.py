@@ -476,7 +476,7 @@ def _handle_raw(
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
     digest = manifest_digest(raw.file_name, raw.text, bodies)
-    if journal.seen(ctx.sender.key, digest):
+    if journal.seen(ctx.sender.key, digest) or publishing.was_accepted(ctx, PurePosixPath(raw.file_name).stem):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -530,9 +530,20 @@ def _handle_raw(
         _watch_manifest(ctx, manifest, ref, outcome)
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
         _reply(ctx, ref, outcome, memory)
-    delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
-    if isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started":
-        publishing.start(ctx, manifest)
+    is_publish = isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
+    try:
+        delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+    except Exception:
+        if is_publish:
+            publishing.abort_before_start(ctx, ref, "publish was not started: could not remove the request; retry with a new id")
+        raise
+    if is_publish:
+        assert isinstance(manifest, PublishManifest)
+        try:
+            publishing.start(ctx, manifest)
+        except Exception:
+            publishing.abort_before_start(ctx, ref, "publish worker could not start; retry with a new id")
+            raise
 
 
 def _refresh_children_snapshot(
@@ -599,6 +610,7 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
         ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
     )
     if ctx.role() == "orchestrator":
+        publishing.remember(ctx)
         _sync_grant_json(ctx, memory)
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
@@ -710,6 +722,7 @@ def tick(
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
     publishes = publishing.inflight(root)
+    former_publishers = publishing.known_senders(root)
     parked = [
         e["name"]
         for e in raw
@@ -720,7 +733,7 @@ def tick(
     ]
     # Before the early return: a later namesake must not inherit stale entries.
     _forget_vanished_watches(root, present)
-    if not candidates and not queues and not parked and not publishes:
+    if not candidates and not queues and not parked and not publishes and not (former_publishers & present):
         return False
 
     try:
@@ -762,6 +775,11 @@ def tick(
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
+            if node.running and node.full in former_publishers:
+                former_ctx = context(node)
+                if former_ctx is not None:
+                    _serve(former_ctx, journal, memory)
+                continue
             if node.full in publishes:
                 publish_ctx = context(node)
                 if publish_ctx is not None:
