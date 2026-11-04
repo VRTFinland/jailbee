@@ -47,7 +47,9 @@ def validate_pattern(pattern: str) -> str:
 
 def resolve_warm_paths(cfg: Config, override: Sequence[str] | None) -> list[str]:
     """Resolve a per-fork replacement without mutating configuration."""
-    return list(cfg.fork.warm_paths) if override is None else [validate_pattern(p) for p in override]
+    return (
+        list(cfg.fork.warm_paths) if override is None else [validate_pattern(p) for p in override]
+    )
 
 
 def seed_warm_paths(
@@ -74,16 +76,24 @@ def _seed(
     from jailbee.sync import _container_head_oid, _container_status_dirty
 
     patterns = [validate_pattern(p) for p in patterns]
-    if not any(c.get("name") == source and c.get("status") == "Running" for c in incus.list_containers()):
+    if not any(
+        c.get("name") == source and c.get("status") == "Running" for c in incus.list_containers()
+    ):
         return _skip("Warm paths skipped: source is not running")
     if incus.current_project() != "default":
         return _skip("Warm paths skipped: only the default Incus project is supported")
     repo_dir = container_repo_dir(cfg, incus, source)
     child_repo = container_repo_dir(cfg, incus, child)
     config = yaml.safe_load(incus.config_show(source, expanded=True))
-    roots = [d for d in config.get("devices", {}).values() if d.get("type") == "disk" and d.get("path") == "/"]
+    roots = [
+        d
+        for d in config.get("devices", {}).values()
+        if d.get("type") == "disk" and d.get("path") == "/"
+    ]
     pool = roots[0].get("pool") if len(roots) == 1 else None
-    driver = next((p.get("driver") for p in incus.list_storage_pools() if p.get("name") == pool), None)
+    driver = next(
+        (p.get("driver") for p in incus.list_storage_pools() if p.get("name") == pool), None
+    )
     if driver != "btrfs":
         return _skip("Warm paths need a btrfs storage pool; skipped")
     uid, gid = cfg.container_user.uid, cfg.container_user.gid
@@ -91,7 +101,21 @@ def _seed(
         return _skip("Warm paths skipped: source has uncommitted changes")
     if _container_head_oid(incus, source, repo_dir, uid=uid) != commit:
         return _skip("Warm paths skipped: source moved past the fork commit")
-    listing = incus.exec(source, ["git", "-C", repo_dir, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], uid=uid)
+    listing = incus.exec(
+        source,
+        [
+            "git",
+            "-C",
+            repo_dir,
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ],
+        uid=uid,
+    )
     paths, unmatched = match_patterns(patterns, [p for p in listing.split("\0") if p])
     if unmatched:
         warn(f"Warm paths matched no ignored entries: {', '.join(unmatched)}")
@@ -109,20 +133,40 @@ def _seed(
     failed: list[str] = []
     incus.snapshot_create(source, snap)
     try:
-        incus.config_device_add(child, DEVICE_NAME, "disk", {
-            "source": f"{POOL_ROOT}/{pool}/containers-snapshots/{source}/{snap}/rootfs{repo_dir}",
-            "path": MOUNT_PATH, "readonly": "true",
-        })
+        incus.config_device_add(
+            child,
+            DEVICE_NAME,
+            "disk",
+            {
+                "source": (
+                    f"{POOL_ROOT}/{pool}/containers-snapshots/{source}/{snap}/rootfs{repo_dir}"
+                ),
+                "path": MOUNT_PATH,
+                "readonly": "true",
+            },
+        )
         # Inspect the immutable view too: the live source may change between
         # the preflight probes and the snapshot operation.
-        if (_container_status_dirty(incus, child, MOUNT_PATH, uid=uid)
-                or _container_head_oid(incus, child, MOUNT_PATH, uid=uid) != commit):
+        if (
+            _container_status_dirty(incus, child, MOUNT_PATH, uid=uid)
+            or _container_head_oid(incus, child, MOUNT_PATH, uid=uid) != commit
+        ):
             return _skip("Warm paths skipped: snapshot does not match the clean fork commit")
         for path in paths:
             target = f"{child_repo}/{path}"
             try:
-                incus.exec(child, ["mkdir", "-p", "--", str(PurePosixPath(target).parent)], uid=uid, gid=gid)
-                incus.exec(child, ["cp", "-a", "--reflink=always", "--", f"{MOUNT_PATH}/{path}", target], uid=uid, gid=gid)
+                incus.exec(
+                    child,
+                    ["mkdir", "-p", "--", str(PurePosixPath(target).parent)],
+                    uid=uid,
+                    gid=gid,
+                )
+                incus.exec(
+                    child,
+                    ["cp", "-a", "--reflink=always", "--", f"{MOUNT_PATH}/{path}", target],
+                    uid=uid,
+                    gid=gid,
+                )
                 seeded.append(path)
             except IncusError:
                 failed.append(path)
@@ -142,7 +186,10 @@ def _seed(
     if failed:
         warn(f"Warm paths could not be reflinked: {', '.join(failed)}")
     if seeded:
-        info(f"Seeded {len(seeded)} warm path(s) from '{short_name(cfg, source)}': {', '.join(seeded)}")
+        info(
+            f"Seeded {len(seeded)} warm path(s) from '{short_name(cfg, source)}': "
+            f"{', '.join(seeded)}"
+        )
     return WarmResult(seeded, None)
 
 
@@ -151,7 +198,9 @@ def _matches(pattern: list[str], path: list[str]) -> bool:
         return not path
     if pattern[0] == "**":
         return _matches(pattern[1:], path) or bool(path and _matches(pattern, path[1:]))
-    return bool(path and fnmatch.fnmatchcase(path[0], pattern[0]) and _matches(pattern[1:], path[1:]))
+    return bool(
+        path and fnmatch.fnmatchcase(path[0], pattern[0]) and _matches(pattern[1:], path[1:])
+    )
 
 
 def match_patterns(patterns: Sequence[str], ignored: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -172,6 +221,10 @@ def match_patterns(patterns: Sequence[str], ignored: Sequence[str]) -> tuple[lis
                     matched.append(path)
     selected = set(matched)
     return (
-        [p for p in matched if not any("/".join(p.split("/")[:i]) in selected for i in range(1, len(p.split("/"))))],
+        [
+            p
+            for p in matched
+            if not any("/".join(p.split("/")[:i]) in selected for i in range(1, len(p.split("/"))))
+        ],
         [p for p in normalized if p not in found],
     )

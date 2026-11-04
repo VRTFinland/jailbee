@@ -3,28 +3,56 @@
 from unittest.mock import MagicMock, call
 
 import pytest
-
-from jailbee.incus import Incus, IncusError
-from tests.conftest import make_cfg
 from pydantic import ValidationError
 
 from jailbee.config import ForkConfig
 from jailbee.fork_warm import match_patterns, validate_pattern
+from jailbee.incus import Incus, IncusError
+from tests.conftest import make_cfg
 
 
-@pytest.mark.parametrize("pattern, expected", [(".gradle", ".gradle"), ("*/build", "*/build"), ("app/bibleview-js/node_modules", "app/bibleview-js/node_modules"), ("**/build", "**/build"), ("build/", "build")])
+@pytest.mark.parametrize(
+    "pattern, expected",
+    [
+        (".gradle", ".gradle"),
+        ("*/build", "*/build"),
+        ("app/bibleview-js/node_modules", "app/bibleview-js/node_modules"),
+        ("**/build", "**/build"),
+        ("build/", "build"),
+    ],
+)
 def test_validate_pattern_accepts(pattern, expected):
     assert validate_pattern(pattern) == expected
 
 
-@pytest.mark.parametrize("pattern", ["", "/abs", "a/../b", "..", ".git/x", "a b", "x;rm", "$(x)", '"q"', ".", "./", "a/./b", "a//b"])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "",
+        "/abs",
+        "a/../b",
+        "..",
+        ".git/x",
+        "a b",
+        "x;rm",
+        "$(x)",
+        '"q"',
+        ".",
+        "./",
+        "a/./b",
+        "a//b",
+    ],
+)
 def test_validate_pattern_rejects(pattern):
     with pytest.raises(ValueError):
         validate_pattern(pattern)
 
 
 def test_match_star_does_not_cross_slash():
-    assert match_patterns(["*/build"], ["app/build/", "a/b/build/", "build/"]) == (["app/build"], [])
+    assert match_patterns(["*/build"], ["app/build/", "a/b/build/", "build/"]) == (
+        ["app/build"],
+        [],
+    )
 
 
 def test_match_double_star():
@@ -39,9 +67,12 @@ def test_match_drops_descendant():
     assert match_patterns(["app", "app/build"], ["app/build/", "app/", "app/"])[0] == ["app"]
 
 
-@pytest.mark.parametrize("override, expected", [(None, [".gradle"]), ([], []), (["build/"], ["build"])])
+@pytest.mark.parametrize(
+    "override, expected", [(None, [".gradle"]), ([], []), (["build/"], ["build"])]
+)
 def test_resolve_warm_paths(tmp_path, override, expected):
     from jailbee.fork_warm import resolve_warm_paths
+
     cfg = make_cfg(tmp_path).model_copy(update={"fork": ForkConfig(warm_paths=[".gradle"])})
     assert resolve_warm_paths(cfg, override) == expected
     with pytest.raises(ValueError):
@@ -66,7 +97,9 @@ def warm_rig(tmp_path, mocker):
     cfg = make_cfg(tmp_path)
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = [{"name": "repo-source", "status": "Running"}]
-    incus.config_show.return_value = "devices:\n  root:\n    type: disk\n    path: /\n    pool: default\n"
+    incus.config_show.return_value = (
+        "devices:\n  root:\n    type: disk\n    path: /\n    pool: default\n"
+    )
     incus.list_storage_pools.return_value = [{"name": "default", "driver": "btrfs"}]
     incus.config_get.return_value = "/home/dev/repo"
     incus.current_project.return_value = "default"
@@ -81,7 +114,9 @@ def seed(rig, patterns=("*/build", ".gradle")):
     from jailbee.fork_warm import seed_warm_paths
 
     cfg, incus = rig
-    return seed_warm_paths(cfg, incus, child="repo-child", source="repo-source", commit="a" * 40, patterns=patterns)
+    return seed_warm_paths(
+        cfg, incus, child="repo-child", source="repo-source", commit="a" * 40, patterns=patterns
+    )
 
 
 def test_empty_patterns_does_nothing(warm_rig):
@@ -114,11 +149,47 @@ def test_happy_path_order(warm_rig):
     uid, gid = cfg.container_user.uid, cfg.container_user.gid
     expected = [
         call.snapshot_create("repo-source", "jailbee-warm-repo-child"),
-        call.config_device_add("repo-child", "jailbee-warm", "disk", {"source": "/var/lib/incus/storage-pools/default/containers-snapshots/repo-source/jailbee-warm-repo-child/rootfs/home/dev/repo", "path": "/run/jailbee-warm", "readonly": "true"}),
+        call.config_device_add(
+            "repo-child",
+            "jailbee-warm",
+            "disk",
+            {
+                "source": (
+                    "/var/lib/incus/storage-pools/default/containers-snapshots/"
+                    "repo-source/jailbee-warm-repo-child/rootfs/home/dev/repo"
+                ),
+                "path": "/run/jailbee-warm",
+                "readonly": "true",
+            },
+        ),
         call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo/app"], uid=uid, gid=gid),
-        call.exec("repo-child", ["cp", "-a", "--reflink=always", "--", "/run/jailbee-warm/app/build", "/home/dev/repo/app/build"], uid=uid, gid=gid),
+        call.exec(
+            "repo-child",
+            [
+                "cp",
+                "-a",
+                "--reflink=always",
+                "--",
+                "/run/jailbee-warm/app/build",
+                "/home/dev/repo/app/build",
+            ],
+            uid=uid,
+            gid=gid,
+        ),
         call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo"], uid=uid, gid=gid),
-        call.exec("repo-child", ["cp", "-a", "--reflink=always", "--", "/run/jailbee-warm/.gradle", "/home/dev/repo/.gradle"], uid=uid, gid=gid),
+        call.exec(
+            "repo-child",
+            [
+                "cp",
+                "-a",
+                "--reflink=always",
+                "--",
+                "/run/jailbee-warm/.gradle",
+                "/home/dev/repo/.gradle",
+            ],
+            uid=uid,
+            gid=gid,
+        ),
         call.config_device_remove("repo-child", "jailbee-warm", missing_ok=True),
         call.snapshot_delete("repo-source", "jailbee-warm-repo-child"),
     ]
@@ -129,14 +200,23 @@ def test_happy_path_order(warm_rig):
 
 def test_cp_failure_cleans_partial_and_continues(warm_rig):
     cfg, incus = warm_rig
+
     def execute(name, argv, **kwargs):
         if argv[0] == "cp" and argv[-1].endswith("app/build"):
             raise IncusError("no reflink")
         return "app/build/\0.gradle/\0" if argv[0] == "git" else ""
+
     incus.exec.side_effect = execute
     assert seed(warm_rig).seeded == [".gradle"]
-    incus.exec.assert_any_call("repo-child", ["rm", "-rf", "--", "/home/dev/repo/app/build"], uid=cfg.container_user.uid, gid=cfg.container_user.gid)
-    incus.config_device_remove.assert_called_once_with("repo-child", "jailbee-warm", missing_ok=True)
+    incus.exec.assert_any_call(
+        "repo-child",
+        ["rm", "-rf", "--", "/home/dev/repo/app/build"],
+        uid=cfg.container_user.uid,
+        gid=cfg.container_user.gid,
+    )
+    incus.config_device_remove.assert_called_once_with(
+        "repo-child", "jailbee-warm", missing_ok=True
+    )
     incus.snapshot_delete.assert_called_once()
 
 
@@ -150,9 +230,16 @@ def test_device_add_failure_still_deletes_snapshot(warm_rig):
 
 def test_stale_snapshots_do_not_remove_another_active_fork(warm_rig):
     incus = warm_rig[1]
-    incus.snapshot_list.return_value = [{"name": "jailbee-warm-repo-child"}, {"name": "jailbee-warm-other"}, {"name": "user-snap"}]
+    incus.snapshot_list.return_value = [
+        {"name": "jailbee-warm-repo-child"},
+        {"name": "jailbee-warm-other"},
+        {"name": "user-snap"},
+    ]
     seed(warm_rig)
-    assert incus.snapshot_delete.call_args_list == [call("repo-source", "jailbee-warm-repo-child"), call("repo-source", "jailbee-warm-repo-child")]
+    assert incus.snapshot_delete.call_args_list == [
+        call("repo-source", "jailbee-warm-repo-child"),
+        call("repo-source", "jailbee-warm-repo-child"),
+    ]
 
 
 def test_unmatched_pattern_warns(warm_rig, mocker):

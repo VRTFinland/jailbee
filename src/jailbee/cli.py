@@ -2149,8 +2149,12 @@ def new_cmd(
             autocompletion=completion.complete_container,
         ),
     ] = None,
-    warm: Annotated[list[str] | None, typer.Option("--warm", hidden=True, help="Internal, set by jailbee fork")] = None,
-    no_warm: Annotated[bool, typer.Option("--no-warm", hidden=True, help="Internal, set by jailbee fork")] = False,
+    warm: Annotated[
+        list[str] | None, typer.Option("--warm", hidden=True, help="Internal, set by jailbee fork")
+    ] = None,
+    no_warm: Annotated[
+        bool, typer.Option("--no-warm", hidden=True, help="Internal, set by jailbee fork")
+    ] = False,
     credential_group: Annotated[
         str | None,
         typer.Option(
@@ -2409,7 +2413,9 @@ def new_cmd(
         error("--warm and --no-warm require --fork-of.")
         raise typer.Exit(2)
     try:
-        warm_paths = resolve_warm_paths(cfg, [] if no_warm else warm) if fork_of is not None else None
+        warm_paths = (
+            resolve_warm_paths(cfg, [] if no_warm else warm) if fork_of is not None else None
+        )
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -2944,8 +2950,16 @@ def fork_cmd(
             metavar="FILE|-",
         ),
     ] = None,
-    warm: Annotated[list[str] | None, typer.Option("--warm", help="Seed this git-ignored path from SOURCE (repeatable; replaces fork.warm_paths)")] = None,
-    no_warm: Annotated[bool, typer.Option("--no-warm", help="Do not seed fork.warm_paths into this fork")] = False,
+    warm: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--warm",
+            help="Seed this git-ignored path from SOURCE (repeatable; replaces fork.warm_paths)",
+        ),
+    ] = None,
+    no_warm: Annotated[
+        bool, typer.Option("--no-warm", help="Do not seed fork.warm_paths into this fork")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Create a container from another container's committed state.

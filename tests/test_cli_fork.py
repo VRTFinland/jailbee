@@ -30,12 +30,21 @@ def _run(args):
 SRC = ForkSource("myrepo-src", "feat/a", "abc123", "main")
 
 
-@pytest.mark.parametrize("flags, expected", [([], [".gradle"]), (["--warm", "a", "--warm", "b"], ["a", "b"]), (["--no-warm"], [])])
+@pytest.mark.parametrize(
+    "flags, expected",
+    [([], [".gradle"]), (["--warm", "a", "--warm", "b"], ["a", "b"]), (["--no-warm"], [])],
+)
 def test_fork_warm_options(tmp_path, mocker, flags, expected):
     from jailbee.config import ForkConfig
+
     _, create = _setup(tmp_path, mocker)
     original_load = __import__("jailbee.cli", fromlist=["_load_or_exit"])._load_or_exit
-    mocker.patch("jailbee.cli._load_or_exit", side_effect=lambda *a: original_load(*a).model_copy(update={"fork": ForkConfig(warm_paths=[".gradle"])}))
+    mocker.patch(
+        "jailbee.cli._load_or_exit",
+        side_effect=lambda *a: original_load(*a).model_copy(
+            update={"fork": ForkConfig(warm_paths=[".gradle"])}
+        ),
+    )
     mocker.patch("jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "myrepo-src"))
     mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
     result = _run(["fork", "src", "b", "--no-autostart", "--no-background", *flags])
@@ -43,7 +52,15 @@ def test_fork_warm_options(tmp_path, mocker, flags, expected):
     assert create.call_args.args[2].warm_paths == expected
 
 
-@pytest.mark.parametrize("args", [["fork", "src", "b", "--warm", "a", "--no-warm"], ["fork", "src", "b", "--warm", "/abs"], ["new", "b", "--warm", "a"], ["new", "b", "--no-warm"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["fork", "src", "b", "--warm", "a", "--no-warm"],
+        ["fork", "src", "b", "--warm", "/abs"],
+        ["new", "b", "--warm", "a"],
+        ["new", "b", "--no-warm"],
+    ],
+)
 def test_warm_flags_rejected_before_create(tmp_path, mocker, args):
     _, create = _setup(tmp_path, mocker)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "myrepo-src"))

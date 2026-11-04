@@ -184,7 +184,9 @@ class SpawnManifest(_ServicesManifest):
 
     @model_validator(mode="after")
     def _spawn_fields(self) -> Self:
-        if self.version == 1 and (self.kind == "pr" or {"ref", "pr", "warm_paths"} & self.model_fields_set):
+        if self.version == 1 and (
+            self.kind == "pr" or {"ref", "pr", "warm_paths"} & self.model_fields_set
+        ):
             raise ValueError("ref, pr and warm_paths require spawn version 2")
         if self.warm_paths is not None and self.kind != "fork":
             raise ValueError("warm_paths is only valid for kind 'fork'")

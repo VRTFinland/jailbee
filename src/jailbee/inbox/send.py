@@ -145,8 +145,10 @@ def parse_send(args: list[str]) -> SendRequest:
     values.update(lists)
     r = SendRequest(**values)  # type: ignore[arg-type]  # Parsed option values match the dataclass fields.
     require(not (r.warm and r.no_warm), "--warm and --no-warm are mutually exclusive")
-    require(not (r.warm or r.no_warm) or (t == "spawn" and not r.new and not r.pr),
-            "--warm and --no-warm only apply to fork spawns")
+    require(
+        not (r.warm or r.no_warm) or (t == "spawn" and not r.new and not r.pr),
+        "--warm and --no-warm only apply to fork spawns",
+    )
     require(not r.merge or t == "update", "--merge only applies to update")
     if r.resume:
         require(t == "restart", "--resume only applies to restart")

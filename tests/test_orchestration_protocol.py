@@ -89,7 +89,15 @@ def test_spawn_warm_paths(warm):
     assert m.warm_paths == warm
 
 
-@pytest.mark.parametrize("fields", [{"kind": "new", "warm_paths": []}, {"kind": "pr", "pr": 1, "warm_paths": ["build"]}, {"warm_paths": ["/x"]}, {"version": 1, "warm_paths": []}])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"kind": "new", "warm_paths": []},
+        {"kind": "pr", "pr": 1, "warm_paths": ["build"]},
+        {"warm_paths": ["/x"]},
+        {"version": 1, "warm_paths": []},
+    ],
+)
 def test_spawn_rejects_invalid_warm_paths(fields):
     with pytest.raises(ManifestError):
         parse_manifest("a.json", _spawn(**({"version": 2} | fields)), {})

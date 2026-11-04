@@ -405,6 +405,7 @@ def test_escalation_policy(rights: dict[str, object], verdict: object, expected:
 @pytest.mark.parametrize("warm, expected", [(None, [".gradle"]), ([], []), (["x"], ["x"])])
 def test_child_options_resolve_warm_paths(tmp_path, warm, expected):
     from dataclasses import replace
+
     from jailbee.config import ForkConfig
     from jailbee.forking import ForkSource
 
@@ -412,16 +413,27 @@ def test_child_options_resolve_warm_paths(tmp_path, warm, expected):
     cfg = ctx.cfg.model_copy(update={"fork": ForkConfig(warm_paths=[".gradle"])})
     plan = replace(plan, warm_paths=warm)
     fork = ForkSource("proj-src", "src", "a" * 40, "main")
-    assert actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=fork).warm_paths == expected
-    assert actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=None).warm_paths is None
+    assert (
+        actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=fork).warm_paths
+        == expected
+    )
+    assert (
+        actions.child_options(cfg, plan, orchestrator_full="proj-orch", fork=None).warm_paths
+        is None
+    )
 
 
 def test_queued_fork_preserves_warm_paths(tmp_path, monkeypatch):
     from jailbee.forking import ForkSource
     from jailbee.orchestration.state import load_queue
+
     ctx = _ctx(tmp_path, {"max_running_children": 1})
     monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 1))
-    monkeypatch.setattr(actions.forking, "prepare_fork", MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "a" * 40, "main")))
+    monkeypatch.setattr(
+        actions.forking,
+        "prepare_fork",
+        MagicMock(return_value=ForkSource(ctx.sender.full, "orch", "a" * 40, "main")),
+    )
     monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
     start = MagicMock(return_value=Outcome("started", "ok"))
     monkeypatch.setattr(actions, "start_child", start)

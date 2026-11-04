@@ -175,7 +175,9 @@ class ForkConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     warm_paths: list[str] = Field(
         default=[],
-        description="Repo-relative globs of git-ignored paths seeded into forks by reflink on btrfs pools.",
+        description=(
+            "Repo-relative globs of git-ignored paths seeded into forks by reflink on btrfs pools."
+        ),
     )
 
     @field_validator("warm_paths")

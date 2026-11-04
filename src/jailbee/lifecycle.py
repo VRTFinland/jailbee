@@ -2223,8 +2223,14 @@ def _new_container(
         from jailbee.fork_warm import seed_warm_paths
 
         _phase("warming")
-        seed_warm_paths(cfg, incus, child=name, source=opts.fork_of,
-                        commit=opts.clone_commit, patterns=opts.warm_paths)
+        seed_warm_paths(
+            cfg,
+            incus,
+            child=name,
+            source=opts.fork_of,
+            commit=opts.clone_commit,
+            patterns=opts.warm_paths,
+        )
 
     # Attach host_mounts whose container path is under /home/<user>/<repo>/.
     # These cannot live in the <prefix>-binds profile: Incus pre-creates the

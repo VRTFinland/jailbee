@@ -126,6 +126,7 @@ def test_queue_roundtrip(tmp_path: Path) -> None:
 
 def test_queue_warm_paths_and_legacy(tmp_path):
     from dataclasses import replace
+
     save_queue(tmp_path, {"proj-a": [replace(_req(), warm_paths=["*/build"])]})
     assert load_queue(tmp_path)["proj-a"][0].warm_paths == ["*/build"]
     path = tmp_path / "queue.json"
