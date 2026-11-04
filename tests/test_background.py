@@ -574,10 +574,14 @@ def test_fork_of_round_trips():
         from_base="base",
         clone=True,
         fork_of="myrepo-src",
+        warm_paths=["*/build"],
     )
     job = op_to_job(opts, container_name="p-feature", log_path="/tmp/l.log")
     restored, _name, _log = job_to_opts(job)
     assert restored.fork_of == "myrepo-src"
+    assert restored.warm_paths == ["*/build"]
+    del job["opts"]["warm_paths"]
+    assert job_to_opts(job)[0].warm_paths is None
 
 
 def test_job_without_fork_of_key_reads_none():

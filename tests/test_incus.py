@@ -36,6 +36,12 @@ def _mock_run(mocker, stdout: str = "", stderr: str = "", returncode: int = 0):
     )
 
 
+def test_current_project(incus, mocker):
+    run = _mock_run(mocker, stdout="default\n")
+    assert incus.current_project() == "default"
+    assert run.call_args.args[0] == ["incus", "project", "get-current"]
+
+
 def test_list_returns_parsed_json(incus, mocker):
     payload = json.dumps(
         [

@@ -1134,6 +1134,8 @@ class NewContainerOptions:
     # `clone_commit`; this is only the remembered upstream. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     fork_of: str | None = None
+    # Resolved ignored outputs. MUST be mirrored in background.py.
+    warm_paths: list[str] | None = None
     # MUST be mirrored in `background.op_to_job`/`job_to_opts`.
     inherited_labels: dict[str, str] | None = None
     # Suppress interactive confirmations (`jailbee new --yes`). Consulted for the
@@ -2216,6 +2218,19 @@ def _new_container(
         )
         if opts.spawned_by is not None:
             _record_child_baseline(cfg, incus, name, repo_dir)
+
+    if opts.clone and opts.fork_of and opts.clone_commit and opts.warm_paths:
+        from jailbee.fork_warm import seed_warm_paths
+
+        _phase("warming")
+        seed_warm_paths(
+            cfg,
+            incus,
+            child=name,
+            source=opts.fork_of,
+            commit=opts.clone_commit,
+            patterns=opts.warm_paths,
+        )
 
     # Attach host_mounts whose container path is under /home/<user>/<repo>/.
     # These cannot live in the <prefix>-binds profile: Incus pre-creates the

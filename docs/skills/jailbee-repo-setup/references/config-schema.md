@@ -625,6 +625,23 @@ push:
 
 `default_source` picks *which branch*, `push_from` picks *which copy of it*. With `push_from: origin` + `autofetch: true` (the defaults) the host fetches and pushes `refs/remotes/origin/<source>`, mirroring `new.clone_from: origin` — a local `refs/heads/<base>` only advances on `git pull`, so after a plain `git fetch` it is the stale copy, and pushing it force-moves the container's `refs/jailbee/base/<base>` anchor backwards. `push_from: local` restores the reverse order. Per-invocation overrides: `--from-local`, `--from-origin`, `--fetch`/`--no-fetch`. `--current` always resolves locally; `--pr` ignores these keys entirely and pushes `refs/jailbee/pr/<N>/head`.
 
+## `fork`
+
+```yaml
+fork:
+  warm_paths:
+    - .gradle
+    - "*/build"
+    - app/bibleview-js/node_modules
+```
+
+Default `[]`. Repo-relative globs select existing Git-ignored build outputs.
+`*`/`?` match within a segment; `**` matches zero or more segments. Absolute
+paths, `..`, and `.git` roots are refused. Warm paths seed HEAD forks only,
+using btrfs reflinks; other pools, dirty sources, and non-HEAD `--ref` forks
+are skipped with a note. `--warm PATH` replaces the list (repeatable), while
+`--no-warm` disables seeding for one fork. The flags are mutually exclusive.
+
 ## `new`
 
 Defaults for `jailbee new`.

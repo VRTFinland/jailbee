@@ -41,6 +41,7 @@ from jailbee.config.models_behaviour import (
     ConfirmConfig,
     Defaults,
     DestroyConfig,
+    ForkConfig,
     NewConfig,
     PullConfig,
     PushConfig,
@@ -423,6 +424,10 @@ class Config(BaseModel):
             "push. Applies to every repo unless a repo overrides it; CLI flags always "
             "win over these defaults."
         ),
+    )
+    fork: ForkConfig = Field(
+        default=ForkConfig(),
+        description="Policy for jailbee fork and orchestrator fork spawns.",
     )
     new: NewConfig = Field(
         default=NewConfig(),

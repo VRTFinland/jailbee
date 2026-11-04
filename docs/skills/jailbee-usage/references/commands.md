@@ -499,8 +499,11 @@ commit is fetched to the host (`refs/jailbee/<source>/<branch>`) and pinned
 under the new container's own name (`refs/jailbee/<name>/HEAD`, removed by
 `jailbee destroy <name>`), so the fork keeps working after SOURCE is destroyed;
 the new container is an ordinary clone-mode `jailbee new` pinned to it, on
-SOURCE's branch unless `--branch` names a new one. Only commits carry over:
-SOURCE must be running, in clone mode, and have no uncommitted changes
+SOURCE's branch unless `--branch` names a new one. Only commits carry over
+by default. `fork.warm_paths` optionally seeds Git-ignored build outputs by
+btrfs reflink (HEAD forks only); other pools skip with a note. Repeatable
+`--warm PATH` replaces that list; `--no-warm` disables it for this fork.
+The flags are mutually exclusive. SOURCE must be running, in clone mode, and have no uncommitted changes
 (tracked or untracked), else exit 2; a failed fetch is exit 1. The fork
 records SOURCE in `user.jailbee.fork_of`: BASE still shows the base branch,
 the dashboards name SOURCE in the container's details (`⑂ forked from SOURCE`)

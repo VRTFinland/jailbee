@@ -82,6 +82,27 @@ def _spawn(name: str = "a", **over: Any) -> str:
     return json.dumps({k: v for k, v in d.items() if v is not None})
 
 
+@pytest.mark.parametrize("warm", [None, [], ["*/build"]])
+def test_spawn_warm_paths(warm):
+    m = parse_manifest("a.json", _spawn(version=2, warm_paths=warm), {})
+    assert isinstance(m, SpawnManifest)
+    assert m.warm_paths == warm
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"kind": "new", "warm_paths": []},
+        {"kind": "pr", "pr": 1, "warm_paths": ["build"]},
+        {"warm_paths": ["/x"]},
+        {"version": 1, "warm_paths": []},
+    ],
+)
+def test_spawn_rejects_invalid_warm_paths(fields):
+    with pytest.raises(ManifestError):
+        parse_manifest("a.json", _spawn(**({"version": 2} | fields)), {})
+
+
 @pytest.mark.parametrize("ref", ["refs/heads/main", "a" * 40])
 def test_spawn_v2_accepts_pinned_ref(ref: str) -> None:
     m = parse_manifest("a.json", _spawn(version=2, ref=ref), {})

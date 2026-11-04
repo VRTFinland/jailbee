@@ -158,6 +158,14 @@ class SpawnManifest(_ServicesManifest):
     on_done: OnDone | None = None
     autostart_profile: str | None = None
     note: str | None = None
+    warm_paths: list[str] | None = None
+
+    @field_validator("warm_paths")
+    @classmethod
+    def _warm_paths(cls, value: list[str] | None) -> list[str] | None:
+        from jailbee.fork_warm import validate_pattern
+
+        return None if value is None else [validate_pattern(p) for p in value]
 
     @field_validator("prompt")
     @classmethod
@@ -176,8 +184,12 @@ class SpawnManifest(_ServicesManifest):
 
     @model_validator(mode="after")
     def _spawn_fields(self) -> Self:
-        if self.version == 1 and (self.kind == "pr" or {"ref", "pr"} & self.model_fields_set):
-            raise ValueError("ref and pr require spawn version 2")
+        if self.version == 1 and (
+            self.kind == "pr" or {"ref", "pr", "warm_paths"} & self.model_fields_set
+        ):
+            raise ValueError("ref, pr and warm_paths require spawn version 2")
+        if self.warm_paths is not None and self.kind != "fork":
+            raise ValueError("warm_paths is only valid for kind 'fork'")
         if self.base is not None and self.kind != "new":
             raise ValueError("base is only valid for kind 'new'")
         if self.ref is not None and self.kind != "fork":

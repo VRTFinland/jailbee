@@ -50,6 +50,7 @@ class QueuedRequest:
     fork_base_pinned: bool = False
     resume: str | None = None
     services: list[str] | None = None
+    warm_paths: list[str] | None = None
 
 
 @dataclass(frozen=True)

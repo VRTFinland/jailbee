@@ -1028,6 +1028,10 @@ class Incus:
             return
         self._run_retrying_on_etag(args)
 
+    def current_project(self) -> str:
+        """Return the CLI's active project (including environment overrides)."""
+        return self._run(["project", "get-current"]).stdout.strip()
+
     # ---- Snapshots ----------------------------------------------------------
 
     # Operands follow `--` so a tag that looks like an option (`--help`) is

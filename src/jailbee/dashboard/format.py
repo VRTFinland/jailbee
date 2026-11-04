@@ -256,6 +256,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
                 "starting": "start",
                 "creating": "create",
                 "cloning": "clone",
+                "warming": "warm",
                 "stopping": "stop",
                 "deleting": "delete",
                 "destroying": "destroy",

@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Forks (`jailbee fork` and orchestrator fork spawns) can seed Git-ignored
+  build outputs from the source by btrfs reflink, configured with
+  `fork.warm_paths` and overridden with repeatable `--warm PATH` or
+  `--no-warm`. Other storage pools skip seeding with a note
+  ([#72](https://github.com/VRTFinland/jailbee/issues/72)).
+
 ### Changed
 
 - `jailbee ls` and the terminal dashboard show `⎈` before an orchestrator's

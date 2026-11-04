@@ -2435,6 +2435,31 @@ other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
 The same sync also keeps the mirror's locked-down `nginx.conf` and its
 Quadlet unit at the versions this jailbee ships.
 
+### `fork`
+
+Warm paths seed HEAD forks (`jailbee fork` and orchestrator fork spawns) with
+Git-ignored build outputs from the source container, using btrfs reflinks only.
+The default empty list disables seeding. Other storage drivers, dirty sources,
+and forks of a `--ref` other than the source's HEAD are skipped with an advisory.
+
+```yaml
+fork:
+  warm_paths:
+    - .gradle
+    - "*/build"
+    - app/bibleview-js/node_modules
+```
+
+Patterns are repository-relative: no absolute paths, `..`, or `.git` root.
+`*` and `?` match one path segment; `**` matches zero or more segments.
+Only existing ignored entries that are also ignored in the child are copied;
+unmatched patterns get an advisory. Select the outermost ignored directory:
+Git collapses its listing (if `cache/` is ignored, select `cache`, not
+`cache/gradle`). Submodule outputs are not listed. Symlinks and special files
+are skipped to keep the copy independent; existing destinations are not replaced.
+`--warm PATH` (repeatable) replaces the configured list; `--no-warm` disables it
+for one fork. The flags are mutually exclusive. No outputs remain shared.
+
 ### `new`
 
 Policy for selecting the source commit when `jailbee new` clones a repository.
