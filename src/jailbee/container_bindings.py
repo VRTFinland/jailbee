@@ -85,10 +85,12 @@ def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
             incus.exec(
                 full,
                 [
-                    "sh", "-c",
+                    "sh",
+                    "-c",
                     'set -eu; umask 022; mkdir -p "${1%/*}"; '
                     'chmod 0755 "${1%/*}"; touch "$1"; chmod 0644 "$1"',
-                    "sh", str(ERROR_MARKER),
+                    "sh",
+                    str(ERROR_MARKER),
                 ],
                 uid=0,
             )

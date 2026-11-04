@@ -54,7 +54,10 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
             home_exec_uids.append(uid)
         # Execute the production payload with a restrictive umask against a
         # fresh home and neutral run directory, without a real Incus daemon.
-        mapped = [arg.replace("/home/dev", str(home)).replace("/run/jailbee", str(neutral / "jailbee")) for arg in argv]
+        mapped = [
+            arg.replace("/home/dev", str(home)).replace("/run/jailbee", str(neutral / "jailbee"))
+            for arg in argv
+        ]
         pid = os.fork()
         if pid == 0:
             try:
@@ -99,7 +102,8 @@ def test_unknown_uid_and_old_mount_cannot_select_stale_binding(tmp_path, monkeyp
     monkeypatch.setattr(bindings, "ERROR_MARKER", marker)
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
     incus.config_device_get.side_effect = lambda name, dev, key: {
-        "type": "disk", "source": str(old.parent),
+        "type": "disk",
+        "source": str(old.parent),
     }.get(key)
     incus.config_device_set.side_effect = IncusError("device repair failed")
     config["user.jailbee.pr"] = "43"
