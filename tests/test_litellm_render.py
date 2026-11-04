@@ -193,7 +193,8 @@ def test_container_profiles():
                 "Claude Code's tier names are aliases here; each runs the backend model below.\n"
                 "- fable → `chatgpt/gpt-6-astra` (route `astra`; effort high; context 1050k)\n"
                 "- opus → `chatgpt/gpt-6.1-sol` (route `sol-high`; effort high; context 1050k)\n"
-                "- sonnet → `chatgpt/gpt-6.1-terra` (route `terra-high`; effort high; context 1050k)\n"
+                "- sonnet → `chatgpt/gpt-6.1-terra` "
+                "(route `terra-high`; effort high; context 1050k)\n"
                 "- haiku → `chatgpt/gpt-6-luna` (route `luna-high`; effort high; context 1050k)"
             ),
             "tiers": {
@@ -243,13 +244,25 @@ def test_container_profiles_carry_the_profile_instructions():
 def test_model_map_exact_format_and_effort_precedence():
     from jailbee.litellm_render import render_model_map
 
-    cfg = LiteLLMConfig.model_validate({
-        "routes": {
-            "one": {"model": "openai/one", "context_window": 128000, "effort": "high", "description": "Deep work."},
-            "two": {"model": "openai/two", "context_window": 64000, "min_effort": "low", "description": "Quick work."},
-        },
-        "profiles": {"custom": {"opus": "one", "haiku": "two", "effort": "medium"}},
-    })
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {
+                "one": {
+                    "model": "openai/one",
+                    "context_window": 128000,
+                    "effort": "high",
+                    "description": "Deep work.",
+                },
+                "two": {
+                    "model": "openai/two",
+                    "context_window": 64000,
+                    "min_effort": "low",
+                    "description": "Quick work.",
+                },
+            },
+            "profiles": {"custom": {"opus": "one", "haiku": "two", "effort": "medium"}},
+        }
+    )
     text = render_model_map("custom", cfg.effective_profiles()["custom"], cfg.effective_routes())
     assert text == (
         "## Model map (claude-jb profile `custom`)\n"
@@ -268,14 +281,24 @@ def test_map_off_and_no_instructions_is_none():
 
 
 def test_map_leaks_no_secrets():
-    cfg = LiteLLMConfig.model_validate({
-        "routes": {"secret": {"model": "openai/m", "context_window": 128000,
-            "api_key": "SECRET_KEY", "api_base": "https://private.example.com/v1",
-            "params": {"token": "secret-param"}}},
-        "profiles": {"safe": {"opus": "secret"}},
-    })
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {
+                "secret": {
+                    "model": "openai/m",
+                    "context_window": 128000,
+                    "api_key": "SECRET_KEY",
+                    "api_base": "https://private.example.com/v1",
+                    "params": {"token": "secret-param"},
+                }
+            },
+            "profiles": {"safe": {"opus": "secret"}},
+        }
+    )
     text = container_profiles(cfg, base_urls={"default": "u"})["safe"]["instructions"]
-    assert all(secret not in text for secret in ("SECRET_KEY", "private.example.com", "secret-param"))
+    assert all(
+        secret not in text for secret in ("SECRET_KEY", "private.example.com", "secret-param")
+    )
 
 
 def test_unmapped_tier_listed():
@@ -286,10 +309,12 @@ def test_unmapped_tier_listed():
 
 
 def test_oversize_drops_descriptions(capsys):
-    cfg = LiteLLMConfig.model_validate({
-        "routes": {"astra": {"description": "Description marker" + "d" * 1000}},
-        "profiles": {"codex": {"instructions": "x" * 65000}},
-    })
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {"astra": {"description": "Description marker" + "d" * 1000}},
+            "profiles": {"codex": {"instructions": "x" * 65000}},
+        }
+    )
     text = container_profiles(cfg, base_urls={"default": "u"})["codex"]["instructions"]
     assert "Description marker" not in text
     assert text.endswith("\n\n" + "x" * 65000)
@@ -302,7 +327,9 @@ def test_size_boundary_preserves_instructions(extra, expect_map, capsys):
     from jailbee.litellm_render import render_model_map
 
     base = LiteLLMConfig()
-    model_map = render_model_map("codex", base.effective_profiles()["codex"], base.effective_routes())
+    model_map = render_model_map(
+        "codex", base.effective_profiles()["codex"], base.effective_routes()
+    )
     size = 65536 - len(model_map.encode()) - 2 + extra
     instructions = "é" * (size // 2) + "x" * (size % 2)
     cfg = LiteLLMConfig.model_validate({"profiles": {"codex": {"instructions": instructions}}})
@@ -310,7 +337,6 @@ def test_size_boundary_preserves_instructions(extra, expect_map, capsys):
     assert text == (model_map + "\n\n" + instructions if expect_map else instructions)
     assert len(text.encode()) <= 65536
     assert bool(capsys.readouterr().err) is not expect_map
-
 
 
 def test_egress_hosts_for_chatgpt():
