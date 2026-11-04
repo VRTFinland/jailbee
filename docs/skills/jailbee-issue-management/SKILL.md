@@ -101,7 +101,9 @@ Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,
 and `--add LOGIN` / `--remove LOGIN` (repeatable) name other users. Give at
 least one of these flags; a login already assigned on `--add`, or not
-assigned on `--remove`, is refused before anything is staged.
+assigned on `--remove`, is refused before anything is staged. `--me` and
+`--unassign-me` are exempt from those checks, because the container cannot
+resolve `@me` to a login.
 
 For related actions use `--batch NAME`, then `jailbee outbox submit NAME
 --kind issue`. A create may set `--ref REF`; later actions in that same
