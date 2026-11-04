@@ -116,8 +116,13 @@ def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...]
         raise ChildOutboxError(f"outbox could not be checked: {exc}") from exc
 
 
+def _display(text: str) -> str:
+    """Escape lone surrogates without changing authoritative filesystem names."""
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
 def _summary(kind: str, name: str, text: str | None) -> str:
-    prefix = f"{kind}/{name}"
+    prefix = f"{kind}/{_display(name)}"
     if text is None:
         return prefix
     try:
@@ -129,7 +134,7 @@ def _summary(kind: str, name: str, text: str | None) -> str:
         verb = action["type"]
         if not isinstance(verb, str):
             return prefix
-        detail = verb[:40]
+        detail = _display(verb[:40])
         if verb == "create" and isinstance(action.get("title"), str):
             detail += " " + json.dumps(action["title"][:200], ensure_ascii=True)
         elif verb == "review" and isinstance(action.get("comments"), list):
@@ -171,9 +176,9 @@ def probe(incus: Incus, full: str, *, uid: int | None) -> PendingGithub:
 def describe(child_short: str, p: PendingGithub) -> str:
     groups = []
     if p.issue:
-        groups.append("issue: " + ", ".join(p.issue))
+        groups.append("issue: " + ", ".join(_display(name) for name in p.issue))
     if p.pr:
-        groups.append("pr: " + ", ".join(p.pr))
+        groups.append("pr: " + ", ".join(_display(name) for name in p.pr))
     return describe_count(child_short, p.count, "; ".join(groups))
 
 

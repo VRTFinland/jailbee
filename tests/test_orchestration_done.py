@@ -113,6 +113,56 @@ def _policy(rig: Rig, policy: str) -> None:
     rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.ON_DONE: policy})
 
 
+@pytest.mark.parametrize("unsafe_part", ["filename", "verb"])
+def test_done_with_surrogate_outbox_text_is_retained_and_serializable(tmp_path, mocker, monkeypatch, unsafe_part):
+    import contextlib
+    import io
+    import json
+    import os
+
+    from jailbee.orchestration import child_outbox
+    from jailbee.orchestration.protocol import InboxMessage
+
+    real_probe = child_outbox.probe
+    rig = _make(tmp_path, mocker)
+    _policy(rig, "destroy")
+    issue = tmp_path / "issue-outbox"
+    issue.mkdir()
+    raw_name = b"bad\xff.json" if unsafe_part == "filename" else b"action.json"
+    name = os.fsdecode(raw_name)
+    verb = "comment" if unsafe_part == "filename" else "bad\udcffverb"
+    text = json.dumps({"actions": [{"type": verb}]})
+    fd = os.open(os.fsencode(issue) + b"/" + raw_name, os.O_WRONLY | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
+
+    def discover(*args, **kwargs):
+        output = io.StringIO()
+        with monkeypatch.context() as scoped:
+            scoped.setattr("sys.argv", ["probe", str(issue), str(tmp_path / "pr-outbox"), "128"])
+            with contextlib.redirect_stdout(output):
+                exec(compile(child_outbox._NAMES_SCRIPT, "<child outbox probe>", "exec"), {})
+        return output.getvalue()
+
+    rig.incus.with_exec_timeout.return_value.exec_capped.side_effect = discover
+    mocker.patch("jailbee.outbox_io.read_text_outbox", side_effect=[{name: text}, {}])
+    pending = real_probe(
+        rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
+    )
+    assert pending.count == 1 and pending.issue == (name,)
+    rig.outbox_probe.return_value = pending
+    messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.on_done == "keep"
+    assert "1 staged GitHub action(s)" in msg.on_done_reason
+    assert "force: true" in msg.body
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
+    serialized = msg.model_dump_json(by_alias=True)
+    delivered = InboxMessage.model_validate_json(serialized)
+    assert "\\udcff" in delivered.body
+    assert ("bad\\udcff.json" if unsafe_part == "filename" else "bad\\udcffverb") in delivered.body
+
+
 @pytest.mark.parametrize("policy", ["keep", "destroy"])
 @pytest.mark.parametrize("import_error", [False, True])
 def test_every_done_reports_staged_github_actions(tmp_path, mocker, policy, import_error):
