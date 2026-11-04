@@ -275,6 +275,24 @@ def test_model_map_exact_format_and_effort_precedence():
     )
 
 
+def test_model_map_formats_non_thousand_context_windows_exactly():
+    from jailbee.litellm_render import render_model_map
+
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {
+                "exact": {"model": "openai/exact", "context_window": 1_050_001},
+                "other": {"model": "openai/other", "context_window": 128_001},
+            },
+            "profiles": {"custom": {"opus": "exact", "haiku": "other"}},
+        }
+    )
+    text = render_model_map("custom", cfg.effective_profiles()["custom"], cfg.effective_routes())
+    assert "context 1050k)" not in text
+    assert "context 1050.001k" in text
+    assert "context 128.001k" in text
+
+
 def test_map_off_and_no_instructions_is_none():
     cfg = LiteLLMConfig.model_validate({"profiles": {"codex": {"model_map": False}}})
     assert container_profiles(cfg, base_urls={"default": "u"})["codex"]["instructions"] is None
@@ -283,6 +301,7 @@ def test_map_off_and_no_instructions_is_none():
 def test_map_leaks_no_secrets():
     cfg = LiteLLMConfig.model_validate(
         {
+            "accounts": ["default", "account-sentinel"],
             "routes": {
                 "secret": {
                     "model": "openai/m",
@@ -290,14 +309,32 @@ def test_map_leaks_no_secrets():
                     "api_key": "SECRET_KEY",
                     "api_base": "https://private.example.com/v1",
                     "params": {"token": "secret-param"},
-                }
+                },
+                "oauth-route": {
+                    "model": "xai/grok-4.3",
+                    "context_window": 128000,
+                    "oauth": True,
+                    "account": "account-sentinel",
+                },
             },
-            "profiles": {"safe": {"opus": "secret"}},
+            "profiles": {"safe": {"opus": "secret", "haiku": "oauth-route"}},
         }
     )
-    text = container_profiles(cfg, base_urls={"default": "u"})["safe"]["instructions"]
+    text = container_profiles(cfg, base_urls={"default": "u", "account-sentinel": "u"})["safe"][
+        "instructions"
+    ]
+    assert "openai/m" in text
+    assert "xai/grok-4.3" in text
     assert all(
-        secret not in text for secret in ("SECRET_KEY", "private.example.com", "secret-param")
+        secret not in text
+        for secret in (
+            "SECRET_KEY",
+            "private.example.com",
+            "account-sentinel",
+            "secret-param",
+            "oauth: True",
+            "use_xai_oauth",
+        )
     )
 
 
@@ -306,6 +343,32 @@ def test_unmapped_tier_listed():
     text = container_profiles(cfg, base_urls={"default": "u"})["codex"]["instructions"]
     assert "Unmapped tiers: haiku (not available in this session)." in text
     assert "- haiku →" not in text
+
+
+@pytest.mark.parametrize(
+    "description, warning, instruction_size",
+    [
+        ("d" * 1000, "dropping descriptions", 65500),
+        (None, "omitting the map", 65536),
+    ],
+)
+def test_oversize_warning_names_profile(description, warning, instruction_size, capsys):
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {"astra": {"description": description}},
+            "profiles": {
+                "team-profile": {
+                    "opus": "astra",
+                    "instructions": "x" * instruction_size,
+                }
+            },
+        }
+    )
+    text = container_profiles(cfg, base_urls={"default": "u"})["team-profile"]["instructions"]
+    stderr = " ".join(capsys.readouterr().err.split())
+    assert "team-profile" in stderr
+    assert warning in stderr
+    assert text == "x" * instruction_size
 
 
 def test_oversize_drops_descriptions(capsys):

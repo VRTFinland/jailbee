@@ -432,7 +432,9 @@ def render_model_map(
             details.append(f"effort {effort}")
         if route.min_effort:
             details.append(f"min effort {route.min_effort}")
-        details.append(f"context {route.context_window / 1000:g}k")
+        whole, fraction = divmod(route.context_window, 1000)
+        context = f"{whole}k" if fraction == 0 else f"{whole}.{fraction:03d}k"
+        details.append(f"context {context}")
         lines.append(f"- {tier} → `{route.model}` ({'; '.join(details)})")
         if descriptions and route.description:
             lines.extend(f"  {line}" for line in route.description.splitlines())
@@ -454,11 +456,17 @@ def _profile_instructions(
     text = combine(render_model_map(name, profile, routes))
     if len(text.encode()) <= INSTRUCTIONS_MAX_BYTES:
         return text
-    tui.warn_plain("Model map exceeds the instructions limit; dropping descriptions.", stderr=True)
+    tui.warn_plain(
+        f"Model map for profile '{name}' exceeds the instructions limit; dropping descriptions.",
+        stderr=True,
+    )
     text = combine(render_model_map(name, profile, routes, descriptions=False))
     if len(text.encode()) <= INSTRUCTIONS_MAX_BYTES:
         return text
-    tui.warn_plain("Model map still exceeds the instructions limit; omitting the map.", stderr=True)
+    tui.warn_plain(
+        f"Model map for profile '{name}' still exceeds the instructions limit; omitting the map.",
+        stderr=True,
+    )
     return profile.instructions
 
 
