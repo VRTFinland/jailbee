@@ -11107,6 +11107,49 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
     )
 
 
+@autostart_app.command("run")
+def autostart_run_cmd(
+    container: AutostartNameArg = None,
+    stage: Annotated[list[str] | None, typer.Option("--stage")] = None,
+    step: Annotated[list[str] | None, typer.Option("--step")] = None,
+    failed: Annotated[bool, typer.Option("--failed")] = False,
+    trigger: Annotated[str | None, typer.Option("--trigger")] = None,
+    wait: Annotated[bool, typer.Option("--wait")] = False,
+    listing: Annotated[bool, typer.Option("--list")] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Re-run configured stages or steps in a running container."""
+    from jailbee import autostart_rerun
+    from jailbee.autostart_plan import RerunSelectionError
+    from jailbee.lifecycle import container_repo_dir
+
+    if trigger not in (None, "on_create", "on_start"):
+        error("--trigger must be on_create or on_start")
+        raise typer.Exit(2)
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, container)
+
+    def spawn(effective: "Config", block: "Autostart") -> None:
+        _spawn_autostart_worker(
+            effective, config, full, incus=incus, autostart=block,
+            from_trigger=autostart_rerun.first_trigger(block).value,
+            repo_dir=container_repo_dir(cfg, incus, full),
+            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus), override="no_wait", rerun=True,
+        )
+
+    try:
+        autostart_rerun.command(cfg, incus, full, stages=stage or [], steps=step or [],
+                                failed=failed, trigger=trigger, listing=listing,
+                                json_output=json_output, wait=wait, spawn=spawn)
+    except RerunSelectionError as exc:
+        error(str(exc))
+        raise typer.Exit(exc.exit_code) from exc
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
 @autostart_app.command("profile")
 def autostart_profile_cmd(
     container: AutostartNameArg = None,

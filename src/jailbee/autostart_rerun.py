@@ -98,3 +98,94 @@ def first_trigger(block: Autostart) -> AutostartTrigger:
         if getattr(block, trigger.value):
             return trigger
     raise ValueError("No autostart stages selected for re-run")
+
+
+def list_rows(cfg: Config, container: str) -> list[dict[str, object]]:
+    from jailbee.autostart_outcomes import read
+
+    outcomes = read(container)
+    rows: list[dict[str, object]] = []
+    for trigger in TRIGGER_ORDER:
+        for stage in rerunnable_stages(cfg.autostart, trigger):
+            recorded = outcomes.get(trigger.value, {}).get(stage.stage, {})
+            steps = []
+            for chain in stage.all_chains():
+                for step in chain.steps:
+                    outcome = recorded.get(step.name)
+                    steps.append({"step": step.name, "state": outcome.state if outcome else None,
+                                  "at": outcome.at if outcome else None})
+            present = [recorded[step["step"]] for step in steps if step["step"] in recorded]
+            failures = [outcome for outcome in present if outcome.state == "fail"]
+            chosen = max(failures or present, key=lambda outcome: outcome.at, default=None)
+            rows.append({"trigger": trigger.value, "stage": stage.stage,
+                         "state": chosen.state if chosen else None, "at": chosen.at if chosen else None,
+                         "steps": steps})
+    return rows
+
+
+def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
+            steps: Sequence[str], failed: bool, trigger: str | None, listing: bool,
+            json_output: bool, wait: bool, spawn: Callable[[Config, Autostart], None]) -> None:
+    """Select a union of explicit and failed targets; trigger filters both."""
+    import json
+    import typer
+    from rich.table import Table
+    from jailbee import prompting
+    from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
+    from jailbee.autostart_status import refuse_while_running
+    from jailbee.lifecycle import short_name
+    from jailbee.tui import console, info
+
+    if (listing and (stages or steps or failed or trigger or wait)) or (json_output and not listing):
+        raise RerunSelectionError("--list excludes selectors, --trigger and --wait; --json requires --list", 2)
+    selected_trigger = AutostartTrigger(trigger) if trigger else None
+    effective = effective_config(cfg, incus, container)
+    if listing:
+        rows = list_rows(effective, container)
+        if json_output:
+            typer.echo(json.dumps(rows))
+        else:
+            table = Table("Trigger", "Stage", "State", "At")
+            for row in rows:
+                table.add_row(str(row["trigger"]), str(row["stage"]), str(row["state"] or "-"), str(row["at"] or "-"))
+            console.print(table)
+        return
+    refuse_while_running(cfg, container)
+    targets = resolve_rerun(effective.autostart, stages=stages, steps=steps, trigger=selected_trigger)
+    failures = [t for t in failed_targets(effective, container) if selected_trigger is None or t.trigger == selected_trigger]
+    if failed:
+        targets.extend(t for t in failures if t not in targets)
+    if not stages and not steps and not failed:
+        if not prompting.is_interactive():
+            raise prompting.MissingValue("autostart selection", reason="pass --stage/--step/--failed or select interactively")
+        options: list[prompting.Option[list[RerunTarget]]] = []
+        if failures:
+            options.append(prompting.Option(failures, f"Re-run failed steps ({len(failures)})", "failed"))
+        for t in TRIGGER_ORDER:
+            if selected_trigger is not None and t != selected_trigger:
+                continue
+            for stage in rerunnable_stages(effective.autostart, t):
+                target = RerunTarget(t, stage.stage, None)
+                label = f"{t.value}: {stage.stage}"
+                options.append(prompting.Option([target], label, label))
+                for chain in stage.all_chains():
+                    for step in chain.steps:
+                        item = RerunTarget(t, stage.stage, step.name)
+                        label = f"{t.value}: {stage.stage}/{step.name}"
+                        options.append(prompting.Option([item], label, label))
+        targets = prompting.choose_one("autostart selection", options, destructive=True)
+    if not targets:
+        info(f"no failed autostart steps in '{short_name(cfg, container)}'")
+        return
+    block = prepare(cfg, incus, container, targets)
+    if wait:
+        run_foreground(cfg, incus, container, block)
+    else:
+        key = "user.jailbee.autostart_in_progress"
+        incus.config_set(container, key, "1")
+        try:
+            spawn(effective, block)
+        except BaseException:
+            incus.config_unset(container, key)
+            raise
+        info(f"Re-running in the background — follow with `jailbee autostart status {short_name(cfg, container)}`")

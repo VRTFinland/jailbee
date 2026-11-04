@@ -1813,3 +1813,10 @@ def test_service_refresh_is_host_only_with_all_unlocks(network, mounts):
             restrict_host=True,
             unlocks=RemoteUnlocks(network=network, mounts=mounts),
         )
+
+
+def test_autostart_run_is_container_scoped():
+    from jailbee.remote_ssh.router import _CONTAINER_COMMANDS, is_host_command
+
+    assert "autostart run" in _CONTAINER_COMMANDS
+    assert not is_host_command("autostart run")

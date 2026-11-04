@@ -501,3 +501,166 @@ def test_status_without_name_and_no_autostart_jobs_exits_2(tmp_path, mocker) -> 
     result = runner.invoke(app, ["autostart", "status"])
     assert result.exit_code == 2
     assert "no autostart" in _out(result).lower()
+
+
+def test_run_requires_selector_off_terminal(tmp_path, mocker):
+    _setup(tmp_path, mocker)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["autostart", "run", "feat-a"])
+    assert result.exit_code == 2
+    assert "--stage/--step/--failed" in _out(result)
+
+
+def test_run_list_json_has_never_run_steps(tmp_path, mocker):
+    import json
+    from jailbee.config import Autostart
+
+    cfg, incus = _setup(tmp_path, mocker)
+    object.__setattr__(cfg, "autostart", Autostart.model_validate({"on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}]}))
+    incus.config_get.return_value = ""
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list", "--json"])
+    assert result.exit_code == 0, _out(result)
+    assert json.loads(result.stdout) == [{"trigger": "on_start", "stage": "deps", "state": None, "at": None, "steps": [{"step": "npm", "state": None, "at": None}]}]
+
+
+def _rerun_setup(tmp_path, mocker):
+    from jailbee.config import Autostart
+
+    cfg, incus = _setup(tmp_path, mocker)
+    object.__setattr__(cfg, "autostart", Autostart.model_validate({
+        "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+        "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}, {"name": "other", "run": "true"}]}],
+    }))
+    incus.config_get.return_value = ""
+    incus.list_containers.return_value = [{"name": "myrepo-feat-a", "status": "Running"}]
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    return cfg, incus
+
+
+def test_run_failed_empty_and_live_guard(tmp_path, mocker):
+    _rerun_setup(tmp_path, mocker)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--failed"])
+    assert result.exit_code == 0, _out(result)
+    assert "no failed autostart steps in 'feat-a'" in _out(result)
+    mocker.patch("jailbee.autostart_status.refuse_while_running", side_effect=RuntimeError("live run"))
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--failed"])
+    assert result.exit_code == 1
+    assert "live run" in _out(result)
+
+
+def test_run_background_forwards_combined_targets(tmp_path, mocker):
+    from jailbee import autostart_outcomes
+
+    _, incus = _rerun_setup(tmp_path, mocker)
+    autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "other", "fail")
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--step", "deps/npm", "--failed", "--trigger", "on_start"])
+    assert result.exit_code == 0, _out(result)
+    assert spawn.call_args.kwargs["rerun"] is True
+    assert spawn.call_args.kwargs["from_trigger"] == "on_start"
+    block = spawn.call_args.kwargs["autostart"]
+    assert [s.name for c in block.on_start[0].all_chains() for s in c.steps] == ["npm", "other"]
+    incus.config_set.assert_called_with("myrepo-feat-a", "user.jailbee.autostart_in_progress", "1")
+
+
+def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
+    _, incus = _rerun_setup(tmp_path, mocker)
+    mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("live job"))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
+    assert result.exit_code == 1
+    assert "live job" in _out(result)
+    assert "Re-running in the background" not in _out(result)
+    incus.config_unset.assert_called_with("myrepo-feat-a", "user.jailbee.autostart_in_progress")
+
+
+def test_run_wait_failure(tmp_path, mocker):
+    _rerun_setup(tmp_path, mocker)
+    mocker.patch("jailbee.autostart_rerun.run_foreground", side_effect=RuntimeError("step failed"))
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps", "--wait"])
+    assert result.exit_code == 1
+    assert "step failed" in _out(result)
+
+
+@pytest.mark.parametrize("args", [["--list", "--stage", "deps"], ["--json"], ["--list", "--trigger", "on_start"]])
+def test_run_rejects_conflicting_options(tmp_path, mocker, args):
+    _rerun_setup(tmp_path, mocker)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", *args])
+    assert result.exit_code == 2
+
+
+def test_run_ambiguous_stage_and_reserved_agent(tmp_path, mocker):
+    cfg, _ = _rerun_setup(tmp_path, mocker)
+    object.__setattr__(cfg.autostart, "on_create", cfg.autostart.on_start)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
+    assert result.exit_code == 2
+    assert "on_create, on_start" in _out(result)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "agents"])
+    assert result.exit_code == 1
+
+
+def test_run_list_corrupt_outcomes_and_failed(tmp_path, mocker):
+    from jailbee.autostart_outcomes import outcomes_path
+
+    _rerun_setup(tmp_path, mocker)
+    path = outcomes_path("myrepo-feat-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{")
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list", "--json"])
+    assert result.exit_code == 0, _out(result)
+    assert '"state": null' in result.stdout
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--failed"])
+    assert result.exit_code == 0, _out(result)
+
+
+def test_run_interactive_picker_counts_interrupted_steps(tmp_path, mocker):
+    from jailbee import autostart_outcomes
+
+    _rerun_setup(tmp_path, mocker)
+    autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "npm", "start")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    picker = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, options: options[0].value)
+    foreground = mocker.patch("jailbee.autostart_rerun.run_foreground")
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--wait"])
+    assert result.exit_code == 0, _out(result)
+    assert picker.call_args.args[1][0].title == "Re-run failed steps (1)"
+    foreground.assert_called_once()
+
+
+def test_run_list_fail_dominates_newer_success(tmp_path, mocker):
+    import json
+    from jailbee import autostart_outcomes
+
+    _rerun_setup(tmp_path, mocker)
+    autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "npm", "fail")
+    autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "other", "ok")
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list", "--json"])
+    assert result.exit_code == 0, _out(result)
+    row = json.loads(result.stdout)[1]
+    assert row["state"] == "fail"
+    assert [s["state"] for s in row["steps"]] == ["fail", "ok"]
+
+
+def test_run_refuses_live_supervisor_without_job_file(tmp_path, mocker):
+    _, incus = _rerun_setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
+    assert result.exit_code == 1
+    assert not list(tmp_path.rglob("*.job.json"))
+    incus.config_set.assert_not_called()
+
+
+def test_run_reserved_service_slot_refused(tmp_path, mocker):
+    from jailbee.config import Autostart
+
+    cfg, _ = _rerun_setup(tmp_path, mocker)
+    object.__setattr__(cfg, "autostart", Autostart.model_validate({
+        "on_start": [{"stage": "services", "services": ["db"]}]
+    }))
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "services"])
+    assert result.exit_code == 1, _out(result)
+    spawn.assert_not_called()
