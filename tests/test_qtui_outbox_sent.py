@@ -112,7 +112,9 @@ def test_open_disabled_without_url(dialog, mocker):
     opened.assert_not_called()
 
 
-@pytest.mark.parametrize("url", ["file:///tmp/private", "http://github.com/o/r", "javascript:alert(1)"])
+@pytest.mark.parametrize(
+    "url", ["file:///tmp/private", "http://github.com/o/r", "javascript:alert(1)"]
+)
 def test_open_refuses_non_https_url(dialog, mocker, url):
     _rec("unsafe", url=url)
     opened = mocker.patch("jailbee.qtui.outbox.QDesktopServices.openUrl")

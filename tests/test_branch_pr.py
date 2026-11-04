@@ -1027,7 +1027,9 @@ def test_publish_survives_sent_record_failure_source(source_publisher, mocker, c
     ) == 1
 
 
-@pytest.mark.parametrize("builder", ["jailbee.branch_pr._source_sent_content", "jailbee.pr_outbox.proposal_files_digest"])
+@pytest.mark.parametrize(
+    "builder", ["jailbee.branch_pr._source_sent_content", "jailbee.pr_outbox.proposal_files_digest"]
+)
 def test_source_publish_survives_sent_construction_failure(source_publisher, mocker, builder):
     p = source_publisher
     mocker.patch(builder, side_effect=OSError("snapshot unavailable"))

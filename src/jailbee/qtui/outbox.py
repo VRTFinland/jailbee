@@ -327,7 +327,9 @@ class OutboxDialog(QDialog):
         selected = self._selected()
         enabled = not self.busy and not self.closing
         sent = self._selected_sent()
-        self.open_button.setEnabled(bool(sent and sent.row.url and sent.row.url.startswith("https://")))
+        self.open_button.setEnabled(
+            bool(sent and sent.row.url and sent.row.url.startswith("https://"))
+        )
         self.sent_button.setEnabled(enabled)
         self.repo_check.setEnabled(enabled)
         self.refresh_button.setEnabled(enabled)
