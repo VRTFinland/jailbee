@@ -1547,7 +1547,7 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     entries = tmenu.menu_entries(menu)
     labels = [i.label if isinstance(i, MenuGroup) else i[0] for i in entries]
     assert labels.index("Mounts…") < labels.index("Services…") < labels.index("Network →")
-    assert tmenu.menu_hotkeys(entries)[labels.index("Services…")] == "v"
+    assert tmenu.menu_hotkeys(entries)[labels.index("Services…")] == "V"
     session, _ = bare_session(mocker, [group])
     session.over_ssh = True
     session.ssh_policy = RemoteSSHConfig()
