@@ -45,7 +45,10 @@ def rig(mocker):
 def test_adoption_reinstalls_marker_even_when_broker_cached_old_child(cfg, rig):
     _, incus = rig
     adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
-    assert any(c.args[0] == "myrepo-a" and labels.ROLE_MARKER_PATH in str(c) for c in incus.exec.call_args_list)
+    assert any(
+        c.args[0] == "myrepo-a" and labels.ROLE_MARKER_PATH in str(c)
+        for c in incus.exec.call_args_list
+    )
 
 
 def test_adoption_discards_stale_child_outbox_record(cfg, rig):
@@ -323,15 +326,19 @@ def test_release_cleans_role_before_clearing_authority(cfg, rig, tmp_path, mocke
     mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
     mocker.patch("jailbee.orchestration.outbox.deliver")
     if not running:
-        with pytest.raises(adoption.AdoptError, match="start.*retry"):
+        with pytest.raises(adoption.AdoptError, match=r"start.*retry"):
             adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
         incus.config_unset_checked.assert_not_called()
         incus.exec.assert_not_called()
         return
     adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
-    cleanup = next(c for c in incus.mock_calls if c[0] == "exec" and labels.ROLE_MARKER_PATH in str(c))
+    cleanup = next(
+        c for c in incus.mock_calls if c[0] == "exec" and labels.ROLE_MARKER_PATH in str(c)
+    )
     assert "rm" in str(cleanup)
-    assert incus.mock_calls.index(cleanup) < next(i for i, c in enumerate(incus.mock_calls) if c[0] == "config_unset_checked")
+    assert incus.mock_calls.index(cleanup) < next(
+        i for i, c in enumerate(incus.mock_calls) if c[0] == "config_unset_checked"
+    )
 
 
 def test_release_role_cleanup_failure_keeps_parent(cfg, rig, tmp_path, mocker):
@@ -355,7 +362,9 @@ def test_release_failed_parent_unset_restores_role_for_retry(cfg, rig, tmp_path,
     incus.config_unset_checked.side_effect = IncusError("cannot unset parent")
     with pytest.raises(IncusError):
         adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
-    assert any("child" in str(c) and labels.ROLE_MARKER_PATH in str(c) for c in incus.exec.call_args_list)
+    assert any(
+        "child" in str(c) and labels.ROLE_MARKER_PATH in str(c) for c in incus.exec.call_args_list
+    )
 
 
 def test_release_non_child_refused(cfg, rig, tmp_path):

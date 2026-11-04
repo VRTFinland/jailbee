@@ -47,7 +47,10 @@ def test_concurrent_issue_publications_enforce_cap(tmp_path):
     from jailbee.container_outbox.store import OutboxCommandError
 
     store = store_for(tmp_path)
-    manifest = {"version": 1, "actions": [{"type": "create", "repo": ".", "ref": "new", "title": "Hi", "body": "x"}]}
+    manifest = {
+        "version": 1,
+        "actions": [{"type": "create", "repo": ".", "ref": "new", "title": "Hi", "body": "x"}],
+    }
     for _ in range(19):
         store.write_manifest("issue", "create", manifest, {})
 
@@ -222,6 +225,7 @@ def test_two_writers_publish_distinct_complete_manifests(tmp_path):
     store = store_for(tmp_path)
     store.require_writable({})
     barrier = Barrier(2)
+
     def write(body):
         barrier.wait(timeout=5)
         return store_for(tmp_path).write_manifest(

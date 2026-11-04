@@ -165,9 +165,15 @@ def test_ensure_env_handles_orchestrator_to_child_transition(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
     rig.incus.exec.reset_mock()
-    rig.incus.list_containers.return_value = [_child("proj-orch", of="proj-parent"), _orch("proj-parent")]
+    rig.incus.list_containers.return_value = [
+        _child("proj-orch", of="proj-parent"),
+        _orch("proj-parent"),
+    ]
     rig.tick(memory)
-    assert any(c.args[0] == "proj-orch" and labels.ROLE_MARKER_PATH in str(c) for c in rig.incus.exec.call_args_list)
+    assert any(
+        c.args[0] == "proj-orch" and labels.ROLE_MARKER_PATH in str(c)
+        for c in rig.incus.exec.call_args_list
+    )
 
 
 def test_ensure_env_runs_for_children(rig: Rig) -> None:

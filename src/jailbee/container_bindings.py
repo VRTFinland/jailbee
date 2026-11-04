@@ -54,9 +54,16 @@ def sync(incus: Incus, full: str) -> None:
         _write(directory, {"error": "PR bindings could not be refreshed; restart with jb start"})
         raise
     if incus.config_device_get(full, "jailbee-metadata", "source") != str(directory):
-        incus.config_device_add(full, "jailbee-metadata", "disk", {
-            "source": str(directory), "path": "/opt/jailbee/metadata", "readonly": "true",
-        })
+        incus.config_device_add(
+            full,
+            "jailbee-metadata",
+            "disk",
+            {
+                "source": str(directory),
+                "path": "/opt/jailbee/metadata",
+                "readonly": "true",
+            },
+        )
 
 
 def refresh(incus: Incus, full: str) -> bool:

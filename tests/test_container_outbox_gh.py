@@ -102,13 +102,21 @@ def test_pr_view_builds_repo_from_url_and_omits_missing_number(
 
 
 def test_pr_view_uses_bound_repository_cwd(mocker):
-    run = mocker.patch.object(gh.subprocess, "run", return_value=completed('{"number":7,"headRefOid":"abc","url":"https://github.com/acme/lib/pull/7"}'))
+    run = mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed(
+            '{"number":7,"headRefOid":"abc","url":"https://github.com/acme/lib/pull/7"}'
+        ),
+    )
     assert gh.pr_view(7, cwd="/repo/lib").repo == "acme/lib"
     assert run.call_args.kwargs["cwd"] == "/repo/lib"
     assert run.call_args.args[0][:4] == ["gh", "pr", "view", "7"]
 
 
-@pytest.mark.parametrize("value", [{"nameWithOwner": "acme/widgets"}, {}, {"nameWithOwner": "invalid"}, []])
+@pytest.mark.parametrize(
+    "value", [{"nameWithOwner": "acme/widgets"}, {}, {"nameWithOwner": "invalid"}, []]
+)
 def test_repo_discovery_without_a_pr(mocker, value):
     run = mocker.patch.object(gh.subprocess, "run", return_value=completed(json.dumps(value)))
     if value == {"nameWithOwner": "acme/widgets"}:

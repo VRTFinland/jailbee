@@ -9,7 +9,13 @@ from pathlib import Path, PurePosixPath
 from jailbee.container_outbox.store import OutboxCommandError
 
 SNAPSHOT = Path("/opt/jailbee/metadata/bindings.json")
-KEYS = ("user.jailbee.repo_dir", "user.jailbee.pr", "user.jailbee.stacked_pr", "user.jailbee.sub_pr", "user.jailbee.branch_prs")
+KEYS = (
+    "user.jailbee.repo_dir",
+    "user.jailbee.pr",
+    "user.jailbee.stacked_pr",
+    "user.jailbee.sub_pr",
+    "user.jailbee.branch_prs",
+)
 
 
 @dataclass(frozen=True)
@@ -23,9 +29,13 @@ def read() -> list[Binding]:
     try:
         raw = json.loads(SNAPSHOT.read_text())
     except FileNotFoundError as exc:
-        raise OutboxCommandError("PR bindings unavailable; name the PR number or use --new; run jb start on the host", 2) from exc
+        raise OutboxCommandError(
+            "PR bindings unavailable; name the PR number or use --new; run jb start on the host", 2
+        ) from exc
     except (OSError, ValueError) as exc:
-        raise OutboxCommandError(f"cannot read PR bindings: {exc}; restart with jb start", 2) from exc
+        raise OutboxCommandError(
+            f"cannot read PR bindings: {exc}; restart with jb start", 2
+        ) from exc
     if not isinstance(raw, dict):
         raise OutboxCommandError("invalid PR bindings; restart with jb start", 2)
     if "error" in raw:
@@ -38,7 +48,12 @@ def read() -> list[Binding]:
     def add(value: object, cwd: str) -> None:
         if value is None or value == "":
             return
-        if isinstance(value, bool) or not str(value).isascii() or not str(value).isdecimal() or int(str(value)) < 1:
+        if (
+            isinstance(value, bool)
+            or not str(value).isascii()
+            or not str(value).isdecimal()
+            or int(str(value)) < 1
+        ):
             raise OutboxCommandError("invalid PR binding number; repair the host binding", 2)
         result.append(Binding(int(str(value)), cwd))
 
@@ -60,7 +75,12 @@ def read() -> list[Binding]:
             raise ValueError("submodule bindings must be an object")
         for path, record in sub.items():
             relative = PurePosixPath(path)
-            if not path or relative.is_absolute() or ".." in relative.parts or not isinstance(record, dict):
+            if (
+                not path
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or not isinstance(record, dict)
+            ):
                 raise ValueError("invalid submodule binding")
             add(record.get("pr"), str(PurePosixPath(root) / relative))
     except (ValueError, TypeError) as exc:
@@ -75,7 +95,11 @@ def resolve(number: int | None, *, allow_new: bool = False) -> Binding | None:
     if number is not None:
         matches = list(dict.fromkeys(item for item in choices if item.number == number))
         if len(matches) > 1:
-            raise OutboxCommandError("PR number matches multiple repository bindings; unbind the unwanted target on the host before retrying", 2)
+            raise OutboxCommandError(
+                "PR number matches multiple repository bindings; "
+                "unbind the unwanted target on the host before retrying",
+                2,
+            )
         return matches[0] if matches else None
     if len(choices) == 1:
         return choices[0]

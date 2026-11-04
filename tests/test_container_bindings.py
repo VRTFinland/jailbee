@@ -11,7 +11,13 @@ from jailbee.incus import IncusError
 
 def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(container_bindings, "metadata_root", lambda: tmp_path)
-    config = {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "12", "user.jailbee.stacked_pr": "13", "user.jailbee.sub_pr": '{"lib":{"pr":14}}', "secret": "never expose"}
+    config = {
+        "user.jailbee.repo_dir": "/repo",
+        "user.jailbee.pr": "12",
+        "user.jailbee.stacked_pr": "13",
+        "user.jailbee.sub_pr": '{"lib":{"pr":14}}',
+        "secret": "never expose",
+    }
     incus = MagicMock()
     incus.config_get_checked.side_effect = lambda name, key: config.get(key)
     incus.config_device_get.return_value = None
@@ -21,10 +27,16 @@ def rig(tmp_path, monkeypatch):
 def test_snapshot_exports_only_binding_fields_and_mounts_readonly(tmp_path, monkeypatch):
     incus, config = rig(tmp_path, monkeypatch)
     container_bindings.sync(incus, "proj-c")
-    assert json.loads((tmp_path / "proj-c/bindings.json").read_text()) == {k: v for k, v in config.items() if k != "secret"}
+    assert json.loads((tmp_path / "proj-c/bindings.json").read_text()) == {
+        k: v for k, v in config.items() if k != "secret"
+    }
     device = incus.config_device_add.call_args.args
     assert device[:3] == ("proj-c", "jailbee-metadata", "disk")
-    assert device[3] == {"source": str(tmp_path / "proj-c"), "path": "/opt/jailbee/metadata", "readonly": "true"}
+    assert device[3] == {
+        "source": str(tmp_path / "proj-c"),
+        "path": "/opt/jailbee/metadata",
+        "readonly": "true",
+    }
     incus.exec.assert_not_called()
 
 
@@ -39,7 +51,7 @@ def test_unbinding_replaces_snapshot_even_when_container_stopped(tmp_path, monke
 
 @pytest.mark.parametrize("kind", ["primary", "stacked", "submodule"])
 def test_real_state_writes_and_clears_refresh_mounted_snapshot(tmp_path, monkeypatch, kind):
-    from jailbee.pr_flow import ContainerLabelState, STACKED_LABEL_PREFIX
+    from jailbee.pr_flow import STACKED_LABEL_PREFIX, ContainerLabelState
     from jailbee.submodule_pr import SubmodulePrState
 
     incus, config = rig(tmp_path, monkeypatch)
@@ -54,7 +66,9 @@ def test_real_state_writes_and_clears_refresh_mounted_snapshot(tmp_path, monkeyp
         state = ContainerLabelState(incus, "proj-c", prefix=key)
     assert state.record(head="new-head", author=True, adopted=False, number=99)
     written = json.loads((tmp_path / "proj-c/bindings.json").read_text())
-    assert (json.loads(written[key])["lib"]["pr"] if kind == "submodule" else written[key]) == (99 if kind == "submodule" else "99")
+    assert (json.loads(written[key])["lib"]["pr"] if kind == "submodule" else written[key]) == (
+        99 if kind == "submodule" else "99"
+    )
     assert state.clear()
     written = json.loads((tmp_path / "proj-c/bindings.json").read_text())
     assert key not in written
@@ -71,7 +85,9 @@ def test_branch_binding_put_and_drop_refresh_snapshot(tmp_path, monkeypatch):
     written = json.loads((tmp_path / "proj-c/bindings.json").read_text())
     assert json.loads(written["user.jailbee.branch_prs"])["work"]["pr"] == 77
     assert state.drop("work")
-    assert "user.jailbee.branch_prs" not in json.loads((tmp_path / "proj-c/bindings.json").read_text())
+    assert "user.jailbee.branch_prs" not in json.loads(
+        (tmp_path / "proj-c/bindings.json").read_text()
+    )
 
 
 def test_failed_refresh_invalidates_old_binding(tmp_path, monkeypatch):

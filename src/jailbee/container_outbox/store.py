@@ -203,7 +203,9 @@ class Store:
         publication_lock = self._draft_lock(kind, "outbox-publication", publication=True)
         with publication_lock, _directory(self.outbox(kind)) as fd:
             if sum(_is_manifest(name) for name in os.listdir(fd)) >= 20:
-                raise OutboxCommandError(f"{kind} outbox already has the cap of 20 pending manifests", 2)
+                raise OutboxCommandError(
+                    f"{kind} outbox already has the cap of 20 pending manifests", 2
+                )
             numbers = [
                 int(match[1])
                 for name in os.listdir(fd)

@@ -469,7 +469,9 @@ def _no_git_identity_sync(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
 
 
 @pytest.fixture(autouse=True)
-def _no_container_binding_snapshot(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_container_binding_snapshot(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Isolate the new lifecycle disk mount from tests about other concerns.
 
     test_container_bindings runs the real host snapshot and PrState writers;
@@ -478,6 +480,7 @@ def _no_container_binding_snapshot(request: pytest.FixtureRequest, monkeypatch: 
     if request.module.__name__.rsplit(".", 1)[-1] == "test_container_bindings":
         return
     from unittest.mock import MagicMock
+
     from jailbee import container_bindings
 
     monkeypatch.setattr(container_bindings, "sync", MagicMock())

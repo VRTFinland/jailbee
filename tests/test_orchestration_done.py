@@ -107,13 +107,29 @@ def _done(**kw: Any) -> MessageManifest:
 @pytest.mark.parametrize("count", ["3", "0", "", "invalid"])
 def test_queued_done_reports_stopped_outbox(tmp_path, mocker, count):
     from dataclasses import replace
+
     from jailbee.orchestration import finishing
     from jailbee.orchestration.protocol import PendingFinish
 
     rig = _make(tmp_path, mocker)
-    child = replace(rig.ctx.sender, running=False, config={**rig.ctx.sender.config, labels.STOPPED_OUTBOX: count})
+    child = replace(
+        rig.ctx.sender,
+        running=False,
+        config={**rig.ctx.sender.config, labels.STOPPED_OUTBOX: count},
+    )
     orch = rig.ctx.nodes["myrepo-orch"]
-    item = PendingFinish(version=1, type="finish", id="done1", child_full=CHILD, child_short="fix-1", branch="fix-1", done_sha=SHA, body="done", in_reply_to=None, uid=None)
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="done1",
+        child_full=CHILD,
+        child_short="fix-1",
+        branch="fix-1",
+        done_sha=SHA,
+        body="done",
+        in_reply_to=None,
+        uid=None,
+    )
     msg, _ = finishing.complete(rig.ctx, child, orch, item)
     rig.outbox_probe.assert_not_called()
     assert msg.on_done == "keep"
