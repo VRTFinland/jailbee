@@ -40,16 +40,21 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
     home.mkdir(mode=0o700)
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
     home_exec_uids = []
+    neutral = tmp_path / "run"
+    guard = neutral / "jailbee/pr-bindings-error"
 
     def execute(name, argv, *, uid=None, **kwargs):
         if argv[:2] == ["id", "-u"]:
             return str(os.getuid())
         if argv[:2] == ["id", "-g"]:
             return str(os.getgid())
-        home_exec_uids.append(uid)
-        # Execute the production shell/Python payload against an actual fresh
-        # home. No Incus daemon or privileged process is needed for this probe.
-        mapped = [arg.replace("/home/dev", str(home)) for arg in argv]
+        if argv[-1] == "/run/jailbee/pr-bindings-error":
+            assert uid == 0
+        else:
+            home_exec_uids.append(uid)
+        # Execute the production payload with a restrictive umask against a
+        # fresh home and neutral run directory, without a real Incus daemon.
+        mapped = [arg.replace("/home/dev", str(home)).replace("/run/jailbee", str(neutral / "jailbee")) for arg in argv]
         pid = os.fork()
         if pid == 0:
             try:
@@ -59,10 +64,17 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
                 os._exit(127)
         _, status = os.waitpid(pid, 0)
         assert os.waitstatus_to_exitcode(status) == 0
+        if guard.exists():
+            assert guard.stat().st_mode & 0o777 == 0o644
+            assert guard.parent.stat().st_mode & 0o777 == 0o755
+            assert not (home / ".jailbee").exists()
         return ""
 
     incus.exec.side_effect = execute
     container_bindings.sync(incus, "proj-c", cfg=cfg if with_config else None)
+    assert not (home / ".jailbee").exists()
+    assert not guard.exists()
+    assert (neutral / "jailbee").stat().st_mode & 0o777 == 0o755
     labels.write_child_role(incus, "proj-c", uid=cfg.container_user.uid)
     ensure_directories(cfg, incus, "proj-c")
     assert (home / ".jailbee/orchestration/role").read_text().strip() == "child"
@@ -75,12 +87,37 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
 
 
 @pytest.mark.parametrize("answer", ["", "not-a-uid", "0", "-1"])
-def test_refresh_without_config_refuses_unknown_container_user(tmp_path, monkeypatch, answer):
-    incus, _ = rig(tmp_path, monkeypatch)
+def test_unknown_uid_and_old_mount_cannot_select_stale_binding(tmp_path, monkeypatch, answer):
+    from jailbee.container_outbox import bindings
+    from jailbee.container_outbox.store import OutboxCommandError
+
+    incus, config = rig(tmp_path, monkeypatch)
+    old = tmp_path / "old-visible.json"
+    old.write_text('{"user.jailbee.repo_dir":"/repo","user.jailbee.pr":"42"}')
+    marker = tmp_path / "run/jailbee/pr-bindings-error"
+    monkeypatch.setattr(bindings, "SNAPSHOT", old)
+    monkeypatch.setattr(bindings, "ERROR_MARKER", marker)
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
-    incus.exec.return_value = answer
+    incus.config_device_get.side_effect = lambda name, dev, key: {
+        "type": "disk", "source": str(old.parent),
+    }.get(key)
+    incus.config_device_set.side_effect = IncusError("device repair failed")
+    config["user.jailbee.pr"] = "43"
+
+    def execute(name, argv, *, uid=None, **kwargs):
+        if argv[0] == "id":
+            return answer
+        assert uid == 0
+        assert argv[-1] == "/run/jailbee/pr-bindings-error"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch(mode=0o644)
+        return ""
+
+    incus.exec.side_effect = execute
     assert not container_bindings.refresh(incus, "proj-c")
-    assert all(call.args[1][0] == "id" for call in incus.exec.call_args_list)
+    assert json.loads(old.read_text())["user.jailbee.pr"] == "42"
+    with pytest.raises(OutboxCommandError, match="restart with jb start"):
+        bindings.resolve(42)
     assert "error" in json.loads((tmp_path / "proj-c/bindings.json").read_text())
 
 
@@ -275,8 +312,8 @@ def test_wrong_metadata_source_repairs_visible_binding_or_fails_closed(
     def execute(name, argv, **kwargs):
         if argv[:2] == ["id", "-u"]:
             return "1000"
-        assert kwargs["uid"] == 1000
-        assert argv[-1] == "/home/dev/.jailbee/pr-bindings-error"
+        assert kwargs["uid"] == 0
+        assert argv[-1] == "/run/jailbee/pr-bindings-error"
         if argv[0] == "rm":
             marker.unlink(missing_ok=True)
         else:

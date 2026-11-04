@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from jailbee.container_outbox.store import OutboxCommandError
 
 SNAPSHOT = Path("/opt/jailbee/metadata/bindings.json")
-ERROR_MARKER = Path("/home/dev/.jailbee/pr-bindings-error")
+ERROR_MARKER = Path("/run/jailbee/pr-bindings-error")
 KEYS = (
     "user.jailbee.repo_dir",
     "user.jailbee.pr",
