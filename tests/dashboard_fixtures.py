@@ -306,6 +306,7 @@ def every_verb_group(tmp_path: Path) -> dmodel.RepoGroup:
     """A container that is offered every terminal-only entry at once."""
     group = mount_group(tmp_path)
     group.containers[0] = dataclasses.replace(
-        group.containers[0], job_phase="autostart", job_pid=os.getpid(), job_kind="autostart"
+        group.containers[0], job_phase="autostart", job_pid=os.getpid(), job_kind="autostart",
+        autostart_rerunnable=True
     )
     return group

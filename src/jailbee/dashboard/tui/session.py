@@ -9,6 +9,7 @@ Container state is read ONLY through the shared state service.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -1072,6 +1073,8 @@ class DashboardSession:
 
     def open_container_entry(self, container: str, verb: str) -> Overlay | None:
         """The first step of a terminal-only container entry; None once it has run."""
+        if verb == dact.AUTOSTART_RERUN:
+            return self.open_autostart_rerun(container)
         if verb == dact.AUTOSTART_STATUS:
             self.run_dashboard_command(
                 container, "container", dact.autostart_status_argv(container)
@@ -1708,6 +1711,33 @@ class DashboardSession:
             return None
         return dact.mounts_picker(container, entries)
 
+    def open_autostart_rerun(self, container: str) -> Picker | None:
+        """Capture the public listing; no worker or config probes in the frontend."""
+        repo = self.repo_for(container, "container")
+        if repo is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        argv = dact.addressed(dact.autostart_list_argv(container), repo.flags(),
+                              over_ssh=self.over_ssh)
+        try:
+            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            result = da.run_cli_quiet(argv, cwd=repo.cwd())
+            if not result.ok:
+                raise dact.RerunLoadError(result.message)
+            picker = dact.rerun_picker(container, dact.parse_rerun_rows(result.stdout))
+        except (RouteError, dact.RerunLoadError) as exc:
+            self.set_notice(f"could not list autostart: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+            return None
+        choices = [
+            (entry, command) for entry, command in zip(picker.entries, picker.carry, strict=True)
+            if permitted(json.loads(command), self.ssh_policy, over_ssh=self.over_ssh)
+        ]
+        if not choices:
+            self.set_notice(f"No re-runnable autostart steps of '{container}' are permitted")
+            return None
+        return replace(picker, entries=tuple(e for e, _ in choices),
+                       carry=tuple(c for _, c in choices))
+
     def open_snapshots(self, container: str) -> Picker | None:
         """List the container's snapshots quietly and offer them, or notice why not.
 
@@ -2301,6 +2331,21 @@ class DashboardSession:
             return None
         if picker.purpose == "repo-dismiss-advisory":
             self.dismiss_advisory(picker.target, entry.value)
+            return None
+        if picker.purpose == "container-autostart-rerun":
+            if entry not in picker.entries:
+                return None
+            index = picker.entries.index(entry)
+            argv = json.loads(picker.carry[index])
+            if not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+                self.set_notice("Autostart re-run is not permitted")
+                return None
+            return dact.rerun_confirm_picker(picker.target, entry.label, argv)
+        if picker.purpose == "container-autostart-rerun-confirm":
+            if entry in picker.entries and entry.value == "yes":
+                self.run_dashboard_command(picker.target, "container", list(picker.carry))
+            else:
+                self.set_notice("Cancelled")
             return None
         if picker.purpose == "container-autostart-cancel":
             if entry.value == "yes":

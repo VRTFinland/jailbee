@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 from typing import Any
 
@@ -13,6 +14,101 @@ from jailbee.dashboard import actions as dact
 from jailbee.dashboard.model import prompt_target_kind
 from jailbee.dashboard.overlays import validate_answer
 from jailbee.lifecycle import ContainerInfo
+
+
+def _rerun_listing():
+    def row(trigger, stage, state, steps):
+        return {"trigger": trigger, "stage": stage, "state": state,
+                "at": "2026-11-04T12:03:00+00:00" if state else None,
+                "steps": [{"step": name, "state": status,
+                           "at": "2026-11-04T12:03:00+00:00" if status else None}
+                          for name, status in steps]}
+    return [row("on_create", "clean", "ok", [("done", "ok")]),
+            row("on_start", "deps", "fail", [("done", "ok"), ("npm", "fail"),
+                                             ("pending", None), ("interrupted", "start")]),
+            row("on_create", "deps", None, [("install", None)])]
+
+
+def test_rerun_picker_failed_first_preserves_stage_children_and_trigger_identity():
+    picker = dact.rerun_picker("alpha-x", dact.parse_rerun_rows(json.dumps(_rerun_listing())))
+    assert [(e.label, e.value) for e in picker.entries] == [
+        ("Re-run failed steps (2)", "failed"),
+        ("deps  [on_start]  ✗ 12:03", "stage:on_start:deps"),
+        ("  npm  ✗", "step:on_start:deps/npm"),
+        ("  interrupted  …", "step:on_start:deps/interrupted"),
+        ("  done  ✓", "step:on_start:deps/done"),
+        ("  pending  ·", "step:on_start:deps/pending"),
+        ("clean  ✓ 12:03", "stage:on_create:clean"),
+        ("  done  ✓", "step:on_create:clean/done"),
+        ("deps  [on_create]  ·", "stage:on_create:deps"),
+        ("  install  ·", "step:on_create:deps/install"),
+    ]
+    assert dact.parse_rerun_rows("[]") == ()
+
+
+@pytest.mark.parametrize("change", [
+    lambda rows: {}, lambda rows: [None], lambda rows: [{"stage": "deps"}],
+    lambda rows: [dict(rows[0], trigger="invalid")],
+    lambda rows: [dict(rows[0], state="bad")],
+    lambda rows: [dict(rows[0], at=12)],
+    lambda rows: [dict(rows[0], at="not-a-time")],
+    lambda rows: [dict(rows[0], stage="")],
+    lambda rows: [dict(rows[0], steps=[{"step": "x", "state": True, "at": None}])],
+    lambda rows: [rows[0], rows[0]],
+    lambda rows: [dict(rows[0], steps=rows[0]["steps"] * 2)],
+])
+def test_rerun_parser_rejects_malformed_listing(change):
+    with pytest.raises(dact.RerunLoadError):
+        dact.parse_rerun_rows(json.dumps(change(_rerun_listing())))
+
+
+def test_rerun_picker_without_failures_has_no_failed_shortcut_or_trigger():
+    rows = dact.parse_rerun_rows(json.dumps(_rerun_listing()[:1]))
+    picker = dact.rerun_picker("alpha-x", rows)
+    assert [e.value for e in picker.entries] == ["stage:on_create:clean", "step:on_create:clean/done"]
+    assert [json.loads(command) for command in picker.carry] == [
+        ["autostart", "run", "alpha-x", "--stage", "clean"],
+        ["autostart", "run", "alpha-x", "--step", "clean/done"],
+    ]
+
+
+def test_rerun_confirmation_question_does_not_repeat_rerun():
+    picker = dact.rerun_confirm_picker("alpha-x", "Re-run failed steps (2)",
+                                       ["autostart", "run", "alpha-x", "--failed"])
+    assert picker.title == "Re-run failed steps (2) — alpha-x?"
+
+
+def test_rerun_parser_rejects_invalid_json():
+    with pytest.raises(dact.RerunLoadError):
+        dact.parse_rerun_rows("not json")
+
+
+@pytest.mark.parametrize("state,live,eligible,offered", [
+    ("Running", False, True, True), ("Stopped", False, True, False),
+    ("Running", True, True, False), ("Running", False, False, False),
+])
+def test_rerun_gating_uses_gathered_worker_state(mocker, state, live, eligible, offered):
+    c = ContainerInfo("alpha-x", state, None, None, None,
+                      job_live=live, autostart_rerunnable=eligible)
+    probe = mocker.patch("jailbee.background.clearable", side_effect=AssertionError("frontend probe"))
+    extras = dact.container_extras(c, (), None, over_ssh=False)
+    assert (("Re-run…", "autostart-rerun") in extras.after_job) is offered
+    probe.assert_not_called()
+
+
+def test_rerun_menu_requires_list_and_run_permission():
+    c = ContainerInfo("alpha-x", "Running", None, None, None, autostart_rerunnable=True)
+    policy = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["autostart status"]}})
+    extras = dact.container_extras(c, (), policy, over_ssh=True)
+    assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
+
+
+@pytest.mark.parametrize("denied", ["--list", "--failed"])
+def test_rerun_menu_checks_both_command_shapes(mocker, denied):
+    c = ContainerInfo("alpha-x", "Running", None, None, None, autostart_rerunnable=True)
+    mocker.patch.object(dact, "permitted", side_effect=lambda argv, *a, **kw: denied not in argv)
+    extras = dact.container_extras(c, (), None, over_ssh=True)
+    assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
 
 
 def test_adoption_commands_and_candidates():

@@ -1944,8 +1944,10 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
     which other entries happen to be visible.
     """
     autostart = (
+        ("Re-run…", tsession.dact.AUTOSTART_RERUN),
         ("Autostart status", tsession.dact.AUTOSTART_STATUS),
         ("Cancel autostart…", tsession.dact.AUTOSTART_CANCEL),
+        ("Profile…", "autostart-profile"),
     )
     before = (
         ("Snapshots…", tsession.dact.SNAPSHOTS),

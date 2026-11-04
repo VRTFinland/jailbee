@@ -164,18 +164,166 @@ def command_label(argv: Sequence[str]) -> str:
     return " ".join(takewhile(lambda word: not word.startswith("-"), argv))
 
 
+AUTOSTART_RERUN = "autostart-rerun"
 AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"
 MOUNTS = "mounts"
 ORCHESTRATION = "orchestration"
-CONTAINER_VERBS = frozenset({AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, ORCHESTRATION})
+CONTAINER_VERBS = frozenset(
+    {AUTOSTART_RERUN, AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, ORCHESTRATION}
+)
 
 SNAPSHOT_FIELDS = "name,created"
 
 # States in which a container exists to snapshot or to give a disk device; a
 # mid-creation background row ("—") has no instance yet.
 _EXISTING_STATES = frozenset({"Running", "Stopped"})
+
+
+def autostart_list_argv(name: str) -> list[str]:
+    return ["autostart", "run", name, "--list", "--json"]
+
+
+def autostart_rerun_argv(
+    name: str, *, stages: Sequence[str] = (), steps: Sequence[str] = (),
+    failed: bool = False, trigger: str | None = None,
+) -> list[str]:
+    argv = ["autostart", "run", name]
+    for stage in stages:
+        argv += ["--stage", stage]
+    for step in steps:
+        argv += ["--step", step]
+    if failed:
+        argv.append("--failed")
+    if trigger is not None:
+        argv += ["--trigger", trigger]
+    return argv
+
+
+@dataclass(frozen=True)
+class RerunStep:
+    step: str
+    state: str | None
+    at: str | None
+
+
+@dataclass(frozen=True)
+class RerunRow:
+    trigger: str
+    stage: str
+    state: str | None
+    at: str | None
+    steps: tuple[RerunStep, ...]
+
+
+class RerunLoadError(ValueError):
+    """The public autostart listing could not be loaded."""
+
+
+def parse_rerun_rows(stdout: str) -> tuple[RerunRow, ...]:
+    """Validate the public stage/steps JSON, including identities and outcome types."""
+    from datetime import datetime
+
+    def bad() -> RerunLoadError:
+        return RerunLoadError("unexpected output from 'jailbee autostart run --list'")
+
+    def name(value: object) -> str:
+        if not isinstance(value, str) or not value or not value.isprintable():
+            raise bad()
+        return value
+
+    def outcome(value: dict[str, object]) -> tuple[str | None, str | None]:
+        if "state" not in value or "at" not in value:
+            raise bad()
+        state, at = value["state"], value["at"]
+        if state is None and at is None:
+            return None, None
+        if not isinstance(state, str) or state not in ("start", "ok", "fail"):
+            raise bad()
+        if not isinstance(at, str):
+            raise bad()
+        try:
+            datetime.fromisoformat(at)
+        except ValueError as exc:
+            raise bad() from exc
+        return state, at
+
+    try:
+        data = json.loads(stdout)
+    except ValueError as exc:
+        raise bad() from exc
+    if not isinstance(data, list):
+        raise bad()
+    rows: list[RerunRow] = []
+    seen: set[tuple[str, str]] = set()
+    for row in data:
+        if not isinstance(row, dict):
+            raise bad()
+        trigger, stage = name(row.get("trigger")), name(row.get("stage"))
+        if trigger not in ("on_create", "on_start") or (trigger, stage) in seen:
+            raise bad()
+        seen.add((trigger, stage))
+        state, at = outcome(row)
+        children = row.get("steps")
+        if not isinstance(children, list):
+            raise bad()
+        steps: list[RerunStep] = []
+        step_names: set[str] = set()
+        for child in children:
+            if not isinstance(child, dict):
+                raise bad()
+            step = name(child.get("step"))
+            if step in step_names:
+                raise bad()
+            step_names.add(step)
+            child_state, child_at = outcome(child)
+            steps.append(RerunStep(step, child_state, child_at))
+        rows.append(RerunRow(trigger, stage, state, at, tuple(steps)))
+    return tuple(rows)
+
+
+def rerun_picker(container: str, rows: Sequence[RerunRow]) -> Picker:
+    """Failures lead, with whole-stage rows kept next to their children.
+
+    Capture each argv beside its opaque value; stage names may contain colons.
+    """
+    from datetime import datetime
+
+    symbols = {None: "·", "ok": "✓", "fail": "✗", "start": "…"}
+    failed_states = {"fail", "start"}
+    entries: list[PickerEntry] = []
+    commands: list[str] = []
+
+    def add(label: str, value: str, argv: list[str]) -> None:
+        entries.append(PickerEntry(label, value))
+        commands.append(json.dumps(argv))
+
+    failures = sum(step.state in failed_states for row in rows for step in row.steps)
+    if failures:
+        add(f"Re-run failed steps ({failures})", "failed",
+            autostart_rerun_argv(container, failed=True))
+    for row in sorted(rows, key=lambda r: not any(s.state in failed_states for s in r.steps)):
+        ambiguous = len({r.trigger for r in rows if r.stage == row.stage}) > 1
+        trigger = row.trigger if ambiguous else None
+        label = row.stage + (f"  [{row.trigger}]" if ambiguous else "")
+        label += f"  {symbols[row.state]}"
+        if row.at is not None:
+            label += " " + datetime.fromisoformat(row.at).strftime("%H:%M")
+        add(label, f"stage:{row.trigger}:{row.stage}",
+            autostart_rerun_argv(container, stages=(row.stage,), trigger=trigger))
+        for step in sorted(row.steps, key=lambda s: s.state not in failed_states):
+            add(f"  {step.step}  {symbols[step.state]}",
+                f"step:{row.trigger}:{row.stage}/{step.step}",
+                autostart_rerun_argv(container, steps=(f"{row.stage}/{step.step}",), trigger=trigger))
+    return Picker("container-autostart-rerun", f"Re-run autostart — {container}",
+                  tuple(entries), target=container, carry=tuple(commands))
+
+
+def rerun_confirm_picker(container: str, label: str, argv: Sequence[str]) -> Picker:
+    return Picker("container-autostart-rerun-confirm", f"Re-run {label.strip().removeprefix('Re-run ')} — {container}?",
+                  (PickerEntry("No", "no"), PickerEntry("Yes, re-run", "yes")),
+                  target=container, carry=tuple(argv))
 
 
 def autostart_status_argv(name: str) -> list[str]:
@@ -376,6 +524,14 @@ def container_extras(
         return permitted(argv, ssh_policy, over_ssh=over_ssh)
 
     after_job: list[Leaf] = []
+    if (
+        container.state == "Running"
+        and container.autostart_rerunnable
+        and not container.job_live
+        and allowed(autostart_rerun_argv(name, failed=True))
+        and allowed(autostart_list_argv(name))
+    ):
+        after_job.append(("Re-run…", AUTOSTART_RERUN))
     if container.job_kind == background.JOB_AUTOSTART and container.job_phase is not None:
         if allowed(autostart_status_argv(name)):
             after_job.append(("Autostart status", AUTOSTART_STATUS))

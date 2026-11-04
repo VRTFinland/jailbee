@@ -116,6 +116,14 @@ def group_menu_actions(
     pr_actions = tuple(action for action in actions if action[1] in pr_verbs)
     git_actions = tuple(action for action in actions if action[1] in _GIT_MENU_VERBS)
     network_actions = tuple(action for action in actions if action[1].startswith("net "))
+    autostart_labels = {
+        dact.AUTOSTART_RERUN: "Re-run…", dact.AUTOSTART_STATUS: "Status",
+        dact.AUTOSTART_CANCEL: "Cancel…", "autostart-profile": "Profile…",
+    }
+    autostart_actions = tuple(
+        (label, verb) for verb, label in autostart_labels.items()
+        if any(action[1] == verb for action in actions)
+    )
     result: list[MenuItem] = []
     seen: set[str] = set()
     for action in actions:
@@ -135,6 +143,10 @@ def group_menu_actions(
             if "git" not in seen:
                 result.append(MenuGroup("Git →", git_actions))
                 seen.add("git")
+        elif terminal_order and verb in autostart_labels:
+            if "autostart" not in seen:
+                result.append(MenuGroup("Autostart →", autostart_actions))
+                seen.add("autostart")
         elif include_network and verb.startswith("net "):
             if "network" not in seen:
                 result.append(MenuGroup("Network →", network_actions))

@@ -81,6 +81,8 @@ class ContainerInfo:
     credential_group: str | None = None
     autostart_profile: str | None = None
     autostart_failed: int = 0
+    # Effective ordinary stages, derived by the dashboard gatherer from the host config.
+    autostart_rerunnable: bool = False
     created_at: datetime | None = None
     memory_usage: int | None = None
     memory_override: bool = False

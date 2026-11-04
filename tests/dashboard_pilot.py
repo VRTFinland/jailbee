@@ -643,12 +643,15 @@ def container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) 
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
     entries = list(tmenu.menu_entries(menu))
-    at = next(
-        i
-        for i, entry in enumerate(entries)
-        if not isinstance(entry, dmenus.MenuGroup) and entry[1] == verb
-    )
-    return ["j", "enter", *["j"] * at, "enter"]
+    for at, entry in enumerate(entries):
+        prefix = ["j", "enter", *["j"] * at, "enter"]
+        if isinstance(entry, dmenus.MenuGroup):
+            for child_at, (_, child_verb) in enumerate(entry.actions):
+                if child_verb == verb:
+                    return [*prefix, *["j"] * child_at, "enter"]
+        elif entry[1] == verb:
+            return prefix
+    raise AssertionError(f"Menu does not offer {verb}")
 
 
 # repo header → Enter (menu) → past New container…, New from PR… → Enter

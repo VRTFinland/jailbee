@@ -499,8 +499,20 @@ def _gather_rows(
             with_background=True,
             instances=instances,
         )
+        from jailbee.autostart_plan import TRIGGER_ORDER, rerunnable_stages
+        from jailbee.autostart_profiles import profiled_config
+
         for c in containers:
             c.configured_mounts = tuple(cfg.optional_mounts)
+            profile = (
+                c.autostart_profile
+                if c.autostart_profile in cfg.autostart.profiles
+                else cfg.autostart.default_profile
+            )
+            effective = profiled_config(cfg, profile)
+            c.autostart_rerunnable = any(
+                rerunnable_stages(effective.autostart, trigger) for trigger in TRIGGER_ORDER
+            )
         covered.add(cfg.container_prefix)
         orch_view = cfg.orchestration_view()
         runner = orch_view.default_runner

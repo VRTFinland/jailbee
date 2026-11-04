@@ -109,7 +109,7 @@ def open_menu(
     if group.autostart_profiles and permitted(
         ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh
     ):
-        actions.append(("Autostart profile…", "autostart-profile"))
+        actions.append(("Profile…", "autostart-profile"))
     actions = _insert_after_job(actions, extras.after_job)
     if extras.before_network:
         actions = _insert_before_network(actions, extras.before_network)
@@ -266,6 +266,9 @@ _MENU_KEYS: dict[str, str] = {
     "job log": "b",
     "job log --follow": "b",
     "job clear": "x",
+    "Autostart →": "u",  # `a` launches apps; `A` is a table action.
+    dact.AUTOSTART_RERUN: "r",
+    "autostart-profile": "p",
     dact.AUTOSTART_STATUS: "T",
     dact.AUTOSTART_CANCEL: "C",
     "Git →": "g",
