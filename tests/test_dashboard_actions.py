@@ -77,6 +77,16 @@ def test_custom_services_args_joined(tmp_path):
     ]
 
 
+@pytest.mark.parametrize(("services", "joined"), [(["db", "web"], "db,web"), ([], "")])
+def test_restart_profile_with_explicit_services_does_not_reset(tmp_path, services, joined):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup("a", str(tmp_path), None, [])
+    assert dact.autostart_choice_args(
+        group, profile="full", services=services, creating=False
+    ) == ["--autostart-profile", "full", "--services", joined]
+
+
 def test_new_container_argv_appends_extra(tmp_path):
     from jailbee.dashboard.menus import new_container_argv, new_pr_container_argv
     from jailbee.dashboard.model import RepoTarget

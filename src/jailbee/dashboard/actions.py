@@ -184,7 +184,7 @@ def autostart_choice_args(
         creating and profile == (group.autostart_default_profile or "all") and services is None
     ):
         args.extend(("--autostart-profile", profile))
-        if not creating:
+        if not creating and services is None:
             args.append("--reset-services")
     if services is not None:
         args.extend(("--services", ",".join(services)))
