@@ -381,6 +381,7 @@ def publish_source_manifest(
                         head,
                         manifest.source_sha,
                     ),
+                    digest=pr_outbox.proposal_files_digest(snapshot.files, manifest_name),
                 ),
                 state="applied",
             )

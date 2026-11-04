@@ -26,6 +26,7 @@ def _action(manifest: str = "m1", index: int = 0, **kw: object) -> SentAction:
         "url": None,
         "title": None,
         "content": "hello",
+        "digest": "d1",
     }
     base.update(kw)
     return SentAction(**base)  # type: ignore[arg-type]
@@ -67,6 +68,7 @@ def test_uncertain_then_mark_applied_sets_state_and_url() -> None:
         container_created=CREATED,
         outbox="issue",
         manifest="m1",
+        digest="d1",
         index=0,
         url="https://github.com/o/r/issues/7",
         target=7,
@@ -87,7 +89,12 @@ def test_forget_removes_only_that_row() -> None:
     _rec(_action("m1"), "uncertain")
     _rec(_action("m2"), "uncertain")
     sent.forget(
-        instance="app-feat", container_created=CREATED, outbox="issue", manifest="m1", index=0
+        instance="app-feat",
+        container_created=CREATED,
+        outbox="issue",
+        manifest="m1",
+        digest="d1",
+        index=0,
     )
     assert [r.manifest for r in sent.list_records()] == ["m2"]
 
@@ -156,9 +163,53 @@ def test_record_with_broken_db_warns_and_returns(
             container_created=None,
             outbox="issue",
             manifest="m",
+            digest="d",
             index=0,
             url=None,
             target=None,
         )
-        sent.forget(instance="i", container_created=None, outbox="issue", manifest="m", index=0)
+        sent.forget(
+            instance="i",
+            container_created=None,
+            outbox="issue",
+            manifest="m",
+            digest="d",
+            index=0,
+        )
     assert len(caplog.records) == 3
+
+
+def test_reused_manifest_name_with_new_digest_is_a_new_row() -> None:
+    _rec(_action(digest="old", content="first", url="u1"))
+    _rec(_action(digest="new", content="second", url="u2"), now=T0 + timedelta(minutes=5))
+    rows = sorted(sent.list_records(), key=lambda r: r.id)
+    assert [(r.content, r.url, r.sent_at) for r in rows] == [
+        ("first", "u1", T0),
+        ("second", "u2", T0 + timedelta(minutes=5)),
+    ]
+
+
+def test_forget_never_deletes_an_applied_row() -> None:
+    _rec(_action(), "applied")
+    sent.forget(
+        instance="app-feat",
+        container_created=CREATED,
+        outbox="issue",
+        manifest="m1",
+        digest="d1",
+        index=0,
+    )
+    assert len(sent.list_records()) == 1
+
+
+def test_forget_with_other_digest_keeps_the_uncertain_row() -> None:
+    _rec(_action(), "uncertain")
+    sent.forget(
+        instance="app-feat",
+        container_created=CREATED,
+        outbox="issue",
+        manifest="m1",
+        digest="other",
+        index=0,
+    )
+    assert len(sent.list_records()) == 1

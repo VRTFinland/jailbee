@@ -2614,8 +2614,42 @@ def test_drop_keeps_applied_rows(execution):
         container_prefix="app",
         container_created=sent.parse_created("2026-09-18"),
         publisher="user",
-        action=sent.SentAction("issue", "a.json", 0, "comment", "acme/app", 7, None, None, "x"),
+        action=sent.SentAction(
+            "issue", "a.json", 0, "comment", "acme/app", 7, None, None, "x", batch.manifests[0].digest
+        ),
         state="applied",
     )
     _drop(execution, batch, archive_journal=True)
     assert [r.index for r in _sent_rows()] == [0]
+
+
+def test_reused_manifest_name_keeps_the_earlier_sent_rows(execution):
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    assert _apply(execution, second).failure is None
+    rows = sorted(_sent_rows(), key=lambda r: r.id)
+    assert [r.content for r in rows] == ["First", "Second"]
+    assert all(r.state == "applied" for r in rows)
+
+
+def test_uncertain_reuse_does_not_touch_the_earlier_applied_row(execution):
+    from jailbee.issue_github import IssueGithubMutationError
+
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, second).failure.uncertain
+    rows = sorted(_sent_rows(), key=lambda r: r.id)
+    assert [(r.content, r.state) for r in rows] == [("First", "applied"), ("Second", "uncertain")]
+
+
+def test_dropping_a_reused_manifest_name_keeps_the_earlier_applied_row(execution):
+    first = execution["batch"]({"a.json": [_comment(body="First")]})
+    assert _apply(execution, first).failure is None
+    second = execution["batch"]({"a.json": [_comment(body="Second")]})
+    _drop(execution, second)
+    assert [(r.content, r.state) for r in _sent_rows()] == [("First", "applied")]

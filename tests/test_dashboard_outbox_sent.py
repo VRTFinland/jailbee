@@ -32,6 +32,7 @@ def _action(manifest: str, **kw: object) -> SentAction:
         "url": URL,
         "title": None,
         "content": "first line\nsecond line of the comment",
+        "digest": "d",
     }
     base.update(kw)
     return SentAction(**base)  # type: ignore[arg-type]

@@ -34,7 +34,7 @@ def _rec(
         container_prefix=prefix,
         container_created=created,
         publisher="user",
-        action=SentAction("issue", manifest, 0, "comment", "o/r", 5, url, title, content),
+        action=SentAction("issue", manifest, 0, "comment", "o/r", 5, url, title, content, "d"),
         state=state,  # type: ignore[arg-type]
         now=at,
     )

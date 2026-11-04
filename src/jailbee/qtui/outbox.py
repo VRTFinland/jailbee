@@ -382,10 +382,11 @@ class OutboxDialog(QDialog):
             return
         previous = self._selected_sent()
         whole = self.repo_check.isChecked()
+        read_error: str | None = None
         try:
             items = self._sent_source(whole)
         except Exception as exc:  # a state-DB failure must not break the dialog
-            self.status.setText(f"could not read the Sent log: {exc}")
+            read_error = f"could not read the Sent log: {exc}"
             items = ()
         self._sent_items = items
         self.sent_tree.clear()
@@ -404,7 +405,10 @@ class OutboxDialog(QDialog):
                 node.setToolTip(0, item.gone)
             if previous is not None and previous.row.id == item.row.id:
                 restored = node
-        self.status.setText(f"{len(items)} sent" if items else "Nothing sent yet")
+        if read_error is not None:
+            self.status.setText(read_error)
+        else:
+            self.status.setText(f"{len(items)} sent" if items else "Nothing sent yet")
         if restored is not None:
             self.sent_tree.setCurrentItem(restored)
         self._buttons()

@@ -377,7 +377,7 @@ class SentRecord(SQLModel, table=True):
 
     Written by `jailbee.outbox.sent`, best effort, by the shared host publish
     code. `dedup_key` (instance + `container_created` + outbox + manifest +
-    action index) is unique, so a retried or resumed publish updates its row
+    proposal digest + action index) is unique, so a retried or resumed publish updates its row
     instead of adding one. `state` is `applied` or `uncertain`; `publisher`
     is `user` or `orchestrator`. `container_created` is the Incus creation
     time of the instance at publish time (NULL when unknown) and separates

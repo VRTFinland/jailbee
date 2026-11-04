@@ -792,6 +792,7 @@ def test_outbox_mutations_pin_validated_repo_despite_another_gh_default(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.failure is None
@@ -902,6 +903,7 @@ def test_recorded_transported_submodule_description_then_comments_are_publishabl
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
     assert outcome.applied == (1,)
     assert outcome.urls == ("https://x/comment",)
@@ -1451,6 +1453,7 @@ def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cf
         indices=frozenset({0, 1, 3}),
         draft=True,
         publisher="user",
+        container_created=None,
     )
     factory.assert_called_once_with(target)
     assert outcome.applied == (0, 1, 3)
@@ -1508,6 +1511,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
         indices=draft_indices(manifest, range(4)),
         draft=True,
         publisher="user",
+        container_created=None,
     )
     finalize(incus, "c", outbox, target, outcome, uid=1000)
     files = reader.return_value.as_dict()
@@ -1526,7 +1530,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
             target,
             read_progress(outbox, manifest.name),
             uid=1000,
-            publisher="user",
+            publisher="user",    container_created=None,
         )
         assert outcome.applied == (2,)
         assert not outcome.draft
@@ -1556,6 +1560,7 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
             indices=frozenset({2}),
             draft=True,
             publisher="user",
+            container_created=None,
         )
     calls["comment"].assert_not_called()
 
@@ -1637,6 +1642,7 @@ def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number
             Progress(frozenset(), {}),
             uid=1000,
             publisher="user",
+            container_created=None,
         )
     for effect in (*calls.values(), progress, push, incus.exec):
         effect.assert_not_called()
@@ -1671,6 +1677,7 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.failure is None
@@ -1739,6 +1746,7 @@ def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.failure is None
@@ -1771,6 +1779,7 @@ def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_p
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     body = calls["comment"].call_args.args[2]
@@ -1806,6 +1815,7 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.applied == (1,)
@@ -1839,6 +1849,7 @@ def test_apply_manifest_calls_before_action_once_per_attempt(mocker, make_cfg, t
         uid=1000,
         before_action=lambda: events.append("hook"),
         publisher="user",
+        container_created=None,
     )
     assert outcome.applied == (1, 2)
     assert events == ["hook", "post", "hook", "post"]
@@ -1871,6 +1882,7 @@ def test_apply_manifest_hook_stops_with_the_failure(mocker, make_cfg, tmp_path):
         uid=1000,
         before_action=lambda: events.append("hook"),
         publisher="user",
+        container_created=None,
     )
     assert outcome.failure is not None
     assert events == ["hook", "hook"]
@@ -1921,6 +1933,7 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.applied == (0,)
@@ -1965,6 +1978,7 @@ def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, t
         uid=1000,
         indices=frozenset({0}),
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.applied == (0,)
@@ -2008,6 +2022,7 @@ def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, 
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     sidecar_writes = [
@@ -2061,6 +2076,7 @@ def test_apply_reports_a_recording_failure_after_a_successful_post_and_stops(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
+        container_created=None,
     )
 
     assert outcome.applied == (0,), "the post landed even though it couldn't be recorded"
@@ -4872,6 +4888,8 @@ def _sent_target(tmp_path, actions):
 def _sent_apply(mocker, make_cfg, tmp_path, target, *, progress=None, publisher="user", **kw):
     from jailbee.pr_outbox import Progress, apply_manifest
 
+    kw.setdefault("container_created", None)
+
     return apply_manifest(
         make_cfg(tmp_path),
         mocker.MagicMock(),
@@ -4977,3 +4995,26 @@ def test_publish_survives_sent_record_failure_review(mocker, make_cfg, tmp_path,
     # One warning per action that could not be recorded; nothing raised.
     assert len(caplog.records) == 4
     assert all("disk gone" in r.getMessage() for r in caplog.records)
+
+
+def test_reused_review_manifest_name_keeps_earlier_sent_rows(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import sent
+
+    _apply_mocks(mocker)
+    first = _sent_target(tmp_path, [{"type": "comment", "body": "first"}])
+    second = _sent_target(tmp_path, [{"type": "comment", "body": "second"}])
+    _sent_apply(mocker, make_cfg, tmp_path, first)
+    _sent_apply(mocker, make_cfg, tmp_path, second)
+    rows = sorted(sent.list_records(), key=lambda r: r.id)
+    assert [r.content for r in rows] == ["first", "second"]
+
+
+def test_review_digest_argument_separates_reused_names(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import sent
+
+    _apply_mocks(mocker)
+    target = _sent_target(tmp_path, [{"type": "comment", "body": "same"}])
+    _sent_apply(mocker, make_cfg, tmp_path, target, digest="raw-1")
+    _sent_apply(mocker, make_cfg, tmp_path, target, digest="raw-2")
+    _sent_apply(mocker, make_cfg, tmp_path, target, digest="raw-2")
+    assert len(sent.list_records()) == 2

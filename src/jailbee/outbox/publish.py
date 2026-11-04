@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PublishOptions:
+    # Who is publishing, recorded in the Sent log. Required so no entry point
+    # silently records an orchestrator publish as "user" (or the reverse).
+    publisher: sent.Publisher
     dry_run: bool = False
     force: bool = False
     # Consent to a PR the container does not own (in any repository, its own
@@ -44,9 +47,6 @@ class PublishOptions:
     # (`github:<owner>/<name>`); the plan warns about each.
     foreign: bool = False
     draft: bool = False
-    # Who is publishing, recorded in the Sent log. Human entry points keep
-    # "user"; the orchestration broker must pass "orchestrator" explicitly.
-    publisher: sent.Publisher = "user"
 
 
 def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.PublishMode | None:

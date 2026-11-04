@@ -1289,8 +1289,28 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
         assert_never(action)
 
 
+def manifest_digest(manifest: Manifest) -> str:
+    """A content digest of a parsed manifest, for callers without its raw text.
+
+    Progress lives in the container's sidecar, not the manifest, so the digest
+    is the same on every resume of one proposal.
+    """
+    from dataclasses import asdict
+
+    blob = json.dumps(asdict(manifest), sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def proposal_files_digest(files: Mapping[str, str], name: str) -> str:
+    """`proposal_digest` of the stored manifest `name` and the bodies it references."""
+    from jailbee.outbox_io import proposal_digest
+
+    raw = files[name]
+    return proposal_digest(name, raw, {n: files[n] for n in _body_references(raw) if n in files})
+
+
 def _sent_action(
-    manifest: Manifest, index: int, action: Action, receipt_url: str, number: int
+    manifest: Manifest, digest: str, index: int, action: Action, receipt_url: str, number: int
 ) -> sent.SentAction:
     """The Sent-log entry of one accepted PR action, from the manifest snapshot in hand."""
     kind = type(action).__name__.lower().removesuffix("action")
@@ -1313,6 +1333,7 @@ def _sent_action(
         url=receipt_url or f"https://github.com/{manifest.repo}/pull/{number}",
         title=title,
         content=content,
+        digest=digest,
     )
 
 
@@ -1328,7 +1349,8 @@ def apply_manifest(
     draft: bool = False,
     before_action: Callable[[], None] | None = None,
     publisher: sent.Publisher,
-    container_created: datetime | None = None,
+    container_created: datetime | None,
+    digest: str | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
 
@@ -1336,7 +1358,9 @@ def apply_manifest(
 
     Each action GitHub accepts is recorded in the outbox Sent log (best effort)
     right away, before the sidecar write, so a later container-side failure
-    still leaves the record. `publisher` says who published it.
+    still leaves the record. `publisher` says who published it. `digest` is the
+    proposal's content digest (it keeps a reused manifest name's rows apart);
+    left out, it is derived from the parsed manifest.
 
     Order: the review (if any) first — one atomic call carrying every line
     comment — then replies and general comments in manifest order, then the
@@ -1390,6 +1414,7 @@ def apply_manifest(
         )
 
     manifest = target.manifest
+    sent_digest = digest if digest is not None else manifest_digest(manifest)
     sidecar_path = f"{outbox_dir()}/{manifest.name}.progress.json"
 
     applied: list[int] = []
@@ -1419,7 +1444,9 @@ def apply_manifest(
             container_prefix=cfg.container_prefix,
             container_created=container_created,
             publisher=publisher,
-            action=_sent_action(manifest, index, manifest.actions[index], url, target.pr.number),
+            action=_sent_action(
+                manifest, sent_digest, index, manifest.actions[index], url, target.pr.number
+            ),
             state="applied",
         )
         applied.append(index)
@@ -3270,6 +3297,7 @@ def _offer_locked(
                 before_action=tick,
                 publisher=publisher,
                 container_created=sent.parse_created(identity.created_at),
+                digest=proposal_files_digest(outbox.files, target.manifest.name),
             )
             _print_receipts(target, outcome)
             if result_sink is not None:

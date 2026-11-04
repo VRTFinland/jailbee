@@ -35,6 +35,7 @@ def _rec(manifest, *, minutes=0, instance="alpha-x", created=CREATED, url=URL, s
             url=url,
             title=None,
             content=f"body of {manifest}\nsecond line",
+            digest="d",
         ),
         state=state,
         now=T0 + timedelta(minutes=minutes),
@@ -204,5 +205,30 @@ def test_sent_button_hidden_without_source(qtbot, mocker, make_cfg, tmp_path):
     qtbot.addWidget(dlg)
     qtbot.waitUntil(lambda: not dlg.busy)
     assert dlg.sent_button.isHidden() and not dlg.sent_mode
+    dlg.close()
+    qtbot.waitUntil(lambda: not dlg.busy)
+
+
+def test_sent_read_error_stays_visible(qtbot, mocker, make_cfg, tmp_path):
+    from jailbee.qtui import outbox
+
+    def broken(whole):
+        raise OSError("state db gone")
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch.object(outbox, "Incus")
+    mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
+    mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
+    mocker.patch.object(
+        outbox.service,
+        "load_container",
+        return_value=outbox.ContainerView(IDENTITY, IDENTITY.full_name, True, None, (), ()),
+    )
+    dlg = outbox.OutboxDialog(RepoTarget(cfg.repo_root, None), "alpha-x", sent_source=broken)
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: not dlg.busy)
+    dlg._load_sent()
+    assert "could not read the Sent log: state db gone" in dlg.status.text()
+    assert "Nothing sent yet" not in dlg.status.text()
     dlg.close()
     qtbot.waitUntil(lambda: not dlg.busy)

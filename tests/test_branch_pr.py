@@ -928,3 +928,15 @@ def test_orchestrator_source_publish_records_orchestrator(source_publisher):
     )
     (row,) = sent.list_records()
     assert row.publisher == "orchestrator"
+
+
+def test_reused_source_manifest_name_keeps_earlier_sent_row(source_publisher):
+    from jailbee.outbox import sent
+
+    p = source_publisher
+    assert _publish(p) == 0
+    changed = dict(p["data"], actions=[{"type": "description", "title": "Other", "body": "Text"}])
+    p["snapshot"].files["m.json"] = json.dumps(changed)
+    assert _publish(p) == 0
+    rows = sorted(sent.list_records(), key=lambda r: r.id)
+    assert [r.title for r in rows] == ["Title", "Other"]

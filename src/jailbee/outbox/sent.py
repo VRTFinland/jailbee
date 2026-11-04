@@ -8,8 +8,9 @@ or filesystem failure here must never fail or undo a publish, so each swallows
 callers decide how to degrade.
 
 One row per action, keyed by `dedup_key` (instance, `container_created`,
-outbox, manifest, action index) so a retried or resumed publish updates its
-row instead of adding one. All datetimes are UTC.
+outbox, manifest, proposal digest, action index) so a retried or resumed
+publish updates its row instead of adding one, while a reused manifest name
+with different content gets rows of its own. All datetimes are UTC.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ class SentAction:
     url: str | None
     title: str | None
     content: str
+    digest: str
+    """Digest of the proposal the action came from; tells a reused manifest name apart."""
 
 
 @dataclass(frozen=True)
@@ -96,12 +99,17 @@ def _utc(value: datetime | None) -> datetime | None:
 
 
 def dedup_key(
-    instance: str, container_created: datetime | None, outbox: str, manifest: str, index: int
+    instance: str,
+    container_created: datetime | None,
+    outbox: str,
+    manifest: str,
+    digest: str,
+    index: int,
 ) -> str:
     """The unique key of one action; an unknown creation time still keys per instance."""
     created = _utc(container_created)
     stamp = created.isoformat() if created is not None else "-"
-    return f"{instance}|{stamp}|{outbox}|{manifest}|{index}"
+    return f"{instance}|{stamp}|{outbox}|{manifest}|{digest}|{index}"
 
 
 _SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
@@ -229,7 +237,9 @@ def record(
     now: datetime | None = None,
 ) -> None:
     """Upsert the row for `action`; an `applied` row is never downgraded. Best effort."""
-    key = dedup_key(instance, container_created, action.outbox, action.manifest, action.index)
+    key = dedup_key(
+        instance, container_created, action.outbox, action.manifest, action.digest, action.index
+    )
     stamp = now if now is not None else datetime.now(UTC)
 
     def run() -> None:
@@ -249,12 +259,13 @@ def mark_applied(
     container_created: datetime | None,
     outbox: str,
     manifest: str,
+    digest: str,
     index: int,
     url: str | None,
     target: int | None,
 ) -> None:
     """Turn an `uncertain` row into `applied`, filling the URL/target. Best effort."""
-    key = dedup_key(instance, container_created, outbox, manifest, index)
+    key = dedup_key(instance, container_created, outbox, manifest, digest, index)
 
     def run() -> None:
         with Session(get_engine()) as session:
@@ -278,14 +289,19 @@ def forget(
     container_created: datetime | None,
     outbox: str,
     manifest: str,
+    digest: str,
     index: int,
 ) -> None:
-    """Delete the row of a dropped uncertain action. Best effort."""
-    key = dedup_key(instance, container_created, outbox, manifest, index)
+    """Delete the `uncertain` row of a dropped action; applied rows stay. Best effort."""
+    key = dedup_key(instance, container_created, outbox, manifest, digest, index)
 
     def run() -> None:
         with Session(get_engine()) as session:
-            session.exec(delete(SentRecord).where(col(SentRecord.dedup_key) == key))
+            session.exec(
+                delete(SentRecord).where(
+                    col(SentRecord.dedup_key) == key, col(SentRecord.state) == "uncertain"
+                )
+            )
             session.commit()
 
     _best_effort("forget the action", run)
@@ -331,6 +347,7 @@ def clear(*, container_prefix: str, before: datetime | None) -> int:
     with Session(get_engine()) as session:
         result = session.execute(stmt)
         session.commit()
+        # Result is typed as the generic Result; a DELETE's CursorResult has rowcount.
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 

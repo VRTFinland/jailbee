@@ -508,9 +508,10 @@ def apply(
             # the prompt below it is consent only when someone reads it.
             # A foreign issue repository asks its own question unless --foreign.
             options=PublishOptions(
-                dry_run,
-                force,
-                foreign
+                publisher="user",
+                dry_run=dry_run,
+                force=force,
+                foreign=foreign
                 or (pid.kind == "pr" and prompting.is_interactive() and not yes and not as_json),
                 draft=draft,
             ),

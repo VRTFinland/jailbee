@@ -1070,6 +1070,7 @@ def pending_action_count(batch: PreparedBatch) -> int:
 
 def _sent_action(
     manifest: str,
+    digest: str,
     resolved: ResolvedAction,
     *,
     target: int | None,
@@ -1108,6 +1109,7 @@ def _sent_action(
         url=url,
         title=title,
         content=content,
+        digest=digest,
     )
 
 
@@ -1301,6 +1303,7 @@ def apply_batch(
                                 publisher=publisher,
                                 action=_sent_action(
                                     name,
+                                    prepared.digest,
                                     resolved,
                                     target=resolved.issue.number
                                     or created_issue_numbers.get(resolved.issue.ref or ""),
@@ -1328,7 +1331,9 @@ def apply_batch(
                         container_prefix=container_prefix,
                         container_created=created_at,
                         publisher=publisher,
-                        action=_sent_action(name, resolved, target=receipt.issue, url=receipt.url),
+                        action=_sent_action(
+                            name, prepared.digest, resolved, target=receipt.issue, url=receipt.url
+                        ),
                         state="applied",
                     )
                     try:
@@ -1487,6 +1492,7 @@ def reconcile_action(
         container_created=sent.parse_created(key.identity.created_at),
         outbox="issue",
         manifest=key.manifest_name,
+        digest=digest,
         index=index,
         url=resolution.url,
         target=url_number,
@@ -1627,6 +1633,7 @@ def drop_manifest(
                         container_created=sent.parse_created(identity.created_at),
                         outbox="issue",
                         manifest=manifest_name,
+                        digest=recorded_digest,
                         index=index,
                     )
 
