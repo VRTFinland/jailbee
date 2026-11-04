@@ -194,6 +194,15 @@ def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
         elif block:
             arranged.extend(block)
             block = []
+    service = next((i for i in arranged if is_leaf(i, frozenset({dact.SERVICES}))), None)
+    network_index = next((n for n, i in enumerate(arranged)
+                          if isinstance(i, MenuGroup) and i.label == "Network →"), None)
+    if service is not None and network_index is not None:
+        adjacent = [i for i in arranged if is_leaf(i, frozenset({dact.MOUNTS, dact.SERVICES}))]
+        arranged = [i for i in arranged if i not in adjacent]
+        network_index = next(n for n, i in enumerate(arranged)
+                             if isinstance(i, MenuGroup) and i.label == "Network →")
+        arranged[network_index:network_index] = adjacent
     return [*pending, *arranged]
 
 

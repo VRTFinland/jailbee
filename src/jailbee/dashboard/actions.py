@@ -169,9 +169,10 @@ AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"
 MOUNTS = "mounts"
+SERVICES = "services"
 ORCHESTRATION = "orchestration"
 CONTAINER_VERBS = frozenset(
-    {AUTOSTART_RERUN, AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, ORCHESTRATION}
+    {AUTOSTART_RERUN, AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, SERVICES, ORCHESTRATION}
 )
 
 SNAPSHOT_FIELDS = "name,created"
@@ -179,6 +180,62 @@ SNAPSHOT_FIELDS = "name,created"
 # States in which a container exists to snapshot or to give a disk device; a
 # mid-creation background row ("—") has no instance yet.
 _EXISTING_STATES = frozenset({"Running", "Stopped"})
+
+
+def service_ls_argv(name: str) -> list[str]:
+    return ["service", "ls", name, "--json"]
+
+
+def service_op_argv(op: str, name: str, service: str) -> list[str]:
+    return ["service", op, name, service]
+
+
+def service_logs_argv(name: str, service: str) -> list[str]:
+    return ["service", "logs", name, service, "-n", "200"]
+
+
+@dataclass(frozen=True)
+class ServiceRow:
+    name: str
+    state: str
+
+
+def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
+    try:
+        data = json.loads(stdout)
+        if not isinstance(data, list):
+            raise ValueError
+        rows = []
+        seen: set[str] = set()
+        for item in data:
+            if not isinstance(item, dict):
+                raise ValueError
+            name, state = item.get("name"), item.get("state")
+            if (not isinstance(name, str) or not name or not name.isprintable()
+                    or name in seen or state not in ("ready", "starting", "stopped", "failed", "exited")
+                    or not all(k in item and (item[k] is None or isinstance(item[k], str))
+                               for k in ("window", "since"))
+                    or not isinstance(item.get("detail"), str)):
+                raise ValueError
+            seen.add(name)
+            rows.append(ServiceRow(name, state))
+        return tuple(rows)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("unexpected output from 'jailbee service ls'") from exc
+
+
+def services_picker(container: str, rows: Sequence[ServiceRow]) -> Picker:
+    return Picker("container-services", f"Services — {container}",
+                  tuple(PickerEntry(f"{r.name}  ({r.state})", str(i)) for i, r in enumerate(rows)),
+                  target=container, carry=tuple(json.dumps([r.name, r.state]) for r in rows))
+
+
+def service_action_picker(container: str, service: str, state: str) -> Picker:
+    ops: tuple[str, ...] = ("stop", "restart") if state in ("ready", "starting") else ("start",)
+    ops += ("refresh", "logs")
+    return Picker("container-service-action", f"Service {service} — {container}",
+                  tuple(PickerEntry(op.title() + ("…" if op == "refresh" else ""), op) for op in ops),
+                  target=container, carry=(service,))
 
 
 def autostart_list_argv(name: str) -> list[str]:
@@ -545,6 +602,8 @@ def container_extras(
             container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
         ):
             before.append(("Mounts…", MOUNTS))
+    if container.state == "Running" and allowed(service_ls_argv(name)):
+        before.append(("Services…", SERVICES))
     if orchestration_offered(container, ssh_policy, over_ssh=over_ssh, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))
     return ContainerExtras(tuple(after_job), tuple(before))

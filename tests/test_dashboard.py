@@ -5411,7 +5411,7 @@ def test_terminal_order_running_menu_layout(tmp_path):
         item.label if isinstance(item, dmenus.MenuGroup) else item[0]
         for item in tmenu.menu_entries(menu)
     ]
-    assert labels[:8] == [
+    assert labels[:9] == [
         "Attach tmux",
         "Open shell",
         "Launch →",
@@ -5419,6 +5419,7 @@ def test_terminal_order_running_menu_layout(tmp_path):
         "Git →",
         "PR →",
         "Lifecycle →",
+        "Services…",
         "Network →",
     ]
     lifecycle = next(
@@ -5767,7 +5768,7 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     at = verbs.index("job log --follow")
     assert verbs[at + 1 : at + 3] == ["autostart-status", "autostart-cancel"]
     assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
-        "orchestration"
+        "services", "orchestration"
     ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")

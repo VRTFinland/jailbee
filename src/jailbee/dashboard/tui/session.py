@@ -1086,6 +1086,8 @@ class DashboardSession:
             return self.open_snapshots(container)
         if verb == dact.MOUNTS:
             return self.open_mount_picker(container)
+        if verb == dact.SERVICES:
+            return self.open_services(container)
         if verb == dact.ORCHESTRATION:
             return self.open_orchestration(container)
         return None
@@ -1711,6 +1713,27 @@ class DashboardSession:
             return None
         return dact.mounts_picker(container, entries)
 
+    def open_services(self, container: str) -> Picker | None:
+        repo = self.repo_for(container, "container")
+        found = self._listed_container(container)
+        if repo is None or found is None or found[1].state != "Running":
+            self.set_notice(f"'{container}' is gone or not running")
+            return None
+        argv = dact.addressed(dact.service_ls_argv(container), repo.flags(), over_ssh=self.over_ssh)
+        try:
+            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            result = da.run_cli_quiet(argv, cwd=repo.cwd())
+            if not result.ok:
+                raise ValueError(result.message)
+            rows = dact.parse_service_rows(result.stdout)
+        except (RouteError, ValueError) as exc:
+            self.set_notice(f"could not list services: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+            return None
+        if not rows:
+            self.set_notice(f"No services in '{container}'")
+            return None
+        return dact.services_picker(container, rows)
+
     def open_autostart_rerun(self, container: str) -> Picker | None:
         """Capture the public listing; no worker or config probes in the frontend."""
         repo = self.repo_for(container, "container")
@@ -2269,6 +2292,28 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
+        if picker.purpose == "container-services":
+            try:
+                name, state = json.loads(picker.carry[int(entry.value)])
+            except (ValueError, IndexError, TypeError):
+                return None
+            actions = dact.service_action_picker(picker.target, name, state)
+            entries = tuple(e for e in actions.entries if permitted(
+                dact.service_logs_argv(picker.target, name) if e.value == "logs"
+                else dact.service_op_argv(e.value, picker.target, name),
+                self.ssh_policy, over_ssh=self.over_ssh))
+            if not entries:
+                self.set_notice("No service actions are permitted here")
+                return None
+            return replace(actions, entries=entries, back=picker)
+        if picker.purpose == "container-service-action":
+            if entry.value not in {"start", "stop", "restart", "refresh", "logs"}:
+                return None
+            name = picker.carry[0]
+            argv = (dact.service_logs_argv(picker.target, name) if entry.value == "logs"
+                    else dact.service_op_argv(entry.value, picker.target, name))
+            self.run_dashboard_command(picker.target, "container", argv)
+            return None
         if picker.purpose == "container-autostart-profile":
             self.run_dashboard_command(
                 picker.target, "container", ["autostart", "profile", picker.target, entry.value]

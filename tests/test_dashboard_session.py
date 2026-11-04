@@ -1516,3 +1516,44 @@ def test_runner_picker_failure_does_not_patch(mocker, tmp_path):
 def test_runner_entry_absent_if_grant_forbidden(mocker, tmp_path):
     session = _ssh_orchestration_session(mocker, tmp_path, level="off")
     assert "runner" not in [e.value for e in session.open_orchestration("alpha-one").entries]
+
+
+def test_services_flow_and_malformed_notice(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    session, _ = bare_session(mocker, [group])
+    result = mocker.patch("jailbee.dashboard.accounts.run_cli_quiet").return_value
+    result.ok = True
+    result.stdout = '[{"name":"db","state":"ready","window":"svc-db","since":null,"detail":""}]'
+    picker = session.open_container_entry("alpha-one", "services")
+    assert isinstance(picker, Picker)
+    actions = session.submit_picker(picker, picker.entries[0])
+    assert isinstance(actions, Picker)
+    run = mocker.patch.object(session, "run_dashboard_command")
+    session.submit_picker(actions, next(e for e in actions.entries if e.value == "refresh"))
+    run.assert_called_once_with("alpha-one", "container", ["service", "refresh", "alpha-one", "db"])
+    result.stdout = "broken"
+    assert session.open_container_entry("alpha-one", "services") is None
+    assert "could not list services" in session.notice
+
+
+def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.menus import MenuGroup
+
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")], optional_mounts=("aws",))
+    menu = tmenu.open_menu([group], "alpha-one")
+    entries = tmenu.menu_entries(menu)
+    labels = [i.label if isinstance(i, MenuGroup) else i[0] for i in entries]
+    assert labels.index("Mounts…") < labels.index("Services…") < labels.index("Network →")
+    assert tmenu.menu_hotkeys(entries)[labels.index("Services…")] == "v"
+    session, _ = bare_session(mocker, [group])
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig()
+    result = mocker.patch("jailbee.dashboard.accounts.run_cli_quiet").return_value
+    result.ok = True
+    result.stdout = '[{"name":"db","state":"ready","window":null,"since":null,"detail":""}]'
+    picker = session.open_services("alpha-one")
+    assert picker is not None
+    actions = session.submit_picker(picker, picker.entries[0])
+    assert isinstance(actions, Picker)
+    assert {e.value for e in actions.entries} == {"stop", "restart", "logs"}

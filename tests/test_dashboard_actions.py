@@ -282,7 +282,7 @@ def _container(state: str = "Running", **fields: Any) -> ContainerInfo:
 _AUTOSTART_LIVE = {"job_phase": "autostart", "job_pid": os.getpid(), "job_kind": "autostart"}
 _AUTOSTART_DONE = {"job_phase": "failed", "job_pid": os.getpid(), "job_kind": "autostart"}
 
-_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts", "orchestration"}
+_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts", "services", "orchestration"}
 
 
 def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -> set[str]:
@@ -347,6 +347,7 @@ def test_container_extras_order_and_labels():
     assert extras.before_network == (
         ("Snapshots…", "snapshots"),
         ("Mounts…", "mounts"),
+        ("Services…", "services"),
         ("Orchestration…", "orchestration"),
     )
 
@@ -742,3 +743,21 @@ def test_orchestrate_grant_runner_options():
         "--",
         "x",
     ]
+
+
+def test_services_json_and_state_actions():
+    rows = dact.parse_service_rows('[{"name":"db","state":"ready","window":"svc-db","since":null,"detail":""}]')
+    assert rows[0].name == "db"
+    assert [e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries] == ["stop", "restart", "refresh", "logs"]
+    for state in ("stopped", "failed", "exited"):
+        assert [e.value for e in dact.service_action_picker("alpha-x", "db", state).entries] == ["start", "refresh", "logs"]
+    assert [e.value for e in dact.service_action_picker("alpha-x", "db", "starting").entries] == ["stop", "restart", "refresh", "logs"]
+    assert dact.service_ls_argv("alpha-x") == ["service", "ls", "alpha-x", "--json"]
+    assert dact.service_op_argv("start", "alpha-x", "db") == ["service", "start", "alpha-x", "db"]
+    assert dact.service_logs_argv("alpha-x", "db") == ["service", "logs", "alpha-x", "db", "-n", "200"]
+
+
+@pytest.mark.parametrize("output", ["oops", "{}", '[{"name":"db","state":"running"}]'])
+def test_services_reject_malformed_output(output):
+    with pytest.raises(ValueError):
+        dact.parse_service_rows(output)

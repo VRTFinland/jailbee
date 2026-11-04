@@ -276,6 +276,7 @@ _MENU_KEYS: dict[str, str] = {
     "Lifecycle →": "l",
     dact.SNAPSHOTS: "N",
     dact.MOUNTS: "m",
+    dact.SERVICES: "v",
     dact.ORCHESTRATION: "G",  # grants; `O` is the table's optimize-widths key
     "credential-group": "c",
     "Network →": "w",
