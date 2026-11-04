@@ -80,6 +80,7 @@ class ContainerInfo:
     # deliberately shares none.
     credential_group: str | None = None
     autostart_profile: str | None = None
+    autostart_failed: int = 0
     created_at: datetime | None = None
     memory_usage: int | None = None
     memory_override: bool = False
@@ -703,7 +704,7 @@ def list_containers(
     if with_background:
         from sqlmodel import Session
 
-        from jailbee import background
+        from jailbee import autostart_outcomes, background
         from jailbee.db import get_engine
 
         with Session(get_engine()) as session:
@@ -733,6 +734,9 @@ def list_containers(
                     job_error=row.error_msg,
                 )
             )
+
+        for c in out:
+            c.autostart_failed = autostart_outcomes.failed_count(c.name)
 
     view.annotate(out, view.queued_counts())
 

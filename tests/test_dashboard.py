@@ -7553,3 +7553,27 @@ def test_session_outbox_diagnostic_handles_invalid_and_large_bytes(mocker):
     rc, text = SessionOutboxRunner(session, "c").hand_off_diagnostic(["pr", "push", "c"])
     assert rc == 1 and text is not None and text.startswith("bad\ufffd")
     assert len(text) < 10000 and "truncated" in text
+
+
+def test_dashboard_job_displays_failed_autostart_and_live_job_precedence(mocker):
+    from rich.text import Text
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    c = _ci("p-one", "p")
+    c.autostart_failed = 2
+
+    def cell():
+        fields = dcolumns.visible_fields(now, [c], ("job",))
+        assert fields
+        return Text.from_markup(fields[0].cell(c)).plain
+
+    assert cell() == "autostart ✗2"
+    c.job_phase, c.job_pid, c.job_kind = "deps", 123, "autostart"
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    assert cell() == "auto:deps"
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    assert cell() == "autostart ✗2"
+    c.job_phase, c.job_pid = "failed", None
+    assert cell() == "autostart ✗2"
+    c.autostart_failed = 0
+    assert cell() == "failed"

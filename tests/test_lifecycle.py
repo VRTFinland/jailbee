@@ -12053,3 +12053,38 @@ def test_destroy_container_removes_outcome_file(tmp_path, mocker, monkeypatch):
     assert path.exists()
     destroy_container(cfg, incus, "x", force=True)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("contents, expected", [("missing", 0), ("corrupt", 0), ("valid", 2)])
+@pytest.mark.parametrize("all_repos", [False, True])
+def test_list_containers_autostart_failed_outcomes(
+    make_cfg, tmp_path, monkeypatch, contents, expected, all_repos
+):
+    from jailbee import autostart_outcomes
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    name = f"{cfg.container_prefix}-feature"
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "status": "Running",
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
+    incus.config_get.return_value = None
+    if contents == "valid":
+        autostart_outcomes.record(name, "start", "deps", "one", "fail")
+        autostart_outcomes.record(name, "start", "deps", "two", "start")
+        autostart_outcomes.record(name, "start", "deps", "three", "ok")
+    elif contents == "corrupt":
+        path = autostart_outcomes.outcomes_path(name)
+        path.parent.mkdir(parents=True)
+        path.write_text("{broken")
+    rows = list_containers(cfg, incus, with_background=True, all_repos=all_repos)
+    assert next(c for c in rows if c.name == name).autostart_failed == expected

@@ -239,6 +239,13 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
     if field.name == "mode":
         return {"clone": "cln", "mount": "mnt"}.get(container.mode, escape(container.mode))
     if field.name == "job":
+        live = (
+            container.job_phase is not None
+            and container.job_pid is not None
+            and not background.clearable(container.job_phase, container.job_pid)
+        )
+        if container.autostart_failed and not live:
+            return f"[red]autostart ✗{container.autostart_failed}[/red]"
         if container.job_phase is None:
             return ""
         label = background.job_label_or_empty(

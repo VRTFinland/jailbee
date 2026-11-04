@@ -344,6 +344,7 @@ def _select_visible_fields(
         if name in by_name
         and (
             not apply_conditions
+            or (name == "job" and any(c.autostart_failed for c in all_containers))
             or by_name[name].show_if is None
             or by_name[name].show_if(all_containers)  # type: ignore[misc]  # narrowed by the None test
         )
