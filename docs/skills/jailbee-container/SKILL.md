@@ -11,7 +11,7 @@ The container is host-managed. Work and commit locally; ask the host operator fo
 
 Read `/etc/jailbee/container.json` before naming a target. `name` is the full container name, `short_name` its short name, `container_prefix` identifies the repo, and `repo_dir` is its in-container repository path. `mode` distinguishes a branch clone from a mounted host tree; in mount mode `branch` is null and the git bridge does not apply. `base_branch`, `pr` and `fork_of` record creation details.
 
-The file is a creation-time snapshot, not live state: a later rename or retarget is not reflected. It may be absent on older containers or if creation could not write it. In that case, `hostname` gives the container name and `$JAILBEE_BRANCH` identifies the branch when set for a clone. Confirm other details with the operator. For host commands outside the repo, the root option `jailbee --repo <container_prefix> ...` selects the repo; do not confuse it with an egress subcommand's `--repo` scope flag.
+The file is a creation-time snapshot, not live state: a later rename or retarget is not reflected. It may be absent on older containers or if creation could not write it. In that case, `hostname` gives the container name and `$JAILBEE_BRANCH`, when set for a clone, records the creation-time branch rather than live Git state. Run `git branch --show-current` in the repository for the current branch; it prints nothing for a detached HEAD. Confirm other details with the operator. For host commands outside the repo, the root option `jailbee --repo <container_prefix> ...` selects the repo; do not confuse it with an egress subcommand's `--repo` scope flag.
 
 ## Services
 
@@ -34,7 +34,7 @@ The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart
 
 ## Blocked network access
 
-The default network mode is strict, a default-deny egress allowlist; configuration may differ. Do not bypass a blocked destination through a proxy or tunnel. Give the operator the destination and container identity and ask them to run on the host:
+The default network mode is strict, a default-deny egress allowlist; configuration may differ. Do not bypass a blocked destination through a proxy or tunnel. A child must ask its orchestrator for access, not request it directly from the host. Otherwise, give the operator the destination and container identity and ask them to run on the host:
 
 ```bash
 jailbee net egress add api.vendor.example <container>
