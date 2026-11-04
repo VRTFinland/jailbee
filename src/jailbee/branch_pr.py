@@ -361,12 +361,13 @@ def publish_source_manifest(
                 audit_sink({"kind": "source", "repo": manifest.repo})
             from jailbee.outbox import sent
 
+            source_sha = manifest.source_sha
             sent.record(
                 instance=full,
                 container_prefix=cfg.container_prefix,
                 container_created=sent.parse_created(snapshot.identity.created_at),
                 publisher=publisher,
-                action=sent.SentAction(
+                action=lambda: sent.SentAction(
                     outbox="source",
                     manifest=manifest_name,
                     index=0,
@@ -380,9 +381,12 @@ def publish_source_manifest(
                         title if target is None else (action.title if action else None),
                         body if target is None else (action.body if action else None),
                         head,
-                        manifest.source_sha,
+                        source_sha,
                     ),
-                    digest=pr_outbox.proposal_files_digest(snapshot.files, manifest_name),
+                    digest=(
+                        pr_outbox.proposal_files_digest(snapshot.files, manifest_name)
+                        + (":create" if target is None else ":update")
+                    ),
                 ),
                 state="applied",
             )

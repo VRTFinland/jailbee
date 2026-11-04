@@ -4998,6 +4998,19 @@ def test_publish_survives_sent_record_failure_review(mocker, make_cfg, tmp_path,
     assert all("disk gone" in r.getMessage() for r in caplog.records)
 
 
+def test_review_publish_survives_sent_construction_failure(mocker, make_cfg, tmp_path):
+    from jailbee import pr_outbox
+
+    _apply_mocks(mocker)
+    mocker.patch("jailbee.pr_outbox._sent_action", side_effect=OSError("snapshot unavailable"))
+    sidecar = mocker.spy(pr_outbox, "_write_sidecar")
+    target = _sent_target(tmp_path, _FOUR_ACTIONS)
+    outcome = _sent_apply(mocker, make_cfg, tmp_path, target)
+    assert outcome.failure is None and outcome.applied == (0, 1, 2, 3)
+    assert outcome.urls == ("https://x/r", "https://x/p", "https://x/c", "")
+    assert sidecar.call_args.args[3]["applied"] == [0, 1, 2, 3]
+
+
 def test_reused_review_manifest_name_keeps_earlier_sent_rows(mocker, make_cfg, tmp_path):
     from jailbee.outbox import sent
 

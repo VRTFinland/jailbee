@@ -1027,6 +1027,35 @@ def test_publish_survives_sent_record_failure_source(source_publisher, mocker, c
     ) == 1
 
 
+@pytest.mark.parametrize("builder", ["jailbee.branch_pr._source_sent_content", "jailbee.pr_outbox.proposal_files_digest"])
+def test_source_publish_survives_sent_construction_failure(source_publisher, mocker, builder):
+    p = source_publisher
+    mocker.patch(builder, side_effect=OSError("snapshot unavailable"))
+    assert _publish(p) == 0
+    p["create"].assert_called_once()
+    p["consume"].assert_called_once()
+    saved = json.loads(p["incus"].config_set.call_args.args[2])
+    assert saved["feature/a"]["pr"] == 42
+
+
+def test_source_create_then_same_manifest_update_keeps_original_sent_row(source_publisher):
+    from jailbee.outbox import sent
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    assert _publish(p) == 0
+    (created,) = sent.list_records()
+    p["discover"].return_value = PrInfo(43, "feature/a", "a" * 40, "OPEN", "main")
+    assert _publish(p) == 0
+    rows = sorted(sent.list_records(), key=lambda r: r.id)
+    assert len(rows) == 2
+    assert rows[0] == created
+    assert rows[0].url == "https://github.com/acme/widgets/pull/42"
+    assert rows[0].content.startswith("create pull request")
+    assert rows[1].url == "https://github.com/acme/widgets/pull/43"
+    assert rows[1].content.startswith("update pull request")
+
+
 def test_orchestrator_source_publish_records_orchestrator(source_publisher):
     from jailbee.branch_pr import publish_source_manifest
     from jailbee.outbox import sent

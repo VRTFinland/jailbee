@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
@@ -1301,7 +1302,8 @@ def apply_batch(
                                 container_prefix=container_prefix,
                                 container_created=created_at,
                                 publisher=publisher,
-                                action=_sent_action(
+                                action=partial(
+                                    _sent_action,
                                     name,
                                     prepared.digest,
                                     resolved,
@@ -1331,8 +1333,13 @@ def apply_batch(
                         container_prefix=container_prefix,
                         container_created=created_at,
                         publisher=publisher,
-                        action=_sent_action(
-                            name, prepared.digest, resolved, target=receipt.issue, url=receipt.url
+                        action=partial(
+                            _sent_action,
+                            name,
+                            prepared.digest,
+                            resolved,
+                            target=receipt.issue,
+                            url=receipt.url,
                         ),
                         state="applied",
                     )
