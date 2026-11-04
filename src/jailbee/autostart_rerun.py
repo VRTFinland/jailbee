@@ -151,6 +151,18 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
             console.print(table)
         return
     refuse_while_running(cfg, container)
+    # The supervisor row is best-effort; its Incus PID claim also guards
+    # the handoff when the state database is unavailable. "1" is a stale
+    # pre-handoff sentinel once the rerun lock has been acquired.
+    from jailbee.background import worker_alive
+
+    claim = incus.config_get(container, "user.jailbee.autostart_in_progress")
+    try:
+        pid = int(claim or "")
+    except ValueError:
+        pid = 0
+    if pid > 1 and worker_alive(pid):
+        raise RuntimeError(f"Autostart is already running for '{container}' (pid {pid})")
     targets = resolve_rerun(effective.autostart, stages=stages, steps=steps, trigger=selected_trigger)
     failures = [t for t in failed_targets(effective, container) if selected_trigger is None or t.trigger == selected_trigger]
     if failed:

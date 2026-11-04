@@ -1470,3 +1470,39 @@ def test_detached_services_presence_overrides_host(
     autostart_mod.run_detached(cfg, incus, spec)
     names = [call.args[3][0].stage for call in run.call_args_list]
     assert ("services" in names) is expected
+
+
+def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cfg):
+    import os
+    from jailbee import cli
+    from jailbee.autostart_rerun import command
+
+    block = Autostart.model_validate({"on_start": [_stage("deps")]})
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    incus = mocker.MagicMock()
+    marker = {}
+    key = "user.jailbee.autostart_in_progress"
+    incus.config_get.side_effect = lambda container, name: marker.get(name, "")
+    incus.config_set.side_effect = lambda container, name, value: marker.update({name: value})
+    incus.config_unset.side_effect = lambda container, name: marker.pop(name, None)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.cli._job_engine", return_value=None)
+    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
+    popen = mocker.patch("jailbee.cli.subprocess.Popen")
+    popen.return_value.pid = os.getpid()
+
+    def spawn(effective, selected):
+        cli._spawn_autostart_worker(effective, None, "c", incus=incus, autostart=selected,
+                                   from_trigger="on_start", repo_dir="/r",
+                                   mirror_endpoint=None, rerun=True)
+
+    def invoke():
+        command(cfg, incus, "c", stages=["deps"], steps=[], failed=False, trigger=None,
+                listing=False, json_output=False, wait=False, spawn=spawn)
+
+    invoke()
+    assert marker[key] == str(os.getpid())
+    with pytest.raises(RuntimeError, match="running|progress"):
+        invoke()
+    assert marker[key] == str(os.getpid())
+    assert popen.call_count == 1

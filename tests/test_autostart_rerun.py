@@ -221,3 +221,17 @@ def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, t
     assert len(spawns) == 1
     incus.config_unset.assert_not_called()
     assert incus.config_set.call_args.args[-1] == "12345"
+
+
+@pytest.mark.parametrize("claim", ["1", "999999999999999999999999", "invalid", "-2", ""])
+def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker, claim):
+    from jailbee.autostart_rerun import command
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda container, key: claim if key.endswith("autostart_in_progress") else ""
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    spawn = mocker.MagicMock()
+    command(cfg, incus, "c", stages=["setup"], steps=[], failed=False, trigger=None,
+            listing=False, json_output=False, wait=False, spawn=spawn)
+    spawn.assert_called_once()
