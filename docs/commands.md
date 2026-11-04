@@ -31,6 +31,33 @@ returns it to the built-in height; with the mouse on, drag the panel's top borde
 The table always keeps five rows and its header, and the panel at least two rows.
 The height is remembered with the rest of the view.
 
+## In-container outbox commands
+
+Inside a non-child container, stage GitHub proposals with `jailbee issue
+create|edit|comment|labels|state` and `jailbee pr
+comment|reply|description|source`. Use `--body` or `--body-file`; issue
+commands accept `--repo` (default `.`), while PR source and new descriptions
+accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
+accepts `--head` as an alias for `--ref`; new PRs need a description body.
+
+Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
+`jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,
+`jailbee outbox submit NAME --kind issue|pr` to submit a batch, and
+`jailbee outbox discard NAME --kind issue|pr` to discard a draft. Drop a
+staged proposal with `jailbee outbox drop issue/NAME` or `pr/NAME`. For
+issue batches, create with `--ref REF` and address it later as `@REF`;
+expected values come from that earlier create. Existing issue changes fetch
+current state for host staleness checks.
+
+Inline reviews use `jailbee pr review add N --file PATH --line LINE --body
+TEXT` followed by `jailbee pr review submit N`; generic outbox submit refuses
+review drafts, because review submit fetches a fresh PR head. Discard with
+`jailbee pr review discard N`. None of these commands publish to GitHub; a
+human inspects and applies on the host. Do not write outbox files or create
+outbox directories by hand. Children cannot stage GitHub writes: send the
+orchestrator exact content using `jailbee inbox send message --text "..."`,
+or `--kind question` when a result is needed.
+
 ## Inside a container
 
 Since 1.8.1 every container has a small `jailbee` (the host's code, mounted

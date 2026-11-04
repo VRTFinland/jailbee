@@ -139,20 +139,27 @@ children. Without the `destroy` operation the default is `keep`; explicitly
 requesting `destroy` is refused. Restart may change the policy; omission
 keeps the current value.
 
+Children must send GitHub requests as messages containing the exact target and
+content; stage them in your own outbox using `jailbee issue` or `jailbee pr`.
+Never write GitHub outbox files or directories by hand. Pending child GitHub
+outbox proposals make the broker keep the child on done, even with `keep`
+already configured; inspect and resolve the leftovers. A broker stop records a
+pending count; an externally stopped child without that record has unknown
+outbox state and is conservatively kept.
+
 ## One PR per child
 
 For independent PRs, spawn each child with `--new --base main` (replace
 `main` with the upstream base), not a fork of your work. This keeps
 orchestrator commits out of the child PR. On `done`, use `imported_ref` and
-`imported_sha` to stage one source manifest in your PR outbox; do **not**
+`imported_sha` to stage one source manifest with `jailbee pr source --ref REF --sha SHA --repo owner/name` (and a description for a new PR); do **not**
 merge the import. See the [source examples](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
 The host publishes each with `jb pr push <orchestrator> --source-manifest
 <file>`. Let `on_done: destroy` clean up after import.
 
 For rework, spawn with `--ref refs/jailbee/from/<child>/<branch>` or a local
 branch as `--ref refs/heads/<name>`, or use `--pr N`. Import the result and
-stage a numbered `pr: N` source manifest. A `--pr` child's own outbox is
-lost on destroy; use `--on-done keep` to preserve it. Before reusing an
+stage a numbered `pr: N` source manifest. Children cannot stage GitHub proposals; relay their exact content into your own outbox with `jailbee issue` or `jailbee pr`. Before reusing an
 imported ref, publish its source manifest or preserve the commit under a
 separate persistent ref and use that ref in the manifest. Staging alone does
 not retain the ref; a later import can move it.

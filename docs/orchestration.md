@@ -5,6 +5,21 @@ starts child containers, talks to them, brings their commits into its own
 repo and cleans up after them, without asking anyone each time. The grant is
 set on the host and bounds everything the agent can do.
 
+## Child GitHub proposals
+
+Children cannot stage GitHub writes, including after adoption when the role
+marker identifies them as children. They send the exact repository, target and
+content to their orchestrator with `jailbee inbox send message --text "..."`
+(or `--kind question` when a result is needed). The orchestrator stages the
+proposal in its own outbox with `jailbee issue` or `jailbee pr`; the human
+reviews and publishes on the host. Never write GitHub outbox files or create
+outbox directories by hand. See [container commands](commands.md#in-container-outbox-commands).
+
+On done, pending child GitHub proposals cause the broker to keep the child and
+report the leftovers even when its policy is already keep. Broker stop records
+the pending count; an externally stopped child without a recorded count has
+unknown outbox state and is conservatively kept for inspection.
+
 ## Overview
 
 The motivating workflow is a bug backlog. An orchestrator container reads the

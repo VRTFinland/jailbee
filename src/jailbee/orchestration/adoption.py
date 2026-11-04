@@ -39,7 +39,9 @@ ADOPTED_CHILD_BODY = (
     "You are now a child container of `{orchestrator}` (adopted by the host user). "
     "Follow the jailbee-orchestration-child skill: report with "
     "`jailbee inbox send message --kind done|question|blocked` and keep a background "
-    "`jailbee inbox wait` running."
+    "`jailbee inbox wait` running. Do not stage GitHub writes; send the exact "
+    "repository, target, title, body and action content with "
+    "`jailbee inbox send message --text`; use a question when you need a result."
 )
 ADOPTED_ORCHESTRATOR_BODY = (
     "`{child}` is now your child (adopted by the host user). It has no import baseline, "

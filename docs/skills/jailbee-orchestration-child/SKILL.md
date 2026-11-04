@@ -5,6 +5,12 @@ description: Use when `JAILBEE_ROLE=child` is set or your first prompt says you 
 
 # Working as a child container
 
+**First:** If `JAILBEE_ROLE=child`, the role marker identifies you as a child,
+or a staging command refuses you as a child, do not stage GitHub writes. Send
+the orchestrator the exact repository, target, title, body and action content
+with `jailbee inbox send message --text "..."`; use `--kind question` when you
+need a result. Do not write GitHub outbox files or directories by hand.
+
 ## You are a worker
 
 An orchestrator (`$JAILBEE_ORCHESTRATOR`, with `JAILBEE_ROLE=child` set) gave

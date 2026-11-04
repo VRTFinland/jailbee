@@ -5,6 +5,12 @@ description: Use when creating, editing, commenting on, labeling, closing, reope
 
 # Managing GitHub issues from inside a container — the outbox
 
+**First:** If `JAILBEE_ROLE=child`, the role marker identifies you as a child,
+or a staging command refuses you as a child, do not stage GitHub writes. Send
+the orchestrator the exact repository, target, title, body and action content
+with `jailbee inbox send message --text "..."`; use `--kind question` when you
+need a result. Do not write GitHub outbox files or directories by hand.
+
 You are inside a JailBee container working with GitHub issues (creating one,
 editing a title or body, commenting, adding or removing labels, closing, or
 reopening). Your `gh` here can **read** GitHub but must never **write** to
@@ -31,23 +37,15 @@ The token available here is read-only by design (Contents, Issues, Pull
 requests, and Metadata all scoped to Read), and even if it weren't, every
 write goes through the outbox so a human sees the exact change before it
 becomes public. Attempting any of the commands above will fail against a
-read-only token anyway — write a manifest instead, every time.
+read-only token anyway — use the staging commands instead, every time.
 
 ## Read path
 
 Use the container's own `gh` to see an issue's current state — never guess
 at numbers, titles, or label spelling:
 
-- `gh issue view <n> --json number,title,body,labels,state,stateReason` — an
-  existing issue's current fields. **Read this before every `edit`,
-  `labels`, or `state` action** and copy the exact current
-  title/body/labels/state into that action's `expected` block — the host
-  refuses to *apply the whole batch you selected* (every manifest in that
-  `jb issue apply` run, not just this one action) if any `expected` no
-  longer matches what is actually on GitHub, so a stale or guessed value
-  aborts the run rather than silently overwriting someone else's change. A
-  `comment` action has no `expected` block and no staleness check, but read
-  the issue first anyway so your comment text is accurate.
+- `gh issue view <n> --json number,title,body,labels,state,stateReason` —
+  inspect current fields. Commands capture expected state automatically.
 - `gh issue list --json number,title,labels,state [--label ...] [--state ...]`
   — for finding or triaging a set of issues.
 - `gh label list --json name` — the repository's exact label spelling and
@@ -80,38 +78,20 @@ confirms it separately. Leave `labels` empty, because GitHub silently drops
 labels from users without triage rights. `issue_ref` works only within the
 same `repo` value.
 
-## Writing a manifest
+## Staging issue actions
 
-- Fixed path: `~/.jailbee/issue-outbox/` inside this container.
-- One manifest per file, named `NNN-<topic>.json` (e.g. `001-triage.json`,
-  `002-bugfix-issue.json`) so the numeric prefix makes the intended order
-  visible — manifests are, by default, applied in filename order.
-- Prose longer than roughly 20 lines does not belong inline in the JSON —
-  put it in a sibling `.md` file at the outbox root and reference it with
-  `body_file` instead of `body`.
-- **Read the current state first, always.** Every mutating action
-  (`edit`, `labels`, `state`) carries an `expected` block that must match
-  what `gh issue view` shows *right now* — title/body for `edit`, the full
-  current label set for `labels`, the current state for `state`. Copy those
-  values exactly; do not paraphrase or guess them. This is not busywork: it
-  is the host's only defense against applying your proposal on top of an
-  issue someone else changed in the meantime.
-- Every `create` action **must** carry a local `ref` (e.g.
-  `"ref": "new-timeout-bug"`), unique within the manifest; a `create`
-  without one is refused. A brand-new issue does not have a number yet, so
-  later actions in that *same manifest* that comment on, label or edit it
-  point at it with `"issue_ref": "new-timeout-bug"` instead of `"issue"`. A `ref` only resolves within the manifest file that defines
-  it — it cannot be referenced from a different manifest.
-- The manifest format itself — envelope fields, every action type,
-  defaults, and the caps — is normative and lives in
-  [`references/manifest-schema.md`](references/manifest-schema.md). Read it
-  before writing a manifest by hand; do not guess at field names or shapes.
+Use `jailbee issue create --title "Title" --body "Details"`, or `edit`,
+`comment`, `labels` and `state` with an issue number. Use `--body-file PATH`
+for long text and `--repo PATH` to select a repository. Commands create
+`~/.jailbee/issue-outbox/` as needed; never write it manually. See the
+normative [output schema](references/manifest-schema.md).
 
-New containers already have both `~/.jailbee/pr-outbox/` and
-`~/.jailbee/issue-outbox/`, created as the container user before agents run.
-This does not retroactively create them in older containers; idempotent
-`mkdir -p ~/.jailbee/pr-outbox ~/.jailbee/issue-outbox` is permitted when
-staging there. Inspection never bootstraps missing stores.
+For related actions use `--batch NAME`, then `jailbee outbox submit NAME
+--kind issue`. A create may set `--ref REF`; later actions in that same
+batch target `@REF`. For edits, labels and state on `@REF`, expected values
+are derived automatically from the earlier create under the draft lock.
+Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`;
+discard a draft with `jailbee outbox discard NAME --kind issue`.
 
 ## Human inspection and approval
 
@@ -127,7 +107,7 @@ one manifest, preserving the existing `expected`, journal and recovery
 gates. `TOKEN` comes from inspection; a changed proposal requires refresh
 and renewed inspection. The original `jb issue apply <container>` remains
 available. These are instructions to the human, **not permission for you
-to run publication commands**. Continue to stage files only; never call
+to run publication commands**. Continue to stage with commands only; never call
 host apply or direct `gh` mutations yourself.
 
 ## When you're done

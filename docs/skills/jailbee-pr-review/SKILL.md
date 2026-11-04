@@ -5,6 +5,12 @@ description: Use when reviewing a GitHub pull request from inside a JailBee cont
 
 # Reviewing a PR from inside a container — the outbox
 
+**First:** If `JAILBEE_ROLE=child`, the role marker identifies you as a child,
+or a staging command refuses you as a child, do not stage GitHub writes. Send
+the orchestrator the exact repository, target, title, body and action content
+with `jailbee inbox send message --text "..."`; use `--kind question` when you
+need a result. Do not write GitHub outbox files or directories by hand.
+
 You are inside a JailBee container reviewing a pull request (typically one
 created with `jailbee new --pr <n>`). Your `gh` here can **read** GitHub but
 must never **write** to it: every review comment, reply, general comment, or
@@ -34,7 +40,7 @@ IDs or line numbers:
 this container. The token available here is read-only by design, and even if
 it weren't, every write goes through the outbox so a human sees the exact
 text before it becomes public. Posting straight from the container would
-skip that gate entirely — write a manifest instead, every time.
+skip that gate entirely — use the staging commands instead, every time.
 
 ## Finding the PR number
 
@@ -105,32 +111,26 @@ because that run has a time budget (`pr.timeout`, 600 s by default) and a
 test suite can eat all of it. Writing to the outbox has no such budget — run whatever you need to
 describe the change accurately.
 
-## The outbox contract
+## Staging PR actions
 
-- Fixed path: `~/.jailbee/pr-outbox/` inside this container.
-- One manifest per file, named `NNN-<topic>.json` (e.g. `001-review.json`,
-  `002-description.json`) so the numeric prefix makes the intended order
-  visible.
-- Prose longer than roughly 20 lines does not belong inline in the JSON —
-  put it in a sibling `.md` file at the outbox root and reference it with
-  `body_file` instead of `body`.
-- The manifest format itself — envelope fields, every action type, defaults,
-  and the caps — is normative and lives in
-  [`references/manifest-schema.md`](references/manifest-schema.md). Read it
-  before writing a manifest by hand; do not guess at field names or shapes.
+Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
+--body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.
+For a new PR description omit N and use `--repo owner/name` when needed.
+Use `--batch NAME` for related actions and `jailbee outbox submit NAME
+--kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
+outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.
+Commands manage `~/.jailbee/pr-outbox/`; never write it by hand. The
+[schema](references/manifest-schema.md) describes their normative output.
 
-New containers already have both `~/.jailbee/pr-outbox/` and
-`~/.jailbee/issue-outbox/`, created as the container user before agents run.
-This does not retroactively create them in older containers; idempotent
-`mkdir -p ~/.jailbee/pr-outbox ~/.jailbee/issue-outbox` is permitted when
-staging there. Inspection never bootstraps missing stores.
+For inline reviews, use `jailbee pr review add N --file PATH --line LINE
+--body "..."`, then `jailbee pr review submit N --body "..."`. Generic
+`jailbee outbox submit` refuses review drafts: review submit fetches the
+fresh PR head. `jailbee pr review discard N` discards that review draft.
 
-## Imported branches
-
-For one PR per imported child, stage a pinned source manifest rather than
-merging the child. The [schema](references/manifest-schema.md#source-publication-examples)
-has new-PR and numbered rework examples; the host publishes each explicitly
-with `jb pr push --source-manifest`.
+For imported branches, use `jailbee pr source --ref REF --sha SHA --base BASE
+--repo owner/name --title "..." --body-file PATH`; `--head` aliases `--ref`.
+For an existing PR, supply `--pr N`. The host publishes with `jb pr push
+<container> --source-manifest <file>`.
 
 ## Human inspection and approval
 
@@ -146,7 +146,7 @@ one manifest, not only a highlighted comment. `TOKEN` comes from inspection;
 a changed proposal requires refresh and renewed inspection. The original
 `jb review apply <container>` remains available. These are instructions to
 the human, **not permission for you to run publication commands**. Continue
-to stage files only; never call host apply or direct `gh` mutations yourself.
+to stage with commands only; never call host apply or direct `gh` mutations yourself.
 
 ## When you're done
 

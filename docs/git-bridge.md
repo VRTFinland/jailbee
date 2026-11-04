@@ -1144,10 +1144,11 @@ full field reference, the `0600` permission requirement, and the
 or changing manifest schemas. Physical stores remain
 `/home/dev/.jailbee/pr-outbox/` and `/home/dev/.jailbee/issue-outbox/` inside
 the container (`~/.jailbee/pr-outbox/` and `~/.jailbee/issue-outbox/` for its
-user). New containers bootstrap both directories as the container user,
-before agents run, including with `--no-clone` or `--no-autostart`. Existing
-containers are not retroactively repaired; an agent may use idempotent
-`mkdir -p` there. Inspection never creates missing directories and makes no
+user). New non-child containers bootstrap both directories as the container
+user before agents run, including with `--no-clone` or `--no-autostart`.
+Spawned children do not bootstrap them and cannot stage GitHub proposals.
+Staging commands create missing stores as needed; do not write files or
+directories by hand. Inspection never creates missing directories and makes no
 `gh` or network calls.
 
 ```bash
@@ -1392,17 +1393,13 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, an agent reads the current state with the container's
-own read-only `gh` (`gh issue view`, `gh issue list`, `gh label list`) before
-proposing any change — an `edit`/`labels`/`state` action carries an
-`expected` block copied from that read, and the host refuses to apply
-anything whose `expected` no longer matches what is actually on GitHub (see
-[Stale-`expected` refusal](#stale-expected-refusal) below). The manifest is
-written into `~/.jailbee/issue-outbox/NNN-<topic>.json`, one file per batch
-of related actions; prose longer than roughly 20 lines goes into a sibling
-`.md` file referenced by `body_file` instead of inline. Nothing reaches
-GitHub until a human runs `jailbee issue apply` on the host — the container
-filesystem is the only place the proposal exists until then.
+Inside the container, use `jailbee issue create|edit|comment|labels|state`
+to stage proposals; `--body-file` accepts long text and `--repo` selects the
+target. Commands fetch expected current values for existing issue edits,
+labels and state; for an `@REF` in a batch they derive expected values from
+the earlier create. Use `--batch NAME` and `jailbee outbox submit NAME
+--kind issue` to group actions. Nothing reaches GitHub until a human applies
+it on the host. See [container commands](commands.md#in-container-outbox-commands).
 
 ### Targeting the superproject or a submodule
 

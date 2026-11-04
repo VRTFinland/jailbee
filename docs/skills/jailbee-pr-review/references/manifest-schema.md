@@ -1,9 +1,7 @@
 # PR review outbox — manifest schema v1 (normative)
 
-This document is the authoritative contract for every file written into
-`~/.jailbee/pr-outbox/`. The host-side parser (`jb review apply`/`ls`/`show`/
-`drop`) matches this document field for field — if you are writing a
-manifest by hand, follow it exactly rather than guessing from the examples.
+This normative schema describes output produced by the container commands and
+parsed by the host. Do not write manifests or outbox files by hand.
 
 ```json
 {
