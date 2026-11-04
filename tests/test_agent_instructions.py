@@ -76,7 +76,17 @@ def test_preamble_staged_without_source(homes, claude_cfg):
     assert staged(data_home).read_bytes() == marker.encode() + b"\n" + ai.PREAMBLE.encode() + b"\n"
     for fact in ("jailbee-container", "/etc/jailbee/container.json", "jailbee service"):
         assert fact in ai.PREAMBLE
-    assert len(ai.PREAMBLE.splitlines()) <= 25
+    assert 15 <= len(ai.PREAMBLE.splitlines()) <= 25
+    assert "mode" in ai.PREAMBLE and "repo_dir" in ai.PREAMBLE
+    assert "mount mode" in ai.PREAMBLE
+    assert "Treat gh as read-only" in ai.PREAMBLE
+    assert "jailbee net egress add <host> <container>" in ai.PREAMBLE
+    assert "short_name" in ai.PREAMBLE
+    assert "JAILBEE_ROLE=child" in ai.PREAMBLE
+    assert "jailbee-orchestration-child" in ai.PREAMBLE
+    assert "jailbee service ls" in ai.PREAMBLE
+    assert "jailbee service start <service>" in ai.PREAMBLE
+    assert "jailbee service logs <service>" in ai.PREAMBLE
 
 
 def test_user_content_follows_preamble(homes, claude_cfg):
