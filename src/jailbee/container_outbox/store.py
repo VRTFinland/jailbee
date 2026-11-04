@@ -177,6 +177,9 @@ class Store:
         if child:
             raise OutboxCommandError(role.CHILD_REFUSAL, 1)
 
+    def require_role(self) -> None:
+        self._require_role()
+
     def require_writable(self, env: Mapping[str, str] | None = None) -> None:
         self._require_role(env)
         for kind in ("issue", "pr"):
@@ -355,6 +358,24 @@ class Store:
             raise OutboxCommandError(str(exc), 2) from exc
         self.require_writable()
         with self._draft_lock(kind, name):
+            with _directory(self.drafts(kind), create=True) as fd:
+                _atomic_write(fd, f"{name}.json", text)
+
+    def draft_append(
+        self, kind: Kind, name: str, action: dict[str, object], bodies: Mapping[str, str]
+    ) -> None:
+        self._require_role()
+        with self._draft_lock(kind, name):
+            state = self.draft_load_state(kind, name)
+            manifest, existing = state if state is not None else ({"version": 1, "actions": []}, {})
+            actions = manifest.get("actions")
+            if not isinstance(actions, list):
+                raise OutboxCommandError("draft actions must be a list", 2)
+            manifest = {**manifest, "actions": [*actions, action]}
+            combined = {**existing, **bodies}
+            _validate(kind, f"{name}.json", manifest, combined)
+            text = json.dumps({"manifest": manifest, "bodies": combined})
+            self.require_writable()
             with _directory(self.drafts(kind), create=True) as fd:
                 _atomic_write(fd, f"{name}.json", text)
 
