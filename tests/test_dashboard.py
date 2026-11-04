@@ -5404,7 +5404,11 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
 def test_terminal_order_running_menu_layout(tmp_path):
     apps = [dmodel.AppMenuEntry("chrome", "Chrome")]
     group = dmodel.RepoGroup(
-        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)], apps=apps,
+        "alpha",
+        str(tmp_path),
+        None,
+        [_ci("alpha-x", "alpha", pr_number=7)],
+        apps=apps,
         autostart_services=("db",),
     )
     menu = tmenu.open_menu([group], "alpha-x")

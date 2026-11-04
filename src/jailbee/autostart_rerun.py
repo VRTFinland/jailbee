@@ -57,10 +57,14 @@ def validate_remote(block: Autostart) -> None:
         return
     for trigger in TRIGGER_ORDER:
         for stage in normalize_stages(getattr(block, trigger.value)):
-            if stage.network is not None or stage.mounts or any(
-                step.network is not None or step.mounts
-                for chain in stage.all_chains()
-                for step in chain.steps
+            if (
+                stage.network is not None
+                or stage.mounts
+                or any(
+                    step.network is not None or step.mounts
+                    for chain in stage.all_chains()
+                    for step in chain.steps
+                )
             ):
                 raise RuntimeError(
                     f"A remote autostart re-run cannot change network or mounts "
@@ -376,6 +380,7 @@ def command(
     spawn: Callable[[Config, Autostart], None],
 ) -> None:
     """Serialize a rerun through the foreground lifetime or background handoff."""
+
     def invoke() -> None:
         _command(
             cfg,

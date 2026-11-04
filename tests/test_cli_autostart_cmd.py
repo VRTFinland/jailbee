@@ -669,15 +669,27 @@ def test_boot_cli_refuses_actual_foreground_rerun_lock(tmp_path, mocker, verb, b
 
     def during_foreground(*args, **kwargs):
         assert live_run(cfg, "myrepo-feat-a") is None
-        result = runner.invoke(app, [verb, "feat-a", "--background" if background else "--no-background"])
+        result = runner.invoke(
+            app, [verb, "feat-a", "--background" if background else "--no-background"]
+        )
         results.append(result)
         assert result.exit_code == 1, _out(result)
         assert "re-run" in _out(result) and "progress" in _out(result)
 
     mocker.patch("jailbee.autostart_rerun.run_foreground", side_effect=during_foreground)
-    command(cfg, incus, "myrepo-feat-a", stages=["deps"], steps=[], failed=False,
-            trigger=None, listing=False, json_output=False, wait=True,
-            spawn=lambda *_: pytest.fail("must not spawn"))
+    command(
+        cfg,
+        incus,
+        "myrepo-feat-a",
+        stages=["deps"],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=False,
+        json_output=False,
+        wait=True,
+        spawn=lambda *_: pytest.fail("must not spawn"),
+    )
     assert len(results) == 1
     boot.assert_not_called()
     worker.assert_not_called()

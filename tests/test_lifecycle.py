@@ -1710,8 +1710,16 @@ def test_new_clears_old_outcomes_only_after_instance_created(tmp_path, mocker, f
         assert not path.exists(), "new instance inherited the old outcomes"
 
     incus.profile_assign.side_effect = at_profile_assign
-    opts = NewContainerOptions(container_branch="feat/x", name=None, network="strict", memory="8GiB",
-                               cpu=4, from_base="gisgro-base", clone=True, autostart=False)
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
     if failure:
         with pytest.raises((ValueError, RuntimeError)):
             new_container(cfg, incus, opts)
@@ -12190,11 +12198,17 @@ def test_list_containers_autostart_failed_outcomes(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "repo"
     repo.mkdir()
-    cfg = make_cfg(repo, autostart={"on_start": [{
-        "stage": "deps", "steps": [
-            {"name": name, "run": "true"} for name in ("one", "two", "three")
-        ]
-    }]})
+    cfg = make_cfg(
+        repo,
+        autostart={
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "steps": [{"name": name, "run": "true"} for name in ("one", "two", "three")],
+                }
+            ]
+        },
+    )
     name = f"{cfg.container_prefix}-feature"
     incus = MagicMock()
     incus.list_containers.return_value = [
