@@ -25,6 +25,65 @@ def rig(tmp_path, monkeypatch):
     return incus, config
 
 
+@pytest.mark.parametrize("with_config", [False, True])
+def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
+    tmp_path, monkeypatch, make_cfg, with_config
+):
+    import os
+
+    from jailbee.orchestration import labels
+    from jailbee.outbox.io import ensure_directories
+
+    incus, _ = rig(tmp_path, monkeypatch)
+    cfg = make_cfg(tmp_path / "repo")
+    home = tmp_path / "fresh-home"
+    home.mkdir(mode=0o700)
+    incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
+    home_exec_uids = []
+
+    def execute(name, argv, *, uid=None, **kwargs):
+        if argv[:2] == ["id", "-u"]:
+            return str(os.getuid())
+        if argv[:2] == ["id", "-g"]:
+            return str(os.getgid())
+        home_exec_uids.append(uid)
+        # Execute the production shell/Python payload against an actual fresh
+        # home. No Incus daemon or privileged process is needed for this probe.
+        mapped = [arg.replace("/home/dev", str(home)) for arg in argv]
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.umask(0o077)
+                os.execvp(mapped[0], mapped)
+            finally:
+                os._exit(127)
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+        return ""
+
+    incus.exec.side_effect = execute
+    container_bindings.sync(incus, "proj-c", cfg=cfg if with_config else None)
+    labels.write_child_role(incus, "proj-c", uid=cfg.container_user.uid)
+    ensure_directories(cfg, incus, "proj-c")
+    assert (home / ".jailbee/orchestration/role").read_text().strip() == "child"
+    for relative in (".jailbee", ".jailbee/pr-outbox", ".jailbee/issue-outbox"):
+        path = home / relative
+        assert path.is_dir()
+        assert path.stat().st_uid == os.getuid()
+        assert os.access(path, os.W_OK | os.X_OK)
+    assert home_exec_uids and all(uid == cfg.container_user.uid for uid in home_exec_uids)
+
+
+@pytest.mark.parametrize("answer", ["", "not-a-uid", "0", "-1"])
+def test_refresh_without_config_refuses_unknown_container_user(tmp_path, monkeypatch, answer):
+    incus, _ = rig(tmp_path, monkeypatch)
+    incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
+    incus.exec.return_value = answer
+    assert not container_bindings.refresh(incus, "proj-c")
+    assert all(call.args[1][0] == "id" for call in incus.exec.call_args_list)
+    assert "error" in json.loads((tmp_path / "proj-c/bindings.json").read_text())
+
+
 def test_snapshot_exports_only_binding_fields_and_mounts_readonly(tmp_path, monkeypatch):
     incus, config = rig(tmp_path, monkeypatch)
     container_bindings.sync(incus, "proj-c")
@@ -214,6 +273,9 @@ def test_wrong_metadata_source_repairs_visible_binding_or_fails_closed(
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
 
     def execute(name, argv, **kwargs):
+        if argv[:2] == ["id", "-u"]:
+            return "1000"
+        assert kwargs["uid"] == 1000
         assert argv[-1] == "/home/dev/.jailbee/pr-bindings-error"
         if argv[0] == "rm":
             marker.unlink(missing_ok=True)
@@ -245,7 +307,9 @@ def test_restart_clears_failed_mount_guard_after_stopped_repair(tmp_path, monkey
     monkeypatch.setattr(bindings, "SNAPSHOT", tmp_path / "proj-c/bindings.json")
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Stopped"}]
     container_bindings.sync(incus, "proj-c")
-    incus.exec.side_effect = lambda *args, **kwargs: guard.unlink(missing_ok=True)
+    incus.exec.side_effect = lambda name, argv, **kwargs: (
+        "1000" if argv[0] == "id" else guard.unlink(missing_ok=True)
+    )
     # Boot must clear the guard after the repaired device has actually mounted.
     incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
     container_bindings.sync(incus, "proj-c")

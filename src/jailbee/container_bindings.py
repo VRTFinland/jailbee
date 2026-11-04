@@ -66,6 +66,24 @@ def _running(incus: Incus, full: str) -> bool:
     )
 
 
+def _writer_uid(incus: Incus, full: str, cfg: Config | None) -> int:
+    from jailbee.config import CONTAINER_USERNAME
+    from jailbee.incus import IncusError
+
+    if cfg is not None:
+        uid = cfg.container_user.uid
+    else:
+        # The publishing state objects do not carry Config. Ask the actual
+        # container instead of guessing its writer from the host's identity.
+        value = incus.exec(full, ["id", "-u", CONTAINER_USERNAME]).strip()
+        if not value.isascii() or not value.isdecimal():
+            raise IncusError("could not resolve container user UID; run jb start in its repo")
+        uid = int(value)
+    if uid <= 0:
+        raise IncusError("container binding infrastructure requires a non-root user UID")
+    return uid
+
+
 def sync(incus: Incus, full: str, *, cfg: Config | None = None) -> None:
     """Serialize authoritative reads, publication and mount repair across host processes."""
     with locked(full):
@@ -80,10 +98,12 @@ def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
     running = _running(incus, full)
     try:
         if running:
+            uid = _writer_uid(incus, full, cfg)
             # Guard the fixed container path, not an arbitrary device source.
             incus.exec(
                 full,
                 ["sh", "-c", 'set -eu; mkdir -p "${1%/*}"; touch "$1"', "sh", str(ERROR_MARKER)],
+                uid=uid,
             )
         config = {}
         for key in KEYS:
@@ -112,7 +132,7 @@ def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
             ):
                 incus.config_device_set(full, "jailbee-metadata", properties)
         if running:
-            incus.exec(full, ["rm", "-f", "--", str(ERROR_MARKER)])
+            incus.exec(full, ["rm", "-f", "--", str(ERROR_MARKER)], uid=uid)
     except (IncusError, OSError):
         # Includes device operations: never hide a mount repair failure as success.
         _write(directory, {"error": "PR bindings could not be refreshed; restart with jb start"})
