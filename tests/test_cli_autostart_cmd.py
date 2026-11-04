@@ -670,11 +670,16 @@ def test_run_rejects_conflicting_options(tmp_path, mocker, args):
 def test_run_ambiguous_stage_and_reserved_agent(tmp_path, mocker):
     cfg, _ = _rerun_setup(tmp_path, mocker)
     object.__setattr__(cfg.autostart, "on_create", cfg.autostart.on_start)
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    foreground = mocker.patch("jailbee.autostart_rerun.run_foreground")
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
     assert result.exit_code == 2
     assert "on_create, on_start" in _out(result)
-    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "agents"])
-    assert result.exit_code == 1
+    for wait_args in ([], ["--wait"]):
+        result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "agents", *wait_args])
+        assert result.exit_code == 1
+    spawn.assert_not_called()
+    foreground.assert_not_called()
 
 
 def test_run_list_corrupt_outcomes_and_failed(tmp_path, mocker):

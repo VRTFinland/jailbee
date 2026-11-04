@@ -18,6 +18,48 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 
+def _protected_windows(cfg: Config) -> set[str]:
+    from jailbee.services.runtime import WINDOW_PREFIX
+    from jailbee.tmux import window_for
+
+    # Configured agents may already be running even when autostart is off.
+    return {window_for(name) for name in cfg.agents} | {
+        WINDOW_PREFIX + name for name in cfg.services
+    }
+
+
+def validate_windows(cfg: Config, block: Autostart) -> None:
+    """Refuse a rerun before an ordinary step can replace an agent/service window."""
+    from jailbee.autostart_plan import RerunSelectionError, normalize_stages
+    from jailbee.tmux import window_for
+
+    protected = _protected_windows(cfg)
+    for trigger in TRIGGER_ORDER:
+        for stage in normalize_stages(getattr(block, trigger.value)):
+            for chain in stage.all_chains():
+                for step in chain.steps:
+                    window = window_for(step.name)
+                    if window in protected:
+                        raise RerunSelectionError(
+                            f"Cannot re-run {trigger.value}:{stage.stage}/{step.name}: "
+                            f"protected agent/service window '{window}'", 1
+                        )
+
+
+def eligible_autostart(cfg: Config) -> Autostart:
+    """Hide unsafe stages, without changing creation-time config validity."""
+    from jailbee.tmux import window_for
+
+    protected = _protected_windows(cfg)
+    return cfg.autostart.model_copy(update={
+        trigger.value: [
+            stage for stage in rerunnable_stages(cfg.autostart, trigger)
+            if not any(window_for(step.name) in protected
+                       for chain in stage.all_chains() for step in chain.steps)
+        ] for trigger in TRIGGER_ORDER
+    })
+
+
 def failed_targets(cfg: Config, container: str) -> list[RerunTarget]:
     """Return current failed steps; callers must supply an already-profiled config."""
     from jailbee.autostart_outcomes import failed_steps, read
@@ -26,7 +68,7 @@ def failed_targets(cfg: Config, container: str) -> list[RerunTarget]:
     return [
         RerunTarget(trigger, stage.stage, step.name)
         for trigger in TRIGGER_ORDER
-        for stage in rerunnable_stages(cfg.autostart, trigger)
+        for stage in rerunnable_stages(eligible_autostart(cfg), trigger)
         for chain in stage.all_chains()
         for step in chain.steps
         if (trigger.value, stage.stage, step.name) in failed
@@ -50,7 +92,9 @@ def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTa
     ):
         raise RuntimeError(f"Container '{container}' must be running to re-run autostart")
     effective = effective_config(cfg, incus, container)
-    return rerun_block(effective.autostart, targets)
+    block = rerun_block(effective.autostart, targets)
+    validate_windows(cfg, block)
+    return block
 
 
 def run_foreground(
@@ -66,6 +110,7 @@ def run_foreground(
     from jailbee.docker_daemon import mirror_endpoint_or_none
     from jailbee.lifecycle import container_repo_dir
 
+    validate_windows(cfg, block)
     refuse_while_running(cfg, container)
     agents = {
         name: agent.model_copy(update={"autostart": False}) for name, agent in cfg.agents.items()
@@ -103,7 +148,7 @@ def list_rows(cfg: Config, container: str) -> list[dict[str, object]]:
     outcomes = read(container)
     rows: list[dict[str, object]] = []
     for trigger in TRIGGER_ORDER:
-        for stage in rerunnable_stages(cfg.autostart, trigger):
+        for stage in rerunnable_stages(eligible_autostart(cfg), trigger):
             recorded = outcomes.get(trigger.value, {}).get(stage.stage, {})
             steps = []
             for chain in stage.all_chains():
@@ -230,7 +275,7 @@ def _command(
         for t in TRIGGER_ORDER:
             if selected_trigger is not None and t != selected_trigger:
                 continue
-            for stage in rerunnable_stages(effective.autostart, t):
+            for stage in rerunnable_stages(eligible_autostart(effective), t):
                 target = RerunTarget(t, stage.stage, None)
                 label = f"{t.value}: {stage.stage}"
                 options.append(prompting.Option([target], label, label))

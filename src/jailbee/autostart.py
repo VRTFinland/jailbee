@@ -575,6 +575,11 @@ def run_detached(
     from jailbee.autostart_plan import TRIGGER_ORDER
     from jailbee.services.autostart import services_stage_wanted
 
+    if spec.rerun:
+        from jailbee.autostart_rerun import validate_windows
+
+        validate_windows(cfg, cfg.autostart)
+
     with _cancel_on_sigterm(spec.container_name):
         incus.config_set(
             spec.container_name, "user.jailbee.autostart_in_progress", str(os.getpid())

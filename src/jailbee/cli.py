@@ -3566,8 +3566,10 @@ def _spawn_autostart_worker(
     from jailbee.lifecycle import lookup_background_job, short_name
 
     if rerun:
+        from jailbee.autostart_rerun import validate_windows
         from jailbee.autostart_status import refuse_while_running
 
+        validate_windows(cfg, autostart)
         refuse_while_running(cfg, full_name)
 
     short = short_name(cfg, full_name)
