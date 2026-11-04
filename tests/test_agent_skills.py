@@ -126,12 +126,14 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
     inline = re.findall(r"`(jailbee(?:\s+[^`]*)?)`", skill)
     examples = inline + [line for block in blocks for line in block.splitlines()]
     for line in preamble.splitlines():
-        examples.extend(
-            re.findall(
-                r"jailbee\s+(?:--repo\s+<container_prefix>|(?:service|net)\s+\w+(?:\s+\w+)?(?:\s+<[^>]+>)*)",
-                line,
-            )
-        )
+        if line == (
+            "Inside the container, jailbee offers service, config validate, inbox, version "
+            "and --version;"
+        ):
+            continue  # This is a prose list, not a command invocation.
+        examples.extend(re.findall(
+            r"\bjailbee\s+.*?(?=\s+and\s+jailbee|\s+\(|[.;]|$)", line
+        ))
     host_roots = {"net", "git", "pr", "port", "display"}
     container_roots = {"service", "config", "inbox", "version"}
     for example in examples:
@@ -140,6 +142,9 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
         tokens = shlex.split(example.replace("[", "").replace("]", ""))
         tokens = tokens[1:]
         if tokens[:1] == ["--repo"]:
+            root_options = {opt for p in get_command(app).params for opt in p.opts}
+            assert "--repo" in root_options, example
+            assert len(tokens) >= 2, example
             tokens = tokens[2:]
         if not tokens or tokens[0] == "...":
             continue
@@ -164,6 +169,13 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
 def test_container_guidance_rejects_unknown_documented_command() -> None:
     with pytest.raises(AssertionError, match="bogus"):
         _validate_guidance_commands("`jailbee service bogus`", "")
+
+
+def test_preamble_rejects_unknown_documented_command() -> None:
+    from jailbee.agent_instructions import PREAMBLE
+
+    with pytest.raises(AssertionError, match="bogus"):
+        _validate_guidance_commands("", PREAMBLE + "\njailbee bogus")
 
 
 def test_container_guidance_commands_resolve() -> None:
