@@ -19,6 +19,7 @@ class IssueView:
     body: str
     labels: tuple[str, ...]
     state: Literal["open", "closed"]
+    assignees: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ def _issue_target(repo: str | None) -> tuple[str | None, str | None]:
 
 
 def issue_view(repo: str | None, number: int) -> IssueView:
-    argv = ["gh", "issue", "view", str(number), "--json", "title,body,labels,state"]
+    argv = ["gh", "issue", "view", str(number), "--json", "title,body,labels,state,assignees"]
     cwd, slug = _issue_target(repo)
     if slug is not None:
         argv.extend(["-R", slug])
@@ -87,10 +88,18 @@ def issue_view(repo: str | None, number: int) -> IssueView:
             normalized_state = "closed"
         else:
             raise ValueError("state must be OPEN or CLOSED")
+        assignees = value["assignees"]
+        if not isinstance(assignees, list):
+            raise ValueError("assignees must be a list")
+        if not all(
+            isinstance(user, dict) and isinstance(user.get("login"), str) for user in assignees
+        ):
+            raise ValueError("assignees must contain logins")
+        logins = tuple(user["login"] for user in assignees)
         title, body = value["title"], value["body"]
         if not isinstance(title, str) or not isinstance(body, str):
             raise ValueError("invalid issue fields")
-        return IssueView(title, body, names, normalized_state)
+        return IssueView(title, body, names, normalized_state, logins)
     except GhError as exc:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
