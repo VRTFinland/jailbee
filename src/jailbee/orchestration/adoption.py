@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import ExitStack
-
-from jailbee.container_locks import locked as container_locked
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from jailbee.container_locks import locked as container_locked
 from jailbee.incus import IncusError
 from jailbee.lifecycle import short_name
 from jailbee.orchestration import commands, labels, outbox, rights, state, watch

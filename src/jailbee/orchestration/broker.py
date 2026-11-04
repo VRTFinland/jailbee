@@ -582,8 +582,11 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
             )
             config = current.get("config", {}) if current else {}
             role = (
-                "child" if config.get(labels.SPAWNED_BY)
-                else "orchestrator" if config.get(labels.GRANT) else "none"
+                "child"
+                if config.get(labels.SPAWNED_BY)
+                else "orchestrator"
+                if config.get(labels.GRANT)
+                else "none"
             )
             if role == "none":
                 memory.env_ensured.discard(full)

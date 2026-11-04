@@ -120,6 +120,7 @@ def test_blocked_old_refresh_cannot_overwrite_new_unbind(tmp_path, monkeypatch):
             assert new_started.wait(5)
             # Exercise the real production inode, never replace the lock with a fake.
             import fcntl
+
             from jailbee.paths import xdg_data_home
 
             path = xdg_data_home() / "jailbee/container-locks/proj-c.lock"
@@ -144,11 +145,13 @@ def test_blocked_old_refresh_cannot_overwrite_new_unbind(tmp_path, monkeypatch):
 def test_legacy_repo_dir_refresh_resolves_primary_and_submodule(
     tmp_path, monkeypatch, make_cfg, registered
 ):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
     from jailbee.container_outbox import bindings
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
-    from datetime import UTC, datetime
-    from sqlmodel import Session
 
     incus, config = rig(tmp_path, monkeypatch)
     del config["user.jailbee.repo_dir"]
@@ -158,10 +161,13 @@ def test_legacy_repo_dir_refresh_resolves_primary_and_submodule(
     cfg = make_cfg(tmp_path / "host-only/legacy-repo")
     if registered:
         with Session(get_engine()) as session:
-            session.add(RegisteredRepo(
-                container_prefix="proj", repo_root=str(cfg.repo_root),
-                registered_at=datetime.now(UTC),
-            ))
+            session.add(
+                RegisteredRepo(
+                    container_prefix="proj",
+                    repo_root=str(cfg.repo_root),
+                    registered_at=datetime.now(UTC),
+                )
+            )
             session.commit()
         assert container_bindings.refresh(incus, "proj-c")
     else:

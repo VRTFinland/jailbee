@@ -48,7 +48,8 @@ def _legacy_repo_dir(full: str, cfg: Config | None) -> str:
 
         with Session(get_engine()) as session:
             repos = [
-                row for row in session.exec(select(RegisteredRepo))
+                row
+                for row in session.exec(select(RegisteredRepo))
                 if full.startswith(row.container_prefix + "-")
             ]
             if not repos:
@@ -80,8 +81,10 @@ def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
     try:
         if running:
             # Guard the fixed container path, not an arbitrary device source.
-            incus.exec(full, ["sh", "-c", 'set -eu; mkdir -p "${1%/*}"; touch "$1"',
-                              "sh", str(ERROR_MARKER)])
+            incus.exec(
+                full,
+                ["sh", "-c", 'set -eu; mkdir -p "${1%/*}"; touch "$1"', "sh", str(ERROR_MARKER)],
+            )
         config = {}
         for key in KEYS:
             value = incus.config_get_checked(full, key)

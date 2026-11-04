@@ -90,8 +90,13 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     config = rows[1]["config"]
     config[labels.SPAWNED_BY] = "myrepo-o"
     ctx = ActionContext(
-        cfg, GlobalConfig(), incus, tmp_path,
-        Node("myrepo-a", "a", True, dict(config)), {}, datetime.now(UTC),
+        cfg,
+        GlobalConfig(),
+        incus,
+        tmp_path,
+        Node("myrepo-a", "a", True, dict(config)),
+        {},
+        datetime.now(UTC),
     )
     incus.config_get_checked.side_effect = incus.config_get.side_effect
     incus.config_unset_checked.side_effect = lambda name, key: config.pop(key, None)
@@ -119,6 +124,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
                 assert started.wait(5)
                 # Without the production lock, force the stale write into the gap.
                 import fcntl
+
                 from jailbee.paths import xdg_data_home
 
                 lock_path = xdg_data_home() / "jailbee/container-locks/myrepo-a.lock"

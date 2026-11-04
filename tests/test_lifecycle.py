@@ -3,7 +3,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
+from unittest.mock import call as mock_call
 
 import pytest
 
@@ -1387,7 +1388,8 @@ def test_new_container_sets_default_base_branch_label(make_cfg, tmp_path, mocker
     from jailbee import container_bindings
 
     assert container_bindings.sync.call_args_list == [
-        call(incus, "myrepo-feat-foo", cfg=cfg), call(incus, "myrepo-feat-foo", cfg=cfg)
+        mock_call(incus, "myrepo-feat-foo", cfg=cfg),
+        mock_call(incus, "myrepo-feat-foo", cfg=cfg),
     ]
 
 
@@ -5411,7 +5413,8 @@ def test_boot_container_syncs_instructions_before_allocation(
     from jailbee import container_bindings
 
     assert container_bindings.sync.call_args_list == [
-        call(incus, "feat-x", cfg=cfg), call(incus, "feat-x", cfg=cfg)
+        mock_call(incus, "feat-x", cfg=cfg),
+        mock_call(incus, "feat-x", cfg=cfg),
     ]
 
 
