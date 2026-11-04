@@ -119,6 +119,29 @@ def test_destroy_orphan_stops_deletes_and_cleans(mocker):
     job.assert_called_once_with("gamma-x")
 
 
+@pytest.mark.parametrize("delete_fails", [False, True], ids=["successful-delete", "failed-delete"])
+def test_destroy_orphan_removes_outcomes_only_after_success(tmp_path, mocker, delete_fails):
+    from jailbee import autostart_outcomes as outcomes
+
+    name = "gamma-x"
+    outcomes.record(name, "on_create", "setup", "init", "fail")
+    path = outcomes.outcomes_path(name)
+    original = path.read_bytes()
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": name, "status": "Stopped"}]
+    mocker.patch("jailbee.egress_scope.drop_container_acl")
+    mocker.patch.object(orphans, "_delete_job_row")
+    if delete_fails:
+        incus.delete.side_effect = IncusError("delete failed")
+        with pytest.raises(IncusError, match="delete failed"):
+            orphans.destroy_orphan(incus, name, force=True)
+        assert path.read_bytes() == original
+    else:
+        orphans.destroy_orphan(incus, name, force=True)
+        assert not path.exists()
+        assert outcomes.failed_count(name) == 0
+
+
 def test_destroy_orphan_skips_stop_when_stopped_and_survives_acl_failure(mocker):
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "gamma-x", "status": "Stopped"}]
