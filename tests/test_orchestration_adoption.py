@@ -51,6 +51,97 @@ def test_adoption_reinstalls_marker_even_when_broker_cached_old_child(cfg, rig):
     )
 
 
+def test_adopt_retry_repairs_marker_after_first_exec_failure(cfg, rig, tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    rows, incus = rig
+    config = rows[1]["config"]
+    incus.config_set.side_effect = lambda name, key, value: config.__setitem__(key, value)
+    mocker.patch("jailbee.orchestration.outbox.deliver")
+    marker = []
+
+    def execute(name, argv, **kwargs):
+        if not marker:
+            marker.append(False)
+            raise IncusError("first marker exec failed")
+        marker[0] = True
+
+    incus.exec.side_effect = execute
+    with pytest.raises(IncusError, match="first marker exec failed"):
+        adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    assert config[labels.SPAWNED_BY] == "myrepo-o"
+    assert marker == [False]
+    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    assert result.already == ("myrepo-a",)
+    assert result.adopted == ()
+    assert marker == [True]
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_path, mocker, cached):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from jailbee.global_config import GlobalConfig
+    from jailbee.orchestration import broker
+    from jailbee.orchestration.actions import ActionContext, Node
+
+    rows, incus = rig
+    config = rows[1]["config"]
+    config[labels.SPAWNED_BY] = "myrepo-o"
+    ctx = ActionContext(
+        cfg, GlobalConfig(), incus, tmp_path,
+        Node("myrepo-a", "a", True, dict(config)), {}, datetime.now(UTC),
+    )
+    incus.config_get_checked.side_effect = incus.config_get.side_effect
+    incus.config_unset_checked.side_effect = lambda name, key: config.pop(key, None)
+    mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
+    mocker.patch("jailbee.orchestration.outbox.deliver")
+    mocker.patch.object(broker, "ensure_orchestration_env")
+    started = Event()
+    marker = [True]
+    memory = broker.BrokerMemory()
+    if cached:
+        memory.env_ensured.add("myrepo-a")
+        memory.env_roles["myrepo-a"] = "child"
+
+    def stale_broker():
+        started.set()
+        broker._ensure_env(ctx, memory)
+
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        pending = []
+
+        def execute(name, argv, **kwargs):
+            if argv[0] == "rm":
+                marker[0] = False
+                pending.append(workers.submit(stale_broker))
+                assert started.wait(5)
+                # Without the production lock, force the stale write into the gap.
+                import fcntl
+                from jailbee.paths import xdg_data_home
+
+                lock_path = xdg_data_home() / "jailbee/container-locks/myrepo-a.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                with lock_path.open("a") as probe:
+                    try:
+                        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        pass
+                    else:
+                        fcntl.flock(probe, fcntl.LOCK_UN)
+                        pending[0].result(timeout=5)
+            else:
+                marker[0] = True
+
+        incus.exec.side_effect = execute
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+        pending[0].result(timeout=5)
+    assert labels.SPAWNED_BY not in config
+    assert marker == [False]
+    assert "myrepo-a" not in memory.env_ensured
+
+
 def test_adoption_discards_stale_child_outbox_record(cfg, rig):
     rows, incus = rig
     rows[1]["config"]["user.jailbee.orch.stopped_outbox"] = "0"

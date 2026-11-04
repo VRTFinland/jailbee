@@ -572,23 +572,39 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     A vanished name is forgotten so a recreated older image is ensured again.
     """
     full = ctx.sender.full
-    role = ctx.role()
-    if full in memory.env_ensured and memory.env_roles.get(full) == role:
-        return
+    from jailbee.container_locks import locked as container_locked
+
     try:
-        ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
-        if ctx.role() == "child":
-            labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
-    except IncusError as exc:
+        with container_locked(full):
+            # The tick's nodes may predate a release. Recheck even on a cache hit.
+            current = next(
+                (row for row in ctx.incus.list_containers() if row.get("name") == full), None
+            )
+            config = current.get("config", {}) if current else {}
+            role = (
+                "child" if config.get(labels.SPAWNED_BY)
+                else "orchestrator" if config.get(labels.GRANT) else "none"
+            )
+            if role == "none":
+                memory.env_ensured.discard(full)
+                memory.env_roles.pop(full, None)
+                return
+            if full in memory.env_ensured and memory.env_roles.get(full) == role:
+                return
+            ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+            if role == "child":
+                labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+            memory.env_ensured.add(full)
+            memory.env_roles[full] = role
+    except (IncusError, OSError) as exc:
+        memory.env_ensured.discard(full)
+        memory.env_roles.pop(full, None)
         memory.warn_once(
             f"env:{full}",
             "broker: %s: could not prepare the orchestration inbox: %s",
             full,
             exc,
         )
-    else:
-        memory.env_ensured.add(full)
-        memory.env_roles[full] = role
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:

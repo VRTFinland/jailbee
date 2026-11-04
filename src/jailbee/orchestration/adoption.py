@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import ExitStack
+
+from jailbee.container_locks import locked as container_locked
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -175,6 +178,23 @@ def adopt(
     root: Path | None = None,
     now: datetime | None = None,
 ) -> AdoptResult:
+    root = root if root is not None else state.state_root()
+    # Order: broker singleton -> mutation -> sorted container locks -> watch.
+    with watch.mutation_locked(root), ExitStack() as locks:
+        for name in sorted(set(children)):
+            locks.enter_context(container_locked(name))
+        return _adopt_locked(cfg, incus, orchestrator_full, children, root=root, now=now)
+
+
+def _adopt_locked(
+    cfg: Config,
+    incus: Incus,
+    orchestrator_full: str,
+    children: Sequence[str],
+    *,
+    root: Path,
+    now: datetime | None,
+) -> AdoptResult:
     rows = _rows(incus)
 
     class SnapshotIncus:
@@ -236,6 +256,10 @@ def adopt(
     root = root if root is not None else state.state_root()
     now = now if now is not None else datetime.now(UTC)
     warnings = []
+    # A failed first adoption may have persisted the parent but not the marker.
+    for name in already:
+        if rows[name].get("status") == "Running":
+            labels.write_child_role(incus.with_exec_timeout(20), name, uid=cfg.container_user.uid)
     for name in pending:
         config = _config(rows[name])
         for key in CHILD_STATE_LABELS:
@@ -272,6 +296,19 @@ def release(
     *,
     root: Path | None = None,
     now: datetime | None = None,
+) -> ReleaseResult:
+    root = root if root is not None else state.state_root()
+    with watch.mutation_locked(root), container_locked(child_full):
+        return _release_locked(cfg, incus, child_full, root=root, now=now)
+
+
+def _release_locked(
+    cfg: Config,
+    incus: Incus,
+    child_full: str,
+    *,
+    root: Path,
+    now: datetime | None,
 ) -> ReleaseResult:
     rows = _rows(incus)
     config = _config(rows.get(child_full, {}))

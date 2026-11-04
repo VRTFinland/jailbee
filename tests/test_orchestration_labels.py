@@ -7,6 +7,16 @@ import pytest
 from jailbee.orchestration import labels
 
 
+def test_startup_marker_writer_rechecks_released_parent():
+    incus = MagicMock()
+    incus.config_get_checked.return_value = None
+    labels.ensure_child_role(incus, "proj-c", uid=1000)
+    incus.exec.assert_not_called()
+    incus.config_get_checked.return_value = "proj-o"
+    labels.ensure_child_role(incus, "proj-c", uid=1000)
+    assert labels.ROLE_MARKER_PATH in str(incus.exec.call_args)
+
+
 def test_on_done_of_defaults_to_keep():
     assert labels.on_done_of({}) == "keep"
     assert labels.on_done_of({labels.ON_DONE: "destroy"}) == "destroy"

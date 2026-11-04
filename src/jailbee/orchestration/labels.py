@@ -50,6 +50,15 @@ SPAWNED_BY = "user.jailbee.spawned_by"
 ROLE_MARKER_PATH = "/home/dev/.jailbee/orchestration/role"
 
 
+def ensure_child_role(incus: Incus, full: str, *, uid: int) -> None:
+    """Startup may race host release; only a fresh parent authorizes the marker."""
+    from jailbee.container_locks import locked
+
+    with locked(full):
+        if incus.config_get_checked(full, SPAWNED_BY):
+            write_child_role(incus, full, uid=uid)
+
+
 def write_child_role(incus: Incus, full: str, *, uid: int) -> None:
     """Install the marker atomically as the container user."""
     incus.exec(

@@ -850,7 +850,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    assert rig.incus.list_containers.call_count == 5  # incl. watch snapshot and post-spawn refresh
+    assert rig.incus.list_containers.call_count == 6  # incl. authority recheck and watch refresh
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
@@ -1603,6 +1603,7 @@ def test_startup_rechecks_container_after_queue_launch(rig: Rig, monkeypatch) ->
     rig.incus.list_containers.side_effect = [
         [_orch(), _child(running=False)],
         [_orch(), _child(running=False)],
+        [_orch(), _child(running=False)],  # env authority recheck, before queue launch
         [_orch(), _child()],
         [_orch(), _child()],
     ]
