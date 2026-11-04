@@ -65,7 +65,8 @@ class ForeignIssueRightsConfig(BaseModel):
         default_factory=list,
         description=(
             "Allowed issue action kinds on the listed foreign repositories "
-            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+            "(assign_self: assign issues to itself, and unassign itself, even from issues "
+            "the user claimed by hand; assign: assign issues to anyone)."
         ),
     )
 
@@ -98,7 +99,8 @@ class PublishRightsConfig(BaseModel):
         default_factory=list,
         description=(
             "Issue action kinds allowed on the own repository and declared submodules "
-            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+            "(assign_self: assign issues to itself, and unassign itself, even from issues "
+            "the user claimed by hand; assign: assign issues to anyone)."
         ),
     )
     foreign_issues: ForeignIssueRightsConfig = Field(

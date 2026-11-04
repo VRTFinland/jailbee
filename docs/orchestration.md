@@ -132,7 +132,9 @@ jb orchestrate grant bugs --no-publish
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after
-`@me` is resolved. `assign` covers any login and implies `assign_self`. A
+`@me` is resolved. That includes removal: `assign_self` lets the orchestrator
+unassign the host user (`remove: ["@me"]`), also from issues the user
+claimed by hand. `assign` covers any login and implies `assign_self`. A
 repo cap can narrow `assign` to `assign_self`. Publishing needs `assign` when
 an action adds or removes another login, or when no publisher login is known.
 Over remote SSH, adding either kind, or going from `assign_self` to `assign`,

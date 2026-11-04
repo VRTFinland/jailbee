@@ -131,7 +131,8 @@ class ForeignIssueRights(BaseModel):
         default=(),
         description=(
             "Issue action kinds permitted on the listed foreign repositories "
-            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+            "(assign_self: assign issues to itself, and unassign itself, even from issues "
+            "the user claimed by hand; assign: assign issues to anyone)."
         ),
     )
 
@@ -159,7 +160,8 @@ class PublishRights(BaseModel):
         default=(),
         description=(
             "Issue actions allowed on the own repository and declared submodules "
-            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+            "(assign_self: assign issues to itself, and unassign itself, even from issues "
+            "the user claimed by hand; assign: assign issues to anyone)."
         ),
     )
     foreign_issues: ForeignIssueRights = Field(

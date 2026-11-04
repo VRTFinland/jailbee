@@ -13074,8 +13074,8 @@ def orchestrate_grant_cmd(
         typer.Option(
             "--publish-issues",
             help=(
-                "Issue action kinds, comma-separated (assign_self: only the publisher; "
-                "assign: anyone); none clears."
+                "Issue action kinds, comma-separated (assign_self: only the publisher, "
+                "which includes unassigning the publisher; assign: anyone); none clears."
             ),
         ),
     ] = None,

@@ -83,7 +83,8 @@ jailbee inbox send publish --pr b.json --wait
 Issue kinds use `publish.issues` for the own repo/submodules, or
 `publish.foreign_issues.actions` plus its repo list for foreign issues.
 Assignment is an issue kind too: `assign_self` covers only assigning or
-unassigning the publisher's own login, `assign` covers any login and implies
+unassigning the publisher's own login (so it can also unassign the host user
+from issues the user claimed by hand), `assign` covers any login and implies
 `assign_self`.
 
 PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
