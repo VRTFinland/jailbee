@@ -386,6 +386,21 @@ via `gh`. The bridge and publication do not require GitHub egress from the
 container. Optional AI description generation runs an agent inside the
 container and does need access to its configured backend.
 
+PR binding snapshots live in the host user's XDG data directory under
+`jailbee/container-metadata/<full-name>/`. Foreground and background destroy
+share the lifecycle deletion path: it holds the same per-container lock as
+snapshot publication and removes only that container's metadata after Incus
+successfully deletes it. A waiting refresh rechecks existence under the lock;
+a recreated namesake reads its own current labels rather than an old snapshot.
+
+`jailbee/container-locks/<full-name>.lock` files deliberately persist after
+destroy as empty name-scoped lock anchors. Unlinking even an unlocked file
+can split mutual exclusion: a waiter may already have opened the old inode
+while a new caller opens its replacement. Reusing the stable inode avoids
+that race across deletion and name reuse. The tradeoff is one empty file and
+inode per distinct container name; automatic lock-file reclamation would need
+a separate retirement protocol and is not performed.
+
 ## Dashboard state service
 
 The terminal dashboard (`dashboard/tui/`, built with Textual) and optional Qt

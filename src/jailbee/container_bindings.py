@@ -75,6 +75,9 @@ def sync(incus: Incus, full: str, *, cfg: Config | None = None) -> None:
 def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
     from jailbee.incus import IncusError
 
+    # A refresh may have waited behind destroy; do not resurrect its metadata.
+    if not incus.exists(full):
+        raise IncusError(f"Container '{full}' does not exist")
     directory = metadata_root() / full
     directory.mkdir(parents=True, exist_ok=True)
     running = _running(incus, full)

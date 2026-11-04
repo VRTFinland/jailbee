@@ -2927,6 +2927,20 @@ def destroy_container(
     before ``incus.delete``. ``on_phase=None`` leaves behaviour unchanged.
     """
 
+    from jailbee.container_locks import locked
+
+    with locked(name):
+        _destroy_container_locked(cfg, incus, name, force=force, on_phase=on_phase)
+
+
+def _destroy_container_locked(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    force: bool,
+    on_phase: Callable[[str], None] | None,
+) -> None:
     def _phase(label: str) -> None:
         if on_phase is not None:
             on_phase(label)
@@ -3017,6 +3031,20 @@ def destroy_container(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    # Publication and deletion share the stable name lock, including waiting refreshes.
+    try:
+        import shutil
+
+        from jailbee.container_bindings import metadata_root
+
+        directory = metadata_root() / name
+        if directory.is_symlink():
+            directory.unlink()
+        elif directory.exists():
+            shutil.rmtree(directory)
+    except OSError as exc:
+        warn(f"Could not remove container metadata for '{name}' (continuing): {exc}")
 
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login

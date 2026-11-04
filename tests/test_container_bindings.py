@@ -365,3 +365,64 @@ def test_failed_refresh_invalidates_old_binding(tmp_path, monkeypatch):
     with pytest.raises(IncusError):
         container_bindings.sync(incus, "proj-c")
     assert "error" in json.loads((tmp_path / "proj-c/bindings.json").read_text())
+
+
+def test_destroy_serializes_waiting_refresh_without_recreating_metadata(make_cfg, tmp_path, mocker):
+    import fcntl
+
+    from jailbee.lifecycle import destroy_container
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from jailbee import container_bindings
+    from jailbee.container_locks import locked
+    from jailbee.paths import xdg_data_home
+
+    full = "proj-waiting"
+    root = tmp_path / "metadata"
+    (root / full).mkdir(parents=True)
+    (root / full / "bindings.json").write_text("old")
+    mocker.patch.object(container_bindings, "metadata_root", return_value=root)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": full, "status": "Stopped"}]
+    present = [True]
+    incus.exists.side_effect = lambda name: present[0]
+    incus.config_get_checked.side_effect = lambda name, key: (
+        "/repo" if key == "user.jailbee.repo_dir" else None
+    )
+    incus.config_device_get.return_value = None
+    started = Event()
+    pending = []
+    with locked(full):
+        lock = xdg_data_home() / f"jailbee/container-locks/{full}.lock"
+        inode = lock.stat().st_ino
+    with ThreadPoolExecutor(1) as workers:
+        def refresh():
+            started.set()
+            container_bindings.sync(incus, full)
+
+        def delete(name, **kwargs):
+            pending.append(workers.submit(refresh))
+            assert started.wait(5)
+            with lock.open("a") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise AssertionError("destroy does not hold the publication lock")
+            present[0] = False
+
+        incus.delete.side_effect = delete
+        destroy_container(make_cfg(tmp_path), incus, full, force=True)
+        with pytest.raises(IncusError, match="does not exist"):
+            pending[0].result(timeout=5)
+    assert not (root / full).exists()
+    with locked(full):
+        assert lock.stat().st_ino == inode
+    present[0] = True  # A newly created namesake can publish fresh bindings.
+    container_bindings.sync(incus, full)
+    assert json.loads((root / full / "bindings.json").read_text()) == {
+        "user.jailbee.repo_dir": "/repo"
+    }
+    assert lock.stat().st_ino == inode

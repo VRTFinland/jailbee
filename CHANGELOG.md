@@ -16,8 +16,10 @@ before editing `## Unreleased`.
 ### Changed
 
 - Child containers no longer stage GitHub writes; they send their orchestrator
-  the exact proposal instead. Children with pending GitHub outbox proposals,
-  or unknown outbox state after an external stop, are kept for inspection.
+  the exact proposal instead. Children with pending GitHub outbox proposals
+  are kept for inspection. An externally stopped child without a recorded
+  stop-time outbox check has unknown outbox state and is kept until restarted
+  for inspection or explicitly force-destroyed.
 
 ## 1.8.2 - 2026-11-04
 
