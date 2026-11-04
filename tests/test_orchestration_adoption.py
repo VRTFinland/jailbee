@@ -34,6 +34,7 @@ def rig(mocker):
         raw("myrepo-a"),
     ]
     incus = MagicMock()
+    incus.with_exec_timeout.return_value = incus
     incus.list_containers.side_effect = lambda: rows
     incus.config_get.side_effect = lambda name, key: next(
         (r["config"].get(key) for r in rows if r["name"] == name), None
@@ -306,6 +307,37 @@ def test_release_cleanup_failure_restores_parent_for_retry(cfg, rig, tmp_path, m
     cancel.side_effect = None
     assert adoption.release(cfg, incus, "myrepo-a", root=tmp_path).orchestrator == "myrepo-o"
     assert labels.SPAWNED_BY not in config
+
+
+@pytest.mark.parametrize("running", [True, False])
+def test_release_cleans_role_before_clearing_authority(cfg, rig, tmp_path, mocker, running):
+    rows, incus = rig
+    rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
+    rows[1]["status"] = "Running" if running else "Stopped"
+    mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
+    mocker.patch("jailbee.orchestration.outbox.deliver")
+    if not running:
+        with pytest.raises(adoption.AdoptError, match="start.*retry"):
+            adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+        incus.config_unset_checked.assert_not_called()
+        incus.exec.assert_not_called()
+        return
+    adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    cleanup = next(c for c in incus.mock_calls if c[0] == "exec" and labels.ROLE_MARKER_PATH in str(c))
+    assert "rm" in str(cleanup)
+    assert incus.mock_calls.index(cleanup) < next(i for i, c in enumerate(incus.mock_calls) if c[0] == "config_unset_checked")
+
+
+def test_release_role_cleanup_failure_keeps_parent(cfg, rig, tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    rows, incus = rig
+    rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
+    mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
+    incus.exec.side_effect = IncusError("cannot remove marker")
+    with pytest.raises(IncusError):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    incus.config_unset_checked.assert_not_called()
 
 
 def test_release_non_child_refused(cfg, rig, tmp_path):

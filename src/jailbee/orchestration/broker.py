@@ -95,6 +95,7 @@ class BrokerMemory:
     # Orchestrator full name -> grant.json text last written into it.
     grant_written: dict[str, str] = field(default_factory=dict)
     env_ensured: set[str] = field(default_factory=set)
+    env_roles: dict[str, str | None] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
     # Inbox file sequence: orders the items emitted within one second.
@@ -571,7 +572,8 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     A vanished name is forgotten so a recreated older image is ensured again.
     """
     full = ctx.sender.full
-    if full in memory.env_ensured:
+    role = ctx.role()
+    if full in memory.env_ensured and memory.env_roles.get(full) == role:
         return
     try:
         ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
@@ -586,6 +588,7 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
     else:
         memory.env_ensured.add(full)
+        memory.env_roles[full] = role
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:

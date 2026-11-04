@@ -278,7 +278,13 @@ def release(
         raise AdoptError(f"'{short_name(cfg, child_full)}' is not a child")
     root = root if root is not None else state.state_root()
     now = now if now is not None else datetime.now(UTC)
+    if rows[child_full].get("status") != "Running":
+        raise AdoptError("cannot release a stopped child safely; start it and retry release")
     revoked = rights.revoke_owned(cfg, incus, child_full)
+    # Retain parent authority until the old-session marker has really been removed.
+    incus.with_exec_timeout(20).exec(
+        child_full, ["rm", "-f", "--", labels.ROLE_MARKER_PATH], uid=cfg.container_user.uid
+    )
     incus.config_unset_checked(child_full, labels.SPAWNED_BY)
     try:
         for key in CHILD_STATE_LABELS:
@@ -288,6 +294,7 @@ def release(
         state.purge_pending(root, child_full)
     except Exception:
         incus.config_set(child_full, labels.SPAWNED_BY, parent)
+        labels.write_child_role(incus, child_full, uid=cfg.container_user.uid)
         raise
     warning = _notify(
         cfg,

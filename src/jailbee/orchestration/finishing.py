@@ -98,9 +98,15 @@ def complete(
                 kept_reason = child_outbox.describe(child.short, pending)
                 if pending.summaries:
                     body += "\n\n" + "\n".join(pending.summaries)
-        if kept_reason is not None:
-            body += "\n\n" + kept_reason
-            policy = "keep"
+    elif child is not None:
+        record = child.config.get(labels.STOPPED_OUTBOX, "")
+        if not record or not record.isascii() or not record.isdecimal() or len(record) > 10:
+            kept_reason = child_outbox.unchecked(child.short)
+        elif int(record):
+            kept_reason = child_outbox.describe_count(child.short, int(record))
+    if kept_reason is not None:
+        body += "\n\n" + kept_reason
+        policy = "keep"
     if error is not None:
         policy = "keep"
     elif policy == "destroy" and not _destroy_allowed(ctx, orchestrator):
