@@ -40,7 +40,10 @@ def test_build_grant_sets_issue_kinds(cfg):
     ).publish.issues == ("comment", "state")
     with pytest.raises(
         GrantError,
-        match="unknown issue action 'close'; known: assign, assign_self, comment, create, edit, labels, state",
+        match=(
+            "unknown issue action 'close'; "
+            "known: assign, assign_self, comment, create, edit, labels, state"
+        ),
     ):
         commands.build_grant(cfg, None, GrantFlags(publish_issues=("close",)))
     assert commands.build_grant(cfg, None, GrantFlags(publish_issues=("none",))).publish.empty()

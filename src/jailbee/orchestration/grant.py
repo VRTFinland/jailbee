@@ -93,9 +93,7 @@ class Grantable(BaseModel):
         return _checked_egress(v)
 
 
-IssueActionKind = Literal[
-    "create", "edit", "comment", "labels", "state", "assign_self", "assign"
-]
+IssueActionKind = Literal["create", "edit", "comment", "labels", "state", "assign_self", "assign"]
 ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
     "assign",
     "assign_self",
@@ -130,7 +128,8 @@ class ForeignIssueRights(BaseModel):
         default=(), description="Foreign owner/name repositories, or '*' alone for any repository."
     )
     actions: tuple[IssueActionKind, ...] = Field(
-        default=(), description=(
+        default=(),
+        description=(
             "Issue action kinds permitted on the listed foreign repositories "
             "(assign_self: assign issues to itself; assign: assign issues to anyone)."
         ),
