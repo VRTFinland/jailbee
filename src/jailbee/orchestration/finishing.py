@@ -42,7 +42,7 @@ def complete(
     """Import and mark for later cleanup; never write to an inbox here."""
     from jailbee import lifecycle, sync
     from jailbee.git import GitError
-    from jailbee.orchestration import importing
+    from jailbee.orchestration import child_outbox, importing
     from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S, _child_head
 
     error: str | None = None
@@ -86,6 +86,21 @@ def complete(
                 error = "child branch or HEAD changed during import; send a new done report"
             else:
                 ref, oid = imported.ref, imported.oid
+    body = item.body
+    if child is not None and child.running:
+        bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+        try:
+            pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
+        except child_outbox.ChildOutboxError:
+            kept_reason = child_outbox.unchecked(child.short)
+        else:
+            if pending.count:
+                kept_reason = child_outbox.describe(child.short, pending)
+                if pending.summaries:
+                    body += "\n\n" + "\n".join(pending.summaries)
+        if kept_reason is not None:
+            body += "\n\n" + kept_reason
+            policy = "keep"
     if error is not None:
         policy = "keep"
     elif policy == "destroy" and not _destroy_allowed(ctx, orchestrator):
@@ -104,7 +119,7 @@ def complete(
             "id": new_host_id(),
             "type": "message",
             "from": item.child_short,
-            "body": item.body,
+            "body": body,
             "kind": "done",
             "in_reply_to": item.in_reply_to,
             "imported_ref": ref,
@@ -119,6 +134,8 @@ def complete(
             f"done reported to {orchestrator.short} at {item.done_sha[:12]}, but the "
             f"import failed: {error}; this container is kept"
         )
+        if kept_reason is not None:
+            summary += f" ({kept_reason})"
     else:
         ending = "will be destroyed" if policy == "destroy" else "is kept"
         if kept_reason is not None:

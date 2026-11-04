@@ -34,8 +34,19 @@ SHA = "a" * 40
 CHILD = "myrepo-fix-1"
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("JAILBEE_ROLE", raising=False)
+
+
 class Rig:
     def __init__(self, ctx: ActionContext, mocker: MockerFixture) -> None:
+        from jailbee.orchestration.child_outbox import PendingGithub
+
+        self.outbox_probe = mocker.patch(
+            "jailbee.orchestration.child_outbox.probe", return_value=PendingGithub((), (), ())
+        )
         self.ctx = ctx
         self.incus: MagicMock = ctx.incus  # type: ignore[assignment]  # built as a MagicMock
         self.dirty = mocker.patch(
@@ -100,6 +111,46 @@ def _untouched(rig: Rig) -> None:
 
 def _policy(rig: Rig, policy: str) -> None:
     rig.ctx.sender = Node(CHILD, "fix-1", True, {**rig.ctx.sender.config, labels.ON_DONE: policy})
+
+
+@pytest.mark.parametrize("policy", ["keep", "destroy"])
+@pytest.mark.parametrize("import_error", [False, True])
+def test_every_done_reports_staged_github_actions(tmp_path, mocker, policy, import_error):
+    from jailbee.orchestration.child_outbox import PendingGithub
+
+    rig = _make(tmp_path, mocker)
+    _policy(rig, policy)
+    if import_error:
+        rig.import_child.return_value = "import failed"
+    pending = PendingGithub(("003-x.json",), (), ('issue/003-x.json: create "Title"',))
+    probe = mocker.patch("jailbee.orchestration.child_outbox.probe", return_value=pending)
+    out = messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.on_done == "keep"
+    assert msg.on_done_reason == (
+        "child `fix-1` has 1 staged GitHub action(s) in its outbox (issue: 003-x.json); "
+        "they are never published from a child — ask it to send the content, "
+        "then destroy with force: true"
+    )
+    assert 'issue/003-x.json: create "Title"' in msg.body
+    assert "staged GitHub" in out.detail
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
+    probe.assert_called_once_with(
+        rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
+    )
+
+
+@pytest.mark.parametrize("policy", ["keep", "destroy"])
+def test_done_unknown_outbox_is_reported_and_never_schedules_destroy(tmp_path, mocker, policy):
+    from jailbee.orchestration.child_outbox import ChildOutboxError
+
+    rig = _make(tmp_path, mocker)
+    _policy(rig, policy)
+    mocker.patch("jailbee.orchestration.child_outbox.probe", side_effect=ChildOutboxError("read"))
+    messages.handle_message(rig.ctx, _done())
+    msg = rig.write_inbox.call_args.args[2]
+    assert msg.on_done == "keep" and "outbox could not be checked" in msg.on_done_reason
+    assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
 
 def test_done_imports_then_delivers_then_marks_destroy(
@@ -395,7 +446,7 @@ def test_done_bounds_every_child_probe_and_the_fetch(tmp_path: Path, mocker: Moc
     and the ext:: fetch from it run with a timeout."""
     rig = _make(tmp_path, mocker)
     messages.handle_message(rig.ctx, _done())
-    assert rig.incus.with_exec_timeout.call_count == 2
+    assert rig.incus.with_exec_timeout.call_count == 3
     assert all(
         c.args == (CHILD_EXEC_TIMEOUT_S,) for c in rig.incus.with_exec_timeout.call_args_list
     )

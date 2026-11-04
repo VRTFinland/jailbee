@@ -31,6 +31,7 @@ CHILD_STATE_LABELS = (
     labels.ON_DONE,
     labels.PENDING_DESTROY,
     labels.STOPPED_DIRTY,
+    labels.STOPPED_OUTBOX,
 )
 
 

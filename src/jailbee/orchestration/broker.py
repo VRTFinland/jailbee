@@ -752,6 +752,7 @@ def tick(
     for node in nodes.values():
         if node.running and (
             node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)
+            or node.config.get(labels.STOPPED_OUTBOX)
         ):
             _clear_stale_stop_labels(incus, node)
 
@@ -872,7 +873,7 @@ def _forget_vanished_watches(root: Path, present: set[object]) -> None:
 def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
     """A running container's recorded stop-time HEAD and dirty flag are stale."""
     try:
-        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY):
+        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY, labels.STOPPED_OUTBOX):
             if node.config.get(key):
                 incus.config_unset_checked(node.full, key)
     except Exception:

@@ -41,6 +41,13 @@ def rig(mocker):
     return rows, incus
 
 
+def test_adoption_discards_stale_child_outbox_record(cfg, rig):
+    rows, incus = rig
+    rows[1]["config"]["user.jailbee.orch.stopped_outbox"] = "0"
+    adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
+    incus.config_unset_checked.assert_any_call("myrepo-a", "user.jailbee.orch.stopped_outbox")
+
+
 def test_adopt_sets_policy_then_parent(cfg, rig):
     _, incus = rig
     result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
@@ -59,7 +66,7 @@ def test_clears_only_present_stale_labels_before_setting(cfg, rig):
         adoption.CHILD_STATE_LABELS
     )
     operations = [c[0] for c in incus.mock_calls if c[0] in {"config_unset_checked", "config_set"}]
-    assert operations == ["config_unset_checked"] * 10 + ["config_set"] * 2
+    assert operations == ["config_unset_checked"] * 11 + ["config_set"] * 2
     assert not {labels.LAST_IMPORT, labels.RIGHTS, labels.RUNNER} & {
         c.args[1] for c in incus.config_set.call_args_list
     }

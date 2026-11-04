@@ -68,6 +68,12 @@ def _spawn_raw(mid: str = "s1", *, prompt_file: bool = True) -> RawManifest:
 
 class Rig:
     def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from jailbee.orchestration.child_outbox import PendingGithub
+
+        monkeypatch.setattr(
+            "jailbee.orchestration.child_outbox.probe",
+            MagicMock(return_value=PendingGithub((), (), ())),
+        )
         self.root = tmp_path / "state"
         self.root.mkdir()
         self.cfg = make_config(tmp_path).model_copy(update={"container_prefix": "proj"})
@@ -1127,6 +1133,25 @@ def test_tick_destroys_child_marked_for_destroy(rig: Rig, monkeypatch: pytest.Mo
     assert not directory.exists()
 
 
+@pytest.mark.parametrize("unknown", [False, True])
+def test_tick_rechecks_outbox_before_deferred_destroy(rig, monkeypatch, unknown):
+    from jailbee.orchestration import child_outbox, outbox
+
+    _marked_child(rig)
+    destroy = _destroy_seams(monkeypatch)
+    probe = MagicMock(return_value=child_outbox.PendingGithub((), ("review.json",), ()))
+    if unknown:
+        probe.side_effect = child_outbox.ChildOutboxError("permission")
+    monkeypatch.setattr(child_outbox, "probe", probe)
+    notice = MagicMock()
+    monkeypatch.setattr(outbox, "deliver", notice)
+    rig.tick()
+    destroy.assert_not_called()
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.PENDING_DESTROY)
+    body = notice.call_args.args[3].body
+    assert ("outbox could not be checked" if unknown else "review.json") in body
+
+
 @pytest.mark.parametrize("dirty", [False, True])
 def test_tick_keeps_marked_child_whose_head_moved_or_tree_dirty(
     rig: Rig, monkeypatch: pytest.MonkeyPatch, dirty: bool
@@ -1316,12 +1341,13 @@ def test_vanished_orchestrator_finish_notifies_child(
     assert not directory.exists()
 
 
-def test_tick_clears_stale_stopped_dirty(rig: Rig) -> None:
+@pytest.mark.parametrize("key", [labels.STOPPED_DIRTY, "user.jailbee.orch.stopped_outbox"])
+def test_tick_clears_stale_stop_record(rig: Rig, key: str) -> None:
     kid = _child()
-    kid["config"][labels.STOPPED_DIRTY] = "1"
+    kid["config"][key] = "0"
     rig.incus.list_containers.return_value = [_orch(), kid]
     rig.tick()
-    rig.incus.config_unset_checked.assert_any_call("proj-kid", labels.STOPPED_DIRTY)
+    rig.incus.config_unset_checked.assert_any_call("proj-kid", key)
 
 
 def test_tick_clears_stopped_head_of_a_running_child(rig: Rig) -> None:
