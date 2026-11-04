@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.2 - 2026-11-04
+
 ### Fixed
 
 - A spawned child whose creation finished while the broker was refreshing its
