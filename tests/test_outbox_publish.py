@@ -1691,3 +1691,38 @@ def test_publish_survives_sent_record_failure_selected(env, kind, mocker, caplog
     assert "001.json" not in env[2][kind].as_dict()
     assert caplog.records
     assert all("disk gone" in r.getMessage() for r in caplog.records)
+
+
+def test_issue_plan_json_names_the_assignees_kind(env):
+    from jailbee.outbox.publish import issue_plan_json
+
+    cfg, incus, _, journals, *_ = env
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "assignees",
+                        "repo": ".",
+                        "issue": 42,
+                        "add": ["@me"],
+                        "expected": {"assignees": []},
+                    }
+                ],
+            }
+        )
+    }
+    env[2]["issue"] = store("issue", files)
+    batch = issue_outbox.prepare_batch(
+        cfg,
+        incus,
+        IDENTITY.full_name,
+        ("001.json",),
+        uid=cfg.container_user.uid,
+        journal_store=journals,
+    )
+    data = issue_plan_json(batch, proposal="issue/001.json", revision="r1")
+    assert [(a["kind"], a["target"], a["will"]) for a in data["actions"]] == [
+        ("assignees", "acme/repo#42", "publish")
+    ]

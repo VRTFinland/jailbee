@@ -179,6 +179,12 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 "labels",
                 False,
             )
+        elif isinstance(action, issues.AssigneesAction):
+            body, kind, markdown = (
+                f"add: {', '.join(action.add)}\nremove: {', '.join(action.remove)}",
+                "assignees",
+                False,
+            )
         else:
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False

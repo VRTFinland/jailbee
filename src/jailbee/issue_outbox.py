@@ -26,6 +26,8 @@ from jailbee.issue_manifest import (
     MAX_MANIFEST_BYTES,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
+    ME_LOGIN,
+    AssigneesAction,
     CommentAction,
     CreateAction,
     CreatedIssue,
@@ -279,14 +281,56 @@ def _expected_fields(action: IssueAction) -> dict[str, object]:
             fields["body"] = action.expected_body or ""
     elif isinstance(action, LabelsAction):
         fields["labels"] = frozenset(label.casefold() for label in action.expected_labels)
+    elif isinstance(action, AssigneesAction):
+        fields["assignees"] = frozenset(login.casefold() for login in action.expected_assignees)
     elif isinstance(action, StateAction):
         fields["state"] = action.expected_state
     return fields
 
 
-def _differences(action: IssueAction, snapshot: IssueSnapshot, context: str) -> list[str]:
+def resolved_assignees(
+    action: AssigneesAction, login: str
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The (add, remove) logins of ``action`` with ``@me`` replaced by the publisher ``login``.
+
+    An empty ``login`` (not resolved) leaves ``@me`` as written.
+    """
+
+    def resolve(logins: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(login if item == ME_LOGIN and login else item for item in logins)
+
+    return resolve(action.add), resolve(action.remove)
+
+
+def _assignee_overlap(action: AssigneesAction, login: str) -> bool:
+    add, remove = resolved_assignees(action, login)
+    return bool({item.casefold() for item in add} & {item.casefold() for item in remove})
+
+
+def _assignees_differ(action: AssigneesAction, snapshot: IssueSnapshot, login: str) -> bool:
+    """Whether the live assignees match neither the expected set nor a state this action reaches.
+
+    A retry after an uncertain attempt finds the issue already past the
+    expected set: the add landed, or both the add and the removal did.
+    Those states are not stale, because replaying the action is a no-op there.
+    """
+    add, remove = resolved_assignees(action, login)
+    expected = {item.casefold() for item in action.expected_assignees}
+    added = expected | {item.casefold() for item in add}
+    reachable = (expected, added, added - {item.casefold() for item in remove})
+    return {item.casefold() for item in snapshot.assignees} not in reachable
+
+
+def _differences(
+    action: IssueAction, snapshot: IssueSnapshot, context: str, login: str = ""
+) -> list[str]:
     differences = []
     for field, expected in _expected_fields(action).items():
+        if field == "assignees":
+            assert isinstance(action, AssigneesAction)
+            if _assignees_differ(action, snapshot, login):
+                differences.append(f"{context}: expected.{field} differs from the current issue")
+            continue
         actual = (
             frozenset(label.casefold() for label in snapshot.labels)
             if field == "labels"
@@ -482,7 +526,7 @@ def prepare_batch(
                 if snapshot is not None:
                     if snapshot.is_pull_request:
                         refusals.append(f"{context}: target is a pull request, not an issue")
-                    refusals.extend(_differences(action, snapshot, context))
+                    refusals.extend(_differences(action, snapshot, context, login))
 
             labels = None
             if isinstance(action, (CreateAction, LabelsAction)) and status == "pending":
@@ -520,6 +564,9 @@ def prepare_batch(
                         action, label_maps.get(repo.identity), context, refusals
                     )
 
+            if status == "pending" and isinstance(action, AssigneesAction):
+                if _assignee_overlap(action, login):
+                    refusals.append(f"{context}: a login cannot appear in both add and remove")
             if status == "pending":
                 for field in _expected_fields(action):
                     mutation_key = (
@@ -573,7 +620,7 @@ def revalidate_batch(batch: PreparedBatch) -> None:
             snapshot = fresh[key]
             if snapshot.is_pull_request:
                 refusals.append(f"{context}: target is a pull request, not an issue")
-            refusals.extend(_differences(resolved.action, snapshot, context))
+            refusals.extend(_differences(resolved.action, snapshot, context, batch.login))
     if execution_errors:
         raise IssueExecutionError("\n".join(refusals)) from execution_errors[0]
     if refusals:
@@ -586,6 +633,13 @@ def _prose(label: str, text: str | None, *, markdown: bool = False) -> list[str]
     return [f"  {label}:", *(f"    {line}" for line in (text or "[empty]").split("\n"))]
 
 
+def _assignee_changes(action: AssigneesAction, login: str) -> str:
+    """``assignees +alice \u2212bob`` with ``@me`` resolved when the publisher ``login`` is known."""
+    add, remove = resolved_assignees(action, login)
+    changes = [f"+{item}" for item in add] + [f"\u2212{item}" for item in remove]
+    return "assignees " + " ".join(changes)
+
+
 def _action_lines(
     name: str,
     index: int,
@@ -594,6 +648,7 @@ def _action_lines(
     receipt: JournalAction | None,
     labels: tuple[str, ...] | None,
     container: str,
+    login: str = "",
 ) -> list[str]:
     kind = (
         "create"
@@ -604,6 +659,8 @@ def _action_lines(
         if isinstance(action, CommentAction)
         else "labels"
         if isinstance(action, LabelsAction)
+        else "assignees"
+        if isinstance(action, AssigneesAction)
         else "state"
     )
     target = f"#{issue.number}" if issue.number is not None else f"ref {issue.ref}"
@@ -650,6 +707,8 @@ def _action_lines(
         lines.append(f"  add: {', '.join(added) or '[empty]'}")
         if labels is not None:
             lines.append(f"  labels after: {', '.join(labels) or '[empty]'}")
+    elif isinstance(action, AssigneesAction):
+        lines.append(f"  {_assignee_changes(action, login)}")
     else:
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
@@ -726,6 +785,7 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
                     receipts.get(resolved.index),
                     resolved.labels,
                     batch.container,
+                    batch.login,
                 )
             )
     return lines
@@ -897,7 +957,7 @@ def _resolved_number(issue: ResolvedIssue, created: Mapping[str, int]) -> int:
 
 
 def _execute_one(
-    host_repo_root: Path, resolved: ResolvedAction, created: dict[str, int]
+    host_repo_root: Path, resolved: ResolvedAction, created: dict[str, int], login: str = ""
 ) -> MutationReceipt:
     """Dispatch one pending action's exact GitHub mutation; return its receipt.
 
@@ -929,6 +989,24 @@ def _execute_one(
         return issue_github.replace_labels(
             host_repo_root, repo, number, labels=resolved.labels or ()
         )
+    if isinstance(action, AssigneesAction):
+        add, remove = resolved_assignees(action, login)
+        last: MutationReceipt | None = None
+        if add:
+            last = issue_github.add_assignees(host_repo_root, repo, number, logins=add)
+        if remove:
+            try:
+                last = issue_github.remove_assignees(host_repo_root, repo, number, logins=remove)
+            except IssueGithubMutationError as exc:
+                if last is None:
+                    raise
+                # The additions already landed, so a definite rejection of the
+                # removal still leaves the issue half-changed.
+                raise IssueGithubMutationError(
+                    "GitHub mutation outcome is uncertain", uncertain=True
+                ) from exc
+        assert last is not None, "a parsed assignees action changes at least one login"
+        return last
     if isinstance(action, StateAction):
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
@@ -1076,6 +1154,7 @@ def _sent_action(
     *,
     target: int | None,
     url: str | None,
+    login: str = "",
 ) -> sent.SentAction:
     """The Sent-log entry of one dispatched issue action, from the prepared snapshot."""
     action = resolved.action
@@ -1095,6 +1174,9 @@ def _sent_action(
         changes = [f"+{label}" for label in action.add]
         changes += [f"\u2212{label}" for label in action.remove]
         content = "labels " + " ".join(changes)
+    elif isinstance(action, AssigneesAction):
+        kind = "assignees"
+        content = _assignee_changes(action, login)
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
@@ -1292,7 +1374,7 @@ def apply_batch(
                             raise
                     try:
                         receipt = _execute_one(
-                            batch.host_repo_root, resolved, created_issue_numbers
+                            batch.host_repo_root, resolved, created_issue_numbers, batch.login
                         )
                     except IssueGithubMutationError as exc:
                         recorded = True
@@ -1310,6 +1392,7 @@ def apply_batch(
                                     target=resolved.issue.number
                                     or created_issue_numbers.get(resolved.issue.ref or ""),
                                     url=None,
+                                    login=batch.login,
                                 ),
                                 state="uncertain",
                             )
@@ -1340,6 +1423,7 @@ def apply_batch(
                             resolved,
                             target=receipt.issue,
                             url=receipt.url,
+                            login=batch.login,
                         ),
                         state="applied",
                     )

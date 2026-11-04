@@ -25,6 +25,7 @@ class IssueSnapshot:
     state: Literal["open", "closed"]
     url: str
     is_pull_request: bool
+    assignees: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def _run_api(
     repo_root: Path,
     endpoint: str,
     *,
-    method: Literal["GET", "POST", "PATCH"] = "GET",
+    method: Literal["GET", "POST", "PATCH", "DELETE"] = "GET",
     payload: Mapping[str, object] | None = None,
     mutation: bool = False,
     paginate: bool = False,
@@ -194,6 +195,16 @@ def get_issue(repo_root: Path, repo: str, number: int) -> IssueSnapshot:
         raise IssueGithubReadError("GitHub read failed: unexpected response")
     labels = tuple(_read_string(_read_object(label).get("name")) for label in raw_labels)
 
+    raw_assignees = data.get("assignees")
+    if raw_assignees is None:
+        assignees: tuple[str, ...] = ()
+    elif _is_array(raw_assignees):
+        assignees = tuple(
+            _read_string(_read_object(item).get("login")) for item in raw_assignees
+        )
+    else:
+        raise IssueGithubReadError("GitHub read failed: unexpected response")
+
     raw_body = data.get("body")
     if raw_body is not None and not isinstance(raw_body, str):
         raise IssueGithubReadError("GitHub read failed: unexpected response")
@@ -209,6 +220,7 @@ def get_issue(repo_root: Path, repo: str, number: int) -> IssueSnapshot:
         state=raw_state,
         url=_read_string(data.get("html_url")),
         is_pull_request="pull_request" in data,
+        assignees=assignees,
     )
 
 
@@ -271,6 +283,42 @@ def replace_labels(
         mutation=True,
     )
     return _mutation_receipt(data)
+
+
+def add_assignees(
+    repo_root: Path,
+    repo: str,
+    number: int,
+    *,
+    logins: tuple[str, ...],
+) -> MutationReceipt:
+    """Add the given logins as assignees; GitHub treats an already-assigned login as a no-op."""
+    data = _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/assignees",
+        method="POST",
+        payload={"assignees": list(logins)},
+        mutation=True,
+    )
+    return _mutation_receipt(data, issue=number)
+
+
+def remove_assignees(
+    repo_root: Path,
+    repo: str,
+    number: int,
+    *,
+    logins: tuple[str, ...],
+) -> MutationReceipt:
+    """Remove the given logins from the assignees; an absent login is a no-op."""
+    data = _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/assignees",
+        method="DELETE",
+        payload={"assignees": list(logins)},
+        mutation=True,
+    )
+    return _mutation_receipt(data, issue=number)
 
 
 def add_comment(

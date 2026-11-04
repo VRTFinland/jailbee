@@ -14478,11 +14478,17 @@ def _select_issue_manifests_or_exit(
     return [manifest]
 
 
-_ISSUE_ACTION_KIND_ORDER = ("create", "edit", "comment", "labels", "state")
+_ISSUE_ACTION_KIND_ORDER = ("create", "edit", "comment", "labels", "assignees", "state")
 
 
 def _issue_action_kind(action: object) -> str:
-    from jailbee.issue_manifest import CommentAction, CreateAction, EditAction, LabelsAction
+    from jailbee.issue_manifest import (
+        AssigneesAction,
+        CommentAction,
+        CreateAction,
+        EditAction,
+        LabelsAction,
+    )
 
     if isinstance(action, CreateAction):
         return "create"
@@ -14492,6 +14498,8 @@ def _issue_action_kind(action: object) -> str:
         return "comment"
     if isinstance(action, LabelsAction):
         return "labels"
+    if isinstance(action, AssigneesAction):
+        return "assignees"
     return "state"
 
 

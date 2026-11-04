@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
@@ -70,6 +71,17 @@ class LabelsAction:
 
 
 @dataclass(frozen=True)
+class AssigneesAction:
+    """Add and remove issue assignees; ``@me`` in add/remove is the publisher's login."""
+
+    repo: str
+    target: IssueTarget
+    add: tuple[str, ...]
+    remove: tuple[str, ...]
+    expected_assignees: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class StateAction:
     repo: str
     target: IssueTarget
@@ -78,7 +90,9 @@ class StateAction:
     expected_state: Literal["open", "closed"]
 
 
-IssueAction = CreateAction | EditAction | CommentAction | LabelsAction | StateAction
+IssueAction = (
+    CreateAction | EditAction | CommentAction | LabelsAction | AssigneesAction | StateAction
+)
 
 
 @dataclass(frozen=True)
@@ -178,6 +192,30 @@ def _labels(value: object, field: str, context: str) -> tuple[str, ...]:
         normalized.add(folded)
         labels.append(label)
     return tuple(labels)
+
+
+ME_LOGIN: Final = "@me"
+_LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
+
+
+def _logins(
+    value: object, field: str, context: str, *, allow_me: bool
+) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise IssueManifestError(f"{context}: {field} must be a list of GitHub logins")
+    logins: list[str] = []
+    seen: set[str] = set()
+    for login in value:
+        if not isinstance(login, str):
+            raise IssueManifestError(f"{context}: {field} must contain login strings")
+        if not (_LOGIN_RE.fullmatch(login) or (allow_me and login == ME_LOGIN)):
+            raise IssueManifestError(f"{context}: invalid login {login!r} in {field}")
+        folded = login.casefold()
+        if folded in seen:
+            raise IssueManifestError(f"{context}: duplicate login {login!r} in {field}")
+        seen.add(folded)
+        logins.append(login)
+    return tuple(logins)
 
 
 def _resolve_body(
@@ -411,6 +449,42 @@ def _parse_label_action(
     )
 
 
+def _parse_assignees_action(
+    item: dict[str, object],
+    refs: Mapping[str, str],
+    changed: dict[tuple[str, str, int | str], set[str]],
+    context: str,
+) -> AssigneesAction:
+    _reject_unknown(
+        item, {"type", "repo", "issue", "issue_ref", "add", "remove", "expected"}, context
+    )
+    repo = _repo(item, context)
+    target = _target(item, repo, refs, context)
+    add = _logins(item.get("add", []), "add", context, allow_me=True)
+    remove = _logins(item.get("remove", []), "remove", context, allow_me=True)
+    if not add and not remove:
+        raise IssueManifestError(f"{context}: at least one login in add or remove is required")
+    if {login.casefold() for login in add} & {login.casefold() for login in remove}:
+        raise IssueManifestError(f"{context}: a login cannot appear in both add and remove")
+    if "expected" not in item:
+        raise IssueManifestError(f"{context}: expected.assignees is required")
+    expected = _expected(item, context)
+    _reject_unknown(expected, {"assignees"}, f"{context} expected")
+    if "assignees" not in expected:
+        raise IssueManifestError(f"{context}: expected.assignees is required")
+    expected_assignees = _logins(
+        expected["assignees"], "expected.assignees", context, allow_me=False
+    )
+    _record_mutations(changed, repo, target, {"assignees"}, context)
+    return AssigneesAction(
+        repo=repo,
+        target=target,
+        add=add,
+        remove=remove,
+        expected_assignees=expected_assignees,
+    )
+
+
 def _state(value: object, field: str, context: str) -> Literal["open", "closed"]:
     if not isinstance(value, str) or value not in ("open", "closed"):
         raise IssueManifestError(f"{context}: {field} must be 'open' or 'closed'")
@@ -489,11 +563,13 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_comment(item, files, body_files, refs, context)
         elif action_type == "labels":
             action = _parse_label_action(item, refs, changed, context)
+        elif action_type == "assignees":
+            action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
         else:
             raise IssueManifestError(
-                f"{context}: type must be one of create, edit, comment, labels, or state"
+                f"{context}: type must be one of create, edit, comment, labels, assignees, or state"
             )
         actions.append(action)
 
