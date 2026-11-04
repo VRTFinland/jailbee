@@ -33,7 +33,10 @@ refresh prepares named services only. Elevated refresh requires the host or
 orchestrator; container refusal exits 3. It pauses an idle managed agent and
 resumes its session after confirmed restoration. `--force` skips only the idle
 check; host `--yes` consents only to foreign agents remaining active. Restricted
-SSH cannot run refresh, even with network and mount unlocks.
+SSH cannot run refresh, even with network and mount unlocks. The dashboard's
+Services menu appears only for running containers in repos with configured
+services; it uses gathered service choices without reading configuration in the
+frontend.
 
 For autostart, `new --services`, profile services, and orchestration spawn/restart
 `--services` select the dependency-closed plan. Reserved `on_start` services slots
@@ -463,7 +466,15 @@ See [Configuration](../../../config.md#where-does-the-autostart-config-come-from
 
 `start` and `restart` re-run autostart (`on_start`). Only `restart` can store
 an autostart profile or override/reset its service selection. `stop` halts. All
-accept a picker when `NAME` is omitted with a TTY.
+accept a picker when `NAME` is omitted with a TTY. Both `start` and `restart`
+refuse while a foreground `autostart run --wait` owns the rerun lock.
+
+`autostart run NAME --stage STAGE`, `--step STAGE/STEP`, or `--failed` reruns
+current host-profile-eligible ordinary steps, detached unless `--wait` is set.
+Any nonempty in-progress claim blocks a rerun, including foreground `1` and
+unknown/dead markers. Failure counts ignore removed/renamed or profile-excluded
+steps. Restricted SSH refuses stage or legacy-step network/mount changes;
+`--list` is read-only and may still show them.
 
 | Flag (`start` / `restart`) | Effect |
 |---|---|

@@ -23,6 +23,25 @@ def test_gather_repo_without_profiles_includes_builtins(mocker, tmp_path, make_c
     assert group.autostart_services == ("db", "web")
 
 
+@pytest.mark.parametrize("over_ssh", [False, True])
+@pytest.mark.parametrize("configured", [False, True])
+def test_gathered_services_control_menu_without_frontend_collection(mocker, tmp_path, make_cfg, configured, over_ssh):
+    from jailbee.dashboard import model
+    from jailbee.dashboard.tui.menu_state import open_menu
+    from jailbee.state_service.protocol import Snapshot, decode, encode
+    from datetime import UTC, datetime
+
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}} if configured else {})
+    row = ContainerInfo("alpha-x", "Running", None, None, None)
+    mocker.patch.object(model, "load_repo_config", return_value=cfg)
+    mocker.patch.object(model, "list_containers", side_effect=[[row], []])
+    groups = model.gather_rows(mocker.MagicMock(), [tmp_path], with_git=False)
+    snapshot = decode(encode(Snapshot(1, datetime.now(UTC), False, groups)))
+    menu = open_menu(snapshot.groups, "alpha-x", over_ssh=over_ssh,
+                     ssh_policy=RemoteSSHConfig() if over_ssh else None)
+    assert ("services" in [verb for _, verb in menu.actions]) is configured
+
+
 def test_gather_repo_with_named_profiles_includes_builtins(mocker, tmp_path, make_cfg):
     from jailbee.dashboard import model
     from tests.test_autostart_profiles import profile_cfg

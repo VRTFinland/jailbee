@@ -160,7 +160,6 @@ def run_foreground(
                 override="wait",
                 skip_services=True,
                 skip_agents=True,
-                record_on_create=bool(cfg.autostart.profiles),
                 on_progress=on_progress,
                 mirror_endpoint=mirror_endpoint,
             )
