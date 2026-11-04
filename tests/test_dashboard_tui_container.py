@@ -1452,11 +1452,22 @@ def test_services_direct_table_key_opens_picker_without_toggling_details(mocker,
     group = every_verb_group(tmp_path)
     menu = tmenu.open_menu([group], "alpha-x")
     entries = tmenu.menu_entries(menu)
-    direct_key = next(key for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
-                      if isinstance(item, tuple) and item[1] == tsession.dact.SERVICES)
-    listing = mocker.patch.object(tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(
-        True, "", json.dumps([{"name": "db", "state": "ready", "window": "svc-db",
-                               "since": None, "detail": ""}])))
+    direct_key = next(
+        key
+        for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
+        if isinstance(item, tuple) and item[1] == tsession.dact.SERVICES
+    )
+    listing = mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(
+            True,
+            "",
+            json.dumps(
+                [{"name": "db", "state": "ready", "window": "svc-db", "since": None, "detail": ""}]
+            ),
+        ),
+    )
     run = drive(mocker, ["j", direct_key], [group])
     assert [p.purpose for p in run.of_type(tsession.Picker)] == ["container-services"]
     assert run.last.show_details == run.trace[0].show_details

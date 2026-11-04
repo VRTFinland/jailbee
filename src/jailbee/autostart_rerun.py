@@ -42,7 +42,8 @@ def validate_windows(cfg: Config, block: Autostart) -> None:
                     if window in protected:
                         raise RerunSelectionError(
                             f"Cannot re-run {trigger.value}:{stage.stage}/{step.name}: "
-                            f"protected agent/service window '{window}'", 1
+                            f"protected agent/service window '{window}'",
+                            1,
                         )
 
 
@@ -51,13 +52,20 @@ def eligible_autostart(cfg: Config) -> Autostart:
     from jailbee.tmux import window_for
 
     protected = _protected_windows(cfg)
-    return cfg.autostart.model_copy(update={
-        trigger.value: [
-            stage for stage in rerunnable_stages(cfg.autostart, trigger)
-            if not any(window_for(step.name) in protected
-                       for chain in stage.all_chains() for step in chain.steps)
-        ] for trigger in TRIGGER_ORDER
-    })
+    return cfg.autostart.model_copy(
+        update={
+            trigger.value: [
+                stage
+                for stage in rerunnable_stages(cfg.autostart, trigger)
+                if not any(
+                    window_for(step.name) in protected
+                    for chain in stage.all_chains()
+                    for step in chain.steps
+                )
+            ]
+            for trigger in TRIGGER_ORDER
+        }
+    )
 
 
 def failed_targets(cfg: Config, container: str) -> list[RerunTarget]:

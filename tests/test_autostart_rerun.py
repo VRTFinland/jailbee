@@ -21,10 +21,12 @@ def collision_cfg(tmp_path, step_name):
         container_prefix="myrepo",
         agents={"claude": {"autostart": True}},
         services={"db": {"run": "sleep infinity"}, "db_cache": {"run": "sleep infinity"}},
-        autostart={"on_create": [
-            {"stage": "setup", "steps": [{"name": step_name, "run": "true"}]},
-            {"stage": "safe-setup", "steps": [{"name": "safe", "run": "true"}]},
-        ]},
+        autostart={
+            "on_create": [
+                {"stage": "setup", "steps": [{"name": step_name, "run": "true"}]},
+                {"stage": "safe-setup", "steps": [{"name": "safe", "run": "true"}]},
+            ]
+        },
     )
     return _build_config_from_dict(raw, tmp_path / ".jailbee/config.yaml", skip_git=True)
 
@@ -32,7 +34,9 @@ def collision_cfg(tmp_path, step_name):
 @pytest.mark.parametrize("step_name", ["claude", "svc-db", "svc-db.cache"])
 @pytest.mark.parametrize("selector", ["stage", "step", "failed"])
 @pytest.mark.parametrize("wait", [False, True], ids=["detached", "foreground"])
-def test_collision_selection_refused_before_any_execution(tmp_path, mocker, step_name, selector, wait):
+def test_collision_selection_refused_before_any_execution(
+    tmp_path, mocker, step_name, selector, wait
+):
     from jailbee import autostart_outcomes as outcomes
     from jailbee.autostart_rerun import command
 
@@ -46,14 +50,20 @@ def test_collision_selection_refused_before_any_execution(tmp_path, mocker, step
     kill = mocker.patch("jailbee.tmux.kill_window")
     launch = mocker.patch("jailbee.tmux._new_window")
     execute, _, _, _ = execution_deps(mocker)
-    kwargs = dict(stages=["setup"] if selector == "stage" else [],
-                  steps=[f"setup/{step_name}"] if selector == "step" else [],
-                  failed=selector == "failed", trigger=None, listing=False,
-                  json_output=False, wait=wait, spawn=spawn)
+    kwargs = dict(
+        stages=["setup"] if selector == "stage" else [],
+        steps=[f"setup/{step_name}"] if selector == "step" else [],
+        failed=selector == "failed",
+        trigger=None,
+        listing=False,
+        json_output=False,
+        wait=wait,
+        spawn=spawn,
+    )
     if selector == "failed":
         command(cfg, incus, "c", **kwargs)
     else:
-        with pytest.raises(ValueError, match="protected.*window"):
+        with pytest.raises(ValueError, match=r"protected.*window"):
             command(cfg, incus, "c", **kwargs)
     kill.assert_not_called()
     launch.assert_not_called()
@@ -74,10 +84,23 @@ def test_collision_list_and_picker_offer_only_safe_steps(tmp_path, mocker, step_
     incus.config_get_checked.return_value = None
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    picker = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, options: options[0].value)
+    picker = mocker.patch(
+        "jailbee.prompting._select", side_effect=lambda noun, options: options[0].value
+    )
     spawn = mocker.MagicMock()
-    command(cfg, incus, "c", stages=[], steps=[], failed=False, trigger=None,
-            listing=False, json_output=False, wait=False, spawn=spawn)
+    command(
+        cfg,
+        incus,
+        "c",
+        stages=[],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=False,
+        json_output=False,
+        wait=False,
+        spawn=spawn,
+    )
     assert len(picker.call_args.args[1]) == 2
     block = spawn.call_args.args[1]
     assert [s.name for c in block.on_create[0].all_chains() for s in c.steps] == ["safe"]
@@ -85,7 +108,9 @@ def test_collision_list_and_picker_offer_only_safe_steps(tmp_path, mocker, step_
 
 @pytest.mark.parametrize("step_name", ["claude", "svc-db", "svc-db.cache"])
 @pytest.mark.parametrize("detached", [False, True])
-def test_collision_execution_defense_rejects_unfiltered_block(tmp_path, mocker, step_name, detached):
+def test_collision_execution_defense_rejects_unfiltered_block(
+    tmp_path, mocker, step_name, detached
+):
     from dataclasses import replace
 
     from jailbee.autostart import run_detached
@@ -97,9 +122,13 @@ def test_collision_execution_defense_rejects_unfiltered_block(tmp_path, mocker, 
     step, _, _, _ = execution_deps(mocker)
     kill = mocker.patch("jailbee.tmux.kill_window")
     launch = mocker.patch("jailbee.tmux._new_window")
-    with pytest.raises(ValueError, match="protected.*window"):
+    with pytest.raises(ValueError, match=r"protected.*window"):
         if detached:
-            run_detached(cfg, incus, replace(_spec(tmp_path, cfg.autostart, from_trigger="on_create"), rerun=True))
+            run_detached(
+                cfg,
+                incus,
+                replace(_spec(tmp_path, cfg.autostart, from_trigger="on_create"), rerun=True),
+            )
         else:
             run_foreground(cfg, incus, "c", cfg.autostart)
     step.assert_not_called()
@@ -115,10 +144,18 @@ def test_collision_spawn_defense_refuses_before_job_write(tmp_path, mocker, step
 
     cfg = collision_cfg(tmp_path, step_name)
     encode = mocker.patch("jailbee.background.autostart_job_to_dict")
-    with pytest.raises(ValueError, match="protected.*window"):
-        cli._spawn_autostart_worker(cfg, None, "c", incus=mocker.MagicMock(),
-            autostart=cfg.autostart, from_trigger="on_create", repo_dir="/r",
-            mirror_endpoint=None, rerun=True)
+    with pytest.raises(ValueError, match=r"protected.*window"):
+        cli._spawn_autostart_worker(
+            cfg,
+            None,
+            "c",
+            incus=mocker.MagicMock(),
+            autostart=cfg.autostart,
+            from_trigger="on_create",
+            repo_dir="/r",
+            mirror_endpoint=None,
+            rerun=True,
+        )
     encode.assert_not_called()
     assert not list(state_dir().rglob("*.job.json"))
 

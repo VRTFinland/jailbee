@@ -512,7 +512,8 @@ def _gather_rows(
             )
             effective = profiled_config(cfg, profile)
             c.autostart_rerunnable = any(
-                rerunnable_stages(eligible_autostart(effective), trigger) for trigger in TRIGGER_ORDER
+                rerunnable_stages(eligible_autostart(effective), trigger)
+                for trigger in TRIGGER_ORDER
             )
         covered.add(cfg.container_prefix)
         orch_view = cfg.orchestration_view()
