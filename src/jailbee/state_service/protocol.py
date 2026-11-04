@@ -38,7 +38,8 @@ from jailbee.update_check import UpdateNotice
 # 14 added SystemStatus.load.
 # 15 adds repo autostart choices/default and container autostart profile.
 # 16 adds the per-container autostart failed-step count.
-PROTOCOL = 16
+# 17 adds gathered job liveness.
+PROTOCOL = 17
 
 
 class ProtocolError(ValueError):

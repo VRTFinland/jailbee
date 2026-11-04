@@ -7569,11 +7569,36 @@ def test_dashboard_job_displays_failed_autostart_and_live_job_precedence(mocker)
 
     assert cell() == "autostart ✗2"
     c.job_phase, c.job_pid, c.job_kind = "deps", 123, "autostart"
+    c.job_live = True
     mocker.patch("jailbee.background.worker_alive", return_value=True)
     assert cell() == "auto:deps"
-    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    c.job_live = False
+    mocker.patch("jailbee.background.worker_alive", side_effect=AssertionError("frontend probe"))
     assert cell() == "autostart ✗2"
     c.job_phase, c.job_pid = "failed", None
     assert cell() == "autostart ✗2"
     c.autostart_failed = 0
     assert cell() == "failed"
+
+
+def test_orphan_dashboard_gathers_failed_autostart(tmp_path, monkeypatch, mocker, make_cfg):
+    from rich.text import Text
+    from jailbee import autostart_outcomes
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    root = tmp_path / "repo"
+    root.mkdir()
+    cfg = make_cfg(root)
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [{
+        "name": "other-work", "status": "Running",
+        "profiles": ["default", "other-base"], "config": {}, "state": None,
+    }]
+    incus.config_get.return_value = None
+    autostart_outcomes.record("other-work", "start", "deps", "install", "fail")
+    groups = dmodel.gather_rows(incus, [root], with_git=False)
+    orphan = next(g for g in groups if g.prefix == "other")
+    c = orphan.containers[0]
+    fields = dcolumns.visible_fields(datetime.now(UTC), [c], ("job",))
+    assert Text.from_markup(fields[0].cell(c)).plain == "autostart ✗1"

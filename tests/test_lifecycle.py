@@ -7060,7 +7060,8 @@ def test_new_container_without_on_phase_is_unchanged(make_cfg, tmp_path, mocker)
     new_container(cfg, incus, opts)
 
 
-def test_list_containers_attaches_job_phase_to_existing(make_cfg, tmp_path, monkeypatch):
+@pytest.mark.parametrize("live", [True, False])
+def test_list_containers_attaches_job_phase_to_existing(make_cfg, tmp_path, monkeypatch, mocker, live):
     """A running container with a matching BackgroundJob row gets job_phase set."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "myrepo"
@@ -7085,6 +7086,8 @@ def test_list_containers_attaches_job_phase_to_existing(make_cfg, tmp_path, monk
     from jailbee import background
     from jailbee.db import get_engine
 
+    mocker.patch("jailbee.background.worker_alive", return_value=live)
+
     with Session(get_engine()) as s:
         background.start_job(
             s,
@@ -7103,6 +7106,7 @@ def test_list_containers_attaches_job_phase_to_existing(make_cfg, tmp_path, monk
     assert len(out) == 1
     assert out[0].job_phase == "cloning"
     assert out[0].job_pid == 4242
+    assert out[0].job_live is live
 
 
 def test_list_containers_synthesises_row_for_container_less_op(make_cfg, tmp_path, monkeypatch):

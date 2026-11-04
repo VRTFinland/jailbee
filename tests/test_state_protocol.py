@@ -132,6 +132,7 @@ def _full_snapshot() -> Snapshot:
                 ),
             ),
             git_status=git,
+            job_live=True,
             job_phase="running",
             job_pid=77,
             job_kind="create",
@@ -270,7 +271,7 @@ def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     # 15 added repo/container autostart profile state.
-    assert PROTOCOL == 16
+    assert PROTOCOL == 17
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.

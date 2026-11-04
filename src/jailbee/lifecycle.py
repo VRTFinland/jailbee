@@ -102,6 +102,7 @@ class ContainerInfo:
     # `annotate_agent_status`; never by `list_containers`.
     agent_status: tuple[AgentSummary, ...] = ()
     git_status: GitStatus | None = None
+    job_live: bool = False
     job_phase: str | None = None
     job_pid: int | None = None
     job_kind: str | None = None
@@ -704,7 +705,7 @@ def list_containers(
     if with_background:
         from sqlmodel import Session
 
-        from jailbee import autostart_outcomes, background
+        from jailbee import background
         from jailbee.db import get_engine
 
         with Session(get_engine()) as session:
@@ -713,6 +714,7 @@ def list_containers(
         for c in out:
             row = ops.get(c.name)
             if row is not None:
+                c.job_live = not background.clearable(row.phase, row.pid)
                 c.job_phase = row.phase
                 c.job_pid = row.pid
                 c.job_kind = row.op_kind
@@ -728,6 +730,7 @@ def list_containers(
                     ip=None,
                     memory_limit=None,
                     repo=cfg.container_prefix,
+                    job_live=not background.clearable(row.phase, row.pid),
                     job_phase=row.phase,
                     job_pid=row.pid,
                     job_kind=row.op_kind,
@@ -735,8 +738,10 @@ def list_containers(
                 )
             )
 
-        for c in out:
-            c.autostart_failed = autostart_outcomes.failed_count(c.name)
+    from jailbee import autostart_outcomes
+
+    for c in out:
+        c.autostart_failed = autostart_outcomes.failed_count(c.name)
 
     view.annotate(out, view.queued_counts())
 
