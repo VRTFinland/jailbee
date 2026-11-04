@@ -109,7 +109,15 @@ def test_issue_management_skill_routes_writes_through_host() -> None:
     assert "jb issue apply" in text
 
 
-@pytest.mark.parametrize("name", ["jailbee-issue-management", "jailbee-pr-review", "jailbee-bug-report", "jailbee-orchestration-child"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "jailbee-issue-management",
+        "jailbee-pr-review",
+        "jailbee-bug-report",
+        "jailbee-orchestration-child",
+    ],
+)
 def test_github_skills_redirect_children(name: str) -> None:
     text = (Path(agent_skills._skills_root()) / name / "SKILL.md").read_text()
     first_rule = text.split("**First:**", 1)[1].split("\n\n", 1)[0]

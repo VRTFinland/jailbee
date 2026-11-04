@@ -2447,6 +2447,7 @@ def test_resolve_repo_targets_uses_located_gitdir(tmp_path, mocker, make_cfg):
 
 def test_container_ref_edits_prepare_with_create_snapshot(preflight, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee.container_cli import container_app
     from jailbee.container_outbox.store import Store
 
@@ -2455,10 +2456,14 @@ def test_container_ref_edits_prepare_with_create_snapshot(preflight, tmp_path, m
     body_file = tmp_path / "original.md"
     body_file.write_text("Original")
     runner = CliRunner()
+
     def invoke(*args):
         result = runner.invoke(container_app, ["issue", *args, "--batch", "b"])
         assert result.exit_code == 0, result.output
-    invoke("create", "--title", "Bug", "--body-file", str(body_file), "--label", "bug", "--ref", "bug")
+
+    invoke(
+        "create", "--title", "Bug", "--body-file", str(body_file), "--label", "bug", "--ref", "bug"
+    )
     invoke("edit", "@bug", "--title", "New", "--body", "Updated")
     invoke("labels", "@bug", "--add", "feature")
     invoke("state", "@bug", "closed", "--reason", "completed")

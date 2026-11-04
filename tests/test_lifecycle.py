@@ -11741,7 +11741,9 @@ def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_p
     ensure = mocker.patch("jailbee.outbox.io.ensure_directories")
     _new_child(cfg, incus, mocker, spawned_by="myrepo-orch")
     ensure.assert_not_called()
-    marker_calls = [c for c in incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)]
+    marker_calls = [
+        c for c in incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)
+    ]
     assert len(marker_calls) == 1
     assert marker_calls[0].kwargs["uid"] == cfg.container_user.uid
     assert "child" in str(marker_calls[0])

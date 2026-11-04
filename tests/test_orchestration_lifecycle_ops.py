@@ -69,7 +69,10 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     }
     from jailbee.orchestration.child_outbox import PendingGithub
 
-    monkeypatch.setattr("jailbee.orchestration.child_outbox.probe", MagicMock(return_value=PendingGithub((), (), ())))
+    monkeypatch.setattr(
+        "jailbee.orchestration.child_outbox.probe",
+        MagicMock(return_value=PendingGithub((), (), ())),
+    )
     monkeypatch.setattr(actions, "live_create_jobs", m["jobs"])
     monkeypatch.setattr(actions.stopping, "stop_container", m["stop"])
     monkeypatch.setattr("jailbee.create_flow.launch_boot_background", m["boot"])
@@ -103,16 +106,23 @@ def test_destroy_guard_keeps_unknown_running_outbox(tmp_path, seams, monkeypatch
     from jailbee.orchestration import child_outbox
 
     rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
-    monkeypatch.setattr(child_outbox, "probe", MagicMock(side_effect=child_outbox.ChildOutboxError("read")))
+    monkeypatch.setattr(
+        child_outbox, "probe", MagicMock(side_effect=child_outbox.ChildOutboxError("read"))
+    )
     reason = actions.destroy_guard(rig.ctx(), rig.child)
     assert reason and "outbox could not be checked" in reason and "force: true" in reason
 
 
 @pytest.mark.parametrize("record", ["2", "0", "bad", "-1"])
 def test_destroy_guard_checks_stopped_outbox_record(tmp_path, seams, record):
-    rig = Rig(tmp_path, config={
-        labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa", labels.STOPPED_OUTBOX: record
-    })
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.STOPPED_OUTBOX: record,
+        },
+    )
     reason = actions.destroy_guard(rig.ctx(), rig.child)
     if record == "0":
         assert reason is None
@@ -138,7 +148,9 @@ def test_stop_records_outbox_count_or_unsets_unknown(tmp_path, seams, monkeypatc
     if count is None:
         probe.side_effect = child_outbox.ChildOutboxError("unreadable")
     else:
-        probe.return_value = child_outbox.PendingGithub(tuple(f"{i}.json" for i in range(count)), (), ())
+        probe.return_value = child_outbox.PendingGithub(
+            tuple(f"{i}.json" for i in range(count)), (), ()
+        )
     monkeypatch.setattr(child_outbox, "probe", probe)
     assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
     if count is None:
@@ -530,7 +542,13 @@ def test_stopped_child_prefers_stopped_head_over_done_sha(
     )
     assert actions.handle_destroy(stale.ctx(), _destroy()).state == "refused"
     clean = Rig(
-        tmp_path, config={labels.LAST_IMPORT: y, labels.DONE_SHA: x, labels.STOPPED_HEAD: y, labels.STOPPED_OUTBOX: "0"}
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: y,
+            labels.DONE_SHA: x,
+            labels.STOPPED_HEAD: y,
+            labels.STOPPED_OUTBOX: "0",
+        },
     )
     assert actions.handle_destroy(clean.ctx(), _destroy()).state == "done"
     seams["head"].assert_not_called()

@@ -18,9 +18,7 @@ def isolated_home(tmp_path, monkeypatch):
 def _probe_rig(mocker, *, issue=(), pr=(), files=None):
     incus = MagicMock()
     incus.exec_capped.return_value = json.dumps({"issue": list(issue), "pr": list(pr)})
-    read = mocker.patch(
-        "jailbee.outbox_io.read_text_outbox", side_effect=files or [{}, {}]
-    )
+    read = mocker.patch("jailbee.outbox_io.read_text_outbox", side_effect=files or [{}, {}])
     return incus, read
 
 
@@ -57,7 +55,8 @@ def test_probe_counts_manifests_not_actions_and_summarizes(mocker):
         assert call.kwargs["uid"] == 1000
         assert call.kwargs["max_file_bytes"] <= 65536
     assert {c.args[2] for c in read.call_args_list} == {
-        "/home/dev/.jailbee/issue-outbox", "/home/dev/.jailbee/pr-outbox"
+        "/home/dev/.jailbee/issue-outbox",
+        "/home/dev/.jailbee/pr-outbox",
     }
     assert incus.exec_capped.call_args.kwargs["timeout"] == 60
     assert incus.exec_capped.call_args.kwargs["max_bytes"] <= 524288
@@ -82,7 +81,9 @@ def test_probe_snapshot_omission_cannot_hide_oversized_or_unreadable_manifest(mo
     assert "unreadable.json" in describe("c1", pending)
 
 
-@pytest.mark.parametrize("raw", ["", "{}", '{"error":"permission denied"}', '{"issue":[],"pr":null}'])
+@pytest.mark.parametrize(
+    "raw", ["", "{}", '{"error":"permission denied"}', '{"issue":[],"pr":null}']
+)
 def test_probe_unknown_names_fail_closed(mocker, raw):
     from jailbee.orchestration.child_outbox import ChildOutboxError, probe
 
@@ -116,9 +117,7 @@ def test_probe_changed_snapshot_fails_closed(mocker):
     from jailbee.orchestration.child_outbox import ChildOutboxError, probe
 
     incus, _ = _probe_rig(mocker)
-    incus.exec_capped.side_effect = [
-        '{"issue":[],"pr":[]}', '{"issue":["late.json"],"pr":[]}'
-    ]
+    incus.exec_capped.side_effect = ['{"issue":[],"pr":[]}', '{"issue":["late.json"],"pr":[]}']
     with pytest.raises(ChildOutboxError):
         probe(incus, "proj-c1", uid=1000)
 
@@ -134,9 +133,7 @@ def _run_name_script(mocker, issue: Path, pr: Path):
 
 
 def test_name_script_missing_real_directories_are_empty(tmp_path, mocker):
-    assert _run_name_script(mocker, tmp_path / "issue", tmp_path / "pr") == {
-        "issue": [], "pr": []
-    }
+    assert _run_name_script(mocker, tmp_path / "issue", tmp_path / "pr") == {"issue": [], "pr": []}
 
 
 def test_name_script_filters_top_level_regular_manifests(tmp_path, mocker):

@@ -8,12 +8,28 @@ import pytest
 @pytest.mark.parametrize(
     ("ref", "valid"),
     [
-        ("main", True), ("refs/heads/topic", True), ("feature/one", True),
-        ("HEAD", False), ("-bad", False), ("a..b", False), ("a@{b", False),
-        ("a.lock", False), ("a.lock/b", False), (".hidden/x", False),
-        ("a//b", False), ("a/", False), ("a.", False), ("a b", False),
-        ("a\tb", False), ("a\x7fb", False), ("a?b", False), ("a[b", False),
-        ("a\\b", False), ("@", True), ("a" * 300, True), ("topic/ends./next", True),
+        ("main", True),
+        ("refs/heads/topic", True),
+        ("feature/one", True),
+        ("HEAD", False),
+        ("-bad", False),
+        ("a..b", False),
+        ("a@{b", False),
+        ("a.lock", False),
+        ("a.lock/b", False),
+        (".hidden/x", False),
+        ("a//b", False),
+        ("a/", False),
+        ("a.", False),
+        ("a b", False),
+        ("a\tb", False),
+        ("a\x7fb", False),
+        ("a?b", False),
+        ("a[b", False),
+        ("a\\b", False),
+        ("@", True),
+        ("a" * 300, True),
+        ("topic/ends./next", True),
     ],
 )
 def test_pure_branch_ref_validation(ref, valid):
@@ -26,8 +42,15 @@ def test_pure_branch_ref_validation(ref, valid):
 def test_pure_parser_rejects_invalid_refs(field, value):
     from jailbee.pr_manifest import ManifestError, parse_manifest
 
-    raw = {"version": 1, "repo": "o/r", "pr": 7, "source": "refs/heads/topic",
-           "source_sha": "a" * 40, "base": "main", "actions": []}
+    raw = {
+        "version": 1,
+        "repo": "o/r",
+        "pr": 7,
+        "source": "refs/heads/topic",
+        "source_sha": "a" * 40,
+        "base": "main",
+        "actions": [],
+    }
     raw[field] = value
     with pytest.raises(ManifestError, match="not a valid"):
         parse_manifest("001-source.json", json.dumps(raw), {})
@@ -36,8 +59,15 @@ def test_pure_parser_rejects_invalid_refs(field, value):
 def test_host_wrapper_keeps_injected_git_validation(mocker):
     from jailbee import pr_manifest, pr_outbox
 
-    raw = {"version": 1, "repo": "o/r", "pr": 7, "source": "refs/heads/topic",
-           "source_sha": "a" * 40, "base": "main", "actions": []}
+    raw = {
+        "version": 1,
+        "repo": "o/r",
+        "pr": 7,
+        "source": "refs/heads/topic",
+        "source_sha": "a" * 40,
+        "base": "main",
+        "actions": [],
+    }
     text = json.dumps(raw)
     mocker.patch("jailbee.pr_outbox.git.check_ref_format", return_value=True)
     assert pr_outbox.parse_manifest("001-source.json", text, {}) == pr_manifest.parse_manifest(

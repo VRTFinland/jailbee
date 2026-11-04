@@ -64,7 +64,8 @@ def _refs(value: object) -> set[str]:
 def _rename_refs(value: object, names: Mapping[str, str]) -> object:
     if isinstance(value, dict):
         return {
-            key: names.get(child, child) if key == "body_file" and isinstance(child, str)
+            key: names.get(child, child)
+            if key == "body_file" and isinstance(child, str)
             else _rename_refs(child, names)
             for key, child in value.items()
         }
@@ -138,7 +139,9 @@ def _manifest_name(name: str) -> None:
 
 
 def _is_manifest(name: str) -> bool:
-    return not name.startswith(".") and name.endswith(".json") and not name.endswith(".progress.json")
+    return (
+        not name.startswith(".") and name.endswith(".json") and not name.endswith(".progress.json")
+    )
 
 
 def _validate(kind: Kind, name: str, manifest: dict[str, object], bodies: Mapping[str, str]) -> str:
@@ -194,12 +197,17 @@ class Store:
             raise OutboxCommandError("slug must match [a-z0-9-]{1,80}", 2)
         _validate(kind, f"{slug}.json", manifest, bodies)
         self.require_writable()
-        publication_lock = self._draft_lock(kind, "outbox-publication", publication=True) if kind == "pr" else nullcontext()
+        publication_lock = (
+            self._draft_lock(kind, "outbox-publication", publication=True)
+            if kind == "pr"
+            else nullcontext()
+        )
         with publication_lock, _directory(self.outbox(kind)) as fd:
             if kind == "pr" and sum(_is_manifest(name) for name in os.listdir(fd)) >= 20:
                 raise OutboxCommandError("PR outbox already has the cap of 20 pending manifests", 2)
             numbers = [
-                int(match[1]) for name in os.listdir(fd)
+                int(match[1])
+                for name in os.listdir(fd)
                 if (match := re.match(r"\.?([0-9]+)-", name))
             ]
             number = max(numbers, default=0) + 1
@@ -221,7 +229,9 @@ class Store:
                 break
             written: builtins.list[str] = []
             try:
-                names = {body_name: f"{stem}-{index}.md" for index, body_name in enumerate(bodies, 1)}
+                names = {
+                    body_name: f"{stem}-{index}.md" for index, body_name in enumerate(bodies, 1)
+                }
                 rewritten = cast(dict[str, object], _rename_refs(manifest, names))
                 renamed_bodies = {names[key]: body for key, body in bodies.items()}
                 text = _validate(kind, f"{stem}.json", rewritten, renamed_bodies)
@@ -251,7 +261,9 @@ class Store:
                         continue
                     try:
                         raw = json.loads(text)
-                        summary = ", ".join(str(action.get("type", "?")) for action in raw["actions"])
+                        summary = ", ".join(
+                            str(action.get("type", "?")) for action in raw["actions"]
+                        )
                     except (ValueError, KeyError, TypeError, AttributeError):
                         summary = "invalid manifest"
                     entries.append(Entry(domain, name, summary or "no actions"))
@@ -270,7 +282,13 @@ class Store:
                 state = self.draft_load_state(kind, name)
                 if state is not None:
                     actions = state[0].get("actions")
-                    result.append({"kind": kind, "name": name, "actions": len(actions) if isinstance(actions, list) else 0})
+                    result.append(
+                        {
+                            "kind": kind,
+                            "name": name,
+                            "actions": len(actions) if isinstance(actions, list) else 0,
+                        }
+                    )
         return result
 
     def show(self, kind: Kind, name: str) -> str:
@@ -350,8 +368,10 @@ class Store:
         path = self.home / ".jailbee" / directory / kind
         with _directory(path, create=True) as directory_fd:
             fd = os.open(
-                f"{name}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                0o600, dir_fd=directory_fd,
+                f"{name}.lock",
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600,
+                dir_fd=directory_fd,
             )
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -382,8 +402,14 @@ class Store:
                 _atomic_write(fd, f"{name}.json", text)
 
     def draft_append(
-        self, kind: Kind, name: str, action: dict[str, object], bodies: Mapping[str, str],
-        *, prepare: Callable[[dict[str, object], dict[str, str], dict[str, object]], dict[str, object]] | None = None,
+        self,
+        kind: Kind,
+        name: str,
+        action: dict[str, object],
+        bodies: Mapping[str, str],
+        *,
+        prepare: Callable[[dict[str, object], dict[str, str], dict[str, object]], dict[str, object]]
+        | None = None,
     ) -> None:
         self._require_role()
         with self._draft_lock(kind, name):
@@ -403,9 +429,14 @@ class Store:
                 _atomic_write(fd, f"{name}.json", text)
 
     def draft_update(
-        self, kind: Kind, name: str,
-        update: Callable[[dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]],
-        *, initial: dict[str, object],
+        self,
+        kind: Kind,
+        name: str,
+        update: Callable[
+            [dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]
+        ],
+        *,
+        initial: dict[str, object],
     ) -> None:
         """Validate and save a complete draft edit under its shared writer lock."""
         self._require_role()
@@ -419,8 +450,15 @@ class Store:
                 _atomic_write(fd, f"{name}.json", text)
 
     def draft_submit(
-        self, kind: Kind, name: str, slug: str,
-        *, prepare: Callable[[dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]] | None = None,
+        self,
+        kind: Kind,
+        name: str,
+        slug: str,
+        *,
+        prepare: Callable[
+            [dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]
+        ]
+        | None = None,
     ) -> str:
         self._require_role()
         with self._draft_lock(kind, name):
@@ -437,8 +475,11 @@ class Store:
             return result
 
     def draft_discard(
-        self, kind: Kind, name: str,
-        *, validate: Callable[[dict[str, object], dict[str, str]], None] | None = None,
+        self,
+        kind: Kind,
+        name: str,
+        *,
+        validate: Callable[[dict[str, object], dict[str, str]], None] | None = None,
     ) -> None:
         self._require_role()
         _draft_name(name)

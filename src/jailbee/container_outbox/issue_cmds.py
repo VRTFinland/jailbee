@@ -19,11 +19,22 @@ def _target(target: int | str) -> dict[str, object]:
     return {"issue": target} if isinstance(target, int) else {"issue_ref": target.removeprefix("@")}
 
 
-def create_action(repo: str, title: str, body: str, labels: list[str], ref: str) -> dict[str, object]:
-    return {"type": "create", "repo": repo, "title": title, "body": body, "labels": labels, "ref": ref}
+def create_action(
+    repo: str, title: str, body: str, labels: list[str], ref: str
+) -> dict[str, object]:
+    return {
+        "type": "create",
+        "repo": repo,
+        "title": title,
+        "body": body,
+        "labels": labels,
+        "ref": ref,
+    }
 
 
-def edit_action(repo: str, target: int | str, title: str | None, body: str | None, view: gh.IssueView | None) -> dict[str, object]:
+def edit_action(
+    repo: str, target: int | str, title: str | None, body: str | None, view: gh.IssueView | None
+) -> dict[str, object]:
     action: dict[str, object] = {"type": "edit", "repo": repo, **_target(target)}
     expected: dict[str, object] = {}
     if title is not None:
@@ -40,12 +51,29 @@ def comment_action(repo: str, target: int | str, body: str) -> dict[str, object]
     return {"type": "comment", "repo": repo, **_target(target), "body": body}
 
 
-def labels_action(repo: str, target: int | str, add: list[str], remove: list[str], view: gh.IssueView | None) -> dict[str, object]:
-    return {"type": "labels", "repo": repo, **_target(target), "add": add, "remove": remove, "expected": {"labels": list(view.labels) if view else []}}
+def labels_action(
+    repo: str, target: int | str, add: list[str], remove: list[str], view: gh.IssueView | None
+) -> dict[str, object]:
+    return {
+        "type": "labels",
+        "repo": repo,
+        **_target(target),
+        "add": add,
+        "remove": remove,
+        "expected": {"labels": list(view.labels) if view else []},
+    }
 
 
-def state_action(repo: str, target: int | str, state: str, reason: str | None, view: gh.IssueView | None) -> dict[str, object]:
-    action: dict[str, object] = {"type": "state", "repo": repo, **_target(target), "state": state, "expected": {"state": view.state if view else "open"}}
+def state_action(
+    repo: str, target: int | str, state: str, reason: str | None, view: gh.IssueView | None
+) -> dict[str, object]:
+    action: dict[str, object] = {
+        "type": "state",
+        "repo": repo,
+        **_target(target),
+        "state": state,
+        "expected": {"state": view.state if view else "open"},
+    }
     if reason is not None and not (state == "open" and reason == "reopened"):
         action["reason"] = reason
     return action
@@ -84,21 +112,32 @@ def _view(repo: str, target: int | str) -> gh.IssueView | None:
     return gh.issue_view(repo, target) if isinstance(target, int) else None
 
 
-def _prepare_ref(manifest: dict[str, object], bodies: dict[str, str], action: dict[str, object]) -> dict[str, object]:
+def _prepare_ref(
+    manifest: dict[str, object], bodies: dict[str, str], action: dict[str, object]
+) -> dict[str, object]:
     ref = action.get("issue_ref")
     if not isinstance(ref, str):
         return action
     actions = manifest.get("actions")
     assert isinstance(actions, list)
     for create in actions:
-        if (isinstance(create, dict) and create.get("type") == "create"
-                and create.get("ref") == ref and create.get("repo") == action.get("repo")):
+        if (
+            isinstance(create, dict)
+            and create.get("type") == "create"
+            and create.get("ref") == ref
+            and create.get("repo") == action.get("repo")
+        ):
             body = create.get("body")
             if "body_file" in create:
                 body = bodies.get(create["body_file"])
             title = create.get("title")
             labels = create.get("labels", [])
-            if not isinstance(title, str) or not isinstance(body, str) or not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
+            if (
+                not isinstance(title, str)
+                or not isinstance(body, str)
+                or not isinstance(labels, list)
+                or not all(isinstance(label, str) for label in labels)
+            ):
                 raise OutboxCommandError(f"issue_ref {ref!r} has an invalid create action", 2)
             view = gh.IssueView(title, body, tuple(labels), "open")
             result = dict(action)
@@ -115,7 +154,9 @@ def _prepare_ref(manifest: dict[str, object], bodies: dict[str, str], action: di
             elif action["type"] == "state":
                 result["expected"] = {"state": view.state}
             return result
-    raise OutboxCommandError(f"issue_ref {ref!r} does not name an earlier create in the same repo", 2)
+    raise OutboxCommandError(
+        f"issue_ref {ref!r} does not name an earlier create in the same repo", 2
+    )
 
 
 def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> None:
@@ -129,7 +170,9 @@ def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> Non
             raise OutboxCommandError(f"label {item!r} is not present", 2)
 
 
-def _stage(store: Store, action: dict[str, object], batch: str | None, file_body: bool = False) -> None:
+def _stage(
+    store: Store, action: dict[str, object], batch: str | None, file_body: bool = False
+) -> None:
     bodies: dict[str, str] = {}
     body = action.get("body")
     if isinstance(body, str) and (file_body or len(body.encode("utf-8")) > 4096):
@@ -141,9 +184,17 @@ def _stage(store: Store, action: dict[str, object], batch: str | None, file_body
         store.draft_append("issue", batch, action, bodies, prepare=_prepare_ref)
         typer.echo(f"staged issue draft {batch}")
     else:
-        slug = re.sub(r"[^a-z0-9]+", "-", str(action.get("title", action["type"])).lower()).strip("-")[:80] or "issue"
+        slug = (
+            re.sub(r"[^a-z0-9]+", "-", str(action.get("title", action["type"])).lower()).strip("-")[
+                :80
+            ]
+            or "issue"
+        )
         name = store.write_manifest("issue", slug, {"version": 1, "actions": [action]}, bodies)
-        typer.echo(f"staged issue/{name} — publish on the host: jb issue apply {socket.gethostname()} {name}")
+        typer.echo(
+            f"staged issue/{name} — publish on the host: "
+            f"jb issue apply {socket.gethostname()} {name}"
+        )
 
 
 def _run(fn: Callable[[], None]) -> None:
@@ -155,42 +206,82 @@ def _run(fn: Callable[[], None]) -> None:
 
 
 @issue_app.command("create")
-def create(title: Annotated[str | None, typer.Option()] = None, body: Annotated[str | None, typer.Option()] = None, body_file: Annotated[Path | None, typer.Option()] = None, label: Annotated[list[str] | None, typer.Option()] = None, repo: str = ".", ref: str | None = None, batch: str | None = None) -> None:
+def create(
+    title: Annotated[str | None, typer.Option()] = None,
+    body: Annotated[str | None, typer.Option()] = None,
+    body_file: Annotated[Path | None, typer.Option()] = None,
+    label: Annotated[list[str] | None, typer.Option()] = None,
+    repo: str = ".",
+    ref: str | None = None,
+    batch: str | None = None,
+) -> None:
     def run() -> None:
         store = _guard()
         if not title:
             raise OutboxCommandError("missing title", 2)
         text = _body(body, body_file, True)
         assert text is not None
-        _stage(store, create_action(repo, title, text, label or [], ref or "issue"), batch, body_file is not None)
+        _stage(
+            store,
+            create_action(repo, title, text, label or [], ref or "issue"),
+            batch,
+            body_file is not None,
+        )
+
     _run(run)
 
 
 @issue_app.command("edit")
-def edit(issue: Annotated[str | None, typer.Argument()] = None, title: Annotated[str | None, typer.Option()] = None, body: Annotated[str | None, typer.Option()] = None, body_file: Annotated[Path | None, typer.Option()] = None, repo: str = ".", batch: str | None = None) -> None:
+def edit(
+    issue: Annotated[str | None, typer.Argument()] = None,
+    title: Annotated[str | None, typer.Option()] = None,
+    body: Annotated[str | None, typer.Option()] = None,
+    body_file: Annotated[Path | None, typer.Option()] = None,
+    repo: str = ".",
+    batch: str | None = None,
+) -> None:
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
         text = _body(body, body_file, False)
         if title is None and text is None:
             raise OutboxCommandError("missing title or body", 2)
-        _stage(store, edit_action(repo, target, title, text, _view(repo, target)), batch, body_file is not None)
+        _stage(
+            store,
+            edit_action(repo, target, title, text, _view(repo, target)),
+            batch,
+            body_file is not None,
+        )
+
     _run(run)
 
 
 @issue_app.command("comment")
-def comment(issue: Annotated[str | None, typer.Argument()] = None, body: Annotated[str | None, typer.Option()] = None, body_file: Annotated[Path | None, typer.Option()] = None, repo: str = ".", batch: str | None = None) -> None:
+def comment(
+    issue: Annotated[str | None, typer.Argument()] = None,
+    body: Annotated[str | None, typer.Option()] = None,
+    body_file: Annotated[Path | None, typer.Option()] = None,
+    repo: str = ".",
+    batch: str | None = None,
+) -> None:
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
         text = _body(body, body_file, True)
         assert text is not None
         _stage(store, comment_action(repo, target, text), batch, body_file is not None)
+
     _run(run)
 
 
 @issue_app.command("labels")
-def labels(issue: Annotated[str | None, typer.Argument()] = None, add: Annotated[list[str] | None, typer.Option()] = None, remove: Annotated[list[str] | None, typer.Option()] = None, repo: str = ".", batch: str | None = None) -> None:
+def labels(
+    issue: Annotated[str | None, typer.Argument()] = None,
+    add: Annotated[list[str] | None, typer.Option()] = None,
+    remove: Annotated[list[str] | None, typer.Option()] = None,
+    repo: str = ".",
+    batch: str | None = None,
+) -> None:
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
@@ -198,15 +289,23 @@ def labels(issue: Annotated[str | None, typer.Argument()] = None, add: Annotated
         if view is not None:
             _check_labels(add or [], remove or [], view)
         _stage(store, labels_action(repo, target, add or [], remove or [], view), batch)
+
     _run(run)
 
 
 @issue_app.command("state")
-def state(issue: Annotated[str | None, typer.Argument()] = None, state: Annotated[str | None, typer.Argument()] = None, reason: str | None = None, repo: str = ".", batch: str | None = None) -> None:
+def state(
+    issue: Annotated[str | None, typer.Argument()] = None,
+    state: Annotated[str | None, typer.Argument()] = None,
+    reason: str | None = None,
+    repo: str = ".",
+    batch: str | None = None,
+) -> None:
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
         if state is None:
             raise OutboxCommandError("missing state", 2)
         _stage(store, state_action(repo, target, state, reason, _view(repo, target)), batch)
+
     _run(run)

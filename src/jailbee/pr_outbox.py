@@ -53,19 +53,41 @@ from jailbee.outbox_io import OutboxReadError as OutboxReadError
 from jailbee.pr_ai import PrText
 from jailbee.pr_manifest import (
     MAX_BODY_BYTES as MAX_BODY_BYTES,
+)
+from jailbee.pr_manifest import (
     MAX_LINE_COMMENTS as MAX_LINE_COMMENTS,
+)
+from jailbee.pr_manifest import (
     MAX_MANIFEST_BYTES as MAX_MANIFEST_BYTES,
+)
+from jailbee.pr_manifest import (
     Action as Action,
+)
+from jailbee.pr_manifest import (
     CommentAction as CommentAction,
+)
+from jailbee.pr_manifest import (
     DescriptionAction as DescriptionAction,
+)
+from jailbee.pr_manifest import (
     LineComment as LineComment,
+)
+from jailbee.pr_manifest import (
     Manifest as Manifest,
+)
+from jailbee.pr_manifest import (
     ManifestError as ManifestError,
+)
+from jailbee.pr_manifest import (
     ReplyAction as ReplyAction,
+)
+from jailbee.pr_manifest import (
     ReviewAction as ReviewAction,
-    is_source_manifest as is_source_manifest,
 )
 from jailbee.pr_manifest import _escapes_containment
+from jailbee.pr_manifest import (
+    is_source_manifest as is_source_manifest,
+)
 from jailbee.pr_manifest import parse_manifest as _parse_manifest
 from jailbee.tui import console, error_plain, info, warn, warn_plain
 
@@ -89,6 +111,7 @@ MAX_MANIFESTS = 20
 # human asked for, so an over-long title is truncated here rather than thrown
 # away with the body it came with.
 MAX_TITLE_CHARS = 120
+
 
 def outbox_dir() -> str:
     """Absolute outbox path inside a container."""

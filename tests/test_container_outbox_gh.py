@@ -17,10 +17,16 @@ def test_issue_view_maps_labels_state_and_default_repo(mocker: pytest.MockerFixt
     run = mocker.patch.object(
         gh.subprocess,
         "run",
-        return_value=completed(json.dumps({
-            "title": "Title", "body": "Body", "labels": [{"name": "bug"}, {"name": "help"}],
-            "state": "OPEN",
-        })),
+        return_value=completed(
+            json.dumps(
+                {
+                    "title": "Title",
+                    "body": "Body",
+                    "labels": [{"name": "bug"}, {"name": "help"}],
+                    "state": "OPEN",
+                }
+            )
+        ),
     )
 
     view = gh.issue_view(None, 12)
@@ -28,14 +34,20 @@ def test_issue_view_maps_labels_state_and_default_repo(mocker: pytest.MockerFixt
     assert view == gh.IssueView("Title", "Body", ("bug", "help"), "open")
     run.assert_called_once_with(
         ["gh", "issue", "view", "12", "--json", "title,body,labels,state"],
-        cwd=None, capture_output=True, text=True, check=False, timeout=30,
+        cwd=None,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
 
 
 def test_issue_view_supports_explicit_github_repo(mocker: pytest.MockerFixture) -> None:
-    run = mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        '{"title":"T","body":"B","labels":[],"state":"CLOSED"}'
-    ))
+    run = mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed('{"title":"T","body":"B","labels":[],"state":"CLOSED"}'),
+    )
 
     view = gh.issue_view("github:owner/project", 9)
 
@@ -44,9 +56,11 @@ def test_issue_view_supports_explicit_github_repo(mocker: pytest.MockerFixture) 
 
 
 def test_issue_view_uses_submodule_as_cwd(mocker: pytest.MockerFixture) -> None:
-    run = mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        '{"title":"T","body":"B","labels":[],"state":"OPEN"}'
-    ))
+    run = mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed('{"title":"T","body":"B","labels":[],"state":"OPEN"}'),
+    )
 
     gh.issue_view("vendor/project", 4)
 
@@ -55,7 +69,9 @@ def test_issue_view_uses_submodule_as_cwd(mocker: pytest.MockerFixture) -> None:
 
 
 @pytest.mark.parametrize("response", [{"body": "Original\nbody"}, {"body": ""}])
-def test_pr_body_reads_only_current_body(mocker: pytest.MockerFixture, response: dict[str, str]) -> None:
+def test_pr_body_reads_only_current_body(
+    mocker: pytest.MockerFixture, response: dict[str, str]
+) -> None:
     run = mocker.patch.object(gh.subprocess, "run", return_value=completed(json.dumps(response)))
     assert gh.pr_body(7) == response["body"]
     assert run.call_args.args[0] == ["gh", "pr", "view", "7", "--json", "body"]
@@ -64,14 +80,20 @@ def test_pr_body_reads_only_current_body(mocker: pytest.MockerFixture, response:
 @pytest.mark.parametrize("stdout", ["{}", '{"body":null}', "[]", "not-json"])
 def test_pr_body_rejects_invalid_response(mocker: pytest.MockerFixture, stdout: str) -> None:
     mocker.patch.object(gh.subprocess, "run", return_value=completed(stdout))
-    with pytest.raises(gh.GhError, match="retry.*gh pr view 7"):
+    with pytest.raises(gh.GhError, match=r"retry.*gh pr view 7"):
         gh.pr_body(7)
 
 
-def test_pr_view_builds_repo_from_url_and_omits_missing_number(mocker: pytest.MockerFixture) -> None:
-    run = mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        '{"number":7,"headRefOid":"abc123","url":"https://github.com/acme/widget/pull/7"}'
-    ))
+def test_pr_view_builds_repo_from_url_and_omits_missing_number(
+    mocker: pytest.MockerFixture,
+) -> None:
+    run = mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed(
+            '{"number":7,"headRefOid":"abc123","url":"https://github.com/acme/widget/pull/7"}'
+        ),
+    )
 
     view = gh.pr_view(None)
 
@@ -80,16 +102,22 @@ def test_pr_view_builds_repo_from_url_and_omits_missing_number(mocker: pytest.Mo
 
 
 def test_pr_view_includes_number_when_given(mocker: pytest.MockerFixture) -> None:
-    run = mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        '{"number":7,"headRefOid":"abc123","url":"https://github.com/acme/widget/pull/7"}'
-    ))
+    run = mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed(
+            '{"number":7,"headRefOid":"abc123","url":"https://github.com/acme/widget/pull/7"}'
+        ),
+    )
 
     gh.pr_view(7)
 
     assert run.call_args.args[0][:4] == ["gh", "pr", "view", "7"]
 
 
-@pytest.mark.parametrize(("stderr", "expected"), [("  not found\n", "not found"), ("", "gh failed")])
+@pytest.mark.parametrize(
+    ("stderr", "expected"), [("  not found\n", "not found"), ("", "gh failed")]
+)
 def test_run_json_reports_nonzero_stderr(
     mocker: pytest.MockerFixture, stderr: str, expected: str
 ) -> None:
@@ -104,15 +132,18 @@ def test_run_json_reports_nonzero_stderr(
 def test_run_json_reports_missing_binary(mocker: pytest.MockerFixture) -> None:
     mocker.patch.object(gh.subprocess, "run", side_effect=FileNotFoundError(2, "missing", "gh"))
 
-    with pytest.raises(gh.GhError, match="^gh not found$"):
+    with pytest.raises(gh.GhError, match=r"^gh not found$"):
         gh.run_json(["gh", "issue", "view", "1"])
 
 
-@pytest.mark.parametrize("error", [
-    FileNotFoundError(2, "missing directory", "vendor/project"),
-    NotADirectoryError(20, "not a directory", "vendor/project"),
-    PermissionError(13, "permission denied", "vendor/project"),
-])
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError(2, "missing directory", "vendor/project"),
+        NotADirectoryError(20, "not a directory", "vendor/project"),
+        PermissionError(13, "permission denied", "vendor/project"),
+    ],
+)
 def test_run_json_reports_invalid_cwd_as_path_error(
     mocker: pytest.MockerFixture, error: OSError
 ) -> None:
@@ -126,45 +157,57 @@ def test_run_json_reports_invalid_cwd_as_path_error(
 def test_issue_view_reports_malformed_response(mocker: pytest.MockerFixture, stdout: str) -> None:
     mocker.patch.object(gh.subprocess, "run", return_value=completed(stdout=stdout))
 
-    with pytest.raises(gh.GhError, match="retry.*gh issue view"):
+    with pytest.raises(gh.GhError, match=r"retry.*gh issue view"):
         gh.issue_view(None, 3)
 
 
 def test_issue_view_adds_retry_command_to_gh_failure(mocker: pytest.MockerFixture) -> None:
-    mocker.patch.object(gh.subprocess, "run", return_value=completed(stderr="issue not found", returncode=1))
+    mocker.patch.object(
+        gh.subprocess, "run", return_value=completed(stderr="issue not found", returncode=1)
+    )
 
-    with pytest.raises(gh.GhError, match="issue not found.*retry.*gh issue view 3"):
+    with pytest.raises(gh.GhError, match=r"issue not found.*retry.*gh issue view 3"):
         gh.issue_view(None, 3)
 
 
 def test_pr_view_reports_timeout_with_retry_command(mocker: pytest.MockerFixture) -> None:
     mocker.patch.object(gh.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 30))
 
-    with pytest.raises(gh.GhError, match="retry.*gh pr view"):
+    with pytest.raises(gh.GhError, match=r"retry.*gh pr view"):
         gh.pr_view(5)
 
 
 def test_pr_view_adds_retry_command_to_gh_failure(mocker: pytest.MockerFixture) -> None:
     mocker.patch.object(gh.subprocess, "run", return_value=completed(stderr="no PR", returncode=1))
 
-    with pytest.raises(gh.GhError, match="no PR.*retry.*gh pr view 5"):
+    with pytest.raises(gh.GhError, match=r"no PR.*retry.*gh pr view 5"):
         gh.pr_view(5)
 
 
 @pytest.mark.parametrize("number", [True, 0, -1])
 def test_pr_view_rejects_invalid_numbers(mocker: pytest.MockerFixture, number: object) -> None:
-    mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        json.dumps({"number": number, "headRefOid": "abc", "url": "https://github.com/o/r/pull/1"})
-    ))
+    mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed(
+            json.dumps(
+                {"number": number, "headRefOid": "abc", "url": "https://github.com/o/r/pull/1"}
+            )
+        ),
+    )
 
     with pytest.raises(gh.GhError, match="invalid PR response"):
         gh.pr_view(1)
 
 
 def test_pr_view_rejects_non_github_url(mocker: pytest.MockerFixture) -> None:
-    mocker.patch.object(gh.subprocess, "run", return_value=completed(
-        '{"number":1,"headRefOid":"abc","url":"https://example.com/o/r/pull/1"}'
-    ))
+    mocker.patch.object(
+        gh.subprocess,
+        "run",
+        return_value=completed(
+            '{"number":1,"headRefOid":"abc","url":"https://example.com/o/r/pull/1"}'
+        ),
+    )
 
     with pytest.raises(gh.GhError, match="invalid PR response"):
         gh.pr_view(1)

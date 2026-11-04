@@ -114,7 +114,9 @@ def _policy(rig: Rig, policy: str) -> None:
 
 
 @pytest.mark.parametrize("unsafe_part", ["filename", "verb"])
-def test_done_with_surrogate_outbox_text_is_retained_and_serializable(tmp_path, mocker, monkeypatch, unsafe_part):
+def test_done_with_surrogate_outbox_text_is_retained_and_serializable(
+    tmp_path, mocker, monkeypatch, unsafe_part
+):
     import contextlib
     import io
     import json

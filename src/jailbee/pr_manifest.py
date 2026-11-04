@@ -27,8 +27,10 @@ def valid_branch_ref(name: str) -> bool:
         and ".." not in name
         and "@{" not in name
         and not any(ord(c) < 33 or ord(c) == 127 or c in "~^:?*[\\" for c in name)
-        and all(part and not part.startswith(".") and not part.endswith(".lock")
-                for part in name.split("/"))
+        and all(
+            part and not part.startswith(".") and not part.endswith(".lock")
+            for part in name.split("/")
+        )
     )
 
 
@@ -320,8 +322,11 @@ def _parse_actions(
 
 
 def parse_manifest(
-    name: str, text: str, bodies: Mapping[str, str],
-    *, ref_validator: Callable[[str], bool] | None = None,
+    name: str,
+    text: str,
+    bodies: Mapping[str, str],
+    *,
+    ref_validator: Callable[[str], bool] | None = None,
 ) -> Manifest:
     """Parse one manifest, resolving every ``body_file`` from ``bodies``.
 

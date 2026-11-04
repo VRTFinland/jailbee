@@ -51,6 +51,7 @@ def ls(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
                     typer.echo(f"{kind}/{item['name']}  {item['summary']}")
             for draft in data["drafts"]:
                 typer.echo(f"draft {draft['kind']}/{draft['name']}  {draft['actions']} actions")
+
     _run(run)
 
 
@@ -59,6 +60,7 @@ def show(target: Annotated[str | None, typer.Argument()] = None) -> None:
     def run() -> None:
         kind, name = _target(target)
         typer.echo(Store(Path.home()).show(kind, name))
+
     _run(run)
 
 
@@ -69,24 +71,35 @@ def drop(target: Annotated[str | None, typer.Argument()] = None) -> None:
         kind, name = _target(target)
         store.drop(kind, name)
         typer.echo(f"dropped {kind}/{name}")
+
     _run(run)
 
 
-def _not_review(manifest: dict[str, object], bodies: dict[str, str]) -> tuple[dict[str, object], dict[str, str]]:
+def _not_review(
+    manifest: dict[str, object], bodies: dict[str, str]
+) -> tuple[dict[str, object], dict[str, str]]:
     actions = manifest.get("actions")
-    if isinstance(actions, list) and any(isinstance(action, dict) and action.get("type") == "review" for action in actions):
-        raise OutboxCommandError("review drafts require fresh PR metadata; use jailbee pr review submit PR", 2)
+    if isinstance(actions, list) and any(
+        isinstance(action, dict) and action.get("type") == "review" for action in actions
+    ):
+        raise OutboxCommandError(
+            "review drafts require fresh PR metadata; use jailbee pr review submit PR", 2
+        )
     return manifest, bodies
 
 
 @outbox_app.command("submit")
 def submit(name: Annotated[str | None, typer.Argument()] = None, kind: str | None = None) -> None:
     """Submit a batch; review drafts require jailbee pr review submit."""
+
     def run() -> None:
         store = _guard()
         domain, draft = _resolve(store, name, kind)
-        result = store.draft_submit(domain, draft, draft, prepare=_not_review if domain == "pr" else None)
+        result = store.draft_submit(
+            domain, draft, draft, prepare=_not_review if domain == "pr" else None
+        )
         typer.echo(f"staged {domain}/{result}")
+
     _run(run)
 
 
@@ -97,4 +110,5 @@ def discard(name: Annotated[str | None, typer.Argument()] = None, kind: str | No
         domain, draft = _resolve(store, name, kind)
         store.draft_discard(domain, draft)
         typer.echo(f"discarded {domain} draft {draft}")
+
     _run(run)

@@ -149,7 +149,11 @@ def test_child_marker_written_once_per_broker_process(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_child(), _orch()]
     rig.tick(memory)
     rig.tick(memory)
-    calls = [c for c in rig.incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)]
+    calls = [
+        c
+        for c in rig.incus.exec.call_args_list
+        if "/home/dev/.jailbee/orchestration/role" in str(c)
+    ]
     assert len(calls) == 1
     assert calls[0].args[0] == "proj-kid"
     assert calls[0].kwargs["uid"] == rig.cfg.container_user.uid

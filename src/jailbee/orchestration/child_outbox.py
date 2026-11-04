@@ -87,8 +87,15 @@ def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...]
     try:
         raw = incus.exec_capped(
             full,
-            ["python3", "-I", "-c", _NAMES_SCRIPT, store_directory("issue"),
-             store_directory("pr"), str(_MAX_MANIFESTS)],
+            [
+                "python3",
+                "-I",
+                "-c",
+                _NAMES_SCRIPT,
+                store_directory("issue"),
+                store_directory("pr"),
+                str(_MAX_MANIFESTS),
+            ],
             uid=uid,
             timeout=CHILD_EXEC_TIMEOUT_S,
             max_bytes=_MAX_NAMES_BYTES,
@@ -102,9 +109,13 @@ def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...]
             if not isinstance(names, list) or len(names) > _MAX_MANIFESTS:
                 raise ValueError("invalid outbox names")
             if any(
-                not isinstance(name, str) or not name.endswith(".json")
-                or name.startswith(".") or name.endswith(".progress.json")
-                or "/" in name or "\0" in name or len(name) > 255
+                not isinstance(name, str)
+                or not name.endswith(".json")
+                or name.startswith(".")
+                or name.endswith(".progress.json")
+                or "/" in name
+                or "\0" in name
+                or len(name) > 255
                 for name in names
             ):
                 raise ValueError("invalid outbox name")
@@ -161,8 +172,12 @@ def probe(incus: Incus, full: str, *, uid: int | None) -> PendingGithub:
     try:
         for kind, names in stores:
             files = outbox_io.read_text_outbox(
-                incus, full, store_directory(kind), uid=uid,
-                max_file_bytes=_MAX_FILE_BYTES, timeout=CHILD_EXEC_TIMEOUT_S,
+                incus,
+                full,
+                store_directory(kind),
+                uid=uid,
+                max_file_bytes=_MAX_FILE_BYTES,
+                timeout=CHILD_EXEC_TIMEOUT_S,
                 select=[("*.json", _MAX_MANIFESTS)],
             )
             summaries.extend(_summary(kind, name, files.get(name)) for name in names)

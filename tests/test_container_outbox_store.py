@@ -4,7 +4,6 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Barrier, Event, local
 
 import pytest
@@ -40,10 +39,15 @@ def test_store_import_does_not_load_host_modules():
     import subprocess
 
     result = subprocess.run(
-        [sys.executable, "-c", "import sys; import jailbee.container_outbox.store; "
-         "assert 'jailbee.incus' not in sys.modules; "
-         "assert 'jailbee.git' not in sys.modules; assert 'jailbee.tui' not in sys.modules"],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            "-c",
+            "import sys; import jailbee.container_outbox.store; "
+            "assert 'jailbee.incus' not in sys.modules; "
+            "assert 'jailbee.git' not in sys.modules; assert 'jailbee.tui' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
 
@@ -110,11 +114,18 @@ def test_pr_write_roundtrips_host_parser_with_nested_bodies(tmp_path):
     from jailbee.pr_outbox import parse_manifest
 
     store = store_for(tmp_path)
-    raw = {"version": 1, "repo": "o/r", "pr": 7, "actions": [
-        {"type": "review", "body_file": "review.md", "comments": [
-            {"path": "src/a.py", "line": 4, "body_file": "line.md"}
-        ]}
-    ]}
+    raw = {
+        "version": 1,
+        "repo": "o/r",
+        "pr": 7,
+        "actions": [
+            {
+                "type": "review",
+                "body_file": "review.md",
+                "comments": [{"path": "src/a.py", "line": 4, "body_file": "line.md"}],
+            }
+        ],
+    }
     name = store.write_manifest("pr", "review", raw, {"review.md": "Review", "line.md": "Line"})
     files = snapshot(store.outbox("pr"))
     parsed = parse_manifest(name, files[name], files)
@@ -126,9 +137,7 @@ def test_invalid_manifest_leaves_home_unchanged(tmp_path):
     from jailbee.container_outbox.store import OutboxCommandError
 
     store = store_for(tmp_path)
-    bad = {"version": 1, "actions": [
-        {"type": "edit", "repo": ".", "issue": 1, "title": "New"}
-    ]}
+    bad = {"version": 1, "actions": [{"type": "edit", "repo": ".", "issue": 1, "title": "New"}]}
     with pytest.raises(OutboxCommandError, match="expected") as exc:
         store.write_manifest("issue", "bad", bad, {})
     assert exc.value.exit_code == 2
@@ -183,21 +192,31 @@ def test_two_writers_publish_distinct_complete_manifests(tmp_path, monkeypatch):
     writer = local()
 
     def compete(path, flags, *args, **kwargs):
-        if flags & os.O_EXCL and str(path).endswith(".reserve") and not getattr(writer, "ready", False):
+        if (
+            flags & os.O_EXCL
+            and str(path).endswith(".reserve")
+            and not getattr(writer, "ready", False)
+        ):
             # Both writers must compete for the first reservation, not the retry.
             writer.ready = True
             barrier.wait(timeout=5)
         return original(path, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, "open", compete)
+
     def write(body):
-        return store_for(tmp_path).write_manifest("issue", "same", issue_manifest(), {"body.md": body})
+        return store_for(tmp_path).write_manifest(
+            "issue", "same", issue_manifest(), {"body.md": body}
+        )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         names = list(pool.map(write, ["First", "Second"]))
     assert set(names) == {"001-same.json", "002-same.json"}
     files = snapshot(store.outbox("issue"))
-    assert {parse_manifest(n, files[n], files).actions[0].body for n in names} == {"First", "Second"}
+    assert {parse_manifest(n, files[n], files).actions[0].body for n in names} == {
+        "First",
+        "Second",
+    }
     assert not any(n.startswith(".") for n in files)
 
 
@@ -247,7 +266,8 @@ def test_list_show_and_drop_preserve_shared_bodies_and_metadata(tmp_path):
     (directory / "applied.log").write_text("receipt")
     (directory / "001-a.progress.json").write_text("{}")
     assert [(e.kind, e.name) for e in store.list()] == [
-        ("issue", "001-a.json"), ("issue", "002-b.json")
+        ("issue", "001-a.json"),
+        ("issue", "002-b.json"),
     ]
     assert all(e.summary for e in store.list())
     assert json.loads(store.show("issue", "001-a.json")) == issue_manifest("shared.md")
@@ -259,13 +279,19 @@ def test_list_show_and_drop_preserve_shared_bodies_and_metadata(tmp_path):
     assert (directory / "001-a.progress.json").exists()
 
 
-@pytest.mark.parametrize("body", ["applied.log", "002-keep.json", "../../outside", ".003-active.reserve"])
+@pytest.mark.parametrize(
+    "body", ["applied.log", "002-keep.json", "../../outside", ".003-active.reserve"]
+)
 def test_drop_does_not_delete_metadata_or_escape(tmp_path, body):
     store = store_for(tmp_path)
     store.require_writable({})
     directory = store.outbox("pr")
-    raw = {"version": 1, "repo": "o/r", "pr": 1,
-           "actions": [{"type": "comment", "body_file": body}]}
+    raw = {
+        "version": 1,
+        "repo": "o/r",
+        "pr": 1,
+        "actions": [{"type": "comment", "body_file": body}],
+    }
     (directory / "001-drop.json").write_text(json.dumps(raw))
     (directory / "applied.log").write_text("receipt")
     (directory / "002-keep.json").write_text("{}")
@@ -302,6 +328,7 @@ def test_drafts_persist_outside_outbox_and_submit_bodies(tmp_path):
     name = reloaded.draft_submit("issue", "one", "submitted")
     assert reloaded.draft_load("issue", "one") is None
     from jailbee.issue_manifest import parse_manifest
+
     files = snapshot(store.outbox("issue"))
     assert parse_manifest(name, files[name], files).actions[0].body == "Saved"
 
@@ -381,8 +408,7 @@ def test_replaced_outbox_ancestor_cannot_redirect_write(tmp_path, monkeypatch):
         return fd
 
     monkeypatch.setattr(os, "open", replace_after_open)
-    raw = {"version": 1, "repo": "o/r", "pr": 7,
-           "actions": [{"type": "comment", "body": "Safe"}]}
+    raw = {"version": 1, "repo": "o/r", "pr": 7, "actions": [{"type": "comment", "body": "Safe"}]}
     # require_writable pins the old directory then the actual writer refuses the replacement.
     with pytest.raises(OutboxCommandError):
         store.write_manifest("pr", "safe", raw, {})
@@ -394,8 +420,12 @@ def test_draft_save_failure_preserves_previous_manifest_and_bodies(tmp_path, mon
     from jailbee.container_outbox.store import OutboxCommandError
 
     store = store_for(tmp_path)
-    raw = {"version": 1, "repo": "o/r", "pr": 7,
-           "actions": [{"type": "comment", "body_file": "body.md"}]}
+    raw = {
+        "version": 1,
+        "repo": "o/r",
+        "pr": 7,
+        "actions": [{"type": "comment", "body_file": "body.md"}],
+    }
     store.draft_save("pr", "one", raw, {"body.md": "Original"})
     original = os.replace
 
@@ -423,9 +453,9 @@ def test_reload_append_save_preserves_all_body_files(tmp_path):
     state = store.draft_load_state("issue", "batch")
     assert state is not None
     manifest, bodies = state
-    manifest["actions"].append({
-        "type": "comment", "repo": ".", "issue_ref": "new", "body_file": "second.md"
-    })
+    manifest["actions"].append(
+        {"type": "comment", "repo": ".", "issue_ref": "new", "body_file": "second.md"}
+    )
     bodies["second.md"] = "Second"
     store.draft_save("issue", "batch", manifest, bodies)
     state = store_for(tmp_path).draft_load_state("issue", "batch")
@@ -434,7 +464,8 @@ def test_reload_append_save_preserves_all_body_files(tmp_path):
     name = store.draft_submit("issue", "batch", "batch")
     files = snapshot(store.outbox("issue"))
     assert [action.body for action in parse_manifest(name, files[name], files).actions] == [
-        "First", "Second"
+        "First",
+        "Second",
     ]
 
 
@@ -487,6 +518,7 @@ def test_concurrent_save_during_submit_survives(tmp_path, monkeypatch):
     assert store.draft_load("issue", "batch") == issue_manifest()
     next_name = store_for(tmp_path).draft_submit("issue", "batch", "newer")
     from jailbee.issue_manifest import parse_manifest
+
     files = snapshot(store.outbox("issue"))
     assert parse_manifest(name, files[name], files).actions[0].body == "Original"
     assert parse_manifest(next_name, files[next_name], files).actions[0].body == "Newer"

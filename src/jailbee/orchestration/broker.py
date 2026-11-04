@@ -751,7 +751,8 @@ def tick(
     # the STOPPED_HEAD it records (the snapshot above predates it).
     for node in nodes.values():
         if node.running and (
-            node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)
+            node.config.get(labels.STOPPED_HEAD)
+            or node.config.get(labels.STOPPED_DIRTY)
             or node.config.get(labels.STOPPED_OUTBOX)
         ):
             _clear_stale_stop_labels(incus, node)

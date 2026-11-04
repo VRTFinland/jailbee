@@ -8,10 +8,10 @@ from typer._click import Context
 from typer.core import TyperGroup
 
 from jailbee import __version__, cli_context
-from jailbee.services.container_cmd import service_app
 from jailbee.container_outbox.issue_cmds import issue_app
-from jailbee.container_outbox.pr_cmds import pr_app
 from jailbee.container_outbox.outbox_cmds import outbox_app
+from jailbee.container_outbox.pr_cmds import pr_app
+from jailbee.services.container_cmd import service_app
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 
