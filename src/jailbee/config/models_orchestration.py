@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -15,6 +15,7 @@ from jailbee.orchestration.grant import (
     DEFAULT_OPERATIONS,
     IMPLIED_OPERATIONS,
     OPERATIONS,
+    PublishRights,
 )
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
@@ -71,6 +72,8 @@ class OrchestrationProfile(BaseModel):
         default_factory=lambda: GrantableConfig(),
         description="What the holder may hand on to the children it spawns.",
     )
+
+    publish: PublishRights | None = None
 
     default_runner: Runner | None = Field(
         default=None, description="Default runner for children of a container granted this profile."
@@ -133,6 +136,8 @@ class RepoOrchestration(BaseModel):
     """A repo's `orchestration:` block: it can only narrow what the host grants."""
 
     model_config = ConfigDict(extra="forbid")
+
+    publish: PublishRights | Literal[False] | None = None
 
     idle_after_seconds: int = Field(
         default=900,

@@ -47,7 +47,9 @@ def test_profile_grant_carries_runner(make_cfg, tmp_path):
 
 
 def test_profile_of_round_trips_a_grant():
+    from jailbee.orchestration.grant import PublishRights
     g = Grant(
+        publish=PublishRights(issues=("comment",), pull_requests=True),
         max_running_children=3,
         operations=("message", "spawn", "stop"),
         grantable=Grantable(mounts=("data",), loose=True, egress=("pypi.org",)),
