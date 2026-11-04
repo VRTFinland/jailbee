@@ -32,7 +32,7 @@ OnDone = Literal["destroy", "keep"]
 FINISH_SUFFIX = ".finish.json"
 
 ORCHESTRATOR_TYPES = frozenset(
-    {"spawn", "message", "import", "update", "restart", "stop", "destroy", "rights", "refresh"}
+    {"spawn", "message", "import", "update", "restart", "stop", "destroy", "rights", "refresh", "publish"}
 )
 CHILD_TYPES = frozenset({"message"})
 
@@ -335,6 +335,20 @@ class DestroyManifest(_Manifest):
     force: bool = False
 
 
+class PublishManifest(_Manifest):
+    version: Literal[1]
+    type: Literal["publish"]
+    outbox: Literal["issue", "pr"]
+    manifest: str
+
+    @field_validator("manifest")
+    @classmethod
+    def _manifest(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json", value) or value.endswith(".progress.json"):
+            raise ValueError("manifest must be a bare outbox JSON file name, not a progress file")
+        return value
+
+
 Manifest = (
     SpawnManifest
     | MessageManifest
@@ -345,6 +359,7 @@ Manifest = (
     | StopManifest
     | DestroyManifest
     | RightsManifest
+    | PublishManifest
 )
 
 _MANIFEST_ADAPTER: TypeAdapter[Manifest] = TypeAdapter(

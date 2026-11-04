@@ -91,6 +91,22 @@ def _popen_wait(script, env, *args):
     )
 
 
+@pytest.mark.parametrize("flag,outbox", [("--issue", "issue"), ("--pr", "pr")])
+def test_send_publish_builds_manifest(script, base, tmp_path, flag, outbox):
+    result = run(script, "send", "publish", flag, "close-12.json", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    files = list((base / "outbox").glob("*.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text()) == {"version": 1, "id": result.stdout.strip(), "type": "publish", "outbox": outbox, "manifest": "close-12.json"}
+
+
+@pytest.mark.parametrize("args", [[], ["--issue", "a.json", "--pr", "b.json"], ["--issue", "../x.json"], ["--pr", "a.progress.json"]])
+def test_send_publish_needs_exactly_one_safe_target(script, base, tmp_path, args):
+    result = run(script, "send", "publish", *args, env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert not list((base / "outbox").glob("*.json"))
+
+
 def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp_path):
     env = env_for(base, tmp_path)
     proc = _popen_wait(script, env, "--timeout", "1", "--timeout", "none")

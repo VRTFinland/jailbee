@@ -211,10 +211,14 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
             grant = ctx.grant()
         if grant is None:
             return refused(NOT_ALLOWED)
-        op = OPERATION_OF[manifest.type]
-        revoke_only = isinstance(manifest, RightsManifest) and manifest.grant is None
-        if op not in grant.operations and not revoke_only:
-            return refused(f"operation `{op}` is not in this container's grant")
+        if manifest.type == "publish":
+            if grant.publish.empty():
+                return refused("publishing is not in this container's grant")
+        else:
+            op = OPERATION_OF[manifest.type]
+            revoke_only = isinstance(manifest, RightsManifest) and manifest.grant is None
+            if op not in grant.operations and not revoke_only:
+                return refused(f"operation `{op}` is not in this container's grant")
     handler = HANDLERS.get(manifest.type)
     if handler is None:
         return refused(f"`{manifest.type}` is not supported by this broker version")
