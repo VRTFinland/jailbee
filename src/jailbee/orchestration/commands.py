@@ -28,6 +28,7 @@ from jailbee.orchestration.grant import (
     PublishRights,
     cap_excess,
     effective_grant,
+    kind_granted,
 )
 from jailbee.orchestration.profiles import default_grant, profile_grant, profile_of, repo_cap
 from jailbee.orchestration.runner_model import Runner
@@ -371,7 +372,7 @@ def _check_remote_bound(
     p = new.publish
     had = current.publish if current is not None else PublishRights()
     rate_widened = p.max_actions_per_hour > had.max_actions_per_hour
-    issue_added = any(k not in had.issues for k in p.issues)
+    issue_added = any(not kind_granted(k, had.issues) for k in p.issues)
     foreign_added = any(
         not had.covers_issue(k, r, foreign=True)
         for r in p.foreign_issues.repos

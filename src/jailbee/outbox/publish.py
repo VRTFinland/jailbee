@@ -182,6 +182,8 @@ def issue_plan_json(
                 if isinstance(action, issue_manifest.CommentAction)
                 else "labels"
                 if isinstance(action, issue_manifest.LabelsAction)
+                else "assignees"
+                if isinstance(action, issue_manifest.AssigneesAction)
                 else "state"
             )
             if resolved.issue.number is not None:

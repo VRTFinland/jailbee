@@ -51,6 +51,23 @@ def _kind(action: issue_manifest.IssueAction) -> str:
     return type(action).__name__.removesuffix("Action").lower()
 
 
+def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.PreparedBatch) -> str:
+    """The grant kind ``action`` needs; resolves ``@me`` before comparing logins.
+
+    `assign_self` only when every login touched is the (non-empty) publisher
+    login, compared case-insensitively; anything else, or no known login, needs `assign`.
+    """
+    if not isinstance(action, issue_manifest.AssigneesAction):
+        return _kind(action)
+    login = batch.login
+    if not login:
+        return "assign"
+    add, remove = issue_outbox.resolved_assignees(action, login)
+    mine = login.casefold()
+    logins = (*add, *remove)
+    return "assign_self" if logins and all(x.casefold() == mine for x in logins) else "assign"
+
+
 def _coverage(rights: PublishRights, kind: str, target: issue_outbox.RepoTarget) -> None:
     if not rights.covers_issue(kind, target.slug, foreign=target.foreign):
         raise issue_outbox.IssueGateError(
@@ -64,7 +81,7 @@ def _issue_policy(
     def check(batch: issue_outbox.PreparedBatch) -> None:
         pending = [a for m in batch.manifests for a in m.actions if a.status != "applied"]
         for action in pending:
-            _coverage(rights, _kind(action.action), action.repo)
+            _coverage(rights, _needed_kind(action.action, batch), action.repo)
         if len(pending) > count:
             raise issue_outbox.IssueGateError("pending actions exceed the reserved publish budget")
 
@@ -144,7 +161,10 @@ def _precheck(
                 target = issue_outbox.target_for(targets, action.repo, ctx.cfg.repo_root)
                 if target is None:
                     raise issue_outbox.IssueGateError(f"unknown repository {action.repo}")
-                _coverage(rights, _kind(action), target)
+                # The login is only known on the host in the locked policy
+                # check, which is strict; this early check needs any assign right.
+                needed = "assign_self" if _kind(action) == "assignees" else _kind(action)
+                _coverage(rights, needed, target)
                 actions.append({"kind": _kind(action), "repo": target.slug})
                 foreign |= target.foreign
         return "issue", actions, foreign

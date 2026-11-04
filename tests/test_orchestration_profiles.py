@@ -111,3 +111,18 @@ def test_repo_cap(cfg_with_view):
     assert repo_cap(cfg_with_view) == RepoCap(
         allowed=True, max_running_children=None, mounts=("data",), egress=None, loose=None
     )
+
+
+def test_profile_loads_assign_self_and_assign():
+    from jailbee.config.models_orchestration import PublishRightsConfig
+
+    rights = PublishRightsConfig.model_validate(
+        {
+            "issues": ["assign_self"],
+            "foreign_issues": {"repos": ["org/lib"], "actions": ["assign"]},
+        }
+    ).to_rights()
+    assert rights.issues == ("assign_self",)
+    assert rights.foreign_issues.actions == ("assign",)
+    with pytest.raises(ValueError, match="unknown issue action"):
+        PublishRightsConfig.model_validate({"issues": ["assign_all"]})

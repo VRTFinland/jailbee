@@ -1386,3 +1386,19 @@ def test_apply_source_exits_two_with_push_hint(env):
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
     assert result.exit_code == 2, result.output
     assert "jailbee pr push acme-feature --source-manifest source.json" in panel_text(result.output)
+
+
+def test_issue_action_summary_counts_assignees_in_its_own_kind():
+    from jailbee.cli import _issue_action_summary
+    from jailbee.issue_manifest import parse_manifest
+
+    action = {
+        "type": "assignees",
+        "repo": ".",
+        "issue": 1,
+        "add": ["@me"],
+        "expected": {"assignees": []},
+    }
+    labels = {"type": "labels", "repo": ".", "issue": 2, "add": ["bug"], "expected": {"labels": []}}
+    text = json.dumps({"version": 1, "actions": [action, labels]})
+    assert _issue_action_summary(parse_manifest("a.json", text, {})) == "labels:1 assignees:1"

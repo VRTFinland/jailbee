@@ -64,6 +64,19 @@ def labels_action(
     }
 
 
+def assignees_action(
+    repo: str, target: int | str, add: list[str], remove: list[str], view: gh.IssueView | None
+) -> dict[str, object]:
+    return {
+        "type": "assignees",
+        "repo": repo,
+        **_target(target),
+        "add": add,
+        "remove": remove,
+        "expected": {"assignees": list(view.assignees) if view else []},
+    }
+
+
 def state_action(
     repo: str, target: int | str, state: str, reason: str | None, view: gh.IssueView | None
 ) -> dict[str, object]:
@@ -153,6 +166,9 @@ def _prepare_ref(
                 result["expected"] = {"labels": list(view.labels)}
             elif action["type"] == "state":
                 result["expected"] = {"state": view.state}
+            elif action["type"] == "assignees":
+                _check_assignees(action.get("add", []), action.get("remove", []), view)
+                result["expected"] = {"assignees": list(view.assignees)}
             return result
     raise OutboxCommandError(
         f"issue_ref {ref!r} does not name an earlier create in the same repo", 2
@@ -168,6 +184,34 @@ def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> Non
     for item in remove:
         if item.casefold() not in current:
             raise OutboxCommandError(f"label {item!r} is not present", 2)
+
+
+ASSIGNEE_ME = "@me"
+# Syntax only, mirroring issue_manifest._LOGIN_RE (container code imports no host module).
+_LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
+
+
+def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> None:
+    assert isinstance(add, list) and isinstance(remove, list)
+    for items in (add, remove):
+        seen: set[str] = set()
+        for item in items:
+            if item != ASSIGNEE_ME and not _LOGIN_RE.fullmatch(item):
+                raise OutboxCommandError(f"invalid GitHub login {item!r}", 2)
+            if item.casefold() in seen:
+                raise OutboxCommandError(f"assignee {item!r} given more than once", 2)
+            seen.add(item.casefold())
+    removed = {x.casefold() for x in remove}
+    for item in add:
+        if item.casefold() in removed:
+            raise OutboxCommandError(f"login {item!r} cannot be both add and remove", 2)
+    current = {x.casefold() for x in view.assignees} if view else set()
+    for item in add:
+        if item != ASSIGNEE_ME and item.casefold() in current:
+            raise OutboxCommandError(f"assignee {item!r} already assigned", 2)
+    for item in remove:
+        if item != ASSIGNEE_ME and item.casefold() not in current:
+            raise OutboxCommandError(f"assignee {item!r} is not assigned", 2)
 
 
 def _stage(
@@ -289,6 +333,30 @@ def labels(
         if view is not None:
             _check_labels(add or [], remove or [], view)
         _stage(store, labels_action(repo, target, add or [], remove or [], view), batch)
+
+    _run(run)
+
+
+@issue_app.command("assign")
+def assign(
+    issue: Annotated[str | None, typer.Argument()] = None,
+    me: Annotated[bool, typer.Option("--me")] = False,
+    add: Annotated[list[str] | None, typer.Option()] = None,
+    remove: Annotated[list[str] | None, typer.Option()] = None,
+    unassign_me: Annotated[bool, typer.Option("--unassign-me")] = False,
+    repo: str = ".",
+    batch: str | None = None,
+) -> None:
+    def run() -> None:
+        store = _guard()
+        target = _parse_target(issue)
+        if not (me or unassign_me or add or remove):
+            raise OutboxCommandError("choose --me, --unassign-me, --add or --remove", 2)
+        add_list = ([ASSIGNEE_ME] if me else []) + list(add or [])
+        remove_list = ([ASSIGNEE_ME] if unassign_me else []) + list(remove or [])
+        view = _view(repo, target)
+        _check_assignees(add_list, remove_list, view)
+        _stage(store, assignees_action(repo, target, add_list, remove_list, view), batch)
 
     _run(run)
 

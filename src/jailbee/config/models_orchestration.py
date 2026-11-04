@@ -63,7 +63,10 @@ class ForeignIssueRightsConfig(BaseModel):
     )
     actions: list[str] = Field(
         default_factory=list,
-        description="Allowed issue action kinds on the listed foreign repositories.",
+        description=(
+            "Allowed issue action kinds on the listed foreign repositories "
+            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+        ),
     )
 
     @field_validator("repos")
@@ -93,7 +96,10 @@ class PublishRightsConfig(BaseModel):
 
     issues: list[str] = Field(
         default_factory=list,
-        description="Issue action kinds allowed on the own repository and declared submodules.",
+        description=(
+            "Issue action kinds allowed on the own repository and declared submodules "
+            "(assign_self: assign issues to itself; assign: assign issues to anyone)."
+        ),
     )
     foreign_issues: ForeignIssueRightsConfig = Field(
         default_factory=ForeignIssueRightsConfig,

@@ -41,6 +41,12 @@ before editing `## Unreleased`.
   agent startup.
 - In-container `jailbee issue`, `jailbee pr` and `jailbee outbox` commands
   stage and inspect GitHub proposals and batches for host review.
+- Issue assignment: `jailbee issue assign ISSUE|@REF` stages assignee changes
+  (`--me`, `--unassign-me`, repeatable `--add` and `--remove`) for host review.
+  `@me` is the publishing account, resolved on the host at publish time, and
+  the host refuses a change whose assignees no longer match the staged state.
+  Orchestrator publish grants take two new issue kinds: `assign_self` (the
+  publisher's own login only) and `assign` (any login, implies `assign_self`).
 
 ### Changed
 

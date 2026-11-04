@@ -34,8 +34,10 @@ The height is remembered with the rest of the view.
 ## In-container outbox commands
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
-create|edit|comment|labels|state` and `jailbee pr
-comment|reply|description|source`. Use `--body` or `--body-file`; issue
+create|edit|comment|labels|assign|state` and `jailbee pr
+comment|reply|description|source`. `jailbee issue assign ISSUE|@REF` takes `--me`
+(the publishing account, `@me`), `--unassign-me`, and repeatable `--add LOGIN` /
+`--remove LOGIN`; at least one is required. Use `--body` or `--body-file`; issue
 commands accept `--repo` (default `.`), while PR source and new descriptions
 accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.

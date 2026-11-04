@@ -8,16 +8,19 @@ from typing import Any
 import pytest
 
 from jailbee.issue_github import (
+    AssigneesReceipt,
     IssueGithubMutationError,
     IssueGithubReadError,
     IssueSnapshot,
     MutationReceipt,
+    add_assignees,
     add_comment,
     create_issue,
     current_login,
     edit_issue,
     get_issue,
     list_labels,
+    remove_assignees,
     replace_labels,
     set_state,
 )
@@ -415,3 +418,112 @@ def test_mutation_errors_never_expose_environment_tokens_or_payloads(tmp_path, m
     assert body not in str(caught.value)
     assert token not in caught.value.args
     assert body not in caught.value.args
+
+
+def test_get_issue_reads_assignee_logins(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(
+            stdout=_issue_payload(assignees=[{"login": "Alice"}, {"login": "bob"}])
+        ),
+    )
+    assert get_issue(tmp_path, "acme/widgets", 42).assignees == ("Alice", "bob")
+
+
+@pytest.mark.parametrize("assignees", [5, [{"name": "x"}], ["alice"]])
+def test_get_issue_rejects_malformed_assignees(tmp_path, mocker, assignees):
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(stdout=_issue_payload(assignees=assignees)),
+    )
+    with pytest.raises(IssueGithubReadError):
+        get_issue(tmp_path, "acme/widgets", 42)
+
+
+def test_add_assignees_posts_the_exact_rest_call(tmp_path, mocker):
+    run = mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(
+            stdout=_issue_payload(assignees=[{"login": "alice"}, {"login": "bob"}])
+        ),
+    )
+
+    receipt = add_assignees(tmp_path, "acme/widgets", 42, logins=("alice", "bob"))
+
+    assert receipt == AssigneesReceipt(
+        42, "https://github.com/acme/widgets/issues/42", ("alice", "bob")
+    )
+    _assert_api_call(
+        run,
+        tmp_path,
+        ["gh", "api", "repos/acme/widgets/issues/42/assignees", "--method", "POST", "--input", "-"],
+        json.dumps({"assignees": ["alice", "bob"]}),
+    )
+
+
+def test_remove_assignees_deletes_with_the_exact_rest_call(tmp_path, mocker):
+    run = mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(stdout=_issue_payload(assignees=[{"login": "bob"}])),
+    )
+
+    receipt = remove_assignees(tmp_path, "acme/widgets", 42, logins=("alice",))
+
+    assert receipt == AssigneesReceipt(42, "https://github.com/acme/widgets/issues/42", ("bob",))
+    _assert_api_call(
+        run,
+        tmp_path,
+        [
+            "gh",
+            "api",
+            "repos/acme/widgets/issues/42/assignees",
+            "--method",
+            "DELETE",
+            "--input",
+            "-",
+        ],
+        json.dumps({"assignees": ["alice"]}),
+    )
+
+
+@pytest.mark.parametrize("call", [add_assignees, remove_assignees])
+def test_assignee_mutations_classify_rejection_and_uncertainty(tmp_path, mocker, call):
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(1, stderr="gh: Not Found (HTTP 404)"),
+    )
+    with pytest.raises(IssueGithubMutationError) as rejected:
+        call(tmp_path, "acme/widgets", 42, logins=("alice",))
+    assert rejected.value.uncertain is False
+
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        side_effect=subprocess.TimeoutExpired("gh", 60),
+    )
+    with pytest.raises(IssueGithubMutationError) as timed_out:
+        call(tmp_path, "acme/widgets", 42, logins=("alice",))
+    assert timed_out.value.uncertain is True
+
+
+@pytest.mark.parametrize("call", [add_assignees, remove_assignees])
+@pytest.mark.parametrize("assignees", ["alice", [1], [{"login": 3}]])
+def test_assignee_mutations_with_unreadable_assignees_are_uncertain(
+    tmp_path, mocker, call, assignees
+):
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(stdout=_issue_payload(assignees=assignees)),
+    )
+    with pytest.raises(IssueGithubMutationError) as error:
+        call(tmp_path, "acme/widgets", 42, logins=("alice",))
+    assert error.value.uncertain is True
+
+
+@pytest.mark.parametrize("call", [add_assignees, remove_assignees])
+def test_assignee_mutations_without_an_assignees_field_are_uncertain(tmp_path, mocker, call):
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=_issue_payload())
+    )
+    with pytest.raises(IssueGithubMutationError) as error:
+        call(tmp_path, "acme/widgets", 42, logins=("alice",))
+    assert error.value.uncertain is True

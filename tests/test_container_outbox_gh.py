@@ -24,6 +24,7 @@ def test_issue_view_maps_labels_state_and_default_repo(mocker: pytest.MockerFixt
                     "body": "Body",
                     "labels": [{"name": "bug"}, {"name": "help"}],
                     "state": "OPEN",
+                    "assignees": [{"login": "alice"}, {"login": "bob"}],
                 }
             )
         ),
@@ -31,9 +32,9 @@ def test_issue_view_maps_labels_state_and_default_repo(mocker: pytest.MockerFixt
 
     view = gh.issue_view(None, 12)
 
-    assert view == gh.IssueView("Title", "Body", ("bug", "help"), "open")
+    assert view == gh.IssueView("Title", "Body", ("bug", "help"), "open", ("alice", "bob"))
     run.assert_called_once_with(
-        ["gh", "issue", "view", "12", "--json", "title,body,labels,state"],
+        ["gh", "issue", "view", "12", "--json", "title,body,labels,state,assignees"],
         cwd=None,
         capture_output=True,
         text=True,
@@ -46,7 +47,9 @@ def test_issue_view_supports_explicit_github_repo(mocker: pytest.MockerFixture) 
     run = mocker.patch.object(
         gh.subprocess,
         "run",
-        return_value=completed('{"title":"T","body":"B","labels":[],"state":"CLOSED"}'),
+        return_value=completed(
+            '{"title":"T","body":"B","labels":[],"state":"CLOSED","assignees":[]}'
+        ),
     )
 
     view = gh.issue_view("github:owner/project", 9)
@@ -59,7 +62,9 @@ def test_issue_view_uses_submodule_as_cwd(mocker: pytest.MockerFixture) -> None:
     run = mocker.patch.object(
         gh.subprocess,
         "run",
-        return_value=completed('{"title":"T","body":"B","labels":[],"state":"OPEN"}'),
+        return_value=completed(
+            '{"title":"T","body":"B","labels":[],"state":"OPEN","assignees":[]}'
+        ),
     )
 
     gh.issue_view("vendor/project", 4)
@@ -179,7 +184,15 @@ def test_run_json_reports_invalid_cwd_as_path_error(
         gh.run_json(["gh", "issue", "view", "4"], cwd="vendor/project")
 
 
-@pytest.mark.parametrize("stdout", ["not json", "[]"])
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "not json",
+        "[]",
+        '{"title":"T","body":"B","labels":[],"state":"OPEN","assignees":"alice"}',
+        '{"title":"T","body":"B","labels":[],"state":"OPEN","assignees":[{"name":"alice"}]}',
+    ],
+)
 def test_issue_view_reports_malformed_response(mocker: pytest.MockerFixture, stdout: str) -> None:
     mocker.patch.object(gh.subprocess, "run", return_value=completed(stdout=stdout))
 

@@ -25,6 +25,7 @@ class IssueSnapshot:
     state: Literal["open", "closed"]
     url: str
     is_pull_request: bool
+    assignees: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,13 @@ class MutationReceipt:
 
     issue: int
     url: str
+
+
+@dataclass(frozen=True)
+class AssigneesReceipt(MutationReceipt):
+    """A mutation receipt that also carries the issue's assignees as GitHub now reports them."""
+
+    assignees: tuple[str, ...]
 
 
 class IssueGithubReadError(RuntimeError):
@@ -51,7 +59,7 @@ def _run_api(
     repo_root: Path,
     endpoint: str,
     *,
-    method: Literal["GET", "POST", "PATCH"] = "GET",
+    method: Literal["GET", "POST", "PATCH", "DELETE"] = "GET",
     payload: Mapping[str, object] | None = None,
     mutation: bool = False,
     paginate: bool = False,
@@ -163,6 +171,23 @@ def _mutation_receipt(value: object, *, issue: int | None = None) -> MutationRec
     return MutationReceipt(issue=response_number, url=url)
 
 
+def _assignees_receipt(value: object, *, issue: int) -> AssigneesReceipt:
+    """Parse an assignees mutation response; an unreadable list cannot be verified, so uncertain."""
+    receipt = _mutation_receipt(value, issue=issue)
+    assert _is_object(value)
+    raw = value.get("assignees")
+    logins: list[str] = []
+    if _is_array(raw):
+        for item in raw:
+            login = item.get("login") if _is_object(item) else None
+            if not isinstance(login, str):
+                break
+            logins.append(login)
+        else:
+            return AssigneesReceipt(receipt.issue, receipt.url, tuple(logins))
+    raise IssueGithubMutationError("GitHub mutation returned an unusable response", uncertain=True)
+
+
 def current_login(repo_root: Path) -> str:
     """Return the login authenticated by the host's ``gh`` configuration."""
     data = _read_object(_run_api(repo_root, "user"))
@@ -194,6 +219,14 @@ def get_issue(repo_root: Path, repo: str, number: int) -> IssueSnapshot:
         raise IssueGithubReadError("GitHub read failed: unexpected response")
     labels = tuple(_read_string(_read_object(label).get("name")) for label in raw_labels)
 
+    raw_assignees = data.get("assignees")
+    if raw_assignees is None:
+        assignees: tuple[str, ...] = ()
+    elif _is_array(raw_assignees):
+        assignees = tuple(_read_string(_read_object(item).get("login")) for item in raw_assignees)
+    else:
+        raise IssueGithubReadError("GitHub read failed: unexpected response")
+
     raw_body = data.get("body")
     if raw_body is not None and not isinstance(raw_body, str):
         raise IssueGithubReadError("GitHub read failed: unexpected response")
@@ -209,6 +242,7 @@ def get_issue(repo_root: Path, repo: str, number: int) -> IssueSnapshot:
         state=raw_state,
         url=_read_string(data.get("html_url")),
         is_pull_request="pull_request" in data,
+        assignees=assignees,
     )
 
 
@@ -271,6 +305,46 @@ def replace_labels(
         mutation=True,
     )
     return _mutation_receipt(data)
+
+
+def add_assignees(
+    repo_root: Path,
+    repo: str,
+    number: int,
+    *,
+    logins: tuple[str, ...],
+) -> AssigneesReceipt:
+    """Add the given logins as assignees; GitHub treats an already-assigned login as a no-op.
+
+    GitHub answers 2xx and silently skips logins it cannot assign, so the receipt
+    carries the resulting assignees for the caller to verify.
+    """
+    data = _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/assignees",
+        method="POST",
+        payload={"assignees": list(logins)},
+        mutation=True,
+    )
+    return _assignees_receipt(data, issue=number)
+
+
+def remove_assignees(
+    repo_root: Path,
+    repo: str,
+    number: int,
+    *,
+    logins: tuple[str, ...],
+) -> AssigneesReceipt:
+    """Remove the given logins from the assignees; an absent login is a no-op."""
+    data = _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/assignees",
+        method="DELETE",
+        payload={"assignees": list(logins)},
+        mutation=True,
+    )
+    return _assignees_receipt(data, issue=number)
 
 
 def add_comment(

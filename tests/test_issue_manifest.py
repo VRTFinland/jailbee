@@ -702,3 +702,115 @@ def test_foreign_slug(repo: str, slug: str | None) -> None:
     from jailbee.issue_manifest import foreign_slug
 
     assert foreign_slug(repo) == slug
+
+
+def _assignees(**extra: object) -> dict[str, object]:
+    action: dict[str, object] = {
+        "type": "assignees",
+        "repo": ".",
+        "issue": 12,
+        "add": ["@me", "Bob-1"],
+        "remove": ["alice"],
+        "expected": {"assignees": ["alice", "carol"]},
+    }
+    action.update(extra)
+    return action
+
+
+def test_assignees_action_round_trips_into_the_model() -> None:
+    from jailbee.issue_manifest import AssigneesAction
+
+    (action,) = _parse_action(_assignees()).actions
+    assert action == AssigneesAction(
+        repo=".",
+        target=ExistingIssue(12),
+        add=("@me", "Bob-1"),
+        remove=("alice",),
+        expected_assignees=("alice", "carol"),
+    )
+
+
+def test_assignees_action_accepts_a_created_issue_ref() -> None:
+    manifest = parse_manifest(
+        "001-work.json",
+        _manifest(
+            _create(),
+            {
+                "type": "assignees",
+                "repo": ".",
+                "issue_ref": "new",
+                "add": ["@me"],
+                "expected": {"assignees": []},
+            },
+        ),
+        {},
+    )
+    assert manifest.actions[1].target == CreatedIssue("new")
+    assert manifest.actions[1].remove == ()
+
+
+@pytest.mark.parametrize(
+    "login",
+    ["-bob", "bob-", "bo--b", "bo b", "bob!", "a" * 40, "", "@you", "@me2", 7, None],
+)
+def test_assignees_rejects_invalid_logins(login: object) -> None:
+    with pytest.raises(IssueManifestError, match=r"action 0.*(login|string)"):
+        _parse_action(_assignees(add=[login], remove=[]))
+    with pytest.raises(IssueManifestError, match=r"action 0.*(login|string)"):
+        _parse_action(_assignees(add=["bob"], remove=[login]))
+
+
+def test_assignees_rejects_invalid_expected_logins_including_at_me() -> None:
+    with pytest.raises(IssueManifestError, match=r"expected.assignees"):
+        _parse_action(_assignees(expected={"assignees": ["@me"]}))
+
+
+def test_assignees_accepts_a_39_character_login() -> None:
+    (action,) = _parse_action(_assignees(add=["a" * 39], remove=[])).actions
+    assert action.add == ("a" * 39,)
+
+
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"add": [], "remove": []}, "at least one"),
+        ({"add": ["Bob"], "remove": ["bob"]}, "both add and remove"),
+        ({"add": ["bob", "BOB"]}, "duplicate"),
+        ({"expected": {}}, "expected.assignees is required"),
+        ({"expected": {"assignees": [], "extra": 1}}, "unknown field 'extra'"),
+        ({"extra": 1}, "unknown field 'extra'"),
+        ({"issue_ref": "new"}, "exactly one of issue or issue_ref"),
+    ],
+)
+def test_assignees_rejects_invalid_changes(changes: dict[str, object], match: str) -> None:
+    with pytest.raises(IssueManifestError, match=match):
+        _parse_action(_assignees(**changes))
+
+
+def test_assignees_requires_the_expected_object() -> None:
+    action = _assignees()
+    del action["expected"]
+    with pytest.raises(IssueManifestError, match=r"expected\.assignees is required"):
+        _parse_action(action)
+
+
+def test_two_assignees_actions_on_one_target_conflict_but_labels_do_not() -> None:
+    labels = {
+        "type": "labels",
+        "repo": ".",
+        "issue": 12,
+        "add": ["bug"],
+        "expected": {"labels": []},
+    }
+    parse_manifest("001-work.json", _manifest(_assignees(), labels), {})
+    with pytest.raises(IssueManifestError, match=r"action 1.*already changes.*assignees"):
+        parse_manifest("001-work.json", _manifest(_assignees(), _assignees()), {})
+
+
+def test_assignees_accepts_enterprise_managed_user_logins() -> None:
+    (action,) = _parse_action(
+        _assignees(add=["jdoe_acme"], remove=["a-b_c"], expected={"assignees": ["x_y"]})
+    ).actions
+    assert action.add == ("jdoe_acme",)
+    assert action.remove == ("a-b_c",)
+    assert action.expected_assignees == ("x_y",)

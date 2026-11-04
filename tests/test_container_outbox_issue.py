@@ -46,7 +46,14 @@ def test_reject_existing_label(monkeypatch, tmp_path):
 def test_child_refused_before_lookup(monkeypatch, tmp_path):
     monkeypatch.setenv("JAILBEE_ROLE", "child")
     monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("lookup"))
-    for args in [("create",), ("edit",), ("comment",), ("labels",), ("state",)]:
+    for args in [
+        ("create",),
+        ("edit",),
+        ("comment",),
+        ("labels",),
+        ("state",),
+        ("assign", "42", "--me"),
+    ]:
         result = invoke(*args)
         assert result.exit_code == 1, result.output
         assert "child container" in result.output
@@ -324,6 +331,97 @@ def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, args):
     assert store.draft_load_state("issue", "b") == before
 
 
+def test_assign_staged_json_exact(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ("alice", "carol"))
+    )
+    result = invoke("assign", "42", "--me", "--add", "bob", "--add", "dave", "--remove", "carol")
+    assert result.exit_code == 0, result.output
+    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
+    data = json.loads(manifest.read_text())
+    assert data == {
+        "version": 1,
+        "actions": [
+            {
+                "type": "assignees",
+                "repo": ".",
+                "issue": 42,
+                "add": ["@me", "bob", "dave"],
+                "remove": ["carol"],
+                "expected": {"assignees": ["alice", "carol"]},
+            }
+        ],
+    }
+    parse_manifest(manifest.name, json.dumps(data), {})
+
+
+def test_assign_without_flags_is_usage_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("unexpected gh lookup"))
+    result = invoke("assign", "42")
+    assert result.exit_code == 2, result.output
+    assert "--unassign-me" in result.output
+    assert not (tmp_path / ".jailbee/issue-outbox").exists()
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (("assign", "42", "--me", "--unassign-me"), "both add and remove"),
+        (("assign", "42", "--add", "alice"), "already assigned"),
+        (("assign", "42", "--remove", "bob"), "is not assigned"),
+        (("assign", "42", "--add", "bob", "--add", "BOB"), "more than once"),
+        (("assign", "42", "--add", "bob", "--remove", "Bob"), "both add and remove"),
+        (("assign", "42", "--add", "@ME"), "invalid GitHub login"),
+        (("assign", "42", "--add", "bad login"), "invalid GitHub login"),
+        (("assign", "42", "--remove", "-bob"), "invalid GitHub login"),
+    ],
+)
+def test_assign_conflicts_rejected_without_draft(monkeypatch, tmp_path, args, message):
+    monkeypatch.setattr(gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ("alice",)))
+    result = invoke(*args)
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert not (tmp_path / ".jailbee/issue-outbox").exists()
+
+
+def test_assign_ref_roundtrip_and_created_check(tmp_path):
+    assert (
+        invoke(
+            "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
+        ).exit_code
+        == 0
+    )
+    result = invoke("assign", "@bug", "--me", "--add", "bob", "--batch", "b")
+    assert result.exit_code == 0, result.output
+    store = Store(tmp_path)
+    name = store.draft_submit("issue", "b", "bug")
+    data = json.loads((store.outbox("issue") / name).read_text())
+    assert data["actions"][1] == {
+        "type": "assignees",
+        "repo": ".",
+        "issue_ref": "bug",
+        "add": ["@me", "bob"],
+        "remove": [],
+        "expected": {"assignees": []},
+    }
+    parse_manifest(name, json.dumps(data), {})
+
+
+def test_assign_ref_remove_of_unassigned_login_rejected(tmp_path):
+    assert (
+        invoke(
+            "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
+        ).exit_code
+        == 0
+    )
+    store = Store(tmp_path)
+    before = store.draft_load_state("issue", "b")
+    result = invoke("assign", "@bug", "--remove", "bob", "--batch", "b")
+    assert result.exit_code == 2, result.output
+    assert "is not assigned" in result.output
+    assert store.draft_load_state("issue", "b") == before
+
+
 def test_ref_label_check_uses_created_labels(tmp_path):
     assert (
         invoke(
@@ -346,3 +444,11 @@ def test_ref_label_check_uses_created_labels(tmp_path):
     result = invoke("labels", "@bug", "--add", "BUG", "--batch", "b")
     assert result.exit_code == 2
     assert store.draft_load_state("issue", "b") == before
+
+
+def test_assign_accepts_underscore_logins(monkeypatch, tmp_path):
+    monkeypatch.setattr(gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ()))
+    result = invoke("assign", "42", "--add", "jdoe_acme")
+    assert result.exit_code == 0, result.output
+    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
+    assert json.loads(manifest.read_text())["actions"][0]["add"] == ["jdoe_acme"]

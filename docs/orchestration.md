@@ -114,7 +114,7 @@ expected fields, receipts and journals as manual publication.
 
 ```yaml
 publish:
-  issues: [create, edit, comment, labels, state]  # own repo and declared submodules
+  issues: [create, edit, comment, labels, assign_self, state]  # own repo and declared submodules
   foreign_issues:
     repos: [someorg/upstream-lib]               # case-insensitive owner/name, or ["*"]
     actions: [comment]
@@ -129,6 +129,14 @@ jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
 jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
 jb orchestrate grant bugs --no-publish
 ```
+
+Assignment has two kinds. `assign_self` covers only assignees changes whose
+logins all equal the publishing account, compared case-insensitively after
+`@me` is resolved. `assign` covers any login and implies `assign_self`. A
+repo cap can narrow `assign` to `assign_self`. Publishing needs `assign` when
+an action adds or removes another login, or when no publisher login is known.
+Over remote SSH, adding either kind, or going from `assign_self` to `assign`,
+counts as widening.
 
 `--publish-issues none` clears issue rights. Repeatable
 `--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed

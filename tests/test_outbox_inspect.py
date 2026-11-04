@@ -669,3 +669,30 @@ def test_source_awaits_push_without_inheriting_recorded_pr(tmp_path, number, act
     )[0]
     assert view.state == "awaiting-push"
     assert all(a.target == (str(number) if number else "") for a in view.actions)
+
+
+def test_assignees_action_view_lists_add_and_remove_as_plain_text(tmp_path):
+    issue = json.loads(issue_files()["001.json"])
+    issue["actions"] = [
+        {
+            "type": "assignees",
+            "repo": ".",
+            "issue": 42,
+            "add": ["@me", "bob"],
+            "remove": ["carol"],
+            "expected": {"assignees": ["carol"]},
+        }
+    ]
+    views = build_views(
+        IDENTITY,
+        (store("issue", {"001.json": json.dumps(issue)}),),
+        journal_store=JournalStore(tmp_path / "journals"),
+    )
+    (action,) = views[0].actions
+    assert (action.kind, action.target, action.title, action.markdown) == (
+        "assignees",
+        "42",
+        None,
+        False,
+    )
+    assert action.body == "add: @me, bob\nremove: carol"
