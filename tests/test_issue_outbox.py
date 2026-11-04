@@ -3093,3 +3093,35 @@ def test_assign_retry_after_a_partly_landed_add_is_not_stale(preflight):
     retried = preflight["prepare"]({"a.json": [action]})
     assert retried.manifests[0].actions[0].status == "pending"
     issue_outbox.revalidate_batch(retried)
+
+
+def test_assign_retry_after_a_partly_landed_add_applies_through_the_real_path(execution, mocker):
+    from dataclasses import replace
+
+    from jailbee import issue_github, issue_outbox
+    from jailbee.issue_github import IssueGithubMutationError
+
+    action = _assign(add=["a", "b"], remove=[], expected={"assignees": ["x"]})
+    batch = execution["batch"]({"a.json": [action]})
+    execution["mutations"]["add_assignees"].side_effect = IssueGithubMutationError(
+        "timeout", uncertain=True
+    )
+    assert _apply(execution, batch).failure.uncertain
+    _reconcile(execution, batch, issue_outbox.RetryResolution())
+
+    # GitHub assigned "a" of ["a", "b"] before the connection dropped.
+    live = issue_github.IssueSnapshot(
+        7, "T", "B", (), "open", "https://github.com/acme/app/issues/7", False
+    )
+    mocker.patch.object(issue_github, "get_issue", return_value=replace(live, assignees=("x", "a")))
+    mocker.patch.object(issue_github, "current_login", return_value="alice")
+    retried = execution["batch"]({"a.json": [action]})
+    issue_outbox.revalidate_batch(retried)
+
+    execution["mutations"]["add_assignees"].side_effect = None
+    execution["mutations"]["add_assignees"].return_value = _assignees_receipt("x", "a", "b")
+    report = _apply(execution, retried)
+    assert report.failure is None
+    assert execution["mutations"]["add_assignees"].call_count == 2
+    assert [r.index for _, r in report.applied] == [0]
+    assert [r.state for _, r in report.applied] == ["applied"]

@@ -741,8 +741,20 @@ def test_assign_self_refusal_in_the_lock_leaves_the_budget_unchanged(rig):
     assert budget.get(ctx.sender.full, []) == []
 
 
-def test_non_policy_failure_still_keeps_the_reservation(rig):
-    rig[4].side_effect = RuntimeError("network failed")
+def test_publish_failure_after_the_policy_passed_keeps_the_reservation(rig):
+    ctx, _m, files, _, publish = rig
+    _assign_manifest(files, ["alice"])
+    ctx.sender.config[labels.GRANT] = Grant(
+        publish=PublishRights(issues=("assign_self",))
+    ).to_label()
+
+    def execute(*a, **kw):
+        kw["policy"](_assign_batch(rig, add=("alice",)))  # passes
+        raise RuntimeError("GitHub failed after the policy")
+
+    publish.side_effect = execute
     accept(rig)
-    publishing.settle(rig[0], lambda *a: None)
-    assert len(json.loads((rig[0].root / "publish-budget.json").read_text())["proj-o"]) == 1
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "failed" and "GitHub failed" in replies[0].detail
+    assert len(json.loads((ctx.root / "publish-budget.json").read_text())[ctx.sender.full]) == 1
