@@ -298,8 +298,12 @@ def test_a_choice_prompt_takes_free_text_unless_a_listed_name_is_required(mocker
     patch_pause(mocker)
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     mocker.patch.object(tsession, "host_branches", return_value=("main", "dev"))
-    run = drive(mocker, ["n", *keys("feat"), "enter", *keys("zz"), "enter"], [_group(tmp_path)])
-    assert run.trace[-1].overlay is None  # "mainzz" was accepted: new-base takes free text
+    run = drive(
+        mocker, ["n", *keys("feat"), "enter", *keys("zz"), "enter", "enter"], [_group(tmp_path)]
+    )
+    child.assert_called_once_with(
+        ["jailbee", "new", "--background", "--", "feat", "mainzz"], check=False, cwd=tmp_path
+    )
 
 
 def test_a_prompt_without_suggestions_ignores_arrows_and_tab(mocker, tmp_path):

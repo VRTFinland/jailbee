@@ -771,15 +771,20 @@ def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
     return None
 
 
-def prompt_target_kind(purpose: str) -> Literal["repo", "container"]:
+def prompt_target_kind(purpose: str, carry: tuple[str, ...] = ()) -> Literal["repo", "container"]:
     """What a prompt's or picker's ``target`` names, read from its ``purpose``.
 
-    Only the ``container-*`` questions are about a container; every other one
-    targets a repo prefix. A container may share its name with another repo's
-    prefix (container ``alpha-x`` of repo ``alpha`` beside repo ``alpha-x``),
+    ``container-*`` and restart questions target a container; service toggles
+    inherit the carried flow's target kind. Other questions target a repo prefix.
+    A container may share its name with another repo's prefix (container
+    ``alpha-x`` of repo ``alpha`` beside repo ``alpha-x``),
     so a target is never looked up as both.
     """
-    return "container" if purpose.startswith("container-") else "repo"
+    if purpose == "autostart-services":
+        return "container" if carry and carry[0] == "restart" else "repo"
+    if purpose.startswith("container-") or purpose == "restart-autostart":
+        return "container"
+    return "repo"
 
 
 def target_group(

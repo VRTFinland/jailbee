@@ -5424,7 +5424,7 @@ def test_terminal_order_running_menu_layout(tmp_path):
         for i in tmenu.menu_entries(menu)
         if isinstance(i, dmenus.MenuGroup) and i.label == "Lifecycle →"
     )
-    assert [v for _, v in lifecycle.actions] == ["restart", "stop", "destroy"]
+    assert [v for _, v in lifecycle.actions] == ["restart", "restart-with", "stop", "destroy"]
     assert {"shell", "destroy"} <= {v for _, v in menu.actions}
 
 
