@@ -106,6 +106,7 @@ Commit everything before you send `done`.
 - `fork` (default) starts the child from your committed HEAD. Commit first:
   a dirty tree is refused. The child inherits the source's PR bindings; normal
   bindings are adopted, while a review source retains its review identity.
+- HEAD forks seed configured `fork.warm_paths` (Git-ignored build outputs) by btrfs reflink; repeatable `--warm PATH` replaces the list and `--no-warm` disables it (mutually exclusive, fork only). Other pools or a changed source skip with a note.
 - `new` starts a fresh checkout from a base (`--new [--base main]`).
 - Grant the least rights the child needs, and only within `grantable`.
 - Prefer the helper; it writes the manifest and body atomically and prints

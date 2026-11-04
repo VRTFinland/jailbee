@@ -250,6 +250,22 @@ prepends a short fixed preamble naming its orchestrator and the child skill,
 and sets `JAILBEE_ROLE=child` and `JAILBEE_ORCHESTRATOR=<name>` in the
 agent's environment.
 
+## Fork warm paths
+
+Fork spawns seed the source's Git-ignored build outputs from `fork.warm_paths`
+using btrfs reflinks, before mounts, caches and autostart. They seed HEAD forks
+only: a dirty source, a source that moved past the pinned fork commit, a non-HEAD
+`--ref`, or another storage driver is skipped with an advisory. A reflink failure
+never falls back to a full copy and never fails the fork.
+
+For `jailbee inbox send spawn`, repeatable `--warm PATH` replaces the configured
+list; `--no-warm` disables it. The flags are mutually exclusive and are refused
+with `--new` or `--pr`. The version-2 fork manifest field is `warm_paths`:
+omitted uses configuration, `[]` disables seeding, and a non-empty list replaces
+configuration. Patterns are repo-relative globs of ignored paths (`*` does not
+cross `/`; `**` matches zero or more segments). Unmatched patterns get a note.
+See [`fork`](config.md#fork).
+
 ## Autostart stage selection
 
 `spawn` and `restart` accept optional `autostart_profile: "NAME"`, also

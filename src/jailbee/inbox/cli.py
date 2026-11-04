@@ -89,6 +89,7 @@ USAGE = (
     "                    [--mount M]... [--loose] [--egress H]... [--note T]\n"
     "                    [--on-done destroy|keep] [--autostart-profile NAME] [--"
     "services LIST] [runner] + text\n"
+    "                    [--warm PATH]... | [--no-warm] (fork only; replaces fork.warm_paths)\n"
     "                    --branch is required except for --pr; the broker derives\n"
     "                    the branch from the PR and ignores any supplied branch.\n"
     "           refresh  --child C --services LIST [--wait]  Refresh services in"
