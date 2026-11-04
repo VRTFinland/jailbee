@@ -371,6 +371,7 @@ def start(ctx: ActionContext, m: PublishManifest) -> threading.Thread | None:
 def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) -> None:
     lines: list[str] = []
     actual: list[dict[str, str]] = []
+    refused_by_policy = False
     try:
         incus = Incus()
         key = entry.get("container_key", full)
@@ -403,6 +404,17 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 if entry["kind"] == "issue"
                 else _review_policy(rights, count, cfg, incus, full)
             )
+            inner = policy
+
+            def policy(batch: Any) -> None:
+                # A policy refusal ran before any GitHub mutation; settle() refunds it.
+                nonlocal refused_by_policy
+                try:
+                    inner(batch)
+                except Exception:
+                    refused_by_policy = True
+                    raise
+
             result = publish_selected(
                 cfg,
                 incus,
@@ -440,11 +452,23 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                     "detail": detail[:4000],
                     "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
                     "actions": actual,
+                    "policy_refused": refused_by_policy,
                 }
             ),
         )
     except Exception:
         log.exception("broker: could not save publish result for %s %s", full, entry["ref"])
+
+
+def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
+    """Return the hourly reservation of a publish the in-lock policy refused whole."""
+    budget = _load(root, "publish-budget.json")
+    stamps = list(budget.get(full, []))
+    for _ in entry["actions"]:
+        if entry["started_at"] in stamps:
+            stamps.remove(entry["started_at"])
+    budget[full] = stamps
+    _save(root, "publish-budget.json", budget)
 
 
 def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
@@ -475,6 +499,10 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     if not entry.get("audited"):
         _audit(ctx.root, audit)
         entry["audited"] = True
+        _save(ctx.root, "publish-inflight.json", current)
+    if result.get("policy_refused") and not entry.get("refunded"):
+        _refund(ctx.root, ctx.sender.full, entry)
+        entry["refunded"] = True
         _save(ctx.root, "publish-inflight.json", current)
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]

@@ -707,3 +707,42 @@ def test_precheck_requires_some_assign_right(rig, kinds, state):
     )
     ctx.sender.config[labels.GRANT] = Grant(publish=PublishRights(issues=kinds)).to_label()
     assert publishing.handle_publish(ctx, m).state == state
+
+
+def _assign_manifest(files, add):
+    files["a.json"] = json.dumps(
+        {
+            "version": 1,
+            "actions": [
+                {
+                    "type": "assignees",
+                    "repo": ".",
+                    "issue": 12,
+                    "add": add,
+                    "expected": {"assignees": []},
+                }
+            ],
+        }
+    )
+
+
+def test_assign_self_refusal_in_the_lock_leaves_the_budget_unchanged(rig):
+    ctx, _m, files, _, publish = rig
+    _assign_manifest(files, ["bob"])
+    ctx.sender.config[labels.GRANT] = Grant(
+        publish=PublishRights(issues=("assign_self",))
+    ).to_label()
+    publish.side_effect = lambda *a, **kw: kw["policy"](_assign_batch(rig, add=("bob",)))
+    accept(rig)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "failed" and "assign" in replies[0].detail
+    budget = json.loads((ctx.root / "publish-budget.json").read_text())
+    assert budget.get(ctx.sender.full, []) == []
+
+
+def test_non_policy_failure_still_keeps_the_reservation(rig):
+    rig[4].side_effect = RuntimeError("network failed")
+    accept(rig)
+    publishing.settle(rig[0], lambda *a: None)
+    assert len(json.loads((rig[0].root / "publish-budget.json").read_text())["proj-o"]) == 1
