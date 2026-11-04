@@ -190,7 +190,7 @@ def test_happy_path_order(warm_rig):
             uid=uid,
             gid=gid,
         ),
-        call.config_device_remove("repo-child", "jailbee-warm", missing_ok=True),
+        call.config_device_remove("repo-child", "jailbee-warm", missing_ok=False),
         call.snapshot_delete("repo-source", "jailbee-warm-repo-child"),
     ]
     # Other read-only safety probes may appear between writes.
@@ -215,7 +215,7 @@ def test_cp_failure_cleans_partial_and_continues(warm_rig):
         gid=cfg.container_user.gid,
     )
     incus.config_device_remove.assert_called_once_with(
-        "repo-child", "jailbee-warm", missing_ok=True
+        "repo-child", "jailbee-warm", missing_ok=False
     )
     incus.snapshot_delete.assert_called_once()
 
@@ -265,6 +265,79 @@ def test_snapshot_moved_after_preflight_skips_copy(warm_rig, mocker):
     mocker.patch("jailbee.sync._container_head_oid", side_effect=["a" * 40, "b" * 40])
     assert seed(warm_rig).skipped
     assert not any(c.args[1][0] == "cp" for c in incus.exec.call_args_list)
+    incus.snapshot_delete.assert_called_once()
+
+
+def test_source_only_ignore_rule_does_not_dirty_child(warm_rig):
+    incus = warm_rig[1]
+    def execute(name, argv, **kwargs):
+        if "check-ignore" in argv and argv[-1] == "app/build":
+            raise IncusError("not ignored in child")
+        return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+    incus.exec.side_effect = execute
+    assert seed(warm_rig).seeded == [".gradle"]
+    assert not any(c.args[1][0] == "cp" and c.args[1][-1].endswith("app/build") for c in incus.exec.call_args_list)
+    assert not any(c.args[1][0] == "rm" for c in incus.exec.call_args_list)
+
+
+def test_symlink_or_existing_target_is_not_copied_or_removed(warm_rig):
+    incus = warm_rig[1]
+    def execute(name, argv, **kwargs):
+        if argv[0] == "python3" and argv[-1] == "app/build":
+            raise IncusError("unsafe symlink or existing destination")
+        return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+    incus.exec.side_effect = execute
+    assert seed(warm_rig).seeded == [".gradle"]
+    assert not any(c.args[1][0] == "rm" for c in incus.exec.call_args_list)
+
+
+@pytest.mark.parametrize("link", ["root", "ancestor", "nested", "existing", "fifo"])
+def test_path_safety_script_refuses_unsafe_tree(tmp_path, monkeypatch, link):
+    import os
+    import sys
+    from jailbee.fork_warm import _PATH_SAFETY_SCRIPT
+    source, target, shared = [tmp_path / p for p in ("source", "target", "shared")]
+    for directory in (source, target, shared):
+        directory.mkdir()
+    if link == "root":
+        (source / "build").symlink_to(shared, target_is_directory=True)
+    elif link == "ancestor":
+        (source / "build").mkdir()
+        (target / "app").symlink_to(shared, target_is_directory=True)
+    else:
+        (source / "build").mkdir()
+        if link == "nested":
+            (source / "build" / "cache").symlink_to(shared, target_is_directory=True)
+        elif link == "fifo":
+            os.mkfifo(source / "build" / "pipe")
+        else:
+            (target / "build").mkdir()
+    relative = "app/build" if link == "ancestor" else "build"
+    monkeypatch.setattr(sys, "argv", ["probe", str(source), str(target), relative])
+    with pytest.raises(ValueError):
+        exec(compile(_PATH_SAFETY_SCRIPT, "warm-path-safety", "exec"), {})
+
+
+def test_path_safety_script_accepts_independent_tree(tmp_path, monkeypatch):
+    import sys
+    from jailbee.fork_warm import _PATH_SAFETY_SCRIPT
+    source, target = tmp_path / "source", tmp_path / "target"
+    (source / "build").mkdir(parents=True)
+    (source / "build" / "output").write_text("artifact")
+    target.mkdir()
+    monkeypatch.setattr(sys, "argv", ["probe", str(source), str(target), "build"])
+    exec(compile(_PATH_SAFETY_SCRIPT, "warm-path-safety", "exec"), {})
+    assert not (target / "build").exists()
+
+
+def test_real_device_removal_failure_is_reported(warm_rig, mocker):
+    real = Incus()
+    mocker.patch.object(real, "_run_retrying_on_etag", side_effect=IncusError("busy device"))
+    incus = warm_rig[1]
+    incus.config_device_remove.side_effect = lambda *a, **k: real.config_device_remove(*a, **k)
+    warn = mocker.patch("jailbee.fork_warm.warn")
+    seed(warm_rig)
+    assert "busy device" in str(warn.call_args_list)
     incus.snapshot_delete.assert_called_once()
 
 

@@ -23,6 +23,33 @@ DEVICE_NAME = "jailbee-warm"
 MOUNT_PATH = "/run/jailbee-warm"
 POOL_ROOT = "/var/lib/incus/storage-pools"
 
+# Reject links instead of dereferencing them: a copied link can still write to
+# shared storage. Also refuse existing destinations before partial-copy cleanup.
+_PATH_SAFETY_SCRIPT = """
+import os
+import stat
+import sys
+from pathlib import Path
+source, target, relative = sys.argv[1:]
+for root in (source, target):
+    current = Path(root)
+    for part in relative.split('/'):
+        current = current / part
+        if current.is_symlink():
+            raise ValueError('warm path contains a symbolic link')
+if os.path.lexists(Path(target) / relative):
+    raise ValueError('warm destination already exists')
+origin = Path(source) / relative
+for directory, dirs, files in os.walk(origin, followlinks=False):
+    for name in dirs + files:
+        mode = (Path(directory) / name).lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            raise ValueError('warm path contains a link or special file')
+mode = origin.lstat().st_mode
+if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+    raise ValueError('warm path is a link or special file')
+"""
+
 
 @dataclass(frozen=True)
 class WarmResult:
@@ -132,6 +159,7 @@ def _seed(
     seeded: list[str] = []
     failed: list[str] = []
     incus.snapshot_create(source, snap)
+    attached = False
     try:
         incus.config_device_add(
             child,
@@ -145,6 +173,7 @@ def _seed(
                 "readonly": "true",
             },
         )
+        attached = True
         # Inspect the immutable view too: the live source may change between
         # the preflight probes and the snapshot operation.
         if (
@@ -154,6 +183,12 @@ def _seed(
             return _skip("Warm paths skipped: snapshot does not match the clean fork commit")
         for path in paths:
             target = f"{child_repo}/{path}"
+            try:
+                incus.exec(child, ["git", "-C", child_repo, "check-ignore", "-q", "--", path], uid=uid)
+                incus.exec(child, ["python3", "-c", _PATH_SAFETY_SCRIPT, MOUNT_PATH, child_repo, path], uid=uid, gid=gid)
+            except IncusError:
+                warn(f"Warm path skipped: {path} is not ignored in the child or is unsafe to copy")
+                continue
             try:
                 incus.exec(
                     child,
@@ -176,7 +211,7 @@ def _seed(
                     warn(f"Warm path partial result could not be removed: {path}: {exc}")
     finally:
         try:
-            incus.config_device_remove(child, DEVICE_NAME, missing_ok=True)
+            incus.config_device_remove(child, DEVICE_NAME, missing_ok=not attached)
         except Exception as exc:
             warn(f"Warm paths device cleanup failed: {exc}")
         try:

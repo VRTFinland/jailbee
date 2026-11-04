@@ -2452,7 +2452,11 @@ fork:
 
 Patterns are repository-relative: no absolute paths, `..`, or `.git` root.
 `*` and `?` match one path segment; `**` matches zero or more segments.
-Only existing ignored entries are copied; unmatched patterns get an advisory.
+Only existing ignored entries that are also ignored in the child are copied;
+unmatched patterns get an advisory. Select the outermost ignored directory:
+Git collapses its listing (if `cache/` is ignored, select `cache`, not
+`cache/gradle`). Submodule outputs are not listed. Symlinks and special files
+are skipped to keep the copy independent; existing destinations are not replaced.
 `--warm PATH` (repeatable) replaces the configured list; `--no-warm` disables it
 for one fork. The flags are mutually exclusive. No outputs remain shared.
 
