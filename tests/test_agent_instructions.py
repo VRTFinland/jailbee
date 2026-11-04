@@ -210,10 +210,11 @@ def test_unreadable_source_warns_and_keeps_previous(homes, claude_cfg, capsys):
     source, data_home = homes
     source.write_bytes(b"good")
     ai.sync_global_instructions(claude_cfg)
+    before = staged(data_home).read_bytes()
     source.unlink()
     source.mkdir()
     ai.sync_global_instructions(claude_cfg)
-    assert staged(data_home).read_bytes().endswith(b"\ngood")
+    assert staged(data_home).read_bytes() == before
     output = capsys.readouterr()
     assert output.out == ""
     assert "cannot read" in output.err

@@ -114,6 +114,56 @@ def test_container_skill_covers_identity_commands_and_policy() -> None:
     assert "child" in network and "orchestrator" in network
 
 
+def _validate_guidance_commands(skill: str, preamble: str) -> None:
+    import shlex
+
+    from typer.main import get_command
+
+    from jailbee.cli import app
+    from jailbee.container_cli import container_app
+
+    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
+    inline = re.findall(r"`(jailbee(?:\s+[^`]*)?)`", skill)
+    examples = inline + [line for block in blocks for line in block.splitlines()]
+    for line in preamble.splitlines():
+        examples.extend(re.findall(
+            r"jailbee\s+(?:--repo\s+<container_prefix>|(?:service|net)\s+\w+(?:\s+\w+)?(?:\s+<[^>]+>)*)",
+            line,
+        ))
+    host_roots = {"net", "git", "pr", "port", "display"}
+    container_roots = {"service", "config", "inbox", "version"}
+    for example in examples:
+        if not example.startswith("jailbee "):
+            continue
+        tokens = shlex.split(example.replace("[", "").replace("]", ""))
+        tokens = tokens[1:]
+        if tokens[:1] == ["--repo"]:
+            tokens = tokens[2:]
+        if not tokens or tokens[0] == "...":
+            continue
+        root = tokens[0]
+        assert root in host_roots | container_roots, example
+        command = get_command(app if root in host_roots else container_app)
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token.startswith("-"):
+                options = {opt: p for p in command.params for opt in p.opts}
+                assert token in options, example
+                index += 1 + (not options[token].is_flag)
+            elif hasattr(command, "commands"):
+                assert token in command.commands, example
+                command = command.commands[token]
+                index += 1
+            else:
+                index += 1
+
+
+def test_container_guidance_rejects_unknown_documented_command() -> None:
+    with pytest.raises(AssertionError, match="bogus"):
+        _validate_guidance_commands("`jailbee service bogus`", "")
+
+
 def test_container_guidance_commands_resolve() -> None:
     from typer.main import get_command
 
@@ -122,6 +172,7 @@ def test_container_guidance_commands_resolve() -> None:
     from jailbee.container_cli import container_app
 
     skill = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
+    _validate_guidance_commands(skill, PREAMBLE)
     commands = {
         "service ls": False,
         "service start": False,
