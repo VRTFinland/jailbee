@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROLE_FILE = Path.home() / ".jailbee/orchestration/role"
 CHILD_REFUSAL = (
-    "Children cannot stage GitHub actions. Send the orchestrator a message or question "
+    "A child container cannot stage GitHub actions. Send the orchestrator a message or question "
     "with the exact repo, issue or PR, title, body, labels, file and line instead: "
     'jailbee inbox send message --text "<exact GitHub action>"'
 )
