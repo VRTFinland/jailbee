@@ -124,6 +124,29 @@ def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]
     raise OutboxError(f"no such container in the visible repository scope: {name}")
 
 
+def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str | None]:
+    """The visible container `name` names: its full name and raw Incus creation time.
+
+    The time is None when Incus does not report a usable one. Stopped containers
+    resolve too; only the scoped inventory supplies candidates.
+    """
+    containers, _ = _inventory(cfg, incus, all_repos=True)
+    item = _resolve_visible(cfg, name, containers)
+    try:
+        raw = next(
+            (
+                c
+                for c in incus.list_containers(fast=True, timeout=READ_TIMEOUT)
+                if c.get("name") == item.name
+            ),
+            None,
+        )
+    except IncusError as exc:
+        raise OutboxExecutionError(str(exc)) from exc
+    created = raw.get("created_at") if raw is not None else None
+    return item.name, created if isinstance(created, str) else None
+
+
 def discover(
     cfg: Config, incus: Incus, name: str | None, *, all_repos: bool, journal_store: JournalStore
 ) -> tuple[ContainerView, ...]:

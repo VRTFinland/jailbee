@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -12,12 +13,14 @@ from typer import _click as click
 from typer.core import TyperGroup
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.outbox.models import ProposalId
     from jailbee.outbox_io import JournalStore
 
-_COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply"))
+_COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply", "sent"))
 
 
 def _normalize_local(argv: Sequence[str]) -> list[str]:
@@ -99,6 +102,14 @@ class Output(StrEnum):
 OutputOption = Annotated[
     Output, typer.Option("--format", "--output", "-o", help="Output format: table or json.")
 ]
+
+
+sent_app = typer.Typer(
+    name="sent",
+    help="The Sent log: what jailbee published to GitHub from the outbox.",
+    no_args_is_help=True,
+)
+app.add_typer(sent_app)
 
 
 @app.callback()
@@ -528,3 +539,189 @@ def apply(
         )
 
     _run(ctx, config, operation)
+
+
+def _run_sent(
+    ctx: typer.Context,
+    config: Path | None,
+    operation: Callable[[], int],
+    *,
+    cfg_operation: Callable[[Config, Incus], int] | None = None,
+) -> None:
+    """Run a Sent log command; only `cfg_operation` (a container was named) loads config."""
+    if cfg_operation is not None:
+        _run(ctx, config, cfg_operation)
+        return
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from jailbee.outbox.inspect import safe_text
+    from jailbee.outbox.models import OutboxError
+    from jailbee.remote_ssh.repo_scope import RepoScopeError
+    from jailbee.tui import error_plain
+
+    try:
+        status = operation()
+    except (OutboxError, RepoScopeError) as exc:
+        error_plain(safe_text(str(exc)))
+        raise typer.Exit(2) from exc
+    except (SQLAlchemyError, OSError) as exc:
+        error_plain(f"Sent log is unavailable: {safe_text(str(exc))}")
+        raise typer.Exit(1) from exc
+    if status:
+        raise typer.Exit(status)
+
+
+@sent_app.command("ls")
+def sent_ls(
+    ctx: typer.Context,
+    container: Annotated[
+        str | None,
+        typer.Argument(
+            help="Full or short container name: only its current incarnation. Omit for all."
+        ),
+    ] = None,
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="Only this repository (container prefix).")
+    ] = None,
+    output: OutputOption = Output.table,
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, help="Show at most this many, newest first.")
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List published actions, newest first."""
+    from jailbee.outbox import sent, sent_view
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+
+    def show_rows(instance: str | None = None, created: datetime | None = None) -> int:
+        scope = scope_for_session()
+        rows = sent_view.in_scope(
+            sent.list_records(container_prefix=repo, instance=instance, container_created=created),
+            scope,
+        )
+        if limit is not None:
+            rows = rows[:limit]
+        if output is Output.json:
+            typer.echo(json.dumps(sent_view.rows_json(rows), ensure_ascii=True))
+            return 0
+        if not rows:
+            typer.echo("No sent records.")
+            return 0
+        from rich.table import Table
+        from rich.text import Text
+
+        from jailbee.tui import console
+
+        table = Table(*sent_view.table_header())
+        for index in range(len(table.columns) - 1):
+            table.columns[index].no_wrap = True
+        for row in rows:
+            table.add_row(*(Text(cell) for cell in sent_view.table_row(row)))
+        console.print(table)
+        return 0
+
+    def with_container(cfg: Config, incus: Incus) -> int:
+        from jailbee.outbox.commands import resolve_incarnation
+
+        assert container is not None
+        full, raw = resolve_incarnation(cfg, incus, container)
+        return show_rows(full, sent.parse_created(raw))
+
+    if container is None:
+        _run_sent(ctx, config, show_rows)
+    else:
+        _run_sent(ctx, config, show_rows, cfg_operation=with_container)
+
+
+@sent_app.command("show")
+def sent_show(
+    ctx: typer.Context,
+    record: Annotated[int | None, typer.Argument(help="Record ID, from `outbox sent ls`.")] = None,
+    output: OutputOption = Output.table,
+    config: ConfigOption = None,
+) -> None:
+    """Show one published action in full, with its GitHub URL."""
+    from jailbee import prompting
+    from jailbee.outbox import sent_view
+    from jailbee.outbox.models import OutboxError
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+
+    def operation() -> int:
+        number = record
+        if number is None:
+            number = int(
+                prompting.ask_text(
+                    "record",
+                    validate=lambda t: None if t.strip().isdigit() else "enter a record ID",
+                )
+            )
+        row = sent_view.visible_record(number, scope_for_session())
+        if row is None:
+            raise OutboxError(f"no such sent record: {number}")
+        if output is Output.json:
+            typer.echo(json.dumps(sent_view.row_json(row), ensure_ascii=True))
+        else:
+            typer.echo("\n".join(sent_view.show_lines(row)))
+        return 0
+
+    _run_sent(ctx, config, operation)
+
+
+@sent_app.command("clear")
+def sent_clear(
+    ctx: typer.Context,
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Repository (container prefix) whose records to delete."),
+    ] = None,
+    before: Annotated[
+        str | None,
+        typer.Option(
+            "--before", help="Only records sent before this ISO date or datetime (naive is UTC)."
+        ),
+    ] = None,
+    yes: YesOption = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete a repository's Sent log records (GitHub is not touched)."""
+    from jailbee import prompting
+    from jailbee.outbox import sent, sent_view
+    from jailbee.outbox.models import OutboxError
+    from jailbee.remote_ssh.repo_scope import scope_for_session
+
+    def operation() -> int:
+        scope = scope_for_session()
+        cutoff = None
+        if before is not None:
+            try:
+                cutoff = sent_view.parse_before(before)
+            except ValueError as exc:
+                raise OutboxError(str(exc)) from exc
+        candidates = sent_view.repos_with_records(scope)
+        if repo is not None:
+            if repo not in candidates:
+                raise OutboxError(f"no sent records for repo: {repo}")
+            chosen = repo
+        else:
+            chosen = prompting.choose_one(
+                "repo",
+                [prompting.Option(p, p, p) for p in candidates],
+                destructive=True,
+                empty_reason="no repository has sent records",
+            )
+        rows = sent.list_records(container_prefix=chosen)
+        total = len([r for r in rows if cutoff is None or r.sent_at < cutoff])
+        if total == 0:
+            typer.echo("Nothing to clear.")
+            return 0
+        when = f" sent before {cutoff.isoformat()}" if cutoff is not None else ""
+        word = "record" if total == 1 else "records"
+        if not yes and not typer.confirm(
+            f"Delete {total} sent {word}{when} of {chosen}?", default=False
+        ):
+            typer.echo("Nothing deleted.")
+            return 0
+        typer.echo(f"Deleted {sent.clear(container_prefix=chosen, before=cutoff)} sent {word}.")
+        return 0
+
+    _run_sent(ctx, config, operation)
