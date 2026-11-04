@@ -343,7 +343,9 @@ def _rights(issues=(), foreign=()):
 
 
 def test_narrowed_assign_degrades_to_assign_self_under_self_cap():
-    narrowed = _rights(("assign",), ("assign",)).narrowed(_rights(("assign_self",), ("assign_self",)))
+    narrowed = _rights(("assign",), ("assign",)).narrowed(
+        _rights(("assign_self",), ("assign_self",))
+    )
     assert narrowed.issues == ("assign_self",)
     assert narrowed.foreign_issues.actions == ("assign_self",)
     assert not narrowed.covers_issue("assign", "org/repo", foreign=False)
@@ -352,7 +354,9 @@ def test_narrowed_assign_degrades_to_assign_self_under_self_cap():
 
 
 def test_narrowed_assign_self_survives_assign_cap():
-    narrowed = _rights(("assign_self",), ("assign_self",)).narrowed(_rights(("assign",), ("assign",)))
+    narrowed = _rights(("assign_self",), ("assign_self",)).narrowed(
+        _rights(("assign",), ("assign",))
+    )
     assert narrowed.issues == ("assign_self",)
     assert narrowed.foreign_issues.actions == ("assign_self",)
 
