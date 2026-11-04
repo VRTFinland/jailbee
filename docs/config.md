@@ -1965,8 +1965,9 @@ are reserved for built-in profiles and cannot be defined in `profiles`:
 `none` selects no configured stages or profile services (an explicit service
 selection can still override the profile), while the generated `agents` stage
 remains selected; `all` selects every configured stage and service.
-Without `profiles`, `default_profile` is invalid and autostart behaves exactly
-as before. The reserved `services` slots determine placement, not selection;
+Without `profiles`, `default_profile` may still select the built-in `none` or
+`all`; when no profile is selected or configured as the default, autostart
+retains the all-stages-and-services behavior. The reserved `services` slots determine placement, not selection;
 see [placing service startup](#placing-service-startup).
 
 A profile may specify `services: [web]` to start those known services and their
