@@ -20,7 +20,7 @@ HOST_SUBCOMMANDS = {
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
     "issue": frozenset({"apply", "resolve", "drop", "ls", "show"}),
-    "outbox": frozenset({"apply", "browse", "clear"}),
+    "outbox": frozenset({"apply", "browse", "clear", "sent"}),
 }
 
 

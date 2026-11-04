@@ -21,6 +21,7 @@ import pytest
 from jailbee import background
 from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
+from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import JOURNAL_FILE, Journal
@@ -72,6 +73,12 @@ class FakeIncus:
     def config_get(self, name: str, key: str) -> str | None:
         value = self.containers[name]["config"].get(key)
         return str(value) if value else None
+
+    def config_get_checked(self, name: str, key: str) -> str | None:
+        # Like Incus: a missing container is a command failure, not "unset".
+        if name not in self.containers:
+            raise IncusError(f"instance {name} not found")
+        return self.config_get(name, key)
 
     def config_set(self, name: str, key: str, value: str) -> None:
         self.containers[name]["config"][key] = value
