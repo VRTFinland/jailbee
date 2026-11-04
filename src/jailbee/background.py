@@ -577,7 +577,7 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
     default = data.pop("default_profile", None)
     # The foreground already filtered both triggers. Unselected stage names
     # remain in profile metadata, so validate the executed block separately.
-    block = Autostart.model_validate(data).model_copy(
+    block = Autostart.model_validate(data, context={"autostart_job": True}).model_copy(
         update={
             "profiles": {
                 k: v if v == "all" else AutostartProfile.model_validate(v)

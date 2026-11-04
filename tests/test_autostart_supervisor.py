@@ -103,6 +103,58 @@ def test_job_file_round_trip_preserves_the_wait_override():
     assert bg.dict_to_autostart_job(json.loads(json.dumps(payload))).override == "no_wait"
 
 
+@pytest.mark.parametrize(
+    "metadata", [{"network": "loose"}, {"mounts": ["cache"]},
+                 {"network": "loose", "mounts": ["cache"]}],
+    ids=["network-only", "mounts-only", "network-and-mounts"],
+)
+def test_normalized_legacy_rerun_survives_job_roundtrip_and_executes(
+    tmp_path, mocker, make_cfg, metadata
+):
+    from jailbee.autostart import run_detached
+    from jailbee.autostart_plan import AutostartTrigger, RerunTarget, rerun_block
+    from tests.test_autostart_rerun import execution_deps
+
+    original = Autostart.model_validate({
+        "on_start": [{"name": "sync", "run": "true", **metadata},
+                     {"name": "other", "run": "false", **metadata}],
+    })
+    block = rerun_block(original, [RerunTarget(AutostartTrigger.ON_START, "sync", "sync")])
+    payload = bg.autostart_job_to_dict(
+        container_name="c1", autostart=block, from_trigger="on_start", repo_dir="/r",
+        mirror_endpoint=None, override=None, log_path="/tmp/x.log",
+        progress_path="/tmp/x.progress.json", rerun=True,
+    )
+    restored = bg.dict_to_autostart_job(json.loads(json.dumps(payload)))
+    stage = restored.autostart.on_start[0]
+    assert stage.stage == "sync"
+    assert stage.network == metadata.get("network")
+    step = stage.all_chains()[0].steps[0]
+    assert step.name == "sync"
+    assert step.network == metadata.get("network")
+    assert step.mounts == metadata.get("mounts", [])
+    run_step, switch, add, remove = execution_deps(mocker)
+    # Detached cleanup compares the live mode with the mode it set.
+    mocker.patch("jailbee.lifecycle.current_network_mode", side_effect=["strict", "loose"])
+    run_detached(_cfg_with(make_cfg, tmp_path, restored.autostart), mocker.MagicMock(), restored)
+    assert [call.kwargs["name"] for call in run_step.call_args_list] == ["sync"]
+    assert [call.args[3] for call in switch.call_args_list] == (
+        ["loose", "strict"] if "network" in metadata else []
+    )
+    assert [call.args[3] for call in add.call_args_list] == metadata.get("mounts", [])
+    assert [call.args[3] for call in remove.call_args_list] == metadata.get("mounts", [])
+
+
+@pytest.mark.parametrize("metadata", [{"network": "loose"}, {"mounts": ["cache"]}])
+def test_job_roundtrip_does_not_relax_ordinary_stage_validation(metadata):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="move"):
+        Autostart.model_validate({"on_start": [{
+            "stage": "deps", "steps": [{"name": "sync", "run": "true", **metadata}],
+        }]})
+
+
 def test_old_job_file_without_rerun_loads(tmp_path):
     from dataclasses import replace
 

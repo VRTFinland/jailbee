@@ -236,6 +236,10 @@ class AutostartStage(BaseModel):
 
     @model_validator(mode="after")
     def _no_container_scope_on_steps(self, info: ValidationInfo) -> AutostartStage:
+        # A worker job carries an execution block, not source configuration:
+        # normalize_stages preserves legal legacy per-step metadata in it.
+        if isinstance(info.context, dict) and info.context.get("autostart_job"):
+            return self
         for chain in self.all_chains():
             for step in chain.steps:
                 if step.network is not None:
