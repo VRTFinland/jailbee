@@ -113,6 +113,7 @@ class OutboxDialog(QDialog):
         self._target, self._container = target, container
         self._sent_source = sent_source
         self._sent_items: tuple[SentItem, ...] = ()
+        self._first_render = True
         self._request: _Request | None = None
         self._generation = 0
         self._pending_load = False
@@ -238,7 +239,8 @@ class OutboxDialog(QDialog):
             "No proposals (empty)" if not view.proposals else "Select a proposal"
         )
         warnings = [text for store in view.stores for text in (*store.warnings, *store.rejected)]
-        self.status.setText("\n".join([status, *warnings]))
+        if not self.sent_mode:
+            self.status.setText("\n".join([status, *warnings]))
         restored: QTreeWidgetItem | None = None
         for proposal in view.proposals:
             root = QTreeWidgetItem(self.tree, [f"{proposal.id} [{proposal.state}]"])
@@ -275,6 +277,9 @@ class OutboxDialog(QDialog):
         if restored is not None:
             self.tree.setCurrentItem(restored)
         self._buttons()
+        first, self._first_render = self._first_render, False
+        if first and not view.proposals and not self.sent_mode and self._has_sent():
+            self.sent_button.setChecked(True)  # only Sent records exist: no dead-end first view
 
     @Slot()
     def _selection_changed(self) -> None:
@@ -345,6 +350,14 @@ class OutboxDialog(QDialog):
     def sent_mode(self) -> bool:
         return self.sent_button.isChecked()
 
+    def _has_sent(self) -> bool:
+        if self._sent_source is None:
+            return False
+        try:
+            return bool(self._sent_source(False))
+        except Exception:
+            return False
+
     @Slot(bool)
     def _toggle_sent(self, on: bool) -> None:
         self.tree.setVisible(not on)
@@ -391,8 +404,7 @@ class OutboxDialog(QDialog):
                 node.setToolTip(0, item.gone)
             if previous is not None and previous.row.id == item.row.id:
                 restored = node
-        if not items:
-            self.status.setText("Nothing sent yet")
+        self.status.setText(f"{len(items)} sent" if items else "Nothing sent yet")
         if restored is not None:
             self.sent_tree.setCurrentItem(restored)
         self._buttons()

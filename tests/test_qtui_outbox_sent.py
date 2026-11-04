@@ -159,3 +159,50 @@ def test_app_sent_source_uses_snapshot_incarnation(tmp_path):
     assert [i.row.content.split("\n")[0] for i in read(False)] == ["body of now"]
     whole = read(True)
     assert [i.gone is None for i in whole] == [True, False]
+
+
+def test_first_view_is_sent_when_only_sent_records_exist(qtbot, mocker, make_cfg, tmp_path):
+    from jailbee.qtui import outbox
+
+    _rec("only")
+    cfg = make_cfg(tmp_path)
+    mocker.patch.object(outbox, "Incus")
+    mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
+    mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
+    mocker.patch.object(
+        outbox.service,
+        "load_container",
+        return_value=outbox.ContainerView(IDENTITY, IDENTITY.full_name, True, None, (), ()),
+    )
+    dlg = outbox.OutboxDialog(RepoTarget(cfg.repo_root, None), "alpha-x", sent_source=_source)
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: not dlg.busy)
+    assert dlg.sent_mode
+    assert _texts(dlg) == ["body of only"]
+    assert "No proposals" not in dlg.status.text()
+    dlg.sent_button.setChecked(False)  # a later user choice is respected
+    dlg.refresh()
+    qtbot.waitUntil(lambda: not dlg.busy)
+    assert not dlg.sent_mode
+    dlg.close()
+    qtbot.waitUntil(lambda: not dlg.busy)
+
+
+def test_sent_button_hidden_without_source(qtbot, mocker, make_cfg, tmp_path):
+    from jailbee.qtui import outbox
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch.object(outbox, "Incus")
+    mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
+    mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
+    mocker.patch.object(
+        outbox.service,
+        "load_container",
+        return_value=outbox.ContainerView(IDENTITY, IDENTITY.full_name, True, None, (), ()),
+    )
+    dlg = outbox.OutboxDialog(RepoTarget(cfg.repo_root, None), "alpha-x")
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: not dlg.busy)
+    assert dlg.sent_button.isHidden() and not dlg.sent_mode
+    dlg.close()
+    qtbot.waitUntil(lambda: not dlg.busy)
