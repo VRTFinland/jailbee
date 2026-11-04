@@ -12,12 +12,18 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.agent_activity import ActivityReader
-from jailbee.dashboard.model import carry_forward_git_status, gather_live, sample_activity
+from jailbee.dashboard.model import (
+    RepoGroup,
+    carry_forward_git_status,
+    gather_live,
+    sample_activity,
+)
 from jailbee.dashboard.system import SystemReader, pool_names
+from jailbee.outbox import sent
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
 from jailbee.update_check import current_notice
@@ -25,7 +31,6 @@ from jailbee.update_check import current_notice
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from jailbee.dashboard.model import RepoGroup
     from jailbee.dashboard.system import SystemStatus
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
@@ -113,7 +118,9 @@ class Gatherer:
         wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
         update: Callable[[], UpdateNotice | None] = current_notice,
         system: SystemReader | None = None,
+        sent_counts: Callable[[], sent.SentCounts] = sent.counts,
     ) -> None:
+        self._sent_counts = sent_counts
         self._incus = incus
         self.cadence = cadence
         self._gather = gather
@@ -172,6 +179,7 @@ class Gatherer:
                 self._sleep(PRIME_INTERVAL_SECONDS)
                 self._primed = True
             sample_activity(groups, self._sampler, self._reader)
+            self._annotate_sent(groups)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
             if message != self._failing:
@@ -199,6 +207,22 @@ class Gatherer:
         if do_git or isinstance(result, GatherError):
             self._last_full = stamp
         return result
+
+    def _annotate_sent(self, groups: list[RepoGroup]) -> None:
+        """Write the Sent record counts onto the groups and their containers.
+
+        One read per round; a failed read leaves every count 0, never failing the gather.
+        """
+        try:
+            counts = self._sent_counts()
+        except Exception:
+            log.debug("sent counts read failed", exc_info=True)
+            return
+        for group in groups:
+            group.sent_count = counts.by_prefix.get(group.prefix, 0)
+            for c in group.containers:
+                created = c.created_at.astimezone(UTC) if c.created_at is not None else None
+                c.sent_count = counts.by_instance.get((c.name, created), 0)
 
     def _update_notice_now(self, *, refresh: bool) -> UpdateNotice | None:
         """The update notice, re-read once a minute or when a client asks.

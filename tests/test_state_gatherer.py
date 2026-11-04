@@ -8,6 +8,7 @@ from jailbee.dashboard.model import RepoGroup
 from jailbee.git_status import GitStatus
 from jailbee.global_config import DashboardRefresh
 from jailbee.lifecycle import ContainerInfo
+from jailbee.outbox.sent import SentCounts
 from jailbee.state_service.gatherer import UPDATE_INTERVAL, Cadence, Gatherer, refresh_due
 from jailbee.state_service.protocol import GatherError, Snapshot
 from jailbee.update_check import UpdateNotice
@@ -75,11 +76,12 @@ def _ci(name, git=None):
     return ContainerInfo(name, "Running", "strict", None, None, repo="alpha", git_status=git)
 
 
-def _gatherer(mocker, gather, clock):
+def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts()):
     mocker.patch("jailbee.state_service.gatherer.sample_activity")
     return Gatherer(
         mocker.Mock(),
         CAD,
+        sent_counts=sent_counts,
         gather=gather,
         clock=clock,
         sleep=lambda _s: None,
@@ -333,3 +335,50 @@ def test_fast_window_caps_both_tier_intervals():
 def test_fast_window_never_slows_a_faster_cadence():
     quick = Cadence(interval=0.5, git_interval=0.5, git=True)
     assert due(cadence=quick, now=100.0, last_base=99.4, last_full=99.4, fast=True) == (True, True)
+
+
+def _sent_groups():
+    old = _ci("alpha-x")
+    old.created_at = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    fresh = _ci("alpha-y")
+    fresh.created_at = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+    return [RepoGroup("alpha", "/a", None, [old, fresh])]
+
+
+def test_sent_counts_are_set_per_current_incarnation_and_per_repo(mocker):
+    counts = SentCounts(
+        by_instance={
+            ("alpha-x", datetime(2026, 10, 1, 12, 0, tzinfo=UTC)): 3,
+            # An earlier incarnation of alpha-y: not this container's.
+            ("alpha-y", datetime(2026, 10, 15, 12, 0, tzinfo=UTC)): 5,
+        },
+        by_prefix={"alpha": 8},
+    )
+    g = _gatherer(mocker, lambda *a, **k: _sent_groups(), _Clock(), lambda: counts)
+
+    group = g.tick(active=True, refresh=False, roots=[]).groups[0]
+
+    assert group.sent_count == 8
+    assert [c.sent_count for c in group.containers] == [3, 0]
+
+
+def test_a_failing_sent_counts_read_leaves_counts_empty_and_the_gather_alive(mocker):
+    def boom():
+        raise RuntimeError("database is locked")
+
+    g = _gatherer(mocker, lambda *a, **k: _sent_groups(), _Clock(), boom)
+
+    snapshot = g.tick(active=True, refresh=False, roots=[])
+
+    assert isinstance(snapshot, Snapshot)
+    assert snapshot.groups[0].sent_count == 0
+    assert [c.sent_count for c in snapshot.groups[0].containers] == [0, 0]
+
+
+def test_sent_counts_are_read_once_per_round(mocker):
+    read = mocker.Mock(return_value=SentCounts())
+    g = _gatherer(mocker, lambda *a, **k: _sent_groups(), _Clock(), read)
+
+    g.tick(active=True, refresh=False, roots=[])
+
+    assert read.call_count == 1

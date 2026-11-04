@@ -131,6 +131,7 @@ def _full_snapshot() -> Snapshot:
                 ),
             ),
             git_status=git,
+            sent_count=2,
             job_phase="running",
             job_pid=77,
             job_kind="create",
@@ -164,6 +165,7 @@ def _full_snapshot() -> Snapshot:
             default_runner="claude haiku",
             default_runner_source="repo",
             runner_profiles=("grok",),
+            sent_count=4,
             push_action_default="merge",
             push_source_default="branch",
             column_notice="note",
@@ -269,7 +271,7 @@ def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     # 15 added repo/container autostart profile state.
-    assert PROTOCOL == 15
+    assert PROTOCOL == 16
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
@@ -327,3 +329,22 @@ def test_a_snapshot_without_load_decodes_to_none():
     assert b',"load":null' in line
     restored = decode(line.replace(b',"load":null', b"", 1))
     assert restored.system is not None and restored.system.load is None
+
+
+def test_snapshot_round_trips_sent_counts():
+    container = ContainerInfo(
+        name="alpha-x", state="Running", network=None, ip=None, memory_limit=None, sent_count=3
+    )
+    group = RepoGroup(
+        prefix="alpha",
+        repo_root="/r",
+        config_path=Path("/r/c.yaml"),
+        containers=[container],
+        sent_count=7,
+    )
+    snapshot = Snapshot(seq=1, gathered_at=T0, git_enabled=False, groups=[group])
+
+    restored = decode(encode(snapshot)).groups[0]
+
+    assert restored.sent_count == 7
+    assert restored.containers[0].sent_count == 3

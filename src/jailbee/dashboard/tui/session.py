@@ -2778,6 +2778,11 @@ class DashboardSession:
                 self.run_dashboard_command(target, "repo", dact.disk_usage_argv())
             elif verb == dact.REPO_PRUNE:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
+            elif verb == dact.REPO_SENT:
+                # The timeline view is not built yet; `jailbee outbox sent ls` lists it.
+                self.set_notice(
+                    f"Sent view not available here yet: jailbee outbox sent ls --repo {target}"
+                )
             elif verb == "fold":
                 self.folded = toggle_folded(self.folded, target)
                 self._recompute_shown()

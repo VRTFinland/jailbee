@@ -101,6 +101,9 @@ class ContainerInfo:
     # `annotate_agent_status`; never by `list_containers`.
     agent_status: tuple[AgentSummary, ...] = ()
     git_status: GitStatus | None = None
+    # Outbox "Sent" log records of this container's current incarnation; set by
+    # the state service's gatherer (never by `list_containers`), 0 = none.
+    sent_count: int = 0
     job_phase: str | None = None
     job_pid: int | None = None
     job_kind: str | None = None

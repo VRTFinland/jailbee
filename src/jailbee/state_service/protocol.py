@@ -37,7 +37,8 @@ from jailbee.update_check import UpdateNotice
 # ChildView.runner. 13 adds default runner and profile fields to the dashboard.
 # 14 added SystemStatus.load.
 # 15 adds repo autostart choices/default and container autostart profile.
-PROTOCOL = 15
+# 16 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
+PROTOCOL = 16
 
 
 class ProtocolError(ValueError):

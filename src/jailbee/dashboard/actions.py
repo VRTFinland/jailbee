@@ -42,6 +42,7 @@ REPO_PRUNE = "prune"
 REPO_BASE_BUILD = "base-build"
 REPO_DISMISS_ADVISORIES = "dismiss-advisories"
 REPO_UPGRADE_ALL = "upgrade-all"
+REPO_SENT = "sent"
 
 DIAGNOSTICS_LABEL = "Diagnostics →"
 
