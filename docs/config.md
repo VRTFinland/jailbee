@@ -3103,7 +3103,8 @@ Instructions that apply to every wired agent in every container of every repo â€
 model preferences, house rules â€” go in one file on the host:
 `~/.config/jailbee/AGENTS.md` (`$XDG_CONFIG_HOME/jailbee/AGENTS.md` if set).
 
-Jailbee copies it into `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
+Jailbee prepends a built-in container-environment preamble to these optional
+instructions and stages them in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
 (`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), under each
 agent's own file name, and mounts that directory read-only into containers
 where the agent is enabled. For Claude Code that is
@@ -3119,8 +3120,8 @@ model-policy enforcement; they do not configure the agent running on the host.
   `jailbee start`/`restart`, `jailbee ls`, `jailbee shell` and `jailbee tmux`.
   A session reads it when it starts, so an edit reaches the next agent session,
   not one already running. No `jailbee apply` needed after the first.
-- **No file:** the staged directory is empty; no host instruction file is
-  supplied. Removing the source removes the staged copy on the next refresh, not the directory.
+- **No file:** the staged copy contains the built-in preamble alone. Removing
+  the source restores that copy on the next refresh.
   Each (agent, file name) pair has its own staging directory, so a repo that
   sets an unusual `global_instructions.file` only adds that file to its own
   containers.
@@ -3855,7 +3856,7 @@ agent_instructions: true       # true (default) | false
 
 | Key | Default | Description |
 |---|---|---|
-| `agent_instructions` | `true` | Sync the host's `AGENTS.md` and mount its staged directory read-only for every enabled agent with `global_instructions`. `false` skips updates and omits the devices on `jailbee apply`; host staging is retained. Apply in each repo and restart running containers to remove existing mounts. |
+| `agent_instructions` | `true` | Stage the built-in preamble and optional host `AGENTS.md`, and mount the staged directory read-only for every enabled agent with `global_instructions`. `false` skips updates and omits the devices on `jailbee apply`; host staging is retained. Apply in each repo and restart running containers to remove existing mounts. |
 
 ### `install_host_skills`
 
