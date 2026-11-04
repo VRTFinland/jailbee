@@ -467,12 +467,9 @@ accept a picker when `NAME` is omitted with a TTY.
 
 | Flag (`restart` only) | Effect |
 |---|---|
-| `--autostart-profile NAME` | Store a profile for this and later boots. `none` selects no configured repository stages or services, while the generated `agents` stage remains selected. An explicit service selection also remains in effect unless cleared. `all` selects every configured stage. |
+| `--autostart-profile NAME` | Store a profile for this and later boots. `none` selects no configured repository stages or profile services, while the generated `agents` stage remains selected. An explicit service selection also remains in effect unless cleared. `all` selects every configured stage. |
 | `--services NAMES` | Explicit service selection (comma-separated; `''` selects none), overriding the profile's service set. Cannot be combined with `--reset-services`. |
 | `--reset-services` | Clear the remembered explicit service selection so the selected profile controls services. |
-| `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
-| `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
-| `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |
 
 | Flag (`stop`) | Effect |
 |---|---|

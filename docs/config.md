@@ -1989,8 +1989,10 @@ and attempted one-shot stages. Add a profile name to switch. On a running
 container this starts missing `on_create` stages, then newly selected
 `on_start` stages, in the foreground; lighter profiles stop nothing. Live
 switching only adds work and does not stop existing processes. `none` selects
-no repository stages or services; `all` selects all. Stopped containers and
-`--no-run` only store the selection. The next start runs any missing one-shot
+no configured repository stages or profile services, while retaining the
+generated `agents` stage; an explicit service selection still overrides the
+profile. `all` selects all configured stages and services. Stopped containers
+and `--no-run` only store the selection. The next start runs any missing one-shot
 stages before `on_start`. A live detached run must be cancelled before switching.
 
 One-shot stages are recorded as **attempted**, even after failure, so they
