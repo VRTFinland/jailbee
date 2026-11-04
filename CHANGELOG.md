@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `claude-jb` sessions receive a generated profile model map before their
+  instructions. Routes can describe model strengths with `description`, and
+  profiles can opt out with `model_map: false`.
 - Forks (`jailbee fork` and orchestrator fork spawns) can seed Git-ignored
   build outputs from the source by btrfs reflink, configured with
   `fork.warm_paths` and overridden with repeatable `--warm PATH` or
