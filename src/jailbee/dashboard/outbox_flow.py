@@ -435,11 +435,13 @@ class OutboxController:
         # A marked proposal or action also covers the rows listed under it since.
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
+        # Every proposals listing re-reads the Sent log too: a publish just added records.
+        sent_state = self._fresh_sent()
         # Nothing pending but records sent: open on the Sent tab, unless the user chose.
         empty = not any(c.proposals for c in containers)
-        tab = "sent" if self.state.sent and empty and not self.state.tab_touched else self.state.tab
+        tab = "sent" if sent_state.sent and empty and not sent_state.tab_touched else sent_state.tab
         return replace(
-            self.state,
+            sent_state,
             tab=tab,
             containers=containers,
             expanded=frozenset(k for k in self.state.expanded if k in keys),
@@ -448,6 +450,20 @@ class OutboxController:
             status=status,
             abilities=self._abilities(containers),
         )
+
+    def _fresh_sent(self) -> dob.OutboxState:
+        """``state`` with the Sent records re-read (unchanged without a loader or on a failure)."""
+        if self.sent_loader is None or self.sent_only:
+            return self.state
+        try:
+            items = self.sent_loader()
+        except Exception:  # the listing still shows; `r` on the Sent tab says why
+            return self.state
+        keys = {dob.sent_key(i) for i in items}
+        cursor = self.state.sent_cursor
+        if cursor not in keys:
+            cursor = dob.sent_key(items[0]) if items else None
+        return replace(self.state, sent=items, sent_cursor=cursor)
 
     def _reloaded(
         self, *, cursor: dob.RowKey | None = None, status: tuple[str, ...] = ()

@@ -1772,16 +1772,19 @@ class DashboardSession:
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
         )
-        info = next((c for g in self.groups for c in g.containers if c.name == container), None)
-        if info is not None and info.sent_count:
-            # Rows are read here, on opening (the snapshot only counts them): this
-            # container's current incarnation, the creation time as the gatherer keys it.
-            created = info.created_at.astimezone(UTC) if info.created_at is not None else None
-            prefix = group.prefix if group is not None else ""
-            controller.sent_loader = lambda: dob.read_sent(
-                prefix, instance=container, created=created, scope=self.scope
+        prefix = group.prefix if group is not None else ""
+
+        def read() -> tuple[dob.SentItem, ...]:
+            # Read on demand (the snapshot only counts), each time from the current
+            # container: its creation time as the gatherer keys it.
+            info = next((c for g in self.groups for c in g.containers if c.name == container), None)
+            created = (
+                info.created_at.astimezone(UTC) if info and info.created_at is not None else None
             )
-            controller.load_sent()
+            return dob.read_sent(prefix, instance=container, created=created, scope=self.scope)
+
+        controller.sent_loader = read
+        controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
         self.outbox = controller
         controller.load_later()
@@ -1793,10 +1796,16 @@ class DashboardSession:
         if group is None:
             self.set_notice(f"'{prefix}' is gone")
             return None
-        live = {
-            c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
-            for c in group.containers
-        }
+
+        def read() -> tuple[dob.SentItem, ...]:
+            # The containers that exist now, re-read with the rows (`r` follows a recreate).
+            now = target_group(self.groups, prefix, "repo")
+            live = {
+                c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
+                for c in (now.containers if now is not None else ())
+            }
+            return dob.read_sent(prefix, live=live, scope=self.scope)
+
         controller = OutboxController(
             SessionOutboxRunner(self, ""),
             title=prefix,
@@ -1804,7 +1813,7 @@ class DashboardSession:
             prefix=prefix,
             standalone=False,
             on_change=lambda _state: None,  # nothing is on screen yet
-            sent_loader=lambda: dob.read_sent(prefix, live=live, scope=self.scope),
+            sent_loader=read,
             sent_only=True,
         )
         controller.load_sent()

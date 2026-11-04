@@ -14,7 +14,7 @@ from jailbee.outbox import sent
 from jailbee.outbox.sent import SentAction
 from tests.dashboard_fixtures import cfg_group, ci
 from tests.dashboard_pilot import bare_session
-from tests.test_dashboard_session import _open_box, _quiet
+from tests.test_dashboard_session import _PLAN, _HeldJobs, _open_box, _quiet, _settle
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
 CREATED = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
@@ -132,6 +132,58 @@ def test_tab_without_sent_records_is_a_status(mocker, tmp_path):
 
     assert _state(session).tab == "outbox"
     assert "no Sent records" in _state(session).status[-1]
+
+
+def test_publish_in_the_box_refreshes_the_sent_list(mocker, tmp_path):
+    """The last proposal is published: the box lands on a Sent list that has the new record."""
+    from jailbee.dashboard.jobs import JobResult
+    from tests.test_dashboard_outbox import _container, _listing
+
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_group(tmp_path, count=0)])  # no records when opened
+    jobs = _HeldJobs()
+    session.jobs = jobs  # type: ignore[assignment]  # test double
+    _open_box(session)
+    assert _state(session).sent == () and _state(session).tab == "outbox"
+
+    session.outbox_intent("publish", ("alpha-x", "pr/a.json", None, None))
+    jobs.started[-1][2](JobResult(0, "", _PLAN))  # type: ignore[operator]  # the plan
+    session.outbox_intent("answer", None, "publish")
+    _rec("just-sent", content="published a moment ago")  # what the publish recorded
+    quiet.return_value = tsession.da.CliResult(True, "done", _listing(_container()))
+    jobs.started[-1][2](JobResult(0, "", "Published 1 action\n"))  # type: ignore[operator]
+
+    state = _state(session)
+    assert state.tab == "sent"
+    assert any("published a moment ago" in t for t in _texts(state))
+
+
+def test_refresh_on_the_outbox_tab_rereads_sent(mocker, tmp_path):
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_group(tmp_path, count=0)])
+    _open_box(session)
+    assert _state(session).sent == ()
+
+    _rec("late")
+    session.outbox_intent("refresh", None)
+    _settle(session)
+
+    assert len(_state(session).sent) == 1
+
+
+def test_timeline_refresh_follows_the_live_containers(mocker, tmp_path):
+    _rec("m1")
+    _quiet(mocker)
+    group = _group(tmp_path)
+    session, _ = bare_session(mocker, [group])
+    _open_repo_sent(session)
+    assert "†" not in _texts(_state(session))[0]
+
+    live = session.groups[0].containers  # the container was recreated since
+    live[0] = replace(live[0], created_at=CREATED + timedelta(days=1))
+    session.outbox_intent("refresh", None)
+
+    assert "†" in _texts(_state(session))[0]
 
 
 def _open(session, mocker, monkeypatch, *, display: str | None):  # type: ignore[no-untyped-def]
@@ -260,13 +312,18 @@ def test_help_lists_sent_keys():
 def test_box_tab_key_posts_intent_and_o_is_ignored_on_the_outbox_tab():
     from textual.app import App
 
-    from tests.test_dashboard_outbox import _key, _proposal, _state
+    from tests.test_dashboard_outbox import _proposal, _state
 
     sent_state = replace(_state(_proposal("pr/a.json")), sent=(_item(),))
+
+    posted: list[str] = []
 
     class Host(App[None]):
         def compose(self):  # type: ignore[no-untyped-def]
             yield OutboxBox(sent_state, mouse_enabled=lambda: True, standalone=True)
+
+        def on_outbox_box_intent(self, message: OutboxBox.Intent) -> None:
+            posted.append(message.name)
 
     got: list[tuple[str, object]] = []
 
@@ -278,10 +335,12 @@ def test_box_tab_key_posts_intent_and_o_is_ignored_on_the_outbox_tab():
             for name in ("o", "tab"):
                 outcome = await box.handle_key(_key_event(name))
                 got.append((name, getattr(outcome, "name", outcome)))
+            await pilot.pause()
 
     asyncio.run(main())
     assert got == [("o", True), ("tab", "tab")]
-    assert _key  # silence unused-import lint for the shared helper
+    # `o` on the Outbox tab neither posted nor leaked a publish/delete/open intent.
+    assert not {"open", "publish", "delete", "create-pr", "clear"} & set(posted)
 
 
 def _key_event(name: str):  # type: ignore[no-untyped-def]
