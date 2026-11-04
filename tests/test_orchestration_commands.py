@@ -54,6 +54,19 @@ def test_no_publish_is_exclusive(cfg, changes):
         commands.build_grant(cfg, None, GrantFlags(no_publish=True, **changes))
 
 
+@pytest.mark.parametrize("right,allowed", [("issues", "issue apply"), ("foreign_issues", "issue apply"), ("pull_requests", "pr push"), ("pr_reviews", "review apply")])
+def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right, allowed):
+    from jailbee.config.models_remote import RemoteSSHConfig, RemoteCommandPolicy
+    from jailbee.orchestration.grant import PublishRights
+    raw = {"issues": ["comment"]} if right == "issues" else {"foreign_issues": {"repos": ["org/lib"], "actions": ["comment"]}} if right == "foreign_issues" else {right: True}
+    new = Grant(publish=PublishRights.model_validate(raw))
+    remote = RemoteSSHConfig(orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
+    commands._check_remote_bound(cfg, incus, "myrepo-a", new, None, remote)
+    denied = remote.model_copy(update={"commands": RemoteCommandPolicy(mode="allowlist", allow=["ls"])})
+    with pytest.raises(GrantError, match="publish.*permission"):
+        commands._check_remote_bound(cfg, incus, "myrepo-a", new, None, denied)
+
+
 def test_no_publish_clears_all(cfg):
     from jailbee.orchestration.grant import PublishRights
     current = Grant(publish=PublishRights(pull_requests=True))

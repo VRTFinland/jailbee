@@ -361,6 +361,22 @@ def _check_remote_bound(
     bound = policy.grant_bound(remote, cfg.optional_mounts, rights)
     if bound is None:  # unreachable: "off" is refused above
         raise GrantError("remote.ssh.orchestration is off")
+    from jailbee.remote_ssh.router import RemoteUnlocks, RouteError, policy_allows
+
+    required: list[tuple[str, list[str]]] = []
+    p = new.publish
+    if p.issues or (p.foreign_issues.repos and p.foreign_issues.actions):
+        required.append(("issues", ["issue", "apply", full]))
+    if p.pull_requests:
+        required.append(("pull_requests", ["pr", "push", full, "--source-manifest", "publish.json"]))
+    if p.pr_reviews:
+        required.append(("pr_reviews", ["review", "apply", full]))
+    for right, argv in required:
+        try:
+            policy_allows(argv, remote.commands, restrict_host=remote.restrict_host,
+                          unlocks=RemoteUnlocks.of(remote))
+        except RouteError as e:
+            raise GrantError(f"publish right {right!r} needs manual publish permission: {e}") from e
     excess = policy.grant_excess(new, current, bound)
     if excess:
         raise GrantError("; ".join(excess))
