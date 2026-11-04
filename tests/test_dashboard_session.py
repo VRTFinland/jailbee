@@ -1541,7 +1541,8 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     from jailbee.dashboard.menus import MenuGroup
 
     group = dmodel.RepoGroup(
-        "alpha", str(tmp_path), None, [ci("alpha-one", "alpha")], optional_mounts=("aws",)
+        "alpha", str(tmp_path), None, [ci("alpha-one", "alpha")], optional_mounts=("aws",),
+        autostart_services=("db",),
     )
     menu = tmenu.open_menu([group], "alpha-one")
     entries = tmenu.menu_entries(menu)

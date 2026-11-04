@@ -393,6 +393,34 @@ def test_remote_rerun_refuses_elevation_before_claim(
     incus.config_set.assert_not_called()
 
 
+@pytest.mark.parametrize("listing,wait", [(True, False), (False, False), (False, True)])
+def test_remote_allows_listing_and_safe_execution(make_cfg, tmp_path, mocker, monkeypatch, listing, wait):
+    from jailbee.autostart_rerun import command, run_foreground
+    from tests.test_autostart_profiles import state_incus
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker)
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    execute, switch, add, _ = execution_deps(mocker)
+    captured = []
+
+    def spawn(effective, block):
+        captured.append(block)
+        run_foreground(effective, incus, "c", block)
+
+    command(cfg, incus, "c", stages=[] if listing else ["setup"], steps=[], failed=False,
+            trigger=None, listing=listing, json_output=listing, wait=wait, spawn=spawn)
+    assert execute.call_count == (0 if listing else 1)
+    assert len(captured) == int(not listing and not wait)
+    switch.assert_not_called()
+    add.assert_not_called()
+    if listing:
+        incus.config_set.assert_not_called()
+
+
 @pytest.mark.parametrize("detached", [False, True])
 def test_remote_rerun_executor_refuses_unfiltered_elevation(make_cfg, tmp_path, mocker, monkeypatch, detached):
     from dataclasses import replace

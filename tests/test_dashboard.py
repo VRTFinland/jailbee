@@ -5404,7 +5404,8 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
 def test_terminal_order_running_menu_layout(tmp_path):
     apps = [dmodel.AppMenuEntry("chrome", "Chrome")]
     group = dmodel.RepoGroup(
-        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)], apps=apps
+        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)], apps=apps,
+        autostart_services=("db",),
     )
     menu = tmenu.open_menu([group], "alpha-x")
     assert menu is not None
@@ -5766,7 +5767,9 @@ def test_repo_menu_diagnostics_and_prune_follow_the_ssh_policy(
 def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_the_group(
     tmp_path,
 ):
-    menu = tmenu.open_menu([_cfg_group(tmp_path, (_autostart_ci(),))], "alpha-x")
+    group = _cfg_group(tmp_path, (_autostart_ci(),))
+    group.autostart_services = ("db",)
+    menu = tmenu.open_menu([group], "alpha-x")
     assert menu is not None
     verbs = [verb for _label, verb in menu.actions]
     at = verbs.index("job log --follow")
