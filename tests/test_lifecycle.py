@@ -7061,7 +7061,9 @@ def test_new_container_without_on_phase_is_unchanged(make_cfg, tmp_path, mocker)
 
 
 @pytest.mark.parametrize("live", [True, False])
-def test_list_containers_attaches_job_phase_to_existing(make_cfg, tmp_path, monkeypatch, mocker, live):
+def test_list_containers_attaches_job_phase_to_existing(
+    make_cfg, tmp_path, monkeypatch, mocker, live
+):
     """A running container with a matching BackgroundJob row gets job_phase set."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "myrepo"

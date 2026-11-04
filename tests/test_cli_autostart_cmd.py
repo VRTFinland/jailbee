@@ -513,14 +513,29 @@ def test_run_requires_selector_off_terminal(tmp_path, mocker):
 
 def test_run_list_json_has_never_run_steps(tmp_path, mocker):
     import json
+
     from jailbee.config import Autostart
 
     cfg, incus = _setup(tmp_path, mocker)
-    object.__setattr__(cfg, "autostart", Autostart.model_validate({"on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}]}))
+    object.__setattr__(
+        cfg,
+        "autostart",
+        Autostart.model_validate(
+            {"on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}]}
+        ),
+    )
     incus.config_get.return_value = ""
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--list", "--json"])
     assert result.exit_code == 0, _out(result)
-    assert json.loads(result.stdout) == [{"trigger": "on_start", "stage": "deps", "state": None, "at": None, "steps": [{"step": "npm", "state": None, "at": None}]}]
+    assert json.loads(result.stdout) == [
+        {
+            "trigger": "on_start",
+            "stage": "deps",
+            "state": None,
+            "at": None,
+            "steps": [{"step": "npm", "state": None, "at": None}],
+        }
+    ]
 
 
 @pytest.mark.parametrize("machine", [True, False], ids=["json", "human"])
@@ -531,20 +546,29 @@ def test_run_list_removed_profile_keeps_warning_and_dashboard_parseable_stdout(
     from jailbee.dashboard.actions import parse_rerun_rows
 
     cfg, incus = _setup(tmp_path, mocker)
-    cfg = cfg.model_copy(update={"autostart": Autostart.model_validate({
-        "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}],
-        "profiles": {"full": "all"}, "default_profile": "full",
-    })})
+    cfg = cfg.model_copy(
+        update={
+            "autostart": Autostart.model_validate(
+                {
+                    "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}],
+                    "profiles": {"full": "all"},
+                    "default_profile": "full",
+                }
+            )
+        }
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus.config_get.return_value = "removed"
-    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list",
-                                 *(["--json"] if machine else [])])
+    result = runner.invoke(
+        app, ["autostart", "run", "feat-a", "--list", *(["--json"] if machine else [])]
+    )
     assert result.exit_code == 0, _out(result)
     warning = "autostart profile `removed` is not defined; using 'full'"
     if machine:
         rows = parse_rerun_rows(result.stdout)
         assert [(r.trigger, r.stage, [s.step for s in r.steps]) for r in rows] == [
-            ("on_start", "deps", ["npm"])]
+            ("on_start", "deps", ["npm"])
+        ]
         assert warning in result.stderr
         assert warning not in result.stdout
     else:
@@ -556,10 +580,21 @@ def _rerun_setup(tmp_path, mocker):
     from jailbee.config import Autostart
 
     cfg, incus = _setup(tmp_path, mocker)
-    object.__setattr__(cfg, "autostart", Autostart.model_validate({
-        "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
-        "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}, {"name": "other", "run": "true"}]}],
-    }))
+    object.__setattr__(
+        cfg,
+        "autostart",
+        Autostart.model_validate(
+            {
+                "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+                "on_start": [
+                    {
+                        "stage": "deps",
+                        "steps": [{"name": "npm", "run": "true"}, {"name": "other", "run": "true"}],
+                    }
+                ],
+            }
+        ),
+    )
     incus.config_get.return_value = ""
     incus.config_get_checked.return_value = None
     incus.list_containers.return_value = [{"name": "myrepo-feat-a", "status": "Running"}]
@@ -572,7 +607,9 @@ def test_run_failed_empty_and_live_guard(tmp_path, mocker):
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--failed"])
     assert result.exit_code == 0, _out(result)
     assert "no failed autostart steps in 'feat-a'" in _out(result)
-    mocker.patch("jailbee.autostart_status.refuse_while_running", side_effect=RuntimeError("live run"))
+    mocker.patch(
+        "jailbee.autostart_status.refuse_while_running", side_effect=RuntimeError("live run")
+    )
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--failed"])
     assert result.exit_code == 1
     assert "live run" in _out(result)
@@ -586,7 +623,10 @@ def test_run_background_forwards_combined_targets(tmp_path, mocker):
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
-    result = runner.invoke(app, ["autostart", "run", "feat-a", "--step", "deps/npm", "--failed", "--trigger", "on_start"])
+    result = runner.invoke(
+        app,
+        ["autostart", "run", "feat-a", "--step", "deps/npm", "--failed", "--trigger", "on_start"],
+    )
     assert result.exit_code == 0, _out(result)
     assert spawn.call_args.kwargs["rerun"] is True
     assert spawn.call_args.kwargs["from_trigger"] == "on_start"
@@ -597,7 +637,9 @@ def test_run_background_forwards_combined_targets(tmp_path, mocker):
 
 def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
     _, incus = _rerun_setup(tmp_path, mocker)
-    incus.config_get.side_effect = lambda name, key: "1" if key.endswith("autostart_in_progress") else ""
+    incus.config_get.side_effect = lambda name, key: (
+        "1" if key.endswith("autostart_in_progress") else ""
+    )
     mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("live job"))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
@@ -616,7 +658,9 @@ def test_run_wait_failure(tmp_path, mocker):
     assert "step failed" in _out(result)
 
 
-@pytest.mark.parametrize("args", [["--list", "--stage", "deps"], ["--json"], ["--list", "--trigger", "on_start"]])
+@pytest.mark.parametrize(
+    "args", [["--list", "--stage", "deps"], ["--json"], ["--list", "--trigger", "on_start"]]
+)
 def test_run_rejects_conflicting_options(tmp_path, mocker, args):
     _rerun_setup(tmp_path, mocker)
     result = runner.invoke(app, ["autostart", "run", "feat-a", *args])
@@ -653,7 +697,9 @@ def test_run_interactive_picker_counts_interrupted_steps(tmp_path, mocker):
     _rerun_setup(tmp_path, mocker)
     autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "npm", "start")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    picker = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, options: options[0].value)
+    picker = mocker.patch(
+        "jailbee.prompting._select", side_effect=lambda noun, options: options[0].value
+    )
     foreground = mocker.patch("jailbee.autostart_rerun.run_foreground")
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--wait"])
     assert result.exit_code == 0, _out(result)
@@ -663,6 +709,7 @@ def test_run_interactive_picker_counts_interrupted_steps(tmp_path, mocker):
 
 def test_run_list_fail_dominates_newer_success(tmp_path, mocker):
     import json
+
     from jailbee import autostart_outcomes
 
     _rerun_setup(tmp_path, mocker)
@@ -688,9 +735,11 @@ def test_run_reserved_service_slot_refused(tmp_path, mocker):
     from jailbee.config import Autostart
 
     cfg, _ = _rerun_setup(tmp_path, mocker)
-    object.__setattr__(cfg, "autostart", Autostart.model_validate({
-        "on_start": [{"stage": "services", "services": ["db"]}]
-    }))
+    object.__setattr__(
+        cfg,
+        "autostart",
+        Autostart.model_validate({"on_start": [{"stage": "services", "services": ["db"]}]}),
+    )
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "services"])
     assert result.exit_code == 1, _out(result)
@@ -699,7 +748,9 @@ def test_run_reserved_service_slot_refused(tmp_path, mocker):
 
 def test_run_spawn_failure_preserves_transferred_marker(tmp_path, mocker):
     _, incus = _rerun_setup(tmp_path, mocker)
-    incus.config_get.side_effect = lambda name, key: "12345" if key.endswith("autostart_in_progress") else ""
+    incus.config_get.side_effect = lambda name, key: (
+        "12345" if key.endswith("autostart_in_progress") else ""
+    )
     mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("handoff failed"))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)

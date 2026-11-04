@@ -1540,7 +1540,9 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.menus import MenuGroup
 
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")], optional_mounts=("aws",))
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-one", "alpha")], optional_mounts=("aws",)
+    )
     menu = tmenu.open_menu([group], "alpha-one")
     entries = tmenu.menu_entries(menu)
     labels = [i.label if isinstance(i, MenuGroup) else i[0] for i in entries]

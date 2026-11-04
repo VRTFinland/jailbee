@@ -104,8 +104,8 @@ def test_job_file_round_trip_preserves_the_wait_override():
 
 
 @pytest.mark.parametrize(
-    "metadata", [{"network": "loose"}, {"mounts": ["cache"]},
-                 {"network": "loose", "mounts": ["cache"]}],
+    "metadata",
+    [{"network": "loose"}, {"mounts": ["cache"]}, {"network": "loose", "mounts": ["cache"]}],
     ids=["network-only", "mounts-only", "network-and-mounts"],
 )
 def test_normalized_legacy_rerun_survives_job_roundtrip_and_executes(
@@ -115,15 +115,25 @@ def test_normalized_legacy_rerun_survives_job_roundtrip_and_executes(
     from jailbee.autostart_plan import AutostartTrigger, RerunTarget, rerun_block
     from tests.test_autostart_rerun import execution_deps
 
-    original = Autostart.model_validate({
-        "on_start": [{"name": "sync", "run": "true", **metadata},
-                     {"name": "other", "run": "false", **metadata}],
-    })
+    original = Autostart.model_validate(
+        {
+            "on_start": [
+                {"name": "sync", "run": "true", **metadata},
+                {"name": "other", "run": "false", **metadata},
+            ],
+        }
+    )
     block = rerun_block(original, [RerunTarget(AutostartTrigger.ON_START, "sync", "sync")])
     payload = bg.autostart_job_to_dict(
-        container_name="c1", autostart=block, from_trigger="on_start", repo_dir="/r",
-        mirror_endpoint=None, override=None, log_path="/tmp/x.log",
-        progress_path="/tmp/x.progress.json", rerun=True,
+        container_name="c1",
+        autostart=block,
+        from_trigger="on_start",
+        repo_dir="/r",
+        mirror_endpoint=None,
+        override=None,
+        log_path="/tmp/x.log",
+        progress_path="/tmp/x.progress.json",
+        rerun=True,
     )
     restored = bg.dict_to_autostart_job(json.loads(json.dumps(payload)))
     stage = restored.autostart.on_start[0]
@@ -150,9 +160,16 @@ def test_job_roundtrip_does_not_relax_ordinary_stage_validation(metadata):
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError, match="move"):
-        Autostart.model_validate({"on_start": [{
-            "stage": "deps", "steps": [{"name": "sync", "run": "true", **metadata}],
-        }]})
+        Autostart.model_validate(
+            {
+                "on_start": [
+                    {
+                        "stage": "deps",
+                        "steps": [{"name": "sync", "run": "true", **metadata}],
+                    }
+                ]
+            }
+        )
 
 
 def test_old_job_file_without_rerun_loads(tmp_path):
@@ -171,12 +188,19 @@ def test_rerun_job_skips_agents_and_services(tmp_path, mocker, make_cfg):
 
     from jailbee.autostart import run_detached
 
-    block = Autostart.model_validate({
-        "on_create": [_stage("setup")], "on_start": [_stage("deps"), _stage("web")],
-    })
+    block = Autostart.model_validate(
+        {
+            "on_create": [_stage("setup")],
+            "on_start": [_stage("deps"), _stage("web")],
+        }
+    )
     cfg = _cfg_with(make_cfg, tmp_path, block)
-    agents = mocker.patch("jailbee.autostart._on_start_agent_steps", side_effect=AssertionError("agents"))
-    services = mocker.patch("jailbee.services.autostart.services_stage_wanted", side_effect=AssertionError("services"))
+    agents = mocker.patch(
+        "jailbee.autostart._on_start_agent_steps", side_effect=AssertionError("agents")
+    )
+    services = mocker.patch(
+        "jailbee.services.autostart.services_stage_wanted", side_effect=AssertionError("services")
+    )
     run = mocker.patch("jailbee.autostart.run_stages")
     spec = replace(_spec(tmp_path, block, from_trigger="on_create"), rerun=True)
     run_detached(cfg, mocker.MagicMock(), spec)
@@ -193,8 +217,15 @@ def test_spawn_rerun_refuses_before_job_write(tmp_path, mocker, make_cfg):
     encode = mocker.patch("jailbee.background.autostart_job_to_dict")
     with pytest.raises(RuntimeError, match="live"):
         cli._spawn_autostart_worker(
-            make_cfg(tmp_path), None, "c", incus=mocker.MagicMock(), autostart=Autostart(),
-            from_trigger="on_start", repo_dir="/r", mirror_endpoint=None, rerun=True,
+            make_cfg(tmp_path),
+            None,
+            "c",
+            incus=mocker.MagicMock(),
+            autostart=Autostart(),
+            from_trigger="on_start",
+            repo_dir="/r",
+            mirror_endpoint=None,
+            rerun=True,
         )
     encode.assert_not_called()
     assert not list(state_dir().rglob("*.job.json"))
@@ -207,8 +238,15 @@ def test_spawn_rerun_serializes_flag(tmp_path, mocker, make_cfg):
     proc = mocker.patch("jailbee.cli.subprocess.Popen")
     proc.return_value.pid = 4242
     cli._spawn_autostart_worker(
-        make_cfg(tmp_path), None, "c", incus=mocker.MagicMock(), autostart=Autostart(),
-        from_trigger="on_start", repo_dir="/r", mirror_endpoint=None, rerun=True,
+        make_cfg(tmp_path),
+        None,
+        "c",
+        incus=mocker.MagicMock(),
+        autostart=Autostart(),
+        from_trigger="on_start",
+        repo_dir="/r",
+        mirror_endpoint=None,
+        rerun=True,
     )
     argv = proc.call_args.args[0]
     payload = json.loads(Path(argv[argv.index("--job") + 1]).read_text())
@@ -1474,6 +1512,7 @@ def test_detached_services_presence_overrides_host(
 
 def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cfg):
     import os
+
     from jailbee import cli
     from jailbee.autostart_rerun import command
 
@@ -1493,17 +1532,36 @@ def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cf
     popen.return_value.pid = os.getpid()
 
     def spawn(effective, selected):
-        cli._spawn_autostart_worker(effective, None, "c", incus=incus, autostart=selected,
-                                   from_trigger="on_start", repo_dir="/r",
-                                   mirror_endpoint=None, rerun=True)
+        cli._spawn_autostart_worker(
+            effective,
+            None,
+            "c",
+            incus=incus,
+            autostart=selected,
+            from_trigger="on_start",
+            repo_dir="/r",
+            mirror_endpoint=None,
+            rerun=True,
+        )
 
     def invoke():
-        command(cfg, incus, "c", stages=["deps"], steps=[], failed=False, trigger=None,
-                listing=False, json_output=False, wait=False, spawn=spawn)
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["deps"],
+            steps=[],
+            failed=False,
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=False,
+            spawn=spawn,
+        )
 
     invoke()
     assert marker[key] == str(os.getpid())
-    with pytest.raises(RuntimeError, match="running|progress"):
+    with pytest.raises(RuntimeError, match=r"running|progress"):
         invoke()
     assert marker[key] == str(os.getpid())
     assert popen.call_count == 1
@@ -1511,6 +1569,7 @@ def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cf
 
 def test_rerun_refuses_when_worker_claim_read_fails(tmp_path, mocker, make_cfg):
     import subprocess
+
     from jailbee.autostart_rerun import command
     from jailbee.incus import Incus
 
@@ -1521,12 +1580,27 @@ def test_rerun_refuses_when_worker_claim_read_fails(tmp_path, mocker, make_cfg):
     incus.config_get_checked.side_effect = Incus().config_get_checked
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
-    run = mocker.patch("jailbee.incus.subprocess.run", return_value=subprocess.CompletedProcess(
-        ["incus"], 1, stdout="", stderr="daemon unavailable"))
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["incus"], 1, stdout="", stderr="daemon unavailable"
+        ),
+    )
     spawn = mocker.MagicMock()
     with pytest.raises(RuntimeError, match="daemon unavailable"):
-        command(cfg, incus, "c", stages=["deps"], steps=[], failed=False, trigger=None,
-                listing=False, json_output=False, wait=False, spawn=spawn)
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["deps"],
+            steps=[],
+            failed=False,
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=False,
+            spawn=spawn,
+        )
     assert run.called
     spawn.assert_not_called()
     incus.config_set.assert_not_called()

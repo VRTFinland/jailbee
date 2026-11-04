@@ -139,7 +139,8 @@ class RerunSelectionError(ValueError):
 
 def rerunnable_stages(autostart: Autostart, trigger: AutostartTrigger) -> list[AutostartStage]:
     return [
-        stage for stage in normalize_stages(getattr(autostart, trigger.value))
+        stage
+        for stage in normalize_stages(getattr(autostart, trigger.value))
         if stage.stage != AGENTS_STAGE
         and not isinstance(stage, GeneratedServicesStage)
         and not stage.is_services_slot()
@@ -167,7 +168,8 @@ def resolve_rerun(
         matches = [(t, s) for t in triggers for s in available[t] if s.stage == name]
         if not matches:
             reserved = name == AGENTS_STAGE or any(
-                name in (key, s.stage) and (s.is_services_slot() or isinstance(s, GeneratedServicesStage))
+                name in (key, s.stage)
+                and (s.is_services_slot() or isinstance(s, GeneratedServicesStage))
                 for t in triggers
                 for entries in [normalize_stages(getattr(autostart, t.value))]
                 for s, key in zip(entries, stage_keys(entries), strict=True)
@@ -177,7 +179,9 @@ def resolve_rerun(
                     f"{name} is not re-runnable; use `jailbee service` for services", 1
                 )
             candidates = sorted({s.stage for t in triggers for s in available[t]})
-            raise RerunSelectionError(f"Unknown stage '{name}'; candidates: {', '.join(candidates)}", 2)
+            raise RerunSelectionError(
+                f"Unknown stage '{name}'; candidates: {', '.join(candidates)}", 2
+            )
         if len({t for t, _ in matches}) > 1:
             raise RerunSelectionError(f"Stage '{name}' is ambiguous: on_create, on_start", 2)
         matched_trigger, stage = matches[0]

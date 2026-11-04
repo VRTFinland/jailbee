@@ -11110,10 +11110,19 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 @autostart_app.command("run")
 def autostart_run_cmd(
     container: AutostartNameArg = None,
-    stage: Annotated[list[str] | None, typer.Option("--stage", help="Re-run a named stage; repeat to select more.")] = None,
-    step: Annotated[list[str] | None, typer.Option("--step", help="Re-run a STAGE/STEP; repeat to select more.")] = None,
-    failed: Annotated[bool, typer.Option("--failed", help="Include failed or interrupted steps.")] = False,
-    trigger: Annotated[str | None, typer.Option("--trigger", help="Select on_create or on_start.")] = None,
+    stage: Annotated[
+        list[str] | None,
+        typer.Option("--stage", help="Re-run a named stage; repeat to select more."),
+    ] = None,
+    step: Annotated[
+        list[str] | None, typer.Option("--step", help="Re-run a STAGE/STEP; repeat to select more.")
+    ] = None,
+    failed: Annotated[
+        bool, typer.Option("--failed", help="Include failed or interrupted steps.")
+    ] = False,
+    trigger: Annotated[
+        str | None, typer.Option("--trigger", help="Select on_create or on_start.")
+    ] = None,
     wait: Annotated[bool, typer.Option("--wait", help="Run in the foreground.")] = False,
     listing: Annotated[bool, typer.Option("--list", help="List re-runnable stages.")] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output the list as JSON.")] = False,
@@ -11132,16 +11141,32 @@ def autostart_run_cmd(
 
     def spawn(effective: "Config", block: "Autostart") -> None:
         _spawn_autostart_worker(
-            effective, config, full, incus=incus, autostart=block,
+            effective,
+            config,
+            full,
+            incus=incus,
+            autostart=block,
             from_trigger=autostart_rerun.first_trigger(block).value,
             repo_dir=container_repo_dir(cfg, incus, full),
-            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus), override="no_wait", rerun=True,
+            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+            override="no_wait",
+            rerun=True,
         )
 
     try:
-        autostart_rerun.command(cfg, incus, full, stages=stage or [], steps=step or [],
-                                failed=failed, trigger=trigger, listing=listing,
-                                json_output=json_output, wait=wait, spawn=spawn)
+        autostart_rerun.command(
+            cfg,
+            incus,
+            full,
+            stages=stage or [],
+            steps=step or [],
+            failed=failed,
+            trigger=trigger,
+            listing=listing,
+            json_output=json_output,
+            wait=wait,
+            spawn=spawn,
+        )
     except RerunSelectionError as exc:
         error(str(exc))
         raise typer.Exit(exc.exit_code) from exc

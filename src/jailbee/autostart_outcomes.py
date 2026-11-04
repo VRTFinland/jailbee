@@ -6,10 +6,10 @@ import fcntl
 import json
 import os
 import tempfile
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -67,7 +67,9 @@ def _transaction(path: Path) -> Iterator[None]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def record(container: str, trigger: str, stage: str, step: str, state: str, *, now: datetime | None = None) -> None:
+def record(
+    container: str, trigger: str, stage: str, step: str, state: str, *, now: datetime | None = None
+) -> None:
     if state not in ("start", "ok", "fail"):
         return
     path = outcomes_path(container)
@@ -76,11 +78,22 @@ def record(container: str, trigger: str, stage: str, step: str, state: str, *, n
         with _transaction(path):
             data = read(container)
             data.setdefault(trigger, {}).setdefault(stage, {})[step] = StepOutcome(
-                cast(Literal["start", "ok", "fail"], state), (now or datetime.now(timezone.utc)).isoformat()
+                cast(Literal["start", "ok", "fail"], state), (now or datetime.now(UTC)).isoformat()
             )
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as fh:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent, delete=False
+            ) as fh:
                 tmp = fh.name
-                json.dump({t: {s: {k: asdict(v) for k, v in steps.items()} for s, steps in stages.items()} for t, stages in data.items()}, fh)
+                json.dump(
+                    {
+                        t: {
+                            s: {k: asdict(v) for k, v in steps.items()}
+                            for s, steps in stages.items()
+                        }
+                        for t, stages in data.items()
+                    },
+                    fh,
+                )
             os.replace(tmp, path)
             tmp = None
     except OSError:
@@ -94,7 +107,13 @@ def record(container: str, trigger: str, stage: str, step: str, state: str, *, n
 
 
 def failed_steps(outcomes: Outcomes) -> list[tuple[str, str, str]]:
-    return [(trigger, stage, step) for trigger, stages in outcomes.items() for stage, steps in stages.items() for step, outcome in steps.items() if outcome.state in ("start", "fail")]
+    return [
+        (trigger, stage, step)
+        for trigger, stages in outcomes.items()
+        for stage, steps in stages.items()
+        for step, outcome in steps.items()
+        if outcome.state in ("start", "fail")
+    ]
 
 
 def failed_count(container: str) -> int:

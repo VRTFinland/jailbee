@@ -117,11 +117,14 @@ def group_menu_actions(
     git_actions = tuple(action for action in actions if action[1] in _GIT_MENU_VERBS)
     network_actions = tuple(action for action in actions if action[1].startswith("net "))
     autostart_labels = {
-        dact.AUTOSTART_RERUN: "Re-run…", dact.AUTOSTART_STATUS: "Status",
-        dact.AUTOSTART_CANCEL: "Cancel…", "autostart-profile": "Profile…",
+        dact.AUTOSTART_RERUN: "Re-run…",
+        dact.AUTOSTART_STATUS: "Status",
+        dact.AUTOSTART_CANCEL: "Cancel…",
+        "autostart-profile": "Profile…",
     }
     autostart_actions = tuple(
-        (label, verb) for verb, label in autostart_labels.items()
+        (label, verb)
+        for verb, label in autostart_labels.items()
         if any(action[1] == verb for action in actions)
     )
     result: list[MenuItem] = []
@@ -195,13 +198,16 @@ def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
             arranged.extend(block)
             block = []
     service = next((i for i in arranged if is_leaf(i, frozenset({dact.SERVICES}))), None)
-    network_index = next((n for n, i in enumerate(arranged)
-                          if isinstance(i, MenuGroup) and i.label == "Network →"), None)
+    network_index = next(
+        (n for n, i in enumerate(arranged) if isinstance(i, MenuGroup) and i.label == "Network →"),
+        None,
+    )
     if service is not None and network_index is not None:
         adjacent = [i for i in arranged if is_leaf(i, frozenset({dact.MOUNTS, dact.SERVICES}))]
         arranged = [i for i in arranged if i not in adjacent]
-        network_index = next(n for n, i in enumerate(arranged)
-                             if isinstance(i, MenuGroup) and i.label == "Network →")
+        network_index = next(
+            n for n, i in enumerate(arranged) if isinstance(i, MenuGroup) and i.label == "Network →"
+        )
         arranged[network_index:network_index] = adjacent
     return [*pending, *arranged]
 

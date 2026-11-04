@@ -5768,7 +5768,8 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     at = verbs.index("job log --follow")
     assert verbs[at + 1 : at + 3] == ["autostart-status", "autostart-cancel"]
     assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
-        "services", "orchestration"
+        "services",
+        "orchestration",
     ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")
@@ -7586,6 +7587,7 @@ def test_dashboard_job_displays_failed_autostart_and_live_job_precedence(mocker)
 
 def test_orphan_dashboard_gathers_failed_autostart(tmp_path, monkeypatch, mocker, make_cfg):
     from rich.text import Text
+
     from jailbee import autostart_outcomes
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
@@ -7594,10 +7596,15 @@ def test_orphan_dashboard_gathers_failed_autostart(tmp_path, monkeypatch, mocker
     cfg = make_cfg(root)
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
     incus = mocker.MagicMock()
-    incus.list_containers.return_value = [{
-        "name": "other-work", "status": "Running",
-        "profiles": ["default", "other-base"], "config": {}, "state": None,
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "other-work",
+            "status": "Running",
+            "profiles": ["default", "other-base"],
+            "config": {},
+            "state": None,
+        }
+    ]
     incus.config_get.return_value = None
     autostart_outcomes.record("other-work", "start", "deps", "install", "fail")
     groups = dmodel.gather_rows(incus, [root], with_git=False)

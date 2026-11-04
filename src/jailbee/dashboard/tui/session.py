@@ -1740,8 +1740,9 @@ class DashboardSession:
         if repo is None:
             self.set_notice(f"'{container}' is gone")
             return None
-        argv = dact.addressed(dact.autostart_list_argv(container), repo.flags(),
-                              over_ssh=self.over_ssh)
+        argv = dact.addressed(
+            dact.autostart_list_argv(container), repo.flags(), over_ssh=self.over_ssh
+        )
         try:
             check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
@@ -1752,14 +1753,16 @@ class DashboardSession:
             self.set_notice(f"could not list autostart: {exc}", seconds=FAILURE_NOTICE_SECONDS)
             return None
         choices = [
-            (entry, command) for entry, command in zip(picker.entries, picker.carry, strict=True)
+            (entry, command)
+            for entry, command in zip(picker.entries, picker.carry, strict=True)
             if permitted(json.loads(command), self.ssh_policy, over_ssh=self.over_ssh)
         ]
         if not choices:
             self.set_notice(f"No re-runnable autostart steps of '{container}' are permitted")
             return None
-        return replace(picker, entries=tuple(e for e, _ in choices),
-                       carry=tuple(c for _, c in choices))
+        return replace(
+            picker, entries=tuple(e for e, _ in choices), carry=tuple(c for _, c in choices)
+        )
 
     def open_snapshots(self, container: str) -> Picker | None:
         """List the container's snapshots quietly and offer them, or notice why not.
@@ -2298,10 +2301,17 @@ class DashboardSession:
             except (ValueError, IndexError, TypeError):
                 return None
             actions = dact.service_action_picker(picker.target, name, state)
-            entries = tuple(e for e in actions.entries if permitted(
-                dact.service_logs_argv(picker.target, name) if e.value == "logs"
-                else dact.service_op_argv(e.value, picker.target, name),
-                self.ssh_policy, over_ssh=self.over_ssh))
+            entries = tuple(
+                e
+                for e in actions.entries
+                if permitted(
+                    dact.service_logs_argv(picker.target, name)
+                    if e.value == "logs"
+                    else dact.service_op_argv(e.value, picker.target, name),
+                    self.ssh_policy,
+                    over_ssh=self.over_ssh,
+                )
+            )
             if not entries:
                 self.set_notice("No service actions are permitted here")
                 return None
@@ -2310,8 +2320,11 @@ class DashboardSession:
             if entry.value not in {"start", "stop", "restart", "refresh", "logs"}:
                 return None
             name = picker.carry[0]
-            argv = (dact.service_logs_argv(picker.target, name) if entry.value == "logs"
-                    else dact.service_op_argv(entry.value, picker.target, name))
+            argv = (
+                dact.service_logs_argv(picker.target, name)
+                if entry.value == "logs"
+                else dact.service_op_argv(entry.value, picker.target, name)
+            )
             self.run_dashboard_command(picker.target, "container", argv)
             return None
         if picker.purpose == "container-autostart-profile":

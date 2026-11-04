@@ -71,20 +71,29 @@ def _gone(run: Run) -> bool:
     return any("is gone" in str(n) for n in run.notices() if n)
 
 
-@pytest.mark.parametrize("selection,selector", [
-    ("failed", ["--failed"]),
-    ("stage:on_start:deps", ["--stage", "deps", "--trigger", "on_start"]),
-    ("step:on_start:deps/npm", ["--step", "deps/npm", "--trigger", "on_start"]),
-    ("stage:on_create:clean", ["--stage", "clean"]),
-])
-def test_rerun_open_select_confirm_executes_exact_detached_argv(mocker, tmp_path, selection, selector):
+@pytest.mark.parametrize(
+    "selection,selector",
+    [
+        ("failed", ["--failed"]),
+        ("stage:on_start:deps", ["--stage", "deps", "--trigger", "on_start"]),
+        ("step:on_start:deps/npm", ["--step", "deps/npm", "--trigger", "on_start"]),
+        ("stage:on_create:clean", ["--stage", "clean"]),
+    ],
+)
+def test_rerun_open_select_confirm_executes_exact_detached_argv(
+    mocker, tmp_path, selection, selector
+):
     from tests.dashboard_pilot import bare_session
     from tests.test_dashboard_actions import _rerun_listing
 
-    group = cfg_group(tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"),
-                                                  autostart_rerunnable=True),))
-    listing = mocker.patch.object(tsession.da, "run_cli_quiet", return_value=
-        tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())))
+    group = cfg_group(
+        tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"), autostart_rerunnable=True),)
+    )
+    listing = mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())),
+    )
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     patch_pause(mocker)
@@ -99,12 +108,15 @@ def test_rerun_open_select_confirm_executes_exact_detached_argv(mocker, tmp_path
     child.assert_not_called()
     session.submit_picker(confirm, confirm.entries[1])
     child.assert_called_once_with(
-        ["jailbee", "autostart", "run", "alpha-x", *selector,
-         "--config", str(group.config_path)], check=False, cwd=tmp_path)
+        ["jailbee", "autostart", "run", "alpha-x", *selector, "--config", str(group.config_path)],
+        check=False,
+        cwd=tmp_path,
+    )
     assert len(terminal.handed) == 1
     listing.assert_called_once_with(
         ["autostart", "run", "alpha-x", "--list", "--json", "--config", str(group.config_path)],
-        cwd=tmp_path)
+        cwd=tmp_path,
+    )
 
 
 @pytest.mark.parametrize("stdout", ["bad json", '[{"trigger":"on_start"}]'])
@@ -112,8 +124,9 @@ def test_rerun_bad_listing_notices_without_opening_picker(mocker, tmp_path, stdo
     from tests.dashboard_pilot import bare_session
 
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
-    mocker.patch.object(tsession.da, "run_cli_quiet", return_value=
-        tsession.da.CliResult(True, "done", stdout))
+    mocker.patch.object(
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done", stdout)
+    )
     session, _ = bare_session(mocker, [group])
     assert session.open_container_entry("alpha-x", "autostart-rerun") is None
     assert "could not list autostart" in session.notice
@@ -124,8 +137,9 @@ def test_rerun_list_policy_rechecked_before_capture(mocker, tmp_path):
 
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    session, _ = bare_session(mocker, [group], over_ssh=True,
-                               ssh_policy=_allowlist("autostart status"))
+    session, _ = bare_session(
+        mocker, [group], over_ssh=True, ssh_policy=_allowlist("autostart status")
+    )
     assert session.open_container_entry("alpha-x", "autostart-rerun") is None
     quiet.assert_not_called()
     assert "could not list autostart" in session.notice
@@ -138,24 +152,37 @@ def test_rerun_picker_filters_each_argv_and_retains_captured_names(mocker, tmp_p
     rows = _rerun_listing()
     rows[0]["stage"] = "clean:build"
     rows[0]["steps"][0]["step"] = "done:now"
-    mocker.patch.object(tsession.da, "run_cli_quiet", return_value=
-        tsession.da.CliResult(True, "done", json.dumps(rows)))
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "done", json.dumps(rows)),
+    )
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     session, _ = bare_session(mocker, [group])
     real = tsession.permitted
 
     def allow(argv, policy, *, over_ssh):
-        return "--failed" not in argv and "--step" not in argv and real(argv, policy, over_ssh=over_ssh)
+        return (
+            "--failed" not in argv
+            and "--step" not in argv
+            and real(argv, policy, over_ssh=over_ssh)
+        )
 
     mocker.patch.object(tsession, "permitted", side_effect=allow)
     picker = session.open_container_entry("alpha-x", "autostart-rerun")
     assert isinstance(picker, tsession.Picker)
     assert [e.value for e in picker.entries] == [
-        "stage:on_start:deps", "stage:on_create:clean:build", "stage:on_create:deps"]
+        "stage:on_start:deps",
+        "stage:on_create:clean:build",
+        "stage:on_create:deps",
+    ]
     confirm = session.submit_picker(picker, picker.entries[1])
     assert confirm.carry == ("autostart", "run", "alpha-x", "--stage", "clean:build")
     # A fabricated selection never decodes its value into a new command.
-    assert session.submit_picker(picker, tsession.PickerEntry("bad", "stage:on_start:injected")) is None
+    assert (
+        session.submit_picker(picker, tsession.PickerEntry("bad", "stage:on_start:injected"))
+        is None
+    )
 
 
 def test_rerun_confirmation_no_and_stale_ssh_policy_spawn_nothing(mocker, tmp_path):
@@ -163,8 +190,11 @@ def test_rerun_confirmation_no_and_stale_ssh_policy_spawn_nothing(mocker, tmp_pa
     from tests.test_dashboard_actions import _rerun_listing
 
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
-    mocker.patch.object(tsession.da, "run_cli_quiet", return_value=
-        tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())))
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())),
+    )
     child = mocker.patch.object(tsession.subprocess, "run")
     session, _ = bare_session(mocker, [group])
     picker = session.open_container_entry("alpha-x", "autostart-rerun")
@@ -180,20 +210,28 @@ def test_rerun_confirmation_no_and_stale_ssh_policy_spawn_nothing(mocker, tmp_pa
 def test_rerun_menu_picker_yes_is_keyboard_reachable(mocker, tmp_path):
     from tests.test_dashboard_actions import _rerun_listing
 
-    group = cfg_group(tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"),
-                                                  autostart_rerunnable=True),))
-    mocker.patch.object(tsession.da, "run_cli_quiet", return_value=
-        tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())))
+    group = cfg_group(
+        tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"), autostart_rerunnable=True),)
+    )
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "done", json.dumps(_rerun_listing())),
+    )
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     patch_pause(mocker)
     steps = [*container_menu_keys(group, "autostart-rerun"), "enter", "j", "enter"]
     run = drive(mocker, steps, [group])
     assert run.rc == 0
-    assert any(p.purpose == "container-autostart-rerun-confirm" for p in run.of_type(tsession.Picker))
+    assert any(
+        p.purpose == "container-autostart-rerun-confirm" for p in run.of_type(tsession.Picker)
+    )
     child.assert_called_once_with(
         ["jailbee", "autostart", "run", "alpha-x", "--failed", "--config", str(group.config_path)],
-        check=False, cwd=tmp_path)
+        check=False,
+        cwd=tmp_path,
+    )
 
 
 # --- Autostart: status and cancel --------------------------------------------
@@ -1388,8 +1426,9 @@ def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
     if verb == "autostart-rerun":
         listing = json.dumps(_rerun_listing())
     elif verb == "services":
-        listing = json.dumps([{"name": "web", "state": "ready", "window": None,
-                               "since": None, "detail": ""}])
+        listing = json.dumps(
+            [{"name": "web", "state": "ready", "window": None, "since": None, "detail": ""}]
+        )
     else:
         listing = _SNAPS_JSON
     mocker.patch.object(

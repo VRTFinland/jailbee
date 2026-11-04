@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
 import multiprocessing
+from datetime import UTC, datetime
 
 import pytest
 
@@ -12,9 +12,11 @@ def state_home(monkeypatch, tmp_path):
 
 
 def test_record_then_read_round_trip():
-    now = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 4, tzinfo=UTC)
     outcomes.record("c", "on_start", "s", "a", "fail", now=now)
-    assert outcomes.read("c") == {"on_start": {"s": {"a": outcomes.StepOutcome("fail", now.isoformat())}}}
+    assert outcomes.read("c") == {
+        "on_start": {"s": {"a": outcomes.StepOutcome("fail", now.isoformat())}}
+    }
 
 
 def test_rerun_ok_clears_fail_and_keeps_others():
@@ -35,13 +37,16 @@ def test_corrupt_file_reads_empty():
 def test_malformed_entries_are_skipped():
     path = outcomes.outcomes_path("c")
     path.parent.mkdir(parents=True)
-    path.write_text('{"on_start":{"s":{"good":{"state":"ok","at":"now"},"bad":{"state":"no","at":"now"},"broken":null},"bad":[]},"bad":null}')
+    path.write_text(
+        '{"on_start":{"s":{"good":{"state":"ok","at":"now"},"bad":{"state":"no","at":"now"},"broken":null},"bad":[]},"bad":null}'
+    )
     assert outcomes.read("c") == {"on_start": {"s": {"good": outcomes.StepOutcome("ok", "now")}}}
 
 
 def test_record_on_readonly_dir_does_not_raise(monkeypatch):
     def fail(*args):
         raise OSError("readonly")
+
     monkeypatch.setattr(outcomes.os, "replace", fail)
     outcomes.record("c", "on_start", "s", "a", "ok")
     assert outcomes.read("c") == {}

@@ -40,9 +40,7 @@ def effective_config(cfg: Config, incus: Incus, container: str) -> Config:
     return profiled_config(cfg, resolve_profile(cfg, incus, container))
 
 
-def prepare(
-    cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTarget]
-) -> Autostart:
+def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTarget]) -> Autostart:
     from jailbee.autostart_status import refuse_while_running
 
     refuse_while_running(cfg, container)
@@ -70,8 +68,7 @@ def run_foreground(
 
     refuse_while_running(cfg, container)
     agents = {
-        name: agent.model_copy(update={"autostart": False})
-        for name, agent in cfg.agents.items()
+        name: agent.model_copy(update={"autostart": False}) for name, agent in cfg.agents.items()
     }
     run_cfg = cfg.model_copy(update={"autostart": block, "agents": agents})
     repo_dir = container_repo_dir(cfg, incus, container)
@@ -112,32 +109,60 @@ def list_rows(cfg: Config, container: str) -> list[dict[str, object]]:
             for chain in stage.all_chains():
                 for step in chain.steps:
                     outcome = recorded.get(step.name)
-                    steps.append({"step": step.name, "state": outcome.state if outcome else None,
-                                  "at": outcome.at if outcome else None})
+                    steps.append(
+                        {
+                            "step": step.name,
+                            "state": outcome.state if outcome else None,
+                            "at": outcome.at if outcome else None,
+                        }
+                    )
             present = [recorded[step["step"]] for step in steps if step["step"] in recorded]
             failures = [outcome for outcome in present if outcome.state == "fail"]
             chosen = max(failures or present, key=lambda outcome: outcome.at, default=None)
-            rows.append({"trigger": trigger.value, "stage": stage.stage,
-                         "state": chosen.state if chosen else None, "at": chosen.at if chosen else None,
-                         "steps": steps})
+            rows.append(
+                {
+                    "trigger": trigger.value,
+                    "stage": stage.stage,
+                    "state": chosen.state if chosen else None,
+                    "at": chosen.at if chosen else None,
+                    "steps": steps,
+                }
+            )
     return rows
 
 
-def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
-            steps: Sequence[str], failed: bool, trigger: str | None, listing: bool,
-            json_output: bool, wait: bool, spawn: Callable[[Config, Autostart], None]) -> None:
+def _command(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    stages: Sequence[str],
+    steps: Sequence[str],
+    failed: bool,
+    trigger: str | None,
+    listing: bool,
+    json_output: bool,
+    wait: bool,
+    spawn: Callable[[Config, Autostart], None],
+) -> None:
     """Select a union of explicit and failed targets; trigger filters both."""
     import json
+
     import typer
     from rich.table import Table
+
     from jailbee import prompting
     from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
     from jailbee.autostart_status import refuse_while_running
     from jailbee.lifecycle import short_name
     from jailbee.tui import console, hint_console, info
 
-    if (listing and (stages or steps or failed or trigger or wait)) or (json_output and not listing):
-        raise RerunSelectionError("--list excludes selectors, --trigger and --wait; --json requires --list", 2)
+    if (listing and (stages or steps or failed or trigger or wait)) or (
+        json_output and not listing
+    ):
+        raise RerunSelectionError(
+            "--list excludes selectors, --trigger and --wait; --json requires --list", 2
+        )
     selected_trigger = AutostartTrigger(trigger) if trigger else None
     if listing and json_output:
         # Profile fallback can warn; machine-readable stdout must stay JSON-only.
@@ -157,7 +182,12 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
         else:
             table = Table("Trigger", "Stage", "State", "At")
             for row in rows:
-                table.add_row(str(row["trigger"]), str(row["stage"]), str(row["state"] or "-"), str(row["at"] or "-"))
+                table.add_row(
+                    str(row["trigger"]),
+                    str(row["stage"]),
+                    str(row["state"] or "-"),
+                    str(row["at"] or "-"),
+                )
             console.print(table)
         return
     refuse_while_running(cfg, container)
@@ -177,16 +207,26 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
         pid = 0
     if pid > 1 and worker_alive(pid):
         raise RuntimeError(f"Autostart is already running for '{container}' (pid {pid})")
-    targets = resolve_rerun(effective.autostart, stages=stages, steps=steps, trigger=selected_trigger)
-    failures = [t for t in failed_targets(effective, container) if selected_trigger is None or t.trigger == selected_trigger]
+    targets = resolve_rerun(
+        effective.autostart, stages=stages, steps=steps, trigger=selected_trigger
+    )
+    failures = [
+        t
+        for t in failed_targets(effective, container)
+        if selected_trigger is None or t.trigger == selected_trigger
+    ]
     if failed:
         targets.extend(t for t in failures if t not in targets)
     if not stages and not steps and not failed:
         if not prompting.is_interactive():
-            raise prompting.MissingValue("autostart selection", reason="pass --stage/--step/--failed or select interactively")
+            raise prompting.MissingValue(
+                "autostart selection", reason="pass --stage/--step/--failed or select interactively"
+            )
         options: list[prompting.Option[list[RerunTarget]]] = []
         if failures:
-            options.append(prompting.Option(failures, f"Re-run failed steps ({len(failures)})", "failed"))
+            options.append(
+                prompting.Option(failures, f"Re-run failed steps ({len(failures)})", "failed")
+            )
         for t in TRIGGER_ORDER:
             if selected_trigger is not None and t != selected_trigger:
                 continue
@@ -215,19 +255,45 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
             if incus.config_get(container, key) == "1":
                 incus.config_unset(container, key)
             raise
-        info(f"Re-running in the background — follow with `jailbee autostart status {short_name(cfg, container)}`")
+        info(
+            "Re-running in the background — follow with "
+            f"`jailbee autostart status {short_name(cfg, container)}`"
+        )
 
 
-def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
-            steps: Sequence[str], failed: bool, trigger: str | None, listing: bool,
-            json_output: bool, wait: bool, spawn: Callable[[Config, Autostart], None]) -> None:
+def command(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    stages: Sequence[str],
+    steps: Sequence[str],
+    failed: bool,
+    trigger: str | None,
+    listing: bool,
+    json_output: bool,
+    wait: bool,
+    spawn: Callable[[Config, Autostart], None],
+) -> None:
     """Serialize a rerun through the foreground lifetime or background handoff."""
     import fcntl
+
     from jailbee.db import state_dir
 
     def invoke() -> None:
-        _command(cfg, incus, container, stages=stages, steps=steps, failed=failed,
-                 trigger=trigger, listing=listing, json_output=json_output, wait=wait, spawn=spawn)
+        _command(
+            cfg,
+            incus,
+            container,
+            stages=stages,
+            steps=steps,
+            failed=failed,
+            trigger=trigger,
+            listing=listing,
+            json_output=json_output,
+            wait=wait,
+            spawn=spawn,
+        )
 
     if listing:
         invoke()
@@ -238,7 +304,9 @@ def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError(f"An autostart re-run for '{container}' is already in progress") from exc
+            raise RuntimeError(
+                f"An autostart re-run for '{container}' is already in progress"
+            ) from exc
         try:
             invoke()
         finally:

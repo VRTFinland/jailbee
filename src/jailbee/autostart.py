@@ -602,7 +602,8 @@ def run_detached(
                     trigger,
                     agent_steps=agent_steps,
                     agents_last=prompted,
-                    services_stage=not spec.rerun and trigger == AutostartTrigger.ON_START
+                    services_stage=not spec.rerun
+                    and trigger == AutostartTrigger.ON_START
                     and services_stage_wanted(
                         cfg, incus, spec.container_name, services_present=spec.services_present
                     ),
@@ -719,11 +720,15 @@ def run_stages(
                     stage,
                     repo_dir,
                     mirror_endpoint=mirror_endpoint,
-                    on_progress=record_progress if trigger is not None and stage.stage != AGENTS_STAGE else on_progress,
+                    on_progress=record_progress
+                    if trigger is not None and stage.stage != AGENTS_STAGE
+                    else on_progress,
                     cas_restore=cas_restore,
                 )
         finally:
-            if trigger is AutostartTrigger.ON_CREATE and (cfg.autostart.profiles or record_on_create):
+            if trigger is AutostartTrigger.ON_CREATE and (
+                cfg.autostart.profiles or record_on_create
+            ):
                 from jailbee.autostart_profiles import record_created
 
                 record_created(incus, container, stage.stage)

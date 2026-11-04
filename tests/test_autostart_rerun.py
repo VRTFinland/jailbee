@@ -14,9 +14,14 @@ def rerun_cfg(make_cfg, tmp_path):
         agents={"claude": {"autostart": True}},
         autostart={
             "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
-            "on_start": [{"stage": "deps", "network": "loose", "mounts": ["m"],
-                          "steps": [{"name": "sync", "run": "true"},
-                                    {"name": "other", "run": "true"}]}],
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "network": "loose",
+                    "mounts": ["m"],
+                    "steps": [{"name": "sync", "run": "true"}, {"name": "other", "run": "true"}],
+                }
+            ],
             "profiles": {"full": "all", "light": {"stages": ["setup"]}},
             "default_profile": "full",
         },
@@ -47,8 +52,9 @@ def test_foreground_step_rerun_restores_network_and_mounts_on_failure(
     incus = mocker.MagicMock()
     step, switch, add, remove = execution_deps(mocker)
     step.side_effect = (
-        AutostartCancelledError(container="c", signum=15) if cancelled else
-        TmuxStepError("failed", step_name="sync", reason="exit", exit_code=1)
+        AutostartCancelledError(container="c", signum=15)
+        if cancelled
+        else TmuxStepError("failed", step_name="sync", reason="exit", exit_code=1)
     )
     block = rerun_block(cfg.autostart, [RerunTarget(AutostartTrigger.ON_START, "deps", "sync")])
     with pytest.raises(AutostartCancelledError if cancelled else AutostartStepError):
@@ -64,8 +70,13 @@ def test_rerun_never_launches_agents(make_cfg, tmp_path, mocker):
 
     cfg = rerun_cfg(make_cfg, tmp_path)
     step, _, _, _ = execution_deps(mocker)
-    agents = mocker.patch("jailbee.autostart._on_start_agent_steps", side_effect=AssertionError("agent helper"))
-    services = mocker.patch("jailbee.services.autostart.services_stage_wanted", side_effect=AssertionError("services helper"))
+    agents = mocker.patch(
+        "jailbee.autostart._on_start_agent_steps", side_effect=AssertionError("agent helper")
+    )
+    services = mocker.patch(
+        "jailbee.services.autostart.services_stage_wanted",
+        side_effect=AssertionError("services helper"),
+    )
     block = rerun_block(cfg.autostart, [RerunTarget(AutostartTrigger.ON_START, "deps", "sync")])
     run_foreground(cfg, mocker.MagicMock(), "c", block)
     assert [call.kwargs["name"] for call in step.call_args_list] == ["sync"]
@@ -126,9 +137,14 @@ def test_failed_targets_drop_stale_names(make_cfg, tmp_path):
     from jailbee.autostart_profiles import profiled_config
     from jailbee.autostart_rerun import failed_targets
 
-    for trigger, stage, step in [("on_create", "setup", "init"), ("on_start", "deps", "sync"),
-                                 ("on_start", "deps", "gone"), ("on_start", "old", "sync"),
-                                 ("unknown", "deps", "sync"), ("on_start", "agents", "claude")]:
+    for trigger, stage, step in [
+        ("on_create", "setup", "init"),
+        ("on_start", "deps", "sync"),
+        ("on_start", "deps", "gone"),
+        ("on_start", "old", "sync"),
+        ("unknown", "deps", "sync"),
+        ("on_start", "agents", "claude"),
+    ]:
         outcomes.record("c", trigger, stage, step, "fail")
     cfg = rerun_cfg(make_cfg, tmp_path)
     assert failed_targets(profiled_config(cfg, "full"), "c") == [
@@ -176,12 +192,13 @@ def test_successful_rerun_clears_only_selected_failure(make_cfg, tmp_path, mocke
 def test_first_trigger_rejects_empty_block():
     from jailbee.autostart_rerun import first_trigger
 
-    with pytest.raises(ValueError, match="No.*stage"):
+    with pytest.raises(ValueError, match=r"No.*stage"):
         first_trigger(Autostart())
 
 
 def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, tmp_path, mocker):
     import threading
+
     from jailbee.autostart_rerun import command
 
     cfg = rerun_cfg(make_cfg, tmp_path)
@@ -202,8 +219,19 @@ def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, t
 
     def invoke():
         try:
-            command(cfg, incus, "c", stages=["setup"], steps=[], failed=False,
-                    trigger=None, listing=False, json_output=False, wait=False, spawn=spawn)
+            command(
+                cfg,
+                incus,
+                "c",
+                stages=["setup"],
+                steps=[],
+                failed=False,
+                trigger=None,
+                listing=False,
+                json_output=False,
+                wait=False,
+                spawn=spawn,
+            )
         except Exception as exc:
             errors.append(exc)
 
@@ -233,6 +261,17 @@ def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker,
     incus.config_get_checked.return_value = claim
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     spawn = mocker.MagicMock()
-    command(cfg, incus, "c", stages=["setup"], steps=[], failed=False, trigger=None,
-            listing=False, json_output=False, wait=False, spawn=spawn)
+    command(
+        cfg,
+        incus,
+        "c",
+        stages=["setup"],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=False,
+        json_output=False,
+        wait=False,
+        spawn=spawn,
+    )
     spawn.assert_called_once()

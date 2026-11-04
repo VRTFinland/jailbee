@@ -71,15 +71,18 @@ def test_profile_picker_marks_current_and_runs_switch_command(mocker, tmp_path):
 def test_gather_rerunnable_uses_effective_stored_profile(mocker, tmp_path, make_cfg):
     from jailbee.dashboard import model
 
-    cfg = make_cfg(tmp_path, autostart={
-        "on_start": [{"stage": "deps", "steps": []}, {"stage": "agents", "steps": []}],
-        "profiles": {"full": "all", "agents-only": {"stages": ["agents"]}},
-        "default_profile": "agents-only",
-    })
-    containers = [ContainerInfo("alpha-" + name, "Running", None, None, None,
-                                autostart_profile=profile)
-                  for name, profile in [("full", "full"), ("agents", "agents-only"),
-                                        ("fallback", "removed")]]
+    cfg = make_cfg(
+        tmp_path,
+        autostart={
+            "on_start": [{"stage": "deps", "steps": []}, {"stage": "agents", "steps": []}],
+            "profiles": {"full": "all", "agents-only": {"stages": ["agents"]}},
+            "default_profile": "agents-only",
+        },
+    )
+    containers = [
+        ContainerInfo("alpha-" + name, "Running", None, None, None, autostart_profile=profile)
+        for name, profile in [("full", "full"), ("agents", "agents-only"), ("fallback", "removed")]
+    ]
     mocker.patch.object(model, "load_repo_config", return_value=cfg)
     mocker.patch.object(model, "list_containers", side_effect=[containers, []])
     groups = model.gather_rows(mocker.MagicMock(), [tmp_path], with_git=False)
@@ -90,21 +93,39 @@ def test_autostart_submenu_has_fixed_unique_mnemonics_and_does_not_change_qt(tmp
     from jailbee.dashboard import actions, menus
     from jailbee.dashboard.tui import menu_state
 
-    leaves = [("Re-run…", "autostart-rerun"), ("Autostart status", "autostart-status"),
-              ("Cancel autostart…", "autostart-cancel"), ("Profile…", "autostart-profile")]
-    menu = menu_state.MenuState("alpha-x", [*leaves, ("Launch editor", "ide"),
-        ("Snapshots…", "snapshots"), ("Restart", "restart"), ("Stop", "stop"),
-        ("Destroy", "destroy")])
+    leaves = [
+        ("Re-run…", "autostart-rerun"),
+        ("Autostart status", "autostart-status"),
+        ("Cancel autostart…", "autostart-cancel"),
+        ("Profile…", "autostart-profile"),
+    ]
+    menu = menu_state.MenuState(
+        "alpha-x",
+        [
+            *leaves,
+            ("Launch editor", "ide"),
+            ("Snapshots…", "snapshots"),
+            ("Restart", "restart"),
+            ("Stop", "stop"),
+            ("Destroy", "destroy"),
+        ],
+    )
     root = menu_state.menu_entries(menu)
     assert "u" in menu_state.menu_hotkeys(root)
     group = menu_state.menu_entries(menu, "Autostart →")
-    assert group == (("Re-run…", "autostart-rerun"), ("Status", "autostart-status"),
-                     ("Cancel…", "autostart-cancel"), ("Profile…", "autostart-profile"))
+    assert group == (
+        ("Re-run…", "autostart-rerun"),
+        ("Status", "autostart-status"),
+        ("Cancel…", "autostart-cancel"),
+        ("Profile…", "autostart-profile"),
+    )
     assert menu_state.menu_hotkeys(group) == ["r", "T", "C", "p"]
     for entries in (root, group):
         keys = menu_state.menu_hotkeys(entries)
         assert len(keys) == len(set(keys))
-        assert all(menu_state._preferred_menu_key(e) == k for e, k in zip(entries, keys))
+        assert all(
+            menu_state._preferred_menu_key(e) == k for e, k in zip(entries, keys, strict=True)
+        )
     assert menus.group_menu_actions(leaves) == leaves  # Qt does not opt in.
     c = ContainerInfo("alpha-x", "Running", None, None, None)
     extras = actions.container_extras(c, (), None, over_ssh=False)

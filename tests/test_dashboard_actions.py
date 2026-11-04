@@ -18,15 +18,31 @@ from jailbee.lifecycle import ContainerInfo
 
 def _rerun_listing():
     def row(trigger, stage, state, steps):
-        return {"trigger": trigger, "stage": stage, "state": state,
-                "at": "2026-11-04T12:03:00+00:00" if state else None,
-                "steps": [{"step": name, "state": status,
-                           "at": "2026-11-04T12:03:00+00:00" if status else None}
-                          for name, status in steps]}
-    return [row("on_create", "clean", "ok", [("done", "ok")]),
-            row("on_start", "deps", "fail", [("done", "ok"), ("npm", "fail"),
-                                             ("pending", None), ("interrupted", "start")]),
-            row("on_create", "deps", None, [("install", None)])]
+        return {
+            "trigger": trigger,
+            "stage": stage,
+            "state": state,
+            "at": "2026-11-04T12:03:00+00:00" if state else None,
+            "steps": [
+                {
+                    "step": name,
+                    "state": status,
+                    "at": "2026-11-04T12:03:00+00:00" if status else None,
+                }
+                for name, status in steps
+            ],
+        }
+
+    return [
+        row("on_create", "clean", "ok", [("done", "ok")]),
+        row(
+            "on_start",
+            "deps",
+            "fail",
+            [("done", "ok"), ("npm", "fail"), ("pending", None), ("interrupted", "start")],
+        ),
+        row("on_create", "deps", None, [("install", None)]),
+    ]
 
 
 def test_rerun_picker_failed_first_preserves_stage_children_and_trigger_identity():
@@ -46,17 +62,22 @@ def test_rerun_picker_failed_first_preserves_stage_children_and_trigger_identity
     assert dact.parse_rerun_rows("[]") == ()
 
 
-@pytest.mark.parametrize("change", [
-    lambda rows: {}, lambda rows: [None], lambda rows: [{"stage": "deps"}],
-    lambda rows: [dict(rows[0], trigger="invalid")],
-    lambda rows: [dict(rows[0], state="bad")],
-    lambda rows: [dict(rows[0], at=12)],
-    lambda rows: [dict(rows[0], at="not-a-time")],
-    lambda rows: [dict(rows[0], stage="")],
-    lambda rows: [dict(rows[0], steps=[{"step": "x", "state": True, "at": None}])],
-    lambda rows: [rows[0], rows[0]],
-    lambda rows: [dict(rows[0], steps=rows[0]["steps"] * 2)],
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda rows: {},
+        lambda rows: [None],
+        lambda rows: [{"stage": "deps"}],
+        lambda rows: [dict(rows[0], trigger="invalid")],
+        lambda rows: [dict(rows[0], state="bad")],
+        lambda rows: [dict(rows[0], at=12)],
+        lambda rows: [dict(rows[0], at="not-a-time")],
+        lambda rows: [dict(rows[0], stage="")],
+        lambda rows: [dict(rows[0], steps=[{"step": "x", "state": True, "at": None}])],
+        lambda rows: [rows[0], rows[0]],
+        lambda rows: [dict(rows[0], steps=rows[0]["steps"] * 2)],
+    ],
+)
 def test_rerun_parser_rejects_malformed_listing(change):
     with pytest.raises(dact.RerunLoadError):
         dact.parse_rerun_rows(json.dumps(change(_rerun_listing())))
@@ -65,7 +86,10 @@ def test_rerun_parser_rejects_malformed_listing(change):
 def test_rerun_picker_without_failures_has_no_failed_shortcut_or_trigger():
     rows = dact.parse_rerun_rows(json.dumps(_rerun_listing()[:1]))
     picker = dact.rerun_picker("alpha-x", rows)
-    assert [e.value for e in picker.entries] == ["stage:on_create:clean", "step:on_create:clean/done"]
+    assert [e.value for e in picker.entries] == [
+        "stage:on_create:clean",
+        "step:on_create:clean/done",
+    ]
     assert [json.loads(command) for command in picker.carry] == [
         ["autostart", "run", "alpha-x", "--stage", "clean"],
         ["autostart", "run", "alpha-x", "--step", "clean/done"],
@@ -73,8 +97,9 @@ def test_rerun_picker_without_failures_has_no_failed_shortcut_or_trigger():
 
 
 def test_rerun_confirmation_question_does_not_repeat_rerun():
-    picker = dact.rerun_confirm_picker("alpha-x", "Re-run failed steps (2)",
-                                       ["autostart", "run", "alpha-x", "--failed"])
+    picker = dact.rerun_confirm_picker(
+        "alpha-x", "Re-run failed steps (2)", ["autostart", "run", "alpha-x", "--failed"]
+    )
     assert picker.title == "Re-run failed steps (2) — alpha-x?"
 
 
@@ -83,14 +108,22 @@ def test_rerun_parser_rejects_invalid_json():
         dact.parse_rerun_rows("not json")
 
 
-@pytest.mark.parametrize("state,live,eligible,offered", [
-    ("Running", False, True, True), ("Stopped", False, True, False),
-    ("Running", True, True, False), ("Running", False, False, False),
-])
+@pytest.mark.parametrize(
+    "state,live,eligible,offered",
+    [
+        ("Running", False, True, True),
+        ("Stopped", False, True, False),
+        ("Running", True, True, False),
+        ("Running", False, False, False),
+    ],
+)
 def test_rerun_gating_uses_gathered_worker_state(mocker, state, live, eligible, offered):
-    c = ContainerInfo("alpha-x", state, None, None, None,
-                      job_live=live, autostart_rerunnable=eligible)
-    probe = mocker.patch("jailbee.background.clearable", side_effect=AssertionError("frontend probe"))
+    c = ContainerInfo(
+        "alpha-x", state, None, None, None, job_live=live, autostart_rerunnable=eligible
+    )
+    probe = mocker.patch(
+        "jailbee.background.clearable", side_effect=AssertionError("frontend probe")
+    )
     extras = dact.container_extras(c, (), None, over_ssh=False)
     assert (("Re-run…", "autostart-rerun") in extras.after_job) is offered
     probe.assert_not_called()
@@ -98,7 +131,9 @@ def test_rerun_gating_uses_gathered_worker_state(mocker, state, live, eligible, 
 
 def test_rerun_menu_requires_list_and_run_permission():
     c = ContainerInfo("alpha-x", "Running", None, None, None, autostart_rerunnable=True)
-    policy = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["autostart status"]}})
+    policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["autostart status"]}}
+    )
     extras = dact.container_extras(c, (), policy, over_ssh=True)
     assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
 
@@ -282,7 +317,14 @@ def _container(state: str = "Running", **fields: Any) -> ContainerInfo:
 _AUTOSTART_LIVE = {"job_phase": "autostart", "job_pid": os.getpid(), "job_kind": "autostart"}
 _AUTOSTART_DONE = {"job_phase": "failed", "job_pid": os.getpid(), "job_kind": "autostart"}
 
-_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts", "services", "orchestration"}
+_ALL_CONTAINER = {
+    "autostart-status",
+    "autostart-cancel",
+    "snapshots",
+    "mounts",
+    "services",
+    "orchestration",
+}
 
 
 def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -> set[str]:
@@ -746,15 +788,35 @@ def test_orchestrate_grant_runner_options():
 
 
 def test_services_json_and_state_actions():
-    rows = dact.parse_service_rows('[{"name":"db","state":"ready","window":"svc-db","since":null,"detail":""}]')
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"ready","window":"svc-db","since":null,"detail":""}]'
+    )
     assert rows[0].name == "db"
-    assert [e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries] == ["stop", "restart", "refresh", "logs"]
+    assert [
+        e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries
+    ] == ["stop", "restart", "refresh", "logs"]
     for state in ("stopped", "failed", "exited"):
-        assert [e.value for e in dact.service_action_picker("alpha-x", "db", state).entries] == ["start", "refresh", "logs"]
-    assert [e.value for e in dact.service_action_picker("alpha-x", "db", "starting").entries] == ["stop", "restart", "refresh", "logs"]
+        assert [e.value for e in dact.service_action_picker("alpha-x", "db", state).entries] == [
+            "start",
+            "refresh",
+            "logs",
+        ]
+    assert [e.value for e in dact.service_action_picker("alpha-x", "db", "starting").entries] == [
+        "stop",
+        "restart",
+        "refresh",
+        "logs",
+    ]
     assert dact.service_ls_argv("alpha-x") == ["service", "ls", "alpha-x", "--json"]
     assert dact.service_op_argv("start", "alpha-x", "db") == ["service", "start", "alpha-x", "db"]
-    assert dact.service_logs_argv("alpha-x", "db") == ["service", "logs", "alpha-x", "db", "-n", "200"]
+    assert dact.service_logs_argv("alpha-x", "db") == [
+        "service",
+        "logs",
+        "alpha-x",
+        "db",
+        "-n",
+        "200",
+    ]
 
 
 @pytest.mark.parametrize("output", ["oops", "{}", '[{"name":"db","state":"running"}]'])

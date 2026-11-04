@@ -172,7 +172,15 @@ MOUNTS = "mounts"
 SERVICES = "services"
 ORCHESTRATION = "orchestration"
 CONTAINER_VERBS = frozenset(
-    {AUTOSTART_RERUN, AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS, SERVICES, ORCHESTRATION}
+    {
+        AUTOSTART_RERUN,
+        AUTOSTART_STATUS,
+        AUTOSTART_CANCEL,
+        SNAPSHOTS,
+        MOUNTS,
+        SERVICES,
+        ORCHESTRATION,
+    }
 )
 
 SNAPSHOT_FIELDS = "name,created"
@@ -211,11 +219,18 @@ def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
             if not isinstance(item, dict):
                 raise ValueError
             name, state = item.get("name"), item.get("state")
-            if (not isinstance(name, str) or not name or not name.isprintable()
-                    or name in seen or state not in ("ready", "starting", "stopped", "failed", "exited")
-                    or not all(k in item and (item[k] is None or isinstance(item[k], str))
-                               for k in ("window", "since"))
-                    or not isinstance(item.get("detail"), str)):
+            if (
+                not isinstance(name, str)
+                or not name
+                or not name.isprintable()
+                or name in seen
+                or state not in ("ready", "starting", "stopped", "failed", "exited")
+                or not all(
+                    k in item and (item[k] is None or isinstance(item[k], str))
+                    for k in ("window", "since")
+                )
+                or not isinstance(item.get("detail"), str)
+            ):
                 raise ValueError
             seen.add(name)
             rows.append(ServiceRow(name, state))
@@ -225,17 +240,25 @@ def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
 
 
 def services_picker(container: str, rows: Sequence[ServiceRow]) -> Picker:
-    return Picker("container-services", f"Services — {container}",
-                  tuple(PickerEntry(f"{r.name}  ({r.state})", str(i)) for i, r in enumerate(rows)),
-                  target=container, carry=tuple(json.dumps([r.name, r.state]) for r in rows))
+    return Picker(
+        "container-services",
+        f"Services — {container}",
+        tuple(PickerEntry(f"{r.name}  ({r.state})", str(i)) for i, r in enumerate(rows)),
+        target=container,
+        carry=tuple(json.dumps([r.name, r.state]) for r in rows),
+    )
 
 
 def service_action_picker(container: str, service: str, state: str) -> Picker:
     ops: tuple[str, ...] = ("stop", "restart") if state in ("ready", "starting") else ("start",)
     ops += ("refresh", "logs")
-    return Picker("container-service-action", f"Service {service} — {container}",
-                  tuple(PickerEntry(op.title() + ("…" if op == "refresh" else ""), op) for op in ops),
-                  target=container, carry=(service,))
+    return Picker(
+        "container-service-action",
+        f"Service {service} — {container}",
+        tuple(PickerEntry(op.title() + ("…" if op == "refresh" else ""), op) for op in ops),
+        target=container,
+        carry=(service,),
+    )
 
 
 def autostart_list_argv(name: str) -> list[str]:
@@ -243,8 +266,12 @@ def autostart_list_argv(name: str) -> list[str]:
 
 
 def autostart_rerun_argv(
-    name: str, *, stages: Sequence[str] = (), steps: Sequence[str] = (),
-    failed: bool = False, trigger: str | None = None,
+    name: str,
+    *,
+    stages: Sequence[str] = (),
+    steps: Sequence[str] = (),
+    failed: bool = False,
+    trigger: str | None = None,
 ) -> list[str]:
     argv = ["autostart", "run", name]
     for stage in stages:
@@ -358,8 +385,11 @@ def rerun_picker(container: str, rows: Sequence[RerunRow]) -> Picker:
 
     failures = sum(step.state in failed_states for row in rows for step in row.steps)
     if failures:
-        add(f"Re-run failed steps ({failures})", "failed",
-            autostart_rerun_argv(container, failed=True))
+        add(
+            f"Re-run failed steps ({failures})",
+            "failed",
+            autostart_rerun_argv(container, failed=True),
+        )
     for row in sorted(rows, key=lambda r: not any(s.state in failed_states for s in r.steps)):
         ambiguous = len({r.trigger for r in rows if r.stage == row.stage}) > 1
         trigger = row.trigger if ambiguous else None
@@ -367,20 +397,36 @@ def rerun_picker(container: str, rows: Sequence[RerunRow]) -> Picker:
         label += f"  {symbols[row.state]}"
         if row.at is not None:
             label += " " + datetime.fromisoformat(row.at).strftime("%H:%M")
-        add(label, f"stage:{row.trigger}:{row.stage}",
-            autostart_rerun_argv(container, stages=(row.stage,), trigger=trigger))
+        add(
+            label,
+            f"stage:{row.trigger}:{row.stage}",
+            autostart_rerun_argv(container, stages=(row.stage,), trigger=trigger),
+        )
         for step in sorted(row.steps, key=lambda s: s.state not in failed_states):
-            add(f"  {step.step}  {symbols[step.state]}",
+            add(
+                f"  {step.step}  {symbols[step.state]}",
                 f"step:{row.trigger}:{row.stage}/{step.step}",
-                autostart_rerun_argv(container, steps=(f"{row.stage}/{step.step}",), trigger=trigger))
-    return Picker("container-autostart-rerun", f"Re-run autostart — {container}",
-                  tuple(entries), target=container, carry=tuple(commands))
+                autostart_rerun_argv(
+                    container, steps=(f"{row.stage}/{step.step}",), trigger=trigger
+                ),
+            )
+    return Picker(
+        "container-autostart-rerun",
+        f"Re-run autostart — {container}",
+        tuple(entries),
+        target=container,
+        carry=tuple(commands),
+    )
 
 
 def rerun_confirm_picker(container: str, label: str, argv: Sequence[str]) -> Picker:
-    return Picker("container-autostart-rerun-confirm", f"Re-run {label.strip().removeprefix('Re-run ')} — {container}?",
-                  (PickerEntry("No", "no"), PickerEntry("Yes, re-run", "yes")),
-                  target=container, carry=tuple(argv))
+    return Picker(
+        "container-autostart-rerun-confirm",
+        f"Re-run {label.strip().removeprefix('Re-run ')} — {container}?",
+        (PickerEntry("No", "no"), PickerEntry("Yes, re-run", "yes")),
+        target=container,
+        carry=tuple(argv),
+    )
 
 
 def autostart_status_argv(name: str) -> list[str]:

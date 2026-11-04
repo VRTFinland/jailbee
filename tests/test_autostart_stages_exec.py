@@ -785,16 +785,25 @@ def test_stage_leaves_an_already_attached_mount_alone(tmp_path, make_cfg, mocker
     remove.assert_called_once_with(cfg, incus, "c1", "gcp")
 
 
-def test_run_stages_records_outcomes_without_caller_hook(tmp_path, make_cfg, mocker, incus, monkeypatch):
+def test_run_stages_records_outcomes_without_caller_hook(
+    tmp_path, make_cfg, mocker, incus, monkeypatch
+):
     from jailbee import autostart_outcomes
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.tmux.ensure_session")
-    mocker.patch("jailbee.tmux.run_step", side_effect=TmuxStepError("boom", step_name="s1", reason="exit", exit_code=1))
+    mocker.patch(
+        "jailbee.tmux.run_step",
+        side_effect=TmuxStepError("boom", step_name="s1", reason="exit", exit_code=1),
+    )
     stage = _stage(stage="deps", steps=[{"name": "s1", "run": "false", "continue_on_error": True}])
-    autostart.run_stages(make_cfg(tmp_path), incus, "c1", [stage], "/r", trigger=AutostartTrigger.ON_START)
-    assert autostart_outcomes.failed_steps(autostart_outcomes.read("c1")) == [("on_start", "deps", "s1")]
+    autostart.run_stages(
+        make_cfg(tmp_path), incus, "c1", [stage], "/r", trigger=AutostartTrigger.ON_START
+    )
+    assert autostart_outcomes.failed_steps(autostart_outcomes.read("c1")) == [
+        ("on_start", "deps", "s1")
+    ]
 
 
 def test_agents_and_services_stages_not_recorded(tmp_path, make_cfg, mocker, incus, monkeypatch):
@@ -806,12 +815,29 @@ def test_agents_and_services_stages_not_recorded(tmp_path, make_cfg, mocker, inc
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.tmux.run_step")
+
     def services(*args, on_progress, **kwargs):
         on_progress("services", "db", "ok")
+
     mocker.patch("jailbee.services.autostart.run_services_stage", side_effect=services)
-    stages = [_stage(stage="agents", steps=[{"name": "agent", "run": "true"}]), GeneratedServicesStage.model_construct(stage="services")]
-    autostart.run_stages(make_cfg(tmp_path), incus, "c1", stages, "/r", trigger=AutostartTrigger.ON_START, on_progress=_record(events))
-    assert events == [("agents", "agent", "start"), ("agents", "agent", "ok"), ("services", "db", "ok")]
+    stages = [
+        _stage(stage="agents", steps=[{"name": "agent", "run": "true"}]),
+        GeneratedServicesStage.model_construct(stage="services"),
+    ]
+    autostart.run_stages(
+        make_cfg(tmp_path),
+        incus,
+        "c1",
+        stages,
+        "/r",
+        trigger=AutostartTrigger.ON_START,
+        on_progress=_record(events),
+    )
+    assert events == [
+        ("agents", "agent", "start"),
+        ("agents", "agent", "ok"),
+        ("services", "db", "ok"),
+    ]
     assert autostart_outcomes.read("c1") == {}
 
 
@@ -824,6 +850,14 @@ def test_run_stages_preserves_caller_hook(tmp_path, make_cfg, mocker, incus, mon
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.tmux.run_step")
     stage = _stage(stage="deps", steps=[{"name": "s1", "run": "true"}])
-    autostart.run_stages(make_cfg(tmp_path), incus, "c1", [stage], "/r", trigger=AutostartTrigger.ON_START, on_progress=_record(events))
+    autostart.run_stages(
+        make_cfg(tmp_path),
+        incus,
+        "c1",
+        [stage],
+        "/r",
+        trigger=AutostartTrigger.ON_START,
+        on_progress=_record(events),
+    )
     assert events == [("deps", "s1", "start"), ("deps", "s1", "ok")]
     assert autostart_outcomes.read("c1")["on_start"]["deps"]["s1"].state == "ok"
