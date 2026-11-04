@@ -59,6 +59,7 @@ from jailbee.config.models_apps import APP_NAME_RE, AppEntry
 from jailbee.config.models_behaviour import (
     BootConfig,
     ConfirmConfig,
+    ForkConfig,
     NewConfig,
     PullConfig,
     PushConfig,
@@ -158,6 +159,7 @@ __all__ = [
     "ConfigError",
     "ConfigNotFoundError",
     "ConfirmConfig",
+    "ForkConfig",
     "Credentials",
     "DockerRegistryMirrorRepoConfig",
     "GitConfig",

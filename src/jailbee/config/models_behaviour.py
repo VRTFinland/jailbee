@@ -169,6 +169,23 @@ class PushConfig(BaseModel):
     )
 
 
+class ForkConfig(BaseModel):
+    """Warm output policy for forks."""
+
+    model_config = ConfigDict(extra="forbid")
+    warm_paths: list[str] = Field(
+        default=[],
+        description="Repo-relative globs of git-ignored paths seeded into forks by reflink on btrfs pools.",
+    )
+
+    @field_validator("warm_paths")
+    @classmethod
+    def _warm_paths(cls, value: list[str]) -> list[str]:
+        from jailbee.fork_warm import validate_pattern
+
+        return [validate_pattern(p) for p in value]
+
+
 class NewConfig(BaseModel):
     """Policy for `jailbee new`'s starting-point selection.
 
