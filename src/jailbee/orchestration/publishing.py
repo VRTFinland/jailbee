@@ -99,8 +99,13 @@ def _review_policy(
         elif len(bound) != 1:
             raise pr_outbox.GateError("review needs exactly one explicitly bound PR")
         target_number = manifest.pr if manifest.pr is not None else next(iter(bound))
-        if any(isinstance(action, pr_outbox.DescriptionAction) for action in manifest.actions) and target_number not in authored:
-            raise pr_outbox.GateError("description rewrite requires an authored, non-adopted PR binding")
+        if (
+            any(isinstance(action, pr_outbox.DescriptionAction) for action in manifest.actions)
+            and target_number not in authored
+        ):
+            raise pr_outbox.GateError(
+                "description rewrite requires an authored, non-adopted PR binding"
+            )
 
     return check
 
@@ -227,12 +232,25 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
         del current[full]
         path.unlink(missing_ok=True)
     _save(root, "publish-inflight.json", current)
-    active_results = {_result(root, entry.get("container_key", full), entry["ref"]) for full, entry in current.items()}
+    active_results = {
+        _result(root, entry.get("container_key", full), entry["ref"])
+        for full, entry in current.items()
+    }
     for path in (root / "publish-results").glob("*.json"):
         if path in active_results:
             continue
         result = json.loads(path.read_text())
-        _audit(root, {"time": now.isoformat(), "orchestrator": result.get("orchestrator", "unknown"), "ref": result.get("ref"), "actions": result.get("actions", []), "urls": result.get("urls", []), "outcome": "abandoned-result"})
+        _audit(
+            root,
+            {
+                "time": now.isoformat(),
+                "orchestrator": result.get("orchestrator", "unknown"),
+                "ref": result.get("ref"),
+                "actions": result.get("actions", []),
+                "urls": result.get("urls", []),
+                "outcome": "abandoned-result",
+            },
+        )
         path.unlink(missing_ok=True)
     known = _load(root, "publish-known.json")
     _save(
@@ -271,7 +289,10 @@ def _review_marker(root: Path, key: str, name: str) -> Path:
 def _handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     assert isinstance(m, PublishManifest)
     if m.outbox == "pr" and _review_marker(ctx.root, ctx.sender.key, m.manifest).exists():
-        return refused("outcome uncertain: review publication requires human resolution with `jb outbox` on the host")
+        return refused(
+            "outcome uncertain: review publication requires human resolution "
+            "with `jb outbox` on the host"
+        )
     current = inflight(ctx.root)
     if ctx.sender.full in current:
         return refused(f"a publish is already running (ref {current[ctx.sender.full]['ref']})")
@@ -352,7 +373,10 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
             )
         else:
             if entry["kind"] == "review":
-                atomic_write_text(_review_marker(root, entry.get("container_key", full), entry["manifest"]), json.dumps({"ref": entry["ref"], "manifest": entry["manifest"]}))
+                atomic_write_text(
+                    _review_marker(root, entry.get("container_key", full), entry["manifest"]),
+                    json.dumps({"ref": entry["ref"], "manifest": entry["manifest"]}),
+                )
             policy = (
                 _issue_policy(rights, count)
                 if entry["kind"] == "issue"
@@ -377,7 +401,9 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
             raise RuntimeError("publication failed; check `jb outbox` on the host")
         state, detail = "done", "\n".join(lines) or "nothing pending"
         if entry["kind"] == "review":
-            _review_marker(root, entry.get("container_key", full), entry["manifest"]).unlink(missing_ok=True)
+            _review_marker(root, entry.get("container_key", full), entry["manifest"]).unlink(
+                missing_ok=True
+            )
     except Exception as e:
         state, detail = "failed", str(e)
         if "uncertain" in detail.lower():
@@ -440,7 +466,10 @@ def recover(root: Path) -> None:
         path = _result(root, entry.get("container_key", full), entry["ref"])
         if not path.exists():
             if entry.get("kind") == "review":
-                atomic_write_text(_review_marker(root, entry.get("container_key", full), entry["manifest"]), json.dumps({"ref": entry["ref"]}))
+                atomic_write_text(
+                    _review_marker(root, entry.get("container_key", full), entry["manifest"]),
+                    json.dumps({"ref": entry["ref"]}),
+                )
             atomic_write_text(
                 path,
                 json.dumps(

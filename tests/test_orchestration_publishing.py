@@ -108,15 +108,47 @@ def test_uncertain_uncovered_action_is_checked(rig):
         publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
 
 
-@pytest.mark.parametrize("binding,description,allowed", [("label", True, False), ("adopted", True, False), ("authored", True, True), ("label", False, True)])
+@pytest.mark.parametrize(
+    "binding,description,allowed",
+    [
+        ("label", True, False),
+        ("adopted", True, False),
+        ("authored", True, True),
+        ("label", False, True),
+    ],
+)
 def test_review_description_requires_authored_binding(rig, mocker, binding, description, allowed):
     ctx = rig[0]
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
-    entries = {"topic": {"head": "topic", "pr": 12, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40, "author": True, "adopted": binding == "adopted"}}
-    ctx.incus.config_get_checked.side_effect = lambda full, key: json.dumps(entries) if key == branch_pr.BRANCH_PRS_LABEL and binding != "label" else "12" if key == "user.jailbee.pr" else None
-    payload = {"version": 1, "repo": "org/repo", "pr": 12, "head_sha": "a" * 40, "actions": [{"type": "description" if description else "comment", "body": "body"}]}
+    entries = {
+        "topic": {
+            "head": "topic",
+            "pr": 12,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "author": True,
+            "adopted": binding == "adopted",
+        }
+    }
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entries)
+        if key == branch_pr.BRANCH_PRS_LABEL and binding != "label"
+        else "12"
+        if key == "user.jailbee.pr"
+        else None
+    )
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [{"type": "description" if description else "comment", "body": "body"}],
+    }
     manifest = pr_outbox.parse_manifest("a.json", json.dumps(payload), {})
-    check = publishing._review_policy(PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    check = publishing._review_policy(
+        PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+    )
     if allowed:
         check(manifest)
     else:
@@ -127,7 +159,11 @@ def test_review_description_requires_authored_binding(rig, mocker, binding, desc
 def test_recovered_uncertain_review_blocks_new_request(rig, mocker):
     ctx, m, *_ = rig
     m = m.model_copy(update={"outbox": "pr"})
-    mocker.patch.object(publishing, "_precheck", return_value=("review", [{"kind": "comment", "repo": "org/repo"}], False))
+    mocker.patch.object(
+        publishing,
+        "_precheck",
+        return_value=("review", [{"kind": "comment", "repo": "org/repo"}], False),
+    )
     assert publishing.handle_publish(ctx, m).state == "started"
     publishing.recover(ctx.root)
     publishing.settle(ctx, lambda *args: None)
@@ -166,9 +202,14 @@ def test_abandoned_worker_late_result_is_audited(rig):
 
 
 def test_worker_transport_refuses_namesake_before_sidecar_write(mocker):
-    from jailbee.incus import Incus, IncusError
     import subprocess
-    transport = mocker.patch("jailbee.incus.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="new-uuid\n", stderr=""))
+
+    from jailbee.incus import Incus, IncusError
+
+    transport = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, stdout="new-uuid\n", stderr=""),
+    )
     incus = Incus()
     incus.guard_instance("proj-o", "old-uuid")
     with pytest.raises(IncusError, match="identity"):

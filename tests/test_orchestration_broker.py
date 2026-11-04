@@ -206,6 +206,7 @@ def test_publish_worker_starts_after_journal_reply_and_delete(tmp_path, monkeypa
     rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
 
     worker = MagicMock()
+
     def start(ctx, manifest):
         assert rig.statuses()[0][1].state == "started"
         assert rig.delete.call_count == 1
@@ -882,6 +883,7 @@ def _sigterm() -> None:
 @pytest.mark.parametrize("upgrade", [False, True])
 def test_broker_waits_for_publish_workers_before_exit(tmp_path, monkeypatch, upgrade):
     from jailbee.orchestration import publishing
+
     rig = Rig(tmp_path, monkeypatch)
     monkeypatch.setattr(broker, "state_root", lambda: rig.root)
     worker = MagicMock()
@@ -893,11 +895,13 @@ def test_broker_waits_for_publish_workers_before_exit(tmp_path, monkeypatch, upg
     # asynchronous launch is replaced, never the tracking list under test.
     monkeypatch.setattr(publishing, "start", lambda *args: worker)
     real_tick = broker.tick
+
     def tick(*args, **kwargs):
         result = real_tick(*args, **kwargs)
         if not upgrade:
             _sigterm()
         return result
+
     monkeypatch.setattr(broker, "tick", tick)
     monkeypatch.setattr(broker, "_installed_version", lambda: "different" if upgrade else None)
     monkeypatch.setattr(broker, "_pause", lambda *args: None)
