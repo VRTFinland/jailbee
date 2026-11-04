@@ -1448,6 +1448,21 @@ def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
     assert all(argv[:2] != ["jailbee", verb] for argv in spawned)
 
 
+def test_services_direct_table_key_opens_picker_without_toggling_details(mocker, tmp_path):
+    group = every_verb_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    entries = tmenu.menu_entries(menu)
+    direct_key = next(key for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
+                      if isinstance(item, tuple) and item[1] == tsession.dact.SERVICES)
+    listing = mocker.patch.object(tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(
+        True, "", json.dumps([{"name": "db", "state": "ready", "window": "svc-db",
+                               "since": None, "detail": ""}])))
+    run = drive(mocker, ["j", direct_key], [group])
+    assert [p.purpose for p in run.of_type(tsession.Picker)] == ["container-services"]
+    assert run.last.show_details == run.trace[0].show_details
+    listing.assert_called_once()
+
+
 def test_an_orphan_row_opens_its_own_small_menu(mocker):
     group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
 
