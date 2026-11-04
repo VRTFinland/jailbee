@@ -257,6 +257,22 @@ class Store:
                     entries.append(Entry(domain, name, summary or "no actions"))
         return entries
 
+    def list_drafts(self) -> builtins.list[dict[str, object]]:
+        result: builtins.list[dict[str, object]] = []
+        kinds: tuple[Kind, ...] = ("issue", "pr")
+        for kind in kinds:
+            path = self.drafts(kind)
+            if not path.exists() and not path.is_symlink():
+                continue
+            with _directory(path) as fd:
+                names = sorted(name[:-5] for name in os.listdir(fd) if _is_manifest(name))
+            for name in names:
+                state = self.draft_load_state(kind, name)
+                if state is not None:
+                    actions = state[0].get("actions")
+                    result.append({"kind": kind, "name": name, "actions": len(actions) if isinstance(actions, list) else 0})
+        return result
+
     def show(self, kind: Kind, name: str) -> str:
         _manifest_name(name)
         with _directory(self.outbox(kind)) as fd:
