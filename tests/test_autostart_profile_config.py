@@ -111,14 +111,18 @@ def test_selection_builtins():
     assert none.stages == [] and none.services == []
     assert selection(a, "all") == "all"
     assert selection(a, None) == "all"
-    with pytest.raises(ProfileError, match="none.*all"):
+    with pytest.raises(ProfileError, match=r"none.*all"):
         selection(a, "bogus")
 
 
 def test_select_profile_none_keeps_only_agents():
     from jailbee.autostart_plan import select_profile
 
-    a = block(on_start=[{"stage": "web"}, {"stage": "agents"}, {"stage": "services"}], profiles={}, default_profile=None)
+    a = block(
+        on_start=[{"stage": "web"}, {"stage": "agents"}, {"stage": "services"}],
+        profiles={},
+        default_profile=None,
+    )
     selected = select_profile(a, "none")
     assert selected.on_create == []
     assert [s.stage for s in selected.on_start] == ["agents", "services"]

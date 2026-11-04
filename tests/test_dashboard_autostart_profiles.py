@@ -5,11 +5,10 @@ from dataclasses import replace
 import pytest
 
 from jailbee.config.models_remote import RemoteSSHConfig
-from jailbee.dashboard.tui import session as ts
-from tests.dashboard_pilot import drive, keys, patch_pause
-
 from jailbee.dashboard.model import RepoGroup
+from jailbee.dashboard.tui import session as ts
 from jailbee.lifecycle import ContainerInfo
+from tests.dashboard_pilot import drive, keys, patch_pause
 
 
 def test_gather_repo_without_profiles_includes_builtins(mocker, tmp_path, make_cfg):
@@ -115,15 +114,19 @@ def test_create_always_ends_with_choice_and_preserves_addressing(
     mocker.patch.object(ts, "host_branches", return_value=())
     before = (
         ["enter", "down", "enter", *keys("123"), "enter"]
-        if from_pr else ["n", *keys("work"), "enter", "enter"]
+        if from_pr
+        else ["n", *keys("work"), "enter", "enter"]
     )
 
     def not_yet(_app):
         child.assert_not_called()
 
     result = drive(
-        mocker, [*before, not_yet, *(["down"] if profile == "none" else []), "enter"],
-        [group], over_ssh=over_ssh, ssh_policy=RemoteSSHConfig(),
+        mocker,
+        [*before, not_yet, *(["down"] if profile == "none" else []), "enter"],
+        [group],
+        over_ssh=over_ssh,
+        ssh_policy=RemoteSSHConfig(),
     )
     picker = next(p for p in result.of_type(ts.Picker) if p.purpose == "new-autostart")
     assert [e.value for e in picker.entries] == ["all", "none", "light", ts.dact.CUSTOM_SERVICES]
@@ -167,14 +170,16 @@ def test_restart_with_custom_toggle_or_profile_dispatches_final_argv(
     flags = [] if over_ssh else ["--config", str(tmp_path / "custom.yaml")]
     child.assert_called_once_with(
         ["jailbee", "restart", "alpha-x", "--background", *extra, *flags],
-        check=False, cwd=tmp_path,
+        check=False,
+        cwd=tmp_path,
     )
 
 
 def test_custom_escape_returns_to_choice_without_execution(mocker, tmp_path):
     child = mocker.patch.object(ts.subprocess, "run")
     result = drive(
-        mocker, [_restart_with, "down", "down", "down", "enter", "down", "enter", "escape"],
+        mocker,
+        [_restart_with, "down", "down", "down", "enter", "down", "enter", "escape"],
         [_choice_group(tmp_path)],
     )
     pickers = result.of_type(ts.Picker)
@@ -186,7 +191,9 @@ def test_custom_escape_returns_to_choice_without_execution(mocker, tmp_path):
 @pytest.mark.parametrize("flow", ["branch", "pr", "restart"])
 @pytest.mark.parametrize("over_ssh", [False, True])
 @pytest.mark.parametrize("custom", [False, True])
-def test_denied_final_autostart_argv_never_executes(mocker, tmp_path, flow, over_ssh, custom, state):
+def test_denied_final_autostart_argv_never_executes(
+    mocker, tmp_path, flow, over_ssh, custom, state
+):
     child = mocker.patch.object(ts.subprocess, "run")
     mocker.patch.object(ts, "new_container_base_default", return_value="main")
     mocker.patch.object(ts, "host_branches", return_value=())
@@ -205,12 +212,19 @@ def test_denied_final_autostart_argv_never_executes(mocker, tmp_path, flow, over
         "pr": ["enter", "down", "enter", *keys("123"), "enter"],
         "restart": [_restart_with],
     }[flow]
-    select = ["down", "down", "down", "enter", "down", "enter", "up", "enter"] if custom else ["down", "enter"]
+    select = (
+        ["down", "down", "down", "enter", "down", "enter", "up", "enter"]
+        if custom
+        else ["down", "enter"]
+    )
     group = _choice_group(tmp_path)
     group.containers[0] = replace(group.containers[0], state=state)
     result = drive(
-        mocker, [*before, *select], [group],
-        over_ssh=over_ssh, ssh_policy=RemoteSSHConfig(),
+        mocker,
+        [*before, *select],
+        [group],
+        over_ssh=over_ssh,
+        ssh_policy=RemoteSSHConfig(),
     )
     option = "--services" if custom else "--autostart-profile"
     assert any(option in argv for argv in checked)
@@ -226,7 +240,8 @@ def test_restart_with_menu_is_adjacent_and_permission_gated(mocker, tmp_path):
     assert verbs[verbs.index("restart") + 1] == "restart-with"
     original = tm.permitted
     mocker.patch.object(
-        tm, "permitted",
+        tm,
+        "permitted",
         side_effect=lambda argv, *a, **kw: argv[0] != "restart" and original(argv, *a, **kw),
     )
     menu = tm.open_menu([_choice_group(tmp_path)], "alpha-x")
@@ -240,7 +255,8 @@ def test_create_custom_services_and_escape_keep_flow_answers(mocker, tmp_path, f
     mocker.patch.object(ts, "host_branches", return_value=())
     before = (
         ["enter", "down", "enter", *keys("123"), "enter"]
-        if flow == "pr" else ["j", "n", *keys("work"), "enter", "enter"]
+        if flow == "pr"
+        else ["j", "n", *keys("work"), "enter", "enter"]
     )
     selected = []
 
@@ -249,8 +265,23 @@ def test_create_custom_services_and_escape_keep_flow_answers(mocker, tmp_path, f
 
     result = drive(
         mocker,
-        [*before, "down", "down", "down", "enter", remember,
-         "down", "enter", "enter", "escape", "enter", "down", "enter", "up", "enter"],
+        [
+            *before,
+            "down",
+            "down",
+            "down",
+            "enter",
+            remember,
+            "down",
+            "enter",
+            "enter",
+            "escape",
+            "enter",
+            "down",
+            "enter",
+            "up",
+            "enter",
+        ],
         [_choice_group(tmp_path)],
     )
     # Toggle db on then off, Esc to custom, reopen and select db, Done.
@@ -260,9 +291,11 @@ def test_create_custom_services_and_escape_keep_flow_answers(mocker, tmp_path, f
 
         assert selected == [Row("container", "alpha-x")]
     flags = ["--config", str(tmp_path / "custom.yaml")]
-    suffix = ["--pr", "123", "--services", "db"] if flow == "pr" else [
-        "--services", "db", "--", "work", "main"
-    ]
+    suffix = (
+        ["--pr", "123", "--services", "db"]
+        if flow == "pr"
+        else ["--services", "db", "--", "work", "main"]
+    )
     child.assert_called_once_with(
         ["jailbee", "new", *flags, "--background", *suffix], check=False, cwd=tmp_path
     )
@@ -311,8 +344,18 @@ def test_restart_service_picker_resolves_container_not_same_named_repo(mocker, t
         assert any("prompt closed" in str(n) for n in result.notices())
     else:
         child.assert_called_once_with(
-            ["jailbee", "restart", "alpha-x", "--background", "--services", "",
-             "--config", str(tmp_path / "custom.yaml")], check=False, cwd=tmp_path,
+            [
+                "jailbee",
+                "restart",
+                "alpha-x",
+                "--background",
+                "--services",
+                "",
+                "--config",
+                str(tmp_path / "custom.yaml"),
+            ],
+            check=False,
+            cwd=tmp_path,
         )
 
 
@@ -328,15 +371,25 @@ def test_stopped_restart_with_full_menu_to_final_argv(mocker, tmp_path, over_ssh
     assert verbs[verbs.index("start") + 1] == "restart-with"
     assert "restart" not in verbs  # Shared/plain restart remains running-only.
     child = mocker.patch.object(ts.subprocess, "run", return_value=mocker.Mock(returncode=0))
-    select = ["down", "down", "down", "enter", "down", "enter", "up", "enter"] if custom else ["down", "enter"]
-    result = drive(mocker, ["j", "enter", "l", "W", *select], [group],
-                   over_ssh=over_ssh, ssh_policy=RemoteSSHConfig())
+    select = (
+        ["down", "down", "down", "enter", "down", "enter", "up", "enter"]
+        if custom
+        else ["down", "enter"]
+    )
+    result = drive(
+        mocker,
+        ["j", "enter", "l", "W", *select],
+        [group],
+        over_ssh=over_ssh,
+        ssh_policy=RemoteSSHConfig(),
+    )
     assert any(p.purpose == "restart-autostart" for p in result.of_type(ts.Picker))
     extra = ["--services", "db"] if custom else ["--autostart-profile", "none", "--reset-services"]
     flags = [] if over_ssh else ["--config", str(tmp_path / "custom.yaml")]
     child.assert_called_once_with(
         ["jailbee", "restart", "alpha-x", "--background", *extra, *flags],
-        check=False, cwd=tmp_path,
+        check=False,
+        cwd=tmp_path,
     )
 
 
@@ -355,8 +408,13 @@ def test_restart_with_rechecks_final_availability(mocker, tmp_path, over_ssh, ch
         else:
             group.repo_root = None
 
-    drive(mocker, [_restart_with, disappear, "enter"], [group],
-          over_ssh=over_ssh, ssh_policy=RemoteSSHConfig())
+    drive(
+        mocker,
+        [_restart_with, disappear, "enter"],
+        [group],
+        over_ssh=over_ssh,
+        ssh_policy=RemoteSSHConfig(),
+    )
     child.assert_not_called()
 
 
@@ -365,15 +423,26 @@ def test_stopped_restart_with_requires_restart_permission_not_start(mocker, tmp_
 
     group = _choice_group(tmp_path)
     group.containers[0] = replace(group.containers[0], state="Stopped")
-    policy = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["restart"]}})
+    policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["restart"]}}
+    )
     menu = tm.open_menu([group], "alpha-x", over_ssh=True, ssh_policy=policy)
     assert "start" not in [verb for _, verb in menu.actions]
     assert "restart-with" in [verb for _, verb in menu.actions]
     child = mocker.patch.object(ts.subprocess, "run", return_value=mocker.Mock(returncode=0))
     drive(mocker, ["j", "enter", "l", "W", "enter"], [group], over_ssh=True, ssh_policy=policy)
     child.assert_called_once_with(
-        ["jailbee", "restart", "alpha-x", "--background", "--autostart-profile", "all", "--reset-services"],
-        check=False, cwd=tmp_path,
+        [
+            "jailbee",
+            "restart",
+            "alpha-x",
+            "--background",
+            "--autostart-profile",
+            "all",
+            "--reset-services",
+        ],
+        check=False,
+        cwd=tmp_path,
     )
 
 
@@ -389,7 +458,9 @@ def test_restart_with_busy_gate(mocker, tmp_path, state, when, over_ssh):
     def become_busy(_app):
         busy.return_value = frozenset({"alpha-x"})
 
-    steps = [become_busy, _restart_with] if when == "open" else [_restart_with, become_busy, "enter"]
+    steps = (
+        [become_busy, _restart_with] if when == "open" else [_restart_with, become_busy, "enter"]
+    )
     result = drive(mocker, steps, [group], over_ssh=over_ssh, ssh_policy=RemoteSSHConfig())
     child.assert_not_called()
     assert any("busy" in str(n) for n in result.notices())
@@ -417,12 +488,39 @@ def test_same_service_picker_toggle_off_dispatches_empty_selection(mocker, tmp_p
         assert isinstance(picker, ts.Picker)
         observed.append((picker.entries[1].label, picker.start_index))
 
-    drive(mocker, [*before, "down", "down", "down", "enter", remember,
-                   "down", "enter", remember, "enter", remember, "up", "enter"], [group])
+    drive(
+        mocker,
+        [
+            *before,
+            "down",
+            "down",
+            "down",
+            "enter",
+            remember,
+            "down",
+            "enter",
+            remember,
+            "enter",
+            remember,
+            "up",
+            "enter",
+        ],
+        [group],
+    )
     assert observed == [("[ ] db", 0), ("[x] db", 1), ("[ ] db", 1)]
     flags = ["--config", str(tmp_path / "custom.yaml")]
     expected = {
-        "branch": ["jailbee", "new", *flags, "--background", "--services", "", "--", "work", "main"],
+        "branch": [
+            "jailbee",
+            "new",
+            *flags,
+            "--background",
+            "--services",
+            "",
+            "--",
+            "work",
+            "main",
+        ],
         "pr": ["jailbee", "new", *flags, "--background", "--pr", "123", "--services", ""],
         "restart": ["jailbee", "restart", "alpha-x", "--background", "--services", "", *flags],
     }[flow]

@@ -11154,7 +11154,8 @@ def autostart_profile_cmd(
     try:
         if profile is None and missing_container:
             profile = prompting.choose_one(
-                "autostart profile", [prompting.Option(p, p, p) for p in profile_names(cfg.autostart)]
+                "autostart profile",
+                [prompting.Option(p, p, p) for p in profile_names(cfg.autostart)],
             )
         if profile is None:
             show_profile(cfg, incus, full)

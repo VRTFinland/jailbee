@@ -1997,8 +1997,11 @@ class DashboardSession:
             self.set_notice(f"'{target}' is busy")
             return False
         menu = open_menu(
-            self.groups, target, remote=self.remote,
-            ssh_policy=self.ssh_policy, over_ssh=self.over_ssh,
+            self.groups,
+            target,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
         )
         if menu is None or not any(verb == "restart-with" for _, verb in menu.actions):
             self.set_notice(f"Action 'restart-with' is no longer available for '{target}'")
@@ -2246,9 +2249,7 @@ class DashboardSession:
                 ),
             )
         if prompt.purpose == "new-base":
-            return self.autostart_choice_picker(
-                prompt.target, ("branch", prompt.carry[0], answer)
-            )
+            return self.autostart_choice_picker(prompt.target, ("branch", prompt.carry[0], answer))
         if prompt.purpose == "container-memory-other":
             return self.change_memory(prompt.target, answer)
         if prompt.purpose in (
@@ -2699,8 +2700,7 @@ class DashboardSession:
             isinstance(self.overlay, (TextPrompt, Picker))
             and not self.overlay.purpose.startswith("new-")
             and not (
-                self.overlay.purpose == "autostart-services"
-                and self.overlay.carry[0] != "restart"
+                self.overlay.purpose == "autostart-services" and self.overlay.carry[0] != "restart"
             )
             and target_group(
                 self.groups,

@@ -439,8 +439,12 @@ def test_start_honours_stored_builtin_without_repo_profiles(make_cfg, tmp_path, 
 
     cfg = make_cfg(tmp_path, autostart={"on_start": [{"stage": "web"}]})
     incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
-    for target in ("jailbee.hosts.sync_hosts", "jailbee.egress_proxy.sync_container",
-                   "jailbee.autostart.inject_github_token", "jailbee.cli._post_create_gui_launches"):
+    for target in (
+        "jailbee.hosts.sync_hosts",
+        "jailbee.egress_proxy.sync_container",
+        "jailbee.autostart.inject_github_token",
+        "jailbee.cli._post_create_gui_launches",
+    ):
         mocker.patch(target)
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
@@ -456,12 +460,16 @@ def test_new_builtin_all_records_real_create_attempts(make_cfg, tmp_path, mocker
     from jailbee.lifecycle import new_container
     from tests.test_lifecycle_autostart_detach import _cfg_for_new, _opts, _patch_new_container_deps
 
-    cfg = _cfg_for_new(make_cfg, tmp_path).model_copy(update={
-        "autostart": Autostart.model_validate({
-            "on_create": [{"stage": "deps"}, {"stage": "images"}],
-            **({"default_profile": "all"} if use_default else {}),
-        })
-    })
+    cfg = _cfg_for_new(make_cfg, tmp_path).model_copy(
+        update={
+            "autostart": Autostart.model_validate(
+                {
+                    "on_create": [{"stage": "deps"}, {"stage": "images"}],
+                    **({"default_profile": "all"} if use_default else {}),
+                }
+            )
+        }
+    )
     _patch_new_container_deps(mocker)
     incus, state = state_incus(mocker)
     incus.exists.return_value = False
@@ -481,9 +489,10 @@ def test_builtin_create_attempts_skip_completed_and_failed_stages(
     from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY, missing_on_create
     from tests.test_autostart_supervisor import _spec
 
-    cfg = make_cfg(tmp_path, autostart={"on_create": [
-        {"stage": "deps", "detach": detached}, {"stage": "images"}
-    ]})
+    cfg = make_cfg(
+        tmp_path,
+        autostart={"on_create": [{"stage": "deps", "detach": detached}, {"stage": "images"}]},
+    )
     incus, state = state_incus(mocker, {PROFILE_KEY: "all", CREATED_KEY: ","})
     run = mocker.patch("jailbee.autostart.run_stage")
     if failed:
@@ -493,8 +502,9 @@ def test_builtin_create_attempts_skip_completed_and_failed_stages(
         if detached:
             run_detached(cfg, incus, _spec(tmp_path, cfg.autostart, from_trigger="on_create"))
         else:
-            run_stages(cfg, incus, "c1", cfg.autostart.on_create, "/r",
-                       trigger=AutostartTrigger.ON_CREATE)
+            run_stages(
+                cfg, incus, "c1", cfg.autostart.on_create, "/r", trigger=AutostartTrigger.ON_CREATE
+            )
 
     if failed:
         with pytest.raises(RuntimeError, match="failed"):
@@ -540,8 +550,11 @@ def test_real_autostart_service_selection_preserves_generated_agents(
     from jailbee.services import autostart as service_autostart
     from jailbee.services.graph import plan_payload
 
-    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}},
-                   agents={"codex": {"enabled": True, "autostart": True}})
+    cfg = make_cfg(
+        tmp_path,
+        services={"db": {"run": "db"}},
+        agents={"codex": {"enabled": True, "autostart": True}},
+    )
     state = {PROFILE_KEY: "none" if selection == "none" else "all"}
     if selection == "empty":
         state[SERVICES_KEY] = ","
@@ -555,12 +568,20 @@ def test_real_autostart_service_selection_preserves_generated_agents(
     # A real plan response makes accidental service submission observable at
     # both the plan boundary and the generated start command.
     payload = plan_payload(cfg.services, [], "start", step_timeout=30)
-    submit = mocker.patch("jailbee.container_app.run_in_container",
-                          return_value=ExecResult(0, json.dumps(payload).encode(), b""))
+    submit = mocker.patch(
+        "jailbee.container_app.run_in_container",
+        return_value=ExecResult(0, json.dumps(payload).encode(), b""),
+    )
     service_run = mocker.spy(service_autostart, "run_services_stage")
     run = mocker.patch("jailbee.autostart.run_stage")
-    run_autostart(profiled_config(cfg, state[PROFILE_KEY]), incus, "c",
-                  AutostartTrigger.ON_START, "/r", override="wait")
+    run_autostart(
+        profiled_config(cfg, state[PROFILE_KEY]),
+        incus,
+        "c",
+        AutostartTrigger.ON_START,
+        "/r",
+        override="wait",
+    )
     stages = [call.args[3] for call in run.call_args_list]
     agent = next(s for s in stages if s.stage == "agents")
     assert [(step.name, step.run) for chain in agent.all_chains() for step in chain.steps] == [
@@ -571,14 +592,30 @@ def test_real_autostart_service_selection_preserves_generated_agents(
         # The planner omits this slot; the service executor must also reject
         # an explicit empty override if invoked directly or by a saved plan.
         service_autostart.run_services_stage(
-            cfg, incus, "c", "/r", mirror_endpoint=None,
-            on_progress=None, cas_restore=False,
+            cfg,
+            incus,
+            "c",
+            "/r",
+            mirror_endpoint=None,
+            on_progress=None,
+            cas_restore=False,
         )
     if selection == "all":
         assert submit.call_args.args[3] == [
-            "service", "--repo", "/r", "plan", "--op", "start", "--json"
+            "service",
+            "--repo",
+            "/r",
+            "plan",
+            "--op",
+            "start",
+            "--json",
         ]
-        assert next(s for s in stages if s.stage == "services").all_chains()[0].steps[0].run.endswith("start db")
+        assert (
+            next(s for s in stages if s.stage == "services")
+            .all_chains()[0]
+            .steps[0]
+            .run.endswith("start db")
+        )
     else:
         submit.assert_not_called()
         assert [s.stage for s in stages] == ["agents"]

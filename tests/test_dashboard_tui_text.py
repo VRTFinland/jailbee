@@ -298,9 +298,7 @@ def test_a_choice_prompt_takes_free_text_unless_a_listed_name_is_required(mocker
     patch_pause(mocker)
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     mocker.patch.object(tsession, "host_branches", return_value=("main", "dev"))
-    run = drive(
-        mocker, ["n", *keys("feat"), "enter", *keys("zz"), "enter", "enter"], [_group(tmp_path)]
-    )
+    drive(mocker, ["n", *keys("feat"), "enter", *keys("zz"), "enter", "enter"], [_group(tmp_path)])
     child.assert_called_once_with(
         ["jailbee", "new", "--background", "--", "feat", "mainzz"], check=False, cwd=tmp_path
     )

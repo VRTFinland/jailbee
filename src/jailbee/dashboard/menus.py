@@ -706,9 +706,7 @@ def rename_argv(container: str, alias: str) -> list[str]:
     return ["rename", container, "--", alias] if alias else ["rename", container, "--clear"]
 
 
-def new_pr_container_argv(
-    target: RepoTarget, number: int, extra: Sequence[str] = ()
-) -> list[str]:
+def new_pr_container_argv(target: RepoTarget, number: int, extra: Sequence[str] = ()) -> list[str]:
     """Create a review container using the CLI's existing PR resolution flow."""
     return ["jailbee", "new", *target.flags(), "--background", "--pr", str(number), *extra]
 

@@ -116,9 +116,7 @@ def test_restart_services_are_trimmed_and_stored_before_background_boot(restart_
         assert state["user.jailbee.autostart_services"] == "api,web"
 
     spawn.side_effect = check_before_boot
-    result = CliRunner().invoke(
-        app, ["restart", "c", "--services", " api, web ", "--background"]
-    )
+    result = CliRunner().invoke(app, ["restart", "c", "--services", " api, web ", "--background"])
     assert result.exit_code == 0, result.output
     assert spawn.called
 

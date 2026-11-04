@@ -920,7 +920,9 @@ class Autostart(BaseModel):
     )
     default_profile: str | None = Field(
         default=None,
-        description="Default autostart profile (including none or all); required when profiles are defined.",
+        description=(
+            "Default autostart profile (including none or all); required when profiles are defined."
+        ),
     )
 
     @model_validator(mode="after")
@@ -929,7 +931,8 @@ class Autostart(BaseModel):
             if name in self.profiles:
                 raise ValueError(f"autostart profile name {name!r} is reserved")
         if self.default_profile is not None and self.default_profile not in (
-            *self.profiles, *BUILTIN_PROFILES
+            *self.profiles,
+            *BUILTIN_PROFILES,
         ):
             raise ValueError(f"default_profile {self.default_profile!r} must name a profile")
         if not self.profiles:

@@ -293,5 +293,12 @@ def test_inbox_services_and_legacy_message_roundtrip(services):
 def test_broker_accepts_builtin_profile(tmp_path, mocker):
     ctx = _ctx(tmp_path)
     mocker.patch("jailbee.orchestration.actions.live_create_jobs", return_value=set())
-    plan = actions.plan_spawn(ctx, _m().model_copy(update={"autostart_profile": "none"}), queued_names=())
-    assert actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None).autostart_profile == "none"
+    plan = actions.plan_spawn(
+        ctx, _m().model_copy(update={"autostart_profile": "none"}), queued_names=()
+    )
+    assert (
+        actions.child_options(
+            ctx.cfg, plan, orchestrator_full="proj-orch", fork=None
+        ).autostart_profile
+        == "none"
+    )
