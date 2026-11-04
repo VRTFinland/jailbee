@@ -86,7 +86,10 @@ def test_preamble_staged_without_source(homes, claude_cfg):
     assert "jailbee-orchestration-child" in ai.PREAMBLE
     assert "In clone mode, the host operator extracts commits" in ai.PREAMBLE
     assert "mount mode shares the tree" in ai.PREAMBLE
-    assert "If you are a child, ask your orchestrator for publication and network access" in ai.PREAMBLE
+    assert (
+        "If you are a child, ask your orchestrator for publication and network access"
+        in ai.PREAMBLE
+    )
     assert "Otherwise, ask the operator to publish changes" in ai.PREAMBLE
     assert "jailbee service ls" in ai.PREAMBLE
     assert "jailbee service start <service>" in ai.PREAMBLE

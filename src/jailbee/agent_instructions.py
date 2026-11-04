@@ -30,9 +30,11 @@ PREAMBLE = "\n".join(
         "The host operator controls container lifecycle and network policy.",
         "Read /etc/jailbee/container.json for identity, mode, and repo_dir.",
         "Branch mode uses a per-branch clone; mount mode uses the mounted repository.",
-        "Make local commits. In clone mode, the host operator extracts commits; mount mode shares the tree.",
+        "Make local commits. In clone mode, the host operator extracts commits; "
+        "mount mode shares the tree.",
         "Do not rely on git push from the container.",
-        "If you are a child, ask your orchestrator for publication and network access, not the host.",
+        "If you are a child, ask your orchestrator for publication and network access, "
+        "not the host.",
         "Otherwise, ask the operator to publish changes or grant network access.",
         "Network egress defaults to strict allowlisting; do not bypass blocked hosts.",
         "For a blocked host, the operator can run the exact host-side command:",
