@@ -1991,6 +1991,20 @@ class DashboardSession:
             start_index=start_index,
         )
 
+    def restart_with_available(self, target: str) -> bool:
+        """Recheck the terminal-only action without widening shared restart eligibility."""
+        if target in self.bulk_running():
+            self.set_notice(f"'{target}' is busy")
+            return False
+        menu = open_menu(
+            self.groups, target, remote=self.remote,
+            ssh_policy=self.ssh_policy, over_ssh=self.over_ssh,
+        )
+        if menu is None or not any(verb == "restart-with" for _, verb in menu.actions):
+            self.set_notice(f"Action 'restart-with' is no longer available for '{target}'")
+            return False
+        return True
+
     def run_autostart_choice(
         self, picker: Picker, *, profile: str | None, services: Sequence[str] | None
     ) -> None:
@@ -2005,11 +2019,8 @@ class DashboardSession:
             group, profile=profile, services=services, creating=flow != "restart"
         )
         if flow == "restart":
-            action = self._plan_one("restart", picker.target)
-            if not action.eligible:
-                self.set_notice(nothing_to_do(action))
-                return
-            self.run_bulk(action, extra)
+            if self.restart_with_available(picker.target):
+                self.run_bulk(BulkAction("restart", (picker.target,)), extra)
             return
 
         def build(repo: RepoTarget) -> list[str]:
@@ -2881,7 +2892,7 @@ class DashboardSession:
                 self.egress_parent = container_parent
                 self.overlay = self.open_egress(owner.prefix, target) if owner else None
             elif verb == "restart-with":
-                if self.dispatchable(target, "restart") is not None:
+                if self.restart_with_available(target):
                     self.overlay = self.autostart_choice_picker(target, ("restart", "", ""))
             elif verb == "autostart-profile":
                 self.overlay = self.open_autostart_profile_picker(target)

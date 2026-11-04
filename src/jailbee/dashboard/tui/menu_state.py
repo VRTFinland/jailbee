@@ -106,10 +106,11 @@ def open_menu(
         remote_mountable=group.remote_mountable,
         rows=group.containers,
     )
-    if any(verb == "restart" for _, verb in actions) and permitted(
+    if container.state in ("Running", "Stopped") and permitted(
         ["restart", name], ssh_policy, over_ssh=over_ssh
     ):
-        at = next(i for i, (_, verb) in enumerate(actions) if verb == "restart")
+        anchor = "restart" if container.state == "Running" else "start"
+        at = next((i for i, (_, verb) in enumerate(actions) if verb == anchor), len(actions) - 1)
         actions.insert(at + 1, ("Restart with…", "restart-with"))
     if group.autostart_profiles and permitted(
         ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh
