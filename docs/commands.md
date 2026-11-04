@@ -49,8 +49,11 @@ without rebuilding the golden image. An unavailable snapshot never falls back to
 `gh pr view` on the current branch. A numbered command without a matching binding
 uses the current repository for its explicit number.
 
-`jailbee pr description [N]` updates the bound existing PR by default, including
-preserving its body on a title-only edit. With no bindings it stages a new PR;
+`jailbee pr description [N]` updates the bound existing PR by default. It requires
+an explicit replacement body via `--body` or `--body-file`, including when only
+the title is intended to change. Title-only staging is refused: automatically
+copying the current body could overwrite later edits when the proposal is
+published. An explicitly empty body remains allowed. With no bindings it stages a new PR;
 `--new` explicitly requests a new description only when the binding snapshot is
 readable and empty. Any binding, including one for another repository, refuses
 `--new`. New repository discovery uses read-only `gh repo view` without requiring

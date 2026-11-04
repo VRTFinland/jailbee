@@ -251,6 +251,8 @@ COMMANDS = [
     ("comment",),
     ("reply",),
     ("description",),
+    ("description", "--title", "Title only"),
+    ("description", "1234", "--title", "Title only"),
     ("review", "add"),
     ("review", "submit"),
     ("review", "discard"),
@@ -336,19 +338,66 @@ def test_lookup_failure_distinguishes_missing_target(monkeypatch, tmp_path, expl
     assert not (tmp_path / ".jailbee").exists()
 
 
-def test_title_only_description_preserves_current_body(monkeypatch, tmp_path):
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("batch", [False, True])
+def test_title_only_description_refuses_without_replaying_body(
+    monkeypatch, tmp_path, explicit, batch
+):
+    from jailbee.container_outbox import bindings
+
     monkeypatch.setattr(
-        gh,
-        "run_json",
-        lambda argv, **kw: (
-            {"body": "Original\nbody\n"}
-            if argv == ["gh", "pr", "view", "1234", "--json", "body", "-R", "acme/widgets"]
-            else pytest.fail(str(argv))
-        ),
+        bindings, "SNAPSHOT", binding_snapshot(
+            tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}
+        )
     )
-    result = invoke("description", "1234", "--title", "New title")
+    if batch:
+        monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "head", "acme/widgets"))
+        assert invoke("comment", "1234", "--body", "Keep", "--batch", "b").exit_code == 0
+    before = {
+        p.relative_to(tmp_path): p.read_bytes()
+        for p in (tmp_path / ".jailbee").rglob("*") if p.is_file()
+    }
+    reads = []
+
+    def current_body(*args, **kwargs):
+        reads.append(True)
+        return "Stage-time body that must not be replayed"
+
+    monkeypatch.setattr(gh, "pr_body", current_body)
+    monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "head", "acme/widgets"))
+    result = invoke(
+        "description", *(("1234",) if explicit else ()), "--title", "New title",
+        *(("--batch", "b") if batch else ())
+    )
+    assert result.exit_code == 2, result.output
+    assert "--body" in result.output and "--body-file" in result.output
+    assert "title-only" in result.output
+    assert reads == []
+    assert not list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
+    assert {
+        p.relative_to(tmp_path): p.read_bytes()
+        for p in (tmp_path / ".jailbee").rglob("*") if p.is_file()
+    } == before
+
+
+@pytest.mark.parametrize("file_body", [False, True])
+@pytest.mark.parametrize("text", ["", "Explicit replacement"])
+def test_description_explicit_body_including_empty_keeps_schema(
+    monkeypatch, tmp_path, file_body, text
+):
+    monkeypatch.setattr(gh, "pr_body", lambda *a, **kw: pytest.fail("automatic body read"))
+    if file_body:
+        body = tmp_path / "input.md"
+        body.write_text(text)
+        args = ("--body-file", str(body))
+    else:
+        args = ("--body", text)
+    result = invoke("description", "1234", "--title", "New title", *args)
     assert result.exit_code == 0, result.output
-    assert published(tmp_path)[1].actions[0].body == "Original\nbody\n"
+    raw, parsed, _ = published(tmp_path)
+    assert parsed.actions[0].body == text
+    assert parsed.actions[0].title == "New title"
+    assert set(raw["actions"][0]) == {"type", "title", "body_file" if file_body else "body"}
 
 
 @pytest.mark.parametrize("command", ["comment", "reply", "description"])
@@ -944,22 +993,6 @@ def test_omitted_pr_resolves_stacked_or_submodule(monkeypatch, tmp_path, key, va
     result = invoke("description", "--body", "Existing")
     assert result.exit_code == 0, result.output
     assert published(tmp_path)[0]["pr"] == 43
-
-
-def test_bound_title_only_description_preserves_body(monkeypatch, tmp_path):
-    from jailbee.container_outbox import bindings
-
-    monkeypatch.setattr(
-        bindings,
-        "SNAPSHOT",
-        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "42"}),
-    )
-    monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "fresh", "acme/widgets"))
-    monkeypatch.setattr(gh, "pr_body", lambda n, **kw: "original")
-    result = invoke("description", "--title", "New title")
-    assert result.exit_code == 0, result.output
-    raw, parsed, _ = published(tmp_path)
-    assert raw["pr"] == 42 and parsed.actions[0].body == "original"
 
 
 @pytest.mark.parametrize("explicit_new", [True, False])

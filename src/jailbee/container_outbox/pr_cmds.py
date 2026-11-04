@@ -201,6 +201,11 @@ def description(
         text = _body(body, body_file, False)
         if text is None and title is None:
             raise OutboxCommandError("missing title or body", 2)
+        if text is None:
+            raise OutboxCommandError(
+                "title-only staging is not supported; provide an explicit replacement body "
+                "with --body or --body-file to avoid replaying an outdated PR body", 2
+            )
         if new and bindings.read():
             raise OutboxCommandError(
                 "--new requires no PR bindings; it does not force-create a PR. "
@@ -211,11 +216,6 @@ def description(
         view = _view(pr) if pr is not None or binding is not None else None
         if view is not None and repo is not None and repo != view.repo:
             raise OutboxCommandError("--repo does not match the existing PR repository", 2)
-        if text is None:
-            # A title edit must not turn the full replacement body into an empty one.
-            if view is None:
-                raise OutboxCommandError("missing body for a new PR description", 2)
-            text = gh.pr_body(view.number, repo=view.repo)
         _stage(
             store,
             _envelope(view, repo),

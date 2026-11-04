@@ -122,7 +122,10 @@ binding snapshot; it refuses any existing binding, even in another repository.
 It is not a host-side force-create switch. Without any bindings omission already
 means new. Repository discovery
 uses read-only `gh repo view`, not an existing PR; `--repo owner/name` overrides
-that discovery for new descriptions. Title-only edits preserve the existing body.
+that discovery for new descriptions. Every description requires an explicit
+replacement body via `--body` or `--body-file`; an explicitly empty body is allowed.
+Title-only staging is refused because replaying a fetched body could overwrite
+later edits at publication time. Supply the intended replacement body explicitly.
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
 outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.
