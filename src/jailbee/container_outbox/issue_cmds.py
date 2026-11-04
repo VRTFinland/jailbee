@@ -84,6 +84,51 @@ def _view(repo: str, target: int | str) -> gh.IssueView | None:
     return gh.issue_view(repo, target) if isinstance(target, int) else None
 
 
+def _prepare_ref(manifest: dict[str, object], bodies: dict[str, str], action: dict[str, object]) -> dict[str, object]:
+    ref = action.get("issue_ref")
+    if not isinstance(ref, str):
+        return action
+    actions = manifest.get("actions")
+    assert isinstance(actions, list)
+    for create in actions:
+        if (isinstance(create, dict) and create.get("type") == "create"
+                and create.get("ref") == ref and create.get("repo") == action.get("repo")):
+            body = create.get("body")
+            if "body_file" in create:
+                body = bodies.get(create["body_file"])
+            title = create.get("title")
+            labels = create.get("labels", [])
+            if not isinstance(title, str) or not isinstance(body, str) or not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
+                raise OutboxCommandError(f"issue_ref {ref!r} has an invalid create action", 2)
+            view = gh.IssueView(title, body, tuple(labels), "open")
+            result = dict(action)
+            if action["type"] == "edit":
+                expected = {}
+                if "title" in action:
+                    expected["title"] = view.title
+                if "body" in action or "body_file" in action:
+                    expected["body"] = view.body
+                result["expected"] = expected
+            elif action["type"] == "labels":
+                _check_labels(action.get("add", []), action.get("remove", []), view)
+                result["expected"] = {"labels": list(view.labels)}
+            elif action["type"] == "state":
+                result["expected"] = {"state": view.state}
+            return result
+    raise OutboxCommandError(f"issue_ref {ref!r} does not name an earlier create in the same repo", 2)
+
+
+def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> None:
+    assert isinstance(add, list) and isinstance(remove, list)
+    current = {x.casefold() for x in view.labels} if view else set()
+    for item in add:
+        if item.casefold() in current:
+            raise OutboxCommandError(f"label {item!r} already present", 2)
+    for item in remove:
+        if item.casefold() not in current:
+            raise OutboxCommandError(f"label {item!r} is not present", 2)
+
+
 def _stage(store: Store, action: dict[str, object], batch: str | None, file_body: bool = False) -> None:
     bodies: dict[str, str] = {}
     body = action.get("body")
@@ -93,7 +138,7 @@ def _stage(store: Store, action: dict[str, object], batch: str | None, file_body
         del action["body"]
         action["body_file"] = name
     if batch is not None:
-        store.draft_append("issue", batch, action, bodies)
+        store.draft_append("issue", batch, action, bodies, prepare=_prepare_ref)
         typer.echo(f"staged issue draft {batch}")
     else:
         slug = re.sub(r"[^a-z0-9]+", "-", str(action.get("title", action["type"])).lower()).strip("-")[:80] or "issue"
@@ -150,20 +195,8 @@ def labels(issue: Annotated[str | None, typer.Argument()] = None, add: Annotated
         store = _guard()
         target = _parse_target(issue)
         view = _view(repo, target)
-        if view is None and batch:
-            draft = store.draft_load("issue", batch)
-            actions = (draft or {}).get("actions", [])
-            if isinstance(actions, list):
-                for item in actions:
-                    if isinstance(item, dict) and item.get("type") == "create" and item.get("ref") == str(target)[1:] and item.get("repo") == repo:
-                        view = gh.IssueView("", "", tuple(item.get("labels", [])), "open")
-        current = {x.casefold() for x in view.labels} if view else set()
-        for item in add or []:
-            if item.casefold() in current:
-                raise OutboxCommandError(f"label {item!r} already present", 2)
-        for item in remove or []:
-            if item.casefold() not in current:
-                raise OutboxCommandError(f"label {item!r} is not present", 2)
+        if view is not None:
+            _check_labels(add or [], remove or [], view)
         _stage(store, labels_action(repo, target, add or [], remove or [], view), batch)
     _run(run)
 

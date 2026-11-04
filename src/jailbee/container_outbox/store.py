@@ -8,7 +8,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -362,7 +362,8 @@ class Store:
                 _atomic_write(fd, f"{name}.json", text)
 
     def draft_append(
-        self, kind: Kind, name: str, action: dict[str, object], bodies: Mapping[str, str]
+        self, kind: Kind, name: str, action: dict[str, object], bodies: Mapping[str, str],
+        *, prepare: Callable[[dict[str, object], dict[str, str], dict[str, object]], dict[str, object]] | None = None,
     ) -> None:
         self._require_role()
         with self._draft_lock(kind, name):
@@ -371,6 +372,8 @@ class Store:
             actions = manifest.get("actions")
             if not isinstance(actions, list):
                 raise OutboxCommandError("draft actions must be a list", 2)
+            if prepare is not None:
+                action = prepare(manifest, existing, action)
             manifest = {**manifest, "actions": [*actions, action]}
             combined = {**existing, **bodies}
             _validate(kind, f"{name}.json", manifest, combined)

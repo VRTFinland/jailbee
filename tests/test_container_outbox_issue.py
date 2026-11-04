@@ -234,3 +234,30 @@ def test_ref_cli_roundtrip(tmp_path, args):
     manifest = store.outbox("issue") / name
     actions = parse_manifest(name, manifest.read_text(), {}).actions
     assert len(actions) == 2
+
+
+@pytest.mark.parametrize("args", [
+    ("edit", "@missing", "--title", "new"),
+    ("labels", "@missing", "--add", "new"),
+    ("state", "@missing", "closed", "--reason", "completed"),
+    ("edit", "@bug", "--title", "new", "--repo", "github:other/repo"),
+    ("labels", "@bug", "--add", "new", "--repo", "github:other/repo"),
+    ("state", "@bug", "closed", "--reason", "completed", "--repo", "github:other/repo"),
+])
+def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, args):
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("unexpected gh lookup"))
+    assert invoke("create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b").exit_code == 0
+    store = Store(tmp_path)
+    before = store.draft_load_state("issue", "b")
+    result = invoke(*args, "--batch", "b")
+    assert result.exit_code == 2, result.output
+    assert store.draft_load_state("issue", "b") == before
+
+
+def test_ref_label_check_uses_created_labels(tmp_path):
+    assert invoke("create", "--title", "Bug", "--body", "body", "--ref", "bug", "--label", "bug", "--batch", "b").exit_code == 0
+    store = Store(tmp_path)
+    before = store.draft_load_state("issue", "b")
+    result = invoke("labels", "@bug", "--add", "BUG", "--batch", "b")
+    assert result.exit_code == 2
+    assert store.draft_load_state("issue", "b") == before
