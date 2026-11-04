@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import fcntl
 import json
 import os
 import re
@@ -310,6 +311,37 @@ class Store:
         draft = self._draft(kind, name)
         return None if draft is None else cast(dict[str, object], draft["manifest"])
 
+    def draft_load_state(
+        self, kind: Kind, name: str
+    ) -> tuple[dict[str, object], dict[str, str]] | None:
+        """Load one atomic snapshot, including bodies needed by a later save."""
+        draft = self._draft(kind, name)
+        if draft is None:
+            return None
+        return cast(dict[str, object], draft["manifest"]), cast(dict[str, str], draft["bodies"])
+
+    @contextmanager
+    def _draft_lock(self, kind: Kind, name: str) -> Iterator[None]:
+        _draft_name(name)
+        self.outbox(kind)
+        path = self.home / ".jailbee/outbox-draft-locks" / kind
+        with _directory(path, create=True) as directory_fd:
+            fd = os.open(
+                f"{name}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600, dir_fd=directory_fd,
+            )
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise OutboxCommandError(f"draft {name!r}: lock is not a regular file")
+                # Keep the lock inode after unlock so waiters never lock a stale inode.
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
     def draft_save(
         self, kind: Kind, name: str, manifest: dict[str, object], bodies: Mapping[str, str]
     ) -> None:
@@ -322,26 +354,30 @@ class Store:
         except (TypeError, ValueError) as exc:
             raise OutboxCommandError(str(exc), 2) from exc
         self.require_writable()
-        with _directory(self.drafts(kind), create=True) as fd:
-            _atomic_write(fd, f"{name}.json", text)
+        with self._draft_lock(kind, name):
+            with _directory(self.drafts(kind), create=True) as fd:
+                _atomic_write(fd, f"{name}.json", text)
 
     def draft_submit(self, kind: Kind, name: str, slug: str) -> str:
         self._require_role()
-        draft = self._draft(kind, name)
-        if draft is None:
-            raise OutboxCommandError(f"draft {name!r} not found", 2)
-        result = self.write_manifest(
-            kind, slug, cast(dict[str, object], draft["manifest"]),
-            cast(Mapping[str, str], draft["bodies"]),
-        )
-        self.draft_discard(kind, name)
-        return result
+        with self._draft_lock(kind, name):
+            draft = self._draft(kind, name)
+            if draft is None:
+                raise OutboxCommandError(f"draft {name!r} not found", 2)
+            result = self.write_manifest(
+                kind, slug, cast(dict[str, object], draft["manifest"]),
+                cast(Mapping[str, str], draft["bodies"]),
+            )
+            with _directory(self.drafts(kind)) as fd:
+                _unlink(fd, f"{name}.json")
+            return result
 
     def draft_discard(self, kind: Kind, name: str) -> None:
         self._require_role()
         _draft_name(name)
-        path = self.drafts(kind)
-        if not path.exists() and not path.is_symlink():
-            return
-        with _directory(path) as fd:
-            _unlink(fd, f"{name}.json")
+        with self._draft_lock(kind, name):
+            path = self.drafts(kind)
+            if not path.exists() and not path.is_symlink():
+                return
+            with _directory(path) as fd:
+                _unlink(fd, f"{name}.json")

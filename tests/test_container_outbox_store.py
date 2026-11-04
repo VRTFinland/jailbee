@@ -5,7 +5,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier, local
+from threading import Barrier, Event, local
 
 import pytest
 
@@ -413,3 +413,80 @@ def test_draft_save_failure_preserves_previous_manifest_and_bodies(tmp_path, mon
     body_name = text["actions"][0]["body_file"]
     assert (store.outbox("pr") / body_name).read_text() == "Original"
     assert not list(store.drafts("pr").iterdir())
+
+
+def test_reload_append_save_preserves_all_body_files(tmp_path):
+    from jailbee.issue_manifest import parse_manifest
+
+    store = store_for(tmp_path)
+    store.draft_save("issue", "batch", issue_manifest("first.md"), {"first.md": "First"})
+    state = store.draft_load_state("issue", "batch")
+    assert state is not None
+    manifest, bodies = state
+    manifest["actions"].append({
+        "type": "comment", "repo": ".", "issue_ref": "new", "body_file": "second.md"
+    })
+    bodies["second.md"] = "Second"
+    store.draft_save("issue", "batch", manifest, bodies)
+    state = store_for(tmp_path).draft_load_state("issue", "batch")
+    assert state is not None
+    assert state[1] == {"first.md": "First", "second.md": "Second"}
+    name = store.draft_submit("issue", "batch", "batch")
+    files = snapshot(store.outbox("issue"))
+    assert [action.body for action in parse_manifest(name, files[name], files).actions] == [
+        "First", "Second"
+    ]
+
+
+def test_concurrent_save_during_submit_survives(tmp_path, monkeypatch):
+    import fcntl
+
+    store = store_for(tmp_path)
+    store.draft_save("issue", "batch", issue_manifest(), {"body.md": "Original"})
+    submitting = Event()
+    continue_submit = Event()
+    save_boundary = Event()
+    thread = local()
+    original_write = store.write_manifest
+    original_replace = os.replace
+    original_flock = fcntl.flock
+
+    def pause_write(*args, **kwargs):
+        submitting.set()
+        assert continue_submit.wait(5)
+        return original_write(*args, **kwargs)
+
+    def observe_lock(fd, operation):
+        if getattr(thread, "saving", False) and operation == fcntl.LOCK_EX:
+            save_boundary.set()
+        return original_flock(fd, operation)
+
+    def observe_replace(src, dst, *args, **kwargs):
+        result = original_replace(src, dst, *args, **kwargs)
+        if getattr(thread, "saving", False) and dst == "batch.json":
+            save_boundary.set()
+        return result
+
+    def save_newer():
+        thread.saving = True
+        store_for(tmp_path).draft_save("issue", "batch", issue_manifest(), {"body.md": "Newer"})
+
+    monkeypatch.setattr(store, "write_manifest", pause_write)
+    monkeypatch.setattr(fcntl, "flock", observe_lock)
+    monkeypatch.setattr(os, "replace", observe_replace)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        submitted = pool.submit(store.draft_submit, "issue", "batch", "original")
+        try:
+            assert submitting.wait(5)
+            saved = pool.submit(save_newer)
+            assert save_boundary.wait(5)
+        finally:
+            continue_submit.set()
+        name = submitted.result(timeout=5)
+        saved.result(timeout=5)
+    assert store.draft_load("issue", "batch") == issue_manifest()
+    next_name = store_for(tmp_path).draft_submit("issue", "batch", "newer")
+    from jailbee.issue_manifest import parse_manifest
+    files = snapshot(store.outbox("issue"))
+    assert parse_manifest(name, files[name], files).actions[0].body == "Original"
+    assert parse_manifest(next_name, files[next_name], files).actions[0].body == "Newer"
