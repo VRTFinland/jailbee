@@ -8,10 +8,12 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jailbee.container_outbox.bindings import KEYS
+from jailbee.container_locks import locked
+from jailbee.container_outbox.bindings import ERROR_MARKER, KEYS
 from jailbee.paths import xdg_data_home
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.incus import Incus
 
 
@@ -32,15 +34,54 @@ def _write(directory: Path, value: dict[str, str]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def sync(incus: Incus, full: str) -> None:
-    """Refresh a directory mount atomically; works for running and stopped instances."""
+def _legacy_repo_dir(full: str, cfg: Config | None) -> str:
+    from jailbee.config import CONTAINER_USERNAME
     from jailbee.incus import IncusError
 
-    if not full or Path(full).name != full or full in (".", ".."):
-        raise ValueError("invalid container name")
+    if cfg is not None:
+        root = cfg.repo_root
+    else:
+        from sqlmodel import Session, select
+
+        from jailbee.db import get_engine
+        from jailbee.db.models import RegisteredRepo
+
+        with Session(get_engine()) as session:
+            repos = [
+                row for row in session.exec(select(RegisteredRepo))
+                if full.startswith(row.container_prefix + "-")
+            ]
+            if not repos:
+                raise IncusError("legacy repository path unavailable; run jb start in its repo")
+            root = Path(max(repos, key=lambda row: len(row.container_prefix)).repo_root)
+    # Match lifecycle.container_repo_dir's pre-label fallback, never the host path.
+    return f"/home/{CONTAINER_USERNAME}/{root.name}"
+
+
+def _running(incus: Incus, full: str) -> bool:
+    return any(
+        row.get("name") == full and row.get("status") == "Running"
+        for row in incus.list_containers()
+    )
+
+
+def sync(incus: Incus, full: str, *, cfg: Config | None = None) -> None:
+    """Serialize authoritative reads, publication and mount repair across host processes."""
+    with locked(full):
+        _sync_locked(incus, full, cfg=cfg)
+
+
+def _sync_locked(incus: Incus, full: str, *, cfg: Config | None) -> None:
+    from jailbee.incus import IncusError
+
     directory = metadata_root() / full
     directory.mkdir(parents=True, exist_ok=True)
+    running = _running(incus, full)
     try:
+        if running:
+            # Guard the fixed container path, not an arbitrary device source.
+            incus.exec(full, ["sh", "-c", 'set -eu; mkdir -p "${1%/*}"; touch "$1"',
+                              "sh", str(ERROR_MARKER)])
         config = {}
         for key in KEYS:
             value = incus.config_get_checked(full, key)
@@ -48,22 +89,31 @@ def sync(incus: Incus, full: str) -> None:
                 if not isinstance(value, str):
                     raise IncusError("invalid binding label response")
                 config[key] = value
+        if not config.get(KEYS[0]):
+            config[KEYS[0]] = _legacy_repo_dir(full, cfg)
         _write(directory, config)
+        properties = {
+            "source": str(directory),
+            "path": "/opt/jailbee/metadata",
+            "readonly": "true",
+        }
+        existing = incus.config_device_get(full, "jailbee-metadata", "type")
+        if existing is None:
+            incus.config_device_add(full, "jailbee-metadata", "disk", properties)
+        else:
+            if existing != "disk":
+                raise IncusError("jailbee-metadata is not a disk device; repair it before retrying")
+            if any(
+                incus.config_device_get(full, "jailbee-metadata", key) != value
+                for key, value in properties.items()
+            ):
+                incus.config_device_set(full, "jailbee-metadata", properties)
+        if running:
+            incus.exec(full, ["rm", "-f", "--", str(ERROR_MARKER)])
     except (IncusError, OSError):
-        # Never let a failed refresh keep selecting an old identity.
+        # Includes device operations: never hide a mount repair failure as success.
         _write(directory, {"error": "PR bindings could not be refreshed; restart with jb start"})
         raise
-    if incus.config_device_get(full, "jailbee-metadata", "source") != str(directory):
-        incus.config_device_add(
-            full,
-            "jailbee-metadata",
-            "disk",
-            {
-                "source": str(directory),
-                "path": "/opt/jailbee/metadata",
-                "readonly": "true",
-            },
-        )
 
 
 def refresh(incus: Incus, full: str) -> bool:

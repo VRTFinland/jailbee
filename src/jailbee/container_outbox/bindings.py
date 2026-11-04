@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from jailbee.container_outbox.store import OutboxCommandError
 
 SNAPSHOT = Path("/opt/jailbee/metadata/bindings.json")
+ERROR_MARKER = Path("/home/dev/.jailbee/pr-bindings-error")
 KEYS = (
     "user.jailbee.repo_dir",
     "user.jailbee.pr",
@@ -24,8 +25,19 @@ class Binding:
     cwd: str
 
 
+def _check_refresh() -> None:
+    try:
+        ERROR_MARKER.read_text()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise OutboxCommandError("PR bindings unavailable; restart with jb start", 2) from exc
+    raise OutboxCommandError("PR bindings unavailable; restart with jb start", 2)
+
+
 def read() -> list[Binding]:
     """Never infer a binding from the agent's current checkout or working directory."""
+    _check_refresh()
     try:
         raw = json.loads(SNAPSHOT.read_text())
     except FileNotFoundError as exc:
@@ -89,6 +101,7 @@ def read() -> list[Binding]:
 
 
 def resolve(number: int | None, *, allow_new: bool = False) -> Binding | None:
+    _check_refresh()
     if number is not None and not SNAPSHOT.exists():
         return None
     choices = read()

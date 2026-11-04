@@ -1,6 +1,7 @@
 """The container sees host PR state, including stopped bind/unbind changes."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -88,6 +89,162 @@ def test_branch_binding_put_and_drop_refresh_snapshot(tmp_path, monkeypatch):
     assert "user.jailbee.branch_prs" not in json.loads(
         (tmp_path / "proj-c/bindings.json").read_text()
     )
+
+
+def test_blocked_old_refresh_cannot_overwrite_new_unbind(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+
+    incus, config = rig(tmp_path, monkeypatch)
+    old_blocked, resume_old, new_started = Event(), Event(), Event()
+    real_write = container_bindings._write
+
+    def write(directory, value):
+        if current_thread().name.startswith("old"):
+            old_blocked.set()
+            assert resume_old.wait(5)
+        real_write(directory, value)
+
+    monkeypatch.setattr(container_bindings, "_write", write)
+    with ThreadPoolExecutor(1, thread_name_prefix="old") as old_pool:
+        with ThreadPoolExecutor(1, thread_name_prefix="new") as new_pool:
+            old = old_pool.submit(container_bindings.sync, incus, "proj-c")
+            assert old_blocked.wait(5)
+            del config["user.jailbee.pr"]
+
+            def unbind_refresh():
+                new_started.set()
+                container_bindings.sync(incus, "proj-c")
+
+            new = new_pool.submit(unbind_refresh)
+            assert new_started.wait(5)
+            # Exercise the real production inode, never replace the lock with a fake.
+            import fcntl
+            from jailbee.paths import xdg_data_home
+
+            path = xdg_data_home() / "jailbee/container-locks/proj-c.lock"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("a") as probe:
+                    try:
+                        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        pass
+                    else:
+                        fcntl.flock(probe, fcntl.LOCK_UN)
+                        new.result(timeout=5)
+            finally:
+                resume_old.set()
+            old.result(timeout=5)
+            new.result(timeout=5)
+    assert "user.jailbee.pr" not in json.loads((tmp_path / "proj-c/bindings.json").read_text())
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_legacy_repo_dir_refresh_resolves_primary_and_submodule(
+    tmp_path, monkeypatch, make_cfg, registered
+):
+    from jailbee.container_outbox import bindings
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+    from datetime import UTC, datetime
+    from sqlmodel import Session
+
+    incus, config = rig(tmp_path, monkeypatch)
+    del config["user.jailbee.repo_dir"]
+    config["user.jailbee.pr"] = "42"
+    config.pop("user.jailbee.stacked_pr")
+    config.pop("user.jailbee.sub_pr")
+    cfg = make_cfg(tmp_path / "host-only/legacy-repo")
+    if registered:
+        with Session(get_engine()) as session:
+            session.add(RegisteredRepo(
+                container_prefix="proj", repo_root=str(cfg.repo_root),
+                registered_at=datetime.now(UTC),
+            ))
+            session.commit()
+        assert container_bindings.refresh(incus, "proj-c")
+    else:
+        container_bindings.sync(incus, "proj-c", cfg=cfg)
+    monkeypatch.setattr(bindings, "SNAPSHOT", tmp_path / "proj-c/bindings.json")
+    assert bindings.resolve(42) == bindings.Binding(42, "/home/dev/legacy-repo")
+    assert bindings.resolve(None) == bindings.Binding(42, "/home/dev/legacy-repo")
+    config.pop("user.jailbee.pr")
+    config["user.jailbee.sub_pr"] = '{"lib/nested":{"pr":43}}'
+    if registered:
+        assert container_bindings.refresh(incus, "proj-c")
+    else:
+        container_bindings.sync(incus, "proj-c", cfg=cfg)
+    assert bindings.resolve(None) == bindings.Binding(43, "/home/dev/legacy-repo/lib/nested")
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_wrong_metadata_source_repairs_visible_binding_or_fails_closed(
+    tmp_path, monkeypatch, failure
+):
+    from jailbee.container_outbox import bindings
+    from jailbee.container_outbox.store import OutboxCommandError
+
+    incus, config = rig(tmp_path, monkeypatch)
+    config["user.jailbee.pr"] = "43"
+    config.pop("user.jailbee.stacked_pr")
+    config.pop("user.jailbee.sub_pr")
+    old = tmp_path / "old-source"
+    old.mkdir()
+    (old / "bindings.json").write_text('{"user.jailbee.repo_dir":"/repo","user.jailbee.pr":"42"}')
+    device = {"type": "disk", "source": str(old), "path": "/wrong", "readonly": "false"}
+    incus.config_device_get.side_effect = lambda name, dev, key: device.get(key)
+    incus.config_device_add.side_effect = IncusError("already exists")
+
+    def update(name, dev, properties):
+        if failure:
+            raise IncusError("device update failed")
+        device.update(properties)
+
+    incus.config_device_set.side_effect = update
+
+    marker = tmp_path / "container-error"
+    monkeypatch.setattr(bindings, "ERROR_MARKER", marker)
+    incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
+
+    def execute(name, argv, **kwargs):
+        assert argv[-1] == "/home/dev/.jailbee/pr-bindings-error"
+        if argv[0] == "rm":
+            marker.unlink(missing_ok=True)
+        else:
+            marker.touch()
+
+    incus.exec.side_effect = execute
+    monkeypatch.setattr(bindings, "SNAPSHOT", old / "bindings.json")
+    if failure:
+        assert not container_bindings.refresh(incus, "proj-c")
+        with pytest.raises(OutboxCommandError, match="restart with jb start"):
+            bindings.resolve(42)
+        # A subsequent refresh must recover rather than retain the error snapshot.
+        failure = False
+    assert container_bindings.refresh(incus, "proj-c")
+    monkeypatch.setattr(bindings, "SNAPSHOT", Path(device["source"]) / "bindings.json")
+    assert bindings.resolve(None) == bindings.Binding(43, "/repo")
+    assert device["path"] == "/opt/jailbee/metadata"
+    assert device["readonly"] == "true"
+
+
+def test_restart_clears_failed_mount_guard_after_stopped_repair(tmp_path, monkeypatch):
+    from jailbee.container_outbox import bindings
+
+    incus, _ = rig(tmp_path, monkeypatch)
+    guard = tmp_path / "guard"
+    guard.touch()
+    monkeypatch.setattr(bindings, "ERROR_MARKER", guard)
+    monkeypatch.setattr(bindings, "SNAPSHOT", tmp_path / "proj-c/bindings.json")
+    incus.list_containers.return_value = [{"name": "proj-c", "status": "Stopped"}]
+    container_bindings.sync(incus, "proj-c")
+    incus.exec.side_effect = lambda *args, **kwargs: guard.unlink(missing_ok=True)
+    # Boot must clear the guard after the repaired device has actually mounted.
+    incus.list_containers.return_value = [{"name": "proj-c", "status": "Running"}]
+    container_bindings.sync(incus, "proj-c")
+    assert not guard.exists()
+    assert bindings.resolve(12) == bindings.Binding(12, "/repo")
 
 
 def test_failed_refresh_invalidates_old_binding(tmp_path, monkeypatch):

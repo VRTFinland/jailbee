@@ -3,7 +3,7 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -1386,7 +1386,9 @@ def test_new_container_sets_default_base_branch_label(make_cfg, tmp_path, mocker
     assert calls[0].args[2] == "main"
     from jailbee import container_bindings
 
-    container_bindings.sync.assert_called_once_with(incus, "myrepo-feat-foo")
+    assert container_bindings.sync.call_args_list == [
+        call(incus, "myrepo-feat-foo", cfg=cfg), call(incus, "myrepo-feat-foo", cfg=cfg)
+    ]
 
 
 def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, tmp_path, mocker):
@@ -5408,7 +5410,9 @@ def test_boot_container_syncs_instructions_before_allocation(
     assert events == ["sync", "allocate", "detach", *operation, "attach"]
     from jailbee import container_bindings
 
-    container_bindings.sync.assert_called_once_with(incus, "feat-x")
+    assert container_bindings.sync.call_args_list == [
+        call(incus, "feat-x", cfg=cfg), call(incus, "feat-x", cfg=cfg)
+    ]
 
 
 @pytest.mark.parametrize("restart", [False, True])
