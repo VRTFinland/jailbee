@@ -23,6 +23,18 @@ def test_gather_repo_without_profiles_includes_builtins(mocker, tmp_path, make_c
     assert group.autostart_services == ("db", "web")
 
 
+def test_gather_repo_with_named_profiles_includes_builtins(mocker, tmp_path, make_cfg):
+    from jailbee.dashboard import model
+    from tests.test_autostart_profiles import profile_cfg
+
+    cfg = profile_cfg(make_cfg, tmp_path)
+    mocker.patch.object(model, "load_repo_config", return_value=cfg)
+    mocker.patch.object(model, "list_containers", return_value=[])
+    group = model.gather_rows(mocker.MagicMock(), [tmp_path], with_git=False)[0]
+    assert group.autostart_profiles == ("full", "light", "none", "all")
+    assert group.autostart_default_profile == "light"
+
+
 def test_ls_profile_column_off_by_default_and_shows_value():
     from jailbee.lifecycle import ls_field_specs
 
