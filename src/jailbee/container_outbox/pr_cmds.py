@@ -63,6 +63,14 @@ def _same_target(manifest: dict[str, object], envelope: dict[str, object]) -> No
         raise OutboxCommandError("draft targets a different repo or PR", 2)
 
 
+def _same_review_head(manifest: dict[str, object], envelope: dict[str, object]) -> None:
+    _same_target(manifest, envelope)
+    if manifest.get("head_sha") != envelope.get("head_sha"):
+        raise OutboxCommandError(
+            "PR head moved; discard the review draft and re-read the diff before re-anchoring", 2
+        )
+
+
 def _review_actions(manifest: dict[str, object]) -> list[dict[str, object]]:
     actions = manifest.get("actions")
     if not isinstance(actions, list) or (
@@ -182,7 +190,7 @@ def description(
     branch: str | None = None,
     repo: str | None = None,
     batch: str | None = None,
-    new: bool = False,
+    new: Annotated[bool, typer.Option(help="Stage for an unbound container, not force-create a PR.")] = False,
 ) -> None:
     def run() -> None:
         store = _guard()
@@ -191,6 +199,11 @@ def description(
         text = _body(body, body_file, False)
         if text is None and title is None:
             raise OutboxCommandError("missing title or body", 2)
+        if new and bindings.read():
+            raise OutboxCommandError(
+                "--new requires no PR bindings; it does not force-create a PR. "
+                "Name the existing PR or unbind it on the host first", 2
+            )
         binding = None if new else bindings.resolve(_number(pr), allow_new=True)
         view = _view(pr) if pr is not None or binding is not None else None
         if view is not None and repo is not None and repo != view.repo:
@@ -242,7 +255,7 @@ def review_add(
         def update(
             manifest: dict[str, object], existing: dict[str, str]
         ) -> tuple[dict[str, object], dict[str, str]]:
-            _same_target(manifest, envelope)
+            _same_review_head(manifest, envelope)
             actions = _review_actions(manifest)
             comments = cast(list[dict[str, object]], actions[0]["comments"]) if actions else []
             return (
@@ -281,12 +294,12 @@ def review_submit(
         def prepare(
             manifest: dict[str, object], existing: dict[str, str]
         ) -> tuple[dict[str, object], dict[str, str]]:
-            _same_target(manifest, envelope)
+            _same_review_head(manifest, envelope)
             actions = _review_actions(manifest)
             review = {**actions[0], "body": text if text is not None else ""}
             review.pop("body_file", None)
             bodies = _file_body(review, body_file is not None)
-            return {**manifest, "head_sha": view.head_sha, "actions": [review]}, {
+            return {**manifest, "actions": [review]}, {
                 **existing,
                 **bodies,
             }
