@@ -519,6 +519,7 @@ class AutostartJob:
     log_path: str
     progress_path: str
     services_present: bool | None = None
+    rerun: bool = False
 
 
 def autostart_job_to_dict(
@@ -532,6 +533,7 @@ def autostart_job_to_dict(
     log_path: str,
     progress_path: str,
     services_present: bool | None = None,
+    rerun: bool = False,
 ) -> dict[str, Any]:
     """Serialize a detached autostart run to the worker's job file.
 
@@ -561,6 +563,7 @@ def autostart_job_to_dict(
         "log_path": log_path,
         "progress_path": progress_path,
         "services_present": services_present,
+        "rerun": rerun,
     }
 
 
@@ -594,6 +597,7 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
         log_path=raw["log_path"],
         progress_path=raw["progress_path"],
         services_present=raw.get("services_present"),
+        rerun=raw.get("rerun", False),
     )
 
 

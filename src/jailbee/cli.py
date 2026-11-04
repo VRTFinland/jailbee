@@ -3531,6 +3531,7 @@ def _spawn_autostart_worker(
     mirror_endpoint: tuple[str, int] | None,
     override: "Literal['wait', 'no_wait'] | None" = None,
     services_present: bool | None = None,
+    rerun: bool = False,
 ) -> None:
     """Hand the detached stages to a `_autostart-worker` and record its row.
 
@@ -3564,6 +3565,11 @@ def _spawn_autostart_worker(
     from jailbee.db.models import JOB_AUTOSTART
     from jailbee.lifecycle import lookup_background_job, short_name
 
+    if rerun:
+        from jailbee.autostart_status import refuse_while_running
+
+        refuse_while_running(cfg, full_name)
+
     short = short_name(cfg, full_name)
     row = lookup_background_job(cfg, full_name)
     if row is not None and not bg.clearable(row.phase, row.pid):
@@ -3573,6 +3579,8 @@ def _spawn_autostart_worker(
             f"the deferred autostart stages were not started."
         )
         info("  Follow that job with `jailbee ls`, or read it with `jailbee job log`.")
+        if rerun:
+            raise RuntimeError(f"'{short}' already has a background job in flight")
         # Nobody owns the deferred stages now, so "autostart in progress" is
         # simply false and the flag must go: `run_autostart` left the literal
         # `"1"` behind for a supervisor that is not going to exist, and
@@ -3602,6 +3610,7 @@ def _spawn_autostart_worker(
                 log_path=str(log_path),
                 progress_path=str(progress_path),
                 services_present=services_present,
+                rerun=rerun,
             )
         )
     )

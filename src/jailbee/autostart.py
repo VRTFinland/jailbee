@@ -454,6 +454,8 @@ def run_autostart(
     already_detached: bool = False,
     on_progress: Callable[[str, str, str], None] | None = None,
     skip_services: bool = False,
+    skip_agents: bool = False,
+    record_on_create: bool = False,
 ) -> AutostartPlan:
     """Run this trigger's blocking stages and return the plan.
 
@@ -479,7 +481,9 @@ def run_autostart(
     # do so in a container whose autostart has not finished.
     from jailbee.services.autostart import services_stage_wanted
 
-    agent_steps, prompted = _on_start_agent_steps(cfg, incus, container, trigger)
+    agent_steps, prompted = (
+        ([], False) if skip_agents else _on_start_agent_steps(cfg, incus, container, trigger)
+    )
     plan = plan_autostart(
         cfg.autostart,
         trigger,
@@ -525,6 +529,7 @@ def run_autostart(
             mirror_endpoint=mirror_endpoint,
             on_progress=on_progress,
             trigger=trigger,
+            record_on_create=record_on_create,
         )
         handed_off = bool(plan.detached)
     finally:
@@ -585,15 +590,19 @@ def run_detached(
             # whole remaining list rather than re-splitting it.
             start_at = TRIGGER_ORDER.index(AutostartTrigger(spec.from_trigger))
             for i, trigger in enumerate(TRIGGER_ORDER[start_at:]):
-                agent_steps, prompted = _on_start_agent_steps(
-                    cfg, incus, spec.container_name, trigger
-                )
+                agent_steps: list[AutostartStep] | tuple[AutostartStep, ...]
+                if spec.rerun:
+                    agent_steps, prompted = (), False
+                else:
+                    agent_steps, prompted = _on_start_agent_steps(
+                        cfg, incus, spec.container_name, trigger
+                    )
                 plan = plan_autostart(
                     cfg.autostart,
                     trigger,
                     agent_steps=agent_steps,
                     agents_last=prompted,
-                    services_stage=trigger == AutostartTrigger.ON_START
+                    services_stage=not spec.rerun and trigger == AutostartTrigger.ON_START
                     and services_stage_wanted(
                         cfg, incus, spec.container_name, services_present=spec.services_present
                     ),
@@ -604,7 +613,7 @@ def run_detached(
                     override=spec.override,
                     # The trigger we resumed into keeps its own split (its blocking
                     # half already ran); every later trigger is detached in full.
-                    already_detached=i > 0,
+                    already_detached=spec.rerun or i > 0,
                 )
                 # `plan.detached` alone, deliberately: under `already_detached`
                 # the planner's boundary is 0 on every branch, so `plan.blocking`
@@ -626,6 +635,7 @@ def run_detached(
                         # hand, and a blind restore would undo their choice.
                         cas_restore=True,
                         trigger=trigger,
+                        record_on_create=spec.rerun,
                     )
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
@@ -671,8 +681,9 @@ def run_stages(
     on_progress: Callable[[str, str, str], None] | None = None,
     cas_restore: bool = False,
     trigger: AutostartTrigger | None = None,
+    record_on_create: bool = False,
 ) -> None:
-    """Run ``stages`` in order, recording attempted one-shot setup."""
+    """Run stages, optionally recording creates even after re-run filtering clears profiles."""
     from jailbee import autostart_outcomes
 
     def record_progress(stage_name: str, step: str, state: str) -> None:
@@ -712,7 +723,7 @@ def run_stages(
                     cas_restore=cas_restore,
                 )
         finally:
-            if trigger is AutostartTrigger.ON_CREATE and cfg.autostart.profiles:
+            if trigger is AutostartTrigger.ON_CREATE and (cfg.autostart.profiles or record_on_create):
                 from jailbee.autostart_profiles import record_created
 
                 record_created(incus, container, stage.stage)

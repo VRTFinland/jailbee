@@ -103,6 +103,66 @@ def test_job_file_round_trip_preserves_the_wait_override():
     assert bg.dict_to_autostart_job(json.loads(json.dumps(payload))).override == "no_wait"
 
 
+def test_old_job_file_without_rerun_loads(tmp_path):
+    from dataclasses import replace
+
+    spec = _spec(tmp_path, Autostart())
+    assert spec.rerun is False
+    payload = bg.autostart_job_to_dict(**replace(spec, rerun=True).__dict__)
+    assert bg.dict_to_autostart_job(payload).rerun is True
+    payload.pop("rerun")
+    assert bg.dict_to_autostart_job(payload).rerun is False
+
+
+def test_rerun_job_skips_agents_and_services(tmp_path, mocker, make_cfg):
+    from dataclasses import replace
+
+    from jailbee.autostart import run_detached
+
+    block = Autostart.model_validate({
+        "on_create": [_stage("setup")], "on_start": [_stage("deps"), _stage("web")],
+    })
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    agents = mocker.patch("jailbee.autostart._on_start_agent_steps", side_effect=AssertionError("agents"))
+    services = mocker.patch("jailbee.services.autostart.services_stage_wanted", side_effect=AssertionError("services"))
+    run = mocker.patch("jailbee.autostart.run_stages")
+    spec = replace(_spec(tmp_path, block, from_trigger="on_create"), rerun=True)
+    run_detached(cfg, mocker.MagicMock(), spec)
+    assert [c.args[3][0].stage for c in run.call_args_list] == ["setup", "deps", "web"]
+    agents.assert_not_called()
+    services.assert_not_called()
+
+
+def test_spawn_rerun_refuses_before_job_write(tmp_path, mocker, make_cfg):
+    from jailbee import cli
+    from jailbee.db import state_dir
+
+    mocker.patch("jailbee.autostart_status.refuse_while_running", side_effect=RuntimeError("live"))
+    encode = mocker.patch("jailbee.background.autostart_job_to_dict")
+    with pytest.raises(RuntimeError, match="live"):
+        cli._spawn_autostart_worker(
+            make_cfg(tmp_path), None, "c", incus=mocker.MagicMock(), autostart=Autostart(),
+            from_trigger="on_start", repo_dir="/r", mirror_endpoint=None, rerun=True,
+        )
+    encode.assert_not_called()
+    assert not list(state_dir().rglob("*.job.json"))
+
+
+def test_spawn_rerun_serializes_flag(tmp_path, mocker, make_cfg):
+    from jailbee import cli
+
+    mocker.patch("jailbee.cli._track_job")
+    proc = mocker.patch("jailbee.cli.subprocess.Popen")
+    proc.return_value.pid = 4242
+    cli._spawn_autostart_worker(
+        make_cfg(tmp_path), None, "c", incus=mocker.MagicMock(), autostart=Autostart(),
+        from_trigger="on_start", repo_dir="/r", mirror_endpoint=None, rerun=True,
+    )
+    argv = proc.call_args.args[0]
+    payload = json.loads(Path(argv[argv.index("--job") + 1]).read_text())
+    assert bg.dict_to_autostart_job(payload).rerun is True
+
+
 def test_job_label_renders_an_autostart_stage(mocker):
     from jailbee.db.models import JOB_AUTOSTART
 
