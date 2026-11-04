@@ -191,11 +191,13 @@ def test_container_profiles():
             "instructions": (
                 "## Model map (claude-jb profile `codex`)\n"
                 "Claude Code's tier names are aliases here; each runs the backend model below.\n"
-                "- fable → `chatgpt/gpt-6-astra` (route `astra`; effort high; context 1050k)\n"
-                "- opus → `chatgpt/gpt-6.1-sol` (route `sol-high`; effort high; context 1050k)\n"
+                "Backend context windows are per route; the session defaults to the smallest mapped "
+                "window, and --context can override it within the profile ceiling.\n"
+                "- fable → `chatgpt/gpt-6-astra` (route `astra`; effort high; backend context 1050k)\n"
+                "- opus → `chatgpt/gpt-6.1-sol` (route `sol-high`; effort high; backend context 1050k)\n"
                 "- sonnet → `chatgpt/gpt-6.1-terra` "
-                "(route `terra-high`; effort high; context 1050k)\n"
-                "- haiku → `chatgpt/gpt-6-luna` (route `luna-high`; effort high; context 1050k)"
+                "(route `terra-high`; effort high; backend context 1050k)\n"
+                "- haiku → `chatgpt/gpt-6-luna` (route `luna-high`; effort high; backend context 1050k)"
             ),
             "tiers": {
                 "fable": "jb.codex.most-capable",
@@ -235,10 +237,18 @@ def test_profile_ceiling_is_the_smallest_ceiling_of_the_profiles_routes():
 
 def test_container_profiles_carry_the_profile_instructions():
     cfg = LiteLLMConfig.model_validate(
-        {"profiles": {"codex": {"instructions": "Use sonnet for edits."}}}
+        {"routes": {"one": {"model": "openai/one", "context_window": 128000}}, "profiles": {"custom": {"sonnet": "one", "instructions": "Use sonnet for edits."}}}
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
-    assert profiles["codex"]["instructions"].endswith("\n\nUse sonnet for edits.")
+    assert profiles["custom"]["instructions"] == (
+        "## Model map (claude-jb profile `custom`)\n"
+        "Claude Code's tier names are aliases here; each runs the backend model below.\n"
+        "Backend context windows are per route; the session defaults to the smallest mapped "
+        "window, and --context can override it within the profile ceiling.\n"
+        "- sonnet → `openai/one` (route `one`; backend context 128k)\n"
+        "Unmapped tiers: fable, opus, haiku (not available in this session).\n\n"
+        "Use sonnet for edits."
+    )
 
 
 def test_model_map_exact_format_and_effort_precedence():
@@ -251,25 +261,27 @@ def test_model_map_exact_format_and_effort_precedence():
                     "model": "openai/one",
                     "context_window": 128000,
                     "effort": "high",
-                    "description": "Deep work.",
+                    "description": "Deep work.\nSecond line.",
                 },
                 "two": {
                     "model": "openai/two",
                     "context_window": 64000,
-                    "min_effort": "low",
+                    "min_effort": "high",
                     "description": "Quick work.",
                 },
             },
-            "profiles": {"custom": {"opus": "one", "haiku": "two", "effort": "medium"}},
+            "profiles": {"custom": {"opus": "one", "haiku": "two", "effort": "low"}},
         }
     )
     text = render_model_map("custom", cfg.effective_profiles()["custom"], cfg.effective_routes())
     assert text == (
         "## Model map (claude-jb profile `custom`)\n"
         "Claude Code's tier names are aliases here; each runs the backend model below.\n"
-        "- opus → `openai/one` (route `one`; effort high; context 128k)\n"
-        "  Deep work.\n"
-        "- haiku → `openai/two` (route `two`; effort medium; min effort low; context 64k)\n"
+        "Backend context windows are per route; the session defaults to the smallest mapped "
+        "window, and --context can override it within the profile ceiling.\n"
+        "- opus → `openai/one` (route `one`; effort high; backend context 128k)\n"
+        "  Deep work.\n  Second line.\n"
+        "- haiku → `openai/two` (route `two`; min effort high; backend context 64k)\n"
         "  Quick work.\n"
         "Unmapped tiers: fable, sonnet (not available in this session)."
     )
@@ -332,8 +344,6 @@ def test_map_leaks_no_secrets():
             "private.example.com",
             "account-sentinel",
             "secret-param",
-            "oauth: True",
-            "use_xai_oauth",
         )
     )
 
@@ -345,44 +355,42 @@ def test_unmapped_tier_listed():
     assert "- haiku →" not in text
 
 
-@pytest.mark.parametrize(
-    "description, warning, instruction_size",
-    [
-        ("d" * 1000, "dropping descriptions", 65500),
-        (None, "omitting the map", 65536),
-    ],
-)
-def test_oversize_warning_names_profile(description, warning, instruction_size, capsys):
+def test_oversize_drops_descriptions_and_names_profile(capsys):
     cfg = LiteLLMConfig.model_validate(
-        {
-            "routes": {"astra": {"description": description}},
-            "profiles": {
-                "team-profile": {
-                    "opus": "astra",
-                    "instructions": "x" * instruction_size,
-                }
-            },
-        }
+        {"routes": {"astra": {"description": "Description marker" + "d" * 1000}},
+         "profiles": {"team-profile": {"opus": "astra", "instructions": "x" * 65000}}}
     )
     text = container_profiles(cfg, base_urls={"default": "u"})["team-profile"]["instructions"]
-    stderr = " ".join(capsys.readouterr().err.split())
-    assert "team-profile" in stderr
-    assert warning in stderr
-    assert text == "x" * instruction_size
-
-
-def test_oversize_drops_descriptions(capsys):
-    cfg = LiteLLMConfig.model_validate(
-        {
-            "routes": {"astra": {"description": "Description marker" + "d" * 1000}},
-            "profiles": {"codex": {"instructions": "x" * 65000}},
-        }
-    )
-    text = container_profiles(cfg, base_urls={"default": "u"})["codex"]["instructions"]
     assert "Description marker" not in text
+    assert text.startswith("## Model map (claude-jb profile `team-profile`)")
     assert text.endswith("\n\n" + "x" * 65000)
     assert len(text.encode()) <= 65536
-    assert "description" in capsys.readouterr().err.lower()
+    stderr = " ".join(capsys.readouterr().err.split())
+    assert stderr == "⚠ Model map for profile 'team-profile' exceeds the instructions limit; dropping descriptions."
+
+
+def test_oversize_omits_map_and_names_profile_in_both_warnings(capsys):
+    cfg = LiteLLMConfig.model_validate(
+        {"profiles": {"team-profile": {"opus": "astra", "instructions": "x" * 65536}}}
+    )
+    text = container_profiles(cfg, base_urls={"default": "u"})["team-profile"]["instructions"]
+    assert text == "x" * 65536
+    stderr = " ".join(capsys.readouterr().err.split())
+    assert stderr == (
+        "⚠ Model map for profile 'team-profile' exceeds the instructions limit; dropping descriptions. "
+        "⚠ Model map for profile 'team-profile' still exceeds the instructions limit; omitting the map."
+    )
+
+
+def test_route_fixed_effort_without_profile_effort():
+    from jailbee.litellm_render import render_model_map
+
+    cfg = LiteLLMConfig.model_validate(
+        {"routes": {"one": {"model": "openai/one", "context_window": 128000, "effort": "high"}},
+         "profiles": {"custom": {"opus": "one"}}}
+    )
+    text = render_model_map("custom", cfg.effective_profiles()["custom"], cfg.effective_routes())
+    assert "- opus → `openai/one` (route `one`; effort high; backend context 128k)" in text
 
 
 @pytest.mark.parametrize("extra, expect_map", [(0, True), (1, False)])

@@ -356,9 +356,12 @@ and suggests `jailbee apply` when a larger value is requested.
 
 By default, `claude-jb` prepends a generated model map to the profile's
 `instructions` in the appended system prompt. It lists mapped tiers in Fable,
-Opus, Sonnet, Haiku order with their route, backend model, configured effort or
-minimum effort, context window and optional route description; it also names
-unmapped tiers. Plain `claude` does not receive this map.
+Opus, Sonnet, Haiku order with their route, backend model, route-configured effort
+or minimum effort, backend context window and optional route description; it also
+names unmapped tiers. The windows describe individual routes, not the selected
+session context. The session defaults to the smallest mapped window; `--context`
+can override it within the profile ceiling. Profile-level default effort is not
+shown on the tier lines. Plain `claude` does not receive this map.
 
 Add a route's `description` to explain its strengths or intended use. It must
 be non-blank and at most 2 KiB in UTF-8; a higher config layer replaces it and

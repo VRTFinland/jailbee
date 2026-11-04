@@ -421,20 +421,21 @@ def render_model_map(
     lines = [
         f"## Model map (claude-jb profile `{name}`)",
         "Claude Code's tier names are aliases here; each runs the backend model below.",
+        "Backend context windows are per route; the session defaults to the smallest mapped "
+        "window, and --context can override it within the profile ceiling.",
     ]
     for tier in TIER_LEVELS:
         if tier not in profile.tiers:
             continue
         route = routes[profile.tiers[tier]]
         details = [f"route `{route.name}`"]
-        effort = route.effort or profile.effort
-        if effort:
-            details.append(f"effort {effort}")
+        if route.effort:
+            details.append(f"effort {route.effort}")
         if route.min_effort:
             details.append(f"min effort {route.min_effort}")
         whole, fraction = divmod(route.context_window, 1000)
         context = f"{whole}k" if fraction == 0 else f"{whole}.{fraction:03d}k"
-        details.append(f"context {context}")
+        details.append(f"backend context {context}")
         lines.append(f"- {tier} → `{route.model}` ({'; '.join(details)})")
         if descriptions and route.description:
             lines.extend(f"  {line}" for line in route.description.splitlines())
