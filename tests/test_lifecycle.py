@@ -5799,6 +5799,75 @@ def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     incus.delete.assert_called_once_with("x", force=True)
 
 
+@pytest.mark.parametrize("running", [False, True])
+def test_destroy_removes_only_own_metadata_and_keeps_lock_inode(
+    make_cfg, tmp_path, mocker, running
+):
+    from jailbee import container_bindings
+    from jailbee.container_locks import locked
+    from jailbee.paths import xdg_data_home
+
+    cfg = make_cfg(tmp_path)
+    root = tmp_path / "metadata"
+    mocker.patch.object(container_bindings, "metadata_root", return_value=root)
+    for full in ("proj-doomed", "proj-neighbor"):
+        (root / full).mkdir(parents=True)
+        (root / full / "bindings.json").write_text('{"user.jailbee.pr":"42"}')
+    with locked("proj-doomed"):
+        lock = xdg_data_home() / "jailbee/container-locks/proj-doomed.lock"
+        inode = lock.stat().st_ino
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "proj-doomed", "status": "Running" if running else "Stopped"}
+    ]
+    destroy_container(cfg, incus, "proj-doomed", force=True)
+    assert not (root / "proj-doomed").exists()
+    assert (root / "proj-neighbor/bindings.json").read_text() == '{"user.jailbee.pr":"42"}'
+    with locked("proj-doomed"):
+        assert lock.stat().st_ino == inode
+
+
+def test_destroy_metadata_symlink_does_not_remove_target(make_cfg, tmp_path, mocker):
+    from jailbee import container_bindings
+
+    root = tmp_path / "metadata"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("safe")
+    (root / "proj-doomed").symlink_to(outside, target_is_directory=True)
+    mocker.patch.object(container_bindings, "metadata_root", return_value=root)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "proj-doomed", "status": "Stopped"}]
+    destroy_container(make_cfg(tmp_path), incus, "proj-doomed", force=True)
+    assert not (root / "proj-doomed").is_symlink()
+    assert (outside / "keep").read_text() == "safe"
+
+
+def test_destroy_failure_preserves_metadata(make_cfg, tmp_path, mocker):
+    from jailbee import container_bindings
+
+    root = tmp_path / "metadata"
+    (root / "proj-doomed").mkdir(parents=True)
+    snapshot = root / "proj-doomed/bindings.json"
+    snapshot.write_text("preserved")
+    mocker.patch.object(container_bindings, "metadata_root", return_value=root)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "proj-doomed", "status": "Stopped"}]
+    incus.delete.side_effect = IncusError("delete failed")
+    with pytest.raises(IncusError, match="delete failed"):
+        destroy_container(make_cfg(tmp_path), incus, "proj-doomed", force=True)
+    assert snapshot.read_text() == "preserved"
+
+
+@pytest.mark.parametrize("full", ["../outside", "/absolute", "..", ""])
+def test_destroy_rejects_unsafe_metadata_names(make_cfg, tmp_path, full):
+    incus = MagicMock()
+    with pytest.raises(ValueError, match="invalid container name"):
+        destroy_container(make_cfg(tmp_path), incus, full, force=True)
+    incus.delete.assert_not_called()
+
+
 def test_destroy_container_bounds_the_clean_shutdown(tmp_path, mocker):
     """Without --force, the courtesy shutdown gets a budget, not incusd's 600s."""
     from jailbee.stopping import CLEAN_STOP_BUDGET
@@ -11887,12 +11956,27 @@ def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_p
     ensure = mocker.patch("jailbee.outbox.io.ensure_directories")
     _new_child(cfg, incus, mocker, spawned_by="myrepo-orch")
     ensure.assert_not_called()
-    marker_calls = [
-        c for c in incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)
-    ]
+    import os
+
+    from jailbee.orchestration.labels import ROLE_MARKER_PATH
+
+    assert ROLE_MARKER_PATH == "/home/dev/.jailbee/orchestration/role"
+    marker_calls = [c for c in incus.exec.call_args_list if c.args[1][-1] == ROLE_MARKER_PATH]
     assert len(marker_calls) == 1
     assert marker_calls[0].kwargs["uid"] == cfg.container_user.uid
-    assert "child" in str(marker_calls[0])
+    assert marker_calls[0].args[0] == "myrepo-feat-foo"
+    argv = list(marker_calls[0].args[1])
+    marker = tmp_path / "home/dev/.jailbee/orchestration/role"
+    argv[-1] = str(marker)
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.execvp(argv[0], argv)
+        finally:
+            os._exit(127)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert marker.read_text() == "child\n"
 
 
 def test_new_container_writes_child_labels_and_rights(make_cfg, tmp_path, mocker):

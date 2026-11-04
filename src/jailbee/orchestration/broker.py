@@ -611,17 +611,9 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     try:
         with container_locked(full):
             # The tick's nodes may predate a release. Recheck even on a cache hit.
-            current = next(
-                (row for row in ctx.incus.list_containers() if row.get("name") == full), None
-            )
-            config = current.get("config", {}) if current else {}
-            role = (
-                "child"
-                if config.get(labels.SPAWNED_BY)
-                else "orchestrator"
-                if config.get(labels.GRANT)
-                else "none"
-            )
+            parent = ctx.incus.config_get_checked(full, labels.SPAWNED_BY)
+            grant = ctx.incus.config_get_checked(full, labels.GRANT)
+            role = "child" if parent else "orchestrator" if grant else "none"
             if role == "none":
                 memory.env_ensured.discard(full)
                 memory.env_roles.pop(full, None)

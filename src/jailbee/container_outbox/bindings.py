@@ -42,7 +42,7 @@ def read() -> list[Binding]:
         raw = json.loads(SNAPSHOT.read_text())
     except FileNotFoundError as exc:
         raise OutboxCommandError(
-            "PR bindings unavailable; name the PR number or use --new; run jb start on the host", 2
+            "PR bindings unavailable; name the PR number or run jb start on the host", 2
         ) from exc
     except (OSError, ValueError) as exc:
         raise OutboxCommandError(

@@ -49,12 +49,17 @@ without rebuilding the golden image. An unavailable snapshot never falls back to
 `gh pr view` on the current branch. A numbered command without a matching binding
 uses the current repository for its explicit number.
 
-`jailbee pr description [N]` updates the bound existing PR by default, including
-preserving its body on a title-only edit. With no bindings it stages a new PR;
-`--new` explicitly requests a new description even when a PR is bound. New
-repository discovery uses read-only `gh repo view` without requiring an existing
-PR; `--repo owner/name` overrides it. As with the unchanged manifest schema,
-`--new` writes `pr: null`: it is a proposal, not a host-side force-create switch.
+`jailbee pr description [N]` updates the bound existing PR by default. It requires
+an explicit replacement body via `--body` or `--body-file`, including when only
+the title is intended to change. Title-only staging is refused: automatically
+copying the current body could overwrite later edits when the proposal is
+published. An explicitly empty body remains allowed. With no bindings it stages a new PR;
+`--new` explicitly requests a new description only when the binding snapshot is
+readable and empty. Any binding, including one for another repository, refuses
+`--new`. New repository discovery uses read-only `gh repo view` without requiring
+an existing PR; `--repo owner/name` overrides it. `--new` writes `pr: null`: it is
+a proposal, not a host-side force-create switch. The host can resolve a null PR
+to an existing binding, so `--new` must not bypass bindings.
 Both outboxes cap pending manifests at 20; issue batches cap actions at 100.
 
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
@@ -68,7 +73,8 @@ current state for host staleness checks.
 
 Inline reviews use `jailbee pr review add N --file PATH --line LINE --body
 TEXT` followed by `jailbee pr review submit N`; generic outbox submit refuses
-review drafts, because review submit fetches a fresh PR head. Discard with
+review drafts. Review add and submit fetch the PR head and refuse if it differs
+from the first comment's anchor; submit never replaces that anchor. Discard with
 `jailbee pr review discard N`. None of these commands publish to GitHub; a
 human inspects and applies on the host. Do not write outbox files or create
 outbox directories by hand. Children cannot stage GitHub writes: send the

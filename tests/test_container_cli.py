@@ -20,6 +20,85 @@ def test_host_commands_snapshot():
     )
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pr", "push"],
+        ["pr", "bind", "dev", "42"],
+        ["pr", "unbind"],
+        ["pr", "ls"],
+        ["pr", "open"],
+        ["issue", "apply"],
+        ["issue", "resolve"],
+        ["outbox", "apply"],
+        ["outbox", "browse"],
+        ["outbox", "clear"],
+        ["config", "edit", "schema"],
+        ["config", "show"],
+        ["config", "migrate"],
+        ["config", "init"],
+    ],
+)
+def test_shared_host_subcommands_get_host_hint(args):
+    from jailbee.container_cli import container_app
+
+    result = CliRunner().invoke(container_app, args)
+    assert result.exit_code == 2
+    assert f"`jailbee {' '.join(args[:2])}` runs on the host" in result.output
+    assert "No such command" not in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pr", "psuh"],
+        ["issue", "aply"],
+        ["outbox", "aply"],
+        ["pr", "review", "aply"],
+        ["config", "edti"],
+    ],
+)
+def test_shared_group_typos_stay_unknown_commands(args):
+    from jailbee.container_cli import container_app
+
+    result = CliRunner().invoke(container_app, args)
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+    assert "runs on the host" not in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pr", "review", "add"],
+        ["issue", "create"],
+        ["outbox", "submit"],
+        ["service", "refresh"],
+        ["config", "validate"],
+    ],
+)
+def test_shared_container_subcommands_still_resolve(args):
+    from jailbee.container_cli import container_app
+
+    result = CliRunner().invoke(container_app, [*args, "--help"])
+    assert result.exit_code == 0
+    assert "runs on the host" not in result.output
+
+
+def test_shared_host_subcommands_snapshot():
+    from jailbee.cli import app
+    from jailbee.container_cli import HOST_SUBCOMMANDS, container_app
+
+    host = typer.main.get_command(app)
+    container = typer.main.get_command(container_app)
+    actual = {}
+    for name in cli_context.SHARED_COMMANDS - {"version"}:
+        commands = set(host.commands[name].commands) - set(container.commands[name].commands)
+        if commands:
+            actual[name] = frozenset(commands)
+    assert HOST_SUBCOMMANDS == actual
+
+
 def test_container_validate_config_help():
     from jailbee.container_cli import container_app
 

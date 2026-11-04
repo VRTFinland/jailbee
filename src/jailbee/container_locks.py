@@ -12,7 +12,11 @@ from jailbee.paths import xdg_data_home
 
 @contextmanager
 def locked(full: str) -> Iterator[None]:
-    """Serialize threads and processes; never replace or unlink the lock inode."""
+    """Serialize threads and processes; keep the empty inode even after destroy.
+
+    A waiter may already have opened it: unlinking would let new callers lock
+    a different inode for the same name. See docs/architecture.md.
+    """
     if not full or Path(full).name != full or full in (".", ".."):
         raise ValueError("invalid container name")
     directory = xdg_data_home() / "jailbee" / "container-locks"

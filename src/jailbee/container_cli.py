@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from typer._click import Context
+from typer._click import Command, Context
 from typer.core import TyperGroup
 
 from jailbee import __version__, cli_context
@@ -14,6 +14,25 @@ from jailbee.container_outbox.pr_cmds import pr_app
 from jailbee.services.container_cmd import service_app
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
+
+# Explicit host-only branches: unknown names must still be reported as typos.
+HOST_SUBCOMMANDS = {
+    "config": frozenset({"show", "migrate", "edit", "init"}),
+    "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
+    "issue": frozenset({"apply", "resolve", "drop", "ls", "show"}),
+    "outbox": frozenset({"apply", "browse", "clear"}),
+}
+
+
+class SharedGroup(TyperGroup):
+    def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
+        if cmd_name in HOST_SUBCOMMANDS.get(ctx.info_name or "", frozenset()):
+            typer.echo(
+                f"`jailbee {ctx.info_name} {cmd_name}` runs on the host, not inside a container.",
+                err=True,
+            )
+            raise typer.Exit(2)
+        return super().get_command(ctx, cmd_name)
 
 
 class ContainerGroup(TyperGroup):
@@ -44,11 +63,11 @@ def _check_version(expected: str) -> None:
 
 container_app = typer.Typer(no_args_is_help=True, cls=ContainerGroup)
 config_app = typer.Typer(no_args_is_help=True)
-container_app.add_typer(config_app, name="config")
+container_app.add_typer(config_app, name="config", cls=SharedGroup)
 container_app.add_typer(service_app, name="service")
-container_app.add_typer(issue_app, name="issue")
-container_app.add_typer(pr_app, name="pr")
-container_app.add_typer(outbox_app, name="outbox")
+container_app.add_typer(issue_app, name="issue", cls=SharedGroup)
+container_app.add_typer(pr_app, name="pr", cls=SharedGroup)
+container_app.add_typer(outbox_app, name="outbox", cls=SharedGroup)
 
 
 def _version(value: bool) -> None:

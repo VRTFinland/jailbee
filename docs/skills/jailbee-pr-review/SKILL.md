@@ -131,10 +131,15 @@ Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 --body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.
 Omitting N selects the unique actual container binding (primary, stacked,
 imported-head or submodule), never the currently checked-out branch. Multiple
-bindings require N. For a new PR description use `--new` to bypass an existing
-binding; without any bindings omission already means new. Repository discovery
+bindings require N. For a new PR description, `--new` requires a readable, empty
+binding snapshot; it refuses any existing binding, even in another repository.
+It is not a host-side force-create switch. Without any bindings omission already
+means new. Repository discovery
 uses read-only `gh repo view`, not an existing PR; `--repo owner/name` overrides
-that discovery for new descriptions. Title-only edits preserve the existing body.
+that discovery for new descriptions. Every description requires an explicit
+replacement body via `--body` or `--body-file`; an explicitly empty body is allowed.
+Title-only staging is refused because replaying a fetched body could overwrite
+later edits at publication time. Supply the intended replacement body explicitly.
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
 outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.
@@ -143,8 +148,10 @@ Commands manage `~/.jailbee/pr-outbox/`; never write it by hand. The
 
 For inline reviews, use `jailbee pr review add N --file PATH --line LINE
 --body "..."`, then `jailbee pr review submit N --body "..."`. Generic
-`jailbee outbox submit` refuses review drafts: review submit fetches the
-fresh PR head. `jailbee pr review discard N` discards that review draft.
+`jailbee outbox submit` refuses review drafts. Review add and submit refuse a
+head change since the first comment; submit preserves that original anchor.
+If the head changed, discard with `jailbee pr review discard N`, re-read the diff,
+and add newly anchored comments.
 
 For imported branches, use `jailbee pr source --ref REF --sha SHA --base BASE
 --repo owner/name --title "..." --body-file PATH`; `--head` aliases `--ref`.

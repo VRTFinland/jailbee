@@ -253,6 +253,14 @@ class Rig:
         self.journal = Journal(self.root)
         self.incus = MagicMock()
         self.incus.list_containers.return_value = []
+        self.incus.config_get_checked.side_effect = lambda full, key: next(
+            (
+                row["config"].get(key)
+                for row in self.incus.list_containers.return_value
+                if row["name"] == full
+            ),
+            None,
+        )
         self.incus.exists.return_value = False
         self.outboxes: dict[str, list[RawManifest] | Exception] = {}
         self.seq = MagicMock()  # parent of every seam, to assert call order
@@ -347,6 +355,37 @@ def test_ensure_env_handles_orchestrator_to_child_transition(rig: Rig) -> None:
         c.args[0] == "proj-orch" and labels.ROLE_MARKER_PATH in str(c)
         for c in rig.incus.exec.call_args_list
     )
+
+
+def test_ensure_env_reads_checked_labels_without_per_node_inventory(rig: Rig) -> None:
+    rig.incus.list_containers.return_value = [_orch(), _child(), _child("proj-other")]
+    memory = broker.BrokerMemory()
+    rig.tick(memory)
+    assert rig.incus.list_containers.call_count == 2
+    rig.incus.list_containers.reset_mock()
+    rig.tick(memory)
+    assert rig.incus.list_containers.call_count == 2
+    assert memory.env_roles == {
+        "proj-orch": "orchestrator",
+        "proj-kid": "child",
+        "proj-other": "child",
+    }
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_ensure_env_checked_read_failure_forgets_cache(rig: Rig, cached: bool) -> None:
+    rig.incus.list_containers.return_value = [_child()]
+    memory = broker.BrokerMemory()
+    if cached:
+        rig.tick(memory)
+    rig.ensure_env.reset_mock()
+    rig.incus.exec.reset_mock()
+    rig.incus.config_get_checked.side_effect = IncusError("instance disappeared")
+    rig.tick(memory)
+    assert "proj-kid" not in memory.env_ensured
+    assert "proj-kid" not in memory.env_roles
+    rig.ensure_env.assert_not_called()
+    assert not any(labels.ROLE_MARKER_PATH in str(c) for c in rig.incus.exec.call_args_list)
 
 
 def test_ensure_env_runs_for_children(rig: Rig) -> None:
@@ -1053,7 +1092,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    assert rig.incus.list_containers.call_count == 6  # incl. authority recheck and watch refresh
+    assert rig.incus.list_containers.call_count == 5  # incl. action and watch refresh
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
