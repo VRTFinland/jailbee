@@ -178,7 +178,11 @@ def parse_send(args: list[str]) -> SendRequest:
     if t == "publish":
         require(bool(r.issue) != bool(r.pr), "publish needs exactly one of --issue or --pr")
         name = r.issue or r.pr
-        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json", name)) and not name.endswith(".progress.json"), "publish needs a bare outbox JSON file name, not a progress file")
+        require(
+            bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json", name))
+            and not name.endswith(".progress.json"),
+            "publish needs a bare outbox JSON file name, not a progress file",
+        )
     sources = sum((r.text is not None, r.file is not None, r.stdin))
     if t in {"message", "spawn", "restart"}:
         require(sources == 1, f"{t} needs exactly one of --text, --file or -")

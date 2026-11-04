@@ -100,8 +100,12 @@ ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = ("comment", "create", "edit", 
 class ForeignIssueRights(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    repos: tuple[str, ...] = Field(default=(), description="Foreign owner/name repositories, or '*' alone for any repository.")
-    actions: tuple[IssueActionKind, ...] = Field(default=(), description="Issue action kinds permitted on the listed foreign repositories.")
+    repos: tuple[str, ...] = Field(
+        default=(), description="Foreign owner/name repositories, or '*' alone for any repository."
+    )
+    actions: tuple[IssueActionKind, ...] = Field(
+        default=(), description="Issue action kinds permitted on the listed foreign repositories."
+    )
 
     @field_validator("repos")
     @classmethod
@@ -123,11 +127,27 @@ class ForeignIssueRights(BaseModel):
 class PublishRights(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    issues: tuple[IssueActionKind, ...] = Field(default=(), description="Issue actions allowed on the own repository and declared submodules.")
-    foreign_issues: ForeignIssueRights = Field(default=ForeignIssueRights(), description="Additional issue rights for explicitly listed foreign repositories.")
-    pull_requests: bool = Field(default=False, description="Publish source manifests for the orchestrator's own PR branches.")
-    pr_reviews: bool = Field(default=False, description="Publish comments, replies and descriptions on bound PRs.")
-    max_actions_per_hour: int = Field(default=30, ge=1, le=500, description="Maximum reserved publish actions per orchestrator in a sliding hour.")
+    issues: tuple[IssueActionKind, ...] = Field(
+        default=(),
+        description="Issue actions allowed on the own repository and declared submodules.",
+    )
+    foreign_issues: ForeignIssueRights = Field(
+        default=ForeignIssueRights(),
+        description="Additional issue rights for explicitly listed foreign repositories.",
+    )
+    pull_requests: bool = Field(
+        default=False,
+        description="Publish source manifests for the orchestrator's own PR branches.",
+    )
+    pr_reviews: bool = Field(
+        default=False, description="Publish comments, replies and descriptions on bound PRs."
+    )
+    max_actions_per_hour: int = Field(
+        default=30,
+        ge=1,
+        le=500,
+        description="Maximum reserved publish actions per orchestrator in a sliding hour.",
+    )
 
     @field_validator("issues")
     @classmethod
@@ -135,8 +155,12 @@ class PublishRights(BaseModel):
         return tuple(sorted(set(values)))
 
     def empty(self) -> bool:
-        return not (self.issues or (self.foreign_issues.repos and self.foreign_issues.actions)
-                    or self.pull_requests or self.pr_reviews)
+        return not (
+            self.issues
+            or (self.foreign_issues.repos and self.foreign_issues.actions)
+            or self.pull_requests
+            or self.pr_reviews
+        )
 
     def covers_issue(self, kind: str, slug: str, *, foreign: bool) -> bool:
         if not foreign:
@@ -156,8 +180,9 @@ class PublishRights(BaseModel):
             repos = tuple(r for r in f.repos if r in c.repos)
         return PublishRights(
             issues=tuple(k for k in self.issues if k in cap.issues),
-            foreign_issues=ForeignIssueRights(repos=repos,
-                actions=tuple(k for k in f.actions if k in c.actions)),
+            foreign_issues=ForeignIssueRights(
+                repos=repos, actions=tuple(k for k in f.actions if k in c.actions)
+            ),
             pull_requests=self.pull_requests and cap.pull_requests,
             pr_reviews=self.pr_reviews and cap.pr_reviews,
             max_actions_per_hour=min(self.max_actions_per_hour, cap.max_actions_per_hour),
@@ -272,12 +297,20 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
         for repo in requested.foreign_issues.repos:
             for kind in requested.foreign_issues.actions:
                 if not narrowed.covers_issue(kind, repo, foreign=True):
-                    out.append(f"publish right `foreign_issues: {repo}:{kind}` is above the repo cap")
+                    out.append(
+                        f"publish right `foreign_issues: {repo}:{kind}` is above the repo cap"
+                    )
         for name in ("pull_requests", "pr_reviews"):
             if getattr(requested, name) and not getattr(narrowed, name):
                 out.append(f"publish right `{name}` is above the repo cap")
-        if cap.publish is not False and requested.max_actions_per_hour > narrowed.max_actions_per_hour:
-            out.append(f"publish rate {requested.max_actions_per_hour} is above the repo cap of {narrowed.max_actions_per_hour}")
+        if (
+            cap.publish is not False
+            and requested.max_actions_per_hour > narrowed.max_actions_per_hour
+        ):
+            out.append(
+                f"publish rate {requested.max_actions_per_hour} is above the repo cap "
+                f"of {narrowed.max_actions_per_hour}"
+            )
     return out
 
 
@@ -298,7 +331,9 @@ def effective_grant(grant: Grant, cap: RepoCap) -> Grant | None:
     return grant.model_copy(
         update={
             "max_running_children": limit,
-            "publish": PublishRights() if cap.publish is False else grant.publish.narrowed(cap.publish),
+            "publish": PublishRights()
+            if cap.publish is False
+            else grant.publish.narrowed(cap.publish),
             "grantable": Grantable(
                 mounts=mounts, loose=g.loose and cap.loose is not False, egress=egress
             ),

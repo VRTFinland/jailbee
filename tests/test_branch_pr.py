@@ -188,10 +188,14 @@ def test_choose_pr_source_lists_own_branch_first(mocker, selected):
     )
 
 
-@pytest.mark.parametrize("case", ["default", "base", "remote", "unbound_number", "unbound_target", "bound_base", "new_base"])
+@pytest.mark.parametrize(
+    "case",
+    ["default", "base", "remote", "unbound_number", "unbound_target", "bound_base", "new_base"],
+)
 def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
     from jailbee.branch_pr import publish_source_manifest
     from jailbee.pr import PrError, PrInfo
+
     p = source_publisher
     data = json.loads(p["snapshot"].files["m.json"])
     if case in {"default", "base"}:
@@ -207,13 +211,24 @@ def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
         p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
     elif case == "bound_base":
         data["pr"] = 77
-        p["incus"].config_get_checked.side_effect = lambda full, key: "77" if key == "user.jailbee.pr" else None
+        p["incus"].config_get_checked.side_effect = lambda full, key: (
+            "77" if key == "user.jailbee.pr" else None
+        )
         p["resolve"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "develop")
     else:
         data["base"] = "develop"
     p["snapshot"].files["m.json"] = json.dumps(data)
     with pytest.raises(PrError):
-        publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: True, own_branches_only=True)
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: True,
+            own_branches_only=True,
+        )
     p["fetch"].assert_not_called()
     p["push"].assert_not_called()
 
@@ -222,16 +237,34 @@ def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
 def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
     from jailbee.branch_pr import publish_source_manifest
     from jailbee.pr import PrInfo
+
     p = source_publisher
     if bound:
         data = json.loads(p["snapshot"].files["m.json"])
         data["pr"] = 42
         p["snapshot"].files["m.json"] = json.dumps(data)
-        p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == "user.jailbee.pr" else None
+        p["incus"].config_get_checked.side_effect = lambda full, key: (
+            "42" if key == "user.jailbee.pr" else None
+        )
         p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     lines = []
-    assert publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: False, own_branches_only=True, result_sink=lines.append) == 0
-    assert lines == [f"{'updated' if bound else 'opened'} PR #42: https://github.com/acme/widgets/pull/42"]
+    assert (
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: False,
+            own_branches_only=True,
+            result_sink=lines.append,
+        )
+        == 0
+    )
+    assert lines == [
+        f"{'updated' if bound else 'opened'} PR #42: https://github.com/acme/widgets/pull/42"
+    ]
     assert json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]["pr"] == 42
 
 

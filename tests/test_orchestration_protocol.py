@@ -38,14 +38,40 @@ def test_orchestration_modules_cold_import(module: str) -> None:
 
 
 def test_publish_manifest_valid():
-    m = parse_manifest("publish-x.json", json.dumps({"version": 1, "type": "publish", "id": "publish-x", "outbox": "issue", "manifest": "close-12.json"}), {})
+    m = parse_manifest(
+        "publish-x.json",
+        json.dumps(
+            {
+                "version": 1,
+                "type": "publish",
+                "id": "publish-x",
+                "outbox": "issue",
+                "manifest": "close-12.json",
+            }
+        ),
+        {},
+    )
     assert m.type == "publish" and m.manifest == "close-12.json"
 
 
-@pytest.mark.parametrize("name,outbox", [("../x.json", "issue"), ("a.progress.json", "issue"), ("a.json", "other")])
+@pytest.mark.parametrize(
+    "name,outbox", [("../x.json", "issue"), ("a.progress.json", "issue"), ("a.json", "other")]
+)
 def test_publish_manifest_rejects_unsafe_target(name, outbox):
     with pytest.raises(ManifestError):
-        parse_manifest("publish-x.json", json.dumps({"version": 1, "type": "publish", "id": "publish-x", "outbox": outbox, "manifest": name}), {})
+        parse_manifest(
+            "publish-x.json",
+            json.dumps(
+                {
+                    "version": 1,
+                    "type": "publish",
+                    "id": "publish-x",
+                    "outbox": outbox,
+                    "manifest": name,
+                }
+            ),
+            {},
+        )
 
 
 def test_refresh_manifest_valid() -> None:

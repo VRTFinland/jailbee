@@ -10,6 +10,7 @@ import signal
 import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _metadata_version
 from pathlib import Path, PurePosixPath
@@ -764,7 +765,7 @@ def tick(
             if node.full in publishes:
                 publish_ctx = context(node)
                 if publish_ctx is not None:
-                    publishing.settle(publish_ctx, lambda ref, out: _reply(publish_ctx, ref, out, memory))
+                    publishing.settle(publish_ctx, partial(_reply, publish_ctx, memory=memory))
             # A revoked grant leaves no label; parked messages still get delivered.
             if node.running and has_pending(root, node.full):
                 _flush_unlabelled(node, context, root, incus)

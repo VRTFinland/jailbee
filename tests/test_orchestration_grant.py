@@ -56,8 +56,13 @@ def test_default_grant_label_is_the_spec_shape() -> None:
         ],
         "grantable": {"mounts": [], "loose": False, "egress": []},
         "default_runner": None,
-        "publish": {"issues": [], "foreign_issues": {"repos": [], "actions": []},
-                    "pull_requests": False, "pr_reviews": False, "max_actions_per_hour": 30},
+        "publish": {
+            "issues": [],
+            "foreign_issues": {"repos": [], "actions": []},
+            "pull_requests": False,
+            "pr_reviews": False,
+            "max_actions_per_hour": 30,
+        },
     }
 
 
@@ -79,9 +84,12 @@ def test_grant_without_publish_parses_with_empty_rights():
 
 
 def test_covers_issue_own_and_foreign():
-    from jailbee.orchestration.grant import PublishRights, ForeignIssueRights
-    rights = PublishRights(issues=("comment",), foreign_issues=ForeignIssueRights(
-        repos=("Org/Lib", "org/lib"), actions=("comment",)))
+    from jailbee.orchestration.grant import ForeignIssueRights, PublishRights
+
+    rights = PublishRights(
+        issues=("comment",),
+        foreign_issues=ForeignIssueRights(repos=("Org/Lib", "org/lib"), actions=("comment",)),
+    )
     assert rights.foreign_issues.repos == ("org/lib",)
     assert rights.covers_issue("comment", "a/b", foreign=False)
     assert not rights.covers_issue("state", "a/b", foreign=False)
@@ -95,16 +103,24 @@ def test_covers_issue_own_and_foreign():
 @pytest.mark.parametrize("repos", [("org",), ("org/lib/x",), ("*", "org/lib")])
 def test_foreign_repos_validation(repos):
     from jailbee.orchestration.grant import ForeignIssueRights
+
     with pytest.raises(ValidationError):
         ForeignIssueRights(repos=repos)
 
 
 def test_effective_grant_narrows_publish():
-    from jailbee.orchestration.grant import PublishRights, ForeignIssueRights
-    rights = PublishRights(issues=("state", "comment", "comment"), pull_requests=True,
-        foreign_issues=ForeignIssueRights(repos=("*",), actions=("comment", "state")))
-    cap = PublishRights(issues=("comment",), max_actions_per_hour=10,
-        foreign_issues=ForeignIssueRights(repos=("org/lib",), actions=("comment",)))
+    from jailbee.orchestration.grant import ForeignIssueRights, PublishRights
+
+    rights = PublishRights(
+        issues=("state", "comment", "comment"),
+        pull_requests=True,
+        foreign_issues=ForeignIssueRights(repos=("*",), actions=("comment", "state")),
+    )
+    cap = PublishRights(
+        issues=("comment",),
+        max_actions_per_hour=10,
+        foreign_issues=ForeignIssueRights(repos=("org/lib",), actions=("comment",)),
+    )
     narrowed = effective_grant(Grant(publish=rights), RepoCap(publish=cap)).publish
     assert narrowed.issues == ("comment",)
     assert narrowed.max_actions_per_hour == 10
@@ -118,8 +134,11 @@ def test_effective_grant_narrows_publish():
 
 def test_cap_excess_names_publish_overreach():
     from jailbee.orchestration.grant import PublishRights
-    messages = cap_excess(Grant(publish=PublishRights(issues=("state",))),
-                          RepoCap(publish=PublishRights(issues=("comment",))))
+
+    messages = cap_excess(
+        Grant(publish=PublishRights(issues=("state",))),
+        RepoCap(publish=PublishRights(issues=("comment",))),
+    )
     assert any("issues: state" in line for line in messages)
 
 

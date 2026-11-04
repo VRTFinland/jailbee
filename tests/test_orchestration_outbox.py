@@ -21,7 +21,10 @@ FULL = "proj-child"
 
 def test_grant_json_has_publish():
     from jailbee.orchestration.grant import Grant, PublishRights
-    data = json.loads(outbox.grant_json_text(Grant(publish=PublishRights(issues=("comment",))), None, None))
+
+    data = json.loads(
+        outbox.grant_json_text(Grant(publish=PublishRights(issues=("comment",))), None, None)
+    )
     assert data["publish"]["issues"] == ["comment"]
 
 

@@ -97,10 +97,24 @@ def test_send_publish_builds_manifest(script, base, tmp_path, flag, outbox):
     assert result.returncode == 0, result.stderr
     files = list((base / "outbox").glob("*.json"))
     assert len(files) == 1
-    assert json.loads(files[0].read_text()) == {"version": 1, "id": result.stdout.strip(), "type": "publish", "outbox": outbox, "manifest": "close-12.json"}
+    assert json.loads(files[0].read_text()) == {
+        "version": 1,
+        "id": result.stdout.strip(),
+        "type": "publish",
+        "outbox": outbox,
+        "manifest": "close-12.json",
+    }
 
 
-@pytest.mark.parametrize("args", [[], ["--issue", "a.json", "--pr", "b.json"], ["--issue", "../x.json"], ["--pr", "a.progress.json"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["--issue", "a.json", "--pr", "b.json"],
+        ["--issue", "../x.json"],
+        ["--pr", "a.progress.json"],
+    ],
+)
 def test_send_publish_needs_exactly_one_safe_target(script, base, tmp_path, args):
     result = run(script, "send", "publish", *args, env=env_for(base, tmp_path))
     assert result.returncode == 2

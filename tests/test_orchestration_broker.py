@@ -50,10 +50,19 @@ def _child(
 def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
     from jailbee.orchestration import publishing
     from jailbee.orchestration.state import atomic_write_text
+
     rig = Rig(tmp_path, monkeypatch)
     rig.incus.list_containers.return_value = [_c("proj-orch") if revoked else _orch()]
-    atomic_write_text(rig.root / "publish-inflight.json", json.dumps({"proj-orch": {"ref": "pub-1", "outbox": "issue", "manifest": "a.json", "actions": []}}))
-    atomic_write_text(publishing._result(rig.root, "proj-orch", "pub-1"), json.dumps({"state": "done", "detail": "https://github.com/org/repo/issues/1"}))
+    atomic_write_text(
+        rig.root / "publish-inflight.json",
+        json.dumps(
+            {"proj-orch": {"ref": "pub-1", "outbox": "issue", "manifest": "a.json", "actions": []}}
+        ),
+    )
+    atomic_write_text(
+        publishing._result(rig.root, "proj-orch", "pub-1"),
+        json.dumps({"state": "done", "detail": "https://github.com/org/repo/issues/1"}),
+    )
     rig.tick()
     assert [(s.ref, s.state) for _, s in rig.statuses()] == [("pub-1", "done")]
     rig.tick()
@@ -62,14 +71,17 @@ def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
 
 def test_publish_worker_starts_after_journal_reply_and_delete(tmp_path, monkeypatch):
     from jailbee.orchestration import publishing
+
     rig = Rig(tmp_path, monkeypatch)
     rig.incus.list_containers.return_value = [_orch()]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
+
     def start(ctx, manifest):
         assert rig.statuses()[0][1].state == "started"
         assert rig.delete.call_count == 1
         assert rig.journal.seen(ctx.sender.key, manifest_digest("pub-1.json", json.dumps(data), {}))
+
     monkeypatch.setattr(publishing, "start", start)
     rig.tick()
 

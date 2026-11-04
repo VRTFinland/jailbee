@@ -1,36 +1,70 @@
 """Grant-controlled publication: durable acceptance, final policy and settlement."""
+
+import json
 from dataclasses import replace
 from datetime import timedelta
-import json
 from unittest.mock import Mock
 
 import pytest
 
 from jailbee import issue_outbox, pr_outbox
-from jailbee.orchestration import actions, labels, publishing
-from jailbee.orchestration.actions import Outcome, dispatch
+from jailbee.orchestration import labels, publishing
+from jailbee.orchestration.actions import dispatch
 from jailbee.orchestration.grant import Grant, PublishRights
 from jailbee.orchestration.protocol import PublishManifest
-from tests.test_orchestration_actions import _ctx, _node
 from jailbee.outbox_io import ContainerIdentity, JournalStore
+from tests.test_orchestration_actions import _ctx, _node
 
 
 @pytest.fixture
 def rig(tmp_path, mocker):
-    ctx = _ctx(tmp_path, _node("proj-o", **{labels.GRANT: Grant(publish=PublishRights(issues=("comment",))).to_label()}))
-    files = {"a.json": json.dumps({"version": 1, "actions": [{"type": "comment", "repo": ".", "issue": 12, "body": "hello"}]})}
-    mocker.patch.object(issue_outbox, "read_issue_outbox", side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(files))
-    mocker.patch.object(publishing, "JournalStore", return_value=JournalStore(tmp_path / "journals"))
-    mocker.patch.object(publishing, "container_identity", return_value=ContainerIdentity("proj-o", "created"))
-    mocker.patch.object(issue_outbox, "resolve_repo_targets", return_value={".": issue_outbox.RepoTarget(".", tmp_path, "org/repo")})
+    ctx = _ctx(
+        tmp_path,
+        _node(
+            "proj-o", **{labels.GRANT: Grant(publish=PublishRights(issues=("comment",))).to_label()}
+        ),
+    )
+    files = {
+        "a.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [{"type": "comment", "repo": ".", "issue": 12, "body": "hello"}],
+            }
+        )
+    }
+    mocker.patch.object(
+        issue_outbox,
+        "read_issue_outbox",
+        side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(files),
+    )
+    mocker.patch.object(
+        publishing, "JournalStore", return_value=JournalStore(tmp_path / "journals")
+    )
+    mocker.patch.object(
+        publishing, "container_identity", return_value=ContainerIdentity("proj-o", "created")
+    )
+    mocker.patch.object(
+        issue_outbox,
+        "resolve_repo_targets",
+        return_value={".": issue_outbox.RepoTarget(".", tmp_path, "org/repo")},
+    )
     threads = []
+
     class Thread:
         def __init__(self, *, target, args, daemon):
             self.target, self.args = target, args
+
         def start(self):
             threads.append(self)
+
     mocker.patch.object(publishing.threading, "Thread", Thread)
-    publish = mocker.patch.object(publishing, "publish_selected", side_effect=lambda *a, **kw: kw["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1") or 0)
+    publish = mocker.patch.object(
+        publishing,
+        "publish_selected",
+        side_effect=lambda *a, **kw: (
+            kw["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1") or 0
+        ),
+    )
     m = PublishManifest(version=1, id="pub-1", type="publish", outbox="issue", manifest="a.json")
     return ctx, m, files, threads, publish
 
@@ -56,7 +90,11 @@ def test_publish_started_then_done_with_urls(rig):
 
 def test_uncovered_issue_action_refused_whole(rig):
     ctx, m, files, threads, publish = rig
-    files["a.json"] = files["a.json"].replace('"comment"', '"create"').replace('"issue": 12,', '"ref": "new", "title": "title",')
+    files["a.json"] = (
+        files["a.json"]
+        .replace('"comment"', '"create"')
+        .replace('"issue": 12,', '"ref": "new", "title": "title",')
+    )
     out = publishing.handle_publish(ctx, m)
     assert out.state == "refused" and "create" in out.detail
     assert not threads
@@ -71,11 +109,18 @@ def test_foreign_repo_needs_foreign_right(rig):
 
 
 def test_in_lock_policy_refusal_reported_failed(rig):
-    ctx, m, _, _, publish = rig
+    ctx, _m, _, _, publish = rig
+
     def execute(*args, **kw):
-        from jailbee.issue_manifest import StateAction, ExistingIssue
-        action = Mock(status="pending", action=StateAction(".", ExistingIssue(12), "closed", "completed", "open"), repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"))
+        from jailbee.issue_manifest import ExistingIssue, StateAction
+
+        action = Mock(
+            status="pending",
+            action=StateAction(".", ExistingIssue(12), "closed", "completed", "open"),
+            repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"),
+        )
         kw["policy"](Mock(manifests=[Mock(actions=[action])]))
+
     publish.side_effect = execute
     accept(rig)
     replies = []
@@ -94,7 +139,9 @@ def test_second_publish_while_inflight_refused(rig):
 
 def test_rate_cap_refuses_and_reserves_nothing(rig):
     ctx, m, *_ = rig
-    (ctx.root / "publish-budget.json").write_text(json.dumps({ctx.sender.full: [ctx.now.isoformat()] * 30}))
+    (ctx.root / "publish-budget.json").write_text(
+        json.dumps({ctx.sender.full: [ctx.now.isoformat()] * 30})
+    )
     before = (ctx.root / "publish-budget.json").read_text()
     assert publishing.handle_publish(ctx, m).state == "refused"
     assert (ctx.root / "publish-budget.json").read_text() == before
@@ -123,10 +170,17 @@ def test_recover_turns_inflight_into_uncertain_failure_once(rig):
 
 def test_in_lock_growth_cannot_exceed_reserved_budget(rig):
     from jailbee.issue_manifest import CommentAction, ExistingIssue
+
     ctx = rig[0]
+
     def execute(*args, **kw):
-        action = Mock(status="pending", action=CommentAction(".", ExistingIssue(12), "hello"), repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"))
+        action = Mock(
+            status="pending",
+            action=CommentAction(".", ExistingIssue(12), "hello"),
+            repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"),
+        )
         kw["policy"](Mock(manifests=[Mock(actions=[action, action])]))
+
     rig[4].side_effect = execute
     accept(rig)
     replies = []
@@ -136,24 +190,45 @@ def test_in_lock_growth_cannot_exceed_reserved_budget(rig):
 
 def test_review_policy_refuses_submodule_repository(rig, mocker):
     from jailbee.orchestration.publishing import _review_policy
+
     ctx = rig[0]
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
-    manifest = pr_outbox.parse_manifest("a.json", json.dumps({"version": 1, "repo": "org/submodule", "pr": 12, "head_sha": "a" * 40, "actions": [{"type": "comment", "body": "x"}]}), {})
+    manifest = pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/submodule",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "comment", "body": "x"}],
+            }
+        ),
+        {},
+    )
     with pytest.raises(pr_outbox.GateError, match="own repository"):
-        _review_policy(PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full)(manifest)
+        _review_policy(PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full)(
+            manifest
+        )
 
 
 def test_rate_budget_prunes_expired_reservations(rig):
     ctx, m, *_ = rig
-    (ctx.root / "publish-budget.json").write_text(json.dumps({ctx.sender.full: [(ctx.now - timedelta(hours=2)).isoformat()] * 30}))
+    (ctx.root / "publish-budget.json").write_text(
+        json.dumps({ctx.sender.full: [(ctx.now - timedelta(hours=2)).isoformat()] * 30})
+    )
     assert publishing.handle_publish(ctx, m).state == "started"
-    assert json.loads((ctx.root / "publish-budget.json").read_text())[ctx.sender.full] == [ctx.now.isoformat()]
+    assert json.loads((ctx.root / "publish-budget.json").read_text())[ctx.sender.full] == [
+        ctx.now.isoformat()
+    ]
 
 
 def test_settlement_delivery_failure_preserves_result(rig):
     accept(rig)
+
     def fail(*args):
         raise RuntimeError("delivery failed")
+
     with pytest.raises(RuntimeError):
         publishing.settle(rig[0], fail)
     replies = []
@@ -164,7 +239,9 @@ def test_settlement_delivery_failure_preserves_result(rig):
 def test_settle_appends_audit_line(rig):
     accept(rig)
     publishing.settle(rig[0], lambda *a: None)
-    rows = [json.loads(line) for line in (rig[0].root / "publish-log.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line) for line in (rig[0].root / "publish-log.jsonl").read_text().splitlines()
+    ]
     assert len(rows) == 1
     assert rows[0]["orchestrator"] == "proj-o"
     assert rows[0]["ref"] == "pub-1" and rows[0]["outcome"] == "done"
@@ -189,12 +266,26 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     ctx, m, *_ = rig
     rights = PublishRights(pull_requests=source, pr_reviews=not source)
     ctx.sender = replace(ctx.sender, config={labels.GRANT: Grant(publish=rights).to_label()})
-    manifest = {"version": 1, "repo": "org/repo", "pr": None if source else 12, "head_sha": None if source else "a" * 40,
-        "actions": [{"type": "description", "body": "B"}] if source else [{"type": "comment", "body": "x"}]}
+    manifest = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": None if source else 12,
+        "head_sha": None if source else "a" * 40,
+        "actions": [{"type": "description", "body": "B"}]
+        if source
+        else [{"type": "comment", "body": "x"}],
+    }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-    mocker.patch.object(pr_outbox, "read_outbox", return_value=pr_outbox.Outbox({"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")))
+    mocker.patch.object(
+        pr_outbox,
+        "read_outbox",
+        return_value=pr_outbox.Outbox(
+            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
+        ),
+    )
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+
     def publish(*args, **kw):
         assert kw["confirm"]("Publish foreign PR?") is False if source else kw["confirm"](1) is True
         if source:
@@ -204,6 +295,7 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
             kw["policy"](pr_outbox.parse_manifest("a.json", json.dumps(manifest), {}))
         kw["result_sink"]("opened PR #12: https://github.com/org/repo/pull/12")
         return 0
+
     if source:
         mocker.patch.object(publishing.branch_pr, "publish_source_manifest", side_effect=publish)
     else:
@@ -218,12 +310,24 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
 @pytest.mark.parametrize("source", [True, False])
 def test_pr_manifest_needs_matching_right(rig, mocker, source):
     ctx, m, *_ = rig
-    manifest = {"version": 1, "repo": "org/repo", "pr": None if source else 12,
-                "head_sha": None if source else "a" * 40,
-                "actions": [{"type": "description", "title": "T", "body": "B"}] if source else [{"type": "comment", "body": "x"}]}
+    manifest = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": None if source else 12,
+        "head_sha": None if source else "a" * 40,
+        "actions": [{"type": "description", "title": "T", "body": "B"}]
+        if source
+        else [{"type": "comment", "body": "x"}],
+    }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-    mocker.patch.object(pr_outbox, "read_outbox", return_value=pr_outbox.Outbox({"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")))
+    mocker.patch.object(
+        pr_outbox,
+        "read_outbox",
+        return_value=pr_outbox.Outbox(
+            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
+        ),
+    )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused"
     assert ("pull_requests" if source else "pr_reviews") in out.detail

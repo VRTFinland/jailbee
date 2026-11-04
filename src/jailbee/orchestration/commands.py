@@ -17,14 +17,14 @@ from jailbee.orchestration import labels, service
 from jailbee.orchestration.grant import (
     DEFAULT_MAX_RUNNING_CHILDREN,
     IMPLIED_OPERATIONS,
+    ISSUE_ACTION_KINDS,
     OPERATIONS,
+    ForeignIssueRights,
     Grant,
     Grantable,
     GrantError,
-    Operation,
-    ISSUE_ACTION_KINDS,
     IssueActionKind,
-    ForeignIssueRights,
+    Operation,
     PublishRights,
     cap_excess,
     effective_grant,
@@ -200,7 +200,9 @@ def _issue_kinds(values: tuple[str, ...]) -> tuple[IssueActionKind, ...]:
         return ()
     for value in values:
         if value not in ISSUE_ACTION_KINDS:
-            raise GrantError(f"unknown issue action {value!r}; known: {', '.join(ISSUE_ACTION_KINDS)}")
+            raise GrantError(
+                f"unknown issue action {value!r}; known: {', '.join(ISSUE_ACTION_KINDS)}"
+            )
     return cast("tuple[IssueActionKind, ...]", tuple(sorted(set(values))))
 
 
@@ -231,7 +233,9 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
                 raise GrantError("foreign repositories must have the same action list")
             repos.append(repo)
             actions = parsed
-        data["foreign_issues"] = ForeignIssueRights(repos=tuple(repos), actions=actions or ()).model_dump()
+        data["foreign_issues"] = ForeignIssueRights(
+            repos=tuple(repos), actions=actions or ()
+        ).model_dump()
     for name in ("pull_requests", "pr_reviews", "max_actions_per_hour"):
         if changes[name] is not None:
             data[name] = changes[name]
@@ -368,13 +372,19 @@ def _check_remote_bound(
     if p.issues or (p.foreign_issues.repos and p.foreign_issues.actions):
         required.append(("issues", ["issue", "apply", full]))
     if p.pull_requests:
-        required.append(("pull_requests", ["pr", "push", full, "--source-manifest", "publish.json"]))
+        required.append(
+            ("pull_requests", ["pr", "push", full, "--source-manifest", "publish.json"])
+        )
     if p.pr_reviews:
         required.append(("pr_reviews", ["review", "apply", full]))
     for right, argv in required:
         try:
-            policy_allows(argv, remote.commands, restrict_host=remote.restrict_host,
-                          unlocks=RemoteUnlocks.of(remote))
+            policy_allows(
+                argv,
+                remote.commands,
+                restrict_host=remote.restrict_host,
+                unlocks=RemoteUnlocks.of(remote),
+            )
         except RouteError as e:
             raise GrantError(f"publish right {right!r} needs manual publish permission: {e}") from e
     excess = policy.grant_excess(new, current, bound)

@@ -246,7 +246,9 @@ def publish_selected(
     raise_errors: bool = False,
     choose_mode: pr_outbox.ChooseMode | None = None,
     plan_sink: pr_outbox.PlanSink | None = None,
-    policy: Callable[[issue_outbox.PreparedBatch], None] | Callable[[pr_outbox.Manifest], None] | None = None,
+    policy: Callable[[issue_outbox.PreparedBatch], None]
+    | Callable[[pr_outbox.Manifest], None]
+    | None = None,
     result_sink: Callable[[str], None] | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
@@ -417,7 +419,10 @@ def publish_selected(
             if result_sink is not None:
                 for name, receipt in report.applied:
                     number = f" issue #{receipt.issue}" if receipt.issue is not None else ""
-                    result_sink(f"{name} action {receipt.index}: applied{number} ({receipt.url or 'no URL'})")
+                    result_sink(
+                        f"{name} action {receipt.index}: applied{number} "
+                        f"({receipt.url or 'no URL'})"
+                    )
             if raise_errors and report.failure is not None:
                 if report.failure.kind == "validation":
                     raise OutboxError(report.failure.detail)

@@ -4,8 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from jailbee.config.models_orchestration import GrantableConfig, OrchestrationProfile, PublishRightsConfig
-from jailbee.orchestration.grant import Grant, Grantable, GrantError, Operation, PublishRights, RepoCap
+from jailbee.config.models_orchestration import (
+    GrantableConfig,
+    OrchestrationProfile,
+    PublishRightsConfig,
+)
+from jailbee.orchestration.grant import (
+    Grant,
+    Grantable,
+    GrantError,
+    Operation,
+    PublishRights,
+    RepoCap,
+)
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
 
 if TYPE_CHECKING:
@@ -86,5 +97,7 @@ def repo_cap(cfg: Config) -> RepoCap:
         mounts=_tuple(repo.mounts),
         egress=_tuple(repo.egress),
         loose=repo.loose,
-        publish=repo.publish.to_rights() if isinstance(repo.publish, PublishRightsConfig) else repo.publish,
+        publish=repo.publish.to_rights()
+        if isinstance(repo.publish, PublishRightsConfig)
+        else repo.publish,
     )

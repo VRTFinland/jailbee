@@ -366,11 +366,23 @@ def test_policy_refusal_applies_nothing(env, kind):
     from jailbee import pr_outbox
     from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, publish_selected
+
     def refuse(value):
         error = issue_outbox.IssueGateError if kind == "issue" else pr_outbox.GateError
         raise error("issue action `state` is not granted")
+
     with pytest.raises(OutboxError, match="state"):
-        publish_selected(env[0], env[1], IDENTITY.full_name, ProposalId(kind, "001.json"), journal_store=env[3], options=PublishOptions(), confirm=lambda n: True, raise_errors=True, policy=refuse)
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId(kind, "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(),
+            confirm=lambda n: True,
+            raise_errors=True,
+            policy=refuse,
+        )
     for mutation in env[4].values():
         mutation.assert_not_called()
 
@@ -378,8 +390,23 @@ def test_policy_refusal_applies_nothing(env, kind):
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     from jailbee.outbox.publish import PublishOptions, publish_selected
+
     seen, lines = [], []
-    assert publish_selected(env[0], env[1], IDENTITY.full_name, ProposalId(kind, "001.json"), journal_store=env[3], options=PublishOptions(), confirm=lambda n: True, raise_errors=True, policy=seen.append, result_sink=lines.append) == 0
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId(kind, "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(),
+            confirm=lambda n: True,
+            raise_errors=True,
+            policy=seen.append,
+            result_sink=lines.append,
+        )
+        == 0
+    )
     assert len(seen) == 1
     assert "001.json" not in env[2][kind].as_dict()
     assert any("https://github.com/acme/repo/" in line for line in lines)
@@ -395,14 +422,27 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
 def test_policy_not_reached_when_confirmation_rewrites_manifest(env, kind):
     from jailbee.outbox.models import OutboxChanged
     from jailbee.outbox.publish import PublishOptions, publish_selected
+
     seen = []
+
     def confirm(n):
         files = env[2][kind].as_dict()
         files["001.json"] += " "
         env[2][kind] = store(kind, files)
         return True
+
     with pytest.raises(OutboxChanged):
-        publish_selected(env[0], env[1], IDENTITY.full_name, ProposalId(kind, "001.json"), journal_store=env[3], options=PublishOptions(), confirm=confirm, raise_errors=True, policy=seen.append)
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId(kind, "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(),
+            confirm=confirm,
+            raise_errors=True,
+            policy=seen.append,
+        )
     assert seen == []
     for mutation in env[4].values():
         mutation.assert_not_called()

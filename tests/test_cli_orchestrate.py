@@ -85,6 +85,7 @@ def test_profile_save_missing_name_noninteractive_exits_2(patched, monkeypatch):
 @pytest.mark.parametrize("enabled", [False, True])
 def test_show_prints_publish_rights(patched, enabled):
     from jailbee.orchestration.grant import PublishRights
+
     grant = Grant(publish=PublishRights(issues=("comment",)) if enabled else PublishRights())
     patched.show.return_value = GrantRow("a", "myrepo-a", grant, None, 0, grant)
     res = runner.invoke(app, ["orchestrate", "show", "a"])
@@ -93,7 +94,21 @@ def test_show_prints_publish_rights(patched, enabled):
 
 
 def test_publish_flags_reach_commands(patched):
-    res = runner.invoke(app, ["orchestrate", "grant", "a", "--publish-issues", "comment,state", "--publish-prs", "--publish-rate", "12", "--publish-foreign-issues", "org/lib:comment"])
+    res = runner.invoke(
+        app,
+        [
+            "orchestrate",
+            "grant",
+            "a",
+            "--publish-issues",
+            "comment,state",
+            "--publish-prs",
+            "--publish-rate",
+            "12",
+            "--publish-foreign-issues",
+            "org/lib:comment",
+        ],
+    )
     assert res.exit_code == 0, res.output
     flags = patched.grant.call_args.args[3]
     assert flags.publish_issues == ("comment", "state")

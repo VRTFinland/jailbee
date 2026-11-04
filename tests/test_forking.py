@@ -45,6 +45,7 @@ def test_inherited_authored_labels_become_adopted():
 
 def test_fork_does_not_copy_grant_label():
     from jailbee.orchestration import labels
+
     incus = _labels(**{"pr": "4", "orchestration.grant": '{"publish":{"pull_requests":true}}'})
     inherited = forking.inherited_pr_labels(incus, "src")
     assert inherited == {"user.jailbee.pr": "4"}

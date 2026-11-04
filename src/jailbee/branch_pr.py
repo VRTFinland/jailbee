@@ -99,8 +99,12 @@ def default_head(source: str) -> str:
 
 
 def _check_own_source(
-    cfg: Config, manifest: Manifest, head: str, base: str,
-    target: PrInfo | None, bound: set[str],
+    cfg: Config,
+    manifest: Manifest,
+    head: str,
+    base: str,
+    target: PrInfo | None,
+    bound: set[str],
 ) -> None:
     from jailbee import git, pr
 
@@ -119,7 +123,9 @@ def _check_own_source(
         if base != cfg.default_branch:
             raise pr.PrError("a new source PR must use the default branch as base")
         if git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head) is not None:
-            raise pr.PrError(f"branch `{head}` already exists upstream and is not bound to this container")
+            raise pr.PrError(
+                f"branch `{head}` already exists upstream and is not bound to this container"
+            )
 
 
 def publish_source_manifest(

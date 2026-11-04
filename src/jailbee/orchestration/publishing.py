@@ -1,4 +1,5 @@
 """Request-driven host publication with durable budget and asynchronous results."""
+
 from __future__ import annotations
 
 import hashlib
@@ -51,16 +52,21 @@ def _kind(action: issue_manifest.IssueAction) -> str:
 
 def _coverage(rights: PublishRights, kind: str, target: issue_outbox.RepoTarget) -> None:
     if not rights.covers_issue(kind, target.slug, foreign=target.foreign):
-        raise issue_outbox.IssueGateError(f"issue action `{kind}` on `{target.slug}` is not granted")
+        raise issue_outbox.IssueGateError(
+            f"issue action `{kind}` on `{target.slug}` is not granted"
+        )
 
 
-def _issue_policy(rights: PublishRights, count: int) -> Callable[[issue_outbox.PreparedBatch], None]:
+def _issue_policy(
+    rights: PublishRights, count: int
+) -> Callable[[issue_outbox.PreparedBatch], None]:
     def check(batch: issue_outbox.PreparedBatch) -> None:
         pending = [a for m in batch.manifests for a in m.actions if a.status == "pending"]
         for action in pending:
             _coverage(rights, _kind(action.action), action.repo)
         if len(pending) > count:
             raise issue_outbox.IssueGateError("pending actions exceed the reserved publish budget")
+
     return check
 
 
@@ -70,7 +76,9 @@ def _own_review_repo(cfg: Config, manifest: pr_outbox.Manifest) -> None:
         raise pr_outbox.GateError("PR reviews may target only the own repository")
 
 
-def _review_policy(rights: PublishRights, count: int, cfg: Config, incus: Incus, full: str) -> Callable[[pr_outbox.Manifest], None]:
+def _review_policy(
+    rights: PublishRights, count: int, cfg: Config, incus: Incus, full: str
+) -> Callable[[pr_outbox.Manifest], None]:
     def check(manifest: pr_outbox.Manifest) -> None:
         if pr_outbox.is_source_manifest(manifest) or not rights.pr_reviews:
             raise pr_outbox.GateError("pr_reviews is not granted for this manifest")
@@ -79,17 +87,27 @@ def _review_policy(rights: PublishRights, count: int, cfg: Config, incus: Incus,
         progress = pr_outbox._publication_progress(snapshot, manifest.name, len(manifest.actions))
         if len(pr_outbox.pending_indices(manifest, progress)) > count:
             raise pr_outbox.GateError("review actions exceed the reserved publish budget")
+
     return check
 
 
-def _precheck(ctx: ActionContext, m: PublishManifest, rights: PublishRights) -> tuple[str, list[dict[str, str]], bool]:
+def _precheck(
+    ctx: ActionContext, m: PublishManifest, rights: PublishRights
+) -> tuple[str, list[dict[str, str]], bool]:
     uid = ctx.cfg.container_user.uid
     if m.outbox == "issue":
         snapshot = issue_outbox.read_issue_outbox(ctx.incus, ctx.sender.full, uid=uid)
         targets = issue_outbox.resolve_repo_targets(ctx.cfg)
         refusals: list[str] = []
-        proposals = issue_outbox._load_proposals(snapshot, (m.manifest,), targets, ctx.cfg.repo_root,
-            container_identity(ctx.incus, ctx.sender.full), JournalStore(), refusals)
+        proposals = issue_outbox._load_proposals(
+            snapshot,
+            (m.manifest,),
+            targets,
+            ctx.cfg.repo_root,
+            container_identity(ctx.incus, ctx.sender.full),
+            JournalStore(),
+            refusals,
+        )
         if refusals:
             raise issue_outbox.IssueGateError("; ".join(refusals))
         actions = []
@@ -100,7 +118,9 @@ def _precheck(ctx: ActionContext, m: PublishManifest, rights: PublishRights) -> 
                 receipt = receipts.get(index)
                 if receipt is not None:
                     if receipt.state != "applied":
-                        raise issue_outbox.IssueGateError("outcome uncertain; resolve with `jb outbox` on the host")
+                        raise issue_outbox.IssueGateError(
+                            "outcome uncertain; resolve with `jb outbox` on the host"
+                        )
                     continue
                 target = issue_outbox.target_for(targets, action.repo, ctx.cfg.repo_root)
                 if target is None:
@@ -112,7 +132,9 @@ def _precheck(ctx: ActionContext, m: PublishManifest, rights: PublishRights) -> 
     snapshot_pr = pr_outbox.read_outbox(ctx.incus, ctx.sender.full, uid=uid, strict=True)
     if m.manifest not in snapshot_pr.files or snapshot_pr.rejected:
         raise pr_outbox.GateError("manifest unavailable or outbox snapshot incomplete")
-    manifest_pr = pr_outbox.parse_manifest(m.manifest, snapshot_pr.files[m.manifest], snapshot_pr.files)
+    manifest_pr = pr_outbox.parse_manifest(
+        m.manifest, snapshot_pr.files[m.manifest], snapshot_pr.files
+    )
     if pr_outbox.is_source_manifest(manifest_pr):
         if not rights.pull_requests:
             raise pr_outbox.GateError("pull_requests is not granted")
@@ -123,7 +145,17 @@ def _precheck(ctx: ActionContext, m: PublishManifest, rights: PublishRights) -> 
     _own_review_repo(ctx.cfg, manifest_pr)
     progress = pr_outbox._publication_progress(snapshot_pr, m.manifest, len(manifest_pr.actions))
     indices = pr_outbox.pending_indices(manifest_pr, progress)
-    return "review", [{"kind": type(manifest_pr.actions[i]).__name__.removesuffix("Action").lower(), "repo": manifest_pr.repo} for i in indices], False
+    return (
+        "review",
+        [
+            {
+                "kind": type(manifest_pr.actions[i]).__name__.removesuffix("Action").lower(),
+                "repo": manifest_pr.repo,
+            }
+            for i in indices
+        ],
+        False,
+    )
 
 
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
@@ -145,20 +177,33 @@ def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
             return refused("publish rate cap exhausted; request refused whole")
         budget[ctx.sender.full] = recent + [ctx.now.isoformat()] * len(actions)
         _save(ctx.root, "publish-budget.json", budget)
-        current[ctx.sender.full] = {"ref": m.id, "outbox": m.outbox, "manifest": m.manifest,
-            "started_at": ctx.now.isoformat(), "actions": actions, "kind": kind, "foreign": foreign,
-            "rights": grant.publish.model_dump(mode="json")}
+        current[ctx.sender.full] = {
+            "ref": m.id,
+            "outbox": m.outbox,
+            "manifest": m.manifest,
+            "started_at": ctx.now.isoformat(),
+            "actions": actions,
+            "kind": kind,
+            "foreign": foreign,
+            "rights": grant.publish.model_dump(mode="json"),
+        }
         _save(ctx.root, "publish-inflight.json", current)
     except Exception as e:
         return refused(str(e))
-    return Outcome("started", f"publishing {m.outbox} manifest {m.manifest}: {len(actions)} actions")
+    return Outcome(
+        "started", f"publishing {m.outbox} manifest {m.manifest}: {len(actions)} actions"
+    )
 
 
 def start(ctx: ActionContext, m: PublishManifest) -> None:
     """Activate only after the broker recorded, replied to and removed the request."""
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == m.id:
-        threading.Thread(target=_run, args=(ctx.cfg, ctx.root, ctx.sender.full, ctx.sender.short, entry), daemon=True).start()
+        threading.Thread(
+            target=_run,
+            args=(ctx.cfg, ctx.root, ctx.sender.full, ctx.sender.short, entry),
+            daemon=True,
+        ).start()
 
 
 def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) -> None:
@@ -168,14 +213,36 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
         rights = PublishRights.model_validate(entry["rights"])
         count = len(entry["actions"])
         if entry["kind"] == "source":
-            result = branch_pr.publish_source_manifest(cfg, incus, short, entry["manifest"],
-                force=False, yes=True, confirm=lambda q: False, own_branches_only=True, result_sink=lines.append)
+            result = branch_pr.publish_source_manifest(
+                cfg,
+                incus,
+                short,
+                entry["manifest"],
+                force=False,
+                yes=True,
+                confirm=lambda q: False,
+                own_branches_only=True,
+                result_sink=lines.append,
+            )
         else:
-            policy = _issue_policy(rights, count) if entry["kind"] == "issue" else _review_policy(rights, count, cfg, incus, full)
-            result = publish_selected(cfg, incus, full, ProposalId(entry["outbox"], entry["manifest"]),
-                journal_store=JournalStore(), options=PublishOptions(foreign=entry["foreign"]),
-                confirm=lambda n: True, confirm_foreign=lambda q: False, raise_errors=True,
-                policy=policy, result_sink=lines.append)
+            policy = (
+                _issue_policy(rights, count)
+                if entry["kind"] == "issue"
+                else _review_policy(rights, count, cfg, incus, full)
+            )
+            result = publish_selected(
+                cfg,
+                incus,
+                full,
+                ProposalId(entry["outbox"], entry["manifest"]),
+                journal_store=JournalStore(),
+                options=PublishOptions(foreign=entry["foreign"]),
+                confirm=lambda n: True,
+                confirm_foreign=lambda q: False,
+                raise_errors=True,
+                policy=policy,
+                result_sink=lines.append,
+            )
         if result:
             raise RuntimeError("publication failed; check `jb outbox` on the host")
         state, detail = "done", "\n".join(lines) or "nothing pending"
@@ -184,8 +251,17 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
         if "uncertain" in detail.lower():
             detail += "; resolve with `jb outbox` on the host"
     try:
-        atomic_write_text(_result(root, full, entry["ref"]), json.dumps({"ref": entry["ref"],
-            "state": state, "detail": detail[:4000], "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)]}))
+        atomic_write_text(
+            _result(root, full, entry["ref"]),
+            json.dumps(
+                {
+                    "ref": entry["ref"],
+                    "state": state,
+                    "detail": detail[:4000],
+                    "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
+                }
+            ),
+        )
     except Exception:
         log.exception("broker: could not save publish result for %s %s", full, entry["ref"])
 
@@ -200,9 +276,16 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
         return
     result = json.loads(path.read_text())
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
-    audit = {"time": ctx.now.isoformat(), "orchestrator": ctx.sender.full, "ref": entry["ref"],
-        "outbox": entry["outbox"], "manifest": entry["manifest"], "actions": entry["actions"],
-        "urls": result.get("urls", []), "outcome": result["state"]}
+    audit = {
+        "time": ctx.now.isoformat(),
+        "orchestrator": ctx.sender.full,
+        "ref": entry["ref"],
+        "outbox": entry["outbox"],
+        "manifest": entry["manifest"],
+        "actions": entry["actions"],
+        "urls": result.get("urls", []),
+        "outcome": result["state"],
+    }
     with (ctx.root / "publish-log.jsonl").open("a") as stream:
         stream.write(json.dumps(audit, sort_keys=True) + "\n")
     log.info("broker: publish %s", json.dumps(audit, sort_keys=True))
@@ -215,8 +298,17 @@ def recover(root: Path) -> None:
     for full, entry in inflight(root).items():
         path = _result(root, full, entry["ref"])
         if not path.exists():
-            atomic_write_text(path, json.dumps({"ref": entry["ref"], "state": "failed",
-                "detail": "outcome uncertain: the broker restarted during publish; check `jb outbox` on the host"}))
+            atomic_write_text(
+                path,
+                json.dumps(
+                    {
+                        "ref": entry["ref"],
+                        "state": "failed",
+                        "detail": "outcome uncertain: the broker restarted during publish; "
+                        "check `jb outbox` on the host",
+                    }
+                ),
+            )
 
 
 HANDLERS["publish"] = handle_publish
