@@ -1455,8 +1455,10 @@ def assess_branch_autostart(
     # merely lags `origin/<default_branch>` is not a privilege escalation, and
     # used to be treated as one.
     profile_name = opts.autostart_profile or loaded.cfg.autostart.default_profile
-    profile = loaded.cfg.autostart.profiles.get(profile_name) if profile_name else None
-    selected_services = profile.services if profile is not None and profile != "all" else None
+    from jailbee.autostart_profiles import selection
+
+    profile = selection(loaded.cfg.autostart, profile_name)
+    selected_services = profile.services if profile != "all" else None
     if opts.autostart_services is not None:
         selected_services = opts.autostart_services
     verdict = branch_config.assess_escalation(
@@ -2316,7 +2318,7 @@ def _new_container(
     # From here on the container is complete; an autostart failure leaves it
     # in place (and running) for debugging, child or not.
     progress.provisioned = True
-    if effective_cfg.autostart.profiles:
+    if selected_profile is not None:
         from jailbee.autostart_plan import normalize_stages
         from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
 
@@ -2336,12 +2338,10 @@ def _new_container(
     if opts.autostart:
         from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope
 
-        profile = (
-            assessment.effective_cfg.autostart.profiles.get(selected_profile)
-            if selected_profile
-            else None
-        )
-        service_names = profile.services if profile is not None and profile != "all" else None
+        from jailbee.autostart_profiles import selection
+
+        profile = selection(assessment.effective_cfg.autostart, selected_profile)
+        service_names = profile.services if profile != "all" else None
         if opts.autostart_services is not None:
             service_names = opts.autostart_services
         incus.config_set(

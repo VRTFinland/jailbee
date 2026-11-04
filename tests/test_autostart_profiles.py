@@ -48,7 +48,6 @@ def test_resolve_profile_no_profiles(make_cfg, tmp_path, mocker):
 
     incus, _ = state_incus(mocker)
     assert resolve_profile(make_cfg(tmp_path), incus, "c") is None
-    incus.config_get.assert_not_called()
 
 
 def test_profiled_config_carries_filtered_block(make_cfg, tmp_path):
@@ -233,7 +232,7 @@ def test_new_flag_in_repo_without_profiles_exits_2(make_cfg, tmp_path, mocker):
     _patch_new_container_deps(mocker)
     incus, _ = state_incus(mocker)
     incus.exists.return_value = False
-    with pytest.raises(ProfileError, match="this repository defines no autostart profiles"):
+    with pytest.raises(ProfileError, match="autostart profile `bad` is not defined"):
         new_container(_cfg_for_new(make_cfg, tmp_path), incus, _opts(autostart_profile="bad"))
 
 
@@ -401,3 +400,50 @@ def test_new_no_autostart_records_all_profile_on_create(make_cfg, tmp_path, mock
     incus.exists.return_value = False
     new_container(cfg, incus, _opts(autostart=False, autostart_profile="light"))
     assert state[CREATED_KEY] == "deps"
+
+
+def test_stored_none_honoured_without_repo_profiles(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY, resolve_profile
+
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    assert resolve_profile(make_cfg(tmp_path), incus, "c") == "none"
+
+
+def test_new_none_selects_no_services(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import new_container
+    from tests.test_lifecycle_autostart_detach import _cfg_for_new, _opts, _patch_new_container_deps
+
+    cfg = _cfg_for_new(make_cfg, tmp_path)
+    _patch_new_container_deps(mocker)
+    incus, _ = state_incus(mocker)
+    incus.exists.return_value = False
+    services = mocker.patch("jailbee.services.autostart.approval_envelope", return_value="ok")
+    new_container(cfg, incus, _opts(autostart_profile="none"))
+    assert services.call_args.args[1] == []
+
+
+def test_services_selection_honours_stored_builtin(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY
+    from jailbee.services.autostart import selected_services
+
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}})
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    assert selected_services(cfg, incus, "c") == []
+
+
+def test_start_honours_stored_builtin_without_repo_profiles(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.autostart_profiles import PROFILE_KEY
+    from jailbee.cli import _post_start_actions
+
+    cfg = make_cfg(tmp_path, autostart={"on_start": [{"stage": "web"}]})
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    for target in ("jailbee.hosts.sync_hosts", "jailbee.egress_proxy.sync_container",
+                   "jailbee.autostart.inject_github_token", "jailbee.cli._post_create_gui_launches"):
+        mocker.patch(target)
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    run = mocker.patch("jailbee.autostart.run_autostart", return_value=AutostartPlan([], []))
+    _post_start_actions(cfg, incus, "c", no_autostart=False)
+    assert run.call_args.args[0].autostart.on_start == []

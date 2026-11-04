@@ -4507,12 +4507,9 @@ def _post_start_actions(
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
 
-    if cfg.autostart.profiles:
-        profile = resolve_profile(cfg, incus, name)
-        missing = missing_on_create(cfg, incus, name, profile)
-        cfg = profiled_config(cfg, profile)
-    else:
-        missing = None
+    profile = resolve_profile(cfg, incus, name)
+    missing = missing_on_create(cfg, incus, name, profile) if profile is not None else None
+    cfg = profiled_config(cfg, profile)
     try:
         if missing is not None and missing.on_create:
             run_autostart(
@@ -11111,17 +11108,15 @@ def autostart_profile_cmd(
 ) -> None:
     """Show or switch a container's autostart profile."""
     from jailbee import prompting
-    from jailbee.autostart_profiles import ProfileError, show_profile, switch_profile
+    from jailbee.autostart_profiles import ProfileError, profile_names, show_profile, switch_profile
 
     cfg = _load_or_exit(config)
     missing_container = container is None
     incus, full = _resolve_existing(cfg, container)
     try:
-        if not cfg.autostart.profiles:
-            raise ProfileError("this repository defines no autostart profiles")
         if profile is None and missing_container:
             profile = prompting.choose_one(
-                "autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles]
+                "autostart profile", [prompting.Option(p, p, p) for p in profile_names(cfg.autostart)]
             )
         if profile is None:
             show_profile(cfg, incus, full)

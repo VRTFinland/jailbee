@@ -48,3 +48,16 @@ def test_switch_prompts_for_missing_container_and_name(make_cfg, tmp_path, mocke
     assert result.exit_code == 0, result.output
     picker.assert_called_once()
     assert state["user.jailbee.autostart_profile"] == "full"
+
+
+def test_profile_cmd_without_repo_profiles_switches_to_none(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = state_incus(mocker)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "c"))
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    result = CliRunner().invoke(app, ["autostart", "profile", "c", "none", "--no-run"])
+    assert result.exit_code == 0, result.output
+    incus.config_set.assert_any_call("c", PROFILE_KEY, "none")
