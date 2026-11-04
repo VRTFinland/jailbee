@@ -114,6 +114,56 @@ def test_container_skill_covers_identity_commands_and_policy() -> None:
     assert "child" in network and "orchestrator" in network
 
 
+def test_container_guidance_commands_resolve() -> None:
+    from typer.main import get_command
+
+    from jailbee.agent_instructions import PREAMBLE
+    from jailbee.cli import app
+    from jailbee.container_cli import container_app
+
+    skill = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
+    commands = {
+        "service ls": False,
+        "service start": False,
+        "service restart": False,
+        "service logs": False,
+        "service refresh": False,
+        "service plan": False,
+        "service stop": False,
+        "config validate": False,
+        "inbox": False,
+        "version": False,
+        "net egress add": True,
+        "net loose": True,
+        "git pull": True,
+        "pr push": True,
+        "port": True,
+        "display": True,
+    }
+    for path, host in commands.items():
+        assert path in skill or path in PREAMBLE
+        command = get_command(app if host else container_app)
+        for part in path.split():
+            assert hasattr(command, "commands"), path
+            command = command.commands[part]
+    service = get_command(container_app).commands["service"]
+    assert "repo" in {p.name for p in service.params}
+    logs = service.commands["logs"]
+    assert {"follow", "lines"} <= {p.name for p in logs.params}
+    plan = service.commands["plan"]
+    assert {"op", "json_output"} <= {p.name for p in plan.params}
+    assert "repo" in {p.name for p in get_command(app).params}
+    assert "--version" in {option for p in get_command(container_app).params for option in p.opts}
+    config = get_command(container_app).commands["config"].commands["validate"]
+    assert "--config" in {option for p in config.params for option in p.opts}
+    assert "--json" in {option for p in service.commands["ls"].params for option in p.opts}
+    assert "--for" in {
+        option
+        for p in get_command(app).commands["net"].commands["loose"].params
+        for option in p.opts
+    }
+
+
 def test_sync_copies_real_container_skill(tmp_path: Path) -> None:
     source = agent_skills._skills_root() / "jailbee-container" / "SKILL.md"
     shared = tmp_path / "shared"

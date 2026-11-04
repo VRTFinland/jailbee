@@ -3107,7 +3107,8 @@ Jailbee prepends a built-in container-environment preamble to these optional
 instructions and stages them in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
 (`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), under each
 agent's own file name, and mounts that directory read-only into containers
-where the agent is enabled. For Claude Code that is
+where the agent is enabled and has `global_instructions` configured. Currently
+only the Claude Code preset configures it. For Claude Code the file is
 `/etc/claude-code/CLAUDE.md`, its managed-policy memory file: loaded in every
 session before `~/.claude/CLAUDE.md` and the project's CLAUDE.md, and not
 excludable. A container cannot change it. These are instructions, not hard

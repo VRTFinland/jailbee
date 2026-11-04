@@ -29,7 +29,7 @@ PREAMBLE = "\n".join(
         "You are in an isolated, host-managed development environment.",
         "The host operator controls container lifecycle and network policy.",
         "Read /etc/jailbee/container.json for identity, mode, and repo_dir.",
-        "Branch mode uses a per-branch clone; mount mode uses the mounted repository.",
+        "Clone mode uses a per-branch clone; mount mode uses the mounted repository.",
         "Make local commits. In clone mode, the host operator extracts commits; "
         "mount mode shares the tree.",
         "Do not rely on git push from the container.",
@@ -39,12 +39,17 @@ PREAMBLE = "\n".join(
         "Network egress defaults to strict allowlisting; do not bypass blocked hosts.",
         "For a blocked host, the operator can run the exact host-side command:",
         "jailbee net egress add <host> <container> (use the container's short_name).",
+        "Outside the repo, prefix it with jailbee --repo <container_prefix>.",
         "Treat gh as read-only; stage GitHub writes using the issue or PR outbox skills.",
-        "Inside the container, jailbee offers service, config validate, inbox, and --version;",
+        "Inside the container, jailbee offers service, config validate, inbox, version "
+        "and --version;",
         "host management commands must be run by the operator on the host.",
-        "Inspect services with jailbee service ls and jailbee service logs <service>.",
+        "From the repository directory, inspect services with jailbee service ls "
+        "and jailbee service logs <service>.",
         "Start a service with jailbee service start <service>.",
-        "If JAILBEE_ROLE=child, use the jailbee-orchestration-child skill.",
+        "If JAILBEE_ROLE=child, your first prompt identifies you as a child, or you were adopted,",
+        "use jailbee-orchestration-child. The variable is set only on orchestrator launches;",
+        "its absence does not mean you are not a child.",
         "Use the jailbee-container skill for details about working in this environment.",
     ]
 )
@@ -119,7 +124,9 @@ def sync_global_instructions(cfg: Config) -> None:
         content = desired_content(source)
     except OSError as exc:
         warn_plain(
-            f"cannot read {display_path(source)}: {exc} — keeping the previous copy", stderr=True
+            f"cannot read {display_path(source)}: {exc} — keeping any previous copy; "
+            "otherwise staging the preamble only",
+            stderr=True,
         )
         content = None
 
@@ -128,13 +135,16 @@ def sync_global_instructions(cfg: Config) -> None:
         target = directory / gi.file
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            if content is None:
-                continue
             try:
                 current = target.read_bytes()
             except FileNotFoundError:
                 current = None
-            if current != content:
+            if content is None:
+                if current is not None:
+                    continue
+                fallback = MARKER_TEMPLATE.format(source=display_path(source)).encode()
+                _write_atomically(target, fallback + b"\n" + PREAMBLE.encode() + b"\n")
+            elif current != content:
                 _write_atomically(target, content)
         except OSError as exc:
             warn_plain(
