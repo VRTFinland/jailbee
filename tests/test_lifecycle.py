@@ -1687,6 +1687,40 @@ def _cfg_for_new(tmp_path, *, clone_from="local", autofetch=False):
     return cfg
 
 
+@pytest.mark.parametrize("failure", [None, "existing", "preflight", "create"])
+def test_new_clears_old_outcomes_only_after_instance_created(tmp_path, mocker, failure):
+    from jailbee import autostart_outcomes
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    name = "repo-feat-x"
+    autostart_outcomes.record(name, "on_start", "old", "step", "fail")
+    path = autostart_outcomes.outcomes_path(name)
+    if failure == "existing":
+        incus.list_containers.return_value = [{"name": name, "profiles": ["repo-base"]}]
+    elif failure == "preflight":
+        incus.profile_exists.return_value = False
+    elif failure == "create":
+        incus.init.side_effect = RuntimeError("creation failed")
+
+    def at_profile_assign(*args):
+        assert not path.exists(), "new instance inherited the old outcomes"
+
+    incus.profile_assign.side_effect = at_profile_assign
+    opts = NewContainerOptions(container_branch="feat/x", name=None, network="strict", memory="8GiB",
+                               cpu=4, from_base="gisgro-base", clone=True, autostart=False)
+    if failure:
+        with pytest.raises((ValueError, RuntimeError)):
+            new_container(cfg, incus, opts)
+        assert path.exists()
+    else:
+        new_container(cfg, incus, opts)
+        assert not path.exists()
+
+
 def test_new_container_creates_on_the_requested_storage_pool(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

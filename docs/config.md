@@ -2127,7 +2127,9 @@ effective configuration; missing or unreadable outcomes are treated as absent.
 The dashboard and own-repository listings count only currently eligible steps
 in the stored profile: removed/renamed steps and the `none` profile contribute
 no failures. Foreign/orphan listings retain raw counts when no repository
-configuration is available.
+configuration is available. Creating a genuinely new instance clears outcomes
+left behind for that name (for example after an external Incus deletion);
+refused or failed creation attempts before an instance exists retain them.
 A successful re-run replaces that step's outcome without clearing untouched
 steps. Re-runs run detached by default: use `autostart status` and `autostart
 cancel` to inspect or stop them, or `--wait` to run in the foreground. A live

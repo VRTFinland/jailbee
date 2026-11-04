@@ -1922,6 +1922,8 @@ def _new_container(
                 "run `jb apply` before creating without --memory."
             )
 
+    from jailbee.autostart_outcomes import remove as remove_old_outcomes
+
     _phase("creating")
     if generation == "work":
         from jailbee.network import strict_nic_acls
@@ -1941,6 +1943,7 @@ def _new_container(
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
                 _create_instance(cfg, incus, opts, name)
+                remove_old_outcomes(name)
                 fresh = True
                 progress.instance = name
                 incus.profile_assign(
@@ -1968,6 +1971,7 @@ def _new_container(
                 raise
     else:
         _create_instance(cfg, incus, opts, name)
+        remove_old_outcomes(name)
         progress.instance = name
     try:
         if generation == "legacy":
