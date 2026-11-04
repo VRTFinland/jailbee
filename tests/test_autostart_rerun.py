@@ -187,6 +187,7 @@ def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, t
     cfg = rerun_cfg(make_cfg, tmp_path)
     incus = mocker.MagicMock()
     incus.config_get.return_value = ""
+    incus.config_get_checked.return_value = None
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     entered = threading.Event()
     release = threading.Event()
@@ -229,7 +230,7 @@ def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker,
 
     cfg = rerun_cfg(make_cfg, tmp_path)
     incus = mocker.MagicMock()
-    incus.config_get.side_effect = lambda container, key: claim if key.endswith("autostart_in_progress") else ""
+    incus.config_get_checked.return_value = claim
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     spawn = mocker.MagicMock()
     command(cfg, incus, "c", stages=["setup"], steps=[], failed=False, trigger=None,

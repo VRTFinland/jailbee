@@ -532,6 +532,7 @@ def _rerun_setup(tmp_path, mocker):
         "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}, {"name": "other", "run": "true"}]}],
     }))
     incus.config_get.return_value = ""
+    incus.config_get_checked.return_value = None
     incus.list_containers.return_value = [{"name": "myrepo-feat-a", "status": "Running"}]
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     return cfg, incus

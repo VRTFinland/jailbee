@@ -1483,6 +1483,7 @@ def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cf
     marker = {}
     key = "user.jailbee.autostart_in_progress"
     incus.config_get.side_effect = lambda container, name: marker.get(name, "")
+    incus.config_get_checked.side_effect = lambda container, name: marker.get(name, "")
     incus.config_set.side_effect = lambda container, name, value: marker.update({name: value})
     incus.config_unset.side_effect = lambda container, name: marker.pop(name, None)
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
@@ -1506,3 +1507,27 @@ def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cf
         invoke()
     assert marker[key] == str(os.getpid())
     assert popen.call_count == 1
+
+
+def test_rerun_refuses_when_worker_claim_read_fails(tmp_path, mocker, make_cfg):
+    import subprocess
+    from jailbee.autostart_rerun import command
+    from jailbee.incus import Incus
+
+    block = Autostart.model_validate({"on_start": [_stage("deps")]})
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
+    incus.config_get_checked.side_effect = Incus().config_get_checked
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)
+    run = mocker.patch("jailbee.incus.subprocess.run", return_value=subprocess.CompletedProcess(
+        ["incus"], 1, stdout="", stderr="daemon unavailable"))
+    spawn = mocker.MagicMock()
+    with pytest.raises(RuntimeError, match="daemon unavailable"):
+        command(cfg, incus, "c", stages=["deps"], steps=[], failed=False, trigger=None,
+                listing=False, json_output=False, wait=False, spawn=spawn)
+    assert run.called
+    spawn.assert_not_called()
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()

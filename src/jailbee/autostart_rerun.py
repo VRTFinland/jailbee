@@ -155,8 +155,12 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
     # the handoff when the state database is unavailable. "1" is a stale
     # pre-handoff sentinel once the rerun lock has been acquired.
     from jailbee.background import worker_alive
+    from jailbee.incus import IncusError
 
-    claim = incus.config_get(container, "user.jailbee.autostart_in_progress")
+    try:
+        claim = incus.config_get_checked(container, "user.jailbee.autostart_in_progress")
+    except IncusError as exc:
+        raise RuntimeError(f"Cannot check autostart worker claim: {exc}") from exc
     try:
         pid = int(claim or "")
     except ValueError:
