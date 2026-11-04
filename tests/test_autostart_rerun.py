@@ -359,6 +359,63 @@ def test_successful_rerun_clears_only_selected_failure(make_cfg, tmp_path, mocke
     assert outcomes.failed_steps(outcomes.read("c")) == [("on_start", "deps", "other")]
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("elevation", [{"network": "loose"}, {"network": "strict"}, {"mounts": ["m"]}])
+@pytest.mark.parametrize("selector", ["stage", "step", "failed"])
+@pytest.mark.parametrize("wait", [False, True])
+def test_remote_rerun_refuses_elevation_before_claim(
+    make_cfg, tmp_path, mocker, monkeypatch, legacy, elevation, selector, wait
+):
+    from jailbee import autostart_outcomes
+    from jailbee.autostart_rerun import command
+    from tests.test_autostart_profiles import state_incus
+
+    step = {"name": "init", "run": "true"}
+    entry = {**step, **elevation} if legacy else {
+        "stage": "init", "steps": [step], **elevation
+    }
+    cfg = make_cfg(tmp_path, autostart={"on_create": [entry]})
+    incus, state = state_incus(mocker)
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    autostart_outcomes.record("c", "on_create", "init", "init", "fail")
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    spawn = mocker.MagicMock()
+    execute, switch, add, _ = execution_deps(mocker)
+    with pytest.raises(RuntimeError, match="remote.*network or mounts"):
+        command(cfg, incus, "c", stages=["init"] if selector == "stage" else [],
+                steps=["init/init"] if selector == "step" else [], failed=selector == "failed",
+                trigger=None, listing=False, json_output=False, wait=wait, spawn=spawn)
+    spawn.assert_not_called()
+    execute.assert_not_called()
+    switch.assert_not_called()
+    add.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_remote_rerun_executor_refuses_unfiltered_elevation(make_cfg, tmp_path, mocker, monkeypatch, detached):
+    from dataclasses import replace
+
+    from jailbee.autostart import run_detached
+    from jailbee.autostart_rerun import run_foreground
+    from tests.test_autostart_supervisor import _spec
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    incus = mocker.MagicMock()
+    execute, switch, add, _ = execution_deps(mocker)
+    with pytest.raises(RuntimeError, match="remote.*network or mounts"):
+        if detached:
+            run_detached(cfg, incus, replace(_spec(tmp_path, cfg.autostart), rerun=True))
+        else:
+            run_foreground(cfg, incus, "c", cfg.autostart)
+    incus.config_set.assert_not_called()
+    execute.assert_not_called()
+    switch.assert_not_called()
+    add.assert_not_called()
+
+
 def test_first_trigger_rejects_empty_block():
     from jailbee.autostart_rerun import first_trigger
 

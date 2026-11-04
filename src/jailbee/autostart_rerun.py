@@ -47,6 +47,26 @@ def validate_windows(cfg: Config, block: Autostart) -> None:
                         )
 
 
+def validate_remote(block: Autostart) -> None:
+    """Remote container commands cannot borrow host network/mount authority."""
+    from jailbee.autostart_plan import normalize_stages
+    from jailbee.remote_ssh.session import is_remote_session
+
+    if not is_remote_session():
+        return
+    for trigger in TRIGGER_ORDER:
+        for stage in normalize_stages(getattr(block, trigger.value)):
+            if stage.network is not None or stage.mounts or any(
+                step.network is not None or step.mounts
+                for chain in stage.all_chains()
+                for step in chain.steps
+            ):
+                raise RuntimeError(
+                    f"A remote autostart re-run cannot change network or mounts "
+                    f"({trigger.value}:{stage.stage}); run it on the host"
+                )
+
+
 def eligible_autostart(cfg: Config) -> Autostart:
     """Hide unsafe stages, without changing creation-time config validity."""
     from jailbee.tmux import window_for
@@ -102,6 +122,7 @@ def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTa
     effective = effective_config(cfg, incus, container)
     block = rerun_block(effective.autostart, targets)
     validate_windows(cfg, block)
+    validate_remote(block)
     return block
 
 
@@ -119,6 +140,7 @@ def run_foreground(
     from jailbee.lifecycle import container_repo_dir
 
     validate_windows(cfg, block)
+    validate_remote(block)
     refuse_while_running(cfg, container)
     agents = {
         name: agent.model_copy(update={"autostart": False}) for name, agent in cfg.agents.items()

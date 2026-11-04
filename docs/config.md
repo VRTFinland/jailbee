@@ -2115,7 +2115,10 @@ and explicit selections containing such steps are refused. Creation-only
 configurations with those names remain valid. A safe step in the same stage
 can still be selected explicitly with `--step`.
 A `background: true` step restarts its tmux window. Stage network and mount
-wrappers still apply and are cleaned up, including on cancellation.
+wrappers still apply and are cleaned up, including on cancellation. In a restricted
+remote SSH session, re-runs that request any stage or legacy-step network or
+mount change are refused, even when the network or mount unlocks are enabled.
+`--list` remains read-only and includes those stages; execute them on the host.
 
 Last step outcomes are recorded best-effort at
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.

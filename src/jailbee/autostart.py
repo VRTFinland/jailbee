@@ -576,9 +576,10 @@ def run_detached(
     from jailbee.services.autostart import services_stage_wanted
 
     if spec.rerun:
-        from jailbee.autostart_rerun import validate_windows
+        from jailbee.autostart_rerun import validate_remote, validate_windows
 
         validate_windows(cfg, cfg.autostart)
+        validate_remote(cfg.autostart)
 
     with _cancel_on_sigterm(spec.container_name):
         incus.config_set(
