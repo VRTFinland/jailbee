@@ -128,6 +128,8 @@ def comment(
         text = _body(body, body_file, True)
         action: dict[str, object] = {"type": "comment", "body": text}
         if reply_to is not None:
+            if reply_to < 1:
+                raise OutboxCommandError("--reply-to must be positive", 2)
             action["reply_to"] = reply_to
         _stage(store, _envelope(_view(pr)), action, batch, body_file is not None)
 
@@ -146,6 +148,8 @@ def reply(
         store = _guard()
         if to is None:
             raise OutboxCommandError("missing --to comment ID", 2)
+        if to < 1:
+            raise OutboxCommandError("--to must be positive", 2)
         text = _body(body, body_file, True)
         _stage(
             store,
@@ -215,6 +219,8 @@ def review_add(
             raise OutboxCommandError("missing --file path", 2)
         if line is None:
             raise OutboxCommandError("missing --line", 2)
+        if line < 1 or (start_line is not None and start_line < 1):
+            raise OutboxCommandError("--line and --start-line must be positive", 2)
         if start_line is not None and start_line >= line:
             raise OutboxCommandError("start_line must be before line", 2)
         text = _body(body, body_file, True)

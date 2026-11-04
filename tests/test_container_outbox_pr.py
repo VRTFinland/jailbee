@@ -789,6 +789,24 @@ def test_concurrent_publications_enforce_twenty_manifest_cap(tmp_path):
     assert len(list(store.outbox("pr").glob("*.json"))) == 20
 
 
+@pytest.mark.parametrize("option", ["--to", "--reply-to", "--line", "--start-line"])
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_positive_ids_and_lines_before_lookup(monkeypatch, tmp_path, option, value):
+    monkeypatch.setattr(gh, "pr_view", lambda *a, **kw: pytest.fail("lookup before validation"))
+    if option == "--to":
+        args = ["reply", "1234", "--body", "x"]
+    elif option == "--reply-to":
+        args = ["comment", "1234", "--body", "x"]
+    else:
+        args = ["review", "add", "1234", "--file", "a.py", "--body", "x"]
+        if option == "--start-line":
+            args += ["--line", "10"]
+    result = invoke(*args, option, value)
+    assert result.exit_code == 2, result.output
+    assert "positive" in result.output
+    assert not (tmp_path / ".jailbee").exists()
+
+
 def test_real_entry_dispatches_pr(monkeypatch, tmp_path, capsys):
     from jailbee import container_main
 
