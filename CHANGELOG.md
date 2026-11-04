@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A `jailbee-container` skill guides agents working inside a JailBee container,
+  and staged agent instructions explain the container's JailBee preamble and
+  how to use it. Set `agent_instructions: false` to omit the preamble.
 - Forks (`jailbee fork` and orchestrator fork spawns) can seed Git-ignored
   build outputs from the source by btrfs reflink, configured with
   `fork.warm_paths` and overridden with repeatable `--warm PATH` or
