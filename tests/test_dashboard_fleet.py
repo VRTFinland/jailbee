@@ -310,6 +310,35 @@ def test_merge_roles_mark_the_source_and_dim_the_ineligible(tmp_path):  # type: 
     assert line(a).style.bgcolor == fleet.MARKED_STYLE.bgcolor
 
 
+def test_a_stopped_container_row_is_dim(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup(
+        "r",
+        str(tmp_path),
+        None,
+        [ci("r-run", "r"), ci("r-stop", "r", "Stopped"), ci("r-frozen", "r", "Frozen")],
+    )
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+    run, stop, frozen = (e for e in model.entries if e.container)
+
+    def line(entry, selected=False):  # type: ignore[no-untyped-def]
+        return fleet.entry_line(entry, model.geometry, frozenset(), selected=selected, width=80)
+
+    assert line(stop).style.dim
+    assert line(stop, selected=True).style.dim
+    assert not line(run).style.dim
+    assert not line(frozen).style.dim
+
+
 def test_a_heading_shows_the_checked_out_branch(tmp_path):  # type: ignore[no-untyped-def]
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [ci("alpha-a", "alpha")], checkout="main"

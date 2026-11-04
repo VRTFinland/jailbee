@@ -29,6 +29,7 @@ before editing `## Unreleased`.
 - The terminal dashboard's fitted column widths cap the NAME column at 20
   cells; a longer name ends in `…` and keeps its failed-autostart `⚠`. The
   details panel's title shows the whole label (`⎈`, alias and name) uncut.
+- The terminal dashboard draws a stopped container's row dim.
 
 ## 1.8.2 - 2026-11-04
 
