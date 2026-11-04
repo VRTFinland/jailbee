@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,22 +55,34 @@ def read(container: str) -> Outcomes:
     return result
 
 
+@contextmanager
+def _transaction(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Keep the lock file after removal so waiters always lock the same inode.
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def record(container: str, trigger: str, stage: str, step: str, state: str, *, now: datetime | None = None) -> None:
     if state not in ("start", "ok", "fail"):
         return
     path = outcomes_path(container)
     tmp: str | None = None
     try:
-        data = read(container)
-        data.setdefault(trigger, {}).setdefault(stage, {})[step] = StepOutcome(
-            cast(Literal["start", "ok", "fail"], state), (now or datetime.now(timezone.utc)).isoformat()
-        )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as fh:
-            tmp = fh.name
-            json.dump({t: {s: {k: asdict(v) for k, v in steps.items()} for s, steps in stages.items()} for t, stages in data.items()}, fh)
-        os.replace(tmp, path)
-        tmp = None
+        with _transaction(path):
+            data = read(container)
+            data.setdefault(trigger, {}).setdefault(stage, {})[step] = StepOutcome(
+                cast(Literal["start", "ok", "fail"], state), (now or datetime.now(timezone.utc)).isoformat()
+            )
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as fh:
+                tmp = fh.name
+                json.dump({t: {s: {k: asdict(v) for k, v in steps.items()} for s, steps in stages.items()} for t, stages in data.items()}, fh)
+            os.replace(tmp, path)
+            tmp = None
     except OSError:
         pass
     finally:
@@ -88,6 +103,8 @@ def failed_count(container: str) -> int:
 
 def remove(container: str) -> None:
     try:
-        outcomes_path(container).unlink(missing_ok=True)
+        path = outcomes_path(container)
+        with _transaction(path):
+            path.unlink(missing_ok=True)
     except OSError:
         pass
