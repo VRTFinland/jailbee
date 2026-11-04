@@ -139,6 +139,7 @@ def publish_source_manifest(
     confirm: Callable[[str], bool],
     own_branches_only: bool = False,
     result_sink: Callable[[str], None] | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Publish a pinned container source without changing the container's own PR."""
     from jailbee import git, lifecycle, pr, pr_flow, pr_outbox, sync
@@ -214,11 +215,7 @@ def publish_source_manifest(
                 entries.pop(head, None)
                 target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
             if own_branches_only:
-                bound = {str(item.pr) for item in entries.values()}
-                for label in (pr_flow.PR_LABEL_PREFIX, pr_flow.STACKED_LABEL_PREFIX):
-                    value = incus.config_get_checked(full, label)
-                    if value:
-                        bound.add(value)
+                bound = {str(item.pr) for item in entries.values() if item.author and not item.adopted}
                 _check_own_source(cfg, manifest, head, base, target, bound)
             if target is not None:
                 if (
@@ -339,7 +336,9 @@ def publish_source_manifest(
                     pr.edit_pr(
                         cfg.repo_root, number, title=action.title, body=action.body, repo=repo
                     )
-                authored = False
+                authored = own_branches_only
+            if audit_sink is not None:
+                audit_sink({"kind": "source", "repo": manifest.repo})
             validate()
             bindings.put(
                 BranchPr(

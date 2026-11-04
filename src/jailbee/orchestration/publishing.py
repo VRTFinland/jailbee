@@ -16,7 +16,8 @@ from jailbee import branch_pr, git, issue_manifest, issue_outbox, pr_outbox
 from jailbee.github_repo import github_slug
 from jailbee.incus import Incus
 from jailbee.orchestration.actions import HANDLERS, ActionContext, Outcome, done, refused
-from jailbee.orchestration.grant import PublishRights
+from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
+from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
 from jailbee.outbox.models import ProposalId
@@ -61,7 +62,7 @@ def _issue_policy(
     rights: PublishRights, count: int
 ) -> Callable[[issue_outbox.PreparedBatch], None]:
     def check(batch: issue_outbox.PreparedBatch) -> None:
-        pending = [a for m in batch.manifests for a in m.actions if a.status == "pending"]
+        pending = [a for m in batch.manifests for a in m.actions if a.status != "applied"]
         for action in pending:
             _coverage(rights, _kind(action.action), action.repo)
         if len(pending) > count:
@@ -186,17 +187,55 @@ def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == ref:
         atomic_write_text(
-            _result(ctx.root, ctx.sender.full, ref),
+            _result(ctx.root, entry.get("container_key", ctx.sender.full), ref),
             json.dumps({"ref": ref, "state": "failed", "detail": detail}),
         )
 
 
+def _audit(root: Path, row: dict[str, Any]) -> None:
+    with (root / "publish-log.jsonl").open("a") as stream:
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+        stream.flush()
+    log.info("broker: publish %s", json.dumps(row, sort_keys=True))
+
+
+def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
+    current = inflight(root)
+    for full, entry in list(current.items()):
+        if identities.get(full) == entry.get("container_key", full):
+            continue
+        path = _result(root, entry.get("container_key", full), entry["ref"])
+        result = json.loads(path.read_text()) if path.exists() else {}
+        _audit(root, {"time": now.isoformat(), "orchestrator": full, "ref": entry["ref"],
+            "outbox": entry["outbox"], "manifest": entry["manifest"], "actions": result.get("actions", []),
+            "urls": result.get("urls", []), "outcome": "abandoned"})
+        del current[full]
+        path.unlink(missing_ok=True)
+    _save(root, "publish-inflight.json", current)
+    known = _load(root, "publish-known.json")
+    _save(root, "publish-known.json", {full: key for full, key in known.items() if identities.get(full) == key})
+
+
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
+    assert isinstance(m, PublishManifest)
+    outcome = _handle_publish(ctx, m)
+    if outcome.state == "refused":
+        _audit(ctx.root, {"time": ctx.now.isoformat(), "orchestrator": ctx.sender.full,
+            "ref": m.id, "outbox": m.outbox, "manifest": m.manifest, "actions": [], "urls": [],
+            "outcome": "refused", "detail": outcome.detail})
+    return outcome
+
+
+def _handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     assert isinstance(m, PublishManifest)
     current = inflight(ctx.root)
     if ctx.sender.full in current:
         return refused(f"a publish is already running (ref {current[ctx.sender.full]['ref']})")
-    grant = ctx.grant()
+    raw = ctx.incus.config_get(ctx.sender.full, labels.GRANT)
+    try:
+        grant = effective_grant(Grant.from_label(raw), profiles.repo_cap(ctx.cfg)) if raw else None
+    except (TypeError, ValueError):
+        grant = None
     if ctx.role() != "orchestrator" or grant is None or grant.publish.empty():
         return refused("publishing is not in this container's grant")
     try:
@@ -222,6 +261,7 @@ def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
             "rights": grant.publish.model_dump(mode="json"),
         }
         _save(ctx.root, "publish-inflight.json", current)
+        remember(ctx)
     except Exception as e:
         return refused(str(e))
     return Outcome(
@@ -229,19 +269,23 @@ def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     )
 
 
-def start(ctx: ActionContext, m: PublishManifest) -> None:
+def start(ctx: ActionContext, m: PublishManifest) -> threading.Thread | None:
     """Activate only after the broker recorded, replied to and removed the request."""
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == m.id:
-        threading.Thread(
+        worker = threading.Thread(
             target=_run,
             args=(ctx.cfg, ctx.root, ctx.sender.full, ctx.sender.short, entry),
             daemon=True,
-        ).start()
+        )
+        worker.start()
+        return worker
+    return None
 
 
 def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) -> None:
     lines: list[str] = []
+    actual: list[dict[str, str]] = []
     try:
         incus = Incus()
         rights = PublishRights.model_validate(entry["rights"])
@@ -257,6 +301,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 confirm=lambda q: False,
                 own_branches_only=True,
                 result_sink=lines.append,
+                audit_sink=actual.append,
             )
         else:
             policy = (
@@ -276,6 +321,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 raise_errors=True,
                 policy=policy,
                 result_sink=lines.append,
+                audit_sink=actual.append,
                 action_limit=count,
             )
         if result:
@@ -287,13 +333,14 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
             detail += "; resolve with `jb outbox` on the host"
     try:
         atomic_write_text(
-            _result(root, full, entry["ref"]),
+            _result(root, entry.get("container_key", full), entry["ref"]),
             json.dumps(
                 {
                     "ref": entry["ref"],
                     "state": state,
                     "detail": detail[:4000],
                     "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
+                    "actions": actual,
                 }
             ),
         )
@@ -304,9 +351,9 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
 def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     current = inflight(ctx.root)
     entry = current.get(ctx.sender.full)
-    if entry is None:
+    if entry is None or entry.get("container_key", ctx.sender.key) != ctx.sender.key:
         return
-    path = _result(ctx.root, ctx.sender.full, entry["ref"])
+    path = _result(ctx.root, entry.get("container_key", ctx.sender.full), entry["ref"])
     if not path.exists():
         return
     result = json.loads(path.read_text())
@@ -316,20 +363,21 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     if entry["ref"] not in refs:
         refs.append(entry["ref"])
         _save(ctx.root, "publish-accepted.json", accepted)
-    reply(entry["ref"], Outcome(result["state"], result["detail"]))
     audit = {
         "time": ctx.now.isoformat(),
         "orchestrator": ctx.sender.full,
         "ref": entry["ref"],
         "outbox": entry["outbox"],
         "manifest": entry["manifest"],
-        "actions": entry["actions"],
+        "actions": result.get("actions", []),
         "urls": result.get("urls", []),
         "outcome": result["state"],
     }
-    with (ctx.root / "publish-log.jsonl").open("a") as stream:
-        stream.write(json.dumps(audit, sort_keys=True) + "\n")
-    log.info("broker: publish %s", json.dumps(audit, sort_keys=True))
+    if not entry.get("audited"):
+        _audit(ctx.root, audit)
+        entry["audited"] = True
+        _save(ctx.root, "publish-inflight.json", current)
+    reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]
     _save(ctx.root, "publish-inflight.json", current)
     path.unlink(missing_ok=True)
@@ -337,7 +385,7 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
 
 def recover(root: Path) -> None:
     for full, entry in inflight(root).items():
-        path = _result(root, full, entry["ref"])
+        path = _result(root, entry.get("container_key", full), entry["ref"])
         if not path.exists():
             atomic_write_text(
                 path,

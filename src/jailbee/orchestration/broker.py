@@ -8,6 +8,7 @@ import json
 import logging
 import signal
 import time
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -96,6 +97,7 @@ class BrokerMemory:
 
     # Orchestrator full name -> grant.json text last written into it.
     grant_written: dict[str, str] = field(default_factory=dict)
+    publish_threads: list[threading.Thread] = field(default_factory=list)
     env_ensured: set[str] = field(default_factory=set)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
@@ -476,9 +478,12 @@ def _handle_raw(
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
     digest = manifest_digest(raw.file_name, raw.text, bodies)
-    if journal.seen(ctx.sender.key, digest) or publishing.was_accepted(
-        ctx, PurePosixPath(raw.file_name).stem
-    ):
+    try:
+        envelope = json.loads(raw.text)
+        request_id = envelope.get("id") if isinstance(envelope, dict) else None
+    except (ValueError, RecursionError):
+        request_id = None
+    if journal.seen(ctx.sender.key, digest) or (isinstance(request_id, str) and publishing.was_accepted(ctx, request_id)):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -548,7 +553,9 @@ def _handle_raw(
     if is_publish:
         assert isinstance(manifest, PublishManifest)
         try:
-            publishing.start(ctx, manifest)
+            worker = publishing.start(ctx, manifest)
+            if worker is not None:
+                memory.publish_threads.append(worker)
         except Exception:
             publishing.abort_before_start(
                 ctx, ref, "publish worker could not start; retry with a new id"
@@ -620,7 +627,6 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
         ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
     )
     if ctx.role() == "orchestrator":
-        publishing.remember(ctx)
         _sync_grant_json(ctx, memory)
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
@@ -702,6 +708,7 @@ def tick(
     memory = memory if memory is not None else BrokerMemory()
     # Release finished workers before taking the snapshot that replaces their slots.
     prune_reservations(root)
+    memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
     candidates = [
         e
@@ -731,6 +738,8 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
+    identities = {str(e["name"]): str((e.get("config") or {}).get("volatile.uuid") or e["name"]) for e in raw if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)}
+    publishing.prune(root, identities, now)
     publishes = publishing.inflight(root)
     former_publishers = publishing.known_senders(root)
     parked = [
@@ -791,18 +800,20 @@ def tick(
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
-            if node.running and node.full in former_publishers:
-                former_ctx = context(node)
-                if former_ctx is not None:
-                    _serve(former_ctx, journal, memory)
-                continue
-            if node.full in publishes:
-                publish_ctx = context(node)
-                if publish_ctx is not None:
-                    publishing.settle(publish_ctx, partial(_reply, publish_ctx, memory=memory))
-            # A revoked grant leaves no label; parked messages still get delivered.
-            if node.running and has_pending(root, node.full):
-                _flush_unlabelled(node, context, root, incus)
+            try:
+                if node.running and node.full in former_publishers:
+                    former_ctx = context(node)
+                    if former_ctx is not None:
+                        _serve(former_ctx, journal, memory)
+                    continue
+                if node.full in publishes:
+                    publish_ctx = context(node)
+                    if publish_ctx is not None:
+                        publishing.settle(publish_ctx, partial(_reply, publish_ctx, memory=memory))
+                if node.running and has_pending(root, node.full):
+                    _flush_unlabelled(node, context, root, incus)
+            except Exception:
+                log.exception("broker: serving former publisher %s failed", node.full)
             continue
         try:
             ctx = context(node)
@@ -1024,6 +1035,10 @@ def run_broker(incus: Incus) -> int:
         log.info("orchestration broker stopping")
         return 0
     finally:
+        deadline = time.monotonic() + 25.0
+        for worker in memory.publish_threads:
+            if worker.is_alive():
+                worker.join(timeout=max(0.0, deadline - time.monotonic()))
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         lock.close()

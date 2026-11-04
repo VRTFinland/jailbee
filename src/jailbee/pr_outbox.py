@@ -2724,6 +2724,7 @@ def offer_pending_comments(
     policy: Callable[[Manifest], None] | None = None,
     result_sink: Callable[[str], None] | None = None,
     action_limit: int | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2813,6 +2814,7 @@ def offer_pending_comments(
                 policy=policy,
                 result_sink=result_sink,
                 action_limit=action_limit,
+                audit_sink=audit_sink,
             )
     except (
         OutboxReadError,
@@ -2979,6 +2981,7 @@ def _offer_locked(
     policy: Callable[[Manifest], None] | None = None,
     result_sink: Callable[[str], None] | None = None,
     action_limit: int | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -3222,6 +3225,9 @@ def _offer_locked(
                 draft=draft,
                 before_action=tick,
             )
+            if audit_sink is not None:
+                for index in outcome.applied:
+                    audit_sink({"kind": type(target.manifest.actions[index]).__name__.removesuffix("Action").lower(), "repo": target.manifest.repo})
             _print_receipts(target, outcome)
             if result_sink is not None:
                 for url in outcome.urls:

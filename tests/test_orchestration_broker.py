@@ -69,6 +69,41 @@ def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
     assert len(rig.statuses()) == 1
 
 
+def test_publish_dedup_matches_request_id_not_file_stem(tmp_path, monkeypatch):
+    from jailbee.orchestration.state import atomic_write_text
+    rig = Rig(tmp_path, monkeypatch)
+    rig.incus.list_containers.return_value = [_orch()]
+    atomic_write_text(rig.root / "publish-accepted.json", json.dumps({"proj-orch": ["pub-1"]}))
+    data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
+    rig.outboxes["proj-orch"] = [RawManifest("different.json", json.dumps(data), {})]
+    rig.tick()
+    assert rig.statuses() == []
+    rig.dispatch.assert_not_called()
+
+
+def test_former_publisher_failure_does_not_starve_later_node(tmp_path, monkeypatch):
+    from jailbee.orchestration.state import atomic_write_text
+    rig = Rig(tmp_path, monkeypatch)
+    rig.incus.list_containers.return_value = [_c("proj-old"), _orch()]
+    atomic_write_text(rig.root / "publish-known.json", json.dumps({"proj-old": "proj-old"}))
+    seen = []
+    def serve(ctx, *args):
+        seen.append(ctx.sender.full)
+        if ctx.sender.full == "proj-old":
+            raise IncusError("read-only outbox")
+    monkeypatch.setattr(broker, "_serve", serve)
+    rig.tick()
+    assert seen == ["proj-old", "proj-orch"]
+
+
+def test_serving_grant_without_publish_does_not_remember_sender(tmp_path, monkeypatch):
+    from jailbee.orchestration import publishing
+    rig = Rig(tmp_path, monkeypatch)
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick()
+    assert publishing.known_senders(rig.root) == set()
+
+
 def test_revoked_orchestrator_new_publish_gets_refusal(tmp_path, monkeypatch):
     from jailbee.orchestration.state import atomic_write_text
 
@@ -94,6 +129,7 @@ def test_restart_before_journal_does_not_publish_request_again(tmp_path, monkeyp
 
     rig = Rig(tmp_path, monkeypatch)
     grant = Grant.model_validate({"publish": {"issues": ["comment"]}})
+    rig.incus.config_get.return_value = grant.to_label()
     rig.incus.list_containers.return_value = [_orch(grant=grant)]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     raw = RawManifest("pub-1.json", json.dumps(data), {})
@@ -126,6 +162,7 @@ def test_publish_delete_failure_finishes_instead_of_wedging(tmp_path, monkeypatc
 
     rig = Rig(tmp_path, monkeypatch)
     grant = Grant.model_validate({"publish": {"issues": ["comment"]}})
+    rig.incus.config_get.return_value = grant.to_label()
     rig.incus.list_containers.return_value = [_orch(grant=grant)]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
@@ -821,6 +858,25 @@ def _sigterm() -> None:
     handler = signal.getsignal(signal.SIGTERM)
     assert callable(handler)
     handler(signal.SIGTERM, None)
+
+
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_broker_waits_for_publish_workers_before_exit(tmp_path, monkeypatch, upgrade):
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    worker = MagicMock()
+    worker.is_alive.return_value = True
+    def tick(*args, memory, **kwargs):
+        if hasattr(memory, "publish_threads"):
+            memory.publish_threads.append(worker)
+        if not upgrade:
+            _sigterm()
+        return True
+    monkeypatch.setattr(broker, "tick", tick)
+    monkeypatch.setattr(broker, "_installed_version", lambda: "different" if upgrade else None)
+    monkeypatch.setattr(broker, "_pause", lambda *args: None)
+    broker.run_broker(MagicMock())
+    worker.join.assert_called_once()
+    assert 0 < worker.join.call_args.kwargs["timeout"] <= 30
 
 
 def test_run_broker_backoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
