@@ -22,6 +22,7 @@ SNAPSHOT_PREFIX = "jailbee-warm-"
 DEVICE_NAME = "jailbee-warm"
 MOUNT_PATH = "/run/jailbee-warm"
 POOL_ROOT = "/var/lib/incus/storage-pools"
+EXEC_TIMEOUT = 120
 
 # Reject links instead of dereferencing them: a copied link can still write to
 # shared storage. Also refuse existing destinations before partial-copy cleanup.
@@ -99,12 +100,14 @@ def _skip(reason: str) -> WarmResult:
 def _seed(
     cfg: Config, incus: Incus, *, child: str, source: str, commit: str, patterns: Sequence[str]
 ) -> WarmResult:
+    from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir, short_name
     from jailbee.sync import _container_head_oid, _container_status_dirty
 
     patterns = [validate_pattern(p) for p in patterns]
+    containers = incus.list_containers()
     if not any(
-        c.get("name") == source and c.get("status") == "Running" for c in incus.list_containers()
+        c.get("name") == source and c.get("status") == "Running" for c in containers
     ):
         return _skip("Warm paths skipped: source is not running")
     if incus.current_project() != "default":
@@ -148,14 +151,32 @@ def _seed(
     paths, unmatched = match_patterns(patterns, entries)
     if unmatched:
         warn(f"Warm paths matched no ignored entries: {', '.join(unmatched)}")
+    mounts = [PurePosixPath(m.container) for m in cfg.host_mounts]
+    local = cfg.share_local_mount()
+    if local is not None:
+        mounts.append(PurePosixPath(local.container))
+    mounts.extend(PurePosixPath(c.container_path.replace("~", f"/home/{CONTAINER_USERNAME}", 1)) for c in cfg.effective_shared_caches())
+    selected = []
+    for path in paths:
+        candidate = PurePosixPath(child_repo) / path
+        if any(candidate == mount or mount in candidate.parents for mount in mounts):
+            warn(f"Warm path skipped: {path} is shadowed by a later mount")
+        else:
+            selected.append(path)
+    paths = selected
     if not paths:
-        return _skip("Warm paths skipped: no ignored paths matched")
+        return _skip("Warm paths skipped: no ignored paths matched outside mounts")
+    try:
+        incus.exec(child, ["python3", "--version"], uid=uid, gid=gid, timeout=EXEC_TIMEOUT)
+    except IncusError as exc:
+        return _skip(f"Warm paths skipped: python3 is unavailable in the child: {exc}")
     snap = f"{SNAPSHOT_PREFIX}{child}"
-    # Never delete another fork's snapshot: it may still be mounted there.
+    existing = {c.get("name") for c in containers}
     for old in incus.snapshot_list(source):
-        if old.get("name") == snap:
+        old_name = old.get("name", "")
+        if old_name == snap or (old_name.startswith(SNAPSHOT_PREFIX) and old_name[len(SNAPSHOT_PREFIX):] not in existing):
             try:
-                incus.snapshot_delete(source, snap)
+                incus.snapshot_delete(source, old_name)
             except Exception:
                 pass
     seeded: list[str] = []
@@ -204,6 +225,7 @@ def _seed(
                     ["python3", "-c", _PATH_SAFETY_SCRIPT, MOUNT_PATH, child_repo, path],
                     uid=uid,
                     gid=gid,
+                    timeout=EXEC_TIMEOUT,
                 )
             except IncusError:
                 warn(f"Warm path skipped: {path} is not ignored in the child or is unsafe to copy")
@@ -214,29 +236,39 @@ def _seed(
                     ["mkdir", "-p", "--", str(PurePosixPath(target).parent)],
                     uid=uid,
                     gid=gid,
+                    timeout=EXEC_TIMEOUT,
                 )
                 incus.exec(
                     child,
                     ["cp", "-a", "--reflink=always", "--", f"{MOUNT_PATH}/{path}", target],
                     uid=uid,
                     gid=gid,
+                    timeout=EXEC_TIMEOUT,
                 )
                 seeded.append(path)
             except IncusError:
                 failed.append(path)
                 try:
-                    incus.exec(child, ["rm", "-rf", "--", target], uid=uid, gid=gid)
+                    incus.exec(child, ["rm", "-rf", "--", target], uid=uid, gid=gid, timeout=EXEC_TIMEOUT)
                 except Exception as exc:
                     warn(f"Warm path partial result could not be removed: {path}: {exc}")
     finally:
-        try:
-            incus.config_device_remove(child, DEVICE_NAME, missing_ok=not attached)
-        except Exception as exc:
-            warn(f"Warm paths device cleanup failed: {exc}")
-        try:
-            incus.snapshot_delete(source, snap)
-        except Exception as exc:
-            warn(f"Warm paths snapshot cleanup failed: {exc}")
+        detached = False
+        cleanup_error = ""
+        for _attempt in range(2):
+            try:
+                incus.config_device_remove(child, DEVICE_NAME, missing_ok=not attached)
+                detached = True
+                break
+            except Exception as exc:
+                cleanup_error = str(exc)
+        if detached:
+            try:
+                incus.snapshot_delete(source, snap)
+            except Exception as exc:
+                warn(f"Warm paths snapshot cleanup failed: {exc}")
+        else:
+            warn(f"Warm paths device cleanup failed ({cleanup_error}); snapshot retained. Run `incus config device remove {child} {DEVICE_NAME}` then `incus snapshot delete {source} {snap}`")
     if failed:
         warn(f"Warm paths could not be reflinked: {', '.join(failed)}")
     if seeded:

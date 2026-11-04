@@ -2936,6 +2936,7 @@ def destroy_container(
 
     state = "Stopped"
     had_group_override = False
+    fork_source: str | None = None
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
@@ -2948,6 +2949,7 @@ def destroy_container(
             # also validates and would need a second `incus.config_get`
             # round trip for data already in hand). Both spellings count.
             labels = raw.get("config") or {}
+            fork_source = labels.get("user.jailbee.fork_of")
             had_group_override = bool(
                 labels.get(groups.GROUP_LABEL) or labels.get(groups.LEGACY_GROUP_LABEL)
             )
@@ -3015,6 +3017,16 @@ def destroy_container(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    if fork_source:
+        from jailbee.fork_warm import SNAPSHOT_PREFIX
+
+        try:
+            snap = f"{SNAPSHOT_PREFIX}{name}"
+            if any(s.get("name") == snap for s in incus.snapshot_list(fork_source)):
+                incus.snapshot_delete(fork_source, snap)
+        except Exception as exc:
+            warn(f"Could not remove warm snapshot for '{name}' (continuing): {exc}")
 
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login

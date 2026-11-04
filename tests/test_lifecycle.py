@@ -5686,6 +5686,22 @@ def _cfg_for_destroy(tmp_path):
     return cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_destroy_reclaims_warm_snapshot_after_child_deletion(tmp_path, mocker, failure):
+    from unittest.mock import call
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": "x", "status": "Stopped", "config": {"user.jailbee.fork_of": "source"}}]
+    incus.snapshot_list.return_value = [{"name": "jailbee-warm-x"}, {"name": "user-snap"}]
+    if failure:
+        incus.snapshot_delete.side_effect = IncusError("busy")
+    destroy_container(cfg, incus, "x", force=True)
+    incus.snapshot_delete.assert_called_once_with("source", "jailbee-warm-x")
+    assert incus.method_calls.index(call.delete("x", force=True)) < incus.method_calls.index(call.snapshot_delete("source", "jailbee-warm-x"))
+
+
 def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):
     cfg = _cfg_for_destroy(tmp_path)
     incus = MagicMock()

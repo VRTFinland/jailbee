@@ -162,7 +162,7 @@ def test_happy_path_order(warm_rig):
                 "readonly": "true",
             },
         ),
-        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo/app"], uid=uid, gid=gid),
+        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo/app"], uid=uid, gid=gid, timeout=120),
         call.exec(
             "repo-child",
             [
@@ -175,8 +175,9 @@ def test_happy_path_order(warm_rig):
             ],
             uid=uid,
             gid=gid,
+            timeout=120,
         ),
-        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo"], uid=uid, gid=gid),
+        call.exec("repo-child", ["mkdir", "-p", "--", "/home/dev/repo"], uid=uid, gid=gid, timeout=120),
         call.exec(
             "repo-child",
             [
@@ -189,6 +190,7 @@ def test_happy_path_order(warm_rig):
             ],
             uid=uid,
             gid=gid,
+            timeout=120,
         ),
         call.config_device_remove("repo-child", "jailbee-warm", missing_ok=False),
         call.snapshot_delete("repo-source", "jailbee-warm-repo-child"),
@@ -196,6 +198,12 @@ def test_happy_path_order(warm_rig):
     # Other read-only safety probes may appear between writes.
     writes = [c for c in incus.mock_calls if c in expected]
     assert writes == expected
+    commands = [c.args[1] for c in incus.exec.call_args_list]
+    for path in ("app/build", ".gradle"):
+        copy_index = next(i for i, argv in enumerate(commands) if argv[0] == "cp" and argv[-1] == f"/home/dev/repo/{path}")
+        ignore_index = next(i for i, argv in enumerate(commands) if "check-ignore" in argv and argv[-1] == path + "/")
+        safety_index = next(i for i, argv in enumerate(commands) if argv[0] == "python3" and argv[-1] == path)
+        assert ignore_index < safety_index < copy_index
 
 
 def test_cp_failure_cleans_partial_and_continues(warm_rig):
@@ -213,6 +221,7 @@ def test_cp_failure_cleans_partial_and_continues(warm_rig):
         ["rm", "-rf", "--", "/home/dev/repo/app/build"],
         uid=cfg.container_user.uid,
         gid=cfg.container_user.gid,
+        timeout=120,
     )
     incus.config_device_remove.assert_called_once_with(
         "repo-child", "jailbee-warm", missing_ok=False
@@ -230,9 +239,10 @@ def test_device_add_failure_still_deletes_snapshot(warm_rig):
 
 def test_stale_snapshots_do_not_remove_another_active_fork(warm_rig):
     incus = warm_rig[1]
+    incus.list_containers.return_value += [{"name": "repo-other", "status": "Running"}]
     incus.snapshot_list.return_value = [
         {"name": "jailbee-warm-repo-child"},
-        {"name": "jailbee-warm-other"},
+        {"name": "jailbee-warm-repo-other"},
         {"name": "user-snap"},
     ]
     seed(warm_rig)
@@ -262,8 +272,9 @@ def test_unsafe_ignored_listing_skipped(warm_rig, entry):
 
 def test_snapshot_moved_after_preflight_skips_copy(warm_rig, mocker):
     incus = warm_rig[1]
-    mocker.patch("jailbee.sync._container_head_oid", side_effect=["a" * 40, "b" * 40])
+    head = mocker.patch("jailbee.sync._container_head_oid", side_effect=["a" * 40, "b" * 40])
     assert seed(warm_rig).skipped
+    assert head.call_args.args == (incus, "repo-child", "/run/jailbee-warm")
     assert not any(c.args[1][0] == "cp" for c in incus.exec.call_args_list)
     incus.snapshot_delete.assert_called_once()
 
@@ -365,7 +376,10 @@ def test_real_device_removal_failure_is_reported(warm_rig, mocker):
     warn = mocker.patch("jailbee.fork_warm.warn")
     seed(warm_rig)
     assert "busy device" in str(warn.call_args_list)
-    incus.snapshot_delete.assert_called_once()
+    incus.snapshot_delete.assert_not_called()
+    assert incus.config_device_remove.call_count == 2
+    assert "incus config device remove repo-child jailbee-warm" in str(warn.call_args_list)
+    assert "incus snapshot delete repo-source jailbee-warm-repo-child" in str(warn.call_args_list)
 
 
 def test_cleanup_failures_are_independent(warm_rig, mocker):
@@ -373,5 +387,77 @@ def test_cleanup_failures_are_independent(warm_rig, mocker):
     incus = warm_rig[1]
     incus.config_device_remove.side_effect = IncusError("remove failed")
     assert seed(warm_rig).seeded == ["app/build", ".gradle"]
-    incus.snapshot_delete.assert_called_once()
+    incus.snapshot_delete.assert_not_called()
+    assert incus.config_device_remove.call_count == 2
     assert warn.called
+
+
+def test_device_cleanup_retry_then_deletes_snapshot(warm_rig):
+    incus = warm_rig[1]
+    incus.config_device_remove.side_effect = [IncusError("busy"), None]
+    seed(warm_rig)
+    assert incus.config_device_remove.call_count == 2
+    incus.snapshot_delete.assert_called_once()
+
+
+def test_reclaims_snapshots_only_for_missing_children(warm_rig):
+    incus = warm_rig[1]
+    incus.list_containers.return_value += [{"name": "repo-other", "status": "Running"}]
+    incus.snapshot_list.return_value = [{"name": "jailbee-warm-repo-gone"}, {"name": "jailbee-warm-repo-other"}, {"name": "user-snap"}]
+    seed(warm_rig)
+    assert incus.snapshot_delete.call_args_list == [call("repo-source", "jailbee-warm-repo-gone"), call("repo-source", "jailbee-warm-repo-child")]
+
+
+def test_snapshot_dirty_skips_copy(warm_rig, mocker):
+    dirty = mocker.patch("jailbee.sync._container_status_dirty", side_effect=[False, True])
+    assert seed(warm_rig).skipped
+    assert dirty.call_args.args == (warm_rig[1], "repo-child", "/run/jailbee-warm")
+    assert not any(c.args[1][0] == "cp" for c in warm_rig[1].exec.call_args_list)
+    warm_rig[1].snapshot_delete.assert_called_once()
+
+
+def test_python_missing_has_specific_advisory(warm_rig, mocker):
+    incus = warm_rig[1]
+    def execute(name, argv, **kwargs):
+        if argv[:2] == ["python3", "--version"]:
+            raise IncusError("executable not found")
+        return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+    incus.exec.side_effect = execute
+    warn = mocker.patch("jailbee.fork_warm.warn")
+    assert seed(warm_rig).skipped
+    assert "python3" in str(warn.call_args_list)
+    assert "not ignored" not in str(warn.call_args_list)
+    incus.snapshot_create.assert_not_called()
+
+
+def test_stalled_exec_has_bounded_timeout(warm_rig):
+    incus = warm_rig[1]
+    def execute(name, argv, **kwargs):
+        if argv[0] in {"python3", "mkdir", "cp", "rm"}:
+            assert 0 < kwargs.get("timeout", 0) <= 300
+        if argv[0] == "cp" and argv[-1].endswith("app/build"):
+            raise IncusError("timed out")
+        return "app/build/\0.gradle/\0" if "ls-files" in argv else ""
+    incus.exec.side_effect = execute
+    assert seed(warm_rig).seeded == [".gradle"]
+
+
+@pytest.mark.parametrize("kind", ["host", "local", "cache", "pool"])
+def test_skip_paths_shadowed_by_later_mount(warm_rig, tmp_path, kind, mocker):
+    from jailbee.config import HostMount, SharedCache
+    from jailbee.config.models_host import PoolSpec
+    cfg, incus = warm_rig
+    target = "/home/dev/repo/app/build"
+    updates = {}
+    if kind == "host":
+        updates["host_mounts"] = [HostMount(host=tmp_path, container=target)]
+    elif kind == "local":
+        mocker.patch.object(type(cfg), "share_local_mount", return_value=HostMount(host=tmp_path, container=target))
+    else:
+        cache = SharedCache(name="outputs", host_subpath="outputs", container_path=target, pool=PoolSpec() if kind == "pool" else None)
+        updates["shared_caches"] = [cache]
+    cfg = cfg.model_copy(update=updates)
+    incus.exec.return_value = "app/build/\0app/build/nested/\0.gradle/\0"
+    warn = mocker.patch("jailbee.fork_warm.warn")
+    assert seed((cfg, incus), ["**"]).seeded == [".gradle"]
+    assert "mount" in str(warn.call_args_list).lower()
