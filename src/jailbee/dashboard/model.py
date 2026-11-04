@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from jailbee import agent_status, git, notices
+from jailbee.autostart_profiles import profile_names
 from jailbee.config import (
     format_ttl,
     load_repo_config,
@@ -206,6 +207,7 @@ class RepoGroup:
     advisories: tuple[RepoAdvisory, ...] = ()
     memory_default: str = "16GiB"
     autostart_profiles: tuple[str, ...] = ()
+    autostart_services: tuple[str, ...] = ()
     autostart_default_profile: str | None = None
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
@@ -530,8 +532,9 @@ def _gather_rows(
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
                 memory_default=cfg.defaults.memory,
-                autostart_profiles=tuple(cfg.autostart.profiles),
-                autostart_default_profile=cfg.autostart.default_profile,
+                autostart_profiles=profile_names(cfg.autostart),
+                autostart_services=tuple(cfg.services),
+                autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,
@@ -768,15 +771,20 @@ def _find_group(groups: list[RepoGroup], name: str | None) -> RepoGroup | None:
     return None
 
 
-def prompt_target_kind(purpose: str) -> Literal["repo", "container"]:
+def prompt_target_kind(purpose: str, carry: tuple[str, ...] = ()) -> Literal["repo", "container"]:
     """What a prompt's or picker's ``target`` names, read from its ``purpose``.
 
-    Only the ``container-*`` questions are about a container; every other one
-    targets a repo prefix. A container may share its name with another repo's
-    prefix (container ``alpha-x`` of repo ``alpha`` beside repo ``alpha-x``),
+    ``container-*`` and restart questions target a container; service toggles
+    inherit the carried flow's target kind. Other questions target a repo prefix.
+    A container may share its name with another repo's prefix (container
+    ``alpha-x`` of repo ``alpha`` beside repo ``alpha-x``),
     so a target is never looked up as both.
     """
-    return "container" if purpose.startswith("container-") else "repo"
+    if purpose == "autostart-services":
+        return "container" if carry and carry[0] == "restart" else "repo"
+    if purpose.startswith("container-") or purpose == "restart-autostart":
+        return "container"
+    return "repo"
 
 
 def target_group(

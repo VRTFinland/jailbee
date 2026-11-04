@@ -4543,12 +4543,9 @@ def _post_start_actions(
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
 
-    if cfg.autostart.profiles:
-        profile = resolve_profile(cfg, incus, name)
-        missing = missing_on_create(cfg, incus, name, profile)
-        cfg = profiled_config(cfg, profile)
-    else:
-        missing = None
+    profile = resolve_profile(cfg, incus, name)
+    missing = missing_on_create(cfg, incus, name, profile) if profile is not None else None
+    cfg = profiled_config(cfg, profile)
     try:
         if missing is not None and missing.on_create:
             run_autostart(
@@ -5087,6 +5084,27 @@ def _stop_job_row(cfg: "Config", full_name: str) -> Iterator[None]:
 @app.command()
 def restart(
     name: ContainerArg = None,
+    autostart_profile: Annotated[
+        str | None,
+        typer.Option("--autostart-profile", help="Store this autostart profile, then restart."),
+    ] = None,
+    services: Annotated[
+        str | None,
+        typer.Option(
+            "--services",
+            help=(
+                "Start only these services (comma-separated) plus their dependencies; "
+                "an empty value starts none."
+            ),
+        ),
+    ] = None,
+    reset_services: Annotated[
+        bool,
+        typer.Option(
+            "--reset-services",
+            help="Drop the container's explicit service selection; the profile's applies.",
+        ),
+    ] = False,
     no_autostart: Annotated[
         bool,
         typer.Option(
@@ -5122,6 +5140,8 @@ def restart(
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
+    from jailbee.autostart_profiles import store_choice
+    from jailbee.create_flow import CreateError
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
@@ -5135,6 +5155,21 @@ def restart(
     # no `--force` here to exempt — a user who wants that reaches for
     # `jailbee autostart cancel`, which the refusal names.
     _refuse_while_autostart_runs(cfg, name)
+    selected_services = (
+        None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    )
+    try:
+        store_choice(
+            cfg,
+            incus,
+            name,
+            profile=autostart_profile,
+            services=selected_services,
+            reset_services=reset_services,
+        )
+    except (ValueError, CreateError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(2) from exc
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
@@ -11147,17 +11182,16 @@ def autostart_profile_cmd(
 ) -> None:
     """Show or switch a container's autostart profile."""
     from jailbee import prompting
-    from jailbee.autostart_profiles import ProfileError, show_profile, switch_profile
+    from jailbee.autostart_profiles import ProfileError, profile_names, show_profile, switch_profile
 
     cfg = _load_or_exit(config)
     missing_container = container is None
     incus, full = _resolve_existing(cfg, container)
     try:
-        if not cfg.autostart.profiles:
-            raise ProfileError("this repository defines no autostart profiles")
         if profile is None and missing_container:
             profile = prompting.choose_one(
-                "autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles]
+                "autostart profile",
+                [prompting.Option(p, p, p) for p in profile_names(cfg.autostart)],
             )
         if profile is None:
             show_profile(cfg, incus, full)

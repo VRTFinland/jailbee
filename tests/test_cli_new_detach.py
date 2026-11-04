@@ -218,6 +218,8 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
     object.__setattr__(cfg, "container_prefix", "myrepo")
 
     incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat-a"))
     mocker.patch("jailbee.cli._resolve_config_path_or_none", return_value=None)

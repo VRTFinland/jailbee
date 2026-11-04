@@ -1960,10 +1960,15 @@ autostart:
 A profile is the literal `all` or a nonempty `stages` list. Stage names select
 from **both** triggers, in config order; the reserved `agents` and `services`
 stages always stay selected, even when not listed. Profiles require stage-form triggers,
-a defined `default_profile`, and known stage names. The profile name `all`
-is reserved. Without `profiles`, `default_profile` is invalid and autostart
-behaves exactly as before. The reserved `services` slots determine placement,
-not selection; see [placing service startup](#placing-service-startup).
+a defined `default_profile`, and known stage names. The names `none` and `all`
+are reserved for built-in profiles and cannot be defined in `profiles`:
+`none` selects no configured stages or profile services (an explicit service
+selection can still override the profile), while the generated `agents` stage
+remains selected; `all` selects every configured stage and service.
+Without `profiles`, `default_profile` may still select the built-in `none` or
+`all`; when no profile is selected or configured as the default, autostart
+retains the all-stages-and-services behavior. The reserved `services` slots determine placement, not selection;
+see [placing service startup](#placing-service-startup).
 
 A profile may specify `services: [web]` to start those known services and their
 dependencies, or `services: []` for none; omitted or null means all. An explicit
@@ -1973,17 +1978,23 @@ precedence over profile services; without it, the profile wins over all services
 Define each example service in the top-level `services:` block.
 
 `jailbee new --autostart-profile frontend` remembers the selection for later
-starts and restarts. An absent selection uses the default; a stored name
-removed from config warns and falls back to the default. Creation uses the
-target branch's autostart block; later commands use the host config.
+starts and restarts. The built-in `none` profile selects no configured repository stages or profile
+services (an explicit service selection can still override it), while the
+generated `agents` stage remains selected; `--no-autostart` also suppresses
+agents. An absent selection uses the default; a stored name removed
+from config warns and falls back to the default. Creation uses the target
+branch's autostart block; later commands use the host config.
 
 `jailbee autostart profile <container>` shows the current/default profiles
 and attempted one-shot stages. Add a profile name to switch. On a running
 container this starts missing `on_create` stages, then newly selected
-`on_start` stages, in the foreground; lighter profiles stop nothing.
-Stopped containers and `--no-run` only store the selection. The next start
-runs any missing one-shot stages before `on_start`. A live detached run
-must be cancelled before switching.
+`on_start` stages, in the foreground; lighter profiles stop nothing. Live
+switching only adds work and does not stop existing processes. `none` selects
+no configured repository stages or profile services, while retaining the
+generated `agents` stage; an explicit service selection still overrides the
+profile. `all` selects all configured stages and services. Stopped containers
+and `--no-run` only store the selection. The next start runs any missing one-shot
+stages before `on_start`. A live detached run must be cancelled before switching.
 
 One-shot stages are recorded as **attempted**, even after failure, so they
 are never retried automatically. Containers predating this tracking count

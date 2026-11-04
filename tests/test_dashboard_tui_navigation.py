@@ -470,7 +470,7 @@ def test_ssh_disabled_policy_rejects_new_before_prompt_or_spawn(mocker, tmp_path
 
     run = drive(
         mocker,
-        ["n", *keys("feature"), "enter", "enter"],
+        ["n", *keys("feature"), "enter", "enter", "enter"],
         groups=[group],
         remote=True,
         over_ssh=True,
@@ -498,7 +498,7 @@ def test_ssh_allowlisted_new_prompts_then_spawns_final_argv(mocker, tmp_path):
 
     drive(
         mocker,
-        ["n", *keys("feature"), "enter", "enter"],
+        ["n", *keys("feature"), "enter", "enter", "enter"],
         groups=[group],
         remote=True,
         over_ssh=True,

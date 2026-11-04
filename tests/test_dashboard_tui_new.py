@@ -16,7 +16,7 @@ from tests.dashboard_pilot import FROZEN_NOW, Paste, drive, keys, patch_in, patc
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
 # repo header -> Enter opens the repo menu -> Down to "New from PR..." -> Enter
-_NEW_PR_KEYS = ["enter", "down", "enter", *keys("123"), "enter"]
+_NEW_PR_KEYS = ["enter", "down", "enter", *keys("123"), "enter", "enter"]
 
 
 def _prompts(run):  # type: ignore[no-untyped-def]
@@ -31,7 +31,8 @@ def test_run_new_from_empty_repo_header_dispatches_to_repo_root(mocker, tmp_path
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     patch_pause(mocker)
 
-    run = drive(mocker, ["n", *keys("feature"), "enter", "enter"], [group])  # base prefilled "main"
+    # Base is prefilled "main"; the final Enter accepts default autostart.
+    run = drive(mocker, ["n", *keys("feature"), "enter", "enter", "enter"], [group])
     assert run.rc == 0
 
     prompt.assert_not_called()  # the terminal is never handed over for a question
@@ -108,6 +109,7 @@ def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path)
         *["backspace"] * 2,
         *keys(" dev "),
         "enter",
+        "enter",  # default autostart
     ]
     run = drive(mocker, steps, [group])
     assert run.rc == 0
@@ -298,7 +300,8 @@ class _PendingJobs(JobRunner):
 def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
-    typed = ["n", *keys("work"), "enter", "enter", "n", *keys("work"), "enter", "enter"]
+    create = ["n", *keys("work"), "enter", "enter", "enter"]
+    typed = [*create, *create]
     patch_pause(mocker)
     mocker.patch.object(tsession.subprocess, "run")
 
@@ -379,7 +382,7 @@ def test_run_empty_repo_header_menu_creates_container(mocker, tmp_path):
     child.return_value.returncode = 0
 
     # Enter opens the repo menu, Enter picks "New container...", then the two answers
-    steps = ["enter", "enter", *keys("feature"), "enter", "enter"]
+    steps = ["enter", "enter", *keys("feature"), "enter", "enter", "enter"]
     assert drive(mocker, steps, [group]).rc == 0
 
     child.assert_called_once_with(
@@ -484,6 +487,7 @@ def test_repo_menu_new_runs_the_existing_creation_flow(mocker, tmp_path):
         *["backspace"] * 7,
         *keys("main"),
         "enter",
+        "enter",  # default autostart
     ]
     assert drive(mocker, steps, [group]).rc == 0
 
@@ -498,7 +502,7 @@ def test_repo_menu_new_from_pr_runs_review_creation_in_repo(mocker, tmp_path):
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
 
-    steps = ["enter", "j", "enter", *keys("123"), "enter"]
+    steps = ["enter", "j", "enter", *keys("123"), "enter", "enter"]
     assert drive(mocker, steps, [group]).rc == 0
 
     child.assert_called_once_with(
@@ -590,7 +594,7 @@ def test_new_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, 
     # The repo header row is selected by default (no navigation needed): "n"
     # opens the branch prompt, then the base prompt, and the final Enter runs
     # `jailbee new` through `run_new_container`, not `dispatch`.
-    steps = ["n", *keys("work"), "enter", *keys("main"), "enter"]
+    steps = ["n", *keys("work"), "enter", *keys("main"), "enter", "enter"]
     run = drive(mocker, steps, [group])
 
     assert run.rc == 0  # the OSError did not propagate

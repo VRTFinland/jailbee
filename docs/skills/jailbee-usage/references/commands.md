@@ -461,15 +461,22 @@ See [Configuration](../../../config.md#where-does-the-autostart-config-come-from
 
 ### `jailbee start|stop|restart [NAME]`
 
-`start` and `restart` re-run autostart (`on_start`). `stop` halts. All
+`start` and `restart` re-run autostart (`on_start`). Only `restart` can store
+an autostart profile or override/reset its service selection. `stop` halts. All
 accept a picker when `NAME` is omitted with a TTY.
 
 | Flag (`start` / `restart`) | Effect |
 |---|---|
-| `--no-autostart` | Boot only — no `on_start` steps. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--no-autostart` | Boot only — no `on_start` steps or agent startup. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
 | `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
 | `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
 | `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |
+
+| Flag (`restart` only) | Effect |
+|---|---|
+| `--autostart-profile NAME` | Store a profile for this and later boots. `none` selects no configured repository stages or profile services, while the generated `agents` stage remains selected. An explicit service selection also remains in effect unless cleared. `all` selects every configured stage. |
+| `--services NAMES` | Explicit service selection (comma-separated; `''` selects none), overriding the profile's service set. Cannot be combined with `--reset-services`. |
+| `--reset-services` | Clear the remembered explicit service selection so the selected profile controls services. |
 
 | Flag (`stop`) | Effect |
 |---|---|

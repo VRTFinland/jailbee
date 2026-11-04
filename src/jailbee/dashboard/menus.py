@@ -353,13 +353,15 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     return [*actions, ("Destroy", "destroy")]
 
 
-_CONTAINER_LIFECYCLE_VERBS = frozenset({"restart", "stop", "destroy", "autostart-profile"})
+_CONTAINER_LIFECYCLE_VERBS = frozenset(
+    {"restart", "restart-with", "stop", "destroy", "autostart-profile"}
+)
 _JOB_VERBS = frozenset({"job clear", "job log", "job log --follow"})
 
 # Container-menu verbs the terminal dashboard handles itself. They are never in
 # the Qt-shared `menu_actions` list and never passed to `dispatch`.
 TERMINAL_MENU_VERBS: frozenset[str] = frozenset(
-    {"credential-group", "autostart-profile", *dact.CONTAINER_VERBS}
+    {"credential-group", "autostart-profile", "restart-with", *dact.CONTAINER_VERBS}
 )
 
 
@@ -659,7 +661,9 @@ def host_branches(
     return tuple(b for b in lister(Path(repo_root)) if b != exclude)
 
 
-def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
+def new_container_argv(
+    target: RepoTarget, branch: str, base: str, extra: Sequence[str] = ()
+) -> list[str]:
     """``jailbee new <branch> <base>``, plus ``target``'s ``--config`` if any.
 
     A repo with no config file gets no flag; the caller runs the child in
@@ -685,7 +689,7 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     `--mount` or `--yes` is refused as a branch name by `jailbee new`, never
     read as the option it spells.
     """
-    return ["jailbee", "new", *target.flags(), "--background", "--", branch, base]
+    return ["jailbee", "new", *target.flags(), "--background", *extra, "--", branch, base]
 
 
 def fork_container_argv(target: RepoTarget, source: str, name: str) -> list[str]:
@@ -702,9 +706,9 @@ def rename_argv(container: str, alias: str) -> list[str]:
     return ["rename", container, "--", alias] if alias else ["rename", container, "--clear"]
 
 
-def new_pr_container_argv(target: RepoTarget, number: int) -> list[str]:
+def new_pr_container_argv(target: RepoTarget, number: int, extra: Sequence[str] = ()) -> list[str]:
     """Create a review container using the CLI's existing PR resolution flow."""
-    return ["jailbee", "new", *target.flags(), "--background", "--pr", str(number)]
+    return ["jailbee", "new", *target.flags(), "--background", "--pr", str(number), *extra]
 
 
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"

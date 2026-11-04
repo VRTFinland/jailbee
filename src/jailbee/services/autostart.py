@@ -104,7 +104,9 @@ def selected_services(cfg: Config, incus: Incus, container: str) -> list[str] | 
         return names
     profile = resolve_profile(cfg, incus, container)
     if profile is not None:
-        selected = cfg.autostart.profiles[profile]
+        from jailbee.autostart_profiles import selection
+
+        selected = selection(cfg.autostart, profile)
         if selected != "all":
             return selected.services
     return None
