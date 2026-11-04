@@ -1799,63 +1799,15 @@ must be true in the global config and this repo's token must be set in
 `github.enabled`, `api.github.com:443` is on the strict allowlist, so `gh`
 **reads** (`gh pr view`, `gh issue list`, `gh api`) work in strict mode.
 
-**Writes don't**, by design: the token is read-only, so `gh` cannot comment,
-edit or create anything, and a `git push` to GitHub has no credential either.
-Stage GitHub writes in the outbox instead — PR comments, replies and
+Treat `gh` as read-only regardless of the token's actual permissions; do not
+rely on `git push` from the container. Stage GitHub writes in the outbox instead — PR comments, replies and
 descriptions with **jailbee-pr-review**, issue actions with
 **jailbee-issue-management** — and publish commits by asking the host operator
 for `jailbee git pull` / `jailbee pr push`.
 
 ## Inside a JailBee container
 
-You may be reading this from **inside** a JailBee container — the repo clone lives at
-`~/<container_prefix>` and there is no Incus daemon on `PATH`. Since 1.8.1 the container
-has an in-container `jailbee` (host code mounted read-only at `/opt/jailbee/app`), but
-only `jailbee --version`, `jailbee config validate`, `jailbee service ...` and
-`jailbee inbox ...` work here; every other command (`apply`, `new`, `doctor`, ...)
-operates on the host and is host-only. What you can do from inside:
-
-- Work in the repo clone, commit, run tests/builds — exactly as on a normal dev box.
-- Edit `.jailbee/config.yaml` and any `install.d/` snippets in the clone. Those
-  changes only take effect when the **host operator** runs `jailbee apply` (live
-  profile/ACL/`/etc/hosts`/dockerd changes) or recreates the container (image /
-  install-time changes).
-- For host-side bridge actions (`jailbee git pull`, `jailbee destroy`, `jailbee net loose`, …),
-  describe what you need and let the host operator run it — you can't from here.
-
-### Which container am I? — `/etc/jailbee/container.json`
-
-Read this file before telling the operator which `jailbee` command to run. It
-is written when `jailbee new` creates the container and is a **snapshot of
-that moment**, never refreshed — network mode, alias and credential group
-are deliberately absent, and a later `jailbee retarget` or `jailbee rename`
-does not show up in it. Containers created before this file existed do not
-have it.
-
-```json
-{
-  "version": 1,
-  "name": "repo-feat-x",
-  "short_name": "feat-x",
-  "container_prefix": "repo",
-  "mode": "clone",
-  "branch": "feat/x",
-  "base_branch": "main",
-  "repo_dir": "/home/dev/repo",
-  "pr": null,
-  "fork_of": null
-}
-```
-
-- `name` is the full Incus name every command accepts; `short_name` works too.
-  Pass `--repo <container_prefix>` when the operator may be outside the repo:
-  `jailbee --repo repo git pull feat-x`.
-- `mode: "mount"` means `branch` is `null` and the git bridge does not apply
-  (host and container share one tree); `pr` is the PR number of a `jailbee
-  new --pr` review container, `fork_of` the source of a `jailbee fork`.
-- Without the file, `hostname` is the full container name (the same `name`),
-  and `$JAILBEE_BRANCH` is the branch in a clone-mode container. Nothing else
-  is available from inside.
+For container identity, service commands and host requests, use the **jailbee-container** skill.
 
 ## Checking what an agent preset resolved to
 
@@ -1873,6 +1825,8 @@ Configuring a new agent, not just inspecting one already on, is the
 **jailbee-repo-setup** skill's job.
 
 ## When to point elsewhere
+
+- Working inside a container, including services, identity and blocked network access → **jailbee-container** skill.
 
 - Writing (not publishing) PR review comments/replies/descriptions from
   *inside* a container — the manifest format, the outbox contract, `gh`

@@ -84,6 +84,47 @@ def test_sync_removes_stale_files_in_managed_skill(tmp_path: Path, monkeypatch) 
     assert (skills / "jailbee-usage" / "SKILL.md").is_file()
 
 
+def test_bundled_skills_include_container_reference() -> None:
+    assert "jailbee-container" in agent_skills.bundled_skill_names()
+
+
+def test_container_skill_covers_identity_commands_and_policy() -> None:
+    import yaml
+
+    text = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
+    _, frontmatter, body = text.split("---", 2)
+    assert yaml.safe_load(frontmatter)["name"] == "jailbee-container"
+    for needle in (
+        "/etc/jailbee/container.json",
+        "repo_dir",
+        "git branch --show-current",
+        "jailbee service restart api",
+        "jailbee service logs api",
+        "jailbee service refresh api",
+        "jailbee net egress add api.vendor.example <container>",
+        "jailbee net loose <container> --for 30m",
+        "jailbee git pull <container>",
+        "read-only policy",
+        "jailbee-orchestration-child",
+    ):
+        assert needle in body, needle
+    assert "must not merge into other branches or perform host integration" in body
+    assert "own-branch updates" in body
+    network = body.split("## Blocked network access", 1)[1].split("## Commits", 1)[0]
+    assert "child" in network and "orchestrator" in network
+
+
+def test_sync_copies_real_container_skill(tmp_path: Path) -> None:
+    source = agent_skills._skills_root() / "jailbee-container" / "SKILL.md"
+    shared = tmp_path / "shared"
+    cfg = make_config(tmp_path / "repo", shared_dir=shared, claude={"enabled": True})
+
+    agent_skills.sync_agent_skills(cfg)
+
+    copied = shared / "claude" / "skills" / "jailbee-container" / "SKILL.md"
+    assert copied.read_bytes() == source.read_bytes()
+
+
 def test_bundled_skills_include_pr_review() -> None:
     assert "jailbee-pr-review" in agent_skills.bundled_skill_names()
 

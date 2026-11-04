@@ -3950,7 +3950,7 @@ def test_agent_instructions_check(make_cfg, tmp_path, instruction_paths, case):
         cfg._agent_instructions = False
     if case in {"synced", "stale", "removed"}:
         source.write_bytes(b"policy\n")
-    if case in {"synced", "removed"}:
+    if case in {"synced", "removed", "no_source"}:
         sync_global_instructions(cfg)
     if case == "removed":
         source.unlink()
@@ -3963,7 +3963,7 @@ def test_agent_instructions_check(make_cfg, tmp_path, instruction_paths, case):
         assert "no enabled agent" in result.detail
     elif case == "no_source":
         assert "no " in result.detail and "AGENTS.md" in result.detail
-        assert not target.exists()
+        assert target.exists()
     elif case == "synced":
         assert "7 bytes" in result.detail
         assert "claude" in result.detail and "/etc/claude-code/CLAUDE.md" in result.detail

@@ -677,7 +677,7 @@ documented by Anthropic:
 
 ## 10. The bundled jailbee skills
 
-jailbee ships seven skills — `jailbee-usage` (day-to-day commands),
+jailbee ships eight skills — `jailbee-container` (working inside a container), `jailbee-usage` (day-to-day commands),
 `jailbee-repo-setup` (first-time repo configuration), `jailbee-pr-review`
 (staging PR review comments, replies and description rewrites),
 `jailbee-issue-management` (staging GitHub issue actions),
