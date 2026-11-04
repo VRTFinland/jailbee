@@ -2149,6 +2149,12 @@ def new_cmd(
             autocompletion=completion.complete_container,
         ),
     ] = None,
+    warm: Annotated[
+        list[str] | None, typer.Option("--warm", hidden=True, help="Internal, set by jailbee fork")
+    ] = None,
+    no_warm: Annotated[
+        bool, typer.Option("--no-warm", hidden=True, help="Internal, set by jailbee fork")
+    ] = False,
     credential_group: Annotated[
         str | None,
         typer.Option(
@@ -2398,6 +2404,22 @@ def new_cmd(
     # `jailbee fork` lands here. The source container's HEAD is fetched to the
     # host and the clone is pinned to it, exactly like a PR head; everything
     # else is an ordinary clone-mode `new`.
+    from jailbee.fork_warm import resolve_warm_paths
+
+    if warm is not None and no_warm:
+        error("--warm and --no-warm are mutually exclusive.")
+        raise typer.Exit(2)
+    if (warm is not None or no_warm) and fork_of is None:
+        error("--warm and --no-warm require --fork-of.")
+        raise typer.Exit(2)
+    try:
+        warm_paths = (
+            resolve_warm_paths(cfg, [] if no_warm else warm) if fork_of is not None else None
+        )
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
     fork_source: ForkSource | None = None
     if fork_of is not None:
         conflicting = [
@@ -2693,6 +2715,7 @@ def new_cmd(
             or (fork_source is not None and fork_source.untrusted),
             clone_commit=(fork_source.commit if fork_source is not None else pr_clone_commit),
             fork_of=fork_source.full_name if fork_source is not None else None,
+            warm_paths=warm_paths,
             inherited_labels=(fork_source.pr_labels or None) if fork_source else None,
             assume_yes=yes,
             credential_group=resolved_credential_group,
@@ -2927,6 +2950,16 @@ def fork_cmd(
             metavar="FILE|-",
         ),
     ] = None,
+    warm: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--warm",
+            help="Seed this git-ignored path from SOURCE (repeatable; replaces fork.warm_paths)",
+        ),
+    ] = None,
+    no_warm: Annotated[
+        bool, typer.Option("--no-warm", help="Do not seed fork.warm_paths into this fork")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Create a container from another container's committed state.
@@ -2936,6 +2969,7 @@ def fork_cmd(
     its upstream: the dashboards name it in the container's details, and
     `jailbee merge` offers SOURCE first.
     SOURCE must be running and have no uncommitted changes.
+    Configured fork.warm_paths seed ignored build outputs by btrfs reflink.
 
     Examples:
 
@@ -2990,6 +3024,8 @@ def fork_cmd(
         pr=None,
         no_fetch=False,
         fork_of=short_name(cfg, source_full),
+        warm=warm,
+        no_warm=no_warm,
         credential_group=credential_group,
         claude_group=None,
         yes=yes,
@@ -4518,12 +4554,9 @@ def _post_start_actions(
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
 
-    if cfg.autostart.profiles:
-        profile = resolve_profile(cfg, incus, name)
-        missing = missing_on_create(cfg, incus, name, profile)
-        cfg = profiled_config(cfg, profile)
-    else:
-        missing = None
+    profile = resolve_profile(cfg, incus, name)
+    missing = missing_on_create(cfg, incus, name, profile) if profile is not None else None
+    cfg = profiled_config(cfg, profile)
     try:
         if missing is not None and missing.on_create:
             run_autostart(
@@ -5062,6 +5095,27 @@ def _stop_job_row(cfg: "Config", full_name: str) -> Iterator[None]:
 @app.command()
 def restart(
     name: ContainerArg = None,
+    autostart_profile: Annotated[
+        str | None,
+        typer.Option("--autostart-profile", help="Store this autostart profile, then restart."),
+    ] = None,
+    services: Annotated[
+        str | None,
+        typer.Option(
+            "--services",
+            help=(
+                "Start only these services (comma-separated) plus their dependencies; "
+                "an empty value starts none."
+            ),
+        ),
+    ] = None,
+    reset_services: Annotated[
+        bool,
+        typer.Option(
+            "--reset-services",
+            help="Drop the container's explicit service selection; the profile's applies.",
+        ),
+    ] = False,
     no_autostart: Annotated[
         bool,
         typer.Option(
@@ -5097,6 +5151,9 @@ def restart(
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
+    from jailbee.autostart_profiles import store_choice
+    from jailbee.create_flow import CreateError
+    from jailbee.incus import IncusError
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
@@ -5110,6 +5167,24 @@ def restart(
     # no `--force` here to exempt — a user who wants that reaches for
     # `jailbee autostart cancel`, which the refusal names.
     _refuse_while_autostart_runs(cfg, name)
+    selected_services = (
+        None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    )
+    try:
+        store_choice(
+            cfg,
+            incus,
+            name,
+            profile=autostart_profile,
+            services=selected_services,
+            reset_services=reset_services,
+        )
+    except (ValueError, CreateError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(2) from exc
+    except IncusError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
@@ -11190,17 +11265,16 @@ def autostart_profile_cmd(
 ) -> None:
     """Show or switch a container's autostart profile."""
     from jailbee import prompting
-    from jailbee.autostart_profiles import ProfileError, show_profile, switch_profile
+    from jailbee.autostart_profiles import ProfileError, profile_names, show_profile, switch_profile
 
     cfg = _load_or_exit(config)
     missing_container = container is None
     incus, full = _resolve_existing(cfg, container)
     try:
-        if not cfg.autostart.profiles:
-            raise ProfileError("this repository defines no autostart profiles")
         if profile is None and missing_container:
             profile = prompting.choose_one(
-                "autostart profile", [prompting.Option(p, p, p) for p in cfg.autostart.profiles]
+                "autostart profile",
+                [prompting.Option(p, p, p) for p in profile_names(cfg.autostart)],
             )
         if profile is None:
             show_profile(cfg, incus, full)
@@ -12906,8 +12980,11 @@ orchestrate_app.add_typer(orchestrate_profile_app)
 
 def _grant_summary(grant: Any) -> str:
     """One line describing a grant: limit, operations, mounts, loose, egress."""
+    from jailbee.orchestration.commands import publish_summary
+
     g = grant.grantable
     runner = f"; default runner {grant.default_runner.describe()}" if grant.default_runner else ""
+    runner += f"; publish: {publish_summary(grant.publish)}"
     return (
         f"{grant.max_running_children} running children, "
         f"operations {', '.join(grant.operations)}; "
@@ -12978,6 +13055,33 @@ def orchestrate_grant_cmd(
         bool,
         typer.Option("--clear-runner", help="Clear the default runner for spawned children."),
     ] = False,
+    publish_issues: Annotated[
+        str | None,
+        typer.Option("--publish-issues", help="Issue action kinds, comma-separated; none clears."),
+    ] = None,
+    publish_foreign_issues: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--publish-foreign-issues", help="REPO:KINDS; repeatable, replaces foreign rights."
+        ),
+    ] = None,
+    publish_prs: Annotated[
+        bool | None,
+        typer.Option("--publish-prs/--no-publish-prs", help="Publish own PR source manifests."),
+    ] = None,
+    publish_pr_reviews: Annotated[
+        bool | None,
+        typer.Option(
+            "--publish-pr-reviews/--no-publish-pr-reviews", help="Publish reviews on bound PRs."
+        ),
+    ] = None,
+    publish_rate: Annotated[
+        int | None,
+        typer.Option("--publish-rate", help="Maximum published actions per sliding hour."),
+    ] = None,
+    no_publish: Annotated[
+        bool, typer.Option("--no-publish", help="Clear all publish rights.")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Grant a container the right to start and manage child containers.
@@ -13026,6 +13130,14 @@ def orchestrate_grant_cmd(
         clear_egress=clear_egress,
         runner=selected,
         clear_runner=clear_runner,
+        publish_issues=tuple(publish_issues.split(",")) if publish_issues is not None else None,
+        publish_foreign_issues=tuple(publish_foreign_issues)
+        if publish_foreign_issues is not None
+        else None,
+        publish_prs=publish_prs,
+        publish_pr_reviews=publish_pr_reviews,
+        publish_rate=publish_rate,
+        no_publish=no_publish,
     )
     previous: list[Grant | None] = []
     try:
@@ -13227,6 +13339,7 @@ def orchestrate_show_cmd(
         info(f"No grant on '{row.short}'.")
         return
     info_plain(f"Grant on '{row.short}': {_grant_summary(row.grant)}")
+    info_plain(f"publish: {commands.publish_summary(row.grant.publish)}")
     if row.effective is None:
         warn_plain(f"{_ORCH_NOT_ALLOWED}; the grant has no effect.")
     elif row.effective != row.grant:
@@ -13283,8 +13396,18 @@ def orchestrate_ls_cmd(
         info("No orchestration grants in this repo.")
         return
     table = Table(show_edge=False, pad_edge=False)
-    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS", "RUNNER"):
-        table.add_column(header)
+    for header in (
+        "NAME",
+        "LIMIT",
+        "RUNNING",
+        "OPERATIONS",
+        "MOUNTS",
+        "LOOSE",
+        "EGRESS",
+        "RUNNER",
+        "PUBLISH",
+    ):
+        table.add_column(header, min_width=13 if header == "OPERATIONS" else len(header))
     for r in rows:
         selected, _ = default_runner(cfg, r.grant) if r.problem is None else (None, None)
         runner_label = (
@@ -13300,10 +13423,19 @@ def orchestrate_ls_cmd(
                 "",
                 "",
                 runner_label,
+                commands.publish_summary(r.grant.publish) if r.grant else "unknown",
             )
         elif r.grant is not None and r.effective is None:
             table.add_row(
-                r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "", runner_label
+                r.short,
+                "-",
+                str(r.running_children),
+                _ORCH_NOT_ALLOWED,
+                "",
+                "",
+                "",
+                runner_label,
+                "none",
             )
         elif r.grant is not None:
             g = r.grant.grantable
@@ -13316,6 +13448,7 @@ def orchestrate_ls_cmd(
                 "yes" if g.loose else "no",
                 ", ".join(g.egress) or "-",
                 runner_label,
+                commands.publish_summary(r.grant.publish) if r.grant else "unknown",
             )
     console.print(table)
 

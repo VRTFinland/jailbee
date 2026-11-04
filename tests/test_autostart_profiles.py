@@ -48,7 +48,6 @@ def test_resolve_profile_no_profiles(make_cfg, tmp_path, mocker):
 
     incus, _ = state_incus(mocker)
     assert resolve_profile(make_cfg(tmp_path), incus, "c") is None
-    incus.config_get.assert_not_called()
 
 
 def test_profiled_config_carries_filtered_block(make_cfg, tmp_path):
@@ -99,10 +98,11 @@ def test_failed_on_create_stage_is_recorded(make_cfg, tmp_path, mocker):
     assert state[CREATED_KEY] == "deps"
 
 
-def test_no_profiles_repo_writes_no_keys(make_cfg, tmp_path, mocker):
+@pytest.mark.parametrize("named_profiles", [False, True])
+def test_untracked_container_writes_no_keys(make_cfg, tmp_path, mocker, named_profiles):
     from jailbee.autostart import run_stages
 
-    cfg = make_cfg(tmp_path)
+    cfg = profile_cfg(make_cfg, tmp_path) if named_profiles else make_cfg(tmp_path)
     incus, state = state_incus(mocker)
     mocker.patch("jailbee.autostart.run_stage")
     run_stages(
@@ -233,7 +233,7 @@ def test_new_flag_in_repo_without_profiles_exits_2(make_cfg, tmp_path, mocker):
     _patch_new_container_deps(mocker)
     incus, _ = state_incus(mocker)
     incus.exists.return_value = False
-    with pytest.raises(ProfileError, match="this repository defines no autostart profiles"):
+    with pytest.raises(ProfileError, match="autostart profile `bad` is not defined"):
         new_container(_cfg_for_new(make_cfg, tmp_path), incus, _opts(autostart_profile="bad"))
 
 
@@ -401,3 +401,249 @@ def test_new_no_autostart_records_all_profile_on_create(make_cfg, tmp_path, mock
     incus.exists.return_value = False
     new_container(cfg, incus, _opts(autostart=False, autostart_profile="light"))
     assert state[CREATED_KEY] == "deps"
+
+
+def test_stored_none_honoured_without_repo_profiles(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY, resolve_profile
+
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    assert resolve_profile(make_cfg(tmp_path), incus, "c") == "none"
+
+
+def test_new_none_selects_no_services(make_cfg, tmp_path, mocker):
+    from jailbee.lifecycle import new_container
+    from tests.test_lifecycle_autostart_detach import _cfg_for_new, _opts, _patch_new_container_deps
+
+    cfg = _cfg_for_new(make_cfg, tmp_path)
+    _patch_new_container_deps(mocker)
+    incus, _ = state_incus(mocker)
+    incus.exists.return_value = False
+    services = mocker.patch("jailbee.services.autostart.approval_envelope", return_value="ok")
+    new_container(cfg, incus, _opts(autostart_profile="none"))
+    assert services.call_args.args[1] == []
+
+
+def test_services_selection_honours_stored_builtin(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import PROFILE_KEY
+    from jailbee.services.autostart import selected_services
+
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}})
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    assert selected_services(cfg, incus, "c") == []
+
+
+def test_start_honours_stored_builtin_without_repo_profiles(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.autostart_profiles import PROFILE_KEY
+    from jailbee.cli import _post_start_actions
+
+    cfg = make_cfg(tmp_path, autostart={"on_start": [{"stage": "web"}]})
+    incus, _ = state_incus(mocker, {PROFILE_KEY: "none"})
+    for target in (
+        "jailbee.hosts.sync_hosts",
+        "jailbee.egress_proxy.sync_container",
+        "jailbee.autostart.inject_github_token",
+        "jailbee.cli._post_create_gui_launches",
+    ):
+        mocker.patch(target)
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    run = mocker.patch("jailbee.autostart.run_autostart", return_value=AutostartPlan([], []))
+    _post_start_actions(cfg, incus, "c", no_autostart=False)
+    assert run.call_args.args[0].autostart.on_start == []
+
+
+@pytest.mark.parametrize("use_default", [False, True])
+def test_new_builtin_all_records_real_create_attempts(make_cfg, tmp_path, mocker, use_default):
+    from jailbee.autostart_profiles import CREATED_KEY, missing_on_create
+    from jailbee.lifecycle import new_container
+    from tests.test_lifecycle_autostart_detach import _cfg_for_new, _opts, _patch_new_container_deps
+
+    cfg = _cfg_for_new(make_cfg, tmp_path).model_copy(
+        update={
+            "autostart": Autostart.model_validate(
+                {
+                    "on_create": [{"stage": "deps"}, {"stage": "images"}],
+                    **({"default_profile": "all"} if use_default else {}),
+                }
+            )
+        }
+    )
+    _patch_new_container_deps(mocker)
+    incus, state = state_incus(mocker)
+    incus.exists.return_value = False
+    run = mocker.patch("jailbee.autostart.run_stage")
+    name = new_container(cfg, incus, _opts(autostart_profile=None if use_default else "all"))
+    assert [call.args[3].stage for call in run.call_args_list] == ["deps", "images"]
+    assert state[CREATED_KEY] == "deps,images"
+    assert missing_on_create(cfg, incus, name, "all").on_create == []
+
+
+@pytest.mark.parametrize("detached", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+def test_builtin_create_attempts_skip_completed_and_failed_stages(
+    make_cfg, tmp_path, mocker, detached, failed
+):
+    from jailbee.autostart import run_detached, run_stages
+    from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY, missing_on_create
+    from tests.test_autostart_supervisor import _spec
+
+    cfg = make_cfg(
+        tmp_path,
+        autostart={"on_create": [{"stage": "deps", "detach": detached}, {"stage": "images"}]},
+    )
+    incus, state = state_incus(mocker, {PROFILE_KEY: "all", CREATED_KEY: ","})
+    run = mocker.patch("jailbee.autostart.run_stage")
+    if failed:
+        run.side_effect = RuntimeError("failed")
+
+    def execute():
+        if detached:
+            run_detached(cfg, incus, _spec(tmp_path, cfg.autostart, from_trigger="on_create"))
+        else:
+            run_stages(
+                cfg, incus, "c1", cfg.autostart.on_create, "/r", trigger=AutostartTrigger.ON_CREATE
+            )
+
+    if failed:
+        with pytest.raises(RuntimeError, match="failed"):
+            execute()
+    else:
+        execute()
+    assert state[CREATED_KEY] == ("deps" if failed else "deps,images")
+    missing = missing_on_create(cfg, incus, "c1", "all")
+    assert [s.stage for s in missing.on_create] == (["images"] if failed else [])
+    run.reset_mock(side_effect=True)
+    run_stages(cfg, incus, "c1", missing.on_create, "/r", trigger=AutostartTrigger.ON_CREATE)
+    assert [call.args[3].stage for call in run.call_args_list] == (["images"] if failed else [])
+    assert missing_on_create(cfg, incus, "c1", "all").on_create == []
+
+
+def test_builtin_none_to_all_live_switch_records_once(make_cfg, tmp_path, mocker):
+    from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY, switch_profile
+
+    cfg = make_cfg(tmp_path, autostart={"on_create": [{"stage": "deps"}]})
+    incus, state = state_incus(mocker, {PROFILE_KEY: "none", CREATED_KEY: ","})
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    mocker.patch("jailbee.autostart_status.live_run", return_value=None)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.docker_daemon.mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.services.autostart.run_services_stage")
+    run = mocker.patch("jailbee.autostart.run_stage")
+    switch_profile(cfg, incus, "c", "all", run=True)
+    assert state[CREATED_KEY] == "deps"
+    switch_profile(cfg, incus, "c", "none", run=True)
+    switch_profile(cfg, incus, "c", "all", run=True)
+    assert [call.args[3].stage for call in run.call_args_list] == ["deps"]
+
+
+@pytest.mark.parametrize("selection", ["none", "empty", "all"])
+def test_real_autostart_service_selection_preserves_generated_agents(
+    make_cfg, tmp_path, mocker, selection
+):
+    import json
+
+    from jailbee.autostart import run_autostart
+    from jailbee.autostart_profiles import PROFILE_KEY, SERVICES_KEY, profiled_config
+    from jailbee.incus import ExecResult
+    from jailbee.services import autostart as service_autostart
+    from jailbee.services.graph import plan_payload
+
+    cfg = make_cfg(
+        tmp_path,
+        services={"db": {"run": "db"}},
+        agents={"codex": {"enabled": True, "autostart": True}},
+    )
+    state = {PROFILE_KEY: "none" if selection == "none" else "all"}
+    if selection == "empty":
+        state[SERVICES_KEY] = ","
+    incus, _ = state_incus(mocker, state)
+    incus.config_get_checked.side_effect = incus.config_get.side_effect
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.orchestration.runner.read_runner", return_value=None)
+    mocker.patch("jailbee.orchestration.runner.read_resume", return_value=None)
+    # A real plan response makes accidental service submission observable at
+    # both the plan boundary and the generated start command.
+    payload = plan_payload(cfg.services, [], "start", step_timeout=30)
+    submit = mocker.patch(
+        "jailbee.container_app.run_in_container",
+        return_value=ExecResult(0, json.dumps(payload).encode(), b""),
+    )
+    service_run = mocker.spy(service_autostart, "run_services_stage")
+    run = mocker.patch("jailbee.autostart.run_stage")
+    run_autostart(
+        profiled_config(cfg, state[PROFILE_KEY]),
+        incus,
+        "c",
+        AutostartTrigger.ON_START,
+        "/r",
+        override="wait",
+    )
+    stages = [call.args[3] for call in run.call_args_list]
+    agent = next(s for s in stages if s.stage == "agents")
+    assert [(step.name, step.run) for chain in agent.all_chains() for step in chain.steps] == [
+        ("codex", "exec codex")
+    ]
+    assert service_run.call_count == (0 if selection == "empty" else 1)
+    if selection == "empty":
+        # The planner omits this slot; the service executor must also reject
+        # an explicit empty override if invoked directly or by a saved plan.
+        service_autostart.run_services_stage(
+            cfg,
+            incus,
+            "c",
+            "/r",
+            mirror_endpoint=None,
+            on_progress=None,
+            cas_restore=False,
+        )
+    if selection == "all":
+        assert submit.call_args.args[3] == [
+            "service",
+            "--repo",
+            "/r",
+            "plan",
+            "--op",
+            "start",
+            "--json",
+        ]
+        assert (
+            next(s for s in stages if s.stage == "services")
+            .all_chains()[0]
+            .steps[0]
+            .run.endswith("start db")
+        )
+    else:
+        submit.assert_not_called()
+        assert [s.stage for s in stages] == ["agents"]
+
+
+def test_none_profile_child_launches_configured_runner(make_cfg, tmp_path, mocker):
+    from jailbee.autostart import run_autostart
+    from jailbee.autostart_profiles import profiled_config
+    from jailbee.orchestration.runner import Runner
+
+    cfg = make_cfg(
+        tmp_path, agents={"claude": {"enabled": True, "autostart": True, "command": "claude"}}
+    )
+    incus, _ = state_incus(mocker)
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={"JAILBEE_ROLE": "child"})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch(
+        "jailbee.orchestration.runner.read_runner",
+        return_value=Runner(agent="claude", model="haiku"),
+    )
+    mocker.patch("jailbee.orchestration.runner.read_resume", return_value=None)
+    run = mocker.patch("jailbee.autostart.run_stage")
+    run_autostart(
+        profiled_config(cfg, "none"), incus, "c", AutostartTrigger.ON_START, "/r", override="wait"
+    )
+    stages = [call.args[3] for call in run.call_args_list]
+    agent = next(s for s in stages if s.stage == "agents")
+    assert [step.run for chain in agent.all_chains() for step in chain.steps] == [
+        "exec claude --model haiku"
+    ]

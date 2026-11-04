@@ -106,6 +106,12 @@ def open_menu(
         remote_mountable=group.remote_mountable,
         rows=group.containers,
     )
+    if container.state in ("Running", "Stopped") and permitted(
+        ["restart", name], ssh_policy, over_ssh=over_ssh
+    ):
+        anchor = "restart" if container.state == "Running" else "start"
+        at = next((i for i, (_, verb) in enumerate(actions) if verb == anchor), len(actions) - 1)
+        actions.insert(at + 1, ("Restart with…", "restart-with"))
     if group.autostart_profiles and permitted(
         ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh
     ):
@@ -297,6 +303,7 @@ _MENU_KEYS: dict[str, str] = {
     "pr unbind": "u",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
+    "restart-with": "W",
     "stop": "H",  # not `s`: shell and start own it, and a lone stop can sit beside them
     "destroy": "D",
     # Network → (modes take their own initial, see `_preferred_menu_key`)

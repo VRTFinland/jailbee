@@ -2007,6 +2007,92 @@ class DashboardSession:
         )
         return Picker(purpose, f"Credential group — {target}", entries, target=target)
 
+    def autostart_choice_picker(self, target: str, carry: tuple[str, ...]) -> Picker | None:
+        """Resolve the flow's owner without confusing a container with a repo prefix."""
+        kind: Literal["repo", "container"] = "container" if carry[0] == "restart" else "repo"
+        group = target_group(self.groups, target, kind)
+        if group is None or RepoTarget.of(group) is None:
+            self.set_notice(f"'{target}' is no longer listed")
+            return None
+        return Picker(
+            "restart-autostart" if kind == "container" else "new-autostart",
+            f"Autostart — {target}",
+            dact.autostart_choice_entries(group),
+            target=target,
+            carry=carry,
+        )
+
+    def autostart_services_picker(
+        self, choice: Picker, checked: tuple[str, ...] = (), *, start_index: int = 0
+    ) -> Picker | None:
+        group = target_group(
+            self.groups, choice.target, prompt_target_kind(choice.purpose, choice.carry)
+        )
+        if group is None:
+            self.set_notice(f"'{choice.target}' is gone")
+            return None
+        return Picker(
+            "autostart-services",
+            f"Custom services — {choice.target}",
+            (
+                PickerEntry("Done", "\x00done"),
+                *(
+                    PickerEntry(f"[{'x' if name in checked else ' '}] {name}", name)
+                    for name in group.autostart_services
+                ),
+            ),
+            target=choice.target,
+            carry=(*choice.carry, *checked),
+            back=choice,
+            start_index=start_index,
+        )
+
+    def restart_with_available(self, target: str) -> bool:
+        """Recheck the terminal-only action without widening shared restart eligibility."""
+        if target in self.bulk_running():
+            self.set_notice(f"'{target}' is busy")
+            return False
+        menu = open_menu(
+            self.groups,
+            target,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+        )
+        if menu is None or not any(verb == "restart-with" for _, verb in menu.actions):
+            self.set_notice(f"Action 'restart-with' is no longer available for '{target}'")
+            return False
+        return True
+
+    def run_autostart_choice(
+        self, picker: Picker, *, profile: str | None, services: Sequence[str] | None
+    ) -> None:
+        flow, first, second = picker.carry[:3]
+        group = target_group(
+            self.groups, picker.target, "container" if flow == "restart" else "repo"
+        )
+        if group is None:
+            self.set_notice(f"'{picker.target}' is gone")
+            return
+        extra = dact.autostart_choice_args(
+            group, profile=profile, services=services, creating=flow != "restart"
+        )
+        if flow == "restart":
+            if self.restart_with_available(picker.target):
+                self.run_bulk(BulkAction("restart", (picker.target,)), extra)
+            return
+
+        def build(repo: RepoTarget) -> list[str]:
+            if flow == "pr":
+                if self.over_ssh:
+                    return ["jailbee", "new", "--background", "--pr", first, *extra]
+                return new_pr_container_argv(repo, int(first), extra)
+            if self.over_ssh:
+                return ["jailbee", "new", "--background", *extra, "--", first, second]
+            return new_container_argv(repo, first, second, extra)
+
+        self.run_new_container(picker.target, f"PR #{first}" if flow == "pr" else first, build)
+
     def open_autostart_profile_picker(self, target: str) -> Picker | None:
         group = _find_group(self.groups, target)
         if group is None or not group.autostart_profiles:
@@ -2202,15 +2288,7 @@ class DashboardSession:
             number = parse_pr_number(answer)
             assert number is not None  # validate_answer guaranteed it
 
-            def pr_argv(repo: RepoTarget) -> list[str]:
-                if self.over_ssh:
-                    # Remote sessions address their selected repo by
-                    # cwd, not by an explicit host config path.
-                    return ["jailbee", "new", "--background", "--pr", str(number)]
-                return new_pr_container_argv(repo, number)
-
-            self.run_new_container(prompt.target, f"PR #{number}", pr_argv)
-            return None
+            return self.autostart_choice_picker(prompt.target, ("pr", str(number), ""))
         if prompt.purpose == "new-branch":
             return TextPrompt(
                 "new-base",
@@ -2227,15 +2305,7 @@ class DashboardSession:
                 ),
             )
         if prompt.purpose == "new-base":
-            branch = prompt.carry[0]
-
-            def branch_argv(repo: RepoTarget) -> list[str]:
-                if self.over_ssh:
-                    return ["jailbee", "new", "--background", "--", branch, answer]
-                return new_container_argv(repo, branch, answer)
-
-            self.run_new_container(prompt.target, branch, branch_argv)
-            return None
+            return self.autostart_choice_picker(prompt.target, ("branch", prompt.carry[0], answer))
         if prompt.purpose == "container-memory-other":
             return self.change_memory(prompt.target, answer)
         if prompt.purpose in (
@@ -2327,6 +2397,26 @@ class DashboardSession:
             )
             self.run_dashboard_command(picker.target, "container", argv)
             return None
+
+
+        if picker.purpose in ("new-autostart", "restart-autostart"):
+            if entry.value == dact.CUSTOM_SERVICES:
+                return self.autostart_services_picker(
+                    replace(picker, start_index=picker.entries.index(entry))
+                )
+            self.run_autostart_choice(picker, profile=entry.value, services=None)
+            return None
+        if picker.purpose == "autostart-services":
+            assert isinstance(picker.back, Picker)
+            checked = picker.carry[3:]
+            if entry.value == "\x00done":
+                self.run_autostart_choice(picker, profile=None, services=checked)
+                return None
+            checked_set = set(checked) ^ {entry.value}
+            checked = tuple(e.value for e in picker.entries[1:] if e.value in checked_set)
+            return self.autostart_services_picker(
+                picker.back, checked, start_index=picker.entries.index(entry)
+            )
         if picker.purpose == "container-autostart-profile":
             self.run_dashboard_command(
                 picker.target, "container", ["autostart", "profile", picker.target, entry.value]
@@ -2659,7 +2749,9 @@ class DashboardSession:
             isinstance(self.overlay, (TextPrompt, Picker))
             and self.overlay.target
             and target_group(
-                self.groups, self.overlay.target, prompt_target_kind(self.overlay.purpose)
+                self.groups,
+                self.overlay.target,
+                prompt_target_kind(self.overlay.purpose, self.overlay.carry),
             )
             is None
         ):
@@ -2712,8 +2804,13 @@ class DashboardSession:
         elif (
             isinstance(self.overlay, (TextPrompt, Picker))
             and not self.overlay.purpose.startswith("new-")
+            and not (
+                self.overlay.purpose == "autostart-services" and self.overlay.carry[0] != "restart"
+            )
             and target_group(
-                self.groups, self.overlay.target, prompt_target_kind(self.overlay.purpose)
+                self.groups,
+                self.overlay.target,
+                prompt_target_kind(self.overlay.purpose, self.overlay.carry),
             )
             is not None
         ):
@@ -2721,7 +2818,9 @@ class DashboardSession:
             # like its menu does. `n`'s questions are left out: they
             # ask about the highlighted row's repo, and pinning its
             # header would strand the cursor there after Esc.
-            self.selected = Row(prompt_target_kind(self.overlay.purpose), self.overlay.target)
+            self.selected = Row(
+                prompt_target_kind(self.overlay.purpose, self.overlay.carry), self.overlay.target
+            )
         else:
             self.selected = reconcile_selection(self.rows, self.selected, self.sel_index)
         if self.selected in self.rows:
@@ -2897,6 +2996,9 @@ class DashboardSession:
                 owner = _find_group(self.groups, target)
                 self.egress_parent = container_parent
                 self.overlay = self.open_egress(owner.prefix, target) if owner else None
+            elif verb == "restart-with":
+                if self.restart_with_available(target):
+                    self.overlay = self.autostart_choice_picker(target, ("restart", "", ""))
             elif verb == "autostart-profile":
                 self.overlay = self.open_autostart_profile_picker(target)
             elif verb == "credential-group":

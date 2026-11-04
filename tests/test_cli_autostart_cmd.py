@@ -762,3 +762,45 @@ def test_run_spawn_failure_preserves_transferred_marker(tmp_path, mocker):
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
     assert result.exit_code == 1
     incus.config_unset.assert_not_called()
+
+
+@pytest.mark.parametrize("profile", ["none", "all"])
+@pytest.mark.parametrize("default", ["none", "all"])
+def test_builtin_profile_rerun_listing_and_failed_filter(tmp_path, mocker, profile, default):
+    import json
+
+    from jailbee import autostart_outcomes
+    from jailbee.autostart_plan import AutostartTrigger, RerunTarget
+    from jailbee.autostart_rerun import effective_config, failed_targets, prepare
+    from jailbee.config import Autostart
+
+    cfg, incus = _setup(tmp_path, mocker)
+    cfg = cfg.model_copy(update={"autostart": Autostart.model_validate({
+        "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+        "on_start": [
+            {"stage": "deps", "steps": [{"name": "sync", "run": "true"}]},
+            {"stage": "agents", "steps": []},
+            {"stage": "services"},
+        ],
+        "default_profile": default,
+    })})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus.config_get.return_value = profile
+    incus.list_containers.return_value = [{"name": "myrepo-feat-a", "status": "Running"}]
+    for trigger, stage, step in [
+        ("on_create", "setup", "init"), ("on_start", "deps", "sync"),
+        ("on_start", "agents", "claude"), ("on_start", "services", "db"),
+    ]:
+        autostart_outcomes.record("myrepo-feat-a", trigger, stage, step, "fail")
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list", "--json"])
+    assert result.exit_code == 0, _out(result)
+    rows = json.loads(result.stdout)
+    expected = [("on_create", "setup"), ("on_start", "deps")] if profile == "all" else []
+    assert [(r["trigger"], r["stage"]) for r in rows] == expected
+    effective = effective_config(cfg, incus, "myrepo-feat-a")
+    failures = failed_targets(effective, "myrepo-feat-a")
+    assert [(t.trigger.value, t.stage) for t in failures] == expected
+    targets = [RerunTarget(AutostartTrigger.ON_CREATE, "setup", None), RerunTarget(AutostartTrigger.ON_START, "deps", None)]
+    block = prepare(cfg, incus, "myrepo-feat-a", targets)
+    assert [s.stage for s in block.on_create] == (["setup"] if profile == "all" else [])
+    assert [s.stage for s in block.on_start] == (["deps"] if profile == "all" else [])

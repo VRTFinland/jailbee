@@ -352,6 +352,38 @@ the image for future containers, not existing ones. An updated wrapper reading
 an older config without a ceiling accepts only windows at or below the default
 and suggests `jailbee apply` when a larger value is requested.
 
+### Model map
+
+By default, `claude-jb` prepends a generated model map to the profile's
+`instructions` in the appended system prompt. It lists mapped tiers in Fable,
+Opus, Sonnet, Haiku order with their route, backend model, route-configured effort
+or minimum effort, backend context window and optional route description; it also
+names unmapped tiers. The windows describe individual routes, not the selected
+session context. The session defaults to the smallest mapped window; `--context`
+can override it within the profile ceiling. Profile-level default effort is not
+shown on the tier lines. Plain `claude` does not receive this map.
+
+Add a route's `description` to explain its strengths or intended use. It must
+be non-blank and at most 2 KiB in UTF-8; a higher config layer replaces it and
+`null` removes it. Set `model_map: false` on a profile to disable the map without
+disabling its instructions:
+
+```yaml
+litellm:
+  routes:
+    sol-high:
+      description: Strong reasoning for planning and review.
+  profiles:
+    codex:
+      model_map: false
+```
+
+The map and instructions together are capped at 64 KiB in UTF-8. If they do
+not fit, JailBee warns and retries without route descriptions; if they still do
+not fit, it warns and omits the map, preserving the user's instructions. The
+map includes no API keys, endpoint credentials, account tokens or route params;
+keep secrets out of descriptions and instructions too.
+
 ### Profile instructions
 
 A profile may carry `instructions`: model-policy text that `claude-jb` appends
@@ -374,11 +406,11 @@ litellm:
 - It reaches sessions started **after `jailbee apply`**; unlike `AGENTS.md`, it is
   rendered into `/etc/jailbee/litellm.json` only by `apply` and `new`.
 - Order in the prompt: the host-wide `AGENTS.md` (as managed memory), then the
-  profile's text, then your own `--append-system-prompt` /
+  generated model map, the profile's text, and your own `--append-system-prompt` /
   `--append-system-prompt-file`. `claude-jb` merges your flags into one argument
-  after the profile's text; with no profile text they pass through unchanged.
+  after the map and profile text; with neither they pass through unchanged.
   Everything after `--` is passed to Claude Code untouched.
-- Plain `claude` and profiles without `instructions` are unaffected. It is
+- Plain `claude` is unaffected. The map and instructions are
   guidance to the model, not enforcement: the text is set on the host and
   cannot be changed through the host's config from inside the container, but a
   user in the container (who has `sudo`) can edit the container's copy, and

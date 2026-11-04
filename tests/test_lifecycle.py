@@ -288,6 +288,28 @@ def test_ls_fields_render_alias_and_a_fork_keeps_its_base():
     assert fields["base"].json(c) == "main"
 
 
+def test_name_cell_marks_orchestrator_with_helm_glyph():
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+    from jailbee.orchestration.view import GrantView
+
+    c = ContainerInfo(
+        name="myrepo-orch",
+        state="RUNNING",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+    )
+    fields = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert fields["name"].cell(c) == "orch"
+    granted = replace(c, grant=GrantView(1, ("spawn",), (), False, ()))
+    assert fields["name"].cell(granted) == "⎈ orch"
+    # Values typed back and sorting keep the plain name.
+    assert fields["name"].json(granted) == "orch"
+    assert fields["name"].sort(granted) == fields["name"].sort(c)
+
+
 def test_list_containers_reports_attached_optional_mounts(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()
@@ -5267,6 +5289,49 @@ def _clone_commit_opts(**overrides):
     return NewContainerOptions(**defaults)
 
 
+@pytest.mark.parametrize(
+    "warm, source",
+    [(["*/build"], "repo-source"), ([], "repo-source"), (None, "repo-source"), (["*/build"], None)],
+)
+def test_warm_fork_runs_between_clone_and_mounts(tmp_path, mocker, warm, source):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="basesha")
+    order = []
+    mocker.patch(
+        "jailbee.lifecycle._clone_repo_in_container",
+        side_effect=lambda *a, **k: order.append("clone"),
+    )
+    seeder = mocker.patch(
+        "jailbee.fork_warm.seed_warm_paths", side_effect=lambda *a, **k: order.append("warm")
+    )
+    mocker.patch(
+        "jailbee.lifecycle._attach_under_repo_host_mounts",
+        side_effect=lambda *a: order.append("mount"),
+    )
+    phases = []
+    new_container(
+        cfg, incus, _clone_commit_opts(fork_of=source, warm_paths=warm), on_phase=phases.append
+    )
+    if warm and source:
+        assert order == ["clone", "warm", "mount"]
+        seeder.assert_called_once_with(
+            cfg,
+            incus,
+            child=f"{cfg.container_prefix}-feat-foo",
+            source=source,
+            commit="beefcafe1234",
+            patterns=warm,
+        )
+        assert phases.index("cloning") < phases.index("warming")
+    else:
+        assert order == ["clone", "mount"]
+        seeder.assert_not_called()
+        assert "warming" not in phases
+
+
 def test_new_container_clone_commit_checks_out_that_commit(tmp_path, mocker):
     """`clone_commit` pins the clone to a raw SHA — no `--branch` resolution."""
     cfg = _cfg_for_new(tmp_path)
@@ -5641,6 +5706,26 @@ def test_boot_container_allocates_pools_before_starting(tmp_path, mocker):
 def _cfg_for_destroy(tmp_path):
     cfg = load_config(FIXTURES / "full_config.yaml")
     return cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_destroy_reclaims_warm_snapshot_after_child_deletion(tmp_path, mocker, failure):
+    from unittest.mock import call
+
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {"name": "x", "status": "Stopped", "config": {"user.jailbee.fork_of": "source"}}
+    ]
+    incus.snapshot_list.return_value = [{"name": "jailbee-warm-x"}, {"name": "user-snap"}]
+    if failure:
+        incus.snapshot_delete.side_effect = IncusError("busy")
+    destroy_container(cfg, incus, "x", force=True)
+    incus.snapshot_delete.assert_called_once_with("source", "jailbee-warm-x")
+    assert incus.method_calls.index(call.delete("x", force=True)) < incus.method_calls.index(
+        call.snapshot_delete("source", "jailbee-warm-x")
+    )
 
 
 def test_destroy_container_stops_then_deletes_when_running(tmp_path, mocker):

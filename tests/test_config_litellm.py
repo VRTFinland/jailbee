@@ -539,6 +539,64 @@ def test_autostart_defaults_off():
     assert LiteLLMConfig().autostart is False
 
 
+@pytest.mark.parametrize(
+    ("description", "message"),
+    [("", "empty"), ("  \n", "empty"), ("a" * 2049, "exceeds"), ("é" * 1025, "exceeds")],
+)
+def test_route_description_rejects_blank_or_over_2kib(description, message):
+    with pytest.raises(ValidationError, match=message):
+        LiteLLMConfig.model_validate({"routes": {"sol-high": {"description": description}}})
+
+
+def test_route_description_accepts_2kib_and_editor_multiline():
+    description = "é" * 1024
+    cfg = LiteLLMConfig.model_validate({"routes": {"sol-high": {"description": description}}})
+    assert cfg.effective_routes()["sol-high"].description == description
+    from jailbee.config.models_litellm import LiteLLMRoute
+
+    assert LiteLLMRoute.model_json_schema()["properties"]["description"]["multiline"] is True
+
+
+def test_overlay_description_replaces_and_inherits():
+    host = LiteLLMConfig.model_validate({"routes": {"sol-high": {"description": "host"}}})
+    assert (
+        host.with_overlay(_overlay(routes={"sol-high": {"effort": "max"}}))
+        .effective_routes()["sol-high"]
+        .description
+        == "host"
+    )
+    assert (
+        host.with_overlay(_overlay(routes={"sol-high": {"description": "repo"}}))
+        .effective_routes()["sol-high"]
+        .description
+        == "repo"
+    )
+
+
+def test_overlay_null_description_removed():
+    host = LiteLLMConfig.model_validate({"routes": {"sol-high": {"description": "host"}}})
+    merged = host.with_overlay(_overlay(routes={"sol-high": {"description": None}}))
+    assert merged.effective_routes()["sol-high"].description is None
+
+
+def test_profile_model_map_default_and_overlay():
+    assert LiteLLMConfig().effective_profiles()["codex"].model_map is True
+    host = LiteLLMConfig.model_validate({"profiles": {"codex": {"model_map": False}}})
+    assert host.effective_profiles()["codex"].model_map is False
+    assert (
+        host.with_overlay(_overlay(profiles={"codex": {"effort": "high"}}))
+        .effective_profiles()["codex"]
+        .model_map
+        is False
+    )
+    assert (
+        host.with_overlay(_overlay(profiles={"codex": {"model_map": True}}))
+        .effective_profiles()["codex"]
+        .model_map
+        is True
+    )
+
+
 def test_overlay_stacks_on_the_global_route_field_by_field():
     host = LiteLLMConfig.model_validate({"routes": {"sol-high": {"effort": "max"}}})
     merged = host.with_overlay(_overlay(routes={"sol-high": {"context_window": 500_000}}))

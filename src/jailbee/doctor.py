@@ -364,6 +364,7 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
 def _check_agent_instructions(cfg: Config) -> CheckResult:
     """Report host-wide instruction staging without requiring Incus."""
     from jailbee.agent_instructions import (
+        PREAMBLE,
         desired_content,
         instruction_agents,
         source_path,
@@ -400,10 +401,11 @@ def _check_agent_instructions(cfg: Config) -> CheckResult:
             f"staged copy out of date for {', '.join(stale)} — "
             "run any `jb` command (e.g. `jb ls`) to refresh",
         )
-    if content is None:
-        return CheckResult(name, True, f"none (no {display_path(source)})")
-    # desired_content prepends one marker line; use its snapshot, not a second source read/stat.
-    size = len(content.partition(b"\n")[2])
+    # Use the content snapshot rather than reading the source a second time.
+    remainder = content.partition(b"\n")[2][len(PREAMBLE.encode()) + 1 :]
+    if not remainder:
+        return CheckResult(name, True, f"preamble only (no {display_path(source)})")
+    size = len(remainder) - 1
     wired = ", ".join(f"{a} → {gi.dir}/{gi.file}" for a, gi in agents)
     return CheckResult(name, True, f"{display_path(source)} ({size} bytes): {wired}")
 

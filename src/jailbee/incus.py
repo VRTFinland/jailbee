@@ -176,6 +176,11 @@ class Incus:
         self.exec_timeout: int | None = None
         self._client_version: tuple[int, ...] | None = None
         self._client_version_probed = False
+        self._guarded_instances: dict[str, str] = {}
+
+    def guard_instance(self, name: str, uuid: str) -> None:
+        """Pin worker-side exec/config writes to an Incus instance, not its name."""
+        self._guarded_instances[name] = uuid
 
     # ---- Internal helpers ---------------------------------------------------
 
@@ -188,6 +193,19 @@ class Incus:
         timeout: int | None = None,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        target = (
+            args[1]
+            if len(args) > 1 and args[0] == "exec"
+            else args[2]
+            if len(args) > 2 and args[:2] in (["config", "set"], ["config", "unset"])
+            else None
+        )
+        if target is not None and target in self._guarded_instances:
+            current = self.config_get_checked(target, "volatile.uuid")
+            if current != self._guarded_instances[target]:
+                raise IncusError(
+                    "container identity changed during publication; refusing worker write"
+                )
         cmd = [self.binary, *args]
         if self.dry_run:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -1027,6 +1045,10 @@ class Incus:
                 pass
             return
         self._run_retrying_on_etag(args)
+
+    def current_project(self) -> str:
+        """Return the CLI's active project (including environment overrides)."""
+        return self._run(["project", "get-current"]).stdout.strip()
 
     # ---- Snapshots ----------------------------------------------------------
 

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 PHASE_STARTING = "starting"
 PHASE_CREATING = "creating"
 PHASE_CLONING = "cloning"
+PHASE_WARMING = "warming"
 PHASE_AUTOSTART = "autostart"
 PHASE_STOPPING = "stopping"
 PHASE_DELETING = "deleting"
@@ -422,6 +423,7 @@ def op_to_job(
             "untrusted_head": opts.untrusted_head,
             "clone_commit": opts.clone_commit,
             "fork_of": opts.fork_of,
+            "warm_paths": opts.warm_paths,
             "inherited_labels": opts.inherited_labels,
             "assume_yes": opts.assume_yes,
             "approved_autostart_ref": opts.approved_autostart_ref,
@@ -469,6 +471,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         untrusted_head=o.get("untrusted_head", False),
         clone_commit=o["clone_commit"],
         fork_of=o.get("fork_of"),
+        warm_paths=o.get("warm_paths"),
         inherited_labels=o.get("inherited_labels"),
         # `.get` not `[...]`: a job file written by an older jailbee predates these
         # keys, and an in-flight background `jailbee new` must survive an upgrade.

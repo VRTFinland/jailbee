@@ -163,6 +163,15 @@ class ContainerInfo:
             return f"{self.alias} ({self.display_name})"
         return self.display_name
 
+    @property
+    def name_label(self) -> str:
+        """:attr:`shown_name` led by the orchestrator glyph when the container holds a grant.
+
+        The dashboard's NAME cell (which may be cut at its width cap) and the
+        details card's title (never cut) both show this.
+        """
+        return f"{ORCHESTRATOR_GLYPH} {self.shown_name}" if self.grant else self.shown_name
+
 
 def fork_source(c: ContainerInfo) -> str | None:
     """The short name of the container ``c`` was forked from; None when not a fork."""
@@ -1145,6 +1154,8 @@ class NewContainerOptions:
     # `clone_commit`; this is only the remembered upstream. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     fork_of: str | None = None
+    # Resolved ignored outputs. MUST be mirrored in background.py.
+    warm_paths: list[str] | None = None
     # MUST be mirrored in `background.op_to_job`/`job_to_opts`.
     inherited_labels: dict[str, str] | None = None
     # Suppress interactive confirmations (`jailbee new --yes`). Consulted for the
@@ -1466,8 +1477,10 @@ def assess_branch_autostart(
     # merely lags `origin/<default_branch>` is not a privilege escalation, and
     # used to be treated as one.
     profile_name = opts.autostart_profile or loaded.cfg.autostart.default_profile
-    profile = loaded.cfg.autostart.profiles.get(profile_name) if profile_name else None
-    selected_services = profile.services if profile is not None and profile != "all" else None
+    from jailbee.autostart_profiles import selection
+
+    profile = selection(loaded.cfg.autostart, profile_name)
+    selected_services = profile.services if profile != "all" else None
     if opts.autostart_services is not None:
         selected_services = opts.autostart_services
     verdict = branch_config.assess_escalation(
@@ -2228,6 +2241,19 @@ def _new_container(
         if opts.spawned_by is not None:
             _record_child_baseline(cfg, incus, name, repo_dir)
 
+    if opts.clone and opts.fork_of and opts.clone_commit and opts.warm_paths:
+        from jailbee.fork_warm import seed_warm_paths
+
+        _phase("warming")
+        seed_warm_paths(
+            cfg,
+            incus,
+            child=name,
+            source=opts.fork_of,
+            commit=opts.clone_commit,
+            patterns=opts.warm_paths,
+        )
+
     # Attach host_mounts whose container path is under /home/<user>/<repo>/.
     # These cannot live in the <prefix>-binds profile: Incus pre-creates the
     # mount target at `incus start`, which pre-populates the clone destination
@@ -2327,7 +2353,7 @@ def _new_container(
     # From here on the container is complete; an autostart failure leaves it
     # in place (and running) for debugging, child or not.
     progress.provisioned = True
-    if effective_cfg.autostart.profiles:
+    if selected_profile is not None:
         from jailbee.autostart_plan import normalize_stages
         from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
 
@@ -2345,14 +2371,11 @@ def _new_container(
 
         incus.config_set(name, SERVICES_KEY, encode_names(opts.autostart_services))
     if opts.autostart:
+        from jailbee.autostart_profiles import selection
         from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope
 
-        profile = (
-            assessment.effective_cfg.autostart.profiles.get(selected_profile)
-            if selected_profile
-            else None
-        )
-        service_names = profile.services if profile is not None and profile != "all" else None
+        profile = selection(assessment.effective_cfg.autostart, selected_profile)
+        service_names = profile.services if profile != "all" else None
         if opts.autostart_services is not None:
             service_names = opts.autostart_services
         incus.config_set(
@@ -2932,6 +2955,7 @@ def destroy_container(
 
     state = "Stopped"
     had_group_override = False
+    fork_source: str | None = None
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
@@ -2944,6 +2968,7 @@ def destroy_container(
             # also validates and would need a second `incus.config_get`
             # round trip for data already in hand). Both spellings count.
             labels = raw.get("config") or {}
+            fork_source = labels.get("user.jailbee.fork_of")
             had_group_override = bool(
                 labels.get(groups.GROUP_LABEL) or labels.get(groups.LEGACY_GROUP_LABEL)
             )
@@ -3015,6 +3040,17 @@ def destroy_container(
     from jailbee import autostart_outcomes
 
     autostart_outcomes.remove(name)
+
+
+    if fork_source:
+        from jailbee.fork_warm import SNAPSHOT_PREFIX
+
+        try:
+            snap = f"{SNAPSHOT_PREFIX}{name}"
+            if any(s.get("name") == snap for s in incus.snapshot_list(fork_source)):
+                incus.snapshot_delete(fork_source, snap)
+        except Exception as exc:
+            warn(f"Could not remove warm snapshot for '{name}' (continuing): {exc}")
 
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login
@@ -3474,6 +3510,12 @@ def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
     return [f"{repo}/{base}: {warning}" for repo, base, warning in tracking_findings(containers)]
 
 
+# Leads an orchestrator's NAME cell (helm: it steers its children).
+ORCHESTRATOR_GLYPH = "⎈"
+# The dashboard's NAME column, tree indent and glyph included, never grows past
+# this many cells; a longer name ends in an ellipsis.
+NAME_MAX_WIDTH = 20
+
 # Rich style per `git_status.merge_label` kind. Module-level because it is a
 # constant with no dependency on `ls_field_specs`' arguments — rebuilding it per
 # call bought nothing, and at function scope the `_UPPER` name (this module's
@@ -3931,8 +3973,10 @@ def ls_field_specs(
             name="name",
             sort=lambda c: _text_key(c.shown_name),
             header="NAME",
-            cell=lambda c: c.shown_name,
+            # An orchestrator (a container holding a grant) leads with ⎈.
+            cell=lambda c: c.name_label,
             json=lambda c: c.display_name,
+            dashboard_max_width=NAME_MAX_WIDTH,
         ),
         table_format.FieldSpec(
             name="full_name",

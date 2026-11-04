@@ -10,7 +10,39 @@ before editing `## Unreleased`.
 
 ### Added
 
-- Re-run selected or failed autostart steps, record their outcomes, and use the terminal dashboard Autostart and Services menus.
+- Re-run selected or failed autostart steps, record their outcomes, and use the
+  terminal dashboard Autostart and Services menus.
+- `claude-jb` sessions receive a generated profile model map before their
+  instructions. Routes can describe model strengths with `description`, and
+  profiles can opt out with `model_map: false`.
+- A `jailbee-container` skill guides agents working inside a JailBee container.
+  Staged host-wide instruction files contain a built-in JailBee preamble for
+  agents configured with such a file (currently Claude Code). Set
+  `agent_instructions: false` to omit the preamble.
+- Forks (`jailbee fork` and orchestrator fork spawns) can seed Git-ignored
+  build outputs from the source by btrfs reflink, configured with
+  `fork.warm_paths` and overridden with repeatable `--warm PATH` or
+  `--no-warm`. Other storage pools skip seeding with a note
+  ([#72](https://github.com/VRTFinland/jailbee/issues/72)).
+- Opt-in orchestrator publish grants: request host-broker publication of the
+  orchestrator's own issue actions, source PRs and bound-PR reviews, with
+  per-kind/repository rights, repo caps, a sliding-hour rate budget and an
+  audit log. Children never receive publish rights. Upgrade the host CLI and
+  broker together: the optional `publish` grant-label key is not understood
+  by older brokers. The staged container helper needs no base-image rebuild.
+- Built-in `none` and `all` autostart profiles are available alongside configured
+  profiles. Restart commands and the dashboard can choose a profile and reset
+  explicit service selections; `none` skips repository startup while preserving
+  agent startup.
+
+### Changed
+
+- `jailbee ls` and the terminal dashboard show `⎈` before an orchestrator's
+  name (a container holding an orchestration grant).
+- The terminal dashboard's fitted column widths cap the NAME column at 20
+  cells; a longer name ends in `…` and keeps its failed-autostart `⚠`. The
+  details panel's title shows the whole label (`⎈`, alias and name) uncut.
+- The terminal dashboard draws a stopped container's row dim.
 
 ## 1.8.2 - 2026-11-04
 
@@ -52,7 +84,8 @@ before editing `## Unreleased`.
   the choice and `autostart profile` switches it later, starting missing setup
   and newly selected services without a restart. The terminal dashboard adds
   a Lifecycle picker and optional PROFILE column; orchestration spawn/restart
-  requests accept the same selection.
+  requests accept the same selection. Configured profile names `none` and `all`
+  are rejected at config load; `all` was already reserved.
 
 - **Adopting and releasing children.** `jb orchestrate adopt ORCHESTRATOR
   CHILD...` brings existing containers of the same repo, running or stopped,

@@ -12,6 +12,20 @@ description you produce is written as a JSON manifest file into a fixed
 outbox directory, and a human on the host reviews and publishes it later with
 `jb review apply`. Nothing you write here reaches GitHub by itself.
 
+## Orchestrator publication
+
+An orchestrator with `publish.pr_reviews` in
+`~/.jailbee/orchestration/grant.json` stages normally, then runs
+`jailbee inbox send publish --pr NAME.json --wait` instead of asking the human
+to apply it. Comments and replies may target review-bound PRs in the own
+repository; description rewrites additionally require an authored, non-adopted
+source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
+`publish.pull_requests` and the own-branch restrictions described by
+`jailbee-orchestration`. `started` is acceptance, not success: read the final
+status for its ref and use the returned URLs. An uncertain result requires
+human resolution with `jb outbox` on the host, never automatic retry.
+Without the right, keep the human handoff. Children never publish.
+
 ## Read path
 
 Use the container's own `gh` to see the PR's current state — never guess at
@@ -145,14 +159,18 @@ pr/NNN-topic.json --revision TOKEN` publishes all pending actions in that
 one manifest, not only a highlighted comment. `TOKEN` comes from inspection;
 a changed proposal requires refresh and renewed inspection. The original
 `jb review apply <container>` remains available. These are instructions to
-the human, **not permission for you to run publication commands**. Continue
-to stage files only; never call host apply or direct `gh` mutations yourself.
+the human, **not permission for you to run host publication commands**.
+Without matching orchestrator rights, stage files only. With those rights,
+use `send publish` as described above; never call host apply or direct `gh`
+mutations yourself.
 
 ## When you're done
 
-Tell the user, verbatim: run `jb review apply <container>` on the host —
-**nothing has been published yet.** Everything you wrote is a proposal sitting
-in the container's filesystem until then.
+If a broker `done` confirms publication, report its URLs. If there is no
+final result yet, say publication is pending. For manifests not sent through
+a granted orchestrator publish request, tell the user to run
+`jb review apply <container>` on the host: **nothing has been published yet.**
+Everything still queued is a proposal in the container's filesystem.
 
 ## What not to assume
 

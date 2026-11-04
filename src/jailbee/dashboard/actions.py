@@ -28,7 +28,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
-    from jailbee.dashboard.model import RepoAdvisory
+    from jailbee.dashboard.model import RepoAdvisory, RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.orchestration.runner_model import Runner
 
@@ -165,6 +165,35 @@ def command_label(argv: Sequence[str]) -> str:
 
 
 AUTOSTART_RERUN = "autostart-rerun"
+
+
+CUSTOM_SERVICES = "\x00custom"
+
+
+def autostart_choice_entries(group: RepoGroup) -> tuple[PickerEntry, ...]:
+    default = group.autostart_default_profile or "all"
+    names = (default, *(name for name in group.autostart_profiles if name != default))
+    return (
+        *(PickerEntry(f"{name}  (default)" if name == default else name, name) for name in names),
+        *((PickerEntry("Custom services…", CUSTOM_SERVICES),) if group.autostart_services else ()),
+    )
+
+
+def autostart_choice_args(
+    group: RepoGroup, *, profile: str | None, services: Sequence[str] | None, creating: bool
+) -> list[str]:
+    args: list[str] = []
+    if profile is not None and not (
+        creating and profile == (group.autostart_default_profile or "all") and services is None
+    ):
+        args.extend(("--autostart-profile", profile))
+        if not creating and services is None:
+            args.append("--reset-services")
+    if services is not None:
+        args.extend(("--services", ",".join(services)))
+    return args
+
+
 AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"

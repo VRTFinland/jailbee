@@ -62,6 +62,28 @@ def _spawn() -> SpawnManifest:
     )
 
 
+@pytest.mark.parametrize(
+    "role,rights,expected",
+    [
+        ("child", True, "children may only send messages"),
+        ("orchestrator", False, "publishing is not in this container's grant"),
+        ("orchestrator", True, "published"),
+    ],
+)
+def test_publish_dispatch(tmp_path, monkeypatch, role, rights, expected):
+    from jailbee.orchestration.protocol import PublishManifest
+
+    config = {labels.GRANT: _grant(publish={"pull_requests": rights})}
+    if role == "child":
+        config[labels.SPAWNED_BY] = "proj-parent"
+    ctx = _ctx(tmp_path, _node("proj-o", **config))
+    monkeypatch.setitem(actions.HANDLERS, "publish", lambda ctx, m: Outcome("done", "published"))
+    m = PublishManifest(
+        version=1, id="publish-x", type="publish", outbox="issue", manifest="a.json"
+    )
+    assert dispatch(ctx, m).detail == expected
+
+
 def test_child_preamble_requests_background_waiter() -> None:
     assert "jailbee inbox wait --timeout none" in actions.child_preamble("orch")
 

@@ -341,10 +341,10 @@ class GlobalConfig(BaseModel):
         default=True,
         strict=True,
         description=(
-            "When true (default), `~/.config/jailbee/AGENTS.md` is mounted read-only "
-            "into every container as each wired agent's host-wide instructions "
-            "(Claude: `/etc/claude-code/CLAUDE.md`). With no such file the mount is "
-            "an empty directory. `false` skips sync and omits the mount, retaining "
+            "When true (default), a built-in JailBee preamble and optional host "
+            "`~/.config/jailbee/AGENTS.md` are staged and mounted read-only as each "
+            "wired agent's host-wide instructions (Claude: `/etc/claude-code/CLAUDE.md`). "
+            "`false` skips sync and omits the mount, retaining "
             "host staging. Apply in each repo and restart running containers to "
             "remove existing mounts. Host-level "
             "only (`common.py`'s `_HOST_LEVEL_KEYS`)."

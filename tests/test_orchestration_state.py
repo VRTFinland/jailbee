@@ -124,6 +124,18 @@ def test_queue_roundtrip(tmp_path: Path) -> None:
     assert data["version"] == 1
 
 
+def test_queue_warm_paths_and_legacy(tmp_path):
+    from dataclasses import replace
+
+    save_queue(tmp_path, {"proj-a": [replace(_req(), warm_paths=["*/build"])]})
+    assert load_queue(tmp_path)["proj-a"][0].warm_paths == ["*/build"]
+    path = tmp_path / "queue.json"
+    raw = json.loads(path.read_text())
+    del raw["queues"]["proj-a"][0]["warm_paths"]
+    path.write_text(json.dumps(raw))
+    assert load_queue(tmp_path)["proj-a"][0].warm_paths is None
+
+
 def test_missing_queue_is_empty(tmp_path: Path) -> None:
     assert load_queue(tmp_path) == {}
 

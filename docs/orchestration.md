@@ -90,6 +90,91 @@ settings off does not narrow stored grants. See
 Revoking stops new spawns and other operations and drops queued spawns.
 Existing children are untouched and stay children.
 
+### Publish the orchestrator's own outboxes
+
+Publishing is opt-in, separate from child `operations`. A grant without
+`publish` has no publish rights; children never receive them. The broker uses
+the host user's GitHub/git credentials and the same locks, freshness checks,
+expected fields, receipts and journals as manual publication.
+
+```yaml
+publish:
+  issues: [create, edit, comment, labels, state]  # own repo and declared submodules
+  foreign_issues:
+    repos: [someorg/upstream-lib]               # case-insensitive owner/name, or ["*"]
+    actions: [comment]
+  pull_requests: true
+  pr_reviews: false
+  max_actions_per_hour: 30                      # 1..500
+```
+
+```bash
+jb orchestrate grant bugs --publish-issues comment,state --publish-prs
+jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
+jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
+jb orchestrate grant bugs --no-publish
+```
+
+`--publish-issues none` clears issue rights. Repeatable
+`--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed
+repository must use the same kinds. `--publish-prs/--no-publish-prs` and
+`--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
+`--no-publish` clears everything and is exclusive with other publish flags.
+A bare `grant` keeps existing publish rights. `show` and `ls` display them.
+Profiles may carry the same block; the repo cap intersects rights and takes
+the smaller rate, while `publish: false` forbids publication.
+
+After staging a manifest in its own issue or PR outbox, the orchestrator sends:
+
+```bash
+jailbee inbox send publish --issue close-12.json --wait
+jailbee inbox send publish --pr imported-branch.json --wait
+```
+
+The version-1 protocol request is
+`{"version":1,"type":"publish","id":"publish-unique","outbox":"issue","manifest":"close-12.json"}`.
+The target is a bare JSON file name, never a path or `.progress.json` file.
+The broker checks every pending action before acceptance and again under the
+domain lock. Any uncovered kind or repository refuses the whole request.
+
+Acceptance replies `started`; a later `done` lists result URLs and created
+issue numbers in manifest order. `--wait` can return at `started`: read the
+final status for the same ref through the ordinary inbox. A worker failure
+replies `failed`. An uncertain outcome, including a broker restart during
+publication, is never retried automatically: ask the human to inspect
+`jb outbox` on the host. Use a new request id for a deliberate retry.
+
+Source publication cannot force-push, use the default/base branch as head,
+or overwrite an existing upstream head unless it belongs to a PR bound to
+this container. New PRs use the default base; bound updates keep that PR's
+base. Updates require an authored `BranchPrMap` binding created by this
+container's source publication; review-only PR/stacked labels and adopted
+bindings do not authorize pushes. PRs opened here retain authorship for later
+updates. Updating any PR opened some other way remains a host step. Review comments and replies target only bound PRs in the own repository,
+never foreign repositories or submodules. Description rewrites additionally
+require an authored, non-adopted source-PR binding; review-only labels do not
+authorize editing someone else's title or body.
+
+Only one publish runs per orchestrator. Its full pending-action count is
+reserved against a sliding-hour cap before starting, including failed or
+partially applied attempts; reservations are never refunded. One source
+publish costs one action. Revocation or `--no-publish` refuses new requests;
+an already accepted worker finishes and reports its result.
+The broker writes finished requests, action kinds/repos, URLs and outcome to
+`publish-log.jsonl` under its state root (`~/.local/state/jailbee/orchestration/`).
+Existing outbox receipts and history remain available through `jb outbox`.
+A worker shutdown that leaves a review outcome uncertain also leaves a
+host-side block for that instance and manifest name: further broker requests
+for it are refused until the human resolves the outbox on the host. A manual
+host publication is not subject to this broker block. Do not rename and
+resubmit an uncertain manifest. The broker waits up to 25 seconds for workers
+on shutdown/upgrade; later recovery never automatically retries a cut request.
+
+Over SSH, granting publish rights requires the session's command policy to
+permit the equivalent manual operation: `issue apply`, `pr push
+--source-manifest`, or `review apply`. The same router policy checks these
+permissions; enabling `orchestrate grant` alone does not unlock publishing.
+
 ### Adopt running containers
 
 The host user can adopt existing containers into an orchestrator's topology,
@@ -249,6 +334,26 @@ prompt](agents.md#primary-agent-and-initial-prompt) and the
 prepends a short fixed preamble naming its orchestrator and the child skill,
 and sets `JAILBEE_ROLE=child` and `JAILBEE_ORCHESTRATOR=<name>` in the
 agent's environment.
+
+## Fork warm paths
+
+Fork spawns seed the source's Git-ignored build outputs from `fork.warm_paths`
+using btrfs reflinks, before mounts, caches and autostart. They seed HEAD forks
+only: a dirty source, a source that moved past the pinned fork commit, a non-HEAD
+`--ref`, or another storage driver is skipped with an advisory. A reflink failure
+never falls back to a full copy and never fails the fork. While warming runs,
+the source's entire repository snapshot is visible read-only to the child,
+including ignored secrets such as `.env`; fork only to trusted children.
+Paths equal to or below later mount targets are skipped rather than copied
+into storage that would immediately be hidden.
+
+For `jailbee inbox send spawn`, repeatable `--warm PATH` replaces the configured
+list; `--no-warm` disables it. The flags are mutually exclusive and are refused
+with `--new` or `--pr`. The version-2 fork manifest field is `warm_paths`:
+omitted uses configuration, `[]` disables seeding, and a non-empty list replaces
+configuration. Patterns are repo-relative globs of ignored paths (`*` does not
+cross `/`; `**` matches zero or more segments). Unmatched patterns get a note.
+See [`fork`](config.md#fork).
 
 ## Autostart stage selection
 

@@ -146,6 +146,93 @@ def test_rerun_menu_checks_both_command_shapes(mocker, denied):
     assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
 
 
+def test_default_choice_adds_no_args(tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup("a", str(tmp_path), None, [], autostart_default_profile="all")
+    assert dact.autostart_choice_args(group, profile="all", services=None, creating=True) == []
+    assert dact.autostart_choice_args(group, profile="none", services=None, creating=True) == [
+        "--autostart-profile",
+        "none",
+    ]
+
+
+def test_choice_entries_order_and_custom_only_with_services(tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup(
+        "a",
+        str(tmp_path),
+        None,
+        [],
+        autostart_profiles=("full", "light", "none", "all"),
+        autostart_default_profile="light",
+        autostart_services=("db",),
+    )
+    entries = dact.autostart_choice_entries(group)
+    assert [(e.label, e.value) for e in entries] == [
+        ("light  (default)", "light"),
+        ("full", "full"),
+        ("none", "none"),
+        ("all", "all"),
+        ("Custom services…", "\x00custom"),
+    ]
+    assert (
+        len(dact.autostart_choice_entries(dataclasses.replace(group, autostart_services=()))) == 4
+    )
+
+
+def test_custom_services_args_joined(tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup("a", str(tmp_path), None, [])
+    assert dact.autostart_choice_args(
+        group, profile=None, services=["db", "web"], creating=False
+    ) == ["--services", "db,web"]
+    assert dact.autostart_choice_args(group, profile=None, services=[], creating=True) == [
+        "--services",
+        "",
+    ]
+
+
+@pytest.mark.parametrize(("services", "joined"), [(["db", "web"], "db,web"), ([], "")])
+def test_restart_profile_with_explicit_services_does_not_reset(tmp_path, services, joined):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup("a", str(tmp_path), None, [])
+    assert dact.autostart_choice_args(group, profile="full", services=services, creating=False) == [
+        "--autostart-profile",
+        "full",
+        "--services",
+        joined,
+    ]
+
+
+def test_new_container_argv_appends_extra(tmp_path):
+    from jailbee.dashboard.menus import new_container_argv, new_pr_container_argv
+    from jailbee.dashboard.model import RepoTarget
+
+    target = RepoTarget(tmp_path, None)
+    extra = ["--autostart-profile", "none"]
+    assert new_container_argv(target, "branch", "main", extra) == [
+        "jailbee",
+        "new",
+        "--background",
+        *extra,
+        "--",
+        "branch",
+        "main",
+    ]
+    assert new_pr_container_argv(target, 42, extra) == [
+        "jailbee",
+        "new",
+        "--background",
+        "--pr",
+        "42",
+        *extra,
+    ]
+
+
 def test_adoption_commands_and_candidates():
     from jailbee.orchestration.view import ChildView, GrantView
     from tests.dashboard_fixtures import ci

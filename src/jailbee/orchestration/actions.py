@@ -188,7 +188,7 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     """
     role = ctx.role()
     if role == "none":
-        return None
+        return refused(NOT_ALLOWED) if manifest.type == "publish" else None
     if role == "child":
         if isinstance(manifest, RightsManifest):
             if "grant" in manifest.model_fields_set or manifest.child not in (
@@ -211,10 +211,14 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
             grant = ctx.grant()
         if grant is None:
             return refused(NOT_ALLOWED)
-        op = OPERATION_OF[manifest.type]
-        revoke_only = isinstance(manifest, RightsManifest) and manifest.grant is None
-        if op not in grant.operations and not revoke_only:
-            return refused(f"operation `{op}` is not in this container's grant")
+        if manifest.type == "publish":
+            if grant.publish.empty():
+                return refused("publishing is not in this container's grant")
+        else:
+            op = OPERATION_OF[manifest.type]
+            revoke_only = isinstance(manifest, RightsManifest) and manifest.grant is None
+            if op not in grant.operations and not revoke_only:
+                return refused(f"operation `{op}` is not in this container's grant")
     handler = HANDLERS.get(manifest.type)
     if handler is None:
         return refused(f"`{manifest.type}` is not supported by this broker version")
@@ -280,6 +284,7 @@ class SpawnPlan:
     autostart_profile: str | None = None
     manifest_id: str = ""
     services: list[str] | None = None
+    warm_paths: list[str] | None = None
 
 
 def _profile_problem(cfg: Config, name: str | None) -> str | None:
@@ -366,6 +371,7 @@ def plan_spawn(
         m.autostart_profile,
         m.id,
         services=m.services,
+        warm_paths=m.warm_paths,
     )
 
 
@@ -385,6 +391,8 @@ def child_options(
     cfg: Config, plan: SpawnPlan, *, orchestrator_full: str, fork: ForkSource | None
 ) -> NewContainerOptions:
     """The create options for a child: always an untrusted head, rights exactly as planned."""
+    from jailbee.fork_warm import resolve_warm_paths
+
     return NewContainerOptions(
         container_branch=plan.branch,
         name=plan.child_full,
@@ -398,6 +406,7 @@ def child_options(
         clone_commit=fork.commit if fork is not None else plan.clone_commit,
         pr=plan.pr,
         fork_of=fork.full_name if fork is not None else None,
+        warm_paths=resolve_warm_paths(cfg, plan.warm_paths) if fork is not None else None,
         inherited_labels=(fork.pr_labels or None) if fork else None,
         base_branch_label=fork.base_branch if fork is not None else plan.pr_base,
         untrusted_head=True,
@@ -642,6 +651,7 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
             on_done=plan.on_done,
             autostart_profile=plan.autostart_profile,
             services=plan.services,
+            warm_paths=plan.warm_paths,
             ref=plan.ref,
             pr=plan.pr,
             pr_base=plan.pr_base,
@@ -792,6 +802,7 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
         pr_base=req.pr_base,
         autostart_profile=req.autostart_profile,
         services=req.services,
+        warm_paths=req.warm_paths,
         manifest_id=req.manifest_id,
         on_done=(
             "destroy"

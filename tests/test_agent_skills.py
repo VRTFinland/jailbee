@@ -84,6 +84,160 @@ def test_sync_removes_stale_files_in_managed_skill(tmp_path: Path, monkeypatch) 
     assert (skills / "jailbee-usage" / "SKILL.md").is_file()
 
 
+def test_bundled_skills_include_container_reference() -> None:
+    assert "jailbee-container" in agent_skills.bundled_skill_names()
+
+
+def test_container_skill_covers_identity_commands_and_policy() -> None:
+    import yaml
+
+    text = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
+    _, frontmatter, body = text.split("---", 2)
+    assert yaml.safe_load(frontmatter)["name"] == "jailbee-container"
+    for needle in (
+        "/etc/jailbee/container.json",
+        "repo_dir",
+        "git branch --show-current",
+        "jailbee service restart api",
+        "jailbee service logs api",
+        "jailbee service refresh api",
+        "jailbee net egress add api.vendor.example <container>",
+        "jailbee net loose <container> --for 30m",
+        "jailbee git pull <container>",
+        "read-only policy",
+        "jailbee-orchestration-child",
+    ):
+        assert needle in body, needle
+    assert "must not merge into other branches or perform host integration" in body
+    assert "own-branch updates" in body
+    network = body.split("## Blocked network access", 1)[1].split("## Commits", 1)[0]
+    assert "child" in network and "orchestrator" in network
+
+
+def _validate_guidance_commands(skill: str, preamble: str) -> None:
+    import shlex
+
+    from typer.main import get_command
+
+    from jailbee.cli import app
+    from jailbee.container_cli import container_app
+
+    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
+    inline = re.findall(r"`(jailbee(?:\s+[^`]*)?)`", skill)
+    examples = inline + [line for block in blocks for line in block.splitlines()]
+    for line in preamble.splitlines():
+        if line == (
+            "Inside the container, jailbee offers service, config validate, inbox, version "
+            "and --version;"
+        ):
+            continue  # This is a prose list, not a command invocation.
+        examples.extend(re.findall(r"\bjailbee\s+.*?(?=\s+and\s+jailbee|\s+\(|[.;]|$)", line))
+    host_roots = {"net", "git", "pr", "port", "display"}
+    container_roots = {"service", "config", "inbox", "version"}
+    for example in examples:
+        if not example.startswith("jailbee "):
+            continue
+        tokens = shlex.split(example.replace("[", "").replace("]", ""))
+        tokens = tokens[1:]
+        if tokens[:1] == ["--repo"]:
+            root_options = {opt for p in get_command(app).params for opt in p.opts}
+            assert "--repo" in root_options, example
+            assert len(tokens) >= 2, example
+            tokens = tokens[2:]
+        if not tokens or tokens[0] == "...":
+            continue
+        root = tokens[0]
+        assert root in host_roots | container_roots, example
+        command = get_command(app if root in host_roots else container_app)
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token.startswith("-"):
+                options = {opt: p for p in command.params for opt in p.opts}
+                assert token in options, example
+                index += 1 + (not options[token].is_flag)
+            elif hasattr(command, "commands"):
+                assert token in command.commands, example
+                command = command.commands[token]
+                index += 1
+            else:
+                index += 1
+
+
+def test_container_guidance_rejects_unknown_documented_command() -> None:
+    with pytest.raises(AssertionError, match="bogus"):
+        _validate_guidance_commands("`jailbee service bogus`", "")
+
+
+def test_preamble_rejects_unknown_documented_command() -> None:
+    from jailbee.agent_instructions import PREAMBLE
+
+    with pytest.raises(AssertionError, match="bogus"):
+        _validate_guidance_commands("", PREAMBLE + "\njailbee bogus")
+
+
+def test_container_guidance_commands_resolve() -> None:
+    from typer.main import get_command
+
+    from jailbee.agent_instructions import PREAMBLE
+    from jailbee.cli import app
+    from jailbee.container_cli import container_app
+
+    skill = (agent_skills._skills_root() / "jailbee-container" / "SKILL.md").read_text()
+    _validate_guidance_commands(skill, PREAMBLE)
+    commands = {
+        "service ls": False,
+        "service start": False,
+        "service restart": False,
+        "service logs": False,
+        "service refresh": False,
+        "service plan": False,
+        "service stop": False,
+        "config validate": False,
+        "inbox": False,
+        "version": False,
+        "net egress add": True,
+        "net loose": True,
+        "git pull": True,
+        "pr push": True,
+        "port": True,
+        "display": True,
+    }
+    for path, host in commands.items():
+        assert path in skill or path in PREAMBLE
+        command = get_command(app if host else container_app)
+        for part in path.split():
+            assert hasattr(command, "commands"), path
+            command = command.commands[part]
+    service = get_command(container_app).commands["service"]
+    assert "repo" in {p.name for p in service.params}
+    logs = service.commands["logs"]
+    assert {"follow", "lines"} <= {p.name for p in logs.params}
+    plan = service.commands["plan"]
+    assert {"op", "json_output"} <= {p.name for p in plan.params}
+    assert "repo" in {p.name for p in get_command(app).params}
+    assert "--version" in {option for p in get_command(container_app).params for option in p.opts}
+    config = get_command(container_app).commands["config"].commands["validate"]
+    assert "--config" in {option for p in config.params for option in p.opts}
+    assert "--json" in {option for p in service.commands["ls"].params for option in p.opts}
+    assert "--for" in {
+        option
+        for p in get_command(app).commands["net"].commands["loose"].params
+        for option in p.opts
+    }
+
+
+def test_sync_copies_real_container_skill(tmp_path: Path) -> None:
+    source = agent_skills._skills_root() / "jailbee-container" / "SKILL.md"
+    shared = tmp_path / "shared"
+    cfg = make_config(tmp_path / "repo", shared_dir=shared, claude={"enabled": True})
+
+    agent_skills.sync_agent_skills(cfg)
+
+    copied = shared / "claude" / "skills" / "jailbee-container" / "SKILL.md"
+    assert copied.read_bytes() == source.read_bytes()
+
+
 def test_bundled_skills_include_pr_review() -> None:
     assert "jailbee-pr-review" in agent_skills.bundled_skill_names()
 

@@ -188,6 +188,242 @@ def test_choose_pr_source_lists_own_branch_first(mocker, selected):
     )
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["default", "base", "remote", "unbound_number", "unbound_target", "bound_base", "new_base"],
+)
+def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.pr import PrError, PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    if case in {"default", "base"}:
+        data["actions"][0]["branch"] = "main" if case == "default" else "develop"
+        if case == "base":
+            data["base"] = "develop"
+    elif case == "remote":
+        p["remote"].return_value = "b" * 40
+    elif case == "unbound_number":
+        data["pr"] = 77
+        p["resolve"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
+    elif case == "unbound_target":
+        p["discover"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "main")
+    elif case == "bound_base":
+        data["pr"] = 77
+        p["incus"].config_get_checked.side_effect = lambda full, key: (
+            "77" if key == "user.jailbee.pr" else None
+        )
+        p["resolve"].return_value = PrInfo(77, "feature/a", "b" * 40, "OPEN", "develop")
+    else:
+        data["base"] = "develop"
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    with pytest.raises(PrError):
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: True,
+            own_branches_only=True,
+        )
+    p["fetch"].assert_not_called()
+    p["push"].assert_not_called()
+
+
+@pytest.mark.parametrize("label", ["user.jailbee.pr", "user.jailbee.stacked_pr"])
+def test_own_source_refuses_review_label_only(source_publisher, label):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.pr import PrError, PrInfo
+
+    p = source_publisher
+    data = json.loads(p["snapshot"].files["m.json"])
+    data["pr"] = 42
+    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == label else None
+    p["resolve"].return_value = PrInfo(42, "colleague", "b" * 40, "OPEN", "main")
+    with pytest.raises(PrError, match="bound"):
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: True,
+            own_branches_only=True,
+        )
+    p["push"].assert_not_called()
+    p["edit"].assert_not_called()
+
+
+@pytest.mark.parametrize("authored,adopted", [(False, False), (True, False), (True, True)])
+def test_own_source_requires_authored_binding(source_publisher, authored, adopted):
+    from jailbee.branch_pr import BRANCH_PRS_LABEL, publish_source_manifest
+    from jailbee.pr import PrError, PrInfo
+
+    p = source_publisher
+    entry = {
+        "feature/a": {
+            "head": "feature/a",
+            "pr": 42,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "author": authored,
+            "adopted": adopted,
+        }
+    }
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entry) if key == BRANCH_PRS_LABEL else None
+    )
+    p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    if authored and not adopted:
+        assert (
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: False,
+                own_branches_only=True,
+            )
+            == 0
+        )
+        saved = json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]
+        assert saved["author"] is True and saved["adopted"] is False
+    else:
+        with pytest.raises(PrError, match="bound"):
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: True,
+                own_branches_only=True,
+            )
+        p["push"].assert_not_called()
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    if bound:
+        data = json.loads(p["snapshot"].files["m.json"])
+        data["pr"] = 42
+        p["snapshot"].files["m.json"] = json.dumps(data)
+        p["incus"].config_get_checked.side_effect = lambda full, key: (
+            "42" if key == "user.jailbee.pr" else None
+        )
+        p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    if bound:
+        from jailbee.pr import PrError
+
+        with pytest.raises(PrError, match="bound"):
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: False,
+                own_branches_only=True,
+            )
+        p["push"].assert_not_called()
+        return
+    lines = []
+    assert (
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: False,
+            own_branches_only=True,
+            result_sink=lines.append,
+        )
+        == 0
+    )
+    assert lines == [
+        f"{'updated' if bound else 'opened'} PR #42: https://github.com/acme/widgets/pull/42"
+    ]
+    assert json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]["pr"] == 42
+
+
+def test_broker_source_worker_runs_real_domain_gates(source_publisher, tmp_path, mocker):
+    from jailbee.orchestration import publishing
+
+    p = source_publisher
+    mocker.patch.object(publishing, "Incus", return_value=p["incus"])
+    entry = {
+        "ref": "pub-real",
+        "kind": "source",
+        "manifest": "m.json",
+        "actions": [{"kind": "source", "repo": "acme/widgets"}],
+        "rights": {"pull_requests": True},
+    }
+    publishing._run(p["cfg"], tmp_path, "full", "c", entry)
+    result = json.loads(publishing._result(tmp_path, "full", "pub-real").read_text())
+    assert result["state"] == "done"
+    assert result["actions"] == [{"kind": "source", "repo": "acme/widgets"}]
+    assert result["urls"] == ["https://github.com/acme/widgets/pull/42"]
+    assert p["push"].call_args.kwargs["force"] is False
+    assert p["push"].call_args.kwargs["require_absent"] is True
+    assert json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]["author"] is True
+
+
+def test_own_source_rechecks_new_remote_and_uses_absent_lease(source_publisher):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.pr import PrError
+
+    p = source_publisher
+    p["remote"].side_effect = [None, "b" * 40]
+    with pytest.raises(PrError, match="already exists"):
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: False,
+            own_branches_only=True,
+        )
+    p["push"].assert_not_called()
+
+
+def test_own_new_source_push_requires_remote_absence(source_publisher):
+    from jailbee.branch_pr import publish_source_manifest
+
+    p = source_publisher
+    assert (
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: False,
+            own_branches_only=True,
+        )
+        == 0
+    )
+    assert p["push"].call_args.kwargs["require_absent"] is True
+
+
 def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 

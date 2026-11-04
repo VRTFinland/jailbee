@@ -577,7 +577,8 @@ def details_for(
     """The panel for ``selected``, or None when there is nothing to describe.
 
     Panel title is:
-    - For a container: the display name (repo prefix stripped; full name for orphans).
+    - For a container: its NAME label in full — orchestrator glyph, alias and
+      display name (repo prefix stripped; full name for orphans), never cut.
     - For a repo heading: the repo prefix.
 
     A container destroyed since the cursor landed on it simply has no panel
@@ -616,7 +617,7 @@ def details_for(
             if c.name == selected.key:
                 block = activity_block(c, now)
                 return DetailsView(
-                    c.display_name,
+                    c.name_label,
                     (),
                     block.lines,
                     reserve,

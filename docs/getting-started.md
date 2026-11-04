@@ -235,7 +235,7 @@ What turning it on gets you:
   GitHub hosts the plugin marketplace and skills reach. You don't
   list them by hand. The npm registry is not among them: a plugin that
   installs from npm needs `registry.npmjs.org:443` in `egress_allow`.
-- **The agents know JailBee.** JailBee's own `jailbee-usage`,
+- **The agents know JailBee.** JailBee's own `jailbee-container`, `jailbee-usage`,
   `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`,
   `jailbee-bug-report`, `jailbee-orchestration` and `jailbee-orchestration-child` skills are copied into the shared skills directory of every enabled agent
   that has one (claude, codex,

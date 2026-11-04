@@ -427,3 +427,34 @@ def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker,
         spawn=spawn,
     )
     spawn.assert_called_once()
+
+
+@pytest.mark.parametrize("profile", [None, "all"])
+@pytest.mark.parametrize("marker", [None, ","])
+@pytest.mark.parametrize("fail", [False, True])
+def test_rerun_create_attempt_tracking_uses_persisted_marker(
+    make_cfg, tmp_path, mocker, profile, marker, fail
+):
+    from jailbee.autostart_profiles import CREATED_KEY, PROFILE_KEY
+    from jailbee.autostart_rerun import run_foreground
+    from tests.test_autostart_profiles import state_incus
+
+    cfg = make_cfg(tmp_path, autostart={
+        "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+    })
+    state = {}
+    if profile is not None:
+        state[PROFILE_KEY] = profile
+    if marker is not None:
+        state[CREATED_KEY] = marker
+    incus, state = state_incus(mocker, state)
+    step, _, _, _ = execution_deps(mocker)
+    if fail:
+        step.side_effect = RuntimeError("failed")
+    block = rerun_block(cfg.autostart, [RerunTarget(AutostartTrigger.ON_CREATE, "setup", None)])
+    if fail:
+        with pytest.raises(RuntimeError, match="failed"):
+            run_foreground(cfg, incus, "c", block)
+    else:
+        run_foreground(cfg, incus, "c", block)
+    assert state.get(CREATED_KEY) == ("setup" if marker is not None else None)

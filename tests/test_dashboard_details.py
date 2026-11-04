@@ -1363,3 +1363,18 @@ def test_unknown_inbox_and_outbox_counts_draw_nothing() -> None:
     assert child.orchestration[0] == "child of orch · running"
     orch = dd.container_panel(replace(_orch(), git_status=gs), NOW)
     assert "inbox" not in orch.orchestration[0]
+
+
+def test_container_title_shows_the_glyph_alias_and_name_uncut() -> None:
+    """The NAME cell may be cut at its width cap; the card title never is."""
+    from dataclasses import replace
+
+    from jailbee.orchestration.view import GrantView
+
+    long = "a-rather-long-branch-name-that-the-table-cuts"
+    c = replace(
+        _c(name=f"alpha-{long}"), alias="my alias", grant=GrantView(1, ("spawn",), (), False, ())
+    )
+    g = dmodel.RepoGroup("alpha", "/repos/alpha", None, [c])
+    view = dd.details_for([g], dmodel.Row("container", f"alpha-{long}"), NOW)
+    assert view is not None and view.title == f"⎈ my alias ({long})"

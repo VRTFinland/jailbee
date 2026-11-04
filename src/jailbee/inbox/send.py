@@ -45,6 +45,7 @@ class SendRequest:
     timeout: str = ""
     ref: str = ""
     pr: str = ""
+    issue: str = ""
     text: str | None = None
     file: str | None = None
     stdin: bool = False
@@ -54,6 +55,8 @@ class SendRequest:
     revoke_egress: list[str] = field(default_factory=list)
     duration: str = ""
     revoke_loose: bool = False
+    warm: list[str] = field(default_factory=list)
+    no_warm: bool = False
 
 
 def parse_send(args: list[str]) -> SendRequest:
@@ -77,6 +80,7 @@ def parse_send(args: list[str]) -> SendRequest:
             "stop",
             "destroy",
             "rights",
+            "publish",
         },
         f"unknown message type '{t}'",
     )
@@ -85,6 +89,7 @@ def parse_send(args: list[str]) -> SendRequest:
         "--merge": "merge",
         "--wait": "wait",
         "--new": "new",
+        "--no-warm": "no_warm",
         "--loose": "loose",
         "--revoke-loose": "revoke_loose",
         "--force": "force",
@@ -101,7 +106,9 @@ def parse_send(args: list[str]) -> SendRequest:
         "--branch": "branch",
         "--base": "base_branch",
         "--ref": "ref",
+        "--warm": "warm",
         "--pr": "pr",
+        "--issue": "issue",
         "--mount": "mounts",
         "--egress": "egress",
         "--note": "note",
@@ -119,7 +126,7 @@ def parse_send(args: list[str]) -> SendRequest:
         "--resume": "resume",
     }
     lists: dict[str, list[str]] = {
-        k: [] for k in ("mounts", "egress", "revoke_mounts", "revoke_egress")
+        k: [] for k in ("mounts", "egress", "revoke_mounts", "revoke_egress", "warm")
     }
     i = 1
     while i < len(args):
@@ -140,6 +147,11 @@ def parse_send(args: list[str]) -> SendRequest:
         i += 2
     values.update(lists)
     r = SendRequest(**values)  # type: ignore[arg-type]  # Parsed option values match the dataclass fields.
+    require(not (r.warm and r.no_warm), "--warm and --no-warm are mutually exclusive")
+    require(
+        not (r.warm or r.no_warm) or (t == "spawn" and not r.new and not r.pr),
+        "--warm and --no-warm only apply to fork spawns",
+    )
     require(not r.merge or t == "update", "--merge only applies to update")
     if r.resume:
         require(t == "restart", "--resume only applies to restart")
@@ -171,6 +183,15 @@ def parse_send(args: list[str]) -> SendRequest:
     if r.on_done:
         require(t in {"spawn", "restart"}, "--on-done only applies to spawn and restart")
         require(r.on_done in {"destroy", "keep"}, "--on-done must be destroy or keep")
+    require(t == "publish" or not r.issue, "--issue only applies to publish")
+    if t == "publish":
+        require(bool(r.issue) != bool(r.pr), "publish needs exactly one of --issue or --pr")
+        name = r.issue or r.pr
+        require(
+            bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json", name))
+            and not name.endswith(".progress.json"),
+            "publish needs a bare outbox JSON file name, not a progress file",
+        )
     sources = sum((r.text is not None, r.file is not None, r.stdin))
     if t in {"message", "spawn", "restart"}:
         require(sources == 1, f"{t} needs exactly one of --text, --file or -")
@@ -185,7 +206,7 @@ def parse_send(args: list[str]) -> SendRequest:
         or not (
             r.branch
             or r.new
-            or r.pr
+            or (r.pr and t != "publish")
             or r.note
             or (t != "rights" and (r.loose or r.mounts or r.egress))
         ),
@@ -262,6 +283,8 @@ def parse_send(args: list[str]) -> SendRequest:
 
 def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str, object]:
     m: dict[str, object] = {"version": 2 if r.type == "spawn" else 1, "id": id_, "type": r.type}
+    if r.type == "publish":
+        return m | {"outbox": "issue" if r.issue else "pr", "manifest": r.issue or r.pr}
     runner: dict[str, object] = {}
     if r.agent:
         runner["runner"] = {
@@ -313,6 +336,8 @@ def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str,
                 "rights": {"version": 1, "mounts": r.mounts, "loose": r.loose, "egress": r.egress},
             }
         )
+        if r.warm or r.no_warm:
+            m["warm_paths"] = [] if r.no_warm else r.warm
         for key, spawn_value in (
             ("base", r.base_branch),
             ("ref", r.ref),

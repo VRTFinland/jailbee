@@ -19,6 +19,15 @@ AT = datetime(2026, 10, 25, 10, 0, tzinfo=UTC)
 FULL = "proj-child"
 
 
+def test_grant_json_has_publish():
+    from jailbee.orchestration.grant import Grant, PublishRights
+
+    data = json.loads(
+        outbox.grant_json_text(Grant(publish=PublishRights(issues=("comment",))), None, None)
+    )
+    assert data["publish"]["issues"] == ["comment"]
+
+
 def _item(n: str) -> InboxStatus:
     return InboxStatus(version=1, id=f"h-{n}", type="status", ref="r", state="queued", detail="d")
 

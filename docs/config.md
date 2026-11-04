@@ -1960,10 +1960,15 @@ autostart:
 A profile is the literal `all` or a nonempty `stages` list. Stage names select
 from **both** triggers, in config order; the reserved `agents` and `services`
 stages always stay selected, even when not listed. Profiles require stage-form triggers,
-a defined `default_profile`, and known stage names. The profile name `all`
-is reserved. Without `profiles`, `default_profile` is invalid and autostart
-behaves exactly as before. The reserved `services` slots determine placement,
-not selection; see [placing service startup](#placing-service-startup).
+a defined `default_profile`, and known stage names. The names `none` and `all`
+are reserved for built-in profiles and cannot be defined in `profiles`:
+`none` selects no configured stages or profile services (an explicit service
+selection can still override the profile), while the generated `agents` stage
+remains selected; `all` selects every configured stage and service.
+Without `profiles`, `default_profile` may still select the built-in `none` or
+`all`; when no profile is selected or configured as the default, autostart
+retains the all-stages-and-services behavior. The reserved `services` slots determine placement, not selection;
+see [placing service startup](#placing-service-startup).
 
 A profile may specify `services: [web]` to start those known services and their
 dependencies, or `services: []` for none; omitted or null means all. An explicit
@@ -1973,17 +1978,23 @@ precedence over profile services; without it, the profile wins over all services
 Define each example service in the top-level `services:` block.
 
 `jailbee new --autostart-profile frontend` remembers the selection for later
-starts and restarts. An absent selection uses the default; a stored name
-removed from config warns and falls back to the default. Creation uses the
-target branch's autostart block; later commands use the host config.
+starts and restarts. The built-in `none` profile selects no configured repository stages or profile
+services (an explicit service selection can still override it), while the
+generated `agents` stage remains selected; `--no-autostart` also suppresses
+agents. An absent selection uses the default; a stored name removed
+from config warns and falls back to the default. Creation uses the target
+branch's autostart block; later commands use the host config.
 
 `jailbee autostart profile <container>` shows the current/default profiles
 and attempted one-shot stages. Add a profile name to switch. On a running
 container this starts missing `on_create` stages, then newly selected
-`on_start` stages, in the foreground; lighter profiles stop nothing.
-Stopped containers and `--no-run` only store the selection. The next start
-runs any missing one-shot stages before `on_start`. A live detached run
-must be cancelled before switching.
+`on_start` stages, in the foreground; lighter profiles stop nothing. Live
+switching only adds work and does not stop existing processes. `none` selects
+no configured repository stages or profile services, while retaining the
+generated `agents` stage; an explicit service selection still overrides the
+profile. `all` selects all configured stages and services. Stopped containers
+and `--no-run` only store the selection. The next start runs any missing one-shot
+stages before `on_start`. A live detached run must be cancelled before switching.
 
 One-shot stages are recorded as **attempted**, even after failure, so they
 are never retried automatically. Containers predating this tracking count
@@ -2467,6 +2478,31 @@ other key in the file (rpardini's `AUTH_REGISTRIES`, say) is preserved.
 The same sync also keeps the mirror's locked-down `nginx.conf` and its
 Quadlet unit at the versions this jailbee ships.
 
+### `fork`
+
+Warm paths seed HEAD forks (`jailbee fork` and orchestrator fork spawns) with
+Git-ignored build outputs from the source container, using btrfs reflinks only.
+The default empty list disables seeding. Other storage drivers, dirty sources,
+and forks of a `--ref` other than the source's HEAD are skipped with an advisory.
+
+```yaml
+fork:
+  warm_paths:
+    - .gradle
+    - "*/build"
+    - app/bibleview-js/node_modules
+```
+
+Patterns are repository-relative: no absolute paths, `..`, or `.git` root.
+`*` and `?` match one path segment; `**` matches zero or more segments.
+Only existing ignored entries that are also ignored in the child are copied;
+unmatched patterns get an advisory. Select the outermost ignored directory:
+Git collapses its listing (if `cache/` is ignored, select `cache`, not
+`cache/gradle`). Submodule outputs are not listed. Symlinks and special files
+are skipped to keep the copy independent; existing destinations are not replaced.
+`--warm PATH` (repeatable) replaces the configured list; `--no-warm` disables it
+for one fork. The flags are mutually exclusive. No outputs remain shared.
+
 ### `new`
 
 Policy for selecting the source commit when `jailbee new` clones a repository.
@@ -2933,6 +2969,14 @@ orchestration:
         mounts: []               # optional_mounts names
         loose: false
         egress: []               # egress allow entries
+      publish:                   # optional; absent means no publishing
+        issues: [comment, state] # own repo and declared submodules
+        foreign_issues:
+          repos: [someorg/upstream-lib] # owner/name or ["*"]
+          actions: [comment]
+        pull_requests: false     # own source PR manifests
+        pr_reviews: false        # bound own-repository PRs
+        max_actions_per_hour: 30 # 1..500; reserved, never refunded
 ```
 
 Profile names are lowercase letters, digits and dashes, starting with a letter
@@ -2960,6 +3004,7 @@ may set `default_runner` and the idle-report threshold freely.
 | `mounts` | none | Mounts children may be given; others are dropped |
 | `egress` | none | Egress entries children may be given |
 | `loose` | none | `false` forbids handing loose network to children |
+| `publish` | none | Same block as a profile: intersect actions/repos/booleans and take the smaller rate; `false` forbids all publishing. Never grants new rights. |
 | `default_runner` | none | Preferred runner, with the same `{agent, profile?, model?}` shape as the host setting |
 
 `profiles` and `default_profile` are refused in a repo's config. A profile
@@ -3110,10 +3155,12 @@ Instructions that apply to every wired agent in every container of every repo â€
 model preferences, house rules â€” go in one file on the host:
 `~/.config/jailbee/AGENTS.md` (`$XDG_CONFIG_HOME/jailbee/AGENTS.md` if set).
 
-Jailbee copies it into `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
+Jailbee prepends a built-in container-environment preamble to these optional
+instructions and stages them in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
 (`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), under each
 agent's own file name, and mounts that directory read-only into containers
-where the agent is enabled. For Claude Code that is
+where the agent is enabled and has `global_instructions` configured. Currently
+only the Claude Code preset configures it. For Claude Code the file is
 `/etc/claude-code/CLAUDE.md`, its managed-policy memory file: loaded in every
 session before `~/.claude/CLAUDE.md` and the project's CLAUDE.md, and not
 excludable. A container cannot change it. These are instructions, not hard
@@ -3126,8 +3173,8 @@ model-policy enforcement; they do not configure the agent running on the host.
   `jailbee start`/`restart`, `jailbee ls`, `jailbee shell` and `jailbee tmux`.
   A session reads it when it starts, so an edit reaches the next agent session,
   not one already running. No `jailbee apply` needed after the first.
-- **No file:** the staged directory is empty; no host instruction file is
-  supplied. Removing the source removes the staged copy on the next refresh, not the directory.
+- **No file:** the staged copy contains the built-in preamble alone. Removing
+  the source restores that copy on the next refresh.
   Each (agent, file name) pair has its own staging directory, so a repo that
   sets an unusual `global_instructions.file` only adds that file to its own
   containers.
@@ -3228,7 +3275,9 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 | `routes` | five built-in routes | Named models; same-name entries overlay the built-in route field by field. |
 | `profiles` | built-in `codex` | Named maps of `fable`, `opus`, `sonnet`, `haiku` tiers to routes; same-name entries overlay individual tiers. |
 
-Routes accept `model` (required for new routes), `effort` (fixed),
+Routes accept `model` (required for new routes), `description` (optional model
+strengths and intended use in the generated map; non-blank, at most 2 KiB UTF-8;
+a higher layer replaces it, `null` removes it), `effort` (fixed),
 `min_effort` (floor; mutually exclusive with `effort`), `context_window`
 (required for unknown models, default `1050000` (included in a ChatGPT subscription) for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
 `max_context_window` (the most `claude-jb --context` may select; default `1050000` for those three models, otherwise `context_window`; never below it),
@@ -3246,8 +3295,10 @@ changes nothing else needs `jailbee litellm up`. Subscription routes
 (`chatgpt/` or `oauth: true`) also accept `account`, defaulting to the first
 entry in `accounts`. All subscription routes in one profile must use the same
 account. Profiles derive their account from those routes and reject a profile-level
-`account` key. They accept `effort` as the default session effort and
-`instructions` (model-policy text appended to Claude Code's system prompt; see
+`account` key. They accept `effort` as the default session effort,
+`model_map` (default `true`; `false` disables the generated tier-to-model map)
+and `instructions` (model-policy text appended after that map to Claude Code's
+system prompt; see [Model map](litellm.md#model-map) and
 [Profile instructions](litellm.md#profile-instructions)). `jailbee litellm up` renders changes
 and restarts the instance if needed; `jailbee apply` reconciles an enabled,
 already-running proxy, but does not start a missing or stopped one. Use
@@ -3355,6 +3406,12 @@ remote:
 **Deprecated: `gui`.** `remote.ssh.gui` was split into `rdp` and `waypipe`. `gui: true` means
 `rdp: true` plus `waypipe: true`, and `gui: false` turns both off. Setting `gui` next to
 either new key is an error. `jailbee config migrate` rewrites it.
+
+Publish rights in an orchestration grant require the same SSH policy
+permission as the corresponding manual command (`issue apply`, `pr push
+--source-manifest`, or `review apply`), checked by the normal command router.
+A permitted remote session may add or widen those rights; `orchestrate grant`
+permission alone is not enough. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 
 An allowlist matches the exact public command leaf, not a prefix and not its
 arguments. `git pull` permits `git pull feat-x --cleanup`; `git` is not a leaf
@@ -3862,7 +3919,7 @@ agent_instructions: true       # true (default) | false
 
 | Key | Default | Description |
 |---|---|---|
-| `agent_instructions` | `true` | Sync the host's `AGENTS.md` and mount its staged directory read-only for every enabled agent with `global_instructions`. `false` skips updates and omits the devices on `jailbee apply`; host staging is retained. Apply in each repo and restart running containers to remove existing mounts. |
+| `agent_instructions` | `true` | Stage the built-in preamble and optional host `AGENTS.md`, and mount the staged directory read-only for every enabled agent with `global_instructions`. `false` skips updates and omits the devices on `jailbee apply`; host staging is retained. Apply in each repo and restart running containers to remove existing mounts. |
 
 ### `install_host_skills`
 

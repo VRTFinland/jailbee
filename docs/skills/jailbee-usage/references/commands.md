@@ -133,7 +133,14 @@ host-local `litellm:` override may change it for that repo's containers).
 Overrides are edited on the host (`jailbee config edit --local`) and take effect
 with `jailbee apply`, which reloads route and profile changes into the running proxy and restarts an
 instance only for secrets, `extra` outside its `model_list`, settings or an unconfirmed reload
-(`--no-restart` defers only the restarts). A profile's `instructions` text is appended to the session's system prompt; your own `--append-system-prompt[-file]` is merged after it. `litellm.autostart` starts the Claude
+(`--no-restart` defers only the restarts). By default, a generated tier-to-backend
+model map precedes the profile's `instructions` in the appended system prompt;
+your own `--append-system-prompt[-file]` is merged after them. Set a route's
+`description` to describe its strengths and intended use in the map, or set
+`model_map: false` on a profile to disable the map while keeping instructions.
+If the combined text exceeds 64 KiB, JailBee warns and drops descriptions;
+if it still does not fit, it omits the map and preserves instructions. Changes
+reach new sessions after `jailbee apply`. `litellm.autostart` starts the Claude
 autostart window with `claude-jb`.
 
 ## Remote SSH
@@ -454,15 +461,22 @@ See [Configuration](../../../config.md#where-does-the-autostart-config-come-from
 
 ### `jailbee start|stop|restart [NAME]`
 
-`start` and `restart` re-run autostart (`on_start`). `stop` halts. All
+`start` and `restart` re-run autostart (`on_start`). Only `restart` can store
+an autostart profile or override/reset its service selection. `stop` halts. All
 accept a picker when `NAME` is omitted with a TTY.
 
 | Flag (`start` / `restart`) | Effect |
 |---|---|
-| `--no-autostart` | Boot only — no `on_start` steps. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--no-autostart` | Boot only — no `on_start` steps or agent startup. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
 | `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
 | `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
 | `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |
+
+| Flag (`restart` only) | Effect |
+|---|---|
+| `--autostart-profile NAME` | Store a profile for this and later boots. `none` selects no configured repository stages or profile services, while the generated `agents` stage remains selected. An explicit service selection also remains in effect unless cleared. `all` selects every configured stage. |
+| `--services NAMES` | Explicit service selection (comma-separated; `''` selects none), overriding the profile's service set. Cannot be combined with `--reset-services`. |
+| `--reset-services` | Clear the remembered explicit service selection so the selected profile controls services. |
 
 | Flag (`stop`) | Effect |
 |---|---|
@@ -499,8 +513,11 @@ commit is fetched to the host (`refs/jailbee/<source>/<branch>`) and pinned
 under the new container's own name (`refs/jailbee/<name>/HEAD`, removed by
 `jailbee destroy <name>`), so the fork keeps working after SOURCE is destroyed;
 the new container is an ordinary clone-mode `jailbee new` pinned to it, on
-SOURCE's branch unless `--branch` names a new one. Only commits carry over:
-SOURCE must be running, in clone mode, and have no uncommitted changes
+SOURCE's branch unless `--branch` names a new one. Only commits carry over
+by default. `fork.warm_paths` optionally seeds Git-ignored build outputs by
+btrfs reflink (HEAD forks only); other pools skip with a note. Repeatable
+`--warm PATH` replaces that list; `--no-warm` disables it for this fork.
+The flags are mutually exclusive. SOURCE must be running, in clone mode, and have no uncommitted changes
 (tracked or untracked), else exit 2; a failed fetch is exit 1. The fork
 records SOURCE in `user.jailbee.fork_of`: BASE still shows the base branch,
 the dashboards name SOURCE in the container's details (`⑂ forked from SOURCE`)

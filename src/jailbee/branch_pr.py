@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.pr import PrInfo
+    from jailbee.pr_outbox import Manifest
 
 BRANCH_PRS_LABEL = "user.jailbee.branch_prs"
 
@@ -96,6 +98,36 @@ def default_head(source: str) -> str:
     return source.rsplit("/", 1)[-1]
 
 
+def _check_own_source(
+    cfg: Config,
+    manifest: Manifest,
+    head: str,
+    base: str,
+    target: PrInfo | None,
+    bound: set[str],
+) -> None:
+    from jailbee import git, pr
+
+    resolved_head = target.head_ref if target else head
+    resolved_base = target.base_ref if target else base
+    if head in {cfg.default_branch, base} or resolved_head in {cfg.default_branch, resolved_base}:
+        raise pr.PrError("source head must not be the default or base branch")
+    if manifest.pr is not None and str(manifest.pr) not in bound:
+        raise pr.PrError(f"PR #{manifest.pr} is not bound to this container")
+    if target is not None:
+        if str(target.number) not in bound:
+            raise pr.PrError(f"PR #{target.number} is not bound to this container")
+        if base != target.base_ref:
+            raise pr.PrError(f"source base {base} differs from bound PR base {target.base_ref}")
+    else:
+        if base != cfg.default_branch:
+            raise pr.PrError("a new source PR must use the default branch as base")
+        if git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head) is not None:
+            raise pr.PrError(
+                f"branch `{head}` already exists upstream and is not bound to this container"
+            )
+
+
 def publish_source_manifest(
     cfg: Config,
     incus: Incus,
@@ -105,6 +137,9 @@ def publish_source_manifest(
     force: bool,
     yes: bool,
     confirm: Callable[[str], bool],
+    own_branches_only: bool = False,
+    result_sink: Callable[[str], None] | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Publish a pinned container source without changing the container's own PR."""
     from jailbee import git, lifecycle, pr, pr_flow, pr_outbox, sync
@@ -115,6 +150,8 @@ def publish_source_manifest(
     from jailbee.tui import error_plain, info_plain
 
     try:
+        if own_branches_only and force:
+            raise pr.PrError("force publishing is host-only")
         ProposalId("pr", manifest_name)
         full = lifecycle.resolve_container_name(cfg, incus, short)
         manager = PrManagement()
@@ -177,6 +214,11 @@ def publish_source_manifest(
                 bindings.drop(head)
                 entries.pop(head, None)
                 target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
+            if own_branches_only:
+                bound = {
+                    str(item.pr) for item in entries.values() if item.author and not item.adopted
+                }
+                _check_own_source(cfg, manifest, head, base, target, bound)
             if target is not None:
                 if (
                     action is not None
@@ -238,6 +280,10 @@ def publish_source_manifest(
 
             validate()
             remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
+            if own_branches_only and target is None and remote_sha is not None:
+                raise pr.PrError(
+                    f"branch `{head}` already exists upstream and is not bound to this container"
+                )
             if remote_sha is None or remote_sha.lower() != manifest.source_sha:
                 if (
                     target is not None
@@ -256,6 +302,7 @@ def publish_source_manifest(
                     force=force,
                     expected_sha=manifest.source_sha,
                     on_before_push=validate,
+                    **({"require_absent": True} if own_branches_only and target is None else {}),
                 )
             validate()
             if target is None:
@@ -291,7 +338,9 @@ def publish_source_manifest(
                     pr.edit_pr(
                         cfg.repo_root, number, title=action.title, body=action.body, repo=repo
                     )
-                authored = False
+                authored = own_branches_only
+            if audit_sink is not None:
+                audit_sink({"kind": "source", "repo": manifest.repo})
             validate()
             bindings.put(
                 BranchPr(
@@ -307,6 +356,8 @@ def publish_source_manifest(
                 preview=snapshot,
                 management=manager,
             )
+            if result_sink is not None:
+                result_sink(f"{'opened' if target is None else 'updated'} PR #{number}: {url}")
             return 0
     except (
         IncusError,
@@ -320,6 +371,8 @@ def publish_source_manifest(
         git.GitFetchError,
         sync.SyncError,
     ) as exc:
+        if own_branches_only:
+            raise pr.PrError(str(exc)) from exc
         error_plain(str(exc))
         return 1
 

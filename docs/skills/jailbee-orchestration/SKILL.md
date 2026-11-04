@@ -70,6 +70,34 @@ automatically relaunched. Ask the user to close a hand-started agent before
 using `jailbee inbox send restart --child C --agent-only` to relaunch it under
 supervision; otherwise you may start a second agent.
 
+## Publishing your own staged manifests
+
+If `grant.json.publish` covers every pending action, stage normally, then ask
+the host broker to publish your own outbox file:
+
+```bash
+jailbee inbox send publish --issue a.json --wait
+jailbee inbox send publish --pr b.json --wait
+```
+
+Issue kinds use `publish.issues` for the own repo/submodules, or
+`publish.foreign_issues.actions` plus its repo list for foreign issues.
+PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
+need `publish.pr_reviews` and must target bound PRs in the own repository.
+Existing unbound upstream branches, default/base heads, force pushes and
+foreign PRs are refused. New PRs use the default base; updates require an
+authored source-PR binding, not a review-only PR/stacked label or adopted
+binding. Updating a PR opened some other way remains a host step. Children never publish.
+
+`--wait` may return at `started`; keep your inbox waiter armed and read the
+final `done`/`failed` status for the printed ref. Use the returned URLs and
+created issue numbers, in manifest order; staging or `started` is not success.
+One request runs at once. Budget is reserved for every pending action and is
+never refunded on failure. An uncertain result means stop and tell the human
+to resolve it with `jb outbox` on the host; do not retry automatically. A
+normal retry gets a new id. Without the required right, keep the manifest for
+human review and give the host apply command instead.
+
 ## Runtime rights
 
 Ask for the least: prefer an egress host over loose, and a timed grant over
@@ -106,6 +134,7 @@ Commit everything before you send `done`.
 - `fork` (default) starts the child from your committed HEAD. Commit first:
   a dirty tree is refused. The child inherits the source's PR bindings; normal
   bindings are adopted, while a review source retains its review identity.
+- HEAD forks seed configured `fork.warm_paths` (Git-ignored build outputs) by btrfs reflink; repeatable `--warm PATH` replaces the list and `--no-warm` disables it (mutually exclusive, fork only). Other pools or a changed source skip with a note.
 - `new` starts a fresh checkout from a base (`--new [--base main]`).
 - Grant the least rights the child needs, and only within `grantable`.
 - Prefer the helper; it writes the manifest and body atomically and prints
@@ -159,12 +188,20 @@ not retain the ref; a later import can move it.
 
 Spawn and restart may also name `--autostart-profile NAME` to select the repo's
 startup stages; this is separate from the runner's LiteLLM `--profile`.
-For light children, use `send spawn --services web --wait` or
-`send restart --child C --services web`: only the selected services and their
-dependencies start. `--services ''` starts none; omission uses the profile or
-all on spawn and retains the child's explicit selection on restart. Explicit
-selection overrides only the profile's service set; nonservice stages still follow
-the profile. Prepare runs once per service/container and cannot exceed the
+For light children, use `send spawn --autostart-profile none --wait` to select
+no configured repository stages or profile services while leaving the generated
+`agents` stage in effect. An explicit `--services` selection still overrides
+the profile's service set. Alternatively, use `send spawn --services web --wait`
+or `send restart --child C --services web` to select those services and their
+dependencies. `--services ''` selects no services; omission on spawn uses the
+profile or all, while omission on restart retains the child's explicit service
+selection. Nonservice stages still follow the selected profile.
+On restart, `--autostart-profile none` alone preserves explicit services. Use
+`send restart --child C --autostart-profile none --services ''` for a light
+child with no services. The broker has no `--reset-services` option, so an
+existing explicit selection cannot be cleared back to the profile default.
+Prepare runs once per service/container and
+cannot exceed the
 child's stored rights. Ordinary containers are bounded by creation-time approved
 elevation (legacy containers use host-effective declarations). Re-assessment is
 needed to widen it; an accepted host or orchestrator refresh can update it. Live profile

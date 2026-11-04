@@ -40,7 +40,8 @@ from jailbee.update_check import UpdateNotice
 # 16 adds the per-container autostart failed-step count.
 # 17 adds gathered job liveness.
 # 18 adds profile-aware autostart re-run eligibility.
-PROTOCOL = 18
+# 19 combines these with service choices and built-in autostart profiles.
+PROTOCOL = 19
 
 
 class ProtocolError(ValueError):

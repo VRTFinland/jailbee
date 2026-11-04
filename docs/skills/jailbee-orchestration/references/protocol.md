@@ -37,6 +37,29 @@ spawn also supports version `2`. The type is one of
 
 ## Orchestrator manifests
 
+### `publish`
+
+Only orchestrators with matching `grant.json.publish` rights may request this;
+children never can. The target file is read from the requester's own outbox.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "publish-1", "type": "publish", "outbox": "issue", "manifest": "close-12.json"}
+```
+
+`outbox` is `issue` or `pr`. `manifest` matches
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$`, never a path or `.progress.json`.
+Use `jailbee inbox send publish --issue NAME --wait` or `--pr NAME --wait`.
+Issue action kinds and repo coverage must all be granted. Source PR manifests
+need `pull_requests` (own branches only, no force); review manifests need
+`pr_reviews` (bound PRs in the own repo only). Missing `publish` grants nothing.
+One request runs per orchestrator; all pending actions reserve sliding-hour
+budget up front, never refunded. A source publish counts as one action.
+Replies: `started`, then `done` with URLs/issue numbers or `failed` with the
+domain error. `--wait` may return on `started`; consume the final reply for
+the same ref. Uncertain outcomes, including broker restart, require human
+resolution through `jb outbox`, never an automatic retry. Retry with a new id.
+
 ### `refresh`
 
 Refresh services in a child with `jailbee inbox send refresh --child C
@@ -69,7 +92,7 @@ service/container, and cannot exceed stored child rights. `services` is
 incompatible with `agent_only`.
 
 Spawn requests support version 2; legacy version 1 remains valid for fork/new
-without `ref` or `pr`. Other messages, inbox, grant and finish envelopes
+without `ref`, `pr`, or `warm_paths`. Other messages, inbox, grant and finish envelopes
 remain version 1.
 
 Create a child container. `kind` is `fork` (the child starts from your
@@ -84,6 +107,15 @@ a positive integer `pr`. `base` is only for `new`; `ref` is only for
 `fork`. Use `refs/heads/<name>` for a local branch, not a bare name.
 Explicit-ref forks do not inherit PR bindings. A PR child's own outbox is
 lost when destroyed; use `--on-done keep` to preserve it.
+
+Optional version-2 `warm_paths: list[str]` is valid only for `kind: "fork"`.
+Omission uses `fork.warm_paths`; `[]` disables it; a non-empty list replaces it.
+Values are repo-relative globs of Git-ignored build outputs, seeded by btrfs
+reflink before autostart. `*` matches one segment; `**` matches zero or more.
+Absolute paths, `..`, and `.git` roots are refused. Unmatched patterns, non-btrfs
+pools, dirty sources and source HEADs different from the fork commit skip with
+a note; seeding never fails the fork. CLI: repeatable `--warm PATH` or
+`--no-warm` (mutually exclusive; neither is valid with `--new`/`--pr`).
 
 <!-- kind: outbox -->
 ```json

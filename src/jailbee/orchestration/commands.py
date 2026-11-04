@@ -17,11 +17,15 @@ from jailbee.orchestration import labels, service
 from jailbee.orchestration.grant import (
     DEFAULT_MAX_RUNNING_CHILDREN,
     IMPLIED_OPERATIONS,
+    ISSUE_ACTION_KINDS,
     OPERATIONS,
+    ForeignIssueRights,
     Grant,
     Grantable,
     GrantError,
+    IssueActionKind,
     Operation,
+    PublishRights,
     cap_excess,
     effective_grant,
 )
@@ -58,6 +62,12 @@ class GrantFlags:
     clear_egress: bool = False
     runner: Runner | None = None
     clear_runner: bool = False
+    publish_issues: tuple[str, ...] | None = None
+    publish_foreign_issues: tuple[str, ...] | None = None
+    publish_prs: bool | None = None
+    publish_pr_reviews: bool | None = None
+    publish_rate: int | None = None
+    no_publish: bool = False
 
 
 @dataclass(frozen=True)
@@ -185,6 +195,70 @@ def _check_mounts(cfg: Config, names: tuple[str, ...]) -> None:
             )
 
 
+def _issue_kinds(values: tuple[str, ...]) -> tuple[IssueActionKind, ...]:
+    if values == ("none",):
+        return ()
+    for value in values:
+        if value not in ISSUE_ACTION_KINDS:
+            raise GrantError(
+                f"unknown issue action {value!r}; known: {', '.join(ISSUE_ACTION_KINDS)}"
+            )
+    return cast("tuple[IssueActionKind, ...]", tuple(sorted(set(values))))
+
+
+def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
+    changes = {
+        "issues": flags.publish_issues,
+        "foreign_issues": flags.publish_foreign_issues,
+        "pull_requests": flags.publish_prs,
+        "pr_reviews": flags.publish_pr_reviews,
+        "max_actions_per_hour": flags.publish_rate,
+    }
+    if flags.no_publish:
+        if any(v is not None for v in changes.values()):
+            raise GrantError("--no-publish is exclusive with all other publish flags")
+        return PublishRights()
+    data = base.model_dump()
+    if flags.publish_issues is not None:
+        data["issues"] = _issue_kinds(flags.publish_issues)
+    if flags.publish_foreign_issues is not None:
+        repos: list[str] = []
+        actions: tuple[IssueActionKind, ...] | None = None
+        for entry in flags.publish_foreign_issues:
+            repo, sep, kinds = entry.partition(":")
+            if not sep:
+                raise GrantError("foreign issue rights must be REPO:KIND[,KIND]")
+            parsed = _issue_kinds(tuple(kinds.split(",")))
+            if actions is not None and actions != parsed:
+                raise GrantError("foreign repositories must have the same action list")
+            repos.append(repo)
+            actions = parsed
+        data["foreign_issues"] = ForeignIssueRights(
+            repos=tuple(repos), actions=actions or ()
+        ).model_dump()
+    for name in ("pull_requests", "pr_reviews", "max_actions_per_hour"):
+        if changes[name] is not None:
+            data[name] = changes[name]
+    return PublishRights.model_validate(data)
+
+
+def publish_summary(rights: PublishRights) -> str:
+    if rights.empty():
+        return "none"
+    parts: list[str] = []
+    if rights.issues:
+        parts.append(f"issues: {', '.join(rights.issues)}")
+    f = rights.foreign_issues
+    if f.repos and f.actions:
+        parts.append(f"foreign issues: {', '.join(f.repos)} ({', '.join(f.actions)})")
+    if rights.pull_requests:
+        parts.append("PRs")
+    if rights.pr_reviews:
+        parts.append("PR reviews")
+    parts.append(f"{rights.max_actions_per_hour}/hour")
+    return "; ".join(parts)
+
+
 def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
     """Apply `flags` onto the profile, the current grant, `default_profile` or the defaults."""
     if flags.mounts is not None and flags.clear_mounts:
@@ -224,6 +298,7 @@ def build_grant(cfg: Config, current: Grant | None, flags: GrantFlags) -> Grant:
             operations=cast("tuple[Operation, ...]", tuple(sorted(ops))),
             grantable=Grantable(mounts=mounts, loose=loose, egress=egress),
             default_runner=None if flags.clear_runner else (flags.runner or base.default_runner),
+            publish=_publish_rights(base.publish, flags),
         )
     except ValidationError as e:
         raise GrantError(f"invalid grant: {e}") from e
@@ -290,6 +365,40 @@ def _check_remote_bound(
     bound = policy.grant_bound(remote, cfg.optional_mounts, rights)
     if bound is None:  # unreachable: "off" is refused above
         raise GrantError("remote.ssh.orchestration is off")
+    from jailbee.remote_ssh.router import RemoteUnlocks, RouteError, policy_allows
+
+    required: list[tuple[str, list[str]]] = []
+    p = new.publish
+    had = current.publish if current is not None else PublishRights()
+    rate_widened = p.max_actions_per_hour > had.max_actions_per_hour
+    issue_added = any(k not in had.issues for k in p.issues)
+    foreign_added = any(
+        not had.covers_issue(k, r, foreign=True)
+        for r in p.foreign_issues.repos
+        for k in p.foreign_issues.actions
+    )
+    if (
+        issue_added
+        or foreign_added
+        or (rate_widened and (p.issues or (p.foreign_issues.repos and p.foreign_issues.actions)))
+    ):
+        required.append(("issues", ["issue", "apply", full]))
+    if p.pull_requests and (not had.pull_requests or rate_widened):
+        required.append(
+            ("pull_requests", ["pr", "push", full, "--source-manifest", "publish.json"])
+        )
+    if p.pr_reviews and (not had.pr_reviews or rate_widened):
+        required.append(("pr_reviews", ["review", "apply", full]))
+    for right, argv in required:
+        try:
+            policy_allows(
+                argv,
+                remote.commands,
+                restrict_host=remote.restrict_host,
+                unlocks=RemoteUnlocks.of(remote),
+            )
+        except RouteError as e:
+            raise GrantError(f"publish right {right!r} needs manual publish permission: {e}") from e
     excess = policy.grant_excess(new, current, bound)
     if excess:
         raise GrantError("; ".join(excess))

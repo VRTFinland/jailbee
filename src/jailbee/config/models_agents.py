@@ -564,7 +564,8 @@ class AgentConfig(BaseModel):
         default=True,
         description=(
             "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
-            "skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, "
+            "skills (`jailbee-container`, `jailbee-usage`, `jailbee-repo-setup`, "
+            "`jailbee-pr-review`, "
             "`jailbee-issue-management`, `jailbee-bug-report`, `jailbee-orchestration`, "
             "`jailbee-orchestration-child`) into "
             "this agent's shared `skills_dir` so the in-container agent understands "
@@ -893,6 +894,9 @@ class AutostartProfile(BaseModel):
     )
 
 
+BUILTIN_PROFILES: tuple[str, ...] = ("none", "all")
+
+
 class Autostart(BaseModel):
     """The top-level autostart block: which shell steps run inside a
     container, and when.
@@ -921,19 +925,25 @@ class Autostart(BaseModel):
     )
     default_profile: str | None = Field(
         default=None,
-        description="Default named autostart profile; required when profiles are defined.",
+        description=(
+            "Default autostart profile (including none or all); required when profiles are defined."
+        ),
     )
 
     @model_validator(mode="after")
     def _validate_profiles(self) -> Self:
-        if not self.profiles:
-            if self.default_profile is not None:
-                raise ValueError("default_profile requires autostart.profiles")
-            return self
-        if "all" in self.profiles:
-            raise ValueError("autostart profile name 'all' is reserved")
-        if self.default_profile not in self.profiles:
+        for name in BUILTIN_PROFILES:
+            if name in self.profiles:
+                raise ValueError(f"autostart profile name {name!r} is reserved")
+        if self.default_profile is not None and self.default_profile not in (
+            *self.profiles,
+            *BUILTIN_PROFILES,
+        ):
             raise ValueError(f"default_profile {self.default_profile!r} must name a profile")
+        if not self.profiles:
+            return self
+        if self.default_profile is None:
+            raise ValueError("default_profile must name a profile")
         names = {"agents", "services"}
         for trigger in ("on_create", "on_start"):
             for entry in getattr(self, trigger):

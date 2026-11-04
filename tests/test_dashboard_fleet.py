@@ -310,6 +310,35 @@ def test_merge_roles_mark_the_source_and_dim_the_ineligible(tmp_path):  # type: 
     assert line(a).style.bgcolor == fleet.MARKED_STYLE.bgcolor
 
 
+def test_a_stopped_container_row_is_dim(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup(
+        "r",
+        str(tmp_path),
+        None,
+        [ci("r-run", "r"), ci("r-stop", "r", "Stopped"), ci("r-frozen", "r", "Frozen")],
+    )
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+    run, stop, frozen = (e for e in model.entries if e.container)
+
+    def line(entry, selected=False):  # type: ignore[no-untyped-def]
+        return fleet.entry_line(entry, model.geometry, frozenset(), selected=selected, width=80)
+
+    assert line(stop).style.dim
+    assert line(stop, selected=True).style.dim
+    assert not line(run).style.dim
+    assert not line(frozen).style.dim
+
+
 def test_a_heading_shows_the_checked_out_branch(tmp_path):  # type: ignore[no-untyped-def]
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [ci("alpha-a", "alpha")], checkout="main"
@@ -422,3 +451,54 @@ def test_deep_fork_name_is_cut_with_an_ellipsis_not_wrapped(tmp_path):
     line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=80)
     assert "\n" not in line.plain
     assert line.plain.rstrip().endswith("…")
+
+
+def _fitted_name_model(group):  # type: ignore[no-untyped-def]
+    """The NAME column as the dashboard's width fitting (`o`, auto-fit) sizes it."""
+    from jailbee.dashboard.columns import optimize_column_widths
+
+    widths = optimize_column_widths([group], now=NOW, enabled=("name",))
+    return _name_model(group, column_widths=widths)
+
+
+def test_a_long_name_is_capped_and_cut_at_the_end(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee.lifecycle import NAME_MAX_WIDTH
+
+    long = "x" * (NAME_MAX_WIDTH + 20)
+    group = dmodel.RepoGroup("p", str(tmp_path), None, [ci(f"p-{long}", "p")])
+    model = _fitted_name_model(group)
+    # The first column carries the two-cell status indent on top of the cap.
+    assert model.geometry.widths[0] == NAME_MAX_WIDTH + 2
+    entry = next(e for e in model.entries if e.container)
+    line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=200)
+    assert line.plain.rstrip().endswith("…")
+    assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2
+
+
+def test_a_capped_fork_name_counts_its_tree_prefix(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee.lifecycle import NAME_MAX_WIDTH
+
+    long = "y" * NAME_MAX_WIDTH
+    parent = ci("p-parent", "p")
+    fork = replace(ci(f"p-{long}", "p"), child=ChildView("p-parent", "working", (), False, ()))
+    model = _fitted_name_model(dmodel.RepoGroup("p", str(tmp_path), None, [parent, fork]))
+    entry = next(e for e in model.entries if e.container == fork)
+    line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=200)
+    assert line.plain.rstrip() == "  └ " + "y" * (NAME_MAX_WIDTH - 3) + "…"
+
+
+def test_a_capped_name_keeps_its_failed_autostart_mark(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee import background
+    from jailbee.lifecycle import NAME_MAX_WIDTH
+
+    long = "z" * (NAME_MAX_WIDTH + 20)
+    failed = replace(
+        ci(f"p-{long}", "p"),
+        job_kind=background.JOB_AUTOSTART,
+        job_phase=background.PHASE_FAILED,
+    )
+    model = _fitted_name_model(dmodel.RepoGroup("p", str(tmp_path), None, [failed]))
+    entry = next(e for e in model.entries if e.container)
+    line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=200)
+    assert line.plain.rstrip().endswith("… ⚠")
+    assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2

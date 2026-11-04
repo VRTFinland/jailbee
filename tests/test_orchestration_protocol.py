@@ -37,6 +37,43 @@ def test_orchestration_modules_cold_import(module: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_publish_manifest_valid():
+    m = parse_manifest(
+        "publish-x.json",
+        json.dumps(
+            {
+                "version": 1,
+                "type": "publish",
+                "id": "publish-x",
+                "outbox": "issue",
+                "manifest": "close-12.json",
+            }
+        ),
+        {},
+    )
+    assert m.type == "publish" and m.manifest == "close-12.json"
+
+
+@pytest.mark.parametrize(
+    "name,outbox", [("../x.json", "issue"), ("a.progress.json", "issue"), ("a.json", "other")]
+)
+def test_publish_manifest_rejects_unsafe_target(name, outbox):
+    with pytest.raises(ManifestError):
+        parse_manifest(
+            "publish-x.json",
+            json.dumps(
+                {
+                    "version": 1,
+                    "type": "publish",
+                    "id": "publish-x",
+                    "outbox": outbox,
+                    "manifest": name,
+                }
+            ),
+            {},
+        )
+
+
 def test_refresh_manifest_valid() -> None:
     from jailbee.orchestration.protocol import ORCHESTRATOR_TYPES, RefreshManifest
 
@@ -80,6 +117,27 @@ def _spawn(name: str = "a", **over: Any) -> str:
     }
     d.update(over)
     return json.dumps({k: v for k, v in d.items() if v is not None})
+
+
+@pytest.mark.parametrize("warm", [None, [], ["*/build"]])
+def test_spawn_warm_paths(warm):
+    m = parse_manifest("a.json", _spawn(version=2, warm_paths=warm), {})
+    assert isinstance(m, SpawnManifest)
+    assert m.warm_paths == warm
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"kind": "new", "warm_paths": []},
+        {"kind": "pr", "pr": 1, "warm_paths": ["build"]},
+        {"warm_paths": ["/x"]},
+        {"version": 1, "warm_paths": []},
+    ],
+)
+def test_spawn_rejects_invalid_warm_paths(fields):
+    with pytest.raises(ManifestError):
+        parse_manifest("a.json", _spawn(**({"version": 2} | fields)), {})
 
 
 @pytest.mark.parametrize("ref", ["refs/heads/main", "a" * 40])

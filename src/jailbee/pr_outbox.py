@@ -2721,6 +2721,10 @@ def offer_pending_comments(
     draft: bool = False,
     choose_mode: ChooseMode | None = None,
     plan_sink: PlanSink | None = None,
+    policy: Callable[[Manifest], None] | None = None,
+    result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2807,6 +2811,10 @@ def offer_pending_comments(
                 choose_mode=choose_mode,
                 plan_sink=plan_sink,
                 revisions=revisions,
+                policy=policy,
+                result_sink=result_sink,
+                action_limit=action_limit,
+                audit_sink=audit_sink,
             )
     except (
         OutboxReadError,
@@ -2970,6 +2978,10 @@ def _offer_locked(
     choose_mode: ChooseMode | None = None,
     plan_sink: PlanSink | None = None,
     revisions: Mapping[str, str] | None = None,
+    policy: Callable[[Manifest], None] | None = None,
+    result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -3193,7 +3205,12 @@ def _offer_locked(
 
     from jailbee.publish_progress import reporting
 
+    if policy is not None:
+        for target, _, _ in plans:
+            policy(target.manifest)
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
+    if action_limit is not None and total > action_limit:
+        raise GateError("review actions exceed the reserved publish budget")
     with ExitStack() as stack:
         tick = stack.enter_context(reporting(total))
         for position, (target, progress, idx) in enumerate(plans):
@@ -3208,7 +3225,20 @@ def _offer_locked(
                 draft=draft,
                 before_action=tick,
             )
+            if audit_sink is not None:
+                for index in outcome.applied:
+                    audit_sink(
+                        {
+                            "kind": type(target.manifest.actions[index])
+                            .__name__.removesuffix("Action")
+                            .lower(),
+                            "repo": target.manifest.repo,
+                        }
+                    )
             _print_receipts(target, outcome)
+            if result_sink is not None:
+                for url in outcome.urls:
+                    result_sink(url)
             stop = False
             try:
                 finalize(incus, container, outbox, target, outcome, uid=uid)

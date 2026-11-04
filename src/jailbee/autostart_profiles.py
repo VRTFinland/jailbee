@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from jailbee.autostart_plan import normalize_stages, select_profile
 from jailbee.config import Autostart, Config
+from jailbee.config.models_agents import BUILTIN_PROFILES, AutostartProfile
 from jailbee.incus import Incus
 from jailbee.tui import warn
 
@@ -28,18 +30,55 @@ class ProfileError(ValueError):
     """Invalid profile selection."""
 
 
+def profile_names(autostart: Autostart) -> tuple[str, ...]:
+    return (*autostart.profiles, *BUILTIN_PROFILES)
+
+
 def validate_profile_name(autostart: Autostart, name: str) -> None:
-    if not autostart.profiles:
-        raise ProfileError("this repository defines no autostart profiles")
-    if name not in autostart.profiles:
+    if name not in profile_names(autostart):
         raise ProfileError(f"autostart profile `{name}` is not defined")
 
 
+def store_choice(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    profile: str | None,
+    services: list[str] | None,
+    reset_services: bool,
+) -> None:
+    from jailbee.create_flow import validate_service_names
+
+    if services is not None and reset_services:
+        raise ValueError("--services and --reset-services cannot be used together")
+    if profile is not None:
+        validate_profile_name(cfg.autostart, profile)
+    validate_service_names(services)
+    if reset_services:
+        incus.config_unset_checked(container, SERVICES_KEY)
+    if profile is not None:
+        incus.config_set(container, PROFILE_KEY, profile)
+    if services is not None:
+        incus.config_set(container, SERVICES_KEY, encode_names(services))
+
+
+def selection(autostart: Autostart, name: str | None) -> Literal["all"] | AutostartProfile:
+    if name is None or name == "all":
+        return "all"
+    if name == "none":
+        return AutostartProfile.model_construct(stages=[], services=[])
+    if name not in autostart.profiles:
+        raise ProfileError(
+            f"autostart profile `{name}` is not defined; choose from: "
+            + ", ".join(profile_names(autostart))
+        )
+    return autostart.profiles[name]
+
+
 def resolve_profile(cfg: Config, incus: Incus, container: str) -> str | None:
-    if not cfg.autostart.profiles:
-        return None
     stored = incus.config_get(container, PROFILE_KEY)
-    if stored in cfg.autostart.profiles:
+    if stored in profile_names(cfg.autostart):
         return stored
     if stored:
         warn(
@@ -80,7 +119,7 @@ def show_profile(cfg: Config, incus: Incus, container: str) -> None:
 
     current = resolve_profile(cfg, incus, container)
     info(f"Current autostart profile: {current}")
-    for name in cfg.autostart.profiles:
+    for name in profile_names(cfg.autostart):
         marks = []
         if name == current:
             marks.append("current")
@@ -123,10 +162,10 @@ def switch_profile(
     override_services = decode_names(incus.config_get(container, SERVICES_KEY))
 
     def profile_services(profile: str | None) -> frozenset[str] | None:
-        selection = cfg.autostart.profiles.get(profile) if profile else None
-        if selection is None or selection == "all" or selection.services is None:
+        chosen = selection(cfg.autostart, profile)
+        if chosen == "all" or chosen.services is None:
             return None
-        return frozenset(selection.services)
+        return frozenset(chosen.services)
 
     old_services = profile_services(previous)
     new_services = profile_services(name)

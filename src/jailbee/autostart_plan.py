@@ -239,16 +239,19 @@ def stage_keys(stages: list[AutostartStage]) -> list[str]:
 
 
 def profile_names(autostart: Autostart) -> tuple[str, ...]:
-    return tuple(autostart.profiles)
+    from jailbee.autostart_profiles import profile_names as names
+
+    return names(autostart)
 
 
 def select_profile(autostart: Autostart, profile: str | None) -> Autostart:
     """Filter before planning, preserving agents and config order."""
-    if profile is None or autostart.profiles[profile] == "all":
+    from jailbee.autostart_profiles import selection
+
+    chosen = selection(autostart, profile)
+    if chosen == "all":
         return autostart
-    selection = autostart.profiles[profile]
-    assert selection != "all"
-    names = set(selection.stages) | {AGENTS_STAGE}
+    names = set(chosen.stages) | {AGENTS_STAGE}
     return autostart.model_copy(
         update={
             trigger.value: [

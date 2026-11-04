@@ -9708,6 +9708,14 @@ def test_annotated_tag_source_uses_peeled_commit(mocker, make_cfg, tmp_path, ope
         ancestor.assert_called_once_with(cfg.repo_root, "c" * 40, commit)
 
 
+def test_push_new_ref_uses_atomic_absent_lease(mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="a" * 40)
+    push = mocker.patch("jailbee.git.push_to_remote")
+    sync.push_ref_to_remote(cfg, "refs/heads/topic", "topic", force=False, require_absent=True)
+    assert push.call_args.kwargs["force_with_lease"] == ""
+
+
 @pytest.mark.parametrize("force", [False, True])
 def test_push_pinned_ref_uses_lease_only_when_forced(mocker, make_cfg, tmp_path, force):
     cfg = make_cfg(tmp_path)

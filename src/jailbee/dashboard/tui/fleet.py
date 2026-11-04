@@ -72,7 +72,7 @@ class Entry:
     source: bool = False
     """A merge source while the dashboard picks merge targets: drawn with ``◆``."""
     dim: bool = False
-    """Not a merge target while the dashboard picks them: drawn dim."""
+    """Drawn dim: a stopped container, or not a merge target while the dashboard picks them."""
     fork_prefix: str = ""
     """The NAME cell's orchestration-tree indent, ``fork_tree.name_prefix``."""
 
@@ -173,7 +173,7 @@ def table_model(
                     marked=container.name in marked,
                     running=container.name in running,
                     source=container.name in sources,
-                    dim=container.name in ineligible,
+                    dim=container.name in ineligible or container.state == "Stopped",
                     fork_prefix=name_prefix(layout, container.name),
                 )
                 for container in group.containers
@@ -266,7 +266,11 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
         if spec.name == "name":
             value = entry.fork_prefix + value
         if index == 0 and spec.name == "name" and autostart_failed(entry.container):
-            value += f" {WARN_MARK}"
+            # Cut the name, not the mark: room is the column less the status
+            # indent and " ⚠", so a capped name still shows its failure.
+            body = Text.from_markup(value)
+            body.truncate(max(1, geometry.widths[index] - 4), overflow="ellipsis")
+            value = f"{body.markup} {WARN_MARK}"
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
