@@ -1286,8 +1286,8 @@ error warns and never fails a publish that GitHub accepted, and a retry never
 duplicates a row.
 
 ```bash
-jb outbox sent ls [CONTAINER] [--repo PREFIX] [--json] [--limit N]
-jb outbox sent show ID
+jb outbox sent ls [CONTAINER] [--repo PREFIX] [-o table|json] [--limit N]
+jb outbox sent show ID [-o table|json]
 jb outbox sent clear [--repo PREFIX] [--before DATE] [-y]
 ```
 
@@ -1296,7 +1296,7 @@ a Sent tab in the Outbox box (`o` opens the URL in the desktop browser, or
 shows a notice over remote SSH) and as a repo-header `Sent…` timeline, where
 `†` marks destroyed or earlier incarnations of a container. The Qt outbox
 dialog has Sent and Whole repo toggles and an Open in browser button. Over
-remote SSH `sent ls`/`show` are read-only and `sent clear` is destructive.
+remote SSH, `sent ls`/`show` are limited to the repositories the SSH session may see, and `sent clear` deletes local records only for those repositories.
 
 A PR manifest normally names a PR the container owns: the one it was created
 from (`jb new --pr`), opened (`jb pr push`), bound (`jb pr bind <container> N`) or stacked

@@ -1715,8 +1715,8 @@ To see what was already published, use the Sent log (local, never calls GitHub,
 read-only over remote SSH except `clear`):
 
 ```bash
-jailbee outbox sent ls [feat-foo] [--repo PREFIX] [--json] [--limit N]
-jailbee outbox sent show ID
+jailbee outbox sent ls [feat-foo] [--repo PREFIX] [-o table|json] [--limit N]
+jailbee outbox sent show ID [-o table|json]
 jailbee outbox sent clear [--repo PREFIX] [--before DATE] [-y]
 ```
 
