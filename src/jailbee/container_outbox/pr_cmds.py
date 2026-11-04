@@ -204,7 +204,8 @@ def description(
         if text is None:
             raise OutboxCommandError(
                 "title-only staging is not supported; provide an explicit replacement body "
-                "with --body or --body-file to avoid replaying an outdated PR body", 2
+                "with --body or --body-file to avoid replaying an outdated PR body",
+                2,
             )
         if new and bindings.read():
             raise OutboxCommandError(

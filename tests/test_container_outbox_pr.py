@@ -346,16 +346,17 @@ def test_title_only_description_refuses_without_replaying_body(
     from jailbee.container_outbox import bindings
 
     monkeypatch.setattr(
-        bindings, "SNAPSHOT", binding_snapshot(
-            tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}
-        )
+        bindings,
+        "SNAPSHOT",
+        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}),
     )
     if batch:
         monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "head", "acme/widgets"))
         assert invoke("comment", "1234", "--body", "Keep", "--batch", "b").exit_code == 0
     before = {
         p.relative_to(tmp_path): p.read_bytes()
-        for p in (tmp_path / ".jailbee").rglob("*") if p.is_file()
+        for p in (tmp_path / ".jailbee").rglob("*")
+        if p.is_file()
     }
     reads = []
 
@@ -366,8 +367,11 @@ def test_title_only_description_refuses_without_replaying_body(
     monkeypatch.setattr(gh, "pr_body", current_body)
     monkeypatch.setattr(gh, "pr_view", lambda n, **kw: gh.PrView(n, "head", "acme/widgets"))
     result = invoke(
-        "description", *(("1234",) if explicit else ()), "--title", "New title",
-        *(("--batch", "b") if batch else ())
+        "description",
+        *(("1234",) if explicit else ()),
+        "--title",
+        "New title",
+        *(("--batch", "b") if batch else ()),
     )
     assert result.exit_code == 2, result.output
     assert "--body" in result.output and "--body-file" in result.output
@@ -376,7 +380,8 @@ def test_title_only_description_refuses_without_replaying_body(
     assert not list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
     assert {
         p.relative_to(tmp_path): p.read_bytes()
-        for p in (tmp_path / ".jailbee").rglob("*") if p.is_file()
+        for p in (tmp_path / ".jailbee").rglob("*")
+        if p.is_file()
     } == before
 
 
