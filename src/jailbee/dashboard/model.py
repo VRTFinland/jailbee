@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from jailbee import agent_status, git, notices
+from jailbee.autostart_profiles import profile_names
 from jailbee.config import (
     format_ttl,
     load_repo_config,
@@ -206,6 +207,7 @@ class RepoGroup:
     advisories: tuple[RepoAdvisory, ...] = ()
     memory_default: str = "16GiB"
     autostart_profiles: tuple[str, ...] = ()
+    autostart_services: tuple[str, ...] = ()
     autostart_default_profile: str | None = None
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
@@ -530,8 +532,9 @@ def _gather_rows(
                 checkout=git.get_checkout_label(root),
                 advisories=advisories,
                 memory_default=cfg.defaults.memory,
-                autostart_profiles=tuple(cfg.autostart.profiles),
-                autostart_default_profile=cfg.autostart.default_profile,
+                autostart_profiles=profile_names(cfg.autostart),
+                autostart_services=tuple(cfg.services),
+                autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,

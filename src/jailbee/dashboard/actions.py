@@ -28,7 +28,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
-    from jailbee.dashboard.model import RepoAdvisory
+    from jailbee.dashboard.model import RepoAdvisory, RepoGroup, RepoTarget
     from jailbee.lifecycle import ContainerInfo
     from jailbee.orchestration.runner_model import Runner
 
@@ -162,6 +162,42 @@ def addressed(argv: Sequence[str], flags: Sequence[str], *, over_ssh: bool) -> l
 def command_label(argv: Sequence[str]) -> str:
     """The words of ``argv`` up to its first option or ``--``, for an exit notice."""
     return " ".join(takewhile(lambda word: not word.startswith("-"), argv))
+
+
+CUSTOM_SERVICES = "\x00custom"
+
+
+def autostart_choice_entries(group: RepoGroup) -> tuple[PickerEntry, ...]:
+    default = group.autostart_default_profile or "all"
+    names = (default, *(name for name in group.autostart_profiles if name != default))
+    return (
+        *(PickerEntry(f"{name}  (default)" if name == default else name, name) for name in names),
+        *((PickerEntry("Custom services…", CUSTOM_SERVICES),) if group.autostart_services else ()),
+    )
+
+
+def autostart_choice_args(
+    group: RepoGroup, *, profile: str | None, services: Sequence[str] | None, creating: bool
+) -> list[str]:
+    args: list[str] = []
+    if profile is not None and not (
+        creating and profile == (group.autostart_default_profile or "all") and services is None
+    ):
+        args.extend(("--autostart-profile", profile))
+        if not creating:
+            args.append("--reset-services")
+    if services is not None:
+        args.extend(("--services", ",".join(services)))
+    return args
+
+
+def restart_with_argv(target: RepoTarget, container: str, extra: Sequence[str]) -> list[str]:
+    from jailbee.dashboard.bulk import bulk_argv
+
+    return [
+        "jailbee",
+        *addressed(bulk_argv("restart", container, extra), target.flags(), over_ssh=False),
+    ]
 
 
 AUTOSTART_STATUS = "autostart-status"
