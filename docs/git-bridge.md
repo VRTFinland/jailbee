@@ -1410,7 +1410,7 @@ agents stage proposals; humans inspect and approve on the host.
 With the recommended read-only token, a container's `gh` can inspect issues
 but cannot mutate them through that credential (see [GitHub CLI (`gh`)
 inside containers](#github-cli-gh-inside-containers)). Stage proposed issue
-creates, edits, comments, labels and state changes as JSON manifests in
+creates, edits, comments, labels, assignee and state changes as JSON manifests in
 `~/.jailbee/issue-outbox/`; a human reviews and applies them from the host
 with `jailbee issue apply`. The manifest schema itself is normative in the
 **jailbee-issue-management** skill
@@ -1419,11 +1419,19 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, use `jailbee issue create|edit|comment|labels|state`
+Inside the container, use `jailbee issue create|edit|comment|labels|assign|state`
 to stage proposals; `--body-file` accepts long text and `--repo` selects the
 target. Commands fetch expected current values for existing issue edits,
-labels and state; for an `@REF` in a batch they derive expected values from
-the earlier create. Use `--batch NAME` and `jailbee outbox submit NAME
+labels, assignees and state; for an `@REF` in a batch they derive expected values from
+the earlier create.
+
+`jailbee issue assign` stages an `assignees` action. `--me` and
+`--unassign-me` stand for the GitHub account the host publishes with: the
+literal `@me` is resolved at publish time, so the container never needs to
+know that login. Other logins go through `--add` and `--remove`. The host
+compares the live assignees with the staged `expected` list before it
+changes anything, and a retry after a partly landed attempt is not refused
+as stale. Adds are sent before removes. Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies
 it on the host. See [container commands](commands.md#in-container-outbox-commands).
 

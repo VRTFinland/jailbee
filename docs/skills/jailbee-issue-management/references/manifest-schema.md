@@ -13,6 +13,8 @@ parsed by the host. Do not write manifests or outbox files by hand.
     {"type": "comment", "repo": ".", "issue_ref": "new-bug", "body": "…"},
     {"type": "labels", "repo": ".", "issue": 42, "add": ["needs-triage"], "remove": [],
      "expected": {"labels": ["bug"]}},
+    {"type": "assignees", "repo": ".", "issue": 42, "add": ["@me"], "remove": [],
+     "expected": {"assignees": []}},
     {"type": "state", "repo": ".", "issue": 42, "state": "closed", "reason": "completed",
      "expected": {"state": "open"}}
   ]
@@ -117,6 +119,33 @@ The host computes the final label set itself (`expected.labels` minus
 `remove` plus `add`, using the repository's canonical label casing) and
 sends one full replacement — there is no separate "add" and "remove" call
 on GitHub's side.
+
+## `type: "assignees"`
+
+Adds and/or removes assignees. An entry is a GitHub login, or the literal
+`"@me"`, which the host replaces with the GitHub account it publishes with,
+resolved at publish time. Staged by `jailbee issue assign`.
+
+| Field | Rule |
+|---|---|
+| `repo`, `issue`/`issue_ref` | As above. |
+| `add` | Logins or `"@me"` to assign. Default `[]`. |
+| `remove` | Logins or `"@me"` to unassign. Default `[]`. At least one of `add`/`remove` must be non-empty. |
+| `expected.assignees` | Required — the **complete** current assignee list `gh issue view` showed, as plain logins (no `"@me"`). |
+
+A login is 1–39 characters of letters, digits and single hyphens, with no
+leading or trailing hyphen. Within one list, and across `add` and `remove`
+after `"@me"` is resolved, duplicates are refused case-insensitively. A
+manifest may hold one `assignees` action per target.
+
+The live assignees must equal `expected.assignees`, or one of the two states
+the action itself produces: `expected` plus `add`, or `expected` plus `add`
+minus `remove`. The extra states make a retry after an uncertain, partly
+landed attempt succeed instead of being refused as stale. For an `issue_ref`
+target, `expected.assignees` is `[]`.
+
+On apply, additions are sent before removals. A failed removal after a
+successful addition leaves the action uncertain, like other partial failures.
 
 ## `type: "state"`
 

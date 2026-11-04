@@ -1,6 +1,6 @@
 ---
 name: jailbee-issue-management
-description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "add a label", "remove a label", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
+description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
 ---
 
 # Managing GitHub issues from inside a container — the outbox
@@ -12,8 +12,8 @@ with `jailbee inbox send message --text "..."`; use `--kind question` when you
 need a result. Do not write GitHub outbox files or directories by hand.
 
 You are inside a JailBee container working with GitHub issues (creating one,
-editing a title or body, commenting, adding or removing labels, closing, or
-reopening). Your `gh` here can **read** GitHub but must never **write** to
+editing a title or body, commenting, adding or removing labels, assigning or
+unassigning people, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
 it: every issue action you produce is written as a JSON manifest file into a
 fixed outbox directory, and a human on the host reviews and publishes it
 later with `jb issue apply`. Nothing you write here reaches GitHub by
@@ -55,7 +55,7 @@ read-only token anyway — use the staging commands instead, every time.
 Use the container's own `gh` to see an issue's current state — never guess
 at numbers, titles, or label spelling:
 
-- `gh issue view <n> --json number,title,body,labels,state,stateReason` —
+- `gh issue view <n> --json number,title,body,labels,assignees,state,stateReason` —
   inspect current fields. Commands capture expected state automatically.
 - `gh issue list --json number,title,labels,state [--label ...] [--state ...]`
   — for finding or triaging a set of issues.
@@ -92,14 +92,20 @@ same `repo` value.
 ## Staging issue actions
 
 Use `jailbee issue create --title "Title" --body "Details"`, or `edit`,
-`comment`, `labels` and `state` with an issue number. Use `--body-file PATH`
+`comment`, `labels`, `assign` and `state` with an issue number. Use `--body-file PATH`
 for long text and `--repo PATH` to select a repository. Commands create
 `~/.jailbee/issue-outbox/` as needed; never write it manually. See the
 normative [output schema](references/manifest-schema.md).
 
+Assignment: `jailbee issue assign 42 --me` assigns the publishing account
+(`@me`, resolved on the host at publish time), `--unassign-me` removes it,
+and `--add LOGIN` / `--remove LOGIN` (repeatable) name other users. Give at
+least one of these flags; a login already assigned on `--add`, or not
+assigned on `--remove`, is refused before anything is staged.
+
 For related actions use `--batch NAME`, then `jailbee outbox submit NAME
 --kind issue`. A create may set `--ref REF`; later actions in that same
-batch target `@REF`. For edits, labels and state on `@REF`, expected values
+batch target `@REF`. For edits, labels, assign and state on `@REF`, expected values
 are derived automatically from the earlier create under the draft lock.
 Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`;
 discard a draft with `jailbee outbox discard NAME --kind issue`.

@@ -1864,7 +1864,7 @@ Configuring a new agent, not just inspecting one already on, is the
 - Writing (not publishing) PR review comments/replies/descriptions from
   *inside* a container — the manifest format, the outbox contract, `gh`
   read-path recipes → **jailbee-pr-review** skill.
-- Staging GitHub issue creates, edits, comments, labels, closes or reopens
+- Staging GitHub issue creates, edits, comments, labels, assignments, closes or reopens
   from *inside* a container → **jailbee-issue-management** skill.
 - An agent inside a granted container managing child containers →
   **jailbee-orchestration** skill; an agent running as such a child →
