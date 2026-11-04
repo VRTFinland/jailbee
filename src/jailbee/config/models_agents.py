@@ -560,7 +560,7 @@ class AgentConfig(BaseModel):
         default=True,
         description=(
             "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
-            "skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, "
+            "skills (`jailbee-container`, `jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, "
             "`jailbee-issue-management`, `jailbee-bug-report`, `jailbee-orchestration`, "
             "`jailbee-orchestration-child`) into "
             "this agent's shared `skills_dir` so the in-container agent understands "

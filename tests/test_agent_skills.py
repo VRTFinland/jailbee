@@ -84,6 +84,10 @@ def test_sync_removes_stale_files_in_managed_skill(tmp_path: Path, monkeypatch) 
     assert (skills / "jailbee-usage" / "SKILL.md").is_file()
 
 
+def test_bundled_skills_include_container_reference() -> None:
+    assert "jailbee-container" in agent_skills.bundled_skill_names()
+
+
 def test_bundled_skills_include_pr_review() -> None:
     assert "jailbee-pr-review" in agent_skills.bundled_skill_names()
 
