@@ -186,7 +186,9 @@ authorize editing someone else's title or body.
 
 Only one publish runs per orchestrator. Its full pending-action count is
 reserved against a sliding-hour cap before starting, including failed or
-partially applied attempts; reservations are never refunded. One source
+partially applied attempts. A publish that the in-lock policy refuses before
+any GitHub mutation gets its reservation back; failed or partly applied
+attempts keep theirs. One source
 publish costs one action. Revocation or `--no-publish` refuses new requests;
 an already accepted worker finishes and reports its result.
 The broker writes finished requests, action kinds/repos, URLs and outcome to

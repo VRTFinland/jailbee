@@ -2989,7 +2989,7 @@ orchestration:
           actions: [comment]
         pull_requests: false     # own source PR manifests
         pr_reviews: false        # bound own-repository PRs
-        max_actions_per_hour: 30 # 1..500; reserved, never refunded
+        max_actions_per_hour: 30 # 1..500; reserved; refunded only when the in-lock policy refuses before any mutation
 ```
 
 Profile names are lowercase letters, digits and dashes, starting with a letter

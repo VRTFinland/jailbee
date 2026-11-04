@@ -54,7 +54,7 @@ Issue action kinds and repo coverage must all be granted. Source PR manifests
 need `pull_requests` (own branches only, no force); review manifests need
 `pr_reviews` (bound PRs in the own repo only). Missing `publish` grants nothing.
 One request runs per orchestrator; all pending actions reserve sliding-hour
-budget up front, never refunded. A source publish counts as one action.
+budget up front, refunded only if the in-lock policy refuses before any mutation. A source publish counts as one action.
 Replies: `started`, then `done` with URLs/issue numbers or `failed` with the
 domain error. `--wait` may return on `started`; consume the final reply for
 the same ref. Uncertain outcomes, including broker restart, require human

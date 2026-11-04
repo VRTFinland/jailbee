@@ -98,7 +98,7 @@ binding. Updating a PR opened some other way remains a host step. Children never
 final `done`/`failed` status for the printed ref. Use the returned URLs and
 created issue numbers, in manifest order; staging or `started` is not success.
 One request runs at once. Budget is reserved for every pending action and is
-never refunded on failure. An uncertain result means stop and tell the human
+never refunded on failure (only an in-lock policy refusal returns it). An uncertain result means stop and tell the human
 to resolve it with `jb outbox` on the host; do not retry automatically. A
 normal retry gets a new id. Without the required right, keep the manifest for
 human review and give the host apply command instead.
