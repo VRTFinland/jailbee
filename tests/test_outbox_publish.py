@@ -1545,7 +1545,10 @@ def test_plan_sink_reports_stale_refusal(env, mocker, capsys):
     got = []
     assert (
         _sink_publish(
-            env, "pr", got.append, options=PublishOptions(publisher="user", dry_run=True, foreign=True, force=False)
+            env,
+            "pr",
+            got.append,
+            options=PublishOptions(publisher="user", dry_run=True, foreign=True, force=False),
         )
         == 1
     )

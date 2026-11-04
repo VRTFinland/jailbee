@@ -2615,7 +2615,16 @@ def test_drop_keeps_applied_rows(execution):
         container_created=sent.parse_created("2026-09-18"),
         publisher="user",
         action=sent.SentAction(
-            "issue", "a.json", 0, "comment", "acme/app", 7, None, None, "x", batch.manifests[0].digest
+            "issue",
+            "a.json",
+            0,
+            "comment",
+            "acme/app",
+            7,
+            None,
+            None,
+            "x",
+            batch.manifests[0].digest,
         ),
         state="applied",
     )

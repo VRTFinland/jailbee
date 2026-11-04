@@ -1530,7 +1530,8 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
             target,
             read_progress(outbox, manifest.name),
             uid=1000,
-            publisher="user",    container_created=None,
+            publisher="user",
+            container_created=None,
         )
         assert outcome.applied == (2,)
         assert not outcome.draft
