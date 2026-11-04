@@ -70,7 +70,7 @@ def restart_env(make_cfg, tmp_path, mocker):
 
     cfg = profile_cfg(make_cfg, tmp_path)
     incus, state = state_incus(mocker, {PROFILE_KEY: "light", SERVICES_KEY: "old"})
-    incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
+    incus.config_unset_checked.side_effect = lambda c, k: state.pop(k, None)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "c"))
     mocker.patch("jailbee.cli._refuse_while_autostart_runs")
@@ -123,12 +123,26 @@ def test_restart_services_are_trimmed_and_stored_before_background_boot(restart_
     assert spawn.called
 
 
+@pytest.mark.parametrize("mode", ["--no-background", "--background"])
+def test_restart_reset_failure_aborts_before_boot(restart_env, mode):
+    from jailbee.incus import IncusError
+
+    incus, state, boot, spawn = restart_env
+    incus.config_unset_checked.side_effect = IncusError("permission denied")
+    result = CliRunner().invoke(app, ["restart", "c", "--reset-services", mode])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, IncusError)
+    assert state["user.jailbee.autostart_services"] == "old"
+    boot.assert_not_called()
+    spawn.assert_not_called()
+
+
 def test_restart_reset_services_unsets_key(restart_env):
     incus, state, _, _ = restart_env
     result = CliRunner().invoke(app, ["restart", "c", "--reset-services", "--no-background"])
     assert result.exit_code == 0, result.output
     assert "user.jailbee.autostart_services" not in state
-    incus.config_unset.assert_called_once_with("c", "user.jailbee.autostart_services")
+    incus.config_unset_checked.assert_called_once_with("c", "user.jailbee.autostart_services")
 
 
 @pytest.mark.parametrize(
@@ -149,7 +163,7 @@ def test_restart_invalid_choice_has_no_side_effects(restart_env, args, message):
         "user.jailbee.autostart_services": "old",
     }
     incus.config_set.assert_not_called()
-    incus.config_unset.assert_not_called()
+    incus.config_unset_checked.assert_not_called()
     boot.assert_not_called()
     spawn.assert_not_called()
 
@@ -163,4 +177,4 @@ def test_restart_omitted_choices_preserve_existing_values(restart_env):
         "user.jailbee.autostart_services": "old",
     }
     incus.config_set.assert_not_called()
-    incus.config_unset.assert_not_called()
+    incus.config_unset_checked.assert_not_called()
