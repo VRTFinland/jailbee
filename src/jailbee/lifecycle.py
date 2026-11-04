@@ -2256,9 +2256,14 @@ def _new_container(
 
     # Infrastructure must exist even without cloning or autostart; a failed
     # bootstrap must not let agents write into an unsafe store.
-    from jailbee.outbox.io import ensure_directories
+    if opts.spawned_by is not None:
+        from jailbee.orchestration.labels import write_child_role
 
-    ensure_directories(cfg, incus, name)
+        write_child_role(incus, name, uid=cfg.container_user.uid)
+    else:
+        from jailbee.outbox.io import ensure_directories
+
+        ensure_directories(cfg, incus, name)
 
     # Before agents, autostart and `on_create`, any of which may commit. Both
     # modes: the XDG file never touches the host repo's own config.

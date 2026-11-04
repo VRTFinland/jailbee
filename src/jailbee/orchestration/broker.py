@@ -575,6 +575,8 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
         return
     try:
         ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+        if ctx.role() == "child":
+            labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
     except IncusError as exc:
         memory.warn_once(
             f"env:{full}",

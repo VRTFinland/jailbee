@@ -138,6 +138,18 @@ def test_ensure_env_runs_for_orchestrator_before_grant_json(rig: Rig) -> None:
     assert names.index("ensure_orchestration_env") < names.index("write_grant_json")
 
 
+def test_child_marker_written_once_per_broker_process(rig: Rig) -> None:
+    memory = broker.BrokerMemory()
+    rig.incus.list_containers.return_value = [_child(), _orch()]
+    rig.tick(memory)
+    rig.tick(memory)
+    calls = [c for c in rig.incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)]
+    assert len(calls) == 1
+    assert calls[0].args[0] == "proj-kid"
+    assert calls[0].kwargs["uid"] == rig.cfg.container_user.uid
+    assert "child" in str(calls[0])
+
+
 def test_ensure_env_runs_for_children(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_child()]
     rig.tick()

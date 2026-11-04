@@ -47,6 +47,18 @@ RIGHTS = "user.jailbee.orchestration.rights"
 TIMED = "user.jailbee.orchestration.timed"
 RUNNER = "user.jailbee.orchestration.runner"
 SPAWNED_BY = "user.jailbee.spawned_by"
+ROLE_MARKER_PATH = "/home/dev/.jailbee/orchestration/role"
+
+
+def write_child_role(incus: Incus, full: str, *, uid: int) -> None:
+    """Install the marker atomically as the container user."""
+    incus.exec(
+        full,
+        ["sh", "-c", 'set -eu; mkdir -p "${1%/*}"; tmp=$(mktemp "${1}.XXXXXX"); '
+         'trap \'rm -f "$tmp"\' EXIT; printf "child\\n" > "$tmp"; mv -f "$tmp" "$1"',
+         "sh", ROLE_MARKER_PATH],
+        uid=uid,
+    )
 STATE = "user.jailbee.orchestration.state"
 # LAST_IMPORT, DONE_SHA and STOPPED_HEAD hold a commit as the full 40-hex
 # OID, in exactly the form `sync._container_head_oid` returns (plan E
