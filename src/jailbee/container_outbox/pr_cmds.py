@@ -79,6 +79,12 @@ def _stage(store: Store, envelope: dict[str, object], action: dict[str, object],
             if not manifest.get("actions"):
                 manifest.update(envelope)
             _same_target(manifest, envelope)
+            actions = manifest.get("actions")
+            if isinstance(actions, list) and any(
+                isinstance(existing_action, dict) and existing_action.get("type") == "review"
+                for existing_action in actions
+            ):
+                raise OutboxCommandError("cannot append a batch action to a review draft", 2)
             return item
         store.draft_append("pr", batch, action, bodies, prepare=prepare)
         typer.echo(f"staged pr draft {batch}")
@@ -187,7 +193,11 @@ def review_discard(pr: Annotated[str | None, typer.Argument()] = None) -> None:
     def run() -> None:
         store = _guard()
         view = _view(pr)
-        store.draft_discard("pr", f"review-{view.number}")
+        envelope = _envelope(view)
+        def validate(manifest: dict[str, object], bodies: dict[str, str]) -> None:
+            _same_target(manifest, envelope)
+            _review_actions(manifest)
+        store.draft_discard("pr", f"review-{view.number}", validate=validate)
         typer.echo(f"discarded pr review-{view.number}")
     _run(run)
 
@@ -214,5 +224,6 @@ def source(ref: Annotated[str | None, typer.Option("--ref", "--head")] = None, s
             action = _description(title, text, branch)
             bodies = _file_body(action, body_file is not None)
             manifest["actions"] = [action]
-        _announce(store.write_manifest("pr", "source", manifest, bodies))
+        name = store.write_manifest("pr", "source", manifest, bodies)
+        typer.echo(f"staged pr/{name} - publish on the host: jb pr push {socket.gethostname()} --source-manifest {name}")
     _run(run)

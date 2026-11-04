@@ -420,10 +420,20 @@ class Store:
                 _unlink(fd, f"{name}.json")
             return result
 
-    def draft_discard(self, kind: Kind, name: str) -> None:
+    def draft_discard(
+        self, kind: Kind, name: str,
+        *, validate: Callable[[dict[str, object], dict[str, str]], None] | None = None,
+    ) -> None:
         self._require_role()
         _draft_name(name)
         with self._draft_lock(kind, name):
+            if validate is not None:
+                state = self.draft_load_state(kind, name)
+                if state is None:
+                    return
+                manifest, bodies = state
+                _validate(kind, f"{name}.json", manifest, bodies)
+                validate(manifest, bodies)
             path = self.drafts(kind)
             if not path.exists() and not path.is_symlink():
                 return

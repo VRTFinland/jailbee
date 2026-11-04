@@ -380,7 +380,7 @@ def test_source_repo_inference_uses_explicit_number(monkeypatch, tmp_path):
     assert raw["head_sha"] is None
 
 
-@pytest.mark.parametrize("command", ["add", "submit"])
+@pytest.mark.parametrize("command", ["add", "submit", "discard"])
 def test_review_commands_do_not_overwrite_a_named_batch(tmp_path, command):
     assert invoke("comment", "1234", "--body", "Keep", "--batch", "review-1234").exit_code == 0
     store = Store(tmp_path)
@@ -393,6 +393,91 @@ def test_review_commands_do_not_overwrite_a_named_batch(tmp_path, command):
     assert "review draft" in result.output
     assert store.draft_load_state("pr", "review-1234") == before
     assert not list(store.outbox("pr").glob("*.json"))
+
+
+@pytest.mark.parametrize("command", ["comment", "reply", "description"])
+def test_batch_cannot_append_to_review_draft(tmp_path, command):
+    body = tmp_path / "comment.md"
+    body.write_text("Original review comment\n")
+    assert invoke("review", "add", "1234", "--file", "a.py", "--line", "1", "--body-file", str(body)).exit_code == 0
+    store = Store(tmp_path)
+    before = store.draft_load_state("pr", "review-1234")
+    args = [command, "1234", "--body", "Not a review", "--batch", "review-1234"]
+    if command == "reply":
+        args += ["--to", "9"]
+    result = invoke(*args)
+    assert result.exit_code == 2, result.output
+    assert "review draft" in result.output
+    assert store.draft_load_state("pr", "review-1234") == before
+    assert invoke("review", "submit", "1234").exit_code == 0
+    assert published(tmp_path)[1].actions[0].comments[0].body == body.read_text()
+
+
+@pytest.mark.parametrize("command", ["add", "submit", "discard"])
+def test_review_repo_collision_keeps_original_draft(monkeypatch, tmp_path, command):
+    assert invoke("review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "Keep").exit_code == 0
+    store = Store(tmp_path)
+    before = store.draft_load_state("pr", "review-1234")
+    monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(1234, "head", "other/widgets"))
+    args = ["review", command, "1234"]
+    if command == "add":
+        args += ["--file", "a.py", "--line", "2", "--body", "Wrong repo"]
+    result = invoke(*args)
+    assert result.exit_code == 2, result.output
+    assert "different repo or PR" in result.output
+    assert store.draft_load_state("pr", "review-1234") == before
+    assert not list(store.outbox("pr").glob("*.json"))
+
+
+def test_review_discard_checks_pr_inside_draft(tmp_path):
+    store = Store(tmp_path)
+    store.draft_save("pr", "review-1234", {"version": 1, "repo": "acme/widgets", "pr": 999, "head_sha": "head", "actions": [{"type": "review", "body": "", "comments": []}]}, {})
+    before = store.draft_load_state("pr", "review-1234")
+    result = invoke("review", "discard", "1234")
+    assert result.exit_code == 2, result.output
+    assert "different repo or PR" in result.output
+    assert store.draft_load_state("pr", "review-1234") == before
+
+
+def test_discard_validates_while_holding_draft_lock(monkeypatch, tmp_path):
+    import fcntl
+    from jailbee.container_outbox import pr_cmds
+    assert invoke("review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "Keep").exit_code == 0
+    original = pr_cmds._review_actions
+    checked = False
+    def check_locked(manifest):
+        nonlocal checked
+        lock = tmp_path / ".jailbee/outbox-draft-locks/pr/review-1234.lock"
+        with lock.open("r") as stream:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        checked = True
+        return original(manifest)
+    monkeypatch.setattr(pr_cmds, "_review_actions", check_locked)
+    result = invoke("review", "discard", "1234")
+    assert result.exit_code == 0, result.output
+    assert checked
+    assert Store(tmp_path).draft_load_state("pr", "review-1234") is None
+
+
+def test_batch_repo_collision_preserves_review_draft(monkeypatch, tmp_path):
+    assert invoke("review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "Keep").exit_code == 0
+    store = Store(tmp_path)
+    before = store.draft_load_state("pr", "review-1234")
+    monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(1234, "head", "other/widgets"))
+    result = invoke("comment", "1234", "--body", "Wrong repo", "--batch", "review-1234")
+    assert result.exit_code == 2, result.output
+    assert "different repo or PR" in result.output
+    assert store.draft_load_state("pr", "review-1234") == before
+
+
+def test_source_prints_source_push_hint(tmp_path):
+    result = invoke("source", "--repo", "acme/widgets", "--ref", "refs/heads/a", "--sha", "a" * 40, "--pr", "1234")
+    assert result.exit_code == 0, result.output
+    manifest = next((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
+    import socket
+    assert f"jb pr push {socket.gethostname()} --source-manifest {manifest.name}" in result.output
+    assert "jb review apply" not in result.output
 
 
 def test_publication_lock_cannot_collide_with_batch_name(monkeypatch, tmp_path):
