@@ -147,9 +147,10 @@ publication, is never retried automatically: ask the human to inspect
 Source publication cannot force-push, use the default/base branch as head,
 or overwrite an existing upstream head unless it belongs to a PR bound to
 this container. New PRs use the default base; bound updates keep that PR's
-base. An explicit PR number must be bound. PRs opened here are bound for
-later updates; adopting an unrelated PR for unattended updates remains a
-host step. Reviews, replies and description rewrites target only bound PRs
+base. Updates require an authored `BranchPrMap` binding created by this
+container's source publication; review-only PR/stacked labels and adopted
+bindings do not authorize pushes. PRs opened here retain authorship for later
+updates. Updating any PR opened some other way remains a host step. Reviews, replies and description rewrites target only bound PRs
 in the own repository, never foreign repositories or submodules.
 
 Only one publish runs per orchestrator. Its full pending-action count is

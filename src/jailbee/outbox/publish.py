@@ -251,6 +251,7 @@ def publish_selected(
     | None = None,
     result_sink: Callable[[str], None] | None = None,
     action_limit: int | None = None,
+    audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
 
@@ -316,6 +317,7 @@ def publish_selected(
                     policy=cast("Callable[[pr_outbox.Manifest], None] | None", policy),
                     result_sink=result_sink,
                     action_limit=action_limit,
+                    audit_sink=audit_sink,
                 )
 
             batch = issue_outbox.prepare_batch(
@@ -417,6 +419,20 @@ def publish_selected(
                     journal_store=journal_store,
                     before_action=tick,
                 )
+            if audit_sink is not None:
+                for name, receipt in report.applied:
+                    applied_manifest = next(m for m in batch.manifests if m.manifest.name == name)
+                    applied_action = next(
+                        a for a in applied_manifest.actions if a.index == receipt.index
+                    )
+                    audit_sink(
+                        {
+                            "kind": type(applied_action.action)
+                            .__name__.removesuffix("Action")
+                            .lower(),
+                            "repo": applied_action.repo.slug,
+                        }
+                    )
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:

@@ -105,6 +105,25 @@ def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right,
         commands._check_remote_bound(cfg, incus, "myrepo-a", new, None, denied)
 
 
+def test_remote_unchanged_or_narrowed_publish_needs_no_manual_permission(cfg, incus):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.orchestration.grant import PublishRights
+
+    remote = RemoteSSHConfig(
+        orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    current = Grant(
+        publish=PublishRights(
+            issues=("comment", "state"), pull_requests=True, max_actions_per_hour=40
+        )
+    )
+    for new in (
+        current,
+        Grant(publish=PublishRights(issues=("comment",), max_actions_per_hour=10)),
+    ):
+        commands._check_remote_bound(cfg, incus, "myrepo-a", new, current, remote)
+
+
 def test_no_publish_clears_all(cfg):
     from jailbee.orchestration.grant import PublishRights
 

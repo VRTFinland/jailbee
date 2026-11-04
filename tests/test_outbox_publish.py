@@ -391,7 +391,7 @@ def test_policy_refusal_applies_nothing(env, kind):
 def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
-    seen, lines = [], []
+    seen, lines, audited = [], [], []
     assert (
         publish_selected(
             env[0],
@@ -404,10 +404,13 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
             raise_errors=True,
             policy=seen.append,
             result_sink=lines.append,
+            audit_sink=audited.append,
         )
         == 0
     )
     assert len(seen) == 1
+    assert len(audited) == (3 if kind == "issue" else 2)
+    assert all(action["repo"] == "acme/repo" for action in audited)
     assert "001.json" not in env[2][kind].as_dict()
     assert any("https://github.com/acme/repo/" in line for line in lines)
     if kind == "issue":
@@ -465,6 +468,7 @@ def test_broker_rewrite_after_precheck_is_refused_by_real_issue_policy(env, tmp_
     }
     stores["issue"] = store("issue", files)
     grant = Grant(publish=PublishRights(issues=("comment",)))
+    env[5][labels.GRANT] = grant.to_label()
     ctx = _ctx(tmp_path / "broker", _node(IDENTITY.full_name, **{labels.GRANT: grant.to_label()}))
     ctx.cfg, ctx.incus = cfg, incus
     ctx.root.mkdir(parents=True, exist_ok=True)

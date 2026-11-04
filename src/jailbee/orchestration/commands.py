@@ -369,13 +369,25 @@ def _check_remote_bound(
 
     required: list[tuple[str, list[str]]] = []
     p = new.publish
-    if p.issues or (p.foreign_issues.repos and p.foreign_issues.actions):
+    had = current.publish if current is not None else PublishRights()
+    rate_widened = p.max_actions_per_hour > had.max_actions_per_hour
+    issue_added = any(k not in had.issues for k in p.issues)
+    foreign_added = any(
+        not had.covers_issue(k, r, foreign=True)
+        for r in p.foreign_issues.repos
+        for k in p.foreign_issues.actions
+    )
+    if (
+        issue_added
+        or foreign_added
+        or (rate_widened and (p.issues or (p.foreign_issues.repos and p.foreign_issues.actions)))
+    ):
         required.append(("issues", ["issue", "apply", full]))
-    if p.pull_requests:
+    if p.pull_requests and (not had.pull_requests or rate_widened):
         required.append(
             ("pull_requests", ["pr", "push", full, "--source-manifest", "publish.json"])
         )
-    if p.pr_reviews:
+    if p.pr_reviews and (not had.pr_reviews or rate_widened):
         required.append(("pr_reviews", ["review", "apply", full]))
     for right, argv in required:
         try:

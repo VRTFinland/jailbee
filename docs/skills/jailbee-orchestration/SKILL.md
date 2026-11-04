@@ -85,8 +85,9 @@ Issue kinds use `publish.issues` for the own repo/submodules, or
 PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
 need `publish.pr_reviews` and must target bound PRs in the own repository.
 Existing unbound upstream branches, default/base heads, force pushes and
-foreign PRs are refused. New PRs use the default base; updating an unrelated
-PR remains a host step. Children never publish.
+foreign PRs are refused. New PRs use the default base; updates require an
+authored source-PR binding, not a review-only PR/stacked label or adopted
+binding. Updating a PR opened some other way remains a host step. Children never publish.
 
 `--wait` may return at `started`; keep your inbox waiter armed and read the
 final `done`/`failed` status for the printed ref. Use the returned URLs and
