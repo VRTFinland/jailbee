@@ -36,7 +36,7 @@ def test_ls_profile_column_off_by_default_and_shows_value():
     assert "light" in str(spec.cell(c))
 
 
-def test_menu_shows_autostart_profile_only_with_profiles(tmp_path):
+def test_menu_shows_autostart_profile_when_choices_available(tmp_path):
     from jailbee.dashboard.menus import MenuGroup, group_menu_actions
     from jailbee.dashboard.tui.menu_state import open_menu as menu_for
 
@@ -140,7 +140,7 @@ def test_create_always_ends_with_choice_and_preserves_addressing(
 
 @pytest.mark.parametrize("over_ssh", [False, True])
 @pytest.mark.parametrize("selection", ["db", "empty", "none"])
-def test_restart_with_custom_toggle_or_profile_dispatches_final_argv(
+def test_restart_choice_profile_resets_services_and_dispatches_final_argv(
     mocker, tmp_path, over_ssh, selection
 ):
     child = mocker.patch.object(ts.subprocess, "run", return_value=mocker.Mock(returncode=0))
@@ -536,12 +536,12 @@ def test_gatherer_carries_profiles(mocker, tmp_path):
         str(tmp_path),
         None,
         [c],
-        autostart_profiles=("full", "light"),
+        autostart_profiles=("full", "light", "none", "all"),
         autostart_default_profile="full",
     )
     gatherer = _gatherer(mocker, lambda *args, **kwargs: [g], _Clock())
     # The schema roundtrip is checked separately by the state-service suite;
     # the gathered groups must retain the repo choices and stored row value.
     snapshot = gatherer.tick(active=True, refresh=False, roots=[])
-    assert snapshot.groups[0].autostart_profiles == ("full", "light")
+    assert snapshot.groups[0].autostart_profiles == ("full", "light", "none", "all")
     assert snapshot.groups[0].containers[0].autostart_profile == "light"

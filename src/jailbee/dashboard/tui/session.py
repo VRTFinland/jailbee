@@ -3386,11 +3386,7 @@ class DashboardSession:
             except RouteError as exc:
                 batch.failed[name] = str(exc)
                 continue
-            argv = (
-                dact.restart_with_argv(target, name, extra)
-                if action.verb == "restart" and argv_for is None and not self.over_ssh
-                else ["jailbee", *dact.addressed(canonical, target.flags(), over_ssh=self.over_ssh)]
-            )
+            argv = ["jailbee", *dact.addressed(canonical, target.flags(), over_ssh=self.over_ssh)]
             batch.pending.add(name)
             try:
                 self.jobs.start(

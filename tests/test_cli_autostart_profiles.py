@@ -127,10 +127,12 @@ def test_restart_reset_failure_aborts_before_boot(restart_env, mode):
 
     incus, state, boot, spawn = restart_env
     incus.config_unset_checked.side_effect = IncusError("permission denied")
-    result = CliRunner().invoke(app, ["restart", "c", "--reset-services", mode])
-    assert result.exit_code != 0
-    assert isinstance(result.exception, IncusError)
+    result = CliRunner().invoke(app, ["restart", "c", "--autostart-profile", "none", "--reset-services", mode])
+    assert result.exit_code == 1
+    assert "permission denied" in result.output
+    assert "Traceback" not in result.output
     assert state["user.jailbee.autostart_services"] == "old"
+    assert state["user.jailbee.autostart_profile"] == "light"
     boot.assert_not_called()
     spawn.assert_not_called()
 

@@ -55,12 +55,12 @@ def store_choice(
     if profile is not None:
         validate_profile_name(cfg.autostart, profile)
     validate_service_names(services)
+    if reset_services:
+        incus.config_unset_checked(container, SERVICES_KEY)
     if profile is not None:
         incus.config_set(container, PROFILE_KEY, profile)
     if services is not None:
         incus.config_set(container, SERVICES_KEY, encode_names(services))
-    if reset_services:
-        incus.config_unset_checked(container, SERVICES_KEY)
 
 
 def selection(autostart: Autostart, name: str | None) -> Literal["all"] | AutostartProfile:

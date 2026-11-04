@@ -191,15 +191,6 @@ def autostart_choice_args(
     return args
 
 
-def restart_with_argv(target: RepoTarget, container: str, extra: Sequence[str]) -> list[str]:
-    from jailbee.dashboard.bulk import bulk_argv
-
-    return [
-        "jailbee",
-        *addressed(bulk_argv("restart", container, extra), target.flags(), over_ssh=False),
-    ]
-
-
 AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"

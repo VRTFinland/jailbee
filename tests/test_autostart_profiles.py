@@ -619,3 +619,22 @@ def test_real_autostart_service_selection_preserves_generated_agents(
     else:
         submit.assert_not_called()
         assert [s.stage for s in stages] == ["agents"]
+
+
+def test_none_profile_child_launches_configured_runner(make_cfg, tmp_path, mocker):
+    from jailbee.autostart import run_autostart
+    from jailbee.autostart_profiles import profiled_config
+    from jailbee.orchestration.runner import Runner
+
+    cfg = make_cfg(tmp_path, agents={"claude": {"enabled": True, "autostart": True, "command": "claude"}})
+    incus, _ = state_incus(mocker)
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={"JAILBEE_ROLE": "child"})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.orchestration.runner.read_runner", return_value=Runner(agent="claude", model="haiku"))
+    mocker.patch("jailbee.orchestration.runner.read_resume", return_value=None)
+    run = mocker.patch("jailbee.autostart.run_stage")
+    run_autostart(profiled_config(cfg, "none"), incus, "c", AutostartTrigger.ON_START, "/r", override="wait")
+    stages = [call.args[3] for call in run.call_args_list]
+    agent = next(s for s in stages if s.stage == "agents")
+    assert [step.run for chain in agent.all_chains() for step in chain.steps] == ["exec claude --model haiku"]

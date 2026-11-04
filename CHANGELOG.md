@@ -60,7 +60,8 @@ before editing `## Unreleased`.
   the choice and `autostart profile` switches it later, starting missing setup
   and newly selected services without a restart. The terminal dashboard adds
   a Lifecycle picker and optional PROFILE column; orchestration spawn/restart
-  requests accept the same selection.
+  requests accept the same selection. Configured profile names `none` and `all`
+  are rejected at config load; `all` was already reserved.
 
 - **Adopting and releasing children.** `jb orchestrate adopt ORCHESTRATOR
   CHILD...` brings existing containers of the same repo, running or stopped,

@@ -73,7 +73,8 @@ def test_spawn_passes_profile_to_new_options(make_cfg, tmp_path, mocker):
     assert options.autostart_profile == "light"
 
 
-def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
+@pytest.mark.parametrize("profile", ["full", "none"])
+def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker, profile):
     from jailbee.autostart_profiles import PROFILE_KEY
     from tests.test_orchestration_lifecycle_ops import Rig, _restart
 
@@ -87,7 +88,7 @@ def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
     from jailbee.orchestration.state import load_reservations
 
     def launch(*args, **kwargs):
-        rig.incus.config_set.assert_any_call("proj-c1", PROFILE_KEY, "full")
+        rig.incus.config_set.assert_any_call("proj-c1", PROFILE_KEY, profile)
         assert kwargs["initial_prompt"].endswith("go on")
         return CreateStarted("proj-c1", 12345, tmp_path / "boot.log")
 
@@ -96,7 +97,7 @@ def test_restart_stores_profile_before_boot(make_cfg, tmp_path, mocker):
     )
     boot = mocker.patch("jailbee.lifecycle.boot_container")
     result = actions.handle_restart(
-        rig.ctx(), _restart().model_copy(update={"autostart_profile": "full"})
+        rig.ctx(), _restart().model_copy(update={"autostart_profile": profile})
     )
     assert result.state == "started", result.detail
     launch_mock.assert_called_once()

@@ -51,32 +51,6 @@ def test_choice_entries_order_and_custom_only_with_services(tmp_path):
     )
 
 
-def test_restart_choice_profile_resets_services(tmp_path):
-    from jailbee.dashboard.model import RepoGroup, RepoTarget
-
-    group = RepoGroup("a", str(tmp_path), None, [], autostart_default_profile="all")
-    extra = dact.autostart_choice_args(group, profile="all", services=None, creating=False)
-    assert extra == ["--autostart-profile", "all", "--reset-services"]
-    argv = dact.restart_with_argv(RepoTarget(tmp_path, tmp_path / "config.yaml"), "a-x", extra)
-    assert argv == [
-        "jailbee",
-        "restart",
-        "a-x",
-        "--background",
-        *extra,
-        "--config",
-        str(tmp_path / "config.yaml"),
-    ]
-    from jailbee.dashboard.commands import permitted
-
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["restart"]}}
-    )
-    remote_argv = dact.restart_with_argv(RepoTarget(tmp_path, None), "a-x", extra)[1:]
-    assert permitted(remote_argv, policy, over_ssh=True)
-    assert not permitted(remote_argv, _policy({"commands": {"mode": "disabled"}}), over_ssh=True)
-
-
 def test_custom_services_args_joined(tmp_path):
     from jailbee.dashboard.model import RepoGroup
 

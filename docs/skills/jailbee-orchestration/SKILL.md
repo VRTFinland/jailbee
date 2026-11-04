@@ -167,9 +167,11 @@ or `send restart --child C --services web` to select those services and their
 dependencies. `--services ''` selects no services; omission on spawn uses the
 profile or all, while omission on restart retains the child's explicit service
 selection. Nonservice stages still follow the selected profile.
-On restart, `--autostart-profile NAME` alone preserves explicit services; the
-broker restart action has no `--reset-services` option, so it cannot clear an
-existing explicit service selection. Prepare runs once per service/container and
+On restart, `--autostart-profile none` alone preserves explicit services. Use
+`send restart --child C --autostart-profile none --services ''` for a light
+child with no services. The broker has no `--reset-services` option, so an
+existing explicit selection cannot be cleared back to the profile default.
+Prepare runs once per service/container and
 cannot exceed the
 child's stored rights. Ordinary containers are bounded by creation-time approved
 elevation (legacy containers use host-effective declarations). Re-assessment is

@@ -5106,6 +5106,7 @@ def restart(
     """Restart a container, then run autostart."""
     from jailbee.autostart_profiles import store_choice
     from jailbee.create_flow import CreateError
+    from jailbee.incus import IncusError
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
@@ -5134,6 +5135,9 @@ def restart(
     except (ValueError, CreateError) as exc:
         error_plain(str(exc))
         raise typer.Exit(2) from exc
+    except IncusError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
