@@ -108,6 +108,8 @@ def test_container_skill_covers_identity_commands_and_policy() -> None:
         "jailbee-orchestration-child",
     ):
         assert needle in body, needle
+    assert "must not merge into other branches or perform host integration" in body
+    assert "own-branch updates" in body
     network = body.split("## Blocked network access", 1)[1].split("## Commits", 1)[0]
     assert "child" in network and "orchestrator" in network
 

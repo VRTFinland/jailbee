@@ -5,7 +5,7 @@ description: Use when working inside a JailBee container, identifying the contai
 
 # Working inside a JailBee container
 
-The container is host-managed. Work and commit locally; ask the host operator for lifecycle, network and other host-only actions. If `JAILBEE_ROLE=child` or you have been adopted as a child, use **jailbee-orchestration-child**: children report to their orchestrator and must not push, merge, open PRs or manage containers.
+The container is host-managed. Work and commit locally; ask the host operator for lifecycle, network and other host-only actions. If `JAILBEE_ROLE=child` or you have been adopted as a child, use **jailbee-orchestration-child**: children report to their orchestrator, must not push, open PRs or manage containers, and must not merge into other branches or perform host integration. Follow the child skill for own-branch updates from the orchestrator.
 
 ## Identify the container and repository
 
