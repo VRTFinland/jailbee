@@ -452,3 +452,34 @@ def test_assign_accepts_underscore_logins(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
     assert json.loads(manifest.read_text())["actions"][0]["add"] == ["jdoe_acme"]
+
+
+@pytest.mark.parametrize(
+    "fields,message",
+    [
+        ({"add": [1]}, "add"),
+        ({"remove": [None]}, "remove"),
+        ({"add": "bob"}, "add"),
+        ({"remove": {"bob": 1}}, "remove"),
+        ({"add": ["bob"], "expected": {"assignees": [1]}}, "expected"),
+        ({"add": ["bob"], "expected": {"assignees": "alice"}}, "expected"),
+    ],
+)
+def test_assign_ref_with_malformed_raw_action_exits_2_without_traceback(
+    tmp_path, fields, message
+):
+    from jailbee.container_outbox import issue_cmds
+
+    assert (
+        invoke(
+            "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
+        ).exit_code
+        == 0
+    )
+    store = Store(tmp_path)
+    before = store.draft_load_state("issue", "b")
+    action = {"type": "assignees", "repo": ".", "issue_ref": "bug", **fields}
+    with pytest.raises(issue_cmds.OutboxCommandError, match=message) as exc:
+        store.draft_append("issue", "b", action, {}, prepare=issue_cmds._prepare_ref)
+    assert exc.value.exit_code == 2
+    assert store.draft_load_state("issue", "b") == before

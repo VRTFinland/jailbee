@@ -167,6 +167,13 @@ def _prepare_ref(
             elif action["type"] == "state":
                 result["expected"] = {"state": view.state}
             elif action["type"] == "assignees":
+                supplied = action.get("expected")
+                if supplied is not None:
+                    names = supplied.get("assignees", []) if isinstance(supplied, dict) else None
+                    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                        raise OutboxCommandError(
+                            "assignees expected.assignees must be a list of login strings", 2
+                        )
                 _check_assignees(action.get("add", []), action.get("remove", []), view)
                 result["expected"] = {"assignees": list(view.assignees)}
             return result
@@ -192,6 +199,9 @@ _LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
 
 
 def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> None:
+    for field, items in (("add", add), ("remove", remove)):
+        if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+            raise OutboxCommandError(f"assignees {field} must be a list of login strings", 2)
     assert isinstance(add, list) and isinstance(remove, list)
     for items in (add, remove):
         seen: set[str] = set()
