@@ -243,6 +243,8 @@ def adopt(
                 incus.config_unset_checked(name, key)
         incus.config_set(name, labels.ON_DONE, labels.ON_DONE_KEEP)
         incus.config_set(name, labels.SPAWNED_BY, orchestrator_full)
+        if rows[name].get("status") == "Running":
+            labels.write_child_role(incus.with_exec_timeout(20), name, uid=cfg.container_user.uid)
         for recipient, sender, body, seq in (
             (
                 name,
@@ -285,8 +287,8 @@ def release(
     incus.with_exec_timeout(20).exec(
         child_full, ["rm", "-f", "--", labels.ROLE_MARKER_PATH], uid=cfg.container_user.uid
     )
-    incus.config_unset_checked(child_full, labels.SPAWNED_BY)
     try:
+        incus.config_unset_checked(child_full, labels.SPAWNED_BY)
         for key in CHILD_STATE_LABELS:
             if key in config:
                 incus.config_unset_checked(child_full, key)

@@ -42,6 +42,12 @@ def rig(mocker):
     return rows, incus
 
 
+def test_adoption_reinstalls_marker_even_when_broker_cached_old_child(cfg, rig):
+    _, incus = rig
+    adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"])
+    assert any(c.args[0] == "myrepo-a" and labels.ROLE_MARKER_PATH in str(c) for c in incus.exec.call_args_list)
+
+
 def test_adoption_discards_stale_child_outbox_record(cfg, rig):
     rows, incus = rig
     rows[1]["config"]["user.jailbee.orch.stopped_outbox"] = "0"
@@ -338,6 +344,18 @@ def test_release_role_cleanup_failure_keeps_parent(cfg, rig, tmp_path, mocker):
     with pytest.raises(IncusError):
         adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
     incus.config_unset_checked.assert_not_called()
+
+
+def test_release_failed_parent_unset_restores_role_for_retry(cfg, rig, tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    rows, incus = rig
+    rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
+    mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
+    incus.config_unset_checked.side_effect = IncusError("cannot unset parent")
+    with pytest.raises(IncusError):
+        adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    assert any("child" in str(c) and labels.ROLE_MARKER_PATH in str(c) for c in incus.exec.call_args_list)
 
 
 def test_release_non_child_refused(cfg, rig, tmp_path):

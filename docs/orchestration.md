@@ -125,7 +125,12 @@ the existing session.
 
 `jb orchestrate release` removes the relationship, child-state labels, watch
 and pending state. It revokes orchestrator-owned rights but leaves user-owned
-rights intact, and refuses while an autostart run is live. If no child is
+rights intact, and refuses while an autostart run is live. Release removes the
+child role marker before clearing the parent label. A stopped child retains
+its relationship: start it and retry release so marker cleanup can be verified.
+Cleanup failures likewise retain the parent for retry. An agent launched with
+`JAILBEE_ROLE=child` must be relaunched after release to drop its old environment.
+If no child is
 named, release always prompts and is refused without an interactive terminal.
 Over remote SSH, adoption requires `remote.ssh.orchestration` to be enabled;
 release is allowed as a narrowing action without that setting.
