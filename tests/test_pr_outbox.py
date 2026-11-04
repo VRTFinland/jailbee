@@ -791,6 +791,7 @@ def test_outbox_mutations_pin_validated_repo_despite_another_gh_default(
         Target(manifest=manifest, pr=_pr_info(42), stale=False, scope=scope),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.failure is None
@@ -894,7 +895,13 @@ def test_recorded_transported_submodule_description_then_comments_are_publishabl
         tmp_path / "new/library", 42, remote="origin", repo="acme/library"
     )
     outcome = apply_manifest(
-        cfg, incus, "c", target, Progress(applied=frozenset({0}), urls={}), uid=1000
+        cfg,
+        incus,
+        "c",
+        target,
+        Progress(applied=frozenset({0}), urls={}),
+        uid=1000,
+        publisher="user",
     )
     assert outcome.applied == (1,)
     assert outcome.urls == ("https://x/comment",)
@@ -1443,6 +1450,7 @@ def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cf
         uid=1000,
         indices=frozenset({0, 1, 3}),
         draft=True,
+        publisher="user",
     )
     factory.assert_called_once_with(target)
     assert outcome.applied == (0, 1, 3)
@@ -1499,6 +1507,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
         uid=1000,
         indices=draft_indices(manifest, range(4)),
         draft=True,
+        publisher="user",
     )
     finalize(incus, "c", outbox, target, outcome, uid=1000)
     files = reader.return_value.as_dict()
@@ -1517,6 +1526,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
             target,
             read_progress(outbox, manifest.name),
             uid=1000,
+            publisher="user",
         )
         assert outcome.applied == (2,)
         assert not outcome.draft
@@ -1545,6 +1555,7 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
             uid=1000,
             indices=frozenset({2}),
             draft=True,
+            publisher="user",
         )
     calls["comment"].assert_not_called()
 
@@ -1618,7 +1629,15 @@ def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number
         manifest, _pr_info() if number else None, False, PrScope(tmp_path, "origin", "", None)
     )
     with pytest.raises(OutboxError, match=r"jailbee pr push c --source-manifest source\.json"):
-        apply_manifest(make_cfg(tmp_path), incus, "c", target, Progress(frozenset(), {}), uid=1000)
+        apply_manifest(
+            make_cfg(tmp_path),
+            incus,
+            "c",
+            target,
+            Progress(frozenset(), {}),
+            uid=1000,
+            publisher="user",
+        )
     for effect in (*calls.values(), progress, push, incus.exec):
         effect.assert_not_called()
 
@@ -1651,6 +1670,7 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
         Target(manifest=manifest, pr=_pr_info(), stale=False, scope=scope),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.failure is None
@@ -1718,6 +1738,7 @@ def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_
         ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.failure is None
@@ -1749,6 +1770,7 @@ def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_p
         ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     body = calls["comment"].call_args.args[2]
@@ -1783,6 +1805,7 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
         ),
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.applied == (1,)
@@ -1815,6 +1838,7 @@ def test_apply_manifest_calls_before_action_once_per_attempt(mocker, make_cfg, t
         Progress(frozenset({0}), {}),
         uid=1000,
         before_action=lambda: events.append("hook"),
+        publisher="user",
     )
     assert outcome.applied == (1, 2)
     assert events == ["hook", "post", "hook", "post"]
@@ -1846,6 +1870,7 @@ def test_apply_manifest_hook_stops_with_the_failure(mocker, make_cfg, tmp_path):
         Progress(frozenset(), {}),
         uid=1000,
         before_action=lambda: events.append("hook"),
+        publisher="user",
     )
     assert outcome.failure is not None
     assert events == ["hook", "hook"]
@@ -1895,6 +1920,7 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
         ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.applied == (0,)
@@ -1938,6 +1964,7 @@ def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, t
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         indices=frozenset({0}),
+        publisher="user",
     )
 
     assert outcome.applied == (0,)
@@ -1980,6 +2007,7 @@ def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, 
         ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     sidecar_writes = [
@@ -2032,6 +2060,7 @@ def test_apply_reports_a_recording_failure_after_a_successful_post_and_stops(
         ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
+        publisher="user",
     )
 
     assert outcome.applied == (0,), "the post landed even though it couldn't be recorded"
@@ -3514,6 +3543,7 @@ def _selected_offer(cfg, incus, **kwargs):
         manifest_names=("one.json",),
         confirm=kwargs.pop("confirm", lambda count: True),
         **kwargs,
+        publisher="user",
     )
 
 
@@ -3533,6 +3563,7 @@ def test_offer_reports_progress_across_manifests(mocker, make_cfg, tmp_path, mon
             pr_number=None,
             manifest_names=("one.json", "two.json"),
             confirm=lambda _: True,
+            publisher="user",
         )
         == 0
     )
@@ -3669,6 +3700,7 @@ def test_draft_no_prompt_requires_draftable_actions(
             raise_errors=raise_errors,
             confirm=confirm,
             choose_mode=choose,
+            publisher="user",
         )
 
     if raise_errors:
@@ -3698,6 +3730,7 @@ def test_draft_skips_non_draftable_manifest_in_same_run(mocker, make_cfg, tmp_pa
             confirm=confirm,
             manifest_names=("one.json", "two.json"),
             draft=True,
+            publisher="user",
         )
         == 0
     )
@@ -4225,6 +4258,7 @@ def test_selected_duplicate_names_do_not_repost(mocker, make_cfg, tmp_path):
             pr_number=None,
             manifest_names=("one.json", "one.json"),
             confirm=lambda count: True,
+            publisher="user",
         )
         == 1
     )
@@ -4272,7 +4306,14 @@ def test_legacy_offer_does_not_replace_supplied_missing_proposal(mocker, make_cf
     preview = Outbox({"one.json": _manifest_text()})
     assert (
         offer_pending_comments(
-            cfg, incus, "c", "feature", pr_number=None, outbox=preview, confirm=lambda count: True
+            cfg,
+            incus,
+            "c",
+            "feature",
+            pr_number=None,
+            outbox=preview,
+            confirm=lambda count: True,
+            publisher="user",
         )
         == 1
     )
@@ -4566,6 +4607,7 @@ def test_draft_chooser_multiple_manifests_partial_progress(mocker, make_cfg, tmp
             manifest_names=tuple(files),
             confirm=lambda _: True,
             choose_mode=choose,
+            publisher="user",
         )
         == 0
     )
@@ -4818,3 +4860,120 @@ def test_source_manifest_refuses_submodule_scope(mocker, make_cfg, tmp_path):
     manifest = Manifest("m", "acme/library", None, None, source="topic")
     with pytest.raises(ManifestError, match="source manifests are not supported for submodules"):
         resolve_target(cfg, incus, "c", manifest, force=False)
+
+
+def _sent_target(tmp_path, actions):
+    from jailbee.pr_outbox import Target, parse_manifest
+
+    manifest = parse_manifest("rv.json", _manifest_text(actions=actions), {})
+    return Target(manifest, _pr_info(number=7), False, PrScope(tmp_path, "origin", "", None))
+
+
+def _sent_apply(mocker, make_cfg, tmp_path, target, *, progress=None, publisher="user", **kw):
+    from jailbee.pr_outbox import Progress, apply_manifest
+
+    return apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "app-feat",
+        target,
+        progress or Progress(frozenset(), {}),
+        uid=1000,
+        publisher=publisher,
+        **kw,
+    )
+
+
+_FOUR_ACTIONS = [
+    {
+        "type": "review",
+        "body": "overall",
+        "comments": [{"path": "a.py", "line": 3, "body": "nit"}],
+    },
+    {"type": "reply", "comment_id": 9, "body": "reply body"},
+    {"type": "comment", "body": "general"},
+    {"type": "description", "title": "New title", "body": "New body"},
+]
+
+
+def test_apply_manifest_records_each_action_in_sent_log(mocker, make_cfg, tmp_path):
+    from datetime import UTC, datetime
+
+    from jailbee.outbox import sent
+
+    _apply_mocks(mocker)
+    target = _sent_target(tmp_path, _FOUR_ACTIONS)
+    created = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
+    outcome = _sent_apply(mocker, make_cfg, tmp_path, target, container_created=created)
+    assert outcome.failure is None
+    rows = {r.index: r for r in sent.list_records()}
+    assert sorted(rows) == [0, 1, 2, 3]
+    assert [rows[i].kind for i in range(4)] == ["review", "reply", "comment", "description"]
+    assert all(r.target == 7 and r.repo == "acme/widgets" for r in rows.values())
+    assert all(r.publisher == "user" and r.state == "applied" for r in rows.values())
+    assert all(r.outbox == "review" and r.manifest == "rv.json" for r in rows.values())
+    assert all(r.instance == "app-feat" and r.container_created == created for r in rows.values())
+    assert rows[0].url == "https://x/r"
+    assert rows[0].content == "overall\n\na.py:3\nnit"
+    assert rows[1].url == "https://x/p" and rows[1].content == "reply body"
+    assert rows[2].url == "https://x/c" and rows[2].content == "general"
+    assert rows[3].title == "New title" and rows[3].content == "New body"
+
+
+def test_description_edit_row_has_pr_url(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import sent
+
+    _apply_mocks(mocker)  # edit_pr returns "" : no receipt of its own
+    target = _sent_target(tmp_path, [{"type": "description", "body": "text"}])
+    _sent_apply(mocker, make_cfg, tmp_path, target)
+    (row,) = sent.list_records()
+    assert row.kind == "description"
+    assert row.url == "https://github.com/acme/widgets/pull/7"
+
+
+def test_resumed_publish_records_each_action_once(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import sent
+    from jailbee.pr import PrError
+    from jailbee.pr_outbox import Progress
+
+    calls = _apply_mocks(mocker)
+    target = _sent_target(tmp_path, _FOUR_ACTIONS)
+    calls["comment"].side_effect = PrError("rate limited")
+    first = _sent_apply(mocker, make_cfg, tmp_path, target)
+    assert first.applied == (0, 1) and first.failure
+    assert sorted(r.index for r in sent.list_records()) == [0, 1]
+
+    calls["comment"].side_effect = None
+    calls["comment"].return_value = "https://x/c"
+    progress = Progress(frozenset({0, 1}), {"0": "https://x/r", "1": "https://x/p"})
+    second = _sent_apply(mocker, make_cfg, tmp_path, target, progress=progress)
+    assert second.applied == (2, 3)
+    assert sorted(r.index for r in sent.list_records()) == [0, 1, 2, 3]
+
+    # A lost sidecar replays everything: the dedup key keeps one row per action.
+    _sent_apply(mocker, make_cfg, tmp_path, target)
+    assert sorted(r.index for r in sent.list_records()) == [0, 1, 2, 3]
+
+
+def test_failed_action_is_not_recorded(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import sent
+    from jailbee.pr import PrError
+
+    calls = _apply_mocks(mocker)
+    calls["review"].side_effect = PrError("nope")
+    target = _sent_target(tmp_path, _FOUR_ACTIONS[:1])
+    assert _sent_apply(mocker, make_cfg, tmp_path, target).failure
+    assert sent.list_records() == []
+
+
+def test_publish_survives_sent_record_failure_review(mocker, make_cfg, tmp_path, caplog):
+    _apply_mocks(mocker)
+    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    target = _sent_target(tmp_path, _FOUR_ACTIONS)
+    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
+        outcome = _sent_apply(mocker, make_cfg, tmp_path, target)
+    assert outcome.failure is None and outcome.applied == (0, 1, 2, 3)
+    assert outcome.urls == ("https://x/r", "https://x/p", "https://x/c", "")
+    # One warning per action that could not be recorded; nothing raised.
+    assert len(caplog.records) == 4
+    assert all("disk gone" in r.getMessage() for r in caplog.records)

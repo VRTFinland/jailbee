@@ -136,7 +136,14 @@ def test_pr_push_picker_publishes_picked_manifest(source_choice):
     from unittest.mock import ANY
 
     p["source"].assert_called_once_with(
-        p["cfg"], p["incus"], "feat-foo", "b.json", force=True, yes=True, confirm=ANY
+        p["cfg"],
+        p["incus"],
+        "feat-foo",
+        "b.json",
+        force=True,
+        yes=True,
+        confirm=ANY,
+        publisher="user",
     )
     p["own"].assert_not_called()
 

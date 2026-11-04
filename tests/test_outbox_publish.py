@@ -1111,6 +1111,7 @@ def test_review_apply_keeps_the_repository_lock_even_with_foreign(env, capsys):
         confirm=lambda count: True,
         outbox=pr_outbox.Outbox(files=env[2]["pr"].as_dict()),
         allow_foreign=True,
+        publisher="user",
     )
 
     # 002.json, for the container's own repository, still publishes.
@@ -1599,6 +1600,7 @@ def test_plan_sink_requires_one_selected_manifest(env):
             management=env[7],
             raise_errors=True,
             plan_sink=lambda d: None,
+            publisher="user",
         )
 
 
@@ -1658,3 +1660,33 @@ def test_plan_sink_outbox_changed_still_propagates(env):
     with pytest.raises(OutboxChanged):
         _sink_publish(env, "issue", got.append, expected_revision="stale-token", raise_errors=True)
     assert got == []
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("publisher", ["user", "orchestrator"])
+def test_published_actions_recorded_with_publisher(env, kind, publisher):
+    from jailbee.outbox import sent
+
+    assert selected(env, kind, publisher=publisher) == 0
+    rows = sent.list_records()
+    assert rows
+    assert {r.publisher for r in rows} == {publisher}
+    assert {r.outbox for r in rows} == {"issue" if kind == "issue" else "review"}
+    assert {r.instance for r in rows} == {IDENTITY.full_name}
+    assert all(r.state == "applied" and r.url for r in rows)
+
+
+def test_publish_options_default_is_user():
+    from jailbee.outbox.publish import PublishOptions
+
+    assert PublishOptions().publisher == "user"
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_publish_survives_sent_record_failure_selected(env, kind, mocker, caplog):
+    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
+        assert selected(env, kind) == 0
+    assert "001.json" not in env[2][kind].as_dict()
+    assert caplog.records
+    assert all("disk gone" in r.getMessage() for r in caplog.records)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
+from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.markdown_view import print_lines
@@ -43,6 +44,9 @@ class PublishOptions:
     # (`github:<owner>/<name>`); the plan warns about each.
     foreign: bool = False
     draft: bool = False
+    # Who is publishing, recorded in the Sent log. Human entry points keep
+    # "user"; the orchestration broker must pass "orchestrator" explicitly.
+    publisher: sent.Publisher = "user"
 
 
 def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.PublishMode | None:
@@ -316,6 +320,7 @@ def publish_selected(
                     policy=cast("Callable[[pr_outbox.Manifest], None] | None", policy),
                     result_sink=result_sink,
                     action_limit=action_limit,
+                    publisher=options.publisher,
                 )
 
             batch = issue_outbox.prepare_batch(
@@ -416,6 +421,8 @@ def publish_selected(
                     uid=cfg.container_user.uid,
                     journal_store=journal_store,
                     before_action=tick,
+                    container_prefix=cfg.container_prefix,
+                    publisher=options.publisher,
                 )
             print_issue_outcome(batch, report)
             if result_sink is not None:

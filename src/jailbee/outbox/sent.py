@@ -15,6 +15,7 @@ row instead of adding one. All datetimes are UTC.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
@@ -101,6 +102,27 @@ def dedup_key(
     created = _utc(container_created)
     stamp = created.isoformat() if created is not None else "-"
     return f"{instance}|{stamp}|{outbox}|{manifest}|{index}"
+
+
+_SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
+
+
+def parse_created(raw: str | None) -> datetime | None:
+    """An Incus ``created_at`` (RFC3339Nano) as an aware UTC datetime, or None.
+
+    The Go zero time Incus reports for an unset timestamp is None too, so an
+    unknown creation time keys the record per instance only.
+    """
+    if not raw:
+        return None
+    text = _SUBSEC_RE.sub(r"\1", raw.strip())
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return None if parsed.year <= 1 else _utc(parsed)
 
 
 def _warn(what: str, exc: Exception) -> None:

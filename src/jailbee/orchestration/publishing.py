@@ -257,6 +257,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 confirm=lambda q: False,
                 own_branches_only=True,
                 result_sink=lines.append,
+                publisher="orchestrator",
             )
         else:
             policy = (
@@ -270,7 +271,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 full,
                 ProposalId(entry["outbox"], entry["manifest"]),
                 journal_store=JournalStore(),
-                options=PublishOptions(foreign=entry["foreign"]),
+                options=PublishOptions(foreign=entry["foreign"], publisher="orchestrator"),
                 confirm=lambda n: True,
                 confirm_foreign=lambda q: False,
                 raise_errors=True,

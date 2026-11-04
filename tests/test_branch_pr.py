@@ -228,6 +228,7 @@ def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
             yes=True,
             confirm=lambda _: True,
             own_branches_only=True,
+            publisher="user",
         )
     p["fetch"].assert_not_called()
     p["push"].assert_not_called()
@@ -259,6 +260,7 @@ def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
             confirm=lambda _: False,
             own_branches_only=True,
             result_sink=lines.append,
+            publisher="user",
         )
         == 0
     )
@@ -284,6 +286,7 @@ def test_own_source_rechecks_new_remote_and_uses_absent_lease(source_publisher):
             yes=True,
             confirm=lambda _: False,
             own_branches_only=True,
+            publisher="user",
         )
     p["push"].assert_not_called()
 
@@ -302,6 +305,7 @@ def test_own_new_source_push_requires_remote_absence(source_publisher):
             yes=True,
             confirm=lambda _: False,
             own_branches_only=True,
+            publisher="user",
         )
         == 0
     )
@@ -312,7 +316,7 @@ def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     from jailbee.branch_pr import publish_source_manifest
 
     return publish_source_manifest(
-        p["cfg"], p["incus"], "c", "m.json", force=force, yes=yes, confirm=confirm
+        p["cfg"], p["incus"], "c", "m.json", force=force, yes=yes, confirm=confirm, publisher="user"
     )
 
 
@@ -847,3 +851,80 @@ def test_deeply_nested_json_is_ignored():
     value = "[" * 100000 + "]" * 100000
     incus.config_get_checked.return_value = value
     assert BranchPrMap(incus, "c").read() == {}
+
+
+def test_source_create_records_sent_row(source_publisher):
+    from jailbee.outbox import sent
+
+    p = source_publisher
+    assert _publish(p) == 0
+    (row,) = sent.list_records()
+    assert (row.outbox, row.manifest, row.index, row.kind) == ("source", "m.json", 0, "pr")
+    assert (row.repo, row.target, row.state, row.publisher) == (
+        "acme/widgets",
+        42,
+        "applied",
+        "user",
+    )
+    assert row.url == "https://github.com/acme/widgets/pull/42"
+    assert row.instance == "full" and row.container_prefix == p["cfg"].container_prefix
+    assert row.title == "Title"
+    assert row.content.startswith("create pull request")
+    assert "Body" in row.content and "feature/a @ " + "a" * 40 in row.content
+
+
+def test_source_update_records_sent_row_with_update_header(source_publisher):
+    from jailbee.outbox import sent
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    assert _publish(p) == 0
+    (row,) = sent.list_records()
+    assert row.url == "https://github.com/acme/widgets/pull/42" and row.target == 42
+    assert row.content.startswith("update pull request")
+
+
+def test_source_record_survives_finalize_error(source_publisher):
+    from jailbee.outbox import sent
+    from jailbee.pr_outbox import FinalizeError
+
+    p = source_publisher
+    p["consume"].side_effect = FinalizeError("container write failed")
+    assert _publish(p) == 1
+    assert len(sent.list_records()) == 1
+
+
+def test_publish_survives_sent_record_failure_source(source_publisher, mocker, caplog):
+    p = source_publisher
+    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
+        assert _publish(p) == 0
+    p["create"].assert_called_once()
+    p["consume"].assert_called_once()
+    assert [r.getMessage() for r in caplog.records].count(
+        "Could not record the action in the outbox Sent log: disk gone"
+    ) == 1
+
+
+def test_orchestrator_source_publish_records_orchestrator(source_publisher):
+    from jailbee.branch_pr import publish_source_manifest
+    from jailbee.outbox import sent
+
+    p = source_publisher
+    assert (
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: False,
+            own_branches_only=True,
+            publisher="orchestrator",
+        )
+        == 0
+    )
+    (row,) = sent.list_records()
+    assert row.publisher == "orchestrator"

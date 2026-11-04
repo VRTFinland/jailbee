@@ -359,3 +359,38 @@ def test_pr_manifest_needs_matching_right(rig, mocker, source):
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused"
     assert ("pull_requests" if source else "pr_reviews") in out.detail
+
+
+def test_broker_publish_records_orchestrator(rig):
+    accept(rig)
+    publish = rig[4]
+    assert publish.call_args.kwargs["options"].publisher == "orchestrator"
+
+
+def test_broker_source_publish_records_orchestrator(rig, mocker):
+    ctx, m, *_ = rig
+    manifest = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": None,
+        "head_sha": None,
+        "actions": [{"type": "description", "body": "B"}],
+        "source": "refs/heads/topic",
+        "source_sha": "a" * 40,
+        "base": "main",
+    }
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pull_requests=True)).to_label()},
+    )
+    mocker.patch.object(
+        pr_outbox,
+        "read_outbox",
+        return_value=pr_outbox.Outbox(
+            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
+        ),
+    )
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    source = mocker.patch.object(publishing.branch_pr, "publish_source_manifest", return_value=0)
+    accept((ctx, m.model_copy(update={"outbox": "pr"}), *rig[2:]))
+    assert source.call_args.kwargs["publisher"] == "orchestrator"
