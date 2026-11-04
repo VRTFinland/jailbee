@@ -704,10 +704,13 @@ def run_stages(
                     cas_restore=cas_restore,
                 )
         finally:
-            if trigger is AutostartTrigger.ON_CREATE and cfg.autostart.profiles:
-                from jailbee.autostart_profiles import record_created
+            if trigger is AutostartTrigger.ON_CREATE:
+                from jailbee.autostart_profiles import created_stages, record_created
 
-                record_created(incus, container, stage.stage)
+                # The persisted marker opts a container into one-shot tracking,
+                # including built-ins; an absent marker keeps legacy semantics.
+                if created_stages(incus, container) is not None:
+                    record_created(incus, container, stage.stage)
 
 
 def run_stage(
