@@ -159,12 +159,16 @@ not retain the ref; a later import can move it.
 
 Spawn and restart may also name `--autostart-profile NAME` to select the repo's
 startup stages; this is separate from the runner's LiteLLM `--profile`.
-For light children, use `send spawn --services web --wait` or
-`send restart --child C --services web`: only the selected services and their
-dependencies start. `--services ''` starts none; omission uses the profile or
-all on spawn and retains the child's explicit selection on restart. Explicit
-selection overrides only the profile's service set; nonservice stages still follow
-the profile. Prepare runs once per service/container and cannot exceed the
+For light children, use `send spawn --autostart-profile none --wait` to skip
+repository startup while still starting agents, or use `send spawn --services
+web --wait` / `send restart --child C --services web` to start only the selected
+services and their dependencies. `--services ''` starts none; omission uses
+the profile or all on spawn and retains the child's explicit selection on
+restart. Explicit selection overrides only the profile's service set; nonservice
+stages still follow the profile. On restart, `--autostart-profile NAME` alone
+preserves explicit services; add `--reset-services` to clear that selection
+and apply the profile's services. Prepare runs once per service/container and
+cannot exceed the
 child's stored rights. Ordinary containers are bounded by creation-time approved
 elevation (legacy containers use host-effective declarations). Re-assessment is
 needed to widen it; an accepted host or orchestrator refresh can update it. Live profile

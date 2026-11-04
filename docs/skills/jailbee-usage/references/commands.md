@@ -459,7 +459,10 @@ accept a picker when `NAME` is omitted with a TTY.
 
 | Flag (`start` / `restart`) | Effect |
 |---|---|
-| `--no-autostart` | Boot only — no `on_start` steps. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--no-autostart` | Boot only — no `on_start` steps or agent startup. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--autostart-profile NAME` | Store a profile for this and later boots. `none` skips repository stages and services but preserves agent startup; `all` selects everything. A profile flag alone preserves any explicit service selection. |
+| `--services NAMES` | Explicit service selection (comma-separated; `''` selects none), overriding the profile's service set. Cannot be combined with `--reset-services`. |
+| `--reset-services` | Clear the remembered explicit service selection so the selected profile controls services. Use with `--autostart-profile` to switch profiles and apply their service selection. |
 | `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
 | `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
 | `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |

@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Built-in `none` and `all` autostart profiles are available alongside configured
+  profiles. Restart commands and the dashboard can choose a profile and reset
+  explicit service selections; `none` skips repository startup while preserving
+  agent startup.
+
 ### Changed
 
 - `jailbee ls` and the terminal dashboard show `⎈` before an orchestrator's
