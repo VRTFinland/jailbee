@@ -2101,6 +2101,10 @@ def _new_container(
             },
         )
 
+    from jailbee.container_bindings import sync as sync_pr_bindings
+
+    sync_pr_bindings(incus, name, cfg=cfg)
+
     # Before `start`: the credential mount and its env key must be in place
     # when autostart first runs the agent, or the container's first session
     # authenticates against the repo's group and only picks up the override
@@ -2117,6 +2121,8 @@ def _new_container(
             groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
+    # Clear a failed-refresh guard only after the repaired disk is mounted.
+    sync_pr_bindings(incus, name, cfg=cfg)
 
     # Attach /run/user/<uid>/* GUI sockets after logind has provisioned
     # the dev-owned tmpfs at /run/user/<uid> — see the runtime_mounts
@@ -2296,9 +2302,14 @@ def _new_container(
 
     # Infrastructure must exist even without cloning or autostart; a failed
     # bootstrap must not let agents write into an unsafe store.
-    from jailbee.outbox.io import ensure_directories
+    if opts.spawned_by is not None:
+        from jailbee.orchestration.labels import ensure_child_role
 
-    ensure_directories(cfg, incus, name)
+        ensure_child_role(incus, name, uid=cfg.container_user.uid)
+    else:
+        from jailbee.outbox.io import ensure_directories
+
+        ensure_directories(cfg, incus, name)
 
     # Before agents, autostart and `on_create`, any of which may commit. Both
     # modes: the XDG file never touches the host repo's own config.
@@ -2872,6 +2883,10 @@ def boot_container(
             f"missing and could not be created: {', '.join(str(p) for p in missing)}"
         )
 
+    from jailbee.container_bindings import sync as sync_pr_bindings
+
+    sync_pr_bindings(incus, name, cfg=cfg)
+
     # Idempotent: this is also how a container created before pooling
     # existed acquires its slot.
     from jailbee.pool import allocate_startup
@@ -2893,6 +2908,8 @@ def boot_container(
             attach_runtime_devices(cfg, incus, name)
             raise
     incus.start(name)
+    # Clear a failed-refresh guard only after the repaired disk is mounted.
+    sync_pr_bindings(incus, name, cfg=cfg)
     attach_runtime_devices(cfg, incus, name)
 
     # After the start, not before: see `agent_private.attach`. Re-adding the

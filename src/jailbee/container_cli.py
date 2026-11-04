@@ -8,6 +8,9 @@ from typer._click import Context
 from typer.core import TyperGroup
 
 from jailbee import __version__, cli_context
+from jailbee.container_outbox.issue_cmds import issue_app
+from jailbee.container_outbox.outbox_cmds import outbox_app
+from jailbee.container_outbox.pr_cmds import pr_app
 from jailbee.services.container_cmd import service_app
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
@@ -43,6 +46,9 @@ container_app = typer.Typer(no_args_is_help=True, cls=ContainerGroup)
 config_app = typer.Typer(no_args_is_help=True)
 container_app.add_typer(config_app, name="config")
 container_app.add_typer(service_app, name="service")
+container_app.add_typer(issue_app, name="issue")
+container_app.add_typer(pr_app, name="pr")
+container_app.add_typer(outbox_app, name="outbox")
 
 
 def _version(value: bool) -> None:

@@ -31,6 +31,50 @@ returns it to the built-in height; with the mouse on, drag the panel's top borde
 The table always keeps five rows and its header, and the panel at least two rows.
 The height is remembered with the rest of the view.
 
+## In-container outbox commands
+
+Inside a non-child container, stage GitHub proposals with `jailbee issue
+create|edit|comment|labels|state` and `jailbee pr
+comment|reply|description|source`. Use `--body` or `--body-file`; issue
+commands accept `--repo` (default `.`), while PR source and new descriptions
+accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
+accepts `--head` as an alias for `--ref`; new PRs need a description body.
+
+An omitted PR selects exactly one actual container binding (primary, stacked,
+imported-head or submodule), independent of the checkout branch or detached HEAD.
+With multiple bindings, name the PR number. Host creation, start and PR bind/unbind
+operations refresh a minimal read-only snapshot at
+`/opt/jailbee/metadata/bindings.json`; existing containers acquire it on `jb start`
+without rebuilding the golden image. An unavailable snapshot never falls back to
+`gh pr view` on the current branch. A numbered command without a matching binding
+uses the current repository for its explicit number.
+
+`jailbee pr description [N]` updates the bound existing PR by default, including
+preserving its body on a title-only edit. With no bindings it stages a new PR;
+`--new` explicitly requests a new description even when a PR is bound. New
+repository discovery uses read-only `gh repo view` without requiring an existing
+PR; `--repo owner/name` overrides it. As with the unchanged manifest schema,
+`--new` writes `pr: null`: it is a proposal, not a host-side force-create switch.
+Both outboxes cap pending manifests at 20; issue batches cap actions at 100.
+
+Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
+`jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,
+`jailbee outbox submit NAME --kind issue|pr` to submit a batch, and
+`jailbee outbox discard NAME --kind issue|pr` to discard a draft. Drop a
+staged proposal with `jailbee outbox drop issue/NAME` or `pr/NAME`. For
+issue batches, create with `--ref REF` and address it later as `@REF`;
+expected values come from that earlier create. Existing issue changes fetch
+current state for host staleness checks.
+
+Inline reviews use `jailbee pr review add N --file PATH --line LINE --body
+TEXT` followed by `jailbee pr review submit N`; generic outbox submit refuses
+review drafts, because review submit fetches a fresh PR head. Discard with
+`jailbee pr review discard N`. None of these commands publish to GitHub; a
+human inspects and applies on the host. Do not write outbox files or create
+outbox directories by hand. Children cannot stage GitHub writes: send the
+orchestrator exact content using `jailbee inbox send message --text "..."`,
+or `--kind question` when a result is needed.
+
 ## Inside a container
 
 Since 1.8.1 every container has a small `jailbee` (the host's code, mounted
@@ -41,6 +85,7 @@ is host-only:
 - `jailbee config validate` ([configuration](config.md))
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md))
+- `jailbee issue ...`, `jailbee pr ...`, `jailbee outbox ...` ([outbox commands](#in-container-outbox-commands))
 
 The terminal dashboard container menu offers `Autostart →` (`u`): `Re-run…` (`r`), `Status` (`T`), `Cancel…` (`C`), and `Profile…` (`p`) when applicable. The re-run picker puts failures first and asks for confirmation; failed or interrupted outcomes also mark the container row. `Services…` (`V`) on running containers lists services and offers start or stop/restart as appropriate, refresh and logs; an empty list is reported. Entries honor remote SSH policy; elevated service refresh may require the host. These new menus are terminal-only; Qt is unchanged.
 

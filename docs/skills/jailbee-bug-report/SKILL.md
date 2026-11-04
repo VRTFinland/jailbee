@@ -5,6 +5,12 @@ description: Use when JailBee itself misbehaves — a `jb`/`jailbee` command cra
 
 # Reporting a JailBee bug from inside a container
 
+**First:** If `JAILBEE_ROLE=child`, the role marker identifies you as a child,
+or a staging command refuses you as a child, do not stage GitHub writes. Send
+the orchestrator the exact repository, target, title, body and action content
+with `jailbee inbox send message --text "..."`; use `--kind question` when you
+need a result. Do not write GitHub outbox files or directories by hand.
+
 You are inside a JailBee container and JailBee itself — not the user's project —
 appears to be wrong. A report goes to the JailBee repository:
 `github:VRTFinland/jailbee` (<https://github.com/VRTFinland/jailbee/issues>).
@@ -63,36 +69,17 @@ Tokens, credentials, `.claude.json` or other account files, full environment
 dumps, and paths or hostnames that identify the user's private repository or
 network. Replace them with placeholders. Trim logs to the lines that matter.
 
-## The manifest
+## Stage the report
 
-Use `repo: "github:VRTFinland/jailbee"` — the named exception for a repository
-outside the current project. The human sees a foreign-repository warning and
-confirms it separately. Leave `labels` empty: GitHub drops labels from users
-without triage rights. A `create` action needs a local `ref`.
-
-```json
-{
-  "version": 1,
-  "actions": [
-    {
-      "type": "create",
-      "repo": "github:VRTFinland/jailbee",
-      "ref": "new-bug",
-      "title": "<command>: <what goes wrong>",
-      "body_file": "001-jailbee-bug.md",
-      "labels": []
-    }
-  ]
-}
-```
-
-Write it to `~/.jailbee/issue-outbox/001-jailbee-bug.json` and the body to
-`~/.jailbee/issue-outbox/001-jailbee-bug.md`. Keep the title short and
-specific; the body carries the detail.
+Use `jailbee issue create --repo github:VRTFinland/jailbee --title "<command>: <problem>" --body-file PATH`.
+Keep the title short and specific; the body carries the detail. Leave labels
+empty for a foreign repository. The host warns and asks separately for consent.
+For an existing report use `jailbee issue comment NUMBER --repo
+github:VRTFinland/jailbee --body-file PATH`.
 
 ## When you're done
 
 Tell the user, verbatim: run `jb issue apply <container>` on the host —
 **nothing has been published yet.** They can inspect first with
-`jb outbox show <container> issue/001-jailbee-bug.json`. Never run a host apply
+`jb outbox show <container> issue/<name printed by the command>`. Never run a host apply
 or `gh issue create` yourself.

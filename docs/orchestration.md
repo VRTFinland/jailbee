@@ -5,6 +5,21 @@ starts child containers, talks to them, brings their commits into its own
 repo and cleans up after them, without asking anyone each time. The grant is
 set on the host and bounds everything the agent can do.
 
+## Child GitHub proposals
+
+Children cannot stage GitHub writes, including after adoption when the role
+marker identifies them as children. They send the exact repository, target and
+content to their orchestrator with `jailbee inbox send message --text "..."`
+(or `--kind question` when a result is needed). The orchestrator stages the
+proposal in its own outbox with `jailbee issue` or `jailbee pr`; the human
+reviews and publishes on the host. Never write GitHub outbox files or create
+outbox directories by hand. See [container commands](commands.md#in-container-outbox-commands).
+
+On done, pending child GitHub proposals cause the broker to keep the child and
+report the leftovers even when its policy is already keep. Broker stop records
+the pending count; an externally stopped child without a recorded count has
+unknown outbox state and is conservatively kept for inspection.
+
 ## Overview
 
 The motivating workflow is a bug backlog. An orchestrator container reads the
@@ -199,7 +214,12 @@ the existing session.
 
 `jb orchestrate release` removes the relationship, child-state labels, watch
 and pending state. It revokes orchestrator-owned rights but leaves user-owned
-rights intact, and refuses while an autostart run is live. If no child is
+rights intact, and refuses while an autostart run is live. Release removes the
+child role marker before clearing the parent label. A stopped child retains
+its relationship: start it and retry release so marker cleanup can be verified.
+Cleanup failures likewise retain the parent for retry. An agent launched with
+`JAILBEE_ROLE=child` must be relaunched after release to drop its old environment.
+If no child is
 named, release always prompts and is refused without an interactive terminal.
 Over remote SSH, adoption requires `remote.ssh.orchestration` to be enabled;
 release is allowed as a narrowing action without that setting.

@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import call as mock_call
 
 import pytest
 
@@ -1406,6 +1407,12 @@ def test_new_container_sets_default_base_branch_label(make_cfg, tmp_path, mocker
     calls = [c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.base_branch"]
     assert len(calls) == 1
     assert calls[0].args[2] == "main"
+    from jailbee import container_bindings
+
+    assert container_bindings.sync.call_args_list == [
+        mock_call(incus, "myrepo-feat-foo", cfg=cfg),
+        mock_call(incus, "myrepo-feat-foo", cfg=cfg),
+    ]
 
 
 def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, tmp_path, mocker):
@@ -5468,6 +5475,12 @@ def test_boot_container_syncs_instructions_before_allocation(
 
     sync.assert_called_once_with(cfg)
     assert events == ["sync", "allocate", "detach", *operation, "attach"]
+    from jailbee import container_bindings
+
+    assert container_bindings.sync.call_args_list == [
+        mock_call(incus, "feat-x", cfg=cfg),
+        mock_call(incus, "feat-x", cfg=cfg),
+    ]
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -11824,6 +11837,20 @@ def _new_child(cfg, incus, mocker, **extra):
         **extra,
     )
     new_container(cfg, incus, opts)
+
+
+def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_path, mocker):
+    cfg = _child_cfg(make_cfg, tmp_path)
+    incus, _ = _child_incus(cfg)
+    ensure = mocker.patch("jailbee.outbox.io.ensure_directories")
+    _new_child(cfg, incus, mocker, spawned_by="myrepo-orch")
+    ensure.assert_not_called()
+    marker_calls = [
+        c for c in incus.exec.call_args_list if "/home/dev/.jailbee/orchestration/role" in str(c)
+    ]
+    assert len(marker_calls) == 1
+    assert marker_calls[0].kwargs["uid"] == cfg.container_user.uid
+    assert "child" in str(marker_calls[0])
 
 
 def test_new_container_writes_child_labels_and_rights(make_cfg, tmp_path, mocker):

@@ -12,6 +12,7 @@ from jailbee import pr_flow
 
 @pytest.fixture(autouse=True)
 def _github_binding_remote(mocker):
+    mocker.patch("jailbee.container_bindings.refresh", return_value=True)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
 
 

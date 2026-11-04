@@ -47,6 +47,34 @@ RIGHTS = "user.jailbee.orchestration.rights"
 TIMED = "user.jailbee.orchestration.timed"
 RUNNER = "user.jailbee.orchestration.runner"
 SPAWNED_BY = "user.jailbee.spawned_by"
+ROLE_MARKER_PATH = "/home/dev/.jailbee/orchestration/role"
+
+
+def ensure_child_role(incus: Incus, full: str, *, uid: int) -> None:
+    """Startup may race host release; only a fresh parent authorizes the marker."""
+    from jailbee.container_locks import locked
+
+    with locked(full):
+        if incus.config_get_checked(full, SPAWNED_BY):
+            write_child_role(incus, full, uid=uid)
+
+
+def write_child_role(incus: Incus, full: str, *, uid: int) -> None:
+    """Install the marker atomically as the container user."""
+    incus.exec(
+        full,
+        [
+            "sh",
+            "-c",
+            'set -eu; mkdir -p "${1%/*}"; tmp=$(mktemp "${1}.XXXXXX"); '
+            'trap \'rm -f "$tmp"\' EXIT; printf "child\\n" > "$tmp"; mv -f "$tmp" "$1"',
+            "sh",
+            ROLE_MARKER_PATH,
+        ],
+        uid=uid,
+    )
+
+
 STATE = "user.jailbee.orchestration.state"
 # LAST_IMPORT, DONE_SHA and STOPPED_HEAD hold a commit as the full 40-hex
 # OID, in exactly the form `sync._container_head_oid` returns (plan E
@@ -63,6 +91,7 @@ STOPPED_HEAD = "user.jailbee.orchestration.stopped_head"
 ON_DONE = "user.jailbee.orchestration.on_done"
 PENDING_DESTROY = "user.jailbee.orchestration.pending_destroy"
 STOPPED_DIRTY = "user.jailbee.orchestration.stopped_dirty"
+STOPPED_OUTBOX = "user.jailbee.orch.stopped_outbox"
 ON_DONE_DESTROY = "destroy"
 ON_DONE_KEEP = "keep"
 

@@ -99,6 +99,7 @@ class BrokerMemory:
     grant_written: dict[str, str] = field(default_factory=dict)
     publish_threads: list[threading.Thread] = field(default_factory=list)
     env_ensured: set[str] = field(default_factory=set)
+    env_roles: dict[str, str | None] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
     # Inbox file sequence: orders the items emitted within one second.
@@ -605,19 +606,42 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
     A vanished name is forgotten so a recreated older image is ensured again.
     """
     full = ctx.sender.full
-    if full in memory.env_ensured:
-        return
+    from jailbee.container_locks import locked as container_locked
+
     try:
-        ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
-    except IncusError as exc:
+        with container_locked(full):
+            # The tick's nodes may predate a release. Recheck even on a cache hit.
+            current = next(
+                (row for row in ctx.incus.list_containers() if row.get("name") == full), None
+            )
+            config = current.get("config", {}) if current else {}
+            role = (
+                "child"
+                if config.get(labels.SPAWNED_BY)
+                else "orchestrator"
+                if config.get(labels.GRANT)
+                else "none"
+            )
+            if role == "none":
+                memory.env_ensured.discard(full)
+                memory.env_roles.pop(full, None)
+                return
+            if full in memory.env_ensured and memory.env_roles.get(full) == role:
+                return
+            ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+            if role == "child":
+                labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
+            memory.env_ensured.add(full)
+            memory.env_roles[full] = role
+    except (IncusError, OSError) as exc:
+        memory.env_ensured.discard(full)
+        memory.env_roles.pop(full, None)
         memory.warn_once(
             f"env:{full}",
             "broker: %s: could not prepare the orchestration inbox: %s",
             full,
             exc,
         )
-    else:
-        memory.env_ensured.add(full)
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
@@ -804,7 +828,9 @@ def tick(
     # the STOPPED_HEAD it records (the snapshot above predates it).
     for node in nodes.values():
         if node.running and (
-            node.config.get(labels.STOPPED_HEAD) or node.config.get(labels.STOPPED_DIRTY)
+            node.config.get(labels.STOPPED_HEAD)
+            or node.config.get(labels.STOPPED_DIRTY)
+            or node.config.get(labels.STOPPED_OUTBOX)
         ):
             _clear_stale_stop_labels(incus, node)
 
@@ -936,7 +962,7 @@ def _forget_vanished_watches(root: Path, present: set[object]) -> None:
 def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
     """A running container's recorded stop-time HEAD and dirty flag are stale."""
     try:
-        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY):
+        for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY, labels.STOPPED_OUTBOX):
             if node.config.get(key):
                 incus.config_unset_checked(node.full, key)
     except Exception:

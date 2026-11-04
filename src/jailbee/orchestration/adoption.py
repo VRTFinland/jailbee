@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from jailbee.container_locks import locked as container_locked
 from jailbee.incus import IncusError
 from jailbee.lifecycle import short_name
 from jailbee.orchestration import commands, labels, outbox, rights, state, watch
@@ -31,6 +33,7 @@ CHILD_STATE_LABELS = (
     labels.ON_DONE,
     labels.PENDING_DESTROY,
     labels.STOPPED_DIRTY,
+    labels.STOPPED_OUTBOX,
 )
 
 
@@ -38,7 +41,9 @@ ADOPTED_CHILD_BODY = (
     "You are now a child container of `{orchestrator}` (adopted by the host user). "
     "Follow the jailbee-orchestration-child skill: report with "
     "`jailbee inbox send message --kind done|question|blocked` and keep a background "
-    "`jailbee inbox wait` running."
+    "`jailbee inbox wait` running. Do not stage GitHub writes; send the exact "
+    "repository, target, title, body and action content with "
+    "`jailbee inbox send message --text`; use a question when you need a result."
 )
 ADOPTED_ORCHESTRATOR_BODY = (
     "`{child}` is now your child (adopted by the host user). It has no import baseline, "
@@ -172,6 +177,23 @@ def adopt(
     root: Path | None = None,
     now: datetime | None = None,
 ) -> AdoptResult:
+    root = root if root is not None else state.state_root()
+    # Order: broker singleton -> mutation -> sorted container locks -> watch.
+    with watch.mutation_locked(root), ExitStack() as locks:
+        for name in sorted(set(children)):
+            locks.enter_context(container_locked(name))
+        return _adopt_locked(cfg, incus, orchestrator_full, children, root=root, now=now)
+
+
+def _adopt_locked(
+    cfg: Config,
+    incus: Incus,
+    orchestrator_full: str,
+    children: Sequence[str],
+    *,
+    root: Path,
+    now: datetime | None,
+) -> AdoptResult:
     rows = _rows(incus)
 
     class SnapshotIncus:
@@ -233,6 +255,10 @@ def adopt(
     root = root if root is not None else state.state_root()
     now = now if now is not None else datetime.now(UTC)
     warnings = []
+    # A failed first adoption may have persisted the parent but not the marker.
+    for name in already:
+        if rows[name].get("status") == "Running":
+            labels.write_child_role(incus.with_exec_timeout(20), name, uid=cfg.container_user.uid)
     for name in pending:
         config = _config(rows[name])
         for key in CHILD_STATE_LABELS:
@@ -240,6 +266,8 @@ def adopt(
                 incus.config_unset_checked(name, key)
         incus.config_set(name, labels.ON_DONE, labels.ON_DONE_KEEP)
         incus.config_set(name, labels.SPAWNED_BY, orchestrator_full)
+        if rows[name].get("status") == "Running":
+            labels.write_child_role(incus.with_exec_timeout(20), name, uid=cfg.container_user.uid)
         for recipient, sender, body, seq in (
             (
                 name,
@@ -268,6 +296,19 @@ def release(
     root: Path | None = None,
     now: datetime | None = None,
 ) -> ReleaseResult:
+    root = root if root is not None else state.state_root()
+    with watch.mutation_locked(root), container_locked(child_full):
+        return _release_locked(cfg, incus, child_full, root=root, now=now)
+
+
+def _release_locked(
+    cfg: Config,
+    incus: Incus,
+    child_full: str,
+    *,
+    root: Path,
+    now: datetime | None,
+) -> ReleaseResult:
     rows = _rows(incus)
     config = _config(rows.get(child_full, {}))
     parent = config.get(labels.SPAWNED_BY)
@@ -275,9 +316,15 @@ def release(
         raise AdoptError(f"'{short_name(cfg, child_full)}' is not a child")
     root = root if root is not None else state.state_root()
     now = now if now is not None else datetime.now(UTC)
+    if rows[child_full].get("status") != "Running":
+        raise AdoptError("cannot release a stopped child safely; start it and retry release")
     revoked = rights.revoke_owned(cfg, incus, child_full)
-    incus.config_unset_checked(child_full, labels.SPAWNED_BY)
+    # Retain parent authority until the old-session marker has really been removed.
+    incus.with_exec_timeout(20).exec(
+        child_full, ["rm", "-f", "--", labels.ROLE_MARKER_PATH], uid=cfg.container_user.uid
+    )
     try:
+        incus.config_unset_checked(child_full, labels.SPAWNED_BY)
         for key in CHILD_STATE_LABELS:
             if key in config:
                 incus.config_unset_checked(child_full, key)
@@ -285,6 +332,7 @@ def release(
         state.purge_pending(root, child_full)
     except Exception:
         incus.config_set(child_full, labels.SPAWNED_BY, parent)
+        labels.write_child_role(incus, child_full, uid=cfg.container_user.uid)
         raise
     warning = _notify(
         cfg,

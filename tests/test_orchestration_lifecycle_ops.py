@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("JAILBEE_ROLE", raising=False)
+
+
 class Rig:
     def __init__(
         self,
@@ -61,6 +67,12 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
         "destroy": MagicMock(),
         "head": MagicMock(return_value="aaa"),
     }
+    from jailbee.orchestration.child_outbox import PendingGithub
+
+    monkeypatch.setattr(
+        "jailbee.orchestration.child_outbox.probe",
+        MagicMock(return_value=PendingGithub((), (), ())),
+    )
     monkeypatch.setattr(actions, "live_create_jobs", m["jobs"])
     monkeypatch.setattr(actions.stopping, "stop_container", m["stop"])
     monkeypatch.setattr("jailbee.create_flow.launch_boot_background", m["boot"])
@@ -69,6 +81,101 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     monkeypatch.setattr(actions.sync, "_container_status_dirty", MagicMock(return_value=False))
     monkeypatch.setattr(actions.lifecycle, "container_repo_dir", MagicMock(return_value="/r"))
     return m
+
+
+@pytest.mark.parametrize("count", [0, 1])
+def test_destroy_guard_checks_running_child_outbox(tmp_path, seams, monkeypatch, count):
+    from jailbee.orchestration import child_outbox
+
+    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    pending = child_outbox.PendingGithub(("a.json",) if count else (), (), ())
+    probe = MagicMock(return_value=pending)
+    monkeypatch.setattr(child_outbox, "probe", probe)
+    reason = actions.destroy_guard(rig.ctx(), rig.child)
+    if count:
+        assert reason == child_outbox.describe("c1", pending)
+    else:
+        assert reason is None
+    probe.assert_called_once_with(
+        rig.incus.with_exec_timeout.return_value, rig.child.full, uid=rig.cfg.container_user.uid
+    )
+    rig.incus.with_exec_timeout.assert_called_with(actions.CHILD_EXEC_TIMEOUT_S)
+
+
+def test_destroy_guard_keeps_unknown_running_outbox(tmp_path, seams, monkeypatch):
+    from jailbee.orchestration import child_outbox
+
+    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    monkeypatch.setattr(
+        child_outbox, "probe", MagicMock(side_effect=child_outbox.ChildOutboxError("read"))
+    )
+    reason = actions.destroy_guard(rig.ctx(), rig.child)
+    assert reason and "outbox could not be checked" in reason and "force: true" in reason
+
+
+@pytest.mark.parametrize("record", ["2", "0", "bad", "-1"])
+def test_destroy_guard_checks_stopped_outbox_record(tmp_path, seams, record):
+    rig = Rig(
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: "aaa",
+            labels.STOPPED_HEAD: "aaa",
+            labels.STOPPED_OUTBOX: record,
+        },
+    )
+    reason = actions.destroy_guard(rig.ctx(), rig.child)
+    if record == "0":
+        assert reason is None
+    elif record == "2":
+        assert reason and "2 staged GitHub action(s)" in reason and "force: true" in reason
+    else:
+        assert reason and "outbox could not be checked" in reason
+
+
+def test_stopped_child_without_record_is_kept(tmp_path, seams):
+    rig = Rig(tmp_path, config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa"})
+    reason = actions.destroy_guard(rig.ctx(), rig.child)
+    assert reason and "outbox could not be checked" in reason and "force: true" in reason
+
+
+@pytest.mark.parametrize("count", [0, 2, None])
+def test_stop_records_outbox_count_or_unsets_unknown(tmp_path, seams, monkeypatch, count):
+    from jailbee.orchestration import child_outbox
+
+    rig = Rig(tmp_path, running=True, config={labels.STOPPED_OUTBOX: "0"})
+    store = Labels(rig)
+    probe = MagicMock()
+    if count is None:
+        probe.side_effect = child_outbox.ChildOutboxError("unreadable")
+    else:
+        probe.return_value = child_outbox.PendingGithub(
+            tuple(f"{i}.json" for i in range(count)), (), ()
+        )
+    monkeypatch.setattr(child_outbox, "probe", probe)
+    assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
+    if count is None:
+        assert labels.STOPPED_OUTBOX not in store.store
+    else:
+        assert store.store[labels.STOPPED_OUTBOX] == str(count)
+    seams["stop"].assert_called_once()
+
+
+def test_force_destroy_skips_pending_outbox_guard(tmp_path, seams, monkeypatch):
+    from jailbee.orchestration import child_outbox
+
+    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    probe = MagicMock(return_value=child_outbox.PendingGithub(("a.json",), (), ()))
+    monkeypatch.setattr(child_outbox, "probe", probe)
+    assert actions.handle_destroy(rig.ctx(), _destroy(force=True)).state == "done"
+    probe.assert_not_called()
+    seams["destroy"].assert_called_once()
+
+
+def test_restart_invalidates_stopped_outbox_record(tmp_path, seams):
+    rig = Rig(tmp_path, config={labels.STOPPED_OUTBOX: "0"})
+    store = Labels(rig)
+    assert actions.handle_restart(rig.ctx(), _restart()).state == "started"
+    assert labels.STOPPED_OUTBOX not in store.store
 
 
 def test_destroy_refused_when_running_child_tree_dirty(
@@ -435,7 +542,13 @@ def test_stopped_child_prefers_stopped_head_over_done_sha(
     )
     assert actions.handle_destroy(stale.ctx(), _destroy()).state == "refused"
     clean = Rig(
-        tmp_path, config={labels.LAST_IMPORT: y, labels.DONE_SHA: x, labels.STOPPED_HEAD: y}
+        tmp_path,
+        config={
+            labels.LAST_IMPORT: y,
+            labels.DONE_SHA: x,
+            labels.STOPPED_HEAD: y,
+            labels.STOPPED_OUTBOX: "0",
+        },
     )
     assert actions.handle_destroy(clean.ctx(), _destroy()).state == "done"
     seams["head"].assert_not_called()
@@ -567,6 +680,7 @@ def test_restart_with_runner_replaces_label(
         labels.STATE,
         labels.PENDING_DESTROY,
         labels.STOPPED_DIRTY,
+        labels.STOPPED_OUTBOX,
         "set",
         labels.RESUME,
         "boot",

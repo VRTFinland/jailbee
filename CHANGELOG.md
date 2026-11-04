@@ -39,6 +39,8 @@ before editing `## Unreleased`.
   profiles. Restart commands and the dashboard can choose a profile and reset
   explicit service selections; `none` skips repository startup while preserving
   agent startup.
+- In-container `jailbee issue`, `jailbee pr` and `jailbee outbox` commands
+  stage and inspect GitHub proposals and batches for host review.
 
 ### Changed
 
@@ -48,6 +50,9 @@ before editing `## Unreleased`.
   cells; a longer name ends in `…` and keeps its failed-autostart `⚠`. The
   details panel's title shows the whole label (`⎈`, alias and name) uncut.
 - The terminal dashboard draws a stopped container's row dim.
+- Child containers no longer stage GitHub writes; they send their orchestrator
+  the exact proposal instead. Children with pending GitHub outbox proposals,
+  or unknown outbox state after an external stop, are kept for inspection.
 
 ## 1.8.2 - 2026-11-04
 
