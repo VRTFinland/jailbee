@@ -126,10 +126,12 @@ def _validate_guidance_commands(skill: str, preamble: str) -> None:
     inline = re.findall(r"`(jailbee(?:\s+[^`]*)?)`", skill)
     examples = inline + [line for block in blocks for line in block.splitlines()]
     for line in preamble.splitlines():
-        examples.extend(re.findall(
-            r"jailbee\s+(?:--repo\s+<container_prefix>|(?:service|net)\s+\w+(?:\s+\w+)?(?:\s+<[^>]+>)*)",
-            line,
-        ))
+        examples.extend(
+            re.findall(
+                r"jailbee\s+(?:--repo\s+<container_prefix>|(?:service|net)\s+\w+(?:\s+\w+)?(?:\s+<[^>]+>)*)",
+                line,
+            )
+        )
     host_roots = {"net", "git", "pr", "port", "display"}
     container_roots = {"service", "config", "inbox", "version"}
     for example in examples:
