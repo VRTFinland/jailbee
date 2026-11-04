@@ -4865,6 +4865,7 @@ def start(
         cfg, background=background, no_background=no_background
     )
     incus, name = _resolve_existing(cfg, name)
+    _refuse_while_autostart_reruns(name)
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
@@ -5166,6 +5167,7 @@ def restart(
     # doing that under a live supervisor cuts its stages off mid-step. There is
     # no `--force` here to exempt — a user who wants that reaches for
     # `jailbee autostart cancel`, which the refusal names.
+    _refuse_while_autostart_reruns(name)
     _refuse_while_autostart_runs(cfg, name)
     selected_services = (
         None if services is None else [s.strip() for s in services.split(",") if s.strip()]
@@ -11143,6 +11145,16 @@ def _autostart_progress_path(row: "BackgroundJob") -> Path:
 
     log_path = row.log_path or background.synthesized_log_path(row.container_name)
     return autostart_progress.path_for_log(log_path)
+
+
+def _refuse_while_autostart_reruns(full_name: str) -> None:
+    from jailbee.autostart_rerun import refuse_while_rerunning
+
+    try:
+        refuse_while_rerunning(full_name)
+    except RuntimeError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 def _refuse_while_autostart_runs(cfg: "Config", full_name: str) -> None:

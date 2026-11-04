@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from jailbee.autostart_plan import (
@@ -333,6 +334,34 @@ def _command(
         )
 
 
+@contextmanager
+def rerun_locked(container: str) -> Iterator[None]:
+    """Serialize reruns, and let lifecycle commands probe the same lock."""
+    import fcntl
+
+    from jailbee.db import state_dir
+
+    lock_dir = state_dir() / "autostart-rerun-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / (container + ".lock")).open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"An autostart re-run for '{container}' is already in progress"
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def refuse_while_rerunning(container: str) -> None:
+    """Probe without retaining the lock during a lifecycle command's own run."""
+    with rerun_locked(container):
+        pass
+
+
 def command(
     cfg: Config,
     incus: Incus,
@@ -348,10 +377,6 @@ def command(
     spawn: Callable[[Config, Autostart], None],
 ) -> None:
     """Serialize a rerun through the foreground lifetime or background handoff."""
-    import fcntl
-
-    from jailbee.db import state_dir
-
     def invoke() -> None:
         _command(
             cfg,
@@ -370,16 +395,5 @@ def command(
     if listing:
         invoke()
         return
-    lock_dir = state_dir() / "autostart-rerun-locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / (container + ".lock")).open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError(
-                f"An autostart re-run for '{container}' is already in progress"
-            ) from exc
-        try:
-            invoke()
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with rerun_locked(container):
+        invoke()

@@ -2127,8 +2127,12 @@ effective configuration; missing or unreadable outcomes are treated as absent.
 A successful re-run replaces that step's outcome without clearing untouched
 steps. Re-runs run detached by default: use `autostart status` and `autostart
 cancel` to inspect or stop them, or `--wait` to run in the foreground. A live
-autostart run is refused. Foreground restart/apply operations are not coordinated
-by the re-run-only lock; avoid running them concurrently with re-runs.
+autostart run is refused whenever its Incus in-progress claim is nonempty,
+including a foreground lifecycle run's `1` or an unknown/dead marker. Re-run
+handoffs use a distinct `rerun:<pid>` claim and release only their own claim on
+failure. `start` and `restart` also refuse while a foreground `--wait` re-run
+holds its lock, before storing choices or booting. Apply operations are not
+coordinated by that lock; avoid running apply concurrently with re-runs.
 
 #### Detaching a run
 
