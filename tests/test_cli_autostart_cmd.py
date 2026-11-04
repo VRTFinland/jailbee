@@ -523,6 +523,35 @@ def test_run_list_json_has_never_run_steps(tmp_path, mocker):
     assert json.loads(result.stdout) == [{"trigger": "on_start", "stage": "deps", "state": None, "at": None, "steps": [{"step": "npm", "state": None, "at": None}]}]
 
 
+@pytest.mark.parametrize("machine", [True, False], ids=["json", "human"])
+def test_run_list_removed_profile_keeps_warning_and_dashboard_parseable_stdout(
+    tmp_path, mocker, machine
+):
+    from jailbee.config import Autostart
+    from jailbee.dashboard.actions import parse_rerun_rows
+
+    cfg, incus = _setup(tmp_path, mocker)
+    cfg = cfg.model_copy(update={"autostart": Autostart.model_validate({
+        "on_start": [{"stage": "deps", "steps": [{"name": "npm", "run": "true"}]}],
+        "profiles": {"full": "all"}, "default_profile": "full",
+    })})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus.config_get.return_value = "removed"
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--list",
+                                 *(["--json"] if machine else [])])
+    assert result.exit_code == 0, _out(result)
+    warning = "autostart profile `removed` is not defined; using 'full'"
+    if machine:
+        rows = parse_rerun_rows(result.stdout)
+        assert [(r.trigger, r.stage, [s.step for s in r.steps]) for r in rows] == [
+            ("on_start", "deps", ["npm"])]
+        assert warning in result.stderr
+        assert warning not in result.stdout
+    else:
+        assert warning in result.stdout
+        assert "deps" in result.stdout
+
+
 def _rerun_setup(tmp_path, mocker):
     from jailbee.config import Autostart
 

@@ -134,12 +134,22 @@ def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str]
     from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
     from jailbee.autostart_status import refuse_while_running
     from jailbee.lifecycle import short_name
-    from jailbee.tui import console, info
+    from jailbee.tui import console, hint_console, info
 
     if (listing and (stages or steps or failed or trigger or wait)) or (json_output and not listing):
         raise RerunSelectionError("--list excludes selectors, --trigger and --wait; --json requires --list", 2)
     selected_trigger = AutostartTrigger(trigger) if trigger else None
-    effective = effective_config(cfg, incus, container)
+    if listing and json_output:
+        # Profile fallback can warn; machine-readable stdout must stay JSON-only.
+        # Flush captured diagnostics even if resolution raises.
+        diagnostics = console.capture()
+        try:
+            with diagnostics:
+                effective = effective_config(cfg, incus, container)
+        finally:
+            hint_console.print(diagnostics.get(), end="", markup=False, highlight=False)
+    else:
+        effective = effective_config(cfg, incus, container)
     if listing:
         rows = list_rows(effective, container)
         if json_output:
