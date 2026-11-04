@@ -110,9 +110,9 @@ def test_schema_actions(monkeypatch, tmp_path, args, expected):
     from jailbee.container_outbox import bindings
 
     if "--new" in args:
-        monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(
-            tmp_path, {"user.jailbee.repo_dir": "/repo"}
-        ))
+        monkeypatch.setattr(
+            bindings, "SNAPSHOT", binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo"})
+        )
     result = invoke(*args)
     assert result.exit_code == 0, result.output
     raw, _, _ = published(tmp_path)
@@ -127,12 +127,16 @@ def test_schema_actions(monkeypatch, tmp_path, args, expected):
 
 @pytest.mark.parametrize("operation", ["add", "submit"])
 def test_changed_review_head_refuses_without_changing_draft(monkeypatch, tmp_path, operation):
-    assert invoke(
-        "review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "First"
-    ).exit_code == 0
+    assert (
+        invoke(
+            "review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "First"
+        ).exit_code
+        == 0
+    )
     before = {
         p.relative_to(tmp_path): p.read_bytes()
-        for p in (tmp_path / ".jailbee/outbox-drafts").rglob("*") if p.is_file()
+        for p in (tmp_path / ".jailbee/outbox-drafts").rglob("*")
+        if p.is_file()
     }
     monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(1234, "new-head", "acme/widgets"))
     args = ("--file", "b.py", "--line", "2", "--body", "Second") if operation == "add" else ()
@@ -141,7 +145,8 @@ def test_changed_review_head_refuses_without_changing_draft(monkeypatch, tmp_pat
     assert "head moved" in result.output
     assert {
         p.relative_to(tmp_path): p.read_bytes()
-        for p in (tmp_path / ".jailbee/outbox-drafts").rglob("*") if p.is_file()
+        for p in (tmp_path / ".jailbee/outbox-drafts").rglob("*")
+        if p.is_file()
     } == before
     assert not list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
 
@@ -152,9 +157,12 @@ def test_submitted_review_keeps_original_anchor_for_real_host_gate(
     from jailbee.pr_outbox import StaleError, resolve_target
     from tests.test_pr_outbox import _pr_info, _target_setup
 
-    assert invoke(
-        "review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "First"
-    ).exit_code == 0
+    assert (
+        invoke(
+            "review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "First"
+        ).exit_code
+        == 0
+    )
     assert invoke("review", "submit", "1234").exit_code == 0
     manifest = published(tmp_path)[1]
     incus = _target_setup(mocker, tmp_path, pr=_pr_info(head_sha="later-head"))
@@ -1019,18 +1027,23 @@ def test_same_actual_pr_binding_is_unique(monkeypatch, tmp_path):
     assert published(tmp_path)[0]["pr"] == 42
 
 
-@pytest.mark.parametrize("config", [
-    {"user.jailbee.pr": "1234"},
-    {"user.jailbee.pr": "1234", "user.jailbee.stacked_pr": "1300"},
-    {"user.jailbee.sub_pr": '{"lib":{"pr":42}}'},
-    {"user.jailbee.branch_prs": '{"topic":{"pr":99}}'},
-])
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"user.jailbee.pr": "1234"},
+        {"user.jailbee.pr": "1234", "user.jailbee.stacked_pr": "1300"},
+        {"user.jailbee.sub_pr": '{"lib":{"pr":42}}'},
+        {"user.jailbee.branch_prs": '{"topic":{"pr":99}}'},
+    ],
+)
 def test_explicit_new_refuses_any_binding_before_staging(monkeypatch, tmp_path, config):
     from jailbee.container_outbox import bindings
 
-    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(
-        tmp_path, {"user.jailbee.repo_dir": "/repo", **config}
-    ))
+    monkeypatch.setattr(
+        bindings,
+        "SNAPSHOT",
+        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", **config}),
+    )
     result = invoke("description", "--new", "--repo", "other/repo", "--body", "New")
     assert result.exit_code == 2, result.output
     assert "--new" in result.output and "binding" in result.output
@@ -1047,9 +1060,11 @@ def test_explicit_new_cannot_reach_existing_pr_through_host_gate(
     incus = _target_setup(mocker, tmp_path)
     target = resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False)
     assert target.pr.number == 1234  # Null does not force creation on the host.
-    monkeypatch.setattr(bindings, "SNAPSHOT", binding_snapshot(
-        tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}
-    ))
+    monkeypatch.setattr(
+        bindings,
+        "SNAPSHOT",
+        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}),
+    )
     result = invoke("description", "--new", "--repo", "acme/widgets", "--body", "New")
     assert result.exit_code == 2, result.output
     assert not list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))

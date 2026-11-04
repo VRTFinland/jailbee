@@ -190,7 +190,9 @@ def description(
     branch: str | None = None,
     repo: str | None = None,
     batch: str | None = None,
-    new: Annotated[bool, typer.Option(help="Stage for an unbound container, not force-create a PR.")] = False,
+    new: Annotated[
+        bool, typer.Option(help="Stage for an unbound container, not force-create a PR.")
+    ] = False,
 ) -> None:
     def run() -> None:
         store = _guard()
@@ -202,7 +204,8 @@ def description(
         if new and bindings.read():
             raise OutboxCommandError(
                 "--new requires no PR bindings; it does not force-create a PR. "
-                "Name the existing PR or unbind it on the host first", 2
+                "Name the existing PR or unbind it on the host first",
+                2,
             )
         binding = None if new else bindings.resolve(_number(pr), allow_new=True)
         view = _view(pr) if pr is not None or binding is not None else None
