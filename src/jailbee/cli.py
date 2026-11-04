@@ -12827,8 +12827,11 @@ orchestrate_app.add_typer(orchestrate_profile_app)
 
 def _grant_summary(grant: Any) -> str:
     """One line describing a grant: limit, operations, mounts, loose, egress."""
+    from jailbee.orchestration.commands import publish_summary
+
     g = grant.grantable
     runner = f"; default runner {grant.default_runner.describe()}" if grant.default_runner else ""
+    runner += f"; publish: {publish_summary(grant.publish)}"
     return (
         f"{grant.max_running_children} running children, "
         f"operations {', '.join(grant.operations)}; "
@@ -12899,6 +12902,12 @@ def orchestrate_grant_cmd(
         bool,
         typer.Option("--clear-runner", help="Clear the default runner for spawned children."),
     ] = False,
+    publish_issues: Annotated[str | None, typer.Option("--publish-issues", help="Issue action kinds, comma-separated; none clears.")] = None,
+    publish_foreign_issues: Annotated[list[str] | None, typer.Option("--publish-foreign-issues", help="REPO:KINDS; repeatable, replaces foreign rights.")] = None,
+    publish_prs: Annotated[bool | None, typer.Option("--publish-prs/--no-publish-prs", help="Publish own PR source manifests.")] = None,
+    publish_pr_reviews: Annotated[bool | None, typer.Option("--publish-pr-reviews/--no-publish-pr-reviews", help="Publish reviews on bound PRs.")] = None,
+    publish_rate: Annotated[int | None, typer.Option("--publish-rate", help="Maximum published actions per sliding hour.")] = None,
+    no_publish: Annotated[bool, typer.Option("--no-publish", help="Clear all publish rights.")] = False,
     config: ConfigOption = None,
 ) -> None:
     """Grant a container the right to start and manage child containers.
@@ -12947,6 +12956,12 @@ def orchestrate_grant_cmd(
         clear_egress=clear_egress,
         runner=selected,
         clear_runner=clear_runner,
+        publish_issues=tuple(publish_issues.split(",")) if publish_issues is not None else None,
+        publish_foreign_issues=tuple(publish_foreign_issues) if publish_foreign_issues is not None else None,
+        publish_prs=publish_prs,
+        publish_pr_reviews=publish_pr_reviews,
+        publish_rate=publish_rate,
+        no_publish=no_publish,
     )
     previous: list[Grant | None] = []
     try:
@@ -13148,6 +13163,7 @@ def orchestrate_show_cmd(
         info(f"No grant on '{row.short}'.")
         return
     info_plain(f"Grant on '{row.short}': {_grant_summary(row.grant)}")
+    info_plain(f"publish: {commands.publish_summary(row.grant.publish)}")
     if row.effective is None:
         warn_plain(f"{_ORCH_NOT_ALLOWED}; the grant has no effect.")
     elif row.effective != row.grant:
@@ -13204,8 +13220,8 @@ def orchestrate_ls_cmd(
         info("No orchestration grants in this repo.")
         return
     table = Table(show_edge=False, pad_edge=False)
-    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS", "RUNNER"):
-        table.add_column(header)
+    for header in ("NAME", "LIMIT", "RUNNING", "OPERATIONS", "MOUNTS", "LOOSE", "EGRESS", "RUNNER", "PUBLISH"):
+        table.add_column(header, min_width=13 if header == "OPERATIONS" else len(header))
     for r in rows:
         selected, _ = default_runner(cfg, r.grant) if r.problem is None else (None, None)
         runner_label = (
@@ -13221,10 +13237,11 @@ def orchestrate_ls_cmd(
                 "",
                 "",
                 runner_label,
+                commands.publish_summary(r.grant.publish) if r.grant else "unknown",
             )
         elif r.grant is not None and r.effective is None:
             table.add_row(
-                r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "", runner_label
+                r.short, "-", str(r.running_children), _ORCH_NOT_ALLOWED, "", "", "", runner_label, "none"
             )
         elif r.grant is not None:
             g = r.grant.grantable
@@ -13237,6 +13254,7 @@ def orchestrate_ls_cmd(
                 "yes" if g.loose else "no",
                 ", ".join(g.egress) or "-",
                 runner_label,
+                commands.publish_summary(r.grant.publish) if r.grant else "unknown",
             )
     console.print(table)
 
