@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 
 from jailbee.issue_github import (
+    AssigneesReceipt,
     IssueGithubMutationError,
     IssueGithubReadError,
     IssueSnapshot,
     MutationReceipt,
-    AssigneesReceipt,
     add_assignees,
     add_comment,
     create_issue,
