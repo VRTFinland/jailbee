@@ -78,6 +78,13 @@ def test_preamble_staged_without_source(homes, claude_cfg):
         assert fact in ai.PREAMBLE
     assert 15 <= len(ai.PREAMBLE.splitlines()) <= 25
     assert "mode" in ai.PREAMBLE and "repo_dir" in ai.PREAMBLE
+    assert "Clone mode uses a per-branch clone" in ai.PREAMBLE
+    assert "Branch mode" not in ai.PREAMBLE
+    assert "your first prompt identifies you as a child" in ai.PREAMBLE
+    assert "its absence does not mean you are not a child" in ai.PREAMBLE
+    assert "From the repository directory" in ai.PREAMBLE
+    assert "jailbee --repo <container_prefix>" in ai.PREAMBLE
+    assert "inbox, version and --version" in ai.PREAMBLE
     assert "mount mode" in ai.PREAMBLE
     assert "Treat gh as read-only" in ai.PREAMBLE
     assert "jailbee net egress add <host> <container>" in ai.PREAMBLE
@@ -113,7 +120,8 @@ def test_sync_replaces_staged_file_when_source_deleted(homes, claude_cfg):
     ai.sync_global_instructions(claude_cfg)
     source.unlink()
     ai.sync_global_instructions(claude_cfg)
-    assert staged(data_home).read_bytes().endswith(ai.PREAMBLE.encode() + b"\n")
+    marker = ai.MARKER_TEMPLATE.format(source=str(source)).encode()
+    assert staged(data_home).read_bytes() == marker + b"\n" + ai.PREAMBLE.encode() + b"\n"
     assert staged(data_home).parent.is_dir()
 
 
@@ -182,14 +190,31 @@ def test_hand_edited_staged_file_is_restored(homes, claude_cfg):
     assert staged(data_home).read_bytes().endswith(b"\npolicy")
 
 
+def test_unreadable_source_first_sync_stages_preamble(homes, claude_cfg, monkeypatch, capsys):
+    source, data_home = homes
+    original = Path.read_bytes
+
+    def read_bytes(path):
+        if path == source:
+            raise PermissionError("denied")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    ai.sync_global_instructions(claude_cfg)
+    marker = ai.MARKER_TEMPLATE.format(source=str(source)).encode()
+    assert staged(data_home).read_bytes() == marker + b"\n" + ai.PREAMBLE.encode() + b"\n"
+    assert "cannot read" in capsys.readouterr().err
+
+
 def test_unreadable_source_warns_and_keeps_previous(homes, claude_cfg, capsys):
     source, data_home = homes
     source.write_bytes(b"good")
     ai.sync_global_instructions(claude_cfg)
+    before = staged(data_home).read_bytes()
     source.unlink()
     source.mkdir()
     ai.sync_global_instructions(claude_cfg)
-    assert staged(data_home).read_bytes().endswith(b"\ngood")
+    assert staged(data_home).read_bytes() == before
     output = capsys.readouterr()
     assert output.out == ""
     assert "cannot read" in output.err
@@ -232,7 +257,10 @@ def test_missing_staging_dirs(homes, claude_cfg):
 
 
 def test_profile_devices_shape(homes, claude_cfg):
-    _, data_home = homes
+    source, data_home = homes
+    assert not source.exists()
+    ai.sync_global_instructions(claude_cfg)
+    assert staged(data_home).is_file()
     assert ai.profile_devices(claude_cfg) == {
         "agent-instructions-claude": {
             "type": "disk",
