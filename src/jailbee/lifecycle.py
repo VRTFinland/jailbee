@@ -3459,6 +3459,9 @@ def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
     return [f"{repo}/{base}: {warning}" for repo, base, warning in tracking_findings(containers)]
 
 
+# Leads an orchestrator's NAME cell (helm: it steers its children).
+ORCHESTRATOR_GLYPH = "⎈"
+
 # Rich style per `git_status.merge_label` kind. Module-level because it is a
 # constant with no dependency on `ls_field_specs`' arguments — rebuilding it per
 # call bought nothing, and at function scope the `_UPPER` name (this module's
@@ -3916,7 +3919,8 @@ def ls_field_specs(
             name="name",
             sort=lambda c: _text_key(c.shown_name),
             header="NAME",
-            cell=lambda c: c.shown_name,
+            # An orchestrator (a container holding a grant) leads with ⎈.
+            cell=lambda c: f"{ORCHESTRATOR_GLYPH} {c.shown_name}" if c.grant else c.shown_name,
             json=lambda c: c.display_name,
         ),
         table_format.FieldSpec(

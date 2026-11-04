@@ -288,6 +288,28 @@ def test_ls_fields_render_alias_and_a_fork_keeps_its_base():
     assert fields["base"].json(c) == "main"
 
 
+def test_name_cell_marks_orchestrator_with_helm_glyph():
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+    from jailbee.orchestration.view import GrantView
+
+    c = ContainerInfo(
+        name="myrepo-orch",
+        state="RUNNING",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+    )
+    fields = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert fields["name"].cell(c) == "orch"
+    granted = replace(c, grant=GrantView(1, ("spawn",), (), False, ()))
+    assert fields["name"].cell(granted) == "⎈ orch"
+    # Values typed back and sorting keep the plain name.
+    assert fields["name"].json(granted) == "orch"
+    assert fields["name"].sort(granted) == fields["name"].sort(c)
+
+
 def test_list_containers_reports_attached_optional_mounts(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

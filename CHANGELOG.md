@@ -8,6 +8,11 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- `jailbee ls` and the terminal dashboard show `⎈` before an orchestrator's
+  name (a container holding an orchestration grant).
+
 ## 1.8.2 - 2026-11-04
 
 ### Fixed
