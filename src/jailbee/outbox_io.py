@@ -82,9 +82,15 @@ _ZERO_CREATED_AT_PREFIX = "0001-01-01T00:00:00"
 _RECOVERED_DETAIL = "a previous run prepared this action; its outcome is uncertain"
 _MAX_DETAIL_LENGTH = 240
 _DEFAULT_UNCERTAIN_DETAIL = "GitHub mutation outcome is uncertain"
+ASSIGN_NOT_APPLIED_DETAIL = (
+    "GitHub did not assign every requested assignee (not assignable by the publisher)"
+)
+UNASSIGN_NOT_APPLIED_DETAIL = "GitHub did not unassign every requested assignee"
 _SAFE_UNCERTAIN_DETAILS = frozenset(
     {
         _DEFAULT_UNCERTAIN_DETAIL,
+        ASSIGN_NOT_APPLIED_DETAIL,
+        UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation was interrupted after dispatch",
         "GitHub mutation transport failed after dispatch",
         "GitHub mutation succeeded but returned an unreadable response",

@@ -133,7 +133,8 @@ resolved at publish time. Staged by `jailbee issue assign`.
 | `remove` | Logins or `"@me"` to unassign. Default `[]`. At least one of `add`/`remove` must be non-empty. |
 | `expected.assignees` | Required — the **complete** current assignee list `gh issue view` showed, as plain logins (no `"@me"`). |
 
-A login is 1–39 characters of letters, digits and single hyphens, with no
+A login is 1–39 characters of letters, digits, underscores (Enterprise
+Managed User logins such as `jdoe_acme`) and single hyphens, with no
 leading or trailing hyphen. Within one list, and across `add` and `remove`
 after `"@me"` is resolved, duplicates are refused case-insensitively. A
 manifest may hold one `assignees` action per target.

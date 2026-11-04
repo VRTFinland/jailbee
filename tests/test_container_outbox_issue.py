@@ -371,6 +371,9 @@ def test_assign_without_flags_is_usage_error(monkeypatch, tmp_path):
         (("assign", "42", "--remove", "bob"), "is not assigned"),
         (("assign", "42", "--add", "bob", "--add", "BOB"), "more than once"),
         (("assign", "42", "--add", "bob", "--remove", "Bob"), "both add and remove"),
+        (("assign", "42", "--add", "@ME"), "invalid GitHub login"),
+        (("assign", "42", "--add", "bad login"), "invalid GitHub login"),
+        (("assign", "42", "--remove", "-bob"), "invalid GitHub login"),
     ],
 )
 def test_assign_conflicts_rejected_without_draft(monkeypatch, tmp_path, args, message):
@@ -441,3 +444,11 @@ def test_ref_label_check_uses_created_labels(tmp_path):
     result = invoke("labels", "@bug", "--add", "BUG", "--batch", "b")
     assert result.exit_code == 2
     assert store.draft_load_state("issue", "b") == before
+
+
+def test_assign_accepts_underscore_logins(monkeypatch, tmp_path):
+    monkeypatch.setattr(gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ()))
+    result = invoke("assign", "42", "--add", "jdoe_acme")
+    assert result.exit_code == 0, result.output
+    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
+    assert json.loads(manifest.read_text())["actions"][0]["add"] == ["jdoe_acme"]

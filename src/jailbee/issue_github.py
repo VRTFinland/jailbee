@@ -36,6 +36,13 @@ class MutationReceipt:
     url: str
 
 
+@dataclass(frozen=True)
+class AssigneesReceipt(MutationReceipt):
+    """A mutation receipt that also carries the issue's assignees as GitHub now reports them."""
+
+    assignees: tuple[str, ...]
+
+
 class IssueGithubReadError(RuntimeError):
     """A host-side GitHub read failed or returned an unusable response."""
 
@@ -164,6 +171,23 @@ def _mutation_receipt(value: object, *, issue: int | None = None) -> MutationRec
     return MutationReceipt(issue=response_number, url=url)
 
 
+def _assignees_receipt(value: object, *, issue: int) -> AssigneesReceipt:
+    """Parse an assignees mutation response; an unreadable list cannot be verified, so uncertain."""
+    receipt = _mutation_receipt(value, issue=issue)
+    assert _is_object(value)
+    raw = value.get("assignees")
+    logins: list[str] = []
+    if _is_array(raw):
+        for item in raw:
+            login = item.get("login") if _is_object(item) else None
+            if not isinstance(login, str):
+                break
+            logins.append(login)
+        else:
+            return AssigneesReceipt(receipt.issue, receipt.url, tuple(logins))
+    raise IssueGithubMutationError("GitHub mutation returned an unusable response", uncertain=True)
+
+
 def current_login(repo_root: Path) -> str:
     """Return the login authenticated by the host's ``gh`` configuration."""
     data = _read_object(_run_api(repo_root, "user"))
@@ -289,8 +313,12 @@ def add_assignees(
     number: int,
     *,
     logins: tuple[str, ...],
-) -> MutationReceipt:
-    """Add the given logins as assignees; GitHub treats an already-assigned login as a no-op."""
+) -> AssigneesReceipt:
+    """Add the given logins as assignees; GitHub treats an already-assigned login as a no-op.
+
+    GitHub answers 2xx and silently skips logins it cannot assign, so the receipt
+    carries the resulting assignees for the caller to verify.
+    """
     data = _run_api(
         repo_root,
         f"repos/{repo}/issues/{number}/assignees",
@@ -298,7 +326,7 @@ def add_assignees(
         payload={"assignees": list(logins)},
         mutation=True,
     )
-    return _mutation_receipt(data, issue=number)
+    return _assignees_receipt(data, issue=number)
 
 
 def remove_assignees(
@@ -307,7 +335,7 @@ def remove_assignees(
     number: int,
     *,
     logins: tuple[str, ...],
-) -> MutationReceipt:
+) -> AssigneesReceipt:
     """Remove the given logins from the assignees; an absent login is a no-op."""
     data = _run_api(
         repo_root,
@@ -316,7 +344,7 @@ def remove_assignees(
         payload={"assignees": list(logins)},
         mutation=True,
     )
-    return _mutation_receipt(data, issue=number)
+    return _assignees_receipt(data, issue=number)
 
 
 def add_comment(

@@ -187,6 +187,8 @@ def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> Non
 
 
 ASSIGNEE_ME = "@me"
+# Syntax only, mirroring issue_manifest._LOGIN_RE (container code imports no host module).
+_LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
 
 
 def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> None:
@@ -194,6 +196,8 @@ def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> 
     for items in (add, remove):
         seen: set[str] = set()
         for item in items:
+            if item != ASSIGNEE_ME and not _LOGIN_RE.fullmatch(item):
+                raise OutboxCommandError(f"invalid GitHub login {item!r}", 2)
             if item.casefold() in seen:
                 raise OutboxCommandError(f"assignee {item!r} given more than once", 2)
             seen.add(item.casefold())

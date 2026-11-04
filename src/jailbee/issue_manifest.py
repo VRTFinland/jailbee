@@ -195,7 +195,7 @@ def _labels(value: object, field: str, context: str) -> tuple[str, ...]:
 
 
 ME_LOGIN: Final = "@me"
-_LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
+_LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
 
 
 def _logins(value: object, field: str, context: str, *, allow_me: bool) -> tuple[str, ...]:

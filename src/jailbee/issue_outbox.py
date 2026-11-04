@@ -47,6 +47,8 @@ from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.markdown_view import render_markdown
 from jailbee.outbox.models import OutboxExecutionError, StoreSnapshot
 from jailbee.outbox_io import (
+    ASSIGN_NOT_APPLIED_DETAIL,
+    UNASSIGN_NOT_APPLIED_DETAIL,
     ContainerIdentity,
     IssueJournal,
     JournalAction,
@@ -897,6 +899,8 @@ Resolution = AppliedResolution | RetryResolution
 _SAFE_DEFINITE_DETAILS = frozenset(
     {
         "GitHub mutation was rejected",
+        ASSIGN_NOT_APPLIED_DETAIL,
+        UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation could not start because 'gh' is unavailable",
     }
 )
@@ -993,10 +997,20 @@ def _execute_one(
         add, remove = resolved_assignees(action, login)
         last: MutationReceipt | None = None
         if add:
-            last = issue_github.add_assignees(host_repo_root, repo, number, logins=add)
+            added = issue_github.add_assignees(host_repo_root, repo, number, logins=add)
+            last = added
+            present = {item.casefold() for item in added.assignees}
+            missing = tuple(item for item in add if item.casefold() not in present)
+            if missing:
+                # GitHub answered 2xx but ignored logins it cannot assign. The removal is
+                # not sent; any add that did land leaves the issue half-changed.
+                raise IssueGithubMutationError(
+                    ASSIGN_NOT_APPLIED_DETAIL,
+                    uncertain=len(missing) < len(add),
+                )
         if remove:
             try:
-                last = issue_github.remove_assignees(host_repo_root, repo, number, logins=remove)
+                removed = issue_github.remove_assignees(host_repo_root, repo, number, logins=remove)
             except IssueGithubMutationError as exc:
                 if last is None:
                     raise
@@ -1005,6 +1019,14 @@ def _execute_one(
                 raise IssueGithubMutationError(
                     "GitHub mutation outcome is uncertain", uncertain=True
                 ) from exc
+            last = removed
+            present = {item.casefold() for item in removed.assignees}
+            still = tuple(item for item in remove if item.casefold() in present)
+            if still:
+                raise IssueGithubMutationError(
+                    UNASSIGN_NOT_APPLIED_DETAIL,
+                    uncertain=bool(add) or len(still) < len(remove),
+                )
         assert last is not None, "a parsed assignees action changes at least one login"
         return last
     if isinstance(action, StateAction):

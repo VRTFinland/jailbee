@@ -207,6 +207,12 @@ def _labels(**changes):
     }
 
 
+def _assignees_receipt(*logins):
+    from jailbee.issue_github import AssigneesReceipt
+
+    return AssigneesReceipt(7, "https://github.com/acme/app/issues/7", tuple(logins))
+
+
 def _assign(**changes):
     return {
         "type": "assignees",
@@ -980,10 +986,15 @@ def execution(tmp_path, mocker):
             "replace_labels",
             "add_comment",
             "set_state",
-            "add_assignees",
-            "remove_assignees",
         )
     }
+    for name, logins in (
+        ("add_assignees", ("alice", "bob", "carol")),
+        ("remove_assignees", ("alice", "bob")),
+    ):
+        mutations[name] = mocker.patch.object(
+            issue_github, name, return_value=_assignees_receipt(*logins)
+        )
 
     def batch(manifests, extras=None):
         files.update(extras or {})
@@ -2903,17 +2914,13 @@ def test_assign_show_lines_keep_me_unresolved(preflight):
 
 
 def test_assign_apply_posts_resolved_adds_then_deletes_removals(execution):
-    from jailbee.issue_github import MutationReceipt
-
     calls = []
     batch = execution["batch"]({"a.json": [_assign()]})
     execution["mutations"]["add_assignees"].side_effect = lambda *a, **k: (
-        calls.append(("add", a[1:], k))
-        or MutationReceipt(7, "https://github.com/acme/app/issues/7")
+        calls.append(("add", a[1:], k)) or _assignees_receipt("alice", "bob", "carol")
     )
     execution["mutations"]["remove_assignees"].side_effect = lambda *a, **k: (
-        calls.append(("remove", a[1:], k))
-        or MutationReceipt(7, "https://github.com/acme/app/issues/7")
+        calls.append(("remove", a[1:], k)) or _assignees_receipt("alice", "bob")
     )
     report = _apply(execution, batch)
     assert report.failure is None
@@ -2974,3 +2981,76 @@ def test_assign_sent_row_content_uses_the_resolved_login(execution):
     assert row.kind == "assignees"
     assert row.content == "assignees +alice +bob \u2212carol"
     assert row.target == 7
+
+
+from jailbee.outbox_io import (  # noqa: E402
+    ASSIGN_NOT_APPLIED_DETAIL,
+    UNASSIGN_NOT_APPLIED_DETAIL,
+)
+
+
+def test_assign_unassignable_add_is_a_definite_failure_and_skips_the_removal(execution):
+    batch = execution["batch"]({"a.json": [_assign()]})
+    # GitHub answered 2xx but silently ignored both logins (no push access).
+    execution["mutations"]["add_assignees"].return_value = _assignees_receipt("carol")
+    failure = _apply(execution, batch).failure
+    assert failure is not None and failure.uncertain is False
+    assert failure.detail == ASSIGN_NOT_APPLIED_DETAIL
+    execution["mutations"]["remove_assignees"].assert_not_called()
+    assert _sent_rows() == []
+
+
+def test_assign_partially_landed_add_is_uncertain_and_skips_the_removal(execution):
+    batch = execution["batch"]({"a.json": [_assign()]})
+    execution["mutations"]["add_assignees"].return_value = _assignees_receipt("alice", "carol")
+    failure = _apply(execution, batch).failure
+    assert failure is not None and failure.uncertain is True
+    assert failure.detail == ASSIGN_NOT_APPLIED_DETAIL
+    execution["mutations"]["remove_assignees"].assert_not_called()
+    (row,) = _sent_rows()
+    assert row.state == "uncertain"
+
+
+def test_assign_add_matching_is_case_insensitive(execution):
+    batch = execution["batch"]({"a.json": [_assign(add=["Bob"], remove=[])]})
+    execution["mutations"]["add_assignees"].return_value = _assignees_receipt("bob")
+    assert _apply(execution, batch).failure is None
+
+
+def test_assign_remove_that_did_not_take_effect_is_definite_when_remove_only(execution):
+    batch = execution["batch"]({"a.json": [_assign(add=[], remove=["carol"])]})
+    execution["mutations"]["remove_assignees"].return_value = _assignees_receipt("carol")
+    failure = _apply(execution, batch).failure
+    assert failure is not None and failure.uncertain is False
+    assert failure.detail == UNASSIGN_NOT_APPLIED_DETAIL
+
+
+def test_assign_remove_that_did_not_take_effect_is_uncertain_after_an_add(execution):
+    batch = execution["batch"]({"a.json": [_assign()]})
+    execution["mutations"]["remove_assignees"].return_value = _assignees_receipt("alice", "carol")
+    failure = _apply(execution, batch).failure
+    assert failure is not None and failure.uncertain is True
+
+
+def test_assign_remove_only_rejection_is_definite(execution):
+    from jailbee.issue_github import IssueGithubMutationError
+
+    batch = execution["batch"]({"a.json": [_assign(add=[], remove=["carol"])]})
+    execution["mutations"]["remove_assignees"].side_effect = IssueGithubMutationError(
+        "GitHub mutation was rejected", uncertain=False
+    )
+    failure = _apply(execution, batch).failure
+    assert failure is not None and failure.uncertain is False
+
+
+def test_assign_stale_check_refuses_every_unreachable_state(preflight):
+    from jailbee import issue_github
+    from jailbee.issue_outbox import IssueGateError
+
+    _assigned(preflight, "bob", "dave")
+    with pytest.raises(IssueGateError, match=r"expected.assignees differs"):
+        preflight["prepare"](
+            {"a.json": [_assign(add=["bob"], remove=["carol"], expected={"assignees": ["carol"]})]}
+        )
+    for name in ("add_assignees", "remove_assignees"):
+        getattr(issue_github, name).assert_not_called()

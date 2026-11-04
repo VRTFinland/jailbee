@@ -805,3 +805,12 @@ def test_two_assignees_actions_on_one_target_conflict_but_labels_do_not() -> Non
     parse_manifest("001-work.json", _manifest(_assignees(), labels), {})
     with pytest.raises(IssueManifestError, match=r"action 1.*already changes.*assignees"):
         parse_manifest("001-work.json", _manifest(_assignees(), _assignees()), {})
+
+
+def test_assignees_accepts_enterprise_managed_user_logins() -> None:
+    (action,) = _parse_action(
+        _assignees(add=["jdoe_acme"], remove=["a-b_c"], expected={"assignees": ["x_y"]})
+    ).actions
+    assert action.add == ("jdoe_acme",)
+    assert action.remove == ("a-b_c",)
+    assert action.expected_assignees == ("x_y",)
