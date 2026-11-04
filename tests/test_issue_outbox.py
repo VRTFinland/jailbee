@@ -2854,11 +2854,19 @@ def test_assign_refuses_me_that_resolves_to_a_removed_login(preflight):
     _assigned(preflight, "tuomas")
     with pytest.raises(IssueGateError, match=r"both add and remove"):
         preflight["prepare"](
-            {"a.json": [_assign(add=["@me"], remove=["tuomas"], expected={"assignees": ["tuomas"]})]}
+            {
+                "a.json": [
+                    _assign(add=["@me"], remove=["tuomas"], expected={"assignees": ["tuomas"]})
+                ]
+            }
         )
     with pytest.raises(IssueGateError, match=r"both add and remove"):
         preflight["prepare"](
-            {"a.json": [_assign(add=["tuomas"], remove=["@me"], expected={"assignees": ["tuomas"]})]}
+            {
+                "a.json": [
+                    _assign(add=["tuomas"], remove=["@me"], expected={"assignees": ["tuomas"]})
+                ]
+            }
         )
 
 
@@ -2900,7 +2908,8 @@ def test_assign_apply_posts_resolved_adds_then_deletes_removals(execution):
     calls = []
     batch = execution["batch"]({"a.json": [_assign()]})
     execution["mutations"]["add_assignees"].side_effect = lambda *a, **k: (
-        calls.append(("add", a[1:], k)) or MutationReceipt(7, "https://github.com/acme/app/issues/7")
+        calls.append(("add", a[1:], k))
+        or MutationReceipt(7, "https://github.com/acme/app/issues/7")
     )
     execution["mutations"]["remove_assignees"].side_effect = lambda *a, **k: (
         calls.append(("remove", a[1:], k))

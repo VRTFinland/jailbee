@@ -790,7 +790,7 @@ def test_assignees_rejects_invalid_changes(changes: dict[str, object], match: st
 def test_assignees_requires_the_expected_object() -> None:
     action = _assignees()
     del action["expected"]
-    with pytest.raises(IssueManifestError, match="expected.assignees is required"):
+    with pytest.raises(IssueManifestError, match=r"expected\.assignees is required"):
         _parse_action(action)
 
 

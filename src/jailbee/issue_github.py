@@ -199,9 +199,7 @@ def get_issue(repo_root: Path, repo: str, number: int) -> IssueSnapshot:
     if raw_assignees is None:
         assignees: tuple[str, ...] = ()
     elif _is_array(raw_assignees):
-        assignees = tuple(
-            _read_string(_read_object(item).get("login")) for item in raw_assignees
-        )
+        assignees = tuple(_read_string(_read_object(item).get("login")) for item in raw_assignees)
     else:
         raise IssueGithubReadError("GitHub read failed: unexpected response")
 

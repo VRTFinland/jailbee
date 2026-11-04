@@ -198,9 +198,7 @@ ME_LOGIN: Final = "@me"
 _LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 
 
-def _logins(
-    value: object, field: str, context: str, *, allow_me: bool
-) -> tuple[str, ...]:
+def _logins(value: object, field: str, context: str, *, allow_me: bool) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise IssueManifestError(f"{context}: {field} must be a list of GitHub logins")
     logins: list[str] = []

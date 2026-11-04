@@ -634,7 +634,7 @@ def _prose(label: str, text: str | None, *, markdown: bool = False) -> list[str]
 
 
 def _assignee_changes(action: AssigneesAction, login: str) -> str:
-    """``assignees +alice \u2212bob`` with ``@me`` resolved when the publisher ``login`` is known."""
+    """``assignees +alice \u2212bob``, ``@me`` resolved when the publisher ``login`` is known."""
     add, remove = resolved_assignees(action, login)
     changes = [f"+{item}" for item in add] + [f"\u2212{item}" for item in remove]
     return "assignees " + " ".join(changes)
