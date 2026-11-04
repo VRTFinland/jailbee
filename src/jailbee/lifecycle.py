@@ -3461,6 +3461,9 @@ def tracking_notices(containers: Sequence[ContainerInfo]) -> list[str]:
 
 # Leads an orchestrator's NAME cell (helm: it steers its children).
 ORCHESTRATOR_GLYPH = "⎈"
+# The dashboard's NAME column, tree indent and glyph included, never grows past
+# this many cells; a longer name ends in an ellipsis.
+NAME_MAX_WIDTH = 20
 
 # Rich style per `git_status.merge_label` kind. Module-level because it is a
 # constant with no dependency on `ls_field_specs`' arguments — rebuilding it per
@@ -3922,6 +3925,7 @@ def ls_field_specs(
             # An orchestrator (a container holding a grant) leads with ⎈.
             cell=lambda c: f"{ORCHESTRATOR_GLYPH} {c.shown_name}" if c.grant else c.shown_name,
             json=lambda c: c.display_name,
+            dashboard_max_width=NAME_MAX_WIDTH,
         ),
         table_format.FieldSpec(
             name="full_name",

@@ -266,7 +266,11 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
         if spec.name == "name":
             value = entry.fork_prefix + value
         if index == 0 and spec.name == "name" and autostart_failed(entry.container):
-            value += f" {WARN_MARK}"
+            # Cut the name, not the mark: room is the column less the status
+            # indent and " ⚠", so a capped name still shows its failure.
+            body = Text.from_markup(value)
+            body.truncate(max(1, geometry.widths[index] - 4), overflow="ellipsis")
+            value = f"{body.markup} {WARN_MARK}"
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
