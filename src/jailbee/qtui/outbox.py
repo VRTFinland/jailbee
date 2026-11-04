@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtCore import QEvent, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -26,12 +29,18 @@ from jailbee.incus import Incus
 from jailbee.issue_manifest import foreign_slug
 from jailbee.outbox import commands, service
 from jailbee.outbox.delete import DeletePlan, DeleteSelection, plan_delete
+from jailbee.outbox.inspect import safe_text
 from jailbee.outbox.models import ContainerView, OutboxChanged, OutboxError, ProposalView
 from jailbee.outbox_io import JournalStore
 from jailbee.remote_ssh.session import is_ssh_session
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoTarget
+    from jailbee.dashboard.outbox import SentItem
+
+# Reads the Sent log on demand: ``whole_repo`` False is the container's current
+# incarnation, True the repo timeline (every container, destroyed ones marked).
+SentSource = Callable[[bool], "tuple[SentItem, ...]"]
 
 
 @dataclass(frozen=True)
@@ -91,12 +100,19 @@ class OutboxDialog(QDialog):
     retired = Signal()
 
     def __init__(
-        self, target: RepoTarget, container: str, *, parent: QWidget | None = None
+        self,
+        target: RepoTarget,
+        container: str,
+        *,
+        parent: QWidget | None = None,
+        sent_source: SentSource | None = None,
     ) -> None:
         if is_ssh_session():
             raise OutboxError("Use the read-only terminal outbox manager over SSH")
         super().__init__(parent)
         self._target, self._container = target, container
+        self._sent_source = sent_source
+        self._sent_items: tuple[SentItem, ...] = ()
         self._request: _Request | None = None
         self._generation = 0
         self._pending_load = False
@@ -115,8 +131,13 @@ class OutboxDialog(QDialog):
         font = QFont("monospace")
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.details.setFont(font)
+        self.sent_tree = QTreeWidget(self)
+        self.sent_tree.setRootIsDecorated(False)
+        self.sent_tree.currentItemChanged.connect(self._sent_selection_changed)
+        self.sent_tree.hide()
         splitter = QSplitter(self)
         splitter.addWidget(self.tree)
+        splitter.addWidget(self.sent_tree)
         splitter.addWidget(self.details)
         self.status = QLabel("Loading", self)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
@@ -124,14 +145,27 @@ class OutboxDialog(QDialog):
         self.refresh_button = QPushButton("Refresh", self)
         self.delete_button = QPushButton("Delete selected", self)
         self.publish_button = QPushButton("Publish all pending in manifest", self)
+        self.sent_button = QPushButton("Sent", self)
+        self.sent_button.setCheckable(True)
+        self.sent_button.setVisible(sent_source is not None)
+        self.repo_check = QCheckBox("Whole repo", self)
+        self.repo_check.setVisible(False)
+        self.open_button = QPushButton("Open in browser", self)
+        self.open_button.setVisible(False)
+        self.open_button.setEnabled(False)
+        self.sent_button.toggled.connect(self._toggle_sent)
+        self.repo_check.toggled.connect(self._reload_sent)
+        self.open_button.clicked.connect(self.open_sent_url)
         close = QPushButton("Close", self)
         self.refresh_button.clicked.connect(self.refresh)
         self.delete_button.clicked.connect(self.delete_selected)
         self.publish_button.clicked.connect(self.publish_selected)
         close.clicked.connect(self.close)
         buttons = QHBoxLayout()
-        for button in (self.refresh_button, self.delete_button, self.publish_button, close):
+        for button in (self.refresh_button, self.delete_button, self.publish_button):
             buttons.addWidget(button)
+        for extra in (self.sent_button, self.repo_check, self.open_button, close):
+            buttons.addWidget(extra)
         layout = QVBoxLayout(self)
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status)
@@ -146,6 +180,8 @@ class OutboxDialog(QDialog):
     def refresh(self) -> None:
         if self.closing or self._confirming:
             return
+        if self.sent_button.isChecked():
+            self._load_sent()
         if self._request is not None and self._request.plan is not None:
             return
         self._generation += 1
@@ -196,7 +232,8 @@ class OutboxDialog(QDialog):
         previous = self._selected()
         self._view = view
         self.tree.clear()
-        self.details.clear()
+        if not self.sent_mode:
+            self.details.clear()
         status = view.error or (
             "No proposals (empty)" if not view.proposals else "Select a proposal"
         )
@@ -242,6 +279,9 @@ class OutboxDialog(QDialog):
     @Slot()
     def _selection_changed(self) -> None:
         selected = self._selected()
+        if self.sent_mode:
+            self._buttons()
+            return
         if selected is None:
             self._buttons()
             return
@@ -281,19 +321,125 @@ class OutboxDialog(QDialog):
     def _buttons(self) -> None:
         selected = self._selected()
         enabled = not self.busy and not self.closing
+        sent = self._selected_sent()
+        self.open_button.setEnabled(bool(sent and sent.row.url))
+        self.sent_button.setEnabled(enabled)
+        self.repo_check.setEnabled(enabled)
         self.refresh_button.setEnabled(enabled)
         self.delete_button.setEnabled(
-            bool(enabled and selected and not selected.proposal.edit_block)
+            bool(enabled and not self.sent_mode and selected and not selected.proposal.edit_block)
         )
         self.publish_button.setEnabled(
             bool(
                 enabled
+                and not self.sent_mode
                 and selected
                 and not selected.proposal.error
                 and selected.proposal.state in ("pending", "partial", "awaiting-pr")
             )
         )
         self.tree.setEnabled(enabled)
+        self.sent_tree.setEnabled(not self.closing)
+
+    @property
+    def sent_mode(self) -> bool:
+        return self.sent_button.isChecked()
+
+    @Slot(bool)
+    def _toggle_sent(self, on: bool) -> None:
+        self.tree.setVisible(not on)
+        self.sent_tree.setVisible(on)
+        self.repo_check.setVisible(on)
+        self.open_button.setVisible(on)
+        self.details.clear()
+        if on:
+            self._load_sent()
+        else:
+            self._selection_changed()
+        self._buttons()
+
+    @Slot()
+    def _reload_sent(self) -> None:
+        if self.sent_mode:
+            self._load_sent()
+
+    def _load_sent(self) -> None:
+        """Read the Sent log (on opening and refreshing only, like the terminal box)."""
+        if self._sent_source is None:
+            return
+        previous = self._selected_sent()
+        whole = self.repo_check.isChecked()
+        try:
+            items = self._sent_source(whole)
+        except Exception as exc:  # a state-DB failure must not break the dialog
+            self.status.setText(f"could not read the Sent log: {exc}")
+            items = ()
+        self._sent_items = items
+        self.sent_tree.clear()
+        self.details.clear()
+        headers = ["Sent (UTC)", "By", "Action", "Target", "Summary"]
+        if whole:
+            headers.insert(2, "Container")
+        self.sent_tree.setHeaderLabels(headers)
+        restored: QTreeWidgetItem | None = None
+        for item in items:
+            node = QTreeWidgetItem(self.sent_tree, self._sent_columns(item, whole))
+            node.setData(0, Qt.ItemDataRole.UserRole, item)
+            if item.row.state == "uncertain":
+                node.setToolTip(0, "uncertain: GitHub may not have accepted this action")
+            if item.gone:
+                node.setToolTip(0, item.gone)
+            if previous is not None and previous.row.id == item.row.id:
+                restored = node
+        if not items:
+            self.status.setText("Nothing sent yet")
+        if restored is not None:
+            self.sent_tree.setCurrentItem(restored)
+        self._buttons()
+
+    @staticmethod
+    def _sent_columns(item: SentItem, whole: bool) -> list[str]:
+        from jailbee.outbox import sent_view
+
+        row = item.row
+        mark = ("† " if item.gone else "") + ("? " if row.state == "uncertain" else "")
+        target = f"{row.repo}#{row.target}" if row.target is not None else row.repo
+        cols = [
+            mark + row.sent_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M"),
+            "orch" if row.publisher == "orchestrator" else "user",
+            f"{row.outbox}/{row.kind}",
+            safe_text(target),
+            sent_view.summary(row) + ("  [uncertain]" if row.state == "uncertain" else ""),
+        ]
+        if whole:
+            cols.insert(2, safe_text(row.container or row.instance))
+        return cols
+
+    def _selected_sent(self) -> SentItem | None:
+        node = self.sent_tree.currentItem()
+        value = node.data(0, Qt.ItemDataRole.UserRole) if node is not None else None
+        return value if value is not None and hasattr(value, "row") else None
+
+    @Slot()
+    def _sent_selection_changed(self) -> None:
+        from jailbee.outbox import sent_view
+
+        item = self._selected_sent()
+        if item is None:
+            self.details.clear()
+        else:
+            lines = sent_view.show_lines(item.row)
+            if item.gone:
+                lines.insert(1, f"Note:       {item.gone}")
+            self.details.setPlainText("\n".join(lines))
+        self._buttons()
+
+    @Slot()
+    def open_sent_url(self) -> None:
+        item = self._selected_sent()
+        if item is None or not item.row.url:
+            return
+        QDesktopServices.openUrl(QUrl(item.row.url))
 
     @Slot()
     def delete_selected(self) -> None:

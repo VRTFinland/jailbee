@@ -70,8 +70,11 @@ from jailbee.state_service.client import StateClient
 from jailbee.tui import error
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.dashboard.bulk import BulkAction
     from jailbee.dashboard.model import RepoGroup
+    from jailbee.dashboard.outbox import SentItem
     from jailbee.lifecycle import ContainerInfo
     from jailbee.state_service.protocol import Snapshot
 
@@ -749,6 +752,30 @@ class AppController(QObject):
             return
         self._request_refresh()  # the config may have changed under every card
 
+    def _sent_source(self, container: str) -> Callable[[bool], tuple[SentItem, ...]]:
+        """Reads the Sent log for ``container``'s repo from the latest snapshot, on demand."""
+        from datetime import UTC
+
+        from jailbee.dashboard import outbox as dob
+
+        def read(whole_repo: bool) -> tuple[SentItem, ...]:
+            group = _group_for(self._latest, container)
+            if group is None:
+                return ()
+            if whole_repo:
+                live = {
+                    c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
+                    for c in group.containers
+                }
+                return dob.read_sent(group.prefix, live=live)
+            info = next((c for c in group.containers if c.name == container), None)
+            created = (
+                info.created_at.astimezone(UTC) if info and info.created_at is not None else None
+            )
+            return dob.read_sent(group.prefix, instance=container, created=created)
+
+        return read
+
     def _open_outbox(self, target: RepoTarget, container: str) -> None:
         if is_ssh_session():
             self.on_action("outbox browse", container)
@@ -761,7 +788,9 @@ class AppController(QObject):
                 dialog.raise_()
                 dialog.activateWindow()
             return  # A closing worker still owns this slot until completion.
-        dialog = OutboxDialog(target, container, parent=self._window)
+        dialog = OutboxDialog(
+            target, container, parent=self._window, sent_source=self._sent_source(container)
+        )
         self._outboxes[key] = dialog
         dialog.changed.connect(self.on_refresh_requested)
         dialog.publishRequested.connect(self._on_outbox_publish)
