@@ -191,13 +191,16 @@ def test_container_profiles():
             "instructions": (
                 "## Model map (claude-jb profile `codex`)\n"
                 "Claude Code's tier names are aliases here; each runs the backend model below.\n"
-                "Backend context windows are per route; the session defaults to the smallest mapped "
-                "window, and --context can override it within the profile ceiling.\n"
-                "- fable → `chatgpt/gpt-6-astra` (route `astra`; effort high; backend context 1050k)\n"
-                "- opus → `chatgpt/gpt-6.1-sol` (route `sol-high`; effort high; backend context 1050k)\n"
+                "Backend context windows are per route; the session defaults to the smallest "
+                "mapped window, and --context can override it within the profile ceiling.\n"
+                "- fable → `chatgpt/gpt-6-astra` "
+                "(route `astra`; effort high; backend context 1050k)\n"
+                "- opus → `chatgpt/gpt-6.1-sol` "
+                "(route `sol-high`; effort high; backend context 1050k)\n"
                 "- sonnet → `chatgpt/gpt-6.1-terra` "
                 "(route `terra-high`; effort high; backend context 1050k)\n"
-                "- haiku → `chatgpt/gpt-6-luna` (route `luna-high`; effort high; backend context 1050k)"
+                "- haiku → `chatgpt/gpt-6-luna` "
+                "(route `luna-high`; effort high; backend context 1050k)"
             ),
             "tiers": {
                 "fable": "jb.codex.most-capable",
@@ -237,7 +240,10 @@ def test_profile_ceiling_is_the_smallest_ceiling_of_the_profiles_routes():
 
 def test_container_profiles_carry_the_profile_instructions():
     cfg = LiteLLMConfig.model_validate(
-        {"routes": {"one": {"model": "openai/one", "context_window": 128000}}, "profiles": {"custom": {"sonnet": "one", "instructions": "Use sonnet for edits."}}}
+        {
+            "routes": {"one": {"model": "openai/one", "context_window": 128000}},
+            "profiles": {"custom": {"sonnet": "one", "instructions": "Use sonnet for edits."}},
+        }
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
     assert profiles["custom"]["instructions"] == (
@@ -357,8 +363,10 @@ def test_unmapped_tier_listed():
 
 def test_oversize_drops_descriptions_and_names_profile(capsys):
     cfg = LiteLLMConfig.model_validate(
-        {"routes": {"astra": {"description": "Description marker" + "d" * 1000}},
-         "profiles": {"team-profile": {"opus": "astra", "instructions": "x" * 65000}}}
+        {
+            "routes": {"astra": {"description": "Description marker" + "d" * 1000}},
+            "profiles": {"team-profile": {"opus": "astra", "instructions": "x" * 65000}},
+        }
     )
     text = container_profiles(cfg, base_urls={"default": "u"})["team-profile"]["instructions"]
     assert "Description marker" not in text
@@ -366,7 +374,10 @@ def test_oversize_drops_descriptions_and_names_profile(capsys):
     assert text.endswith("\n\n" + "x" * 65000)
     assert len(text.encode()) <= 65536
     stderr = " ".join(capsys.readouterr().err.split())
-    assert stderr == "⚠ Model map for profile 'team-profile' exceeds the instructions limit; dropping descriptions."
+    assert stderr == (
+        "⚠ Model map for profile 'team-profile' exceeds the instructions limit; "
+        "dropping descriptions."
+    )
 
 
 def test_oversize_omits_map_and_names_profile_in_both_warnings(capsys):
@@ -377,8 +388,10 @@ def test_oversize_omits_map_and_names_profile_in_both_warnings(capsys):
     assert text == "x" * 65536
     stderr = " ".join(capsys.readouterr().err.split())
     assert stderr == (
-        "⚠ Model map for profile 'team-profile' exceeds the instructions limit; dropping descriptions. "
-        "⚠ Model map for profile 'team-profile' still exceeds the instructions limit; omitting the map."
+        "⚠ Model map for profile 'team-profile' exceeds the instructions limit; "
+        "dropping descriptions. "
+        "⚠ Model map for profile 'team-profile' still exceeds the instructions limit; "
+        "omitting the map."
     )
 
 
@@ -386,8 +399,10 @@ def test_route_fixed_effort_without_profile_effort():
     from jailbee.litellm_render import render_model_map
 
     cfg = LiteLLMConfig.model_validate(
-        {"routes": {"one": {"model": "openai/one", "context_window": 128000, "effort": "high"}},
-         "profiles": {"custom": {"opus": "one"}}}
+        {
+            "routes": {"one": {"model": "openai/one", "context_window": 128000, "effort": "high"}},
+            "profiles": {"custom": {"opus": "one"}},
+        }
     )
     text = render_model_map("custom", cfg.effective_profiles()["custom"], cfg.effective_routes())
     assert "- opus → `openai/one` (route `one`; effort high; backend context 128k)" in text
