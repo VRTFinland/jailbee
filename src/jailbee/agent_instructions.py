@@ -117,17 +117,14 @@ def sync_global_instructions(cfg: Config) -> None:
         warn_plain(
             f"cannot read {display_path(source)}: {exc} — keeping the previous copy", stderr=True
         )
-        content_known = False
         content = None
-    else:
-        content_known = True
 
     for name, gi in agents:
         directory = staging_dir(name, gi.file)
         target = directory / gi.file
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            if not content_known:
+            if content is None:
                 continue
             try:
                 current = target.read_bytes()
