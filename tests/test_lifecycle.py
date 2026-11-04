@@ -12156,7 +12156,11 @@ def test_list_containers_autostart_failed_outcomes(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "repo"
     repo.mkdir()
-    cfg = make_cfg(repo)
+    cfg = make_cfg(repo, autostart={"on_start": [{
+        "stage": "deps", "steps": [
+            {"name": name, "run": "true"} for name in ("one", "two", "three")
+        ]
+    }]})
     name = f"{cfg.container_prefix}-feature"
     incus = MagicMock()
     incus.list_containers.return_value = [
@@ -12170,12 +12174,22 @@ def test_list_containers_autostart_failed_outcomes(
     ]
     incus.config_get.return_value = None
     if contents == "valid":
-        autostart_outcomes.record(name, "start", "deps", "one", "fail")
-        autostart_outcomes.record(name, "start", "deps", "two", "start")
-        autostart_outcomes.record(name, "start", "deps", "three", "ok")
+        autostart_outcomes.record(name, "on_start", "deps", "one", "fail")
+        autostart_outcomes.record(name, "on_start", "deps", "two", "start")
+        autostart_outcomes.record(name, "on_start", "deps", "three", "ok")
     elif contents == "corrupt":
         path = autostart_outcomes.outcomes_path(name)
         path.parent.mkdir(parents=True)
         path.write_text("{broken")
     rows = list_containers(cfg, incus, with_background=True, all_repos=all_repos)
     assert next(c for c in rows if c.name == name).autostart_failed == expected
+
+
+def test_foreign_listing_retains_outcomes_without_applying_callers_config(make_cfg, tmp_path):
+    from jailbee import autostart_outcomes
+
+    cfg = make_cfg(tmp_path, container_prefix="myrepo")
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container("other-x", profiles=["other-base"])]
+    autostart_outcomes.record("other-x", "on_start", "unknown", "step", "fail")
+    assert list_containers(cfg, incus, all_repos=True)[0].autostart_failed == 1

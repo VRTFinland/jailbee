@@ -2124,6 +2124,10 @@ Last step outcomes are recorded best-effort at
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.
 `--failed` selects failed and started-but-unfinished steps still present in the
 effective configuration; missing or unreadable outcomes are treated as absent.
+The dashboard and own-repository listings count only currently eligible steps
+in the stored profile: removed/renamed steps and the `none` profile contribute
+no failures. Foreign/orphan listings retain raw counts when no repository
+configuration is available.
 A successful re-run replaces that step's outcome without clearing untouched
 steps. Re-runs run detached by default: use `autostart status` and `autostart
 cancel` to inspect or stop them, or `--wait` to run in the foreground. A live

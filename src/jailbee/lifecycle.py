@@ -750,9 +750,21 @@ def list_containers(
             )
 
     from jailbee import autostart_outcomes
+    from jailbee.autostart_profiles import profile_names as autostart_profile_names
+    from jailbee.autostart_profiles import profiled_config
+    from jailbee.autostart_rerun import failed_targets
 
     for c in out:
-        c.autostart_failed = autostart_outcomes.failed_count(c.name)
+        if c.repo == cfg.container_prefix:
+            profile = (
+                c.autostart_profile
+                if c.autostart_profile in autostart_profile_names(cfg.autostart)
+                else cfg.autostart.default_profile
+            )
+            c.autostart_failed = len(failed_targets(profiled_config(cfg, profile), c.name))
+        else:
+            # Foreign/orphan rows have no loaded config to filter against.
+            c.autostart_failed = autostart_outcomes.failed_count(c.name)
 
     view.annotate(out, view.queued_counts())
 

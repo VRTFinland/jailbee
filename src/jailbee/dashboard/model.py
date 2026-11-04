@@ -503,7 +503,7 @@ def _gather_rows(
         )
         from jailbee.autostart_plan import TRIGGER_ORDER, rerunnable_stages
         from jailbee.autostart_profiles import profiled_config
-        from jailbee.autostart_rerun import eligible_autostart
+        from jailbee.autostart_rerun import eligible_autostart, failed_targets
 
         for c in containers:
             c.configured_mounts = tuple(cfg.optional_mounts)
@@ -513,6 +513,7 @@ def _gather_rows(
                 else cfg.autostart.default_profile
             )
             effective = profiled_config(cfg, profile)
+            c.autostart_failed = len(failed_targets(effective, c.name))
             c.autostart_rerunnable = any(
                 rerunnable_stages(eligible_autostart(effective), trigger)
                 for trigger in TRIGGER_ORDER
