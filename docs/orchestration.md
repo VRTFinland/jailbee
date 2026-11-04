@@ -256,7 +256,11 @@ Fork spawns seed the source's Git-ignored build outputs from `fork.warm_paths`
 using btrfs reflinks, before mounts, caches and autostart. They seed HEAD forks
 only: a dirty source, a source that moved past the pinned fork commit, a non-HEAD
 `--ref`, or another storage driver is skipped with an advisory. A reflink failure
-never falls back to a full copy and never fails the fork.
+never falls back to a full copy and never fails the fork. While warming runs,
+the source's entire repository snapshot is visible read-only to the child,
+including ignored secrets such as `.env`; fork only to trusted children.
+Paths equal to or below later mount targets are skipped rather than copied
+into storage that would immediately be hidden.
 
 For `jailbee inbox send spawn`, repeatable `--warm PATH` replaces the configured
 list; `--no-warm` disables it. The flags are mutually exclusive and are refused
