@@ -504,7 +504,8 @@ def test_status_without_name_and_no_autostart_jobs_exits_2(tmp_path, mocker) -> 
 
 
 def test_run_requires_selector_off_terminal(tmp_path, mocker):
-    _setup(tmp_path, mocker)
+    _, incus = _setup(tmp_path, mocker)
+    incus.config_get_checked.return_value = None
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["autostart", "run", "feat-a"])
     assert result.exit_code == 2
@@ -632,13 +633,15 @@ def test_run_background_forwards_combined_targets(tmp_path, mocker):
     assert spawn.call_args.kwargs["from_trigger"] == "on_start"
     block = spawn.call_args.kwargs["autostart"]
     assert [s.name for c in block.on_start[0].all_chains() for s in c.steps] == ["npm", "other"]
-    incus.config_set.assert_called_with("myrepo-feat-a", "user.jailbee.autostart_in_progress", "1")
+    incus.config_set.assert_called_with(
+        "myrepo-feat-a", "user.jailbee.autostart_in_progress", f"rerun:{os.getpid()}"
+    )
 
 
 def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
     _, incus = _rerun_setup(tmp_path, mocker)
     incus.config_get.side_effect = lambda name, key: (
-        "1" if key.endswith("autostart_in_progress") else ""
+        f"rerun:{os.getpid()}" if key.endswith("autostart_in_progress") else ""
     )
     mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("live job"))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
@@ -648,6 +651,51 @@ def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
     assert "live job" in _out(result)
     assert "Re-running in the background" not in _out(result)
     incus.config_unset.assert_called_with("myrepo-feat-a", "user.jailbee.autostart_in_progress")
+
+
+@pytest.mark.parametrize("verb", ["start", "restart"])
+@pytest.mark.parametrize("background", [False, True])
+def test_boot_cli_refuses_actual_foreground_rerun_lock(tmp_path, mocker, verb, background):
+    from jailbee.autostart_rerun import command
+    from jailbee.autostart_status import live_run
+
+    cfg, incus = _rerun_setup(tmp_path, mocker)
+    boot = mocker.patch("jailbee.lifecycle.boot_container")
+    worker = mocker.patch("jailbee.cli._spawn_boot_worker")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    choice = mocker.patch("jailbee.autostart_profiles.store_choice")
+    preflight = mocker.patch("jailbee.cli._preflight_cache_pools")
+    results = []
+
+    def during_foreground(*args, **kwargs):
+        assert live_run(cfg, "myrepo-feat-a") is None
+        result = runner.invoke(
+            app, [verb, "feat-a", "--background" if background else "--no-background"]
+        )
+        results.append(result)
+        assert result.exit_code == 1, _out(result)
+        assert "re-run" in _out(result) and "progress" in _out(result)
+
+    mocker.patch("jailbee.autostart_rerun.run_foreground", side_effect=during_foreground)
+    command(
+        cfg,
+        incus,
+        "myrepo-feat-a",
+        stages=["deps"],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=False,
+        json_output=False,
+        wait=True,
+        spawn=lambda *_: pytest.fail("must not spawn"),
+    )
+    assert len(results) == 1
+    boot.assert_not_called()
+    worker.assert_not_called()
+    post.assert_not_called()
+    choice.assert_not_called()
+    preflight.assert_not_called()
 
 
 def test_run_wait_failure(tmp_path, mocker):

@@ -455,7 +455,6 @@ def run_autostart(
     on_progress: Callable[[str, str, str], None] | None = None,
     skip_services: bool = False,
     skip_agents: bool = False,
-    record_on_create: bool = False,
 ) -> AutostartPlan:
     """Run this trigger's blocking stages and return the plan.
 
@@ -529,7 +528,6 @@ def run_autostart(
             mirror_endpoint=mirror_endpoint,
             on_progress=on_progress,
             trigger=trigger,
-            record_on_create=record_on_create,
         )
         handed_off = bool(plan.detached)
     finally:
@@ -576,9 +574,10 @@ def run_detached(
     from jailbee.services.autostart import services_stage_wanted
 
     if spec.rerun:
-        from jailbee.autostart_rerun import validate_windows
+        from jailbee.autostart_rerun import validate_remote, validate_windows
 
         validate_windows(cfg, cfg.autostart)
+        validate_remote(cfg.autostart)
 
     with _cancel_on_sigterm(spec.container_name):
         incus.config_set(
@@ -641,7 +640,6 @@ def run_detached(
                         # hand, and a blind restore would undo their choice.
                         cas_restore=True,
                         trigger=trigger,
-                        record_on_create=spec.rerun,
                     )
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
@@ -687,9 +685,8 @@ def run_stages(
     on_progress: Callable[[str, str, str], None] | None = None,
     cas_restore: bool = False,
     trigger: AutostartTrigger | None = None,
-    record_on_create: bool = False,
 ) -> None:
-    """Run stages, optionally recording creates even after re-run filtering clears profiles."""
+    """Run stages; the persisted create marker opts into attempted-stage tracking."""
     from jailbee import autostart_outcomes
 
     def record_progress(stage_name: str, step: str, state: str) -> None:

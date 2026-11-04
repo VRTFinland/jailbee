@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from jailbee.autostart_plan import (
@@ -45,6 +46,30 @@ def validate_windows(cfg: Config, block: Autostart) -> None:
                             f"protected agent/service window '{window}'",
                             1,
                         )
+
+
+def validate_remote(block: Autostart) -> None:
+    """Remote container commands cannot borrow host network/mount authority."""
+    from jailbee.autostart_plan import normalize_stages
+    from jailbee.remote_ssh.session import is_remote_session
+
+    if not is_remote_session():
+        return
+    for trigger in TRIGGER_ORDER:
+        for stage in normalize_stages(getattr(block, trigger.value)):
+            if (
+                stage.network is not None
+                or stage.mounts
+                or any(
+                    step.network is not None or step.mounts
+                    for chain in stage.all_chains()
+                    for step in chain.steps
+                )
+            ):
+                raise RuntimeError(
+                    f"A remote autostart re-run cannot change network or mounts "
+                    f"({trigger.value}:{stage.stage}); run it on the host"
+                )
 
 
 def eligible_autostart(cfg: Config) -> Autostart:
@@ -102,6 +127,7 @@ def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTa
     effective = effective_config(cfg, incus, container)
     block = rerun_block(effective.autostart, targets)
     validate_windows(cfg, block)
+    validate_remote(block)
     return block
 
 
@@ -119,6 +145,7 @@ def run_foreground(
     from jailbee.lifecycle import container_repo_dir
 
     validate_windows(cfg, block)
+    validate_remote(block)
     refuse_while_running(cfg, container)
     agents = {
         name: agent.model_copy(update={"autostart": False}) for name, agent in cfg.agents.items()
@@ -137,7 +164,6 @@ def run_foreground(
                 override="wait",
                 skip_services=True,
                 skip_agents=True,
-                record_on_create=bool(cfg.autostart.profiles),
                 on_progress=on_progress,
                 mirror_endpoint=mirror_endpoint,
             )
@@ -244,22 +270,16 @@ def _command(
             console.print(table)
         return
     refuse_while_running(cfg, container)
-    # The supervisor row is best-effort; its Incus PID claim also guards
-    # the handoff when the state database is unavailable. "1" is a stale
-    # pre-handoff sentinel once the rerun lock has been acquired.
-    from jailbee.background import worker_alive
+    # Foreground lifecycle runs have no job row and hold the literal "1".
+    # Unknown/dead claims also fail closed: only their owner may release them.
     from jailbee.incus import IncusError
 
     try:
         claim = incus.config_get_checked(container, "user.jailbee.autostart_in_progress")
     except IncusError as exc:
         raise RuntimeError(f"Cannot check autostart worker claim: {exc}") from exc
-    try:
-        pid = int(claim or "")
-    except ValueError:
-        pid = 0
-    if pid > 1 and worker_alive(pid):
-        raise RuntimeError(f"Autostart is already running for '{container}' (pid {pid})")
+    if claim:
+        raise RuntimeError(f"Autostart is already running for '{container}' (claim {claim})")
     targets = resolve_rerun(
         effective.autostart, stages=stages, steps=steps, trigger=selected_trigger
     )
@@ -300,18 +320,49 @@ def _command(
     if wait:
         run_foreground(cfg, incus, container, block)
     else:
+        import os
+
         key = "user.jailbee.autostart_in_progress"
-        incus.config_set(container, key, "1")
+        own_claim = f"rerun:{os.getpid()}"
+        incus.config_set(container, key, own_claim)
         try:
             spawn(effective, block)
         except BaseException:
-            if incus.config_get(container, key) == "1":
+            if incus.config_get(container, key) == own_claim:
                 incus.config_unset(container, key)
             raise
         info(
             "Re-running in the background — follow with "
             f"`jailbee autostart status {short_name(cfg, container)}`"
         )
+
+
+@contextmanager
+def rerun_locked(container: str) -> Iterator[None]:
+    """Serialize reruns, and let lifecycle commands probe the same lock."""
+    import fcntl
+
+    from jailbee.db import state_dir
+
+    lock_dir = state_dir() / "autostart-rerun-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / (container + ".lock")).open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"An autostart re-run for '{container}' is already in progress"
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def refuse_while_rerunning(container: str) -> None:
+    """Probe without retaining the lock during a lifecycle command's own run."""
+    with rerun_locked(container):
+        pass
 
 
 def command(
@@ -329,9 +380,6 @@ def command(
     spawn: Callable[[Config, Autostart], None],
 ) -> None:
     """Serialize a rerun through the foreground lifetime or background handoff."""
-    import fcntl
-
-    from jailbee.db import state_dir
 
     def invoke() -> None:
         _command(
@@ -351,16 +399,5 @@ def command(
     if listing:
         invoke()
         return
-    lock_dir = state_dir() / "autostart-rerun-locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / (container + ".lock")).open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError(
-                f"An autostart re-run for '{container}' is already in progress"
-            ) from exc
-        try:
-            invoke()
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with rerun_locked(container):
+        invoke()

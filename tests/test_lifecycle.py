@@ -1694,6 +1694,48 @@ def _cfg_for_new(tmp_path, *, clone_from="local", autofetch=False):
     return cfg
 
 
+@pytest.mark.parametrize("failure", [None, "existing", "preflight", "create"])
+def test_new_clears_old_outcomes_only_after_instance_created(tmp_path, mocker, failure):
+    from jailbee import autostart_outcomes
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    name = "repo-feat-x"
+    autostart_outcomes.record(name, "on_start", "old", "step", "fail")
+    path = autostart_outcomes.outcomes_path(name)
+    if failure == "existing":
+        incus.list_containers.return_value = [{"name": name, "profiles": ["repo-base"]}]
+    elif failure == "preflight":
+        incus.profile_exists.return_value = False
+    elif failure == "create":
+        incus.init.side_effect = RuntimeError("creation failed")
+
+    def at_profile_assign(*args):
+        assert not path.exists(), "new instance inherited the old outcomes"
+
+    incus.profile_assign.side_effect = at_profile_assign
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    if failure:
+        with pytest.raises((ValueError, RuntimeError)):
+            new_container(cfg, incus, opts)
+        assert path.exists()
+    else:
+        new_container(cfg, incus, opts)
+        assert not path.exists()
+
+
 def test_new_container_creates_on_the_requested_storage_pool(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -12183,7 +12225,17 @@ def test_list_containers_autostart_failed_outcomes(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     repo = tmp_path / "repo"
     repo.mkdir()
-    cfg = make_cfg(repo)
+    cfg = make_cfg(
+        repo,
+        autostart={
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "steps": [{"name": name, "run": "true"} for name in ("one", "two", "three")],
+                }
+            ]
+        },
+    )
     name = f"{cfg.container_prefix}-feature"
     incus = MagicMock()
     incus.list_containers.return_value = [
@@ -12197,12 +12249,22 @@ def test_list_containers_autostart_failed_outcomes(
     ]
     incus.config_get.return_value = None
     if contents == "valid":
-        autostart_outcomes.record(name, "start", "deps", "one", "fail")
-        autostart_outcomes.record(name, "start", "deps", "two", "start")
-        autostart_outcomes.record(name, "start", "deps", "three", "ok")
+        autostart_outcomes.record(name, "on_start", "deps", "one", "fail")
+        autostart_outcomes.record(name, "on_start", "deps", "two", "start")
+        autostart_outcomes.record(name, "on_start", "deps", "three", "ok")
     elif contents == "corrupt":
         path = autostart_outcomes.outcomes_path(name)
         path.parent.mkdir(parents=True)
         path.write_text("{broken")
     rows = list_containers(cfg, incus, with_background=True, all_repos=all_repos)
     assert next(c for c in rows if c.name == name).autostart_failed == expected
+
+
+def test_foreign_listing_retains_outcomes_without_applying_callers_config(make_cfg, tmp_path):
+    from jailbee import autostart_outcomes
+
+    cfg = make_cfg(tmp_path, container_prefix="myrepo")
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container("other-x", profiles=["other-base"])]
+    autostart_outcomes.record("other-x", "on_start", "unknown", "step", "fail")
+    assert list_containers(cfg, incus, all_repos=True)[0].autostart_failed == 1

@@ -23,6 +23,32 @@ def test_gather_repo_without_profiles_includes_builtins(mocker, tmp_path, make_c
     assert group.autostart_services == ("db", "web")
 
 
+@pytest.mark.parametrize("over_ssh", [False, True])
+@pytest.mark.parametrize("configured", [False, True])
+def test_gathered_services_control_menu_without_frontend_collection(
+    mocker, tmp_path, make_cfg, configured, over_ssh
+):
+    from datetime import UTC, datetime
+
+    from jailbee.dashboard import model
+    from jailbee.dashboard.tui.menu_state import open_menu
+    from jailbee.state_service.protocol import Snapshot, decode, encode
+
+    cfg = make_cfg(tmp_path, services={"db": {"run": "db"}} if configured else {})
+    row = ContainerInfo("alpha-x", "Running", None, None, None)
+    mocker.patch.object(model, "load_repo_config", return_value=cfg)
+    mocker.patch.object(model, "list_containers", side_effect=[[row], []])
+    groups = model.gather_rows(mocker.MagicMock(), [tmp_path], with_git=False)
+    snapshot = decode(encode(Snapshot(1, datetime.now(UTC), False, groups)))
+    menu = open_menu(
+        snapshot.groups,
+        "alpha-x",
+        over_ssh=over_ssh,
+        ssh_policy=RemoteSSHConfig() if over_ssh else None,
+    )
+    assert ("services" in [verb for _, verb in menu.actions]) is configured
+
+
 def test_gather_repo_with_named_profiles_includes_builtins(mocker, tmp_path, make_cfg):
     from jailbee.dashboard import model
     from tests.test_autostart_profiles import profile_cfg
@@ -33,6 +59,44 @@ def test_gather_repo_with_named_profiles_includes_builtins(mocker, tmp_path, mak
     group = model.gather_rows(mocker.MagicMock(), [tmp_path], with_git=False)[0]
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_default_profile == "light"
+
+
+@pytest.mark.parametrize("profile,expected", [("none", 0), ("all", 2), ("light", 1)])
+def test_actual_gather_counts_only_current_profile_eligible_failures(
+    mocker, tmp_path, make_cfg, profile, expected
+):
+    from jailbee import autostart_outcomes
+    from jailbee.dashboard import model
+    from tests.test_lifecycle import _container
+
+    cfg = make_cfg(
+        tmp_path,
+        container_prefix="myrepo",
+        autostart={
+            "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+            "on_start": [{"stage": "deps", "steps": [{"name": "sync", "run": "true"}]}],
+            "profiles": {"light": {"stages": ["setup"]}},
+            "default_profile": "light",
+        },
+    )
+    for trigger, stage, step, state in [
+        ("on_create", "setup", "init", "fail"),
+        ("on_start", "deps", "sync", "start"),
+        ("on_start", "deps", "renamed", "fail"),
+        ("on_start", "removed", "sync", "fail"),
+        ("on_start", "agents", "claude", "fail"),
+    ]:
+        autostart_outcomes.record("myrepo-x", trigger, stage, step, state)
+    mocker.patch.object(model, "load_repo_config", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        _container("myrepo-x", user_config={"user.jailbee.autostart_profile": profile})
+    ]
+    from jailbee.lifecycle import list_containers
+
+    assert list_containers(cfg, incus)[0].autostart_failed == expected
+    group = model.gather_rows(incus, [tmp_path], with_git=False)[0]
+    assert group.containers[0].autostart_failed == expected
 
 
 def test_ls_profile_column_off_by_default_and_shows_value():

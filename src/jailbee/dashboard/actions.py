@@ -643,6 +643,7 @@ def container_extras(
     over_ssh: bool,
     remote_mountable: Sequence[str] = (),
     rows: Sequence[ContainerInfo] = (),
+    services: Sequence[str] = (),
 ) -> ContainerExtras:
     """What one container's menu adds; each entry hidden when its command would be refused.
 
@@ -678,7 +679,7 @@ def container_extras(
             container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
         ):
             before.append(("Mounts…", MOUNTS))
-    if container.state == "Running" and allowed(service_ls_argv(name)):
+    if services and container.state == "Running" and allowed(service_ls_argv(name)):
         before.append(("Services…", SERVICES))
     if orchestration_offered(container, ssh_policy, over_ssh=over_ssh, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))

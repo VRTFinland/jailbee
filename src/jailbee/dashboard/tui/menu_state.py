@@ -105,6 +105,7 @@ def open_menu(
         over_ssh=over_ssh,
         remote_mountable=group.remote_mountable,
         rows=group.containers,
+        services=group.autostart_services,
     )
     if container.state in ("Running", "Stopped") and permitted(
         ["restart", name], ssh_policy, over_ssh=over_ssh

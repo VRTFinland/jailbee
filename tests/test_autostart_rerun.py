@@ -238,17 +238,50 @@ def test_rerun_never_launches_agents(make_cfg, tmp_path, mocker):
 
 
 def test_refused_while_supervisor_live(make_cfg, tmp_path, mocker):
-    from jailbee.autostart_rerun import prepare
+    import os
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.autostart_rerun import command, prepare
+    from jailbee.db import get_engine, state_dir
 
     cfg = rerun_cfg(make_cfg, tmp_path)
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
-    mocker.patch("jailbee.autostart_status.refuse_while_running", side_effect=RuntimeError("live"))
+    with Session(get_engine()) as session:
+        background.start_job(
+            session,
+            container_name="c",
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=os.getpid(),
+            log_path="/unused.log",
+            now=datetime.now(UTC),
+            op_kind=background.JOB_AUTOSTART,
+        )
     execute = mocker.patch("jailbee.autostart.run_autostart")
-    with pytest.raises(RuntimeError, match="live"):
+    with pytest.raises(RuntimeError, match="still has autostart stages running"):
         prepare(cfg, incus, "c", [])
+    with pytest.raises(RuntimeError, match="still has autostart stages running"):
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["setup"],
+            steps=[],
+            failed=False,
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=False,
+            spawn=lambda *_: pytest.fail("must not spawn"),
+        )
     execute.assert_not_called()
-    assert not list(tmp_path.rglob("*.job.json"))
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+    assert not list(state_dir().rglob("*.job.json"))
 
 
 def test_refused_when_stopped(make_cfg, tmp_path, mocker):
@@ -341,6 +374,116 @@ def test_successful_rerun_clears_only_selected_failure(make_cfg, tmp_path, mocke
     assert outcomes.failed_steps(outcomes.read("c")) == [("on_start", "deps", "other")]
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize(
+    "elevation", [{"network": "loose"}, {"network": "strict"}, {"mounts": ["m"]}]
+)
+@pytest.mark.parametrize("selector", ["stage", "step", "failed"])
+@pytest.mark.parametrize("wait", [False, True])
+def test_remote_rerun_refuses_elevation_before_claim(
+    make_cfg, tmp_path, mocker, monkeypatch, legacy, elevation, selector, wait
+):
+    from jailbee import autostart_outcomes
+    from jailbee.autostart_rerun import command
+    from tests.test_autostart_profiles import state_incus
+
+    step = {"name": "init", "run": "true"}
+    entry = {**step, **elevation} if legacy else {"stage": "init", "steps": [step], **elevation}
+    cfg = make_cfg(tmp_path, autostart={"on_create": [entry]})
+    incus, state = state_incus(mocker)
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    autostart_outcomes.record("c", "on_create", "init", "init", "fail")
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    spawn = mocker.MagicMock()
+    execute, switch, add, _ = execution_deps(mocker)
+    with pytest.raises(RuntimeError, match=r"remote.*network or mounts"):
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["init"] if selector == "stage" else [],
+            steps=["init/init"] if selector == "step" else [],
+            failed=selector == "failed",
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=wait,
+            spawn=spawn,
+        )
+    spawn.assert_not_called()
+    execute.assert_not_called()
+    switch.assert_not_called()
+    add.assert_not_called()
+    incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize("listing,wait", [(True, False), (False, False), (False, True)])
+def test_remote_allows_listing_and_safe_execution(
+    make_cfg, tmp_path, mocker, monkeypatch, listing, wait
+):
+    from jailbee.autostart_rerun import command, run_foreground
+    from tests.test_autostart_profiles import state_incus
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker)
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    execute, switch, add, _ = execution_deps(mocker)
+    captured = []
+
+    def spawn(effective, block):
+        captured.append(block)
+        run_foreground(effective, incus, "c", block)
+
+    command(
+        cfg,
+        incus,
+        "c",
+        stages=[] if listing else ["setup"],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=listing,
+        json_output=listing,
+        wait=wait,
+        spawn=spawn,
+    )
+    assert execute.call_count == (0 if listing else 1)
+    assert len(captured) == int(not listing and not wait)
+    switch.assert_not_called()
+    add.assert_not_called()
+    if listing:
+        incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_remote_rerun_executor_refuses_unfiltered_elevation(
+    make_cfg, tmp_path, mocker, monkeypatch, detached
+):
+    from dataclasses import replace
+
+    from jailbee.autostart import run_detached
+    from jailbee.autostart_rerun import run_foreground
+    from tests.test_autostart_supervisor import _spec
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    incus = mocker.MagicMock()
+    execute, switch, add, _ = execution_deps(mocker)
+    with pytest.raises(RuntimeError, match=r"remote.*network or mounts"):
+        if detached:
+            run_detached(cfg, incus, replace(_spec(tmp_path, cfg.autostart), rerun=True))
+        else:
+            run_foreground(cfg, incus, "c", cfg.autostart)
+    incus.config_set.assert_not_called()
+    execute.assert_not_called()
+    switch.assert_not_called()
+    add.assert_not_called()
+
+
 def test_first_trigger_rejects_empty_block():
     from jailbee.autostart_rerun import first_trigger
 
@@ -404,8 +547,8 @@ def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, t
     assert incus.config_set.call_args.args[-1] == "12345"
 
 
-@pytest.mark.parametrize("claim", ["1", "999999999999999999999999", "invalid", "-2", ""])
-def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker, claim):
+@pytest.mark.parametrize("claim", ["1", "999999999999999999999999", "invalid", "-2", "rerun:42"])
+def test_any_nonempty_claim_blocks_rerun(make_cfg, tmp_path, mocker, claim):
     from jailbee.autostart_rerun import command
 
     cfg = rerun_cfg(make_cfg, tmp_path)
@@ -413,20 +556,23 @@ def test_stale_or_invalid_claim_does_not_block_rerun(make_cfg, tmp_path, mocker,
     incus.config_get_checked.return_value = claim
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     spawn = mocker.MagicMock()
-    command(
-        cfg,
-        incus,
-        "c",
-        stages=["setup"],
-        steps=[],
-        failed=False,
-        trigger=None,
-        listing=False,
-        json_output=False,
-        wait=False,
-        spawn=spawn,
-    )
-    spawn.assert_called_once()
+    with pytest.raises(RuntimeError, match="already running"):
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["setup"],
+            steps=[],
+            failed=False,
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=False,
+            spawn=spawn,
+        )
+    spawn.assert_not_called()
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
 
 
 @pytest.mark.parametrize("profile", [None, "all"])
@@ -461,3 +607,79 @@ def test_rerun_create_attempt_tracking_uses_persisted_marker(
     else:
         run_foreground(cfg, incus, "c", block)
     assert state.get(CREATED_KEY) == ("setup" if marker is not None else None)
+
+
+def test_actual_foreground_autostart_claim_refuses_rerun_without_job(make_cfg, tmp_path, mocker):
+    from jailbee.autostart import run_autostart
+    from jailbee.autostart_rerun import command
+    from jailbee.autostart_status import live_run
+    from tests.test_autostart_profiles import state_incus
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    key = "user.jailbee.autostart_in_progress"
+    incus, state = state_incus(mocker)
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    step, _, _, _ = execution_deps(mocker)
+    spawn = mocker.MagicMock()
+
+    def while_running(*args, **kwargs):
+        assert state[key] == "1"
+        assert live_run(cfg, "c") is None
+        with pytest.raises(RuntimeError, match="already running"):
+            command(
+                cfg,
+                incus,
+                "c",
+                stages=["setup"],
+                steps=[],
+                failed=False,
+                trigger=None,
+                listing=False,
+                json_output=False,
+                wait=False,
+                spawn=spawn,
+            )
+        assert state[key] == "1"
+        incus.config_unset.assert_not_called()
+
+    step.side_effect = while_running
+    run_autostart(cfg, incus, "c", AutostartTrigger.ON_CREATE, "/r", override="wait")
+    assert key not in state
+    spawn.assert_not_called()
+
+
+@pytest.mark.parametrize("replacement", [None, "1", "1234", "rerun:other"])
+def test_spawn_error_releases_only_own_claim(make_cfg, tmp_path, mocker, replacement):
+    from jailbee.autostart_rerun import command
+    from tests.test_autostart_profiles import state_incus
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    incus, state = state_incus(mocker)
+    key = "user.jailbee.autostart_in_progress"
+    incus.config_get_checked.side_effect = lambda c, k: state.get(k)
+    incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+
+    def spawn(*args):
+        assert state[key].startswith("rerun:")
+        if replacement is not None:
+            state[key] = replacement
+        raise RuntimeError("spawn failed")
+
+    with pytest.raises(RuntimeError, match="spawn failed"):
+        command(
+            cfg,
+            incus,
+            "c",
+            stages=["setup"],
+            steps=[],
+            failed=False,
+            trigger=None,
+            listing=False,
+            json_output=False,
+            wait=False,
+            spawn=spawn,
+        )
+    assert state.get(key) == replacement

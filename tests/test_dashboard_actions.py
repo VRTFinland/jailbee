@@ -417,7 +417,9 @@ _ALL_CONTAINER = {
 def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -> set[str]:
     over_ssh, kwargs = case
     info = container or _container(**_AUTOSTART_LIVE, optional_mounts=("gcloud",))
-    extras = dact.container_extras(info, ("aws", "gcloud"), _policy(kwargs), over_ssh=over_ssh)
+    extras = dact.container_extras(
+        info, ("aws", "gcloud"), _policy(kwargs), over_ssh=over_ssh, services=("db",)
+    )
     return {verb for _label, verb in (*extras.after_job, *extras.before_network)}
 
 
@@ -468,6 +470,7 @@ def test_container_extras_order_and_labels():
         ("aws", "gcloud"),
         None,
         over_ssh=False,
+        services=("db",),
     )
     assert extras.after_job == (
         ("Autostart status", "autostart-status"),

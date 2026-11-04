@@ -753,9 +753,21 @@ def list_containers(
             )
 
     from jailbee import autostart_outcomes
+    from jailbee.autostart_profiles import profile_names as autostart_profile_names
+    from jailbee.autostart_profiles import profiled_config
+    from jailbee.autostart_rerun import failed_targets
 
     for c in out:
-        c.autostart_failed = autostart_outcomes.failed_count(c.name)
+        if c.repo == cfg.container_prefix:
+            profile = (
+                c.autostart_profile
+                if c.autostart_profile in autostart_profile_names(cfg.autostart)
+                else cfg.autostart.default_profile
+            )
+            c.autostart_failed = len(failed_targets(profiled_config(cfg, profile), c.name))
+        else:
+            # Foreign/orphan rows have no loaded config to filter against.
+            c.autostart_failed = autostart_outcomes.failed_count(c.name)
 
     view.annotate(out, view.queued_counts())
 
@@ -1913,6 +1925,8 @@ def _new_container(
                 "run `jb apply` before creating without --memory."
             )
 
+    from jailbee.autostart_outcomes import remove as remove_old_outcomes
+
     _phase("creating")
     if generation == "work":
         from jailbee.network import strict_nic_acls
@@ -1932,6 +1946,7 @@ def _new_container(
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
                 _create_instance(cfg, incus, opts, name)
+                remove_old_outcomes(name)
                 fresh = True
                 progress.instance = name
                 incus.profile_assign(
@@ -1959,6 +1974,7 @@ def _new_container(
                 raise
     else:
         _create_instance(cfg, incus, opts, name)
+        remove_old_outcomes(name)
         progress.instance = name
     try:
         if generation == "legacy":

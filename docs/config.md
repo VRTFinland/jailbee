@@ -2115,17 +2115,30 @@ and explicit selections containing such steps are refused. Creation-only
 configurations with those names remain valid. A safe step in the same stage
 can still be selected explicitly with `--step`.
 A `background: true` step restarts its tmux window. Stage network and mount
-wrappers still apply and are cleaned up, including on cancellation.
+wrappers still apply and are cleaned up, including on cancellation. In a restricted
+remote SSH session, re-runs that request any stage or legacy-step network or
+mount change are refused, even when the network or mount unlocks are enabled.
+`--list` remains read-only and includes those stages; execute them on the host.
 
 Last step outcomes are recorded best-effort at
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.
 `--failed` selects failed and started-but-unfinished steps still present in the
 effective configuration; missing or unreadable outcomes are treated as absent.
+The dashboard and own-repository listings count only currently eligible steps
+in the stored profile: removed/renamed steps and the `none` profile contribute
+no failures. Foreign/orphan listings retain raw counts when no repository
+configuration is available. Creating a genuinely new instance clears outcomes
+left behind for that name (for example after an external Incus deletion);
+refused or failed creation attempts before an instance exists retain them.
 A successful re-run replaces that step's outcome without clearing untouched
 steps. Re-runs run detached by default: use `autostart status` and `autostart
 cancel` to inspect or stop them, or `--wait` to run in the foreground. A live
-autostart run is refused. Foreground restart/apply operations are not coordinated
-by the re-run-only lock; avoid running them concurrently with re-runs.
+autostart run is refused whenever its Incus in-progress claim is nonempty,
+including a foreground lifecycle run's `1` or an unknown/dead marker. Re-run
+handoffs use a distinct `rerun:<pid>` claim and release only their own claim on
+failure. `start` and `restart` also refuse while a foreground `--wait` re-run
+holds its lock, before storing choices or booting. Apply operations are not
+coordinated by that lock; avoid running apply concurrently with re-runs.
 
 #### Detaching a run
 
