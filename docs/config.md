@@ -2901,6 +2901,14 @@ orchestration:
         mounts: []               # optional_mounts names
         loose: false
         egress: []               # egress allow entries
+      publish:                   # optional; absent means no publishing
+        issues: [comment, state] # own repo and declared submodules
+        foreign_issues:
+          repos: [someorg/upstream-lib] # owner/name or ["*"]
+          actions: [comment]
+        pull_requests: false     # own source PR manifests
+        pr_reviews: false        # bound own-repository PRs
+        max_actions_per_hour: 30 # 1..500; reserved, never refunded
 ```
 
 Profile names are lowercase letters, digits and dashes, starting with a letter
@@ -2928,6 +2936,7 @@ may set `default_runner` and the idle-report threshold freely.
 | `mounts` | none | Mounts children may be given; others are dropped |
 | `egress` | none | Egress entries children may be given |
 | `loose` | none | `false` forbids handing loose network to children |
+| `publish` | none | Same block as a profile: intersect actions/repos/booleans and take the smaller rate; `false` forbids all publishing. Never grants new rights. |
 | `default_runner` | none | Preferred runner, with the same `{agent, profile?, model?}` shape as the host setting |
 
 `profiles` and `default_profile` are refused in a repo's config. A profile
@@ -3323,6 +3332,12 @@ remote:
 **Deprecated: `gui`.** `remote.ssh.gui` was split into `rdp` and `waypipe`. `gui: true` means
 `rdp: true` plus `waypipe: true`, and `gui: false` turns both off. Setting `gui` next to
 either new key is an error. `jailbee config migrate` rewrites it.
+
+Publish rights in an orchestration grant require the same SSH policy
+permission as the corresponding manual command (`issue apply`, `pr push
+--source-manifest`, or `review apply`), checked by the normal command router.
+A permitted remote session may add or widen those rights; `orchestrate grant`
+permission alone is not enough. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 
 An allowlist matches the exact public command leaf, not a prefix and not its
 arguments. `git pull` permits `git pull feat-x --cleanup`; `git` is not a leaf

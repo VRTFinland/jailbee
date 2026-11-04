@@ -8,6 +8,15 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Opt-in orchestrator publish grants: request host-broker publication of the
+  orchestrator's own issue actions, source PRs and bound-PR reviews, with
+  per-kind/repository rights, repo caps, a sliding-hour rate budget and an
+  audit log. Children never receive publish rights. Upgrade the host CLI and
+  broker together: the optional `publish` grant-label key is not understood
+  by older brokers. The staged container helper needs no base-image rebuild.
+
 ## 1.8.2 - 2026-11-04
 
 ### Fixed

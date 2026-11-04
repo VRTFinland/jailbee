@@ -173,6 +173,14 @@ operations are never bounded. A remote grant can always narrow, and elements
 the stored grant already holds, including wider host-set ones, are kept. The
 bound is checked when the grant is made: turning `network` or `mounts` off
 later does not narrow stored grants, so revoke or edit those on the host.
+Publish grants are also checked against the session's manual publishing
+permissions with the router's normal policy function: issue rights need
+`issue apply`, source PR rights need `pr push --source-manifest`, and review
+rights need `review apply`. A session may add or widen those rights when it
+could publish the equivalent content manually; permitting `orchestrate grant`
+alone is insufficient. Stored grants are not retroactively revoked when the
+SSH command policy changes.
+
 The startup log names allowlisted commands still refused by these restrictions.
 A regression test checks that every public leaf has a host/container
 classification; restricted routing also rejects unclassified commands at runtime.

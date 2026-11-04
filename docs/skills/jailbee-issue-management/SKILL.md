@@ -13,6 +13,17 @@ fixed outbox directory, and a human on the host reviews and publishes it
 later with `jb issue apply`. Nothing you write here reaches GitHub by
 itself.
 
+## Orchestrator publication
+
+An orchestrator whose `~/.jailbee/orchestration/grant.json` has matching
+`publish.issues` (own repo/submodules), or `publish.foreign_issues` (listed
+repos and kinds), stages normally and then runs
+`jailbee inbox send publish --issue NAME.json --wait` instead of asking the
+human to apply it. `started` is acceptance, not success: read the final status
+for the printed ref and use its issue numbers/URLs. An uncertain outcome must
+be resolved by the human through `jb outbox` on the host, never retried
+automatically. Without coverage, keep the human handoff. Children never publish.
+
 ## Never write to GitHub directly — use the outbox instead
 
 **Never run** any of the following inside this container:
@@ -127,13 +138,17 @@ one manifest, preserving the existing `expected`, journal and recovery
 gates. `TOKEN` comes from inspection; a changed proposal requires refresh
 and renewed inspection. The original `jb issue apply <container>` remains
 available. These are instructions to the human, **not permission for you
-to run publication commands**. Continue to stage files only; never call
-host apply or direct `gh` mutations yourself.
+to run host publication commands**. Without matching orchestrator publish
+rights, stage files only. With those rights, use `send publish` as described
+above; never call host apply or direct `gh` mutations yourself.
 
 ## When you're done
 
-Tell the user, verbatim: run `jb issue apply <container>` on the host —
-**nothing has been published yet.** Everything you wrote is a proposal
+If a broker `done` confirms publication, report its issue numbers and URLs.
+If there is no final result yet, say publication is pending. For manifests
+not sent through a granted orchestrator publish request, tell the user to
+run `jb issue apply <container>` on the host: **nothing has been published
+yet.** Everything still queued is a proposal
 sitting in the container's filesystem until then. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
 this container, and the dashboards' OUTBOX column counts it together with any staged PR actions.

@@ -37,6 +37,29 @@ spawn also supports version `2`. The type is one of
 
 ## Orchestrator manifests
 
+### `publish`
+
+Only orchestrators with matching `grant.json.publish` rights may request this;
+children never can. The target file is read from the requester's own outbox.
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "publish-1", "type": "publish", "outbox": "issue", "manifest": "close-12.json"}
+```
+
+`outbox` is `issue` or `pr`. `manifest` matches
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$`, never a path or `.progress.json`.
+Use `jailbee inbox send publish --issue NAME --wait` or `--pr NAME --wait`.
+Issue action kinds and repo coverage must all be granted. Source PR manifests
+need `pull_requests` (own branches only, no force); review manifests need
+`pr_reviews` (bound PRs in the own repo only). Missing `publish` grants nothing.
+One request runs per orchestrator; all pending actions reserve sliding-hour
+budget up front, never refunded. A source publish counts as one action.
+Replies: `started`, then `done` with URLs/issue numbers or `failed` with the
+domain error. `--wait` may return on `started`; consume the final reply for
+the same ref. Uncertain outcomes, including broker restart, require human
+resolution through `jb outbox`, never an automatic retry. Retry with a new id.
+
 ### `refresh`
 
 Refresh services in a child with `jailbee inbox send refresh --child C

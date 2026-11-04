@@ -90,6 +90,82 @@ settings off does not narrow stored grants. See
 Revoking stops new spawns and other operations and drops queued spawns.
 Existing children are untouched and stay children.
 
+### Publish the orchestrator's own outboxes
+
+Publishing is opt-in, separate from child `operations`. A grant without
+`publish` has no publish rights; children never receive them. The broker uses
+the host user's GitHub/git credentials and the same locks, freshness checks,
+expected fields, receipts and journals as manual publication.
+
+```yaml
+publish:
+  issues: [create, edit, comment, labels, state]  # own repo and declared submodules
+  foreign_issues:
+    repos: [someorg/upstream-lib]               # case-insensitive owner/name, or ["*"]
+    actions: [comment]
+  pull_requests: true
+  pr_reviews: false
+  max_actions_per_hour: 30                      # 1..500
+```
+
+```bash
+jb orchestrate grant bugs --publish-issues comment,state --publish-prs
+jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
+jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
+jb orchestrate grant bugs --no-publish
+```
+
+`--publish-issues none` clears issue rights. Repeatable
+`--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed
+repository must use the same kinds. `--publish-prs/--no-publish-prs` and
+`--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
+`--no-publish` clears everything and is exclusive with other publish flags.
+A bare `grant` keeps existing publish rights. `show` and `ls` display them.
+Profiles may carry the same block; the repo cap intersects rights and takes
+the smaller rate, while `publish: false` forbids publication.
+
+After staging a manifest in its own issue or PR outbox, the orchestrator sends:
+
+```bash
+jailbee inbox send publish --issue close-12.json --wait
+jailbee inbox send publish --pr imported-branch.json --wait
+```
+
+The version-1 protocol request is
+`{"version":1,"type":"publish","id":"publish-unique","outbox":"issue","manifest":"close-12.json"}`.
+The target is a bare JSON file name, never a path or `.progress.json` file.
+The broker checks every pending action before acceptance and again under the
+domain lock. Any uncovered kind or repository refuses the whole request.
+
+Acceptance replies `started`; a later `done` lists result URLs and created
+issue numbers in manifest order. `--wait` can return at `started`: read the
+final status for the same ref through the ordinary inbox. A worker failure
+replies `failed`. An uncertain outcome, including a broker restart during
+publication, is never retried automatically: ask the human to inspect
+`jb outbox` on the host. Use a new request id for a deliberate retry.
+
+Source publication cannot force-push, use the default/base branch as head,
+or overwrite an existing upstream head unless it belongs to a PR bound to
+this container. New PRs use the default base; bound updates keep that PR's
+base. An explicit PR number must be bound. PRs opened here are bound for
+later updates; adopting an unrelated PR for unattended updates remains a
+host step. Reviews, replies and description rewrites target only bound PRs
+in the own repository, never foreign repositories or submodules.
+
+Only one publish runs per orchestrator. Its full pending-action count is
+reserved against a sliding-hour cap before starting, including failed or
+partially applied attempts; reservations are never refunded. One source
+publish costs one action. Revocation or `--no-publish` refuses new requests;
+an already accepted worker finishes and reports its result.
+The broker writes finished requests, action kinds/repos, URLs and outcome to
+`publish-log.jsonl` under its state root (`~/.local/state/jailbee/orchestration/`).
+Existing outbox receipts and history remain available through `jb outbox`.
+
+Over SSH, granting publish rights requires the session's command policy to
+permit the equivalent manual operation: `issue apply`, `pr push
+--source-manifest`, or `review apply`. The same router policy checks these
+permissions; enabling `orchestrate grant` alone does not unlock publishing.
+
 ### Adopt running containers
 
 The host user can adopt existing containers into an orchestrator's topology,
