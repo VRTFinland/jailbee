@@ -5428,20 +5428,23 @@ def test_terminal_order_running_menu_layout(tmp_path):
     assert {"shell", "destroy"} <= {v for _, v in menu.actions}
 
 
-def test_terminal_order_stopped_menu_keeps_a_lone_destroy_leaf(tmp_path):
+def test_terminal_order_stopped_menu_groups_restart_with_and_destroy(tmp_path):
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", "Stopped", pr_number=7)]
     )
     menu = tmenu.open_menu([group], "alpha-x")
     assert menu is not None
-    labels = [
-        item.label if isinstance(item, dmenus.MenuGroup) else item[0]
-        for item in tmenu.menu_entries(menu)
-    ]
+    entries = tmenu.menu_entries(menu)
+    labels = [item.label if isinstance(item, dmenus.MenuGroup) else item[0] for item in entries]
     assert labels[0] == "Start"
     at = labels.index("PR →")
-    assert labels[at : at + 3] == ["PR →", "Destroy", "Network →"]
-    assert "Lifecycle →" not in labels
+    assert labels[at : at + 3] == ["PR →", "Lifecycle →", "Network →"]
+    lifecycle = next(
+        item
+        for item in entries
+        if isinstance(item, dmenus.MenuGroup) and item.label == "Lifecycle →"
+    )
+    assert [verb for _, verb in lifecycle.actions] == ["restart-with", "destroy"]
 
 
 def test_group_menu_actions_default_order_is_unchanged_for_qt():
