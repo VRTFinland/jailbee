@@ -422,8 +422,17 @@ def publish_selected(
             if audit_sink is not None:
                 for name, receipt in report.applied:
                     applied_manifest = next(m for m in batch.manifests if m.manifest.name == name)
-                    applied_action = next(a for a in applied_manifest.actions if a.index == receipt.index)
-                    audit_sink({"kind": type(applied_action.action).__name__.removesuffix("Action").lower(), "repo": applied_action.repo.slug})
+                    applied_action = next(
+                        a for a in applied_manifest.actions if a.index == receipt.index
+                    )
+                    audit_sink(
+                        {
+                            "kind": type(applied_action.action)
+                            .__name__.removesuffix("Action")
+                            .lower(),
+                            "repo": applied_action.repo.slug,
+                        }
+                    )
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:

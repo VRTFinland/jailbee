@@ -7,8 +7,8 @@ import itertools
 import json
 import logging
 import signal
-import time
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -483,7 +483,9 @@ def _handle_raw(
         request_id = envelope.get("id") if isinstance(envelope, dict) else None
     except (ValueError, RecursionError):
         request_id = None
-    if journal.seen(ctx.sender.key, digest) or (isinstance(request_id, str) and publishing.was_accepted(ctx, request_id)):
+    if journal.seen(ctx.sender.key, digest) or (
+        isinstance(request_id, str) and publishing.was_accepted(ctx, request_id)
+    ):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -738,7 +740,11 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
-    identities = {str(e["name"]): str((e.get("config") or {}).get("volatile.uuid") or e["name"]) for e in raw if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)}
+    identities = {
+        str(e["name"]): str((e.get("config") or {}).get("volatile.uuid") or e["name"])
+        for e in raw
+        if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)
+    }
     publishing.prune(root, identities, now)
     publishes = publishing.inflight(root)
     former_publishers = publishing.known_senders(root)

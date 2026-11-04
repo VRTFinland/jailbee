@@ -215,7 +215,9 @@ def publish_source_manifest(
                 entries.pop(head, None)
                 target = pr.find_open_pr_for_branch_strict(cfg.repo_root, head, repo=repo)
             if own_branches_only:
-                bound = {str(item.pr) for item in entries.values() if item.author and not item.adopted}
+                bound = {
+                    str(item.pr) for item in entries.values() if item.author and not item.adopted
+                }
                 _check_own_source(cfg, manifest, head, base, target, bound)
             if target is not None:
                 if (

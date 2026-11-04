@@ -63,7 +63,9 @@ def rig(tmp_path, mocker):
         publishing,
         "publish_selected",
         side_effect=lambda *a, **kw: (
-            kw["audit_sink"]({"kind": "comment", "repo": "org/repo"}) or kw["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1") or 0
+            kw["audit_sink"]({"kind": "comment", "repo": "org/repo"})
+            or kw["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1")
+            or 0
         ),
     )
     m = PublishManifest(version=1, id="pub-1", type="publish", outbox="issue", manifest="a.json")
@@ -89,10 +91,18 @@ def test_handle_publish_rereads_revoked_label(rig):
 
 
 def test_uncertain_uncovered_action_is_checked(rig):
-    from jailbee.issue_manifest import ExistingIssue, StateAction
-    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue, PreparedManifest, PreparedBatch
     from types import SimpleNamespace
-    action = ResolvedAction(0, StateAction(".", ExistingIssue(12), "closed", "completed", "open"), issue_outbox.RepoTarget(".", rig[0].root, "org/repo"), ResolvedIssue(12), "uncertain")
+
+    from jailbee.issue_manifest import ExistingIssue, StateAction
+    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
+
+    action = ResolvedAction(
+        0,
+        StateAction(".", ExistingIssue(12), "closed", "completed", "open"),
+        issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
+        ResolvedIssue(12),
+        "uncertain",
+    )
     batch = SimpleNamespace(manifests=(SimpleNamespace(actions=(action,)),))
     with pytest.raises(issue_outbox.IssueGateError, match="state"):
         publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
@@ -100,10 +110,12 @@ def test_uncertain_uncovered_action_is_checked(rig):
 
 def test_audit_uses_actual_domain_actions_not_precheck(rig):
     ctx = rig[0]
+
     def publish(*args, **kw):
         kw["audit_sink"]({"kind": "comment", "repo": "org/actual"})
         kw["result_sink"]("https://github.com/org/actual/issues/12")
         return 0
+
     rig[4].side_effect = publish
     accept(rig)
     publishing.settle(ctx, lambda *args: None)
@@ -113,14 +125,18 @@ def test_audit_uses_actual_domain_actions_not_precheck(rig):
 
 def test_settlement_audits_before_delivery(rig):
     accept(rig)
+
     def reply(ref, out):
         assert (rig[0].root / "publish-log.jsonl").exists()
+
     publishing.settle(rig[0], reply)
 
 
 def test_rate_refusal_is_audited(rig):
     ctx, m, *_ = rig
-    (ctx.root / "publish-budget.json").write_text(json.dumps({ctx.sender.full: [ctx.now.isoformat()] * 30}))
+    (ctx.root / "publish-budget.json").write_text(
+        json.dumps({ctx.sender.full: [ctx.now.isoformat()] * 30})
+    )
     assert publishing.handle_publish(ctx, m).state == "refused"
     row = json.loads((ctx.root / "publish-log.jsonl").read_text())
     assert row["outcome"] == "refused" and "rate" in row["detail"]

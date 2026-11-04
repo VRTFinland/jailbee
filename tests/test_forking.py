@@ -47,7 +47,12 @@ def test_fork_does_not_copy_grant_label(cfg, wired):
     from jailbee.orchestration import labels
 
     incus = _labels(**{"pr": "4", "orchestration.grant": '{"publish":{"pull_requests":true}}'})
-    incus.list_containers.return_value = [{"name": "myrepo-src", "config": {labels.GRANT: '{"publish":{"pull_requests":true}}', "user.jailbee.pr": "4"}}]
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-src",
+            "config": {labels.GRANT: '{"publish":{"pull_requests":true}}', "user.jailbee.pr": "4"},
+        }
+    ]
     inherited = forking.prepare_fork(cfg, incus, "src").pr_labels
     assert inherited == {"user.jailbee.pr": "4"}
     assert labels.GRANT not in inherited

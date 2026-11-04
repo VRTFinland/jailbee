@@ -372,8 +372,16 @@ def _check_remote_bound(
     had = current.publish if current is not None else PublishRights()
     rate_widened = p.max_actions_per_hour > had.max_actions_per_hour
     issue_added = any(k not in had.issues for k in p.issues)
-    foreign_added = any(not had.covers_issue(k, r, foreign=True) for r in p.foreign_issues.repos for k in p.foreign_issues.actions)
-    if issue_added or foreign_added or (rate_widened and (p.issues or (p.foreign_issues.repos and p.foreign_issues.actions))):
+    foreign_added = any(
+        not had.covers_issue(k, r, foreign=True)
+        for r in p.foreign_issues.repos
+        for k in p.foreign_issues.actions
+    )
+    if (
+        issue_added
+        or foreign_added
+        or (rate_widened and (p.issues or (p.foreign_issues.repos and p.foreign_issues.actions)))
+    ):
         required.append(("issues", ["issue", "apply", full]))
     if p.pull_requests and (not had.pull_requests or rate_widened):
         required.append(

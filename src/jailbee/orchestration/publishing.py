@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any
 from jailbee import branch_pr, git, issue_manifest, issue_outbox, pr_outbox
 from jailbee.github_repo import github_slug
 from jailbee.incus import Incus
+from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.actions import HANDLERS, ActionContext, Outcome, done, refused
 from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
-from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
 from jailbee.outbox.models import ProposalId
@@ -206,23 +206,48 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
             continue
         path = _result(root, entry.get("container_key", full), entry["ref"])
         result = json.loads(path.read_text()) if path.exists() else {}
-        _audit(root, {"time": now.isoformat(), "orchestrator": full, "ref": entry["ref"],
-            "outbox": entry["outbox"], "manifest": entry["manifest"], "actions": result.get("actions", []),
-            "urls": result.get("urls", []), "outcome": "abandoned"})
+        _audit(
+            root,
+            {
+                "time": now.isoformat(),
+                "orchestrator": full,
+                "ref": entry["ref"],
+                "outbox": entry["outbox"],
+                "manifest": entry["manifest"],
+                "actions": result.get("actions", []),
+                "urls": result.get("urls", []),
+                "outcome": "abandoned",
+            },
+        )
         del current[full]
         path.unlink(missing_ok=True)
     _save(root, "publish-inflight.json", current)
     known = _load(root, "publish-known.json")
-    _save(root, "publish-known.json", {full: key for full, key in known.items() if identities.get(full) == key})
+    _save(
+        root,
+        "publish-known.json",
+        {full: key for full, key in known.items() if identities.get(full) == key},
+    )
 
 
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
     assert isinstance(m, PublishManifest)
     outcome = _handle_publish(ctx, m)
     if outcome.state == "refused":
-        _audit(ctx.root, {"time": ctx.now.isoformat(), "orchestrator": ctx.sender.full,
-            "ref": m.id, "outbox": m.outbox, "manifest": m.manifest, "actions": [], "urls": [],
-            "outcome": "refused", "detail": outcome.detail})
+        _audit(
+            ctx.root,
+            {
+                "time": ctx.now.isoformat(),
+                "orchestrator": ctx.sender.full,
+                "ref": m.id,
+                "outbox": m.outbox,
+                "manifest": m.manifest,
+                "actions": [],
+                "urls": [],
+                "outcome": "refused",
+                "detail": outcome.detail,
+            },
+        )
     return outcome
 
 

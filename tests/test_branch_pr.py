@@ -237,6 +237,7 @@ def test_own_branches_only_refuses_before_fetch_or_push(source_publisher, case):
 def test_own_source_refuses_review_label_only(source_publisher, label):
     from jailbee.branch_pr import publish_source_manifest
     from jailbee.pr import PrError, PrInfo
+
     p = source_publisher
     data = json.loads(p["snapshot"].files["m.json"])
     data["pr"] = 42
@@ -244,7 +245,16 @@ def test_own_source_refuses_review_label_only(source_publisher, label):
     p["incus"].config_get_checked.side_effect = lambda full, key: "42" if key == label else None
     p["resolve"].return_value = PrInfo(42, "colleague", "b" * 40, "OPEN", "main")
     with pytest.raises(PrError, match="bound"):
-        publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: True, own_branches_only=True)
+        publish_source_manifest(
+            p["cfg"],
+            p["incus"],
+            "c",
+            "m.json",
+            force=False,
+            yes=True,
+            confirm=lambda _: True,
+            own_branches_only=True,
+        )
     p["push"].assert_not_called()
     p["edit"].assert_not_called()
 
@@ -253,15 +263,48 @@ def test_own_source_refuses_review_label_only(source_publisher, label):
 def test_own_source_requires_authored_binding(source_publisher, authored):
     from jailbee.branch_pr import BRANCH_PRS_LABEL, publish_source_manifest
     from jailbee.pr import PrError, PrInfo
+
     p = source_publisher
-    entry = {"feature/a": {"head": "feature/a", "pr": 42, "base": "main", "source": "refs/heads/topic", "source_sha": "a" * 40, "author": authored}}
-    p["incus"].config_get_checked.side_effect = lambda full, key: json.dumps(entry) if key == BRANCH_PRS_LABEL else None
+    entry = {
+        "feature/a": {
+            "head": "feature/a",
+            "pr": 42,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "author": authored,
+        }
+    }
+    p["incus"].config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entry) if key == BRANCH_PRS_LABEL else None
+    )
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     if authored:
-        assert publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: False, own_branches_only=True) == 0
+        assert (
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: False,
+                own_branches_only=True,
+            )
+            == 0
+        )
     else:
         with pytest.raises(PrError, match="bound"):
-            publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: True, own_branches_only=True)
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: True,
+                own_branches_only=True,
+            )
         p["push"].assert_not_called()
 
 
@@ -281,8 +324,18 @@ def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
         p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     if bound:
         from jailbee.pr import PrError
+
         with pytest.raises(PrError, match="bound"):
-            publish_source_manifest(p["cfg"], p["incus"], "c", "m.json", force=False, yes=True, confirm=lambda _: False, own_branches_only=True)
+            publish_source_manifest(
+                p["cfg"],
+                p["incus"],
+                "c",
+                "m.json",
+                force=False,
+                yes=True,
+                confirm=lambda _: False,
+                own_branches_only=True,
+            )
         p["push"].assert_not_called()
         return
     lines = []
@@ -308,9 +361,16 @@ def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
 
 def test_broker_source_worker_runs_real_domain_gates(source_publisher, tmp_path, mocker):
     from jailbee.orchestration import publishing
+
     p = source_publisher
     mocker.patch.object(publishing, "Incus", return_value=p["incus"])
-    entry = {"ref": "pub-real", "kind": "source", "manifest": "m.json", "actions": [{"kind": "source", "repo": "acme/widgets"}], "rights": {"pull_requests": True}}
+    entry = {
+        "ref": "pub-real",
+        "kind": "source",
+        "manifest": "m.json",
+        "actions": [{"kind": "source", "repo": "acme/widgets"}],
+        "rights": {"pull_requests": True},
+    }
     publishing._run(p["cfg"], tmp_path, "full", "c", entry)
     result = json.loads(publishing._result(tmp_path, "full", "pub-real").read_text())
     assert result["state"] == "done"

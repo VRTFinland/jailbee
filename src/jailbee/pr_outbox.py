@@ -3227,7 +3227,14 @@ def _offer_locked(
             )
             if audit_sink is not None:
                 for index in outcome.applied:
-                    audit_sink({"kind": type(target.manifest.actions[index]).__name__.removesuffix("Action").lower(), "repo": target.manifest.repo})
+                    audit_sink(
+                        {
+                            "kind": type(target.manifest.actions[index])
+                            .__name__.removesuffix("Action")
+                            .lower(),
+                            "repo": target.manifest.repo,
+                        }
+                    )
             _print_receipts(target, outcome)
             if result_sink is not None:
                 for url in outcome.urls:
