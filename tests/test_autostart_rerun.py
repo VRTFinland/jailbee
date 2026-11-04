@@ -178,3 +178,46 @@ def test_first_trigger_rejects_empty_block():
 
     with pytest.raises(ValueError, match="No.*stage"):
         first_trigger(Autostart())
+
+
+def test_concurrent_command_refuses_contender_without_clearing_owner(make_cfg, tmp_path, mocker):
+    import threading
+    from jailbee.autostart_rerun import command
+
+    cfg = rerun_cfg(make_cfg, tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
+    incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
+    entered = threading.Event()
+    release = threading.Event()
+    errors = []
+    spawns = []
+
+    def spawn(_cfg, _block):
+        spawns.append(True)
+        entered.set()
+        assert release.wait(5)
+        incus.config_set("c", "user.jailbee.autostart_in_progress", "12345")
+
+    def invoke():
+        try:
+            command(cfg, incus, "c", stages=["setup"], steps=[], failed=False,
+                    trigger=None, listing=False, json_output=False, wait=False, spawn=spawn)
+        except Exception as exc:
+            errors.append(exc)
+
+    owner = threading.Thread(target=invoke)
+    owner.start()
+    try:
+        assert entered.wait(5)
+        contender = threading.Thread(target=invoke)
+        contender.start()
+        contender.join(5)
+        assert not contender.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+    finally:
+        release.set()
+        owner.join(5)
+    assert len(spawns) == 1
+    incus.config_unset.assert_not_called()
+    assert incus.config_set.call_args.args[-1] == "12345"

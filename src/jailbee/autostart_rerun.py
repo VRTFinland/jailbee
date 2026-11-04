@@ -123,7 +123,7 @@ def list_rows(cfg: Config, container: str) -> list[dict[str, object]]:
     return rows
 
 
-def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
+def _command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
             steps: Sequence[str], failed: bool, trigger: str | None, listing: bool,
             json_output: bool, wait: bool, spawn: Callable[[Config, Autostart], None]) -> None:
     """Select a union of explicit and failed targets; trigger filters both."""
@@ -186,6 +186,34 @@ def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
         try:
             spawn(effective, block)
         except BaseException:
-            incus.config_unset(container, key)
+            if incus.config_get(container, key) == "1":
+                incus.config_unset(container, key)
             raise
         info(f"Re-running in the background — follow with `jailbee autostart status {short_name(cfg, container)}`")
+
+
+def command(cfg: Config, incus: Incus, container: str, *, stages: Sequence[str],
+            steps: Sequence[str], failed: bool, trigger: str | None, listing: bool,
+            json_output: bool, wait: bool, spawn: Callable[[Config, Autostart], None]) -> None:
+    """Serialize a rerun through the foreground lifetime or background handoff."""
+    import fcntl
+    from jailbee.db import state_dir
+
+    def invoke() -> None:
+        _command(cfg, incus, container, stages=stages, steps=steps, failed=failed,
+                 trigger=trigger, listing=listing, json_output=json_output, wait=wait, spawn=spawn)
+
+    if listing:
+        invoke()
+        return
+    lock_dir = state_dir() / "autostart-rerun-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / (container + ".lock")).open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(f"An autostart re-run for '{container}' is already in progress") from exc
+        try:
+            invoke()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)

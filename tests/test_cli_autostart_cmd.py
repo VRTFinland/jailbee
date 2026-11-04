@@ -567,6 +567,7 @@ def test_run_background_forwards_combined_targets(tmp_path, mocker):
 
 def test_run_spawn_refusal_clears_marker(tmp_path, mocker):
     _, incus = _rerun_setup(tmp_path, mocker)
+    incus.config_get.side_effect = lambda name, key: "1" if key.endswith("autostart_in_progress") else ""
     mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("live job"))
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
@@ -664,3 +665,14 @@ def test_run_reserved_service_slot_refused(tmp_path, mocker):
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "services"])
     assert result.exit_code == 1, _out(result)
     spawn.assert_not_called()
+
+
+def test_run_spawn_failure_preserves_transferred_marker(tmp_path, mocker):
+    _, incus = _rerun_setup(tmp_path, mocker)
+    incus.config_get.side_effect = lambda name, key: "12345" if key.endswith("autostart_in_progress") else ""
+    mocker.patch("jailbee.cli._spawn_autostart_worker", side_effect=RuntimeError("handoff failed"))
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    result = runner.invoke(app, ["autostart", "run", "feat-a", "--stage", "deps"])
+    assert result.exit_code == 1
+    incus.config_unset.assert_not_called()
