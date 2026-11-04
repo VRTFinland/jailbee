@@ -1385,7 +1385,13 @@ def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
     # Each listing uses its actual public JSON shape.
     from tests.test_dashboard_actions import _rerun_listing
 
-    listing = json.dumps(_rerun_listing()) if verb == "autostart-rerun" else _SNAPS_JSON
+    if verb == "autostart-rerun":
+        listing = json.dumps(_rerun_listing())
+    elif verb == "services":
+        listing = json.dumps([{"name": "web", "state": "ready", "window": None,
+                               "since": None, "detail": ""}])
+    else:
+        listing = _SNAPS_JSON
     mocker.patch.object(
         tsession.da,
         "run_cli_quiet",
