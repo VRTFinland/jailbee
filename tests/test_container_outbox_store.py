@@ -30,6 +30,40 @@ def store_for(home):
     return Store(home)
 
 
+def test_issue_action_cap_preserves_draft(tmp_path):
+    from jailbee.container_outbox.store import OutboxCommandError
+
+    store = store_for(tmp_path)
+    action = {"type": "comment", "repo": ".", "issue": 1, "body": "hello"}
+    for _ in range(100):
+        store.draft_append("issue", "batch", action, {})
+    before = store.draft_load_state("issue", "batch")
+    with pytest.raises(OutboxCommandError, match="100"):
+        store.draft_append("issue", "batch", action, {})
+    assert store.draft_load_state("issue", "batch") == before
+
+
+def test_concurrent_issue_publications_enforce_cap(tmp_path):
+    from jailbee.container_outbox.store import OutboxCommandError
+
+    store = store_for(tmp_path)
+    manifest = {"version": 1, "actions": [{"type": "create", "repo": ".", "ref": "new", "title": "Hi", "body": "x"}]}
+    for _ in range(19):
+        store.write_manifest("issue", "create", manifest, {})
+
+    def publish(_):
+        try:
+            store.write_manifest("issue", "create", manifest, {})
+            return True
+        except OutboxCommandError as exc:
+            assert "20" in str(exc)
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sum(executor.map(publish, range(2))) == 1
+    assert len(list(store.outbox("issue").glob("*.json"))) == 20
+
+
 def snapshot(path):
     return {p.name: p.read_text() for p in path.iterdir()}
 
@@ -182,29 +216,14 @@ def test_next_name_is_exclusive(tmp_path, monkeypatch):
     assert json.loads((store.outbox("issue") / name).read_text())["version"] == 1
 
 
-def test_two_writers_publish_distinct_complete_manifests(tmp_path, monkeypatch):
+def test_two_writers_publish_distinct_complete_manifests(tmp_path):
     from jailbee.issue_manifest import parse_manifest
 
     store = store_for(tmp_path)
     store.require_writable({})
     barrier = Barrier(2)
-    original = os.open
-    writer = local()
-
-    def compete(path, flags, *args, **kwargs):
-        if (
-            flags & os.O_EXCL
-            and str(path).endswith(".reserve")
-            and not getattr(writer, "ready", False)
-        ):
-            # Both writers must compete for the first reservation, not the retry.
-            writer.ready = True
-            barrier.wait(timeout=5)
-        return original(path, flags, *args, **kwargs)
-
-    monkeypatch.setattr(os, "open", compete)
-
     def write(body):
+        barrier.wait(timeout=5)
         return store_for(tmp_path).write_manifest(
             "issue", "same", issue_manifest(), {"body.md": body}
         )

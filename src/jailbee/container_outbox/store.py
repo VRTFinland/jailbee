@@ -9,7 +9,7 @@ import os
 import re
 import stat
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -148,6 +148,9 @@ def _validate(kind: Kind, name: str, manifest: dict[str, object], bodies: Mappin
     try:
         text = json.dumps(manifest)
         if kind == "issue":
+            actions = manifest.get("actions")
+            if isinstance(actions, list) and len(actions) > 100:
+                raise OutboxCommandError("issue manifest exceeds the cap of 100 actions", 2)
             parse_issue(name, text, bodies)
         else:
             parse_pr(name, text, bodies)
@@ -197,14 +200,10 @@ class Store:
             raise OutboxCommandError("slug must match [a-z0-9-]{1,80}", 2)
         _validate(kind, f"{slug}.json", manifest, bodies)
         self.require_writable()
-        publication_lock = (
-            self._draft_lock(kind, "outbox-publication", publication=True)
-            if kind == "pr"
-            else nullcontext()
-        )
+        publication_lock = self._draft_lock(kind, "outbox-publication", publication=True)
         with publication_lock, _directory(self.outbox(kind)) as fd:
-            if kind == "pr" and sum(_is_manifest(name) for name in os.listdir(fd)) >= 20:
-                raise OutboxCommandError("PR outbox already has the cap of 20 pending manifests", 2)
+            if sum(_is_manifest(name) for name in os.listdir(fd)) >= 20:
+                raise OutboxCommandError(f"{kind} outbox already has the cap of 20 pending manifests", 2)
             numbers = [
                 int(match[1])
                 for name in os.listdir(fd)
