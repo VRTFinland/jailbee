@@ -653,8 +653,12 @@ def test_combined_menu_has_unique_leaves_groups_and_hotkeys(mocker, tmp_path, st
 
     group = _choice_group(tmp_path)
     group.containers[0] = replace(
-        group.containers[0], state=state, job_live=live, autostart_rerunnable=True,
-        job_kind="autostart" if live else None, job_phase="deps" if live else None,
+        group.containers[0],
+        state=state,
+        job_live=live,
+        autostart_rerunnable=True,
+        job_kind="autostart" if live else None,
+        job_phase="deps" if live else None,
         job_pid=123 if live else None,
     )
     mocker.patch("jailbee.background.clearable", return_value=not live)
@@ -676,6 +680,16 @@ def test_combined_menu_has_unique_leaves_groups_and_hotkeys(mocker, tmp_path, st
     for level in levels:
         hotkeys = tm.menu_hotkeys(level)
         assert len(hotkeys) == len(set(hotkeys))
-    assert tm._preferred_menu_key(next(i for i in root if isinstance(i, MenuGroup) and i.label == "Autostart →")) == "u"
+    assert (
+        tm._preferred_menu_key(
+            next(i for i in root if isinstance(i, MenuGroup) and i.label == "Autostart →")
+        )
+        == "u"
+    )
     if state == "Running":
-        assert tm._preferred_menu_key(next(i for i in root if isinstance(i, tuple) and i[1] == "services")) == "V"
+        assert (
+            tm._preferred_menu_key(
+                next(i for i in root if isinstance(i, tuple) and i[1] == "services")
+            )
+            == "V"
+        )

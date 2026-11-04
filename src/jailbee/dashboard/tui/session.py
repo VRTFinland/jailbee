@@ -2398,7 +2398,6 @@ class DashboardSession:
             self.run_dashboard_command(picker.target, "container", argv)
             return None
 
-
         if picker.purpose in ("new-autostart", "restart-autostart"):
             if entry.value == dact.CUSTOM_SERVICES:
                 return self.autostart_services_picker(

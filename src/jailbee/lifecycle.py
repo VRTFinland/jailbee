@@ -3041,7 +3041,6 @@ def destroy_container(
 
     autostart_outcomes.remove(name)
 
-
     if fork_source:
         from jailbee.fork_warm import SNAPSHOT_PREFIX
 

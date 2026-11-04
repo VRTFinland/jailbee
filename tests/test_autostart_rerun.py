@@ -439,9 +439,12 @@ def test_rerun_create_attempt_tracking_uses_persisted_marker(
     from jailbee.autostart_rerun import run_foreground
     from tests.test_autostart_profiles import state_incus
 
-    cfg = make_cfg(tmp_path, autostart={
-        "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
-    })
+    cfg = make_cfg(
+        tmp_path,
+        autostart={
+            "on_create": [{"stage": "setup", "steps": [{"name": "init", "run": "true"}]}],
+        },
+    )
     state = {}
     if profile is not None:
         state[PROFILE_KEY] = profile
