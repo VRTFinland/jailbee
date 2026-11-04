@@ -27,7 +27,8 @@ before editing `## Unreleased`.
 - `jailbee ls` and the terminal dashboard show `⎈` before an orchestrator's
   name (a container holding an orchestration grant).
 - The terminal dashboard's fitted column widths cap the NAME column at 20
-  cells; a longer name ends in `…` and keeps its failed-autostart `⚠`.
+  cells; a longer name ends in `…` and keeps its failed-autostart `⚠`. The
+  details panel's title shows the whole label (`⎈`, alias and name) uncut.
 
 ## 1.8.2 - 2026-11-04
 

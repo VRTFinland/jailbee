@@ -159,6 +159,15 @@ class ContainerInfo:
             return f"{self.alias} ({self.display_name})"
         return self.display_name
 
+    @property
+    def name_label(self) -> str:
+        """:attr:`shown_name` led by the orchestrator glyph when the container holds a grant.
+
+        The dashboard's NAME cell (which may be cut at its width cap) and the
+        details card's title (never cut) both show this.
+        """
+        return f"{ORCHESTRATOR_GLYPH} {self.shown_name}" if self.grant else self.shown_name
+
 
 def fork_source(c: ContainerInfo) -> str | None:
     """The short name of the container ``c`` was forked from; None when not a fork."""
@@ -3950,7 +3959,7 @@ def ls_field_specs(
             sort=lambda c: _text_key(c.shown_name),
             header="NAME",
             # An orchestrator (a container holding a grant) leads with ⎈.
-            cell=lambda c: f"{ORCHESTRATOR_GLYPH} {c.shown_name}" if c.grant else c.shown_name,
+            cell=lambda c: c.name_label,
             json=lambda c: c.display_name,
             dashboard_max_width=NAME_MAX_WIDTH,
         ),
