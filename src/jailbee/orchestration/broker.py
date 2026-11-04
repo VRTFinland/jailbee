@@ -745,9 +745,14 @@ def tick(
         for e in raw
         if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)
     }
-    publishing.prune(root, identities, now)
-    publishes = publishing.inflight(root)
-    former_publishers = publishing.known_senders(root)
+    try:
+        publishing.prune(root, identities, now)
+        publishes = publishing.inflight(root)
+        former_publishers = publishing.known_senders(root)
+    except Exception:
+        log.exception("broker: publish state maintenance failed")
+        publishes = {}
+        former_publishers = set()
     parked = [
         e["name"]
         for e in raw

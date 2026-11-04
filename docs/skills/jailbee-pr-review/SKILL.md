@@ -17,8 +17,9 @@ outbox directory, and a human on the host reviews and publishes it later with
 An orchestrator with `publish.pr_reviews` in
 `~/.jailbee/orchestration/grant.json` stages normally, then runs
 `jailbee inbox send publish --pr NAME.json --wait` instead of asking the human
-to apply it. Only bound PRs in the own repository qualify; no foreign PR,
-submodule or force override. Source PR manifests instead need
+to apply it. Comments and replies may target review-bound PRs in the own
+repository; description rewrites additionally require an authored, non-adopted
+source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
 `jailbee-orchestration`. `started` is acceptance, not success: read the final
 status for its ref and use the returned URLs. An uncertain result requires

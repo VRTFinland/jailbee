@@ -69,6 +69,16 @@ def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
     assert len(rig.statuses()) == 1
 
 
+def test_corrupt_publish_pruning_does_not_stop_tick(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch)
+    rig.incus.list_containers.return_value = [_orch()]
+    (rig.root / "publish-known.json").write_text("broken json")
+    seen = []
+    monkeypatch.setattr(broker, "_serve", lambda ctx, *args: seen.append(ctx.sender.full))
+    rig.tick()
+    assert seen == ["proj-orch"]
+
+
 def test_publish_dedup_matches_request_id_not_file_stem(tmp_path, monkeypatch):
     from jailbee.orchestration.state import atomic_write_text
 
@@ -195,13 +205,18 @@ def test_publish_worker_starts_after_journal_reply_and_delete(tmp_path, monkeypa
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
 
+    worker = MagicMock()
+
     def start(ctx, manifest):
         assert rig.statuses()[0][1].state == "started"
         assert rig.delete.call_count == 1
         assert rig.journal.seen(ctx.sender.key, manifest_digest("pub-1.json", json.dumps(data), {}))
+        return worker
 
     monkeypatch.setattr(publishing, "start", start)
-    rig.tick()
+    memory = broker.BrokerMemory()
+    rig.tick(memory)
+    assert memory.publish_threads == [worker]
 
 
 def _spawn_raw(mid: str = "s1", *, prompt_file: bool = True) -> RawManifest:
@@ -867,21 +882,30 @@ def _sigterm() -> None:
 
 @pytest.mark.parametrize("upgrade", [False, True])
 def test_broker_waits_for_publish_workers_before_exit(tmp_path, monkeypatch, upgrade):
-    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    from jailbee.orchestration import publishing
+
+    rig = Rig(tmp_path, monkeypatch)
+    monkeypatch.setattr(broker, "state_root", lambda: rig.root)
     worker = MagicMock()
     worker.is_alive.return_value = True
+    rig.incus.list_containers.return_value = [_orch()]
+    data = {"version": 1, "id": "pub-join", "type": "publish", "outbox": "pr", "manifest": "a.json"}
+    rig.outboxes["proj-orch"] = [RawManifest("pub-join.json", json.dumps(data), {})]
+    # Run the actual broker handler/journal/delete/activation path; only the
+    # asynchronous launch is replaced, never the tracking list under test.
+    monkeypatch.setattr(publishing, "start", lambda *args: worker)
+    real_tick = broker.tick
 
-    def tick(*args, memory, **kwargs):
-        if hasattr(memory, "publish_threads"):
-            memory.publish_threads.append(worker)
+    def tick(*args, **kwargs):
+        result = real_tick(*args, **kwargs)
         if not upgrade:
             _sigterm()
-        return True
+        return result
 
     monkeypatch.setattr(broker, "tick", tick)
     monkeypatch.setattr(broker, "_installed_version", lambda: "different" if upgrade else None)
     monkeypatch.setattr(broker, "_pause", lambda *args: None)
-    broker.run_broker(MagicMock())
+    broker.run_broker(rig.incus)
     worker.join.assert_called_once()
     assert 0 < worker.join.call_args.kwargs["timeout"] <= 30
 

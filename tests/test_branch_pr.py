@@ -259,8 +259,8 @@ def test_own_source_refuses_review_label_only(source_publisher, label):
     p["edit"].assert_not_called()
 
 
-@pytest.mark.parametrize("authored", [False, True])
-def test_own_source_requires_authored_binding(source_publisher, authored):
+@pytest.mark.parametrize("authored,adopted", [(False, False), (True, False), (True, True)])
+def test_own_source_requires_authored_binding(source_publisher, authored, adopted):
     from jailbee.branch_pr import BRANCH_PRS_LABEL, publish_source_manifest
     from jailbee.pr import PrError, PrInfo
 
@@ -273,13 +273,14 @@ def test_own_source_requires_authored_binding(source_publisher, authored):
             "source": "refs/heads/topic",
             "source_sha": "a" * 40,
             "author": authored,
+            "adopted": adopted,
         }
     }
     p["incus"].config_get_checked.side_effect = lambda full, key: (
         json.dumps(entry) if key == BRANCH_PRS_LABEL else None
     )
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
-    if authored:
+    if authored and not adopted:
         assert (
             publish_source_manifest(
                 p["cfg"],
@@ -293,6 +294,8 @@ def test_own_source_requires_authored_binding(source_publisher, authored):
             )
             == 0
         )
+        saved = json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]
+        assert saved["author"] is True and saved["adopted"] is False
     else:
         with pytest.raises(PrError, match="bound"):
             publish_source_manifest(
