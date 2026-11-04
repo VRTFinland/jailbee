@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
@@ -246,6 +246,11 @@ def publish_selected(
     raise_errors: bool = False,
     choose_mode: pr_outbox.ChooseMode | None = None,
     plan_sink: pr_outbox.PlanSink | None = None,
+    policy: Callable[[issue_outbox.PreparedBatch], None]
+    | Callable[[pr_outbox.Manifest], None]
+    | None = None,
+    result_sink: Callable[[str], None] | None = None,
+    action_limit: int | None = None,
 ) -> int:
     """Publish all pending actions of one manifest; the callback owns TTY policy.
 
@@ -308,6 +313,9 @@ def publish_selected(
                     # The outbox alone relaxes the repository lock, under the
                     # same consent: the plan names the repository it is not.
                     allow_foreign_repo=options.foreign,
+                    policy=cast("Callable[[pr_outbox.Manifest], None] | None", policy),
+                    result_sink=result_sink,
+                    action_limit=action_limit,
                 )
 
             batch = issue_outbox.prepare_batch(
@@ -397,6 +405,8 @@ def publish_selected(
                 revision,
                 raise_errors=raise_errors,
             )
+            if policy is not None:
+                cast("Callable[[issue_outbox.PreparedBatch], None]", policy)(batch)
             from jailbee.publish_progress import reporting
 
             with reporting(total) as tick:
@@ -408,6 +418,13 @@ def publish_selected(
                     before_action=tick,
                 )
             print_issue_outcome(batch, report)
+            if result_sink is not None:
+                for name, receipt in report.applied:
+                    number = f" issue #{receipt.issue}" if receipt.issue is not None else ""
+                    result_sink(
+                        f"{name} action {receipt.index}: applied{number} "
+                        f"({receipt.url or 'no URL'})"
+                    )
             if raise_errors and report.failure is not None:
                 if report.failure.kind == "validation":
                     raise OutboxError(report.failure.detail)

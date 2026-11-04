@@ -10,6 +10,7 @@ import signal
 import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _metadata_version
 from pathlib import Path, PurePosixPath
@@ -19,7 +20,7 @@ from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import finishing, inbox_state, labels, watch
+from jailbee.orchestration import finishing, inbox_state, labels, publishing, watch
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -51,6 +52,7 @@ from jailbee.orchestration.protocol import (
     InboxStatus,
     ManifestError,
     MessageManifest,
+    PublishManifest,
     RestartManifest,
     SpawnManifest,
     StopManifest,
@@ -474,7 +476,9 @@ def _handle_raw(
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
     digest = manifest_digest(raw.file_name, raw.text, bodies)
-    if journal.seen(ctx.sender.key, digest):
+    if journal.seen(ctx.sender.key, digest) or publishing.was_accepted(
+        ctx, PurePosixPath(raw.file_name).stem
+    ):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -528,7 +532,28 @@ def _handle_raw(
         _watch_manifest(ctx, manifest, ref, outcome)
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
         _reply(ctx, ref, outcome, memory)
-    delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+    is_publish = (
+        isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
+    )
+    try:
+        delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+    except Exception:
+        if is_publish:
+            publishing.abort_before_start(
+                ctx,
+                ref,
+                "publish was not started: could not remove the request; retry with a new id",
+            )
+        raise
+    if is_publish:
+        assert isinstance(manifest, PublishManifest)
+        try:
+            publishing.start(ctx, manifest)
+        except Exception:
+            publishing.abort_before_start(
+                ctx, ref, "publish worker could not start; retry with a new id"
+            )
+            raise
 
 
 def _refresh_children_snapshot(
@@ -595,12 +620,14 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
         ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
     )
     if ctx.role() == "orchestrator":
+        publishing.remember(ctx)
         _sync_grant_json(ctx, memory)
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
         saved = json.loads(path.read_text())
         if saved.get("ref"):
             _reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
+    publishing.settle(ctx, lambda ref, out: _reply(ctx, ref, out, memory))
     for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
         _handle_raw(ctx, raw, journal, memory)
 
@@ -704,6 +731,8 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
+    publishes = publishing.inflight(root)
+    former_publishers = publishing.known_senders(root)
     parked = [
         e["name"]
         for e in raw
@@ -714,7 +743,13 @@ def tick(
     ]
     # Before the early return: a later namesake must not inherit stale entries.
     _forget_vanished_watches(root, present)
-    if not candidates and not queues and not parked:
+    if (
+        not candidates
+        and not queues
+        and not parked
+        and not publishes
+        and not (former_publishers & present)
+    ):
         return False
 
     try:
@@ -756,6 +791,15 @@ def tick(
     orchestrators: list[ActionContext] = []
     for node in nodes.values():
         if not _labelled(node.config):
+            if node.running and node.full in former_publishers:
+                former_ctx = context(node)
+                if former_ctx is not None:
+                    _serve(former_ctx, journal, memory)
+                continue
+            if node.full in publishes:
+                publish_ctx = context(node)
+                if publish_ctx is not None:
+                    publishing.settle(publish_ctx, partial(_reply, publish_ctx, memory=memory))
             # A revoked grant leaves no label; parked messages still get delivered.
             if node.running and has_pending(root, node.full):
                 _flush_unlabelled(node, context, root, incus)
@@ -961,6 +1005,7 @@ def run_broker(incus: Incus) -> int:
     memory = BrokerMemory()
     try:
         journal = Journal(root)
+        publishing.recover(root)
         log.info("orchestration broker starting")
         _stage_container_app(memory)
         while not stop.requested:

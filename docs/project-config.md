@@ -26,6 +26,26 @@ file does not exist yet, `jailbee config init --global` creates it. The
 repo template is a starting point, not a dump of the effective config:
 global settings can still enable integrations.
 
+### Limit orchestrator publication
+
+Only host/global profiles or a host grant confer publish rights. A committed
+repo config can narrow them, never add them:
+
+```yaml
+orchestration:
+  publish:
+    issues: [comment]             # intersect allowed own-repo/submodule actions
+    pull_requests: false
+    pr_reviews: false
+    max_actions_per_hour: 10      # min with the grant's rate
+```
+
+`publish: false` forbids all publication. Omitting the block imposes no extra
+cap, but still grants nothing. Foreign rights use the same
+`foreign_issues: {repos: [owner/name], actions: [comment]}` shape; caps
+intersect repos and kinds. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
+Children never receive publish rights.
+
 ## 2. Set `container_prefix` if needed
 
 For a repo with a config file, the prefix defaults to the repo directory's

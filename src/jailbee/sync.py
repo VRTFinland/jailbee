@@ -1425,6 +1425,7 @@ def push_ref_to_remote(
     force: bool,
     on_before_push: Callable[[], None] | None = None,
     expected_sha: str | None = None,
+    require_absent: bool = False,
 ) -> None:
     """Push a fetched ref, preserving the source and lease across retries."""
     if not host_ref.startswith("refs/") or not git.check_ref_format(host_ref):
@@ -1443,7 +1444,15 @@ def push_ref_to_remote(
         )
     remote = cfg.upstream_remote
     try:
-        lease = (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "") if force else None
+        # An empty lease is a create-only compare-and-swap, never permission
+        # to overwrite an existing head (even a fast-forward one).
+        lease = (
+            ""
+            if require_absent
+            else (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "")
+            if force
+            else None
+        )
     except git.GitError as exc:
         raise SyncError(str(exc)) from exc
     if on_before_push is not None:

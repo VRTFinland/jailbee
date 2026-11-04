@@ -70,6 +70,33 @@ automatically relaunched. Ask the user to close a hand-started agent before
 using `jailbee inbox send restart --child C --agent-only` to relaunch it under
 supervision; otherwise you may start a second agent.
 
+## Publishing your own staged manifests
+
+If `grant.json.publish` covers every pending action, stage normally, then ask
+the host broker to publish your own outbox file:
+
+```bash
+jailbee inbox send publish --issue a.json --wait
+jailbee inbox send publish --pr b.json --wait
+```
+
+Issue kinds use `publish.issues` for the own repo/submodules, or
+`publish.foreign_issues.actions` plus its repo list for foreign issues.
+PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
+need `publish.pr_reviews` and must target bound PRs in the own repository.
+Existing unbound upstream branches, default/base heads, force pushes and
+foreign PRs are refused. New PRs use the default base; updating an unrelated
+PR remains a host step. Children never publish.
+
+`--wait` may return at `started`; keep your inbox waiter armed and read the
+final `done`/`failed` status for the printed ref. Use the returned URLs and
+created issue numbers, in manifest order; staging or `started` is not success.
+One request runs at once. Budget is reserved for every pending action and is
+never refunded on failure. An uncertain result means stop and tell the human
+to resolve it with `jb outbox` on the host; do not retry automatically. A
+normal retry gets a new id. Without the required right, keep the manifest for
+human review and give the host apply command instead.
+
 ## Runtime rights
 
 Ask for the least: prefer an egress host over loose, and a timed grant over
