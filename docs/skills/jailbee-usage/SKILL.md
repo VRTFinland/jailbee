@@ -1313,6 +1313,13 @@ blocking* stage rather than after every one. This applies whether or not
 `--wait`/`--no-wait` override below), independent of whether the whole
 command ran in the foreground or was backgrounded.
 
+- `jailbee autostart run [<name>] --list` lists eligible stages; `--list --json`
+  includes steps and last outcomes. Re-run with repeatable `--stage NAME`,
+  `--step STAGE/STEP`, or `--failed`, or choose interactively. Use
+  `--trigger on_create|on_start` for ambiguous stage names. Runs are detached
+  by default; `--wait` waits. See [command details](references/commands.md#jailbee-autostart-runcancelstatus-name).
+- The terminal dashboard has `Autostart →` (`u`) and `Services…` (`v`)
+  menus for eligible containers; Qt is unchanged. Remote SSH policy applies.
 - `jailbee autostart status [<name>]` — one row per step, grouped by stage,
   for the run a detached supervisor is (or was) working through.
 - `jailbee autostart cancel [<name>]` — SIGTERM the supervisor; it unwinds

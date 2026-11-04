@@ -66,7 +66,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 - [LiteLLM proxy (`litellm up|down|status|login|logout|logs`)](#litellm-proxy)
 - [Remote SSH (`remote ssh`)](#remote-ssh)
 - [Config (`config show|validate|init|edit|migrate`)](#config)
-- [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
+- [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart run|status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
 - [Enter & run (`shell`, `console`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
@@ -522,7 +522,31 @@ matching, and it cannot equal another container's name, short name or alias
 in any case. `ALIAS` is asked for on a TTY when
 omitted; `--clear` and `ALIAS` are mutually exclusive.
 
-### `jailbee autostart status|cancel [NAME]`
+### `jailbee autostart run|cancel|status [NAME]`
+
+`jailbee autostart run [NAME] --list [--json]` lists eligible stages (JSON
+includes steps and outcomes). Re-run with repeatable `--stage NAME`,
+`--step STAGE/STEP`, and/or `--failed`, or select interactively. Use
+`--trigger on_create|on_start` when a stage name is ambiguous. The container
+must be running. Runs detach by default; `--wait` runs in the foreground.
+
+Re-runs use restart's host-effective config and stored profile, not branch-only
+additions. Agents and generated/reserved service slots are excluded; ordinary
+`services` stages with steps remain eligible. A legacy flat group normalized as
+`agents` is excluded too: rename its first step or use restart. A background
+step restarts its tmux window; stage network/mount wrappers and cleanup apply.
+Failed and started-but-unfinished outcomes count for `--failed`; missing or
+unreadable records count as no outcome. Last outcomes are stored best-effort in
+`${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.
+Avoid concurrent foreground restart/apply and re-runs: the re-run lock does not
+coordinate them. A live autostart run is refused.
+
+In the terminal dashboard, `Autostart →` (`u`) offers `Re-run…` (`r`),
+`Status` (`T`), `Cancel…` (`C`) and `Profile…` (`p`) when applicable; failures
+lead the picker and a confirmation precedes execution. `Services…` (`v`)
+lists services for running containers with state-dependent start, stop/restart,
+refresh and logs; no services produces a notice. SSH policy controls entries,
+and elevated refresh may require the host. Qt is unchanged.
 
 Inspect and stop a container's **detached** autostart run — the part of
 `on_create`/`on_start` that kept going in a background supervisor after a
@@ -825,7 +849,7 @@ as a notice — use `!` with `--force` to override, while a change that works
 closes the overlay. `Esc` backs out of each question to the overlay, and
 closes the overlay itself.
 
-The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). While a repo owes `jailbee base build` or `jailbee apply` after an upgrade (the advice `jailbee ls` prints on stderr), its header shows `⚠` and its card lists the notice with clickable `[run jb apply]` / `[run jb base build]` and `[dismiss]` links, plus `[run jb upgrade (all repos)]` when two or more repos owe something; the repo menu mirrors them as `[b] Run base build`, `[i] Dismiss notice…` (same effect as `jailbee dismiss`) and `[U] Upgrade all repos…`, each shown only while it applies. Deprecation notices scoped to the repo's config (such as a retired key) appear on the same card with `[dismiss]` only, no run link. Over remote SSH the run links and menu entries follow the session's policy, and `[dismiss]` / `Dismiss notice…` are hidden. The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mounts…` for the repo's `optional_mounts` (one panel listing every configured kind: choosing an unattached kind mounts it, an attached one unmounts it), `Orchestration…` (`G`; grant by profile or with defaults (the menu stays open after granting so the new grant can be edited in place), edit the limit, operations, mounts, loose and egress in place, re-apply a profile, save the grant as a named profile, or revoke after a confirmation — hidden for child containers and mount-mode containers, and over remote SSH when the session's policy forbids `orchestrate`), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
+The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). While a repo owes `jailbee base build` or `jailbee apply` after an upgrade (the advice `jailbee ls` prints on stderr), its header shows `⚠` and its card lists the notice with clickable `[run jb apply]` / `[run jb base build]` and `[dismiss]` links, plus `[run jb upgrade (all repos)]` when two or more repos owe something; the repo menu mirrors them as `[b] Run base build`, `[i] Dismiss notice…` (same effect as `jailbee dismiss`) and `[U] Upgrade all repos…`, each shown only while it applies. Deprecation notices scoped to the repo's config (such as a retired key) appear on the same card with `[dismiss]` only, no run link. Over remote SSH the run links and menu entries follow the session's policy, and `[dismiss]` / `Dismiss notice…` are hidden. The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mounts…` for the repo's `optional_mounts` (one panel listing every configured kind: choosing an unattached kind mounts it, an attached one unmounts it), `Orchestration…` (`G`; grant by profile or with defaults (the menu stays open after granting so the new grant can be edited in place), edit the limit, operations, mounts, loose and egress in place, re-apply a profile, save the grant as a named profile, or revoke after a confirmation — hidden for child containers and mount-mode containers, and over remote SSH when the session's policy forbids `orchestrate`), and `Autostart →` for eligible re-run, status, cancel and profile actions. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the
@@ -839,7 +863,7 @@ proposals, or the one under the cursor (the plans and the choice shown in the bo
 `c` create the PR a description awaits (`pr` for the main repo or
 `submodule pr` for its resolved submodule), `X` clear, `v`/`m` preview and raw
 manifest, `r` refresh and Esc back; keys the SSH policy refuses are not
-offered), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
+offered), then `job clear`, `job log`, then `Autostart →` (re-run, status, cancel and profile when eligible; cancel asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mounts…`, `Orchestration…` (`G`),
@@ -1788,7 +1812,7 @@ Switching a container's network while a detached autostart run is live
 (`jailbee ls` showing `autostart:<stage>`) warns and proceeds rather than
 refusing — a detached stage's own restore is compare-and-swap, so it
 cannot clobber a mode you set by hand afterwards. See [`jailbee autostart
-status|cancel`](#jailbee-autostart-statuscancel-name) above.
+status|cancel`](#jailbee-autostart-runcancelstatus-name) above.
 
 ### Egress overrides — `jailbee net egress`
 

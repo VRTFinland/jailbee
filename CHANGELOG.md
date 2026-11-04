@@ -8,6 +8,10 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Re-run selected or failed autostart steps, record their outcomes, and use the terminal dashboard Autostart and Services menus.
+
 ## 1.8.2 - 2026-11-04
 
 ### Fixed

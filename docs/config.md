@@ -2084,6 +2084,32 @@ step name anywhere in one trigger (see `name` above), and a step name that
 collides with an autostarting agent's own tmux window name (see [Generic
 agent support](agents.md)).
 
+#### Re-running autostart
+
+`jailbee autostart run <container> --list` lists eligible stages; add `--json`
+for stage and step outcomes. Select with repeatable `--stage NAME`,
+`--step STAGE/STEP`, or `--failed` (selectors combine), or choose interactively
+when none is supplied. If a stage name occurs in both triggers, specify
+`--trigger on_create` or `--trigger on_start`. The container must be running.
+
+Re-runs use the same host-effective configuration and stored profile as `restart`,
+not branch-only additions. Agents and generated or reserved services slots are
+never re-run; use `jailbee service` for services. Ordinary stages named
+`services` with steps remain eligible. A legacy flat group normalized to the
+name `agents` is also excluded: rename its first step or use restart instead.
+A `background: true` step restarts its tmux window. Stage network and mount
+wrappers still apply and are cleaned up, including on cancellation.
+
+Last step outcomes are recorded best-effort at
+`${XDG_STATE_HOME:-~/.local/state}/jailbee/autostart-last/<full-container-name>.json`.
+`--failed` selects failed and started-but-unfinished steps still present in the
+effective configuration; missing or unreadable outcomes are treated as absent.
+A successful re-run replaces that step's outcome without clearing untouched
+steps. Re-runs run detached by default: use `autostart status` and `autostart
+cancel` to inspect or stop them, or `--wait` to run in the foreground. A live
+autostart run is refused. Foreground restart/apply operations are not coordinated
+by the re-run-only lock; avoid running them concurrently with re-runs.
+
 #### Detaching a run
 
 `detach: true` on a stage means: this stage, and every stage after it in
