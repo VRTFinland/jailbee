@@ -3043,7 +3043,7 @@ def test_assign_remove_only_rejection_is_definite(execution):
     assert failure is not None and failure.uncertain is False
 
 
-def test_assign_stale_check_refuses_every_unreachable_state(preflight):
+def test_assign_stale_check_refuses_a_change_to_an_unrelated_login(preflight):
     from jailbee import issue_github
     from jailbee.issue_outbox import IssueGateError
 
@@ -3054,3 +3054,42 @@ def test_assign_stale_check_refuses_every_unreachable_state(preflight):
         )
     for name in ("add_assignees", "remove_assignees"):
         getattr(issue_github, name).assert_not_called()
+
+
+def test_assign_stale_check_refuses_an_unrelated_login_removed_by_someone_else(preflight):
+    from jailbee.issue_outbox import IssueGateError
+
+    _assigned(preflight, "bob")
+    with pytest.raises(IssueGateError, match=r"expected.assignees differs"):
+        preflight["prepare"](
+            {"a.json": [_assign(add=["bob"], remove=[], expected={"assignees": ["dave"]})]}
+        )
+
+
+def test_assign_retry_after_a_partly_landed_add_is_not_stale(preflight):
+    from jailbee import issue_outbox
+    from jailbee.outbox_io import journal_key
+
+    _assigned(preflight, "x")
+    action = _assign(add=["a", "b"], remove=[], expected={"assignees": ["x"]})
+    batch = preflight["prepare"]({"a.json": [action]})
+    prepared = batch.manifests[0]
+    key = journal_key(preflight["identity"], "a.json")
+    store = preflight["store"]
+    store.create(key, prepared.digest, 1)
+    store.mark_prepared(key, 0, repo="acme/app")
+    store.mark_uncertain(key, 0, repo="acme/app", detail="timeout")
+    issue_outbox.reconcile_action(
+        key=key,
+        index=0,
+        resolution=issue_outbox.RetryResolution(),
+        repo=prepared.actions[0].repo,
+        manifest=prepared.manifest,
+        digest=prepared.digest,
+        journal_store=store,
+    )
+
+    _assigned(preflight, "x", "a")  # GitHub assigned "a" of ["a", "b"] before failing
+    retried = preflight["prepare"]({"a.json": [action]})
+    assert retried.manifests[0].actions[0].status == "pending"
+    issue_outbox.revalidate_batch(retried)

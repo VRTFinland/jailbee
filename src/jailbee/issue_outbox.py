@@ -310,17 +310,18 @@ def _assignee_overlap(action: AssigneesAction, login: str) -> bool:
 
 
 def _assignees_differ(action: AssigneesAction, snapshot: IssueSnapshot, login: str) -> bool:
-    """Whether the live assignees match neither the expected set nor a state this action reaches.
+    """Whether a login this action does not touch changed since the expected set was recorded.
 
-    A retry after an uncertain attempt finds the issue already past the
-    expected set: the add landed, or both the add and the removal did.
-    Those states are not stale, because replaying the action is a no-op there.
+    The action may have landed partly or wholly on an earlier uncertain
+    attempt, so any combination of its own add/remove logins is acceptable
+    (replaying the action is idempotent there). Everything else must still
+    equal the expected set; a change to an unrelated login is stale.
     """
     add, remove = resolved_assignees(action, login)
+    touched = {item.casefold() for item in add} | {item.casefold() for item in remove}
     expected = {item.casefold() for item in action.expected_assignees}
-    added = expected | {item.casefold() for item in add}
-    reachable = (expected, added, added - {item.casefold() for item in remove})
-    return {item.casefold() for item in snapshot.assignees} not in reachable
+    live = {item.casefold() for item in snapshot.assignees}
+    return live - touched != expected - touched
 
 
 def _differences(
