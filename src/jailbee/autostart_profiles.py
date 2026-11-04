@@ -39,6 +39,30 @@ def validate_profile_name(autostart: Autostart, name: str) -> None:
         raise ProfileError(f"autostart profile `{name}` is not defined")
 
 
+def store_choice(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    profile: str | None,
+    services: list[str] | None,
+    reset_services: bool,
+) -> None:
+    from jailbee.create_flow import validate_service_names
+
+    if services is not None and reset_services:
+        raise ValueError("--services and --reset-services cannot be used together")
+    if profile is not None:
+        validate_profile_name(cfg.autostart, profile)
+    validate_service_names(services)
+    if profile is not None:
+        incus.config_set(container, PROFILE_KEY, profile)
+    if services is not None:
+        incus.config_set(container, SERVICES_KEY, encode_names(services))
+    if reset_services:
+        incus.config_unset(container, SERVICES_KEY)
+
+
 def selection(autostart: Autostart, name: str | None) -> Literal["all"] | AutostartProfile:
     if name is None or name == "all":
         return "all"

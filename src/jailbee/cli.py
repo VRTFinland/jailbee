@@ -5048,6 +5048,27 @@ def _stop_job_row(cfg: "Config", full_name: str) -> Iterator[None]:
 @app.command()
 def restart(
     name: ContainerArg = None,
+    autostart_profile: Annotated[
+        str | None,
+        typer.Option("--autostart-profile", help="Store this autostart profile, then restart."),
+    ] = None,
+    services: Annotated[
+        str | None,
+        typer.Option(
+            "--services",
+            help=(
+                "Start only these services (comma-separated) plus their dependencies; "
+                "an empty value starts none."
+            ),
+        ),
+    ] = None,
+    reset_services: Annotated[
+        bool,
+        typer.Option(
+            "--reset-services",
+            help="Drop the container's explicit service selection; the profile's applies.",
+        ),
+    ] = False,
     no_autostart: Annotated[
         bool,
         typer.Option(
@@ -5083,6 +5104,8 @@ def restart(
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
+    from jailbee.autostart_profiles import store_choice
+    from jailbee.create_flow import CreateError
     from jailbee.lifecycle import boot_container, short_name
 
     cfg = _load_or_exit(config)
@@ -5096,6 +5119,21 @@ def restart(
     # no `--force` here to exempt — a user who wants that reaches for
     # `jailbee autostart cancel`, which the refusal names.
     _refuse_while_autostart_runs(cfg, name)
+    selected_services = (
+        None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+    )
+    try:
+        store_choice(
+            cfg,
+            incus,
+            name,
+            profile=autostart_profile,
+            services=selected_services,
+            reset_services=reset_services,
+        )
+    except (ValueError, CreateError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(2) from exc
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
