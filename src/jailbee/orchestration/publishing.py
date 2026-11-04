@@ -185,8 +185,10 @@ def was_accepted(ctx: ActionContext, ref: str) -> bool:
 def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == ref:
-        atomic_write_text(_result(ctx.root, ctx.sender.full, ref), json.dumps({
-            "ref": ref, "state": "failed", "detail": detail}))
+        atomic_write_text(
+            _result(ctx.root, ctx.sender.full, ref),
+            json.dumps({"ref": ref, "state": "failed", "detail": detail}),
+        )
 
 
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:

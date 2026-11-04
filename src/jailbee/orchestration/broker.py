@@ -476,7 +476,9 @@ def _handle_raw(
     bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
     names = [raw.file_name, *bodies]
     digest = manifest_digest(raw.file_name, raw.text, bodies)
-    if journal.seen(ctx.sender.key, digest) or publishing.was_accepted(ctx, PurePosixPath(raw.file_name).stem):
+    if journal.seen(ctx.sender.key, digest) or publishing.was_accepted(
+        ctx, PurePosixPath(raw.file_name).stem
+    ):
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
@@ -530,19 +532,27 @@ def _handle_raw(
         _watch_manifest(ctx, manifest, ref, outcome)
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
         _reply(ctx, ref, outcome, memory)
-    is_publish = isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
+    is_publish = (
+        isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
+    )
     try:
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
     except Exception:
         if is_publish:
-            publishing.abort_before_start(ctx, ref, "publish was not started: could not remove the request; retry with a new id")
+            publishing.abort_before_start(
+                ctx,
+                ref,
+                "publish was not started: could not remove the request; retry with a new id",
+            )
         raise
     if is_publish:
         assert isinstance(manifest, PublishManifest)
         try:
             publishing.start(ctx, manifest)
         except Exception:
-            publishing.abort_before_start(ctx, ref, "publish worker could not start; retry with a new id")
+            publishing.abort_before_start(
+                ctx, ref, "publish worker could not start; retry with a new id"
+            )
             raise
 
 
@@ -733,7 +743,13 @@ def tick(
     ]
     # Before the early return: a later namesake must not inherit stale entries.
     _forget_vanished_watches(root, present)
-    if not candidates and not queues and not parked and not publishes and not (former_publishers & present):
+    if (
+        not candidates
+        and not queues
+        and not parked
+        and not publishes
+        and not (former_publishers & present)
+    ):
         return False
 
     try:

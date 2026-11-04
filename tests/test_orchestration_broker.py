@@ -70,12 +70,18 @@ def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
 
 
 def test_revoked_orchestrator_new_publish_gets_refusal(tmp_path, monkeypatch):
-    from jailbee.orchestration import publishing
     from jailbee.orchestration.state import atomic_write_text
+
     rig = Rig(tmp_path, monkeypatch)
     rig.incus.list_containers.return_value = [_c("proj-orch")]
     atomic_write_text(rig.root / "publish-known.json", json.dumps({"proj-orch": "proj-orch"}))
-    data = {"version": 1, "id": "new-pub", "type": "publish", "outbox": "issue", "manifest": "a.json"}
+    data = {
+        "version": 1,
+        "id": "new-pub",
+        "type": "publish",
+        "outbox": "issue",
+        "manifest": "a.json",
+    }
     rig.outboxes["proj-orch"] = [RawManifest("new-pub.json", json.dumps(data), {})]
     rig.dispatch.side_effect = actions.dispatch
     rig.tick()
@@ -85,15 +91,27 @@ def test_revoked_orchestrator_new_publish_gets_refusal(tmp_path, monkeypatch):
 def test_restart_before_journal_does_not_publish_request_again(tmp_path, monkeypatch):
     from jailbee.orchestration import publishing
     from jailbee.orchestration.protocol import PublishManifest
+
     rig = Rig(tmp_path, monkeypatch)
     grant = Grant.model_validate({"publish": {"issues": ["comment"]}})
     rig.incus.list_containers.return_value = [_orch(grant=grant)]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     raw = RawManifest("pub-1.json", json.dumps(data), {})
     rig.outboxes["proj-orch"] = [raw]
-    ctx = actions.ActionContext(rig.cfg, GlobalConfig(), rig.incus, rig.root,
-        actions.Node("proj-orch", "orch", True, {labels.GRANT: grant.to_label()}), {}, NOW)
-    monkeypatch.setattr(publishing, "_precheck", lambda *a: ("issue", [{"kind": "comment", "repo": "org/repo"}], False))
+    ctx = actions.ActionContext(
+        rig.cfg,
+        GlobalConfig(),
+        rig.incus,
+        rig.root,
+        actions.Node("proj-orch", "orch", True, {labels.GRANT: grant.to_label()}),
+        {},
+        NOW,
+    )
+    monkeypatch.setattr(
+        publishing,
+        "_precheck",
+        lambda *a: ("issue", [{"kind": "comment", "repo": "org/repo"}], False),
+    )
     assert publishing.handle_publish(ctx, PublishManifest.model_validate(data)).state == "started"
     publishing.recover(rig.root)
     activation = MagicMock()
@@ -105,13 +123,17 @@ def test_restart_before_journal_does_not_publish_request_again(tmp_path, monkeyp
 
 def test_publish_delete_failure_finishes_instead_of_wedging(tmp_path, monkeypatch):
     from jailbee.orchestration import publishing
-    from jailbee.orchestration.protocol import PublishManifest
+
     rig = Rig(tmp_path, monkeypatch)
     grant = Grant.model_validate({"publish": {"issues": ["comment"]}})
     rig.incus.list_containers.return_value = [_orch(grant=grant)]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
     rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
-    monkeypatch.setattr(publishing, "_precheck", lambda *a: ("issue", [{"kind": "comment", "repo": "org/repo"}], False))
+    monkeypatch.setattr(
+        publishing,
+        "_precheck",
+        lambda *a: ("issue", [{"kind": "comment", "repo": "org/repo"}], False),
+    )
     rig.dispatch.side_effect = actions.dispatch
     rig.delete.side_effect = [IncusError("temporary delete failure"), None]
     activation = MagicMock()

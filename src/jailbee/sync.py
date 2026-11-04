@@ -1446,7 +1446,13 @@ def push_ref_to_remote(
     try:
         # An empty lease is a create-only compare-and-swap, never permission
         # to overwrite an existing head (even a fast-forward one).
-        lease = "" if require_absent else (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "") if force else None
+        lease = (
+            ""
+            if require_absent
+            else (git.remote_branch_sha_strict(cfg.repo_root, remote, head) or "")
+            if force
+            else None
+        )
     except git.GitError as exc:
         raise SyncError(str(exc)) from exc
     if on_before_push is not None:
