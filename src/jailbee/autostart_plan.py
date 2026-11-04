@@ -8,6 +8,7 @@ executor (`autostart.py`) only carries out what this module decides.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
@@ -121,6 +122,99 @@ def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> lis
         run_network = entry.network
     flush()
     return stages
+
+
+@dataclass(frozen=True)
+class RerunTarget:
+    trigger: AutostartTrigger
+    stage: str
+    step: str | None
+
+
+class RerunSelectionError(ValueError):
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def rerunnable_stages(autostart: Autostart, trigger: AutostartTrigger) -> list[AutostartStage]:
+    return [
+        stage for stage in normalize_stages(getattr(autostart, trigger.value))
+        if stage.stage != AGENTS_STAGE
+        and not isinstance(stage, GeneratedServicesStage)
+        and not stage.is_services_slot()
+    ]
+
+
+def resolve_rerun(
+    autostart: Autostart,
+    *,
+    stages: Sequence[str],
+    steps: Sequence[str],
+    trigger: AutostartTrigger | None,
+) -> list[RerunTarget]:
+    available = {t: rerunnable_stages(autostart, t) for t in TRIGGER_ORDER}
+    triggers = (trigger,) if trigger is not None else TRIGGER_ORDER
+    selections: list[tuple[str, str | None]] = [(name, None) for name in stages]
+    for value in steps:
+        parts = value.split("/")
+        if len(parts) != 2 or not all(parts):
+            raise RerunSelectionError(f"Invalid step '{value}'; expected STAGE/STEP", 2)
+        selections.append((parts[0], parts[1]))
+
+    result: list[RerunTarget] = []
+    for name, step in selections:
+        matches = [(t, s) for t in triggers for s in available[t] if s.stage == name]
+        if not matches:
+            reserved = name == AGENTS_STAGE or any(
+                name in (key, s.stage) and (s.is_services_slot() or isinstance(s, GeneratedServicesStage))
+                for t in triggers
+                for entries in [normalize_stages(getattr(autostart, t.value))]
+                for s, key in zip(entries, stage_keys(entries), strict=True)
+            )
+            if reserved:
+                raise RerunSelectionError(
+                    f"{name} is not re-runnable; use `jailbee service` for services", 1
+                )
+            candidates = sorted({s.stage for t in triggers for s in available[t]})
+            raise RerunSelectionError(f"Unknown stage '{name}'; candidates: {', '.join(candidates)}", 2)
+        if len({t for t, _ in matches}) > 1:
+            raise RerunSelectionError(f"Stage '{name}' is ambiguous: on_create, on_start", 2)
+        matched_trigger, stage = matches[0]
+        if step is not None:
+            candidates = [item.name for chain in stage.all_chains() for item in chain.steps]
+            if step not in candidates:
+                raise RerunSelectionError(
+                    f"Unknown step '{name}/{step}'; candidates: {', '.join(candidates)}", 2
+                )
+        target = RerunTarget(matched_trigger, name, step)
+        if target not in result:
+            result.append(target)
+    return result
+
+
+def rerun_block(autostart: Autostart, targets: Sequence[RerunTarget]) -> Autostart:
+    selected: dict[str, object] = {"profiles": {}, "default_profile": None}
+    for trigger in TRIGGER_ORDER:
+        kept: list[AutostartStage] = []
+        for stage in rerunnable_stages(autostart, trigger):
+            matching = [t for t in targets if t.trigger == trigger and t.stage == stage.stage]
+            if not matching:
+                continue
+            updates: dict[str, object] = {"detach": False}
+            if not any(t.step is None for t in matching):
+                names = {t.step for t in matching}
+                chains = []
+                for chain in stage.all_chains():
+                    steps = [step for step in chain.steps if step.name in names]
+                    if steps:
+                        chains.append(chain.model_copy(update={"steps": steps}))
+                if not chains:
+                    continue
+                updates.update({"chains": chains, "steps": []})
+            kept.append(stage.model_copy(update=updates))
+        selected[trigger.value] = kept
+    return autostart.model_copy(update=selected)
 
 
 def stage_keys(stages: list[AutostartStage]) -> list[str]:

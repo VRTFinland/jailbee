@@ -530,3 +530,107 @@ def test_profiles_preserve_service_placement_like_agents():
     )
     selected = select_profile(block, "p")
     assert [s.stage for s in selected.on_start] == ["services", "agents"]
+
+
+def _rerun_fixture():
+    return Autostart.model_validate({
+        "on_create": [
+            {"stage": "build", "network": "loose", "mounts": ["aws"], "detach": True,
+             "chains": [
+                 {"name": "first", "steps": [{"name": "a", "run": "a"}, {"name": "b", "run": "b"}]},
+                 {"name": "second", "steps": [{"name": "c", "run": "c"}]},
+             ]},
+            {"stage": "finish", "steps": [{"name": "z", "run": "z"}]},
+        ],
+        "profiles": {"p": "all"},
+        "default_profile": "p",
+    })
+
+
+def test_rerun_block_whole_stage_keeps_network_and_mounts():
+    from jailbee.autostart_plan import RerunTarget, rerun_block
+    result = rerun_block(_rerun_fixture(), [RerunTarget(AutostartTrigger.ON_CREATE, "build", None)])
+    stage = result.on_create[0]
+    assert (stage.stage, stage.network, stage.mounts, stage.detach) == ("build", "loose", ["aws"], False)
+    assert result.profiles == {}
+    assert result.default_profile is None
+    assert [s.name for s in stage.all_chains()[0].steps] == ["a", "b"]
+
+
+def test_rerun_block_single_step_keeps_only_its_chain():
+    from jailbee.autostart_plan import RerunTarget, rerun_block
+    result = rerun_block(_rerun_fixture(), [RerunTarget(AutostartTrigger.ON_CREATE, "build", "b")])
+    chains = result.on_create[0].all_chains()
+    assert [(c.name, [s.name for s in c.steps]) for c in chains] == [("first", ["b"])]
+
+
+def test_rerun_block_two_steps_two_chains_stay_parallel():
+    from jailbee.autostart_plan import RerunTarget, rerun_block
+    result = rerun_block(_rerun_fixture(), [RerunTarget(AutostartTrigger.ON_CREATE, "build", s) for s in ("c", "a")])
+    assert [(c.name, [s.name for s in c.steps]) for c in result.on_create[0].all_chains()] == [("first", ["a"]), ("second", ["c"])]
+
+
+def test_rerun_block_preserves_config_order_not_argument_order():
+    from jailbee.autostart_plan import RerunTarget, rerun_block
+    result = rerun_block(_rerun_fixture(), [RerunTarget(AutostartTrigger.ON_CREATE, s, None) for s in ("finish", "build")])
+    assert [s.stage for s in result.on_create] == ["build", "finish"]
+
+
+def test_resolve_ambiguous_stage_needs_trigger():
+    from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
+    block = Autostart.model_validate({"on_create": [_stage("build")], "on_start": [_stage("build")]})
+    with pytest.raises(RerunSelectionError) as exc:
+        resolve_rerun(block, stages=["build"], steps=[], trigger=None)
+    assert exc.value.exit_code == 2
+    assert "on_create" in str(exc.value) and "on_start" in str(exc.value)
+
+
+def test_resolve_agents_and_services_refused():
+    from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
+    block = Autostart.model_validate({"on_start": [{"stage": "agents"}, {"stage": "services"}]})
+    for name in ("agents", "services", "services#1"):
+        with pytest.raises(RerunSelectionError) as exc:
+            resolve_rerun(block, stages=[name], steps=[], trigger=None)
+        assert exc.value.exit_code == 1
+        assert "not re-runnable" in str(exc.value)
+
+
+def test_resolve_unknown_step_lists_candidates():
+    from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
+    with pytest.raises(RerunSelectionError) as exc:
+        resolve_rerun(_rerun_fixture(), stages=[], steps=["build/nope"], trigger=None)
+    assert exc.value.exit_code == 2
+    assert all(name in str(exc.value) for name in ("a", "b", "c"))
+
+
+def test_legacy_flat_steps_are_addressable():
+    from jailbee.autostart_plan import resolve_rerun, rerun_block
+    block = _flat({"name": "install", "run": "x"}, {"name": "check", "run": "y"})
+    targets = resolve_rerun(block, stages=[], steps=["install/check"], trigger=None)
+    result = rerun_block(block, targets)
+    assert result.on_create[0].stage == "install"
+    assert [s.name for s in result.on_create[0].all_chains()[0].steps] == ["check"]
+
+
+def test_direct_reserved_targets_never_enter_output():
+    from jailbee.autostart_plan import RerunTarget, rerun_block
+    block = Autostart.model_validate({"on_start": [{"stage": "agents"}, {"stage": "services"}]})
+    targets = [RerunTarget(AutostartTrigger.ON_START, name, None) for name in ("agents", "services")]
+    assert rerun_block(block, targets).on_start == []
+
+
+@pytest.mark.parametrize("value", ["build", "/a", "build/", "build/a/b"])
+def test_resolve_malformed_step(value):
+    from jailbee.autostart_plan import RerunSelectionError, resolve_rerun
+    with pytest.raises(RerunSelectionError) as exc:
+        resolve_rerun(_rerun_fixture(), stages=[], steps=[value], trigger=None)
+    assert exc.value.exit_code == 2
+
+
+def test_ordinary_services_stage_remains_rerunnable_alongside_slot():
+    from jailbee.autostart_plan import resolve_rerun, rerun_block
+    block = Autostart.model_validate({"on_start": [{"stage": "services", "steps": [{"name": "x", "run": "x"}]}, {"stage": "services"}]})
+    targets = resolve_rerun(block, stages=["services"], steps=[], trigger=AutostartTrigger.ON_START)
+    result = rerun_block(block, targets)
+    assert len(result.on_start) == 1
+    assert result.on_start[0].all_chains()[0].steps[0].name == "x"
