@@ -1053,6 +1053,15 @@ def test_upgrade_note_announces_orchestration_skills() -> None:
     assert notes[0].actions == frozenset({"apply"})
 
 
+def test_orchestrator_role_upgrade_note_is_apply_only() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if "orchestrator role" in n.reason]
+    assert len(notes) == 1
+    assert notes[0].version == (1, 8, 4)
+    assert notes[0].actions == frozenset({"apply"})
+
+
 def test_inbox_wait_none_has_build_and_apply_notes() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
