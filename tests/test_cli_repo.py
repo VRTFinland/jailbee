@@ -282,9 +282,7 @@ def test_dry_run_real_plan_preserves_shared_alias(
         configs[root] = make_cfg(root, container_prefix=name, golden={"alias": "shared"})
     mocker.patch("jailbee.repo_remove.load_repo_config", side_effect=lambda root: configs[root])
     repo_cli_env.profile_list.return_value = ["target-base"]
-    repo_cli_env.list_containers.return_value = [
-        {"name": "shared--golden", "profiles": []}
-    ]
+    repo_cli_env.list_containers.return_value = [{"name": "shared--golden", "profiles": []}]
     result = CliRunner().invoke(app, ["repo", "rm", "target", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "Golden kept: shared with other" in result.output

@@ -75,7 +75,9 @@ def test_unregistered_path_passes_loaded_config(monkeypatch, tmp_path, make_cfg)
     monkeypatch.setattr(repo_commands, "list_repos", lambda *a, **kw: [])
     monkeypatch.setattr(config, "load_repo_config", lambda root: cfg)
     planned = []
-    monkeypatch.setattr(repo_remove, "plan_removal", lambda *a, **kw: planned.append((a, kw)) or _plan())
+    monkeypatch.setattr(
+        repo_remove, "plan_removal", lambda *a, **kw: planned.append((a, kw)) or _plan()
+    )
     result = CliRunner().invoke(app, ["repo", "rm", str(tmp_path), "--dry-run"])
     assert result.exit_code == 0, result.output
     assert planned[0][0][0] == "demo"
@@ -88,7 +90,8 @@ def test_unregistered_path_rejects_conflicting_registered_root(monkeypatch, tmp_
     cfg = make_cfg(tmp_path, container_prefix="demo")
     monkeypatch.setattr(config, "load_repo_config", lambda root: cfg)
     monkeypatch.setattr(
-        repo_commands, "list_repos",
+        repo_commands,
+        "list_repos",
         lambda *a, **kw: [RepoEntry("demo", tmp_path / "other", "ok", 0, None)],
     )
     monkeypatch.setattr(repo_remove, "plan_removal", lambda *a, **kw: pytest.fail("planned"))
@@ -128,8 +131,15 @@ def test_loaded_config_running_agents_block_removal(monkeypatch, mocker, tmp_pat
     execute = mocker.patch.object(repo_remove, "execute_removal", return_value=[])
     running = mocker.Mock(return_value=["demo-one"])
     with pytest.raises(typer.Exit) as exc:
-        repo_commands.remove_command("demo", yes=True, dry_run=False, force=False, purge=False,
-                                     running_agents=running, warn_before_destroy=mocker.Mock())
+        repo_commands.remove_command(
+            "demo",
+            yes=True,
+            dry_run=False,
+            force=False,
+            purge=False,
+            running_agents=running,
+            warn_before_destroy=mocker.Mock(),
+        )
     assert exc.value.exit_code == 2
     running.assert_called_once_with(cfg, mocker.ANY, ["demo-one"])
     execute.assert_not_called()
@@ -149,8 +159,15 @@ def test_loaded_config_guards_and_confirmation(monkeypatch, mocker, tmp_path, ma
     monkeypatch.setattr(prompting, "is_interactive", lambda: True)
     running = mocker.Mock(return_value=[])
     confirm = mocker.Mock(return_value=True)
-    repo_commands.remove_command("demo", yes=False, dry_run=False, force=False, purge=False,
-                                 running_agents=running, warn_before_destroy=confirm)
+    repo_commands.remove_command(
+        "demo",
+        yes=False,
+        dry_run=False,
+        force=False,
+        purge=False,
+        running_agents=running,
+        warn_before_destroy=confirm,
+    )
     running.assert_called_once_with(cfg, mocker.ANY, ["demo-one"])
     confirm.assert_called_once_with(cfg, [info], question="Remove repository demo?")
     execute.assert_called_once()
@@ -167,13 +184,25 @@ def test_yes_reports_loaded_config_git_risks(monkeypatch, mocker, tmp_path, make
     execute = mocker.patch.object(repo_remove, "execute_removal", return_value=[])
     monkeypatch.setattr(lifecycle, "list_containers", lambda *a, **kw: [info])
     monkeypatch.setattr(destroy_guard, "status_is_unknown", lambda info: True)
-    monkeypatch.setattr(destroy_guard, "assess", lambda cfg, info: SimpleNamespace(line="uncommitted work"))
+    monkeypatch.setattr(
+        destroy_guard, "assess", lambda cfg, info: SimpleNamespace(line="uncommitted work")
+    )
     warn = mocker.patch.object(tui, "warn")
     running = mocker.Mock(return_value=[])
     confirm = mocker.Mock()
-    repo_commands.remove_command("demo", yes=True, dry_run=False, force=False, purge=False,
-                                 running_agents=running, warn_before_destroy=confirm)
-    assert [call.args[0] for call in warn.call_args_list] == ["Git status unknown: one", "uncommitted work"]
+    repo_commands.remove_command(
+        "demo",
+        yes=True,
+        dry_run=False,
+        force=False,
+        purge=False,
+        running_agents=running,
+        warn_before_destroy=confirm,
+    )
+    assert [call.args[0] for call in warn.call_args_list] == [
+        "Git status unknown: one",
+        "uncommitted work",
+    ]
     running.assert_called_once()
     confirm.assert_not_called()
     execute.assert_called_once()
