@@ -779,7 +779,9 @@ def test_status_timeout_and_large_output(tmp_path):
 
 
 def test_status_not_run_for_stopped_or_dead_panes(tmp_path):
-    rt, proc = runtime(tmp_path, {"a": {"run": "x", "status": "x"}, "b": {"run": "x", "status": "x"}})
+    rt, proc = runtime(
+        tmp_path, {"a": {"run": "x", "status": "x"}, "b": {"run": "x", "status": "x"}}
+    )
     proc.windows["svc-b"] = (1, 2, 1)
     assert [s.state for s in rt.status()] == ["stopped", "exited"]
     assert not proc.health_calls

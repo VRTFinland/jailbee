@@ -183,7 +183,9 @@ def test_profile_services_accepts_existing_and_empty(tmp_path):
 
 
 def test_invalid_filter_regex_rejected_at_load(tmp_path):
-    assert load("services: {web: {run: x, logs: {filters: {errors: error}}}}", tmp_path).services["web"].logs.filters == {"errors": "error"}
+    assert load("services: {web: {run: x, logs: {filters: {errors: error}}}}", tmp_path).services[
+        "web"
+    ].logs.filters == {"errors": "error"}
     with pytest.raises(ConfigError) as exc:
         load("services: {web: {run: x, logs: {filters: {errors: '['}}}}", tmp_path)
     assert "web" in str(exc.value) and "errors" in str(exc.value)

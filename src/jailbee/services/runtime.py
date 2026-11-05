@@ -248,8 +248,13 @@ class ServiceRuntime:
                 if item.window is not None and item.state != "exited" and service.status:
                     statuses.append(
                         pool.submit(
-                            self._probe_launch, item.name, "status", service.status,
-                            service.status_timeout, item.since or "", fresh=fresh,
+                            self._probe_launch,
+                            item.name,
+                            "status",
+                            service.status,
+                            service.status_timeout,
+                            item.since or "",
+                            fresh=fresh,
                         )
                     )
                 else:
@@ -259,7 +264,9 @@ class ServiceRuntime:
                 item = health_job.result()
                 if status_job is not None:
                     value, detail = render_status(status_job.result()[0])
-                    item = replace(item, status=value, detail=compose_detail(item.detail, detail, None))
+                    item = replace(
+                        item, status=value, detail=compose_detail(item.detail, detail, None)
+                    )
                 results.append(item)
             return results
 
