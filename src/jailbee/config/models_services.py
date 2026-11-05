@@ -60,6 +60,8 @@ class Service(BaseModel):
     run: str = Field(min_length=1, description="Long-running foreground shell command.")
     ready: str | None = Field(default=None, description="Optional readiness probe command.")
     ready_timeout: int = Field(default=120, gt=0, description="Readiness timeout in seconds.")
+    health: str | None = Field(default=None, description="Optional health probe command.")
+    health_timeout: int = Field(default=5, ge=1, description="Health probe timeout in seconds.")
     stop: str | None = Field(default=None, description="Optional stop command.")
     stop_timeout: int = Field(default=10, gt=0, description="Stop timeout in seconds.")
     working_dir: str = Field(

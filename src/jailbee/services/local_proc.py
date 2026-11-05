@@ -10,7 +10,19 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    code: int | None
+    stdout: str
+    stderr: str
+    timed_out: bool
+
+
+_PROBE_OUTPUT_LIMIT = 16 * 1024
 
 # The anchor publishes its identity before the service command starts. It stays
 # in the pane's process group after the pane shell exits.
@@ -93,6 +105,44 @@ class LocalProc:
                 process.terminate()
             process.wait()
             process.stdout.close()
+
+    def run_probe(
+        self,
+        cmd: str,
+        *,
+        cwd: str,
+        env: Mapping[str, str],
+        timeout: int,
+    ) -> ProbeResult:
+        process = subprocess.Popen(
+            ["bash", "-lc", cmd],
+            cwd=cwd,
+            env={**os.environ, **env},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            return ProbeResult(
+                process.returncode,
+                stdout[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
+                stderr[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
+                False,
+            )
+        except subprocess.TimeoutExpired:
+            self.signal_group(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+            return ProbeResult(
+                None,
+                stdout[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
+                stderr[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
+                True,
+            )
+        except BaseException:
+            self.signal_group(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
 
     def run_shell(
         self,

@@ -30,6 +30,44 @@ def test_shell_timeout_kills_group_and_reaps(monkeypatch, tmp_path):
     assert process.wait.call_count == 2
 
 
+def test_run_probe_captures_stdout_stderr_and_exit_code(tmp_path):
+    result = LocalProc().run_probe(
+        "printf out; printf err >&2; exit 3",
+        cwd=str(tmp_path),
+        env={},
+        timeout=5,
+    )
+    assert (result.code, result.stdout, result.stderr, result.timed_out) == (3, "out", "err", False)
+
+
+def test_run_probe_caps_each_output_stream(tmp_path):
+    result = LocalProc().run_probe(
+        "printf '%020000d' 0; printf '%020000d' 0 >&2",
+        cwd=str(tmp_path),
+        env={},
+        timeout=5,
+    )
+    assert len(result.stdout) == 16 * 1024
+    assert len(result.stderr) == 16 * 1024
+
+
+def test_run_probe_timeout_kills_process_group(tmp_path):
+    marker = tmp_path / "child-finished"
+    result = LocalProc().run_probe(
+        f"(sleep 2; touch {marker}) & printf started; sleep 10",
+        cwd=str(tmp_path),
+        env={},
+        timeout=0.1,
+    )
+    assert result.code is None
+    assert result.stdout == "started"
+    assert result.timed_out
+    import time
+
+    time.sleep(2.1)
+    assert not marker.exists()
+
+
 def test_interrupted_shell_kills_and_reaps_before_propagating(monkeypatch, tmp_path):
     process = Mock(pid=123)
     process.wait.side_effect = [KeyboardInterrupt(), -9]
