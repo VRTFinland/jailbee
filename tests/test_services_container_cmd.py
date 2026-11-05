@@ -138,7 +138,8 @@ def test_ls_json_and_default(tmp_path: Path, monkeypatch) -> None:
     base = ["service", "--repo", str(tmp_path)]
     result = runner.invoke(container_app, [*base, "ls", "--json"])
     assert json.loads(result.stdout) == [
-        {"name": "db", "state": "ready", "window": "svc-db", "since": "today", "detail": "ok"}
+        {"name": "db", "state": "ready", "window": "svc-db", "since": "today", "detail": "ok",
+         "launch": None, "status": None}
     ]
     result = runner.invoke(container_app, base)
     assert result.exit_code == 0 and "db" in result.stdout and "ready" in result.stdout

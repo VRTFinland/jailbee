@@ -190,6 +190,42 @@ def test_parallel_probes_and_shared_cache_lock(tmp_path):
     assert sorted(call[0] for call in proc.health_calls) == ["a-check", "b-check"]
 
 
+def test_concurrent_success_does_not_erase_failed_status_since(tmp_path):
+    rt, proc = runtime(tmp_path, {"a": {"run": "a", "health": "check"}})
+    proc.windows["svc-a"] = (0, "", 1)
+    rt._save("a", "ready")
+    launch = rt._state()["a"]["since"]
+    failed = threading.Event()
+    resume = threading.Event()
+    original = rt._probe_launch
+    calls = iter([ProbeResult(1, "", "bad", False), ProbeResult(0, "", "", False)])
+    proc.run_probe = lambda *args, **kwargs: next(calls)
+
+    def pause_after_failure(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if threading.current_thread().name == "failure":
+            failed.set()
+            assert resume.wait(3)
+        return result
+
+    rt._probe_launch = pause_after_failure
+    statuses = []
+    # Call _health directly so the controlled thread constructs the status itself.
+    item = rt.status(probe=False)[0]
+    thread = threading.Thread(target=lambda: statuses.append(rt._health(item, fresh=True)), name="failure")
+    thread.start()
+    assert failed.wait(3)
+    try:
+        assert rt._health(item, fresh=True).state == "ready"
+    finally:
+        resume.set()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert statuses[0].state == "unhealthy"
+    assert statuses[0].since != launch
+    assert statuses[0].since is not None
+
+
 def test_probe_snapshot_uses_original_launch(tmp_path):
     rt, proc = runtime(tmp_path, {"a": {"run": "a", "health": "check"}})
     proc.windows["svc-a"] = (0, "", 1)

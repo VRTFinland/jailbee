@@ -138,17 +138,14 @@ class ServiceRuntime:
         timeout: int, *, fresh: bool = False,
     ) -> ProbeResult:
         launch_id = self._state().get(name, {}).get("since", "")
-        return self._probe_launch(name, kind, cmd, timeout, launch_id, fresh=fresh)
+        result, _ = self._probe_launch(name, kind, cmd, timeout, launch_id, fresh=fresh)
+        return result
 
     def _probe_launch(
         self, name: str, kind: Literal["health", "status"], cmd: str,
         timeout: int, launch_id: str, *, fresh: bool,
-    ) -> ProbeResult:
+    ) -> tuple[ProbeResult, float | None]:
         cache = ProbeCache(self.state_dir / "probes.json")
-        if not fresh:
-            cached = cache.get(name, kind, launch_id)
-            if cached is not None:
-                return cached
         self.state_dir.mkdir(parents=True, exist_ok=True)
         key = json.dumps([name, kind, launch_id]).encode()
         lock_path = self.state_dir / ("probe-" + hashlib.sha256(key).hexdigest() + ".lock")
@@ -158,14 +155,14 @@ class ServiceRuntime:
                 if not fresh:
                     cached = cache.get(name, kind, launch_id)
                     if cached is not None:
-                        return cached
+                        return cached, cache.first_failure(name, kind, launch_id)
                 service = self.cfg.services[name]
                 result = self.proc.run_probe(
                     cmd, cwd=str(self.repo_dir / service.working_dir),
                     env=self.launch_env(name), timeout=timeout,
                 )
                 cache.put(name, kind, launch_id, result)
-                return result
+                return result, cache.first_failure(name, kind, launch_id)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
@@ -175,7 +172,7 @@ class ServiceRuntime:
         if item.state != "ready" or not command:
             return item
         launch_id = item.since or ""
-        result = self._probe_launch(
+        result, first = self._probe_launch(
             item.name, "health", command, service.health_timeout, launch_id, fresh=fresh
         )
         if result.code == 0 and not result.timed_out:
@@ -189,9 +186,6 @@ class ServiceRuntime:
             detail = f"health check failed (exit {result.code})"
             if lines:
                 detail += ": " + lines[-1][:200]
-        first = ProbeCache(self.state_dir / "probes.json").first_failure(
-            item.name, "health", launch_id
-        )
         since = datetime.fromtimestamp(first, UTC).isoformat() if first is not None else item.since
         return replace(item, state="unhealthy", since=since, detail=detail)
 
