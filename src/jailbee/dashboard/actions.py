@@ -43,6 +43,12 @@ REPO_BASE_BUILD = "base-build"
 REPO_DISMISS_ADVISORIES = "dismiss-advisories"
 REPO_UPGRADE_ALL = "upgrade-all"
 REPO_SENT = "sent"
+REPO_REMOVE = "repo-remove"
+
+
+def repo_remove_argv(prefix: str) -> list[str]:
+    return ["repo", "rm", prefix]
+
 
 DIAGNOSTICS_LABEL = "Diagnostics →"
 

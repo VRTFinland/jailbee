@@ -654,14 +654,15 @@ def test_repo_menu_toggles_fold_and_persists_it(mocker, tmp_path, initially_fold
     assert save.call_args.args[2].hidden_repos == frozenset({"other"})
 
 
-def test_orphan_repo_menu_only_offers_folding(mocker):
+def test_orphan_repo_menu_offers_removal_and_folding(mocker):
     group = dmodel.RepoGroup("orphan", None, None, [ci("orphan-x", "orphan")])
     child = mocker.patch.object(tsession.subprocess, "run")
-    mocker.patch.object(tsession, "save_view_state")
+    save = mocker.patch.object(tsession, "save_view_state")
 
-    run = drive(mocker, ["enter", "enter"], groups=[group])
+    run = drive(mocker, ["enter", "f"], groups=[group])
     menus = [overlay for overlay in run.overlays() if overlay]
-    assert menus[0].actions == [("Fold", "fold")]
+    assert menus[0].actions == [("Remove repo…", "repo-remove"), ("Fold", "fold")]
+    assert save.call_args.args[2].folded == frozenset({"orphan"})
     child.assert_not_called()
 
 

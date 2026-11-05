@@ -824,6 +824,12 @@ class Incus:
 
     # ---- Profiles -----------------------------------------------------------
 
+    def profile_list(self) -> list[str]:
+        """Names of every profile known to the daemon."""
+        result = self._run(["profile", "list", "--format", "json"], check=True)
+        profiles = json.loads(result.stdout) if result.stdout else []
+        return [profile["name"] for profile in profiles]
+
     def profile_create(self, name: str) -> None:
         self._run(["profile", "create", name])
 
@@ -1124,6 +1130,11 @@ class Incus:
         """Return the ACL's current state as YAML (raw stdout)."""
         result = self._run(["network", "acl", "show", name])
         return result.stdout
+
+    def network_acl_used_by(self, name: str) -> list[str]:
+        """Return API paths of networks referencing this ACL."""
+        parsed = yaml.safe_load(self.network_acl_show(name)) or {}
+        return [str(item) for item in parsed.get("used_by") or []]
 
     def network_get(self, name: str, key: str) -> str:
         """Get a single network config key. Returns empty string if unset."""

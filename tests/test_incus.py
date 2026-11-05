@@ -438,6 +438,13 @@ def test_client_version_unknown_probed_once(incus, mocker):
     assert run.call_count == 1
 
 
+def test_profile_list_returns_names_from_json(incus, mocker):
+    run = _mock_run(mocker, stdout='[{"name":"default"},{"name":"jailbee-base"}]')
+
+    assert incus.profile_list() == ["default", "jailbee-base"]
+    assert run.call_args.args[0] == ["incus", "profile", "list", "--format", "json"]
+
+
 def test_profile_show_returns_stdout(incus, mocker):
     _mock_run(mocker, stdout="name: foo\nconfig: {}\n")
     assert incus.profile_show("foo") == "name: foo\nconfig: {}\n"
@@ -638,6 +645,34 @@ def test_network_set_invokes_cli(incus, mocker):
         "security.acls",
         "myrepo-allowlist",
     ]
+
+
+def test_network_acl_used_by_returns_referencing_objects(incus, mocker):
+    run = _mock_run(
+        mocker,
+        stdout=(
+            "name: myrepo-allowlist\nused_by:\n"
+            "- /1.0/networks/incusbr0\n- /1.0/networks/jailbee-work\n"
+        ),
+    )
+
+    assert incus.network_acl_used_by("myrepo-allowlist") == [
+        "/1.0/networks/incusbr0",
+        "/1.0/networks/jailbee-work",
+    ]
+    assert run.call_args.args[0] == [
+        "incus",
+        "network",
+        "acl",
+        "show",
+        "myrepo-allowlist",
+    ]
+
+
+def test_network_acl_used_by_returns_empty_when_unused(incus, mocker):
+    _mock_run(mocker, stdout="name: myrepo-allowlist\nused_by: []\n")
+
+    assert incus.network_acl_used_by("myrepo-allowlist") == []
 
 
 def test_network_acl_show_returns_stdout(incus, mocker):

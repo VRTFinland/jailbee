@@ -50,6 +50,58 @@ app = typer.Typer(
 
 app.add_typer(outbox_app)
 
+repo_app = typer.Typer(name="repo", help="Manage registered repositories.", no_args_is_help=True)
+app.add_typer(repo_app)
+
+
+@repo_app.command("ls")
+def repo_ls(
+    fmt: Annotated[
+        Literal["table", "json"], typer.Option("--format", help="Output format.")
+    ] = "table",
+) -> None:
+    """List registered repositories and leftover resources."""
+    from jailbee.incus import IncusError
+    from jailbee.repo_commands import list_command
+
+    try:
+        list_command(fmt)
+    except (IncusError, ConfigError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@repo_app.command("rm")
+def repo_rm(
+    target: Annotated[str | None, typer.Argument(help="Repository prefix or directory.")] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the removal plan only.")] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Skip agent and destroy risk guards.")
+    ] = False,
+    purge: Annotated[
+        bool, typer.Option("--purge", help="Remove eligible repository data files.")
+    ] = False,
+) -> None:
+    """Remove a repository's managed resources."""
+    from jailbee.incus import IncusError
+    from jailbee.repo_commands import remove_command
+
+    try:
+        remove_command(
+            target,
+            yes=yes,
+            dry_run=dry_run,
+            force=force,
+            purge=purge,
+            running_agents=_running_agents,
+            warn_before_destroy=_warn_before_destroy,
+        )
+    except (IncusError, ConfigError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
+
 config_app = typer.Typer(
     name="config",
     help="Configuration commands.",
@@ -10860,7 +10912,11 @@ def net_unregister_cmd(
         typer.Option("--prefix", help="Target container_prefix directly"),
     ] = None,
 ) -> None:
-    """Remove the cwd (or --repo) registration from the refresh registry."""
+    """Deprecated: use `jailbee repo rm` to remove a repository."""
+    warn(
+        "`jailbee net unregister` is deprecated — use `jailbee repo rm` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     from sqlmodel import Session
 
     from jailbee.db import get_engine
