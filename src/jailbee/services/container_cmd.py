@@ -1,28 +1,34 @@
 """Container service command line."""
 
+from __future__ import annotations
+
 import json
 import math
 import re
 import socket
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 from typer._click import Context
 
 from jailbee import prompting
-from jailbee.config.errors import ConfigError
-from jailbee.config.repo_layer import default_repo_config_path, load_repo_layer
-from jailbee.services import graph, log_query, refresh
+from jailbee.services import log_query
 from jailbee.services.cli_launch import LaunchCommand, request
-from jailbee.services.local_proc import LocalProc
-from jailbee.services.runtime import RunReport, ServiceRuntime
+
+if TYPE_CHECKING:
+    from jailbee.services.runtime import RunReport, ServiceRuntime
 
 service_app = typer.Typer(invoke_without_command=True)
 
 
 def _runtime(repo: Path | None) -> ServiceRuntime:
+    from jailbee.config.errors import ConfigError
+    from jailbee.config.repo_layer import default_repo_config_path, load_repo_layer
+    from jailbee.services.local_proc import LocalProc
+    from jailbee.services.runtime import ServiceRuntime
+
     path = repo.resolve() / ".jailbee" / "config.yaml" if repo else default_repo_config_path()
     if not path.is_file():
         typer.echo("no .jailbee/config.yaml in this repository", err=True)
@@ -62,6 +68,8 @@ def ls(ctx: Context, json_output: Annotated[bool, typer.Option("--json")] = Fals
 
 
 def _names(rt: ServiceRuntime, names: list[str] | None, *, destructive: bool = False) -> list[str]:
+    from jailbee.services import graph
+
     if not names:
         names = [
             prompting.choose_one(
@@ -155,6 +163,8 @@ def restart(
 
 @service_app.command("refresh")
 def refresh_cmd(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
+    from jailbee.services import refresh
+
     rt = _runtime(ctx.obj)
     selected = _names(rt, names)
     refusal = refresh.elevation_refusal(rt.cfg, selected, socket.gethostname())
@@ -171,6 +181,8 @@ def plan(
     op: Annotated[Literal["start", "restart", "refresh"], typer.Option("--op")] = "start",
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
+    from jailbee.services import graph
+
     rt = _runtime(ctx.obj)
     try:
         payload = graph.plan_payload(
