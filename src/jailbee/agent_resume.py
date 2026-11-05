@@ -31,6 +31,10 @@ class ResumeEntry:
 
 _VALUE_OPTIONS = {
     "--model",
+    "--autocompact",
+    "--remote-control-session-name-prefix",
+    "--permission-prompts",
+    "--environment",
     "--system-prompt",
     "--system-prompt-file",
     "-n",
@@ -64,6 +68,7 @@ _VALUE_OPTIONS = {
     "--allowed-tools",
     "--disallowed-tools",
 }
+_OPTIONAL_OPTIONS = {"--prompt-suggestions", "--worktree", "-w", "--debug", "-d", "--remote-control"}
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
 _VARIADIC_OPTIONS = {
     "--add-dir",
@@ -148,7 +153,7 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
     index = 1
     while index < len(args):
         arg = args[index]
-        if arg == "--from-pr":
+        if arg in {"--from-pr", "--teleport", "--cloud"}:
             index += 1
             if index < len(args) and not args[index].startswith("-"):
                 index += 1
@@ -168,10 +173,17 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
         if (
             arg.startswith("--resume=")
             or arg.startswith("--session-id=")
-            or arg.startswith("--from-pr=")
+            or arg.startswith(("--from-pr=", "--teleport=", "--cloud="))
             or arg in _REMOVE_FLAGS
         ):
             index += 1
+            continue
+        if arg in _OPTIONAL_OPTIONS:
+            result.append(arg)
+            index += 1
+            if index < len(args) and not args[index].startswith("-"):
+                result.append(args[index])
+                index += 1
             continue
         if arg in _VALUE_OPTIONS or arg in _VARIADIC_OPTIONS:
             result.append(arg)
@@ -247,7 +259,7 @@ def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[Res
             result[match] = result[match].model_copy(update={"run": resume_run(entry)})
             claimed.add(match)
             continue
-        base = entry.window or "claude"
+        base = window_for(entry.window or "claude")[:48].strip("_") or "claude"
         name = base
         suffix = 2
         while name in names or window_for(name) in windows:

@@ -301,3 +301,61 @@ def test_main_dispatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         container_main.main()
     assert exc.value.code == 42
     assert "jailbee.container_cli" not in sys.modules
+
+
+def test_main_uses_passwd_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import pwd
+    from types import SimpleNamespace
+    monkeypatch.setenv("HOME", "/wrong")
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    seen = []
+    monkeypatch.setattr(snapshot, "boot", lambda home: seen.append(home) or {})
+    assert snapshot.main(["--boot"]) == 0
+    assert seen == [tmp_path]
+
+
+def test_string_pid_and_empty_launcher_args(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+    record(tmp_path, 7)
+    path = tmp_path / snapshot.SESSIONS_RELPATH / "7.json"
+    data = json.loads(path.read_text())
+    data["pid"] = "7"
+    path.write_text(json.dumps(data))
+    live(proc, 7)
+    marker(tmp_path, 7, b"777\0claude-jb\0--tools\0\0")
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert sessions(tmp_path)[0]["launcher"] == ["claude-jb", "--tools", ""]
+    snapshot.boot(tmp_path, proc=proc)
+    assert path.exists()
+
+
+def test_stale_overflow_batches_without_losing_launchers(tmp_path: Path) -> None:
+    for pid in (1, 2):
+        record(tmp_path, pid, sessionId=f"{pid:08x}-1234-1234-1234-123456789abc")
+        marker(tmp_path, pid, b"777\0claude-jb\0--append-system-prompt\0" + b"x" * 33000 + b"\0")
+    first = snapshot.boot(tmp_path, proc=tmp_path / "proc")
+    assert len(json.dumps(first).encode()) + 1 <= 65536
+    assert len(first["sessions"]) == 1
+    assert (tmp_path / snapshot.LAUNCHERS_RELPATH / "2").exists()
+    second = snapshot.boot(tmp_path, proc=tmp_path / "proc")
+    assert len(json.dumps(second).encode()) + 1 <= 65536
+    assert len(second["sessions"]) == 1
+    assert first["sessions"] != second["sessions"]
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
+def test_snapshot_directory_does_not_block_stale_recovery(tmp_path: Path) -> None:
+    record(tmp_path, 1)
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.mkdir(parents=True)
+    assert len(snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"]) == 1
+    assert path.is_dir()
+
+
+def test_huge_pid_is_invalid_not_an_exception(tmp_path: Path) -> None:
+    record(tmp_path, 7)
+    path = tmp_path / snapshot.SESSIONS_RELPATH / "7.json"
+    data = json.loads(path.read_text())
+    data["pid"] = "1" * 5000
+    path.write_text(json.dumps(data))
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []

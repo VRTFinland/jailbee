@@ -314,8 +314,8 @@ chmod 0644 /etc/profile.d/jailbee-claude.sh
 # PATH order can never break either. It reads /etc/jailbee/litellm.json
 # (written by `jailbee new` / `jailbee apply`), picks a profile —
 # --profile/-P, then $JAILBEE_LITELLM_PROFILE, then the file's default — sets the
-# variables Claude Code reads for a gateway, and execs `claude`. It writes
-# nothing and never falls back to native: a missing proxy is an error.
+# variables Claude Code reads for a gateway, records the launcher for resume,
+# and execs `claude`. A missing proxy is an error; it never falls back to native.
 # With the profile's `instructions` set it also appends them to Claude Code's system prompt.
 cat > /usr/local/bin/claude-jb <<'EOF'
 #!/bin/bash
@@ -590,7 +590,7 @@ mkdir -p /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/${CONTAINER_USER}"
 
 # Snapshot interactive Claude sessions while systemd stops the container.
-# systemd expands JAILBEE_USER_HOME at image-build time; requiring both the
+# The provisioning shell expands JAILBEE_USER_HOME here; requiring both the
 # source mount and home mount makes the snapshot's paths available at stop.
 cat > /etc/systemd/system/jailbee-agent-sessions.service <<EOF
 [Unit]

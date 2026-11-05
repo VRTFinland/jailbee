@@ -2,6 +2,7 @@
 
 import json
 import os
+import pwd
 import re
 import stat
 import sys
@@ -62,13 +63,13 @@ def _argv(path: Path) -> list[str]:
     if raw is None:
         return []
     try:
-        return raw.rstrip(b"\0").decode().split("\0") if raw else []
+        return (raw[:-1] if raw.endswith(b"\0") else raw).decode().split("\0") if raw else []
     except UnicodeError:
         return []
 
 
 def _valid_launcher(args: list[str]) -> bool:
-    return bool(args and Path(args[0]).name in {"claude", "claude-jb"} and all(args))
+    return bool(args and Path(args[0]).name in {"claude", "claude-jb"})
 
 
 def _launcher(home: Path, pid: str, start: str, fallback: list[str]) -> list[str]:
@@ -90,8 +91,15 @@ def _record(path: Path) -> dict[str, object] | None:
     if not isinstance(data, dict):
         return None
     pid, start = data.get("pid"), data.get("procStart")
-    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or path.name != f"{pid}.json":
+    if isinstance(pid, bool) or not isinstance(pid, (int, str)):
         return None
+    pid_text = str(pid)
+    if not pid_text.isascii() or not pid_text.isdigit():
+        return None
+    pid_text = pid_text.lstrip("0")
+    if not pid_text or path.name != f"{pid_text}.json":
+        return None
+    data["pid"] = pid_text
     if isinstance(start, bool) or not isinstance(start, (int, str)):
         return None
     if not str(start).isascii() or not str(start).isdigit():
@@ -109,7 +117,7 @@ def _item(data: dict[str, object], launcher: list[str], window: str | None) -> d
 
 
 def _write_snapshot(path: Path, payload: bytes) -> None:
-    if len(payload) > _LIMIT:
+    if len(payload) + 1 > _LIMIT:
         raise ValueError("agent snapshot exceeds size limit")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=".agent-sessions-")
@@ -152,7 +160,7 @@ def _unlink_stale(path: Path) -> bool:
 
 def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
     path = home / SNAPSHOT_RELPATH
-    has_snapshot = path.exists() or path.is_symlink()
+    has_snapshot = (path.exists() or path.is_symlink()) and not path.is_dir()
     result: dict[str, object] = {"version": 1, "source": "capture" if has_snapshot else "stale", "sessions": []}
     if has_snapshot:
         data = _json(path)
@@ -175,6 +183,15 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         item = None
         if data is not None and data.get("kind") == "interactive":
             item = _item(data, _launcher(home, pid, str(data["procStart"]), ["claude"]), None)
+        if not has_snapshot and item is not None:
+            candidate = {**result, "sessions": [*stale, item]}
+            if len(json.dumps(candidate).encode("utf-8")) + 1 > _LIMIT:
+                single = {**result, "sessions": [item]}
+                if len(json.dumps(single).encode("utf-8")) + 1 <= _LIMIT:
+                    blocked_pids.add(pid)
+                    continue
+                print(f"agent snapshot: dropping oversized session {pid}", file=sys.stderr)
+                item = None
         if _unlink_stale(entry):
             if not has_snapshot and item is not None:
                 stale.append(item)
@@ -184,7 +201,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
                 unconsumed.add(str(item["session_id"]))
     for entry in _entries(directory):
         match = re.fullmatch(r"([0-9]+)\..*\.key", entry.name)
-        if match and match[1] not in live:
+        if match and match[1] not in live and match[1] not in blocked_pids:
             _unlink_stale(entry)
     for entry in _entries(home / LAUNCHERS_RELPATH):
         if not entry.name.isascii() or not entry.name.isdigit() or entry.name in blocked_pids:
@@ -208,7 +225,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             _write_snapshot(path, json.dumps(remaining).encode("utf-8"))
             result["sessions"] = [item for item in entries if item not in blocked]
         else:
-            path.unlink(missing_ok=True)
+            _unlink_stale(path)
     return result
 
 
@@ -226,11 +243,11 @@ def window_names() -> dict[str, str]:
 def main(argv: list[str]) -> int:
     if argv == ["--capture"]:
         try:
-            capture(Path.home(), windows=window_names())
+            capture(Path(pwd.getpwuid(os.getuid()).pw_dir), windows=window_names())
         except Exception as exc:
             print(f"agent snapshot: {exc}", file=sys.stderr)
         return 0
     if argv == ["--boot"]:
-        print(json.dumps(boot(Path.home())))
+        print(json.dumps(boot(Path(pwd.getpwuid(os.getuid()).pw_dir))))
         return 0
     return 2

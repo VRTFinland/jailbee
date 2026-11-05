@@ -197,7 +197,7 @@ def test_restore_deduplicates_sanitized_window_names(make_cfg, tmp_path):
     step = AutostartStep(name="work space", run="other")
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work space")
     result = restore_steps(make_cfg(tmp_path), [step], [entry], prompted=None, extra_env={})
-    assert result[1].name == "work space-2"
+    assert result[1].name == "work_space-2"
 
 
 def test_restore_reserves_configured_step_windows(make_cfg, tmp_path):
@@ -207,3 +207,15 @@ def test_restore_reserves_configured_step_windows(make_cfg, tmp_path):
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work_space")
     result = restore_steps(cfg, [], [entry], prompted=None, extra_env={})
     assert result[0].name == "work_space-2"
+
+
+@pytest.mark.parametrize("option", ["--autocompact", "--remote-control-session-name-prefix", "--prompt-suggestions", "--worktree", "-w", "--debug", "-d", "--remote-control", "--permission-prompts", "--environment"])
+def test_replay_preserves_current_option_values(option):
+    assert replay_argv(["claude", option, "value"]) == ["claude", option, "value"]
+
+
+def test_restore_hostile_window_is_safe(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    entry = ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m")
+    name = restore_steps(make_cfg(tmp_path), [], [entry], prompted=None, extra_env={})[0].name
+    assert "[" not in name and "\x1b" not in name and len(name) <= 64
