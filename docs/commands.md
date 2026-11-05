@@ -131,6 +131,26 @@ run it on the host. Logs use tmux scrollback, not durable or
 byte-perfect capture: a line matching the exact tmux control-protocol snapshot
 trailer can truncate the snapshot or end following.
 
+### Health and waiting
+
+A live, ready service is `unhealthy` when its `health` command fails or times
+out. If `health` is unset, `ready` is used; with neither there is no health
+probe. `health_timeout` defaults to 5 seconds. Status reads cache probes for
+five seconds; JailBee never automatically restarts an unhealthy service.
+Use `service ls` and `service logs` to diagnose it, then restart it explicitly.
+
+Inside a container, `jailbee service wait api --until ready` waits for a state;
+on the host use `jb service wait CONTAINER api --until ready`. States are
+`stopped`, `starting`, `ready`, `failed`, `exited`, and `unhealthy`. Waiting
+for `unhealthy` also matches stopped, failed, or exited; with multiple services
+the first matching service wins. `--json` prints the matching status.
+`--interval` defaults to 10 seconds (minimum 1); `--timeout` defaults to 0
+(no limit). Exit codes are 0 for a match, 1 for timeout, 2 for invalid input,
+and 3 when waiting for ready encounters stopped, failed, or exited. Each tick
+performs a synchronous fresh status read before checking the deadline, so an
+in-flight scan can exceed the overall timeout; individual probes remain bounded
+by `health_timeout`.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in that registered repository instead of the

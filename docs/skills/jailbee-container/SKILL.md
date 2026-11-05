@@ -32,6 +32,16 @@ jailbee service stop api
 
 The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Other JailBee management commands run on the host, not here.
 
+### Health and waiting
+
+Before long tests or work that depends on services, check `jailbee service ls`
+or run `jailbee service wait api --until unhealthy` in the background to watch
+for failure. `unhealthy` also matches stopped, failed, or exited services.
+For connection refused, a blank UI, or HTTP 500, check `service ls` and
+`service logs` first; fix the environment and restart the service rather than
+changing application code to work around a dead service. JailBee does not
+restart unhealthy services automatically.
+
 ## Blocked network access
 
 The default network mode is strict, a default-deny egress allowlist; configuration may differ. Do not bypass a blocked destination through a proxy or tunnel. A child must ask its orchestrator for access, not request it directly from the host. Otherwise, give the operator the destination and container identity and ask them to run on the host:

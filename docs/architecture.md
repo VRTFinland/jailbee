@@ -50,6 +50,14 @@ window of the shared autostart session. Readiness gates dependent starts.
 bash; runtime operations receive it as a dependency. Elevated prepare is
 refused until the orchestrated elevation path is implemented.
 
+### Health and waiting
+
+For live ready panes, status derives `unhealthy` on read from `health`, falling
+back to `ready` when no health command is configured. Probe results are cached
+per service and launch for five seconds; a fresh wait tick bypasses the cache.
+The derived state is not persisted as lifecycle state. There is no supervisor or
+automatic restart: an operator or agent must diagnose and restart the service.
+
 ## Golden image
 
 `jailbee base build` provisions a golden using the configured

@@ -54,6 +54,16 @@ with steps/chains stay ordinary work in either trigger. Slots reject network and
 nonempty mounts; elevate service prepare steps instead. Multiple slots have
 separate autostart status rows. See [service commands](references/commands.md#services).
 
+### Health and waiting
+
+Before long tests or service-dependent work, check `jailbee service ls` or run
+`jailbee service wait api --until unhealthy` in the background. The latter also
+matches stopped, failed, or exited. For connection refused, a blank UI, or HTTP
+500, check `service ls` and logs first; fix the environment and restart the
+service, rather than changing app code to mask a dead service. JailBee does not
+automatically restart unhealthy services. On the host, put the container name
+before the service name.
+
 ## Mental model (read this first — it explains every command)
 
 Four ideas make the whole tool make sense:

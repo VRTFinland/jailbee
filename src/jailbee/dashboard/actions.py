@@ -254,7 +254,7 @@ def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
                 or not name
                 or not name.isprintable()
                 or name in seen
-                or state not in ("ready", "starting", "stopped", "failed", "exited")
+                or state not in ("ready", "starting", "stopped", "failed", "exited", "unhealthy")
                 or not all(
                     k in item and (item[k] is None or isinstance(item[k], str))
                     for k in ("window", "since")
@@ -280,7 +280,9 @@ def services_picker(container: str, rows: Sequence[ServiceRow]) -> Picker:
 
 
 def service_action_picker(container: str, service: str, state: str) -> Picker:
-    ops: tuple[str, ...] = ("stop", "restart") if state in ("ready", "starting") else ("start",)
+    ops: tuple[str, ...] = (
+        ("stop", "restart") if state in ("ready", "starting", "unhealthy") else ("start",)
+    )
     ops += ("refresh", "logs")
     return Picker(
         "container-service-action",
