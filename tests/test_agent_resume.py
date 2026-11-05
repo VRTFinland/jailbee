@@ -80,6 +80,14 @@ def test_parse_invalid_snapshot_returns_empty(raw: str) -> None:
 @pytest.mark.parametrize(
     ("launcher", "expected"),
     [
+        (["claude", "--agent", "reviewer"], ["claude", "--agent", "reviewer"]),
+        (["claude", "--effort", "high"], ["claude", "--effort", "high"]),
+        (["claude", "--plugin-dir", "/plugins"], ["claude", "--plugin-dir", "/plugins"]),
+        (["claude", "--add-dir", "/a", "/b"], ["claude", "--add-dir", "/a", "/b"]),
+        (["claude", "--mcp-config", "a", "b"], ["claude", "--mcp-config", "a", "b"]),
+        (["claude", "--allowedTools", "X", "Y"], ["claude", "--allowedTools", "X", "Y"]),
+        (["claude", "--session-id", "--resume"], ["claude"]),
+        (["claude", "--system-prompt", "--resume"], ["claude", "--system-prompt", "--resume"]),
         (
             ["claude-jb", "-P", "codex", "-C", "1m", "--model", "opus"],
             ["claude-jb", "-P", "codex", "-C", "1m", "--model", "opus"],
@@ -89,7 +97,7 @@ def test_parse_invalid_snapshot_returns_empty(raw: str) -> None:
         (["claude", "-c", "--model", "haiku"], ["claude", "--model", "haiku"]),
         (["claude", "--session-id=X", "--fork-session"], ["claude"]),
         (["claude", "--model", "opus", "fix the bug"], ["claude", "--model", "opus"]),
-        (["claude", "fix bug", "--model", "opus"], ["claude", "fix bug", "--model", "opus"]),
+        (["claude", "fix bug", "--model", "opus"], ["claude", "--model", "opus"]),
         (["claude", "--", "fix bug"], ["claude"]),
         (
             ["claude", "--system-prompt", "--resume", "--model", "opus"],

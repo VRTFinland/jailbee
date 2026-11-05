@@ -24,6 +24,20 @@ _VALUE_OPTIONS = {
     "--model",
     "--system-prompt",
     "--system-prompt-file",
+    "--agent",
+    "--agents",
+    "--effort",
+    "--plugin-dir",
+    "--plugin-url",
+    "--fallback-model",
+    "--name",
+    "--debug-file",
+    "--input-format",
+    "--json-schema",
+    "--max-budget-usd",
+    "--output-format",
+    "--setting-sources",
+    "--system-prompt-snapshot",
     "--tools",
     "--allowedTools",
     "--disallowedTools",
@@ -39,6 +53,7 @@ _VALUE_OPTIONS = {
     "--append-system-prompt-file",
 }
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
+_VARIADIC_OPTIONS = {"--add-dir", "--allowedTools", "--disallowedTools", "--mcp-config", "--tools"}
 
 
 def parse_snapshot(raw: str) -> list[ResumeEntry]:
@@ -111,7 +126,12 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
     index = 1
     while index < len(args):
         arg = args[index]
-        if arg in {"-r", "--resume", "--session-id"}:
+        if arg == "--session-id":
+            index += 1
+            if index < len(args):
+                index += 1
+            continue
+        if arg in {"-r", "--resume"}:
             index += 1
             if index < len(args) and not args[index].startswith("-"):
                 index += 1
@@ -121,20 +141,20 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
         if arg.startswith("--resume=") or arg.startswith("--session-id=") or arg in _REMOVE_FLAGS:
             index += 1
             continue
-        if arg in _VALUE_OPTIONS:
+        if arg in _VALUE_OPTIONS or arg in _VARIADIC_OPTIONS:
             result.append(arg)
             index += 1
-            if index < len(args):
+            if arg in _VARIADIC_OPTIONS:
+                while index < len(args) and not args[index].startswith("-"):
+                    result.append(args[index])
+                    index += 1
+            elif index < len(args):
                 result.append(args[index])
                 index += 1
             continue
         if arg.startswith("-"):
             result.append(arg)
-        else:
-            # The CLI prompt is a trailing positional argument, never an earlier token.
-            if index == len(args) - 1:
-                break
-            result.append(arg)
+        # Bare positional arguments are prompts and must not be replayed.
         index += 1
     return result
 
