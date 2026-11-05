@@ -31,6 +31,19 @@ def follow_control(monkeypatch):
     return proc, process, selector, read
 
 
+def test_follow_attach_callback_precedes_buffered_output(follow_control):
+    proc, _process, selector, read = follow_control
+    selector.select.return_value = [1]
+    read.side_effect = [b"%end 1 2 3\n%output %1 hit\\012\n", b""]
+    events = []
+    stream = proc.follow_pane(
+        "svc", 10, initial=False, poll_interval=0.1, on_attached=lambda: events.append("attached")
+    )
+    for chunk in stream:
+        events.append(chunk)
+    assert events == ["attached", "hit\n"]
+
+
 def test_follow_poll_frames_ticks_and_decodes(follow_control):
     proc, process, selector, read = follow_control
     selector.select.side_effect = [[], [1], [1], [1], [1]]

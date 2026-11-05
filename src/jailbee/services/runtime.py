@@ -348,16 +348,23 @@ class ServiceRuntime:
             item = self._lifecycle(name, self._panes(), self._state())
             return [f"{name}: {item.state}" + (f" ({item.detail})" if item.detail else "")]
 
+        def success(lines: list[str]) -> tuple[int, list[str]]:
+            pane = self._panes().get(WINDOW_PREFIX + name)
+            if pane is None or pane.dead:
+                return 3, pane_error()
+            return 0, lines
+
         pane = self._panes().get(WINDOW_PREFIX + name)
         if pane is None or pane.dead:
             return 3, pane_error()
         preceding: deque[str] = deque(maxlen=before)
-        if before:
-            try:
+        def capture_context() -> None:
+            if before:
                 preceding.extend(strip_terminal(self.logs(name, before)).splitlines()[-before:])
-            except RuntimeError:
-                return 3, pane_error()
-        stream = self.proc.follow_pane(self._target(name), 1, initial=False, poll_interval=0.1)
+
+        stream = self.proc.follow_pane(
+            self._target(name), 1, initial=False, poll_interval=0.1, on_attached=capture_context
+        )
         pending = ""
         result: list[str] = []
         matched = False
@@ -371,7 +378,7 @@ class ServiceRuntime:
                     if pane is None or pane.dead:
                         return 3, pane_error()
                 if matched and now - last_output >= silence:
-                    return 0, result
+                    return success(result)
                 if not matched and timeout and now - started >= timeout:
                     return 1, []
                 if not chunk:
@@ -384,13 +391,13 @@ class ServiceRuntime:
                     if matched:
                         result.append(line)
                         if len(result) >= hit_length + after:
-                            return 0, result
+                            return success(result)
                     elif pattern.search(line):
                         matched = True
                         result = [*preceding, line]
                         hit_length = len(result)
                         if not after:
-                            return 0, result
+                            return success(result)
                     else:
                         preceding.append(line)
             pane = self._panes().get(WINDOW_PREFIX + name)
