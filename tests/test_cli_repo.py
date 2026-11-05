@@ -7,13 +7,23 @@ from jailbee.cli import app
 from jailbee.repo_remove import RepoEntry
 
 
+@pytest.fixture(autouse=True)
+def fake_incus(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from jailbee import repo_commands
+    from jailbee.incus import Incus
+
+    monkeypatch.setattr(repo_commands, "Incus", lambda: MagicMock(spec=Incus))
+
+
 def test_repo_ls_json(monkeypatch):
     import json
 
-    from jailbee import repo_remove
+    from jailbee import repo_commands
 
     monkeypatch.setattr(
-        repo_remove,
+        repo_commands,
         "list_repos",
         lambda *args, **kwargs: [RepoEntry("demo", None, "leftover", 2, None)],
     )
