@@ -10585,6 +10585,8 @@ def net_refresh_cmd(
 
     error_seen = False
     for prefix, r in results.items():
+        if r.status == "skipped":
+            continue
         if r.status not in ("ok", "partial"):
             error(f"FAIL {prefix}: {r.error}")
             error_seen = True

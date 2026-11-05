@@ -142,6 +142,25 @@ def execute_removal(
     destroy_container: Callable[..., None] | None = None,
     destroy_orphan: Callable[..., None] | None = None,
 ) -> list[StepResult]:
+    """Exclude refresh until all removal steps and the final registry commit finish."""
+    from jailbee.repo_locks import locked
+
+    with locked(plan.prefix):
+        return _execute_removal_locked(
+            plan, incus, session_factory, force=force,
+            destroy_container=destroy_container, destroy_orphan=destroy_orphan,
+        )
+
+
+def _execute_removal_locked(
+    plan: RemovalPlan,
+    incus: Incus,
+    session_factory: Callable[[], Session],
+    *,
+    force: bool,
+    destroy_container: Callable[..., None] | None,
+    destroy_orphan: Callable[..., None] | None,
+) -> list[StepResult]:
     """Remove independent resources best-effort, retaining registration on failure."""
     from jailbee.egress_proxy import ProxyStatus, drop_fragment, proxy_status
     from jailbee.init_command import BRIDGE_NETWORK, detach_acl_from_bridge
@@ -165,6 +184,7 @@ def execute_removal(
 
     known = {plan.prefix}
     ownership = {name: plan.prefix for name in plan.containers}
+    acls = list(plan.acls)
 
     def inventory() -> None:
         # Capture ownership before deleting its profiles and instances.
@@ -176,6 +196,31 @@ def execute_removal(
                 if profile.endswith("-base"):
                     ownership[raw["name"]] = profile[:-5]
                     break
+        # Refresh may have created ACLs after the confirmation plan was shown.
+        # Expand only network resources, never the approved user-data/image set.
+        with session_factory() as session:
+            names = set(ownership)
+            names.update(
+                row.container_prefix[3:]
+                for row in session.exec(select(PoolIP)).all()
+                if row.container_prefix.startswith("ct:")
+            )
+        owned = {n for n in names if _pool_owned(f"ct:{n}", plan.prefix, known, ownership)}
+        foreign_acls = {extra_acl_name(n) for n in names - owned}
+        candidates = {
+            f"{plan.prefix}-allowlist", bridge_extras_acl_name(plan.prefix),
+            f"{plan.prefix}-work-loose", _capped_acl_name(plan.prefix, "-work-container-extras"),
+            *(extra_acl_name(n) for n in owned),
+        }
+        for acl in incus.network_acl_list():
+            if acl in foreign_acls:
+                continue
+            if acl in candidates or (
+                acl.endswith("-extra") and len(acl) <= ACL_NAME_MAX
+                and _pool_owned(f"ct:{acl[:-6]}", plan.prefix, known, ownership)
+            ):
+                if acl not in acls:
+                    acls.append(acl)
 
     step("ownership", inventory)
     inventory_ok = results[-1].ok
@@ -198,7 +243,7 @@ def execute_removal(
                 incus.profile_delete(name)
 
         step(f"profile {name}", remove_profile)
-    for name in plan.acls:
+    for name in acls:
 
         def remove_acl(name: str = name) -> None:
             if not incus.network_acl_exists(name):
@@ -250,7 +295,7 @@ def execute_removal(
     def remove_proxy_fragment() -> None:
         if not drop_fragment(incus, plan.prefix) and proxy_status(incus) != ProxyStatus.RUNNING:
             results.append(StepResult(
-                "proxy fragment", True, "proxy unavailable; fragment may remain on disk"
+                "proxy fragment", True, "kept (proxy not running); fragment may remain on disk"
             ))
             return
         results.append(StepResult("proxy fragment", True, "removed or already absent"))

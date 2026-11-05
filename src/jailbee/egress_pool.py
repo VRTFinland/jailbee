@@ -23,6 +23,7 @@ from jailbee.egress_revert import check_and_revert_egress
 from jailbee.loose_revert import check_and_revert_loose
 from jailbee.mount_revert import check_and_revert_mounts
 from jailbee.paths import repo_config_path
+from jailbee.repo_locks import locked
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -43,7 +44,7 @@ class RefreshResult:
     container_prefix: str
     # "error" is `refresh_all`'s catch-all for a repo whose refresh raised;
     # every other value comes from refresh_pool itself.
-    status: str  # "ok" | "dns_error" | "partial" | "acl_error" | "error"
+    status: str  # "ok" | "dns_error" | "partial" | "acl_error" | "error" | "skipped"
     added: list[tuple[str, str]] = field(default_factory=list)
     removed: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
@@ -229,6 +230,33 @@ def evict_expired(
 
 
 def refresh_pool(
+    cfg: Config,
+    gcfg: GlobalConfig,
+    incus: Incus,
+    session: Session,
+    *,
+    now: datetime,
+    ttl: timedelta = DEFAULT_TTL,
+    max_per_host: int = DEFAULT_MAX_PER_HOST,
+) -> RefreshResult:
+    """Refresh a registered repo unless another operation owns its prefix.
+
+    Re-read registration in a fresh transaction after taking the lock: the
+    caller's identity map may still contain a row deleted by repo removal.
+    """
+    prefix = cfg.container_prefix
+    with locked(prefix, blocking=False) as acquired:
+        if acquired:
+            with Session(session.get_bind()) as current:
+                repo = current.get(RegisteredRepo, prefix)
+                if repo is not None:
+                    return _refresh_pool_locked(
+                        cfg, gcfg, incus, current, now=now, ttl=ttl, max_per_host=max_per_host
+                    )
+    return RefreshResult(container_prefix=prefix, status="skipped")
+
+
+def _refresh_pool_locked(
     cfg: Config,
     gcfg: GlobalConfig,
     incus: Incus,
@@ -720,114 +748,136 @@ def refresh_all(
     to migrate.
     """
     out: dict[str, RefreshResult] = {}
-    repos = list(session.exec(select(RegisteredRepo)).all())
+    # Snapshot keys only; another process may remove a row before its turn.
+    prefixes = list(session.exec(select(RegisteredRepo.container_prefix)).all())
+    for prefix in prefixes:
+        with locked(prefix, blocking=False) as acquired:
+            if not acquired:
+                continue
+            with Session(session.get_bind()) as current:
+                repo = current.get(RegisteredRepo, prefix)
+                if repo is None:
+                    continue
+                out.update(_refresh_registered_repo(repo, current, gcfg, incus, now=now))
+                current.commit()
+    return out
 
-    for repo in repos:
-        repo_root = Path(repo.repo_root)
 
-        # A directory that no longer exists can never be refreshed again,
-        # whatever kind of registration it is.
-        if not repo_root.is_dir():
-            log.info(
-                "refresh_all: unregistering %s — repo root gone at %s",
-                repo.container_prefix,
-                repo_root,
-            )
-            session.delete(repo)
-            session.commit()
-            _drop_proxy_fragment(incus, repo.container_prefix)
-            continue
+def _refresh_registered_repo(
+    repo: RegisteredRepo,
+    session: Session,
+    gcfg: GlobalConfig,
+    incus: Incus,
+    *,
+    now: datetime,
+) -> dict[str, RefreshResult]:
+    """Run all timer work while the caller holds this repository's lock."""
+    out: dict[str, RefreshResult] = {}
+    repo_root = Path(repo.repo_root)
 
-        # "No config file" means two different things now. For a registration
-        # that had one, it means the config was deleted — prune, as before.
-        # For a synthetic registration it is the normal state: the config comes
-        # from `global.yaml`'s `scratch:` block.
-        if repo_config_path(repo_root) is None and not repo.synthetic_config:
-            log.info(
-                "refresh_all: unregistering %s — config not found at %s",
-                repo.container_prefix,
-                repo_root,
-            )
-            session.delete(repo)
-            session.commit()
-            _drop_proxy_fragment(incus, repo.container_prefix)
-            continue
+    # A directory that no longer exists can never be refreshed again,
+    # whatever kind of registration it is.
+    if not repo_root.is_dir():
+        log.info(
+            "refresh_all: unregistering %s — repo root gone at %s",
+            repo.container_prefix,
+            repo_root,
+        )
+        session.delete(repo)
+        session.commit()
+        _drop_proxy_fragment(incus, repo.container_prefix)
+        return out
 
-        try:
-            cfg = load_repo_config(repo_root)
-        except Exception as e:
-            # Includes `ConfigNotFoundError` for a synthetic row while
-            # `scratch.enabled` is false — skipped, not pruned, so re-enabling
-            # the feature brings the repo straight back.
-            log.warning(
-                "refresh_all: skipping %s — config load failed: %s",
-                repo.container_prefix,
-                e,
-            )
-            continue
+    # "No config file" means two different things now. For a registration
+    # that had one, it means the config was deleted — prune, as before.
+    # For a synthetic registration it is the normal state: the config comes
+    # from `global.yaml`'s `scratch:` block.
+    if repo_config_path(repo_root) is None and not repo.synthetic_config:
+        log.info(
+            "refresh_all: unregistering %s — config not found at %s",
+            repo.container_prefix,
+            repo_root,
+        )
+        session.delete(repo)
+        session.commit()
+        _drop_proxy_fragment(incus, repo.container_prefix)
+        return out
 
-        if cfg.container_prefix != repo.container_prefix:
-            log.warning(
-                "refresh_all: %s — prefix changed to %s; run `jailbee apply` to migrate",
-                repo.container_prefix,
-                cfg.container_prefix,
-            )
-            continue
+    try:
+        cfg = load_repo_config(repo_root)
+    except Exception as e:
+        # Includes `ConfigNotFoundError` for a synthetic row while
+        # `scratch.enabled` is false — skipped, not pruned, so re-enabling
+        # the feature brings the repo straight back.
+        log.warning(
+            "refresh_all: skipping %s — config load failed: %s",
+            repo.container_prefix,
+            e,
+        )
+        return out
 
-        try:
-            out[repo.container_prefix] = refresh_pool(cfg, gcfg, incus, session, now=now)
-            repo.last_refresh_at = now
-        except Exception as e:
-            log.warning(
-                "refresh_all: refresh_pool failed for %s: %s",
-                repo.container_prefix,
-                e,
-            )
-            # Record it rather than dropping the key. `jailbee net refresh` —
-            # verbatim the systemd unit's ExecStart — iterates this dict and
-            # treats any status outside ("ok", "partial") as FAIL, so a dropped
-            # key would exit 0 and let the timer unit look healthy. The
-            # missing-mirror case is already handled inside
-            # `_compute_mirror_endpoint`, so anything reaching here is a bug.
-            out[repo.container_prefix] = RefreshResult(
-                container_prefix=repo.container_prefix,
-                status="error",
-                error=str(e),
-            )
-            # No `continue`: check_and_revert_loose below is independent of the
-            # pool refresh and must still run for this repo.
+    if cfg.container_prefix != repo.container_prefix:
+        log.warning(
+            "refresh_all: %s — prefix changed to %s; run `jailbee apply` to migrate",
+            repo.container_prefix,
+            cfg.container_prefix,
+        )
+        return out
 
-        # TTL-driven revert of `jailbee net loose` containers. One call per
-        # registered repo; it acts on whatever `user.jailbee.loose_until` labels
-        # exist, independent of the repo's `loose_auto_revert` policy (that
-        # policy only decides whether jailbee writes a label in the first place).
-        # The revert re-pins /etc/hosts, so it needs the mirror endpoint to
-        # keep the mirror row.
-        try:
-            check_and_revert_loose(
-                cfg, incus, now=now, mirror_endpoint=_compute_mirror_endpoint(cfg, incus, gcfg)
-            )
-        except Exception as e:
-            log.warning(
-                "refresh_all: loose_revert failed for %s: %s",
-                repo.container_prefix,
-                e,
-            )
+    try:
+        out[repo.container_prefix] = _refresh_pool_locked(cfg, gcfg, incus, session, now=now)
+        repo.last_refresh_at = now
+    except Exception as e:
+        log.warning(
+            "refresh_all: refresh_pool failed for %s: %s",
+            repo.container_prefix,
+            e,
+        )
+        # Record it rather than dropping the key. `jailbee net refresh` —
+        # verbatim the systemd unit's ExecStart — iterates this dict and
+        # treats any status outside ("ok", "partial") as FAIL, so a dropped
+        # key would exit 0 and let the timer unit look healthy. The
+        # missing-mirror case is already handled inside
+        # `_compute_mirror_endpoint`, so anything reaching here is a bug.
+        out[repo.container_prefix] = RefreshResult(
+            container_prefix=repo.container_prefix,
+            status="error",
+            error=str(e),
+        )
+        # No `continue`: check_and_revert_loose below is independent of the
+        # pool refresh and must still run for this repo.
 
-        # Optional mount deadlines run independently of pool and loose refreshes.
-        try:
-            check_and_revert_mounts(cfg, incus, now=now)
-        except Exception as e:
-            log.warning(
-                "refresh_all: mount_revert failed for %s: %s",
-                repo.container_prefix,
-                e,
-            )
+    # TTL-driven revert of `jailbee net loose` containers. One call per
+    # registered repo; it acts on whatever `user.jailbee.loose_until` labels
+    # exist, independent of the repo's `loose_auto_revert` policy (that
+    # policy only decides whether jailbee writes a label in the first place).
+    # The revert re-pins /etc/hosts, so it needs the mirror endpoint to
+    # keep the mirror row.
+    try:
+        check_and_revert_loose(
+            cfg, incus, now=now, mirror_endpoint=_compute_mirror_endpoint(cfg, incus, gcfg)
+        )
+    except Exception as e:
+        log.warning(
+            "refresh_all: loose_revert failed for %s: %s",
+            repo.container_prefix,
+            e,
+        )
 
-        try:
-            check_and_revert_egress(cfg, incus, now=now)
-        except Exception as e:
-            log.warning("refresh_all: egress_revert failed for %s: %s", repo.container_prefix, e)
+    # Optional mount deadlines run independently of pool and loose refreshes.
+    try:
+        check_and_revert_mounts(cfg, incus, now=now)
+    except Exception as e:
+        log.warning(
+            "refresh_all: mount_revert failed for %s: %s",
+            repo.container_prefix,
+            e,
+        )
+
+    try:
+        check_and_revert_egress(cfg, incus, now=now)
+    except Exception as e:
+        log.warning("refresh_all: egress_revert failed for %s: %s", repo.container_prefix, e)
 
     session.commit()
     return out

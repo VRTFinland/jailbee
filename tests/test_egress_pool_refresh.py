@@ -61,7 +61,7 @@ def test_refresh_pool_records_ok_status(
     mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
 
-    result = egress_pool.refresh_pool(
+    result = egress_pool._refresh_pool_locked(
         cfg,
         gcfg,
         incus,
@@ -114,7 +114,7 @@ def test_refresh_pool_dns_total_failure_preserves_pool(
     mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
 
-    result = egress_pool.refresh_pool(
+    result = egress_pool._refresh_pool_locked(
         cfg,
         gcfg,
         incus,
@@ -151,7 +151,7 @@ def test_refresh_pool_partial_dns_failure(
     mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
 
-    result = egress_pool.refresh_pool(
+    result = egress_pool._refresh_pool_locked(
         cfg,
         gcfg,
         incus,
@@ -211,7 +211,7 @@ def test_write_acl_uses_pool_union(
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
     mocker.patch.object(egress_pool, "_update_container_hosts")
 
-    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     assert len(captured_entries) == 1
     dests = captured_entries[0][0].destinations
@@ -243,7 +243,7 @@ def test_write_acl_failure_records_acl_error(
     )
     incus.network_acl_set_yaml.side_effect = IncusError("some unrelated incus failure")
 
-    result = egress_pool.refresh_pool(
+    result = egress_pool._refresh_pool_locked(
         cfg,
         gcfg,
         incus,
@@ -287,7 +287,7 @@ def test_hosts_updated_for_running_strict_containers_only(
     )
     apply_hosts_mock = mocker.patch("jailbee.hosts.apply_hosts")
 
-    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     # Only the running strict container should be touched.
     assert apply_hosts_mock.call_count == 1
@@ -320,7 +320,7 @@ def test_update_hosts_pins_the_mirror_on_running_loose_containers(
     mocker.patch("jailbee.egress_pool._list_containers", return_value=[loose, loose_stopped])
     apply_hosts_mock = mocker.patch("jailbee.hosts.apply_hosts")
 
-    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     apply_hosts_mock.assert_called_once_with(
         cfg, incus, "X-bar", entries=[], mirror_endpoint=("10.42.0.7", 3128)
@@ -359,7 +359,7 @@ def test_hosts_update_failure_is_nonfatal(
         side_effect=[IncusError("c1 timeout"), None],
     )
 
-    result = egress_pool.refresh_pool(
+    result = egress_pool._refresh_pool_locked(
         cfg,
         gcfg,
         incus,
@@ -483,7 +483,7 @@ def test_refresh_all_iterates_registered_repos(
     mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mock_refresh = mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         return_value=egress_pool.RefreshResult(
             container_prefix="dummy",
             status="ok",
@@ -531,7 +531,7 @@ def test_refresh_all_does_not_unregister_a_repo_migrated_to_jailbee_dir(
     mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         return_value=egress_pool.RefreshResult(
             container_prefix="M",
             status="ok",
@@ -601,7 +601,7 @@ def test_refresh_all_keeps_a_synthetic_row_with_no_config_file(
         )
     )
     db_session.commit()
-    refresh_pool = mocker.patch("jailbee.egress_pool.refresh_pool")
+    refresh_pool = mocker.patch("jailbee.egress_pool._refresh_pool_locked")
     mocker.patch("jailbee.egress_pool.check_and_revert_loose")
 
     refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
@@ -736,7 +736,7 @@ def test_refresh_all_invokes_loose_revert_per_repo(
     mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         return_value=egress_pool.RefreshResult(
             container_prefix="A",
             status="ok",
@@ -784,7 +784,7 @@ def test_refresh_all_hands_loose_revert_the_mirror_endpoint(
     mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         return_value=egress_pool.RefreshResult(container_prefix="A", status="ok"),
     )
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=("10.42.0.7", 3128))
@@ -830,7 +830,7 @@ def test_refresh_all_continues_when_loose_revert_raises(
     mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
     mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         return_value=egress_pool.RefreshResult(
             container_prefix="A",
             status="ok",
@@ -908,7 +908,7 @@ def test_refresh_all_continues_when_mount_revert_raises(
     _mount_revert_repos(db_session, tmp_path, frozen_now, mocker, prefixes=("A", "B"))
     refresh = mocker.patch.object(
         egress_pool,
-        "refresh_pool",
+        "_refresh_pool_locked",
         side_effect=[
             egress_pool.RefreshResult(container_prefix="A", status="ok"),
             egress_pool.RefreshResult(container_prefix="B", status="ok"),
@@ -1004,11 +1004,7 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
             raise ValueError("boom")
         return egress_pool.RefreshResult(container_prefix="B", status="ok")
 
-    mocker.patch.object(egress_pool, "refresh_pool", side_effect=refresh)
-
-    # Spy installed after the setup commits above so only refresh_all's own
-    # trailing commit is counted.
-    commit = mocker.spy(db_session, "commit")
+    mocker.patch.object(egress_pool, "_refresh_pool_locked", side_effect=refresh)
 
     results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
 
@@ -1016,9 +1012,10 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
     assert results["A"].status == "error"
     assert results["A"].error is not None and "boom" in results["A"].error
     assert results["B"].status == "ok"
-    # Neither repo's config is missing, so the loop body commits nothing —
-    # this call count is the trailing commit and nothing else.
-    assert commit.call_count == 1
+    # Each repo commits its timestamp while still holding its prefix lock.
+    with Session(db_session.get_bind()) as current:
+        row = current.get(RegisteredRepo, "B")
+        assert row is not None and row.last_refresh_at == frozen_now
 
 
 # ---- Repo overrides in the ACL, container extras, and pool pruning ----
@@ -1027,7 +1024,7 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
 def test_refresh_pool_includes_repo_overrides_in_the_acl(
     db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
 ) -> None:
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
@@ -1064,7 +1061,7 @@ def test_container_pool_key_is_disjoint_from_repo_prefixes() -> None:
 def test_refresh_pool_writes_a_container_extra_acl(
     db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
 ) -> None:
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
@@ -1110,7 +1107,7 @@ def test_refresh_pool_syncs_the_bridge_extras_union_after_rewriting_extras(
     rotates to a new IP. That new IP has to reach `incusbr0`'s chain too, or
     the grant goes silently dead until the next `jailbee apply` — the same
     failure the union ACL exists to prevent, just delayed."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
 
@@ -1151,7 +1148,7 @@ def test_refresh_pool_skips_extra_acl_churn_for_a_loose_container(
     ACL on the mode switch. Without a mode filter here, this loop would
     recreate it every 60s tick right after — permanent, pointless churn the
     orphan sweep never reclaims because the ACL keeps coming back."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
 
@@ -1225,7 +1222,7 @@ def test_prune_container_pools_drops_rows_for_a_vanished_container(
 def test_a_failing_container_refresh_does_not_abort_the_repo_cycle(
     db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
 ) -> None:
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
@@ -1254,7 +1251,7 @@ def test_refresh_pool_runs_phase_b_for_a_literals_only_repo_allowlist(
     failure. Before this fix, `refresh_pool` returned early on `not
     resolved` and phase B (container extras + prune) never ran for such a
     repo, silently and permanently."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
     from jailbee.network import acl_name
@@ -1300,7 +1297,7 @@ def test_refresh_pool_leaves_a_container_extra_acl_alone_when_all_its_hosts_fail
     the exact failure the guard exists to prevent. With no prior pool rows
     for this container and every hostname failing to resolve this cycle,
     the extra ACL must not be touched at all."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
 
@@ -1343,7 +1340,7 @@ def test_refresh_pool_one_container_extras_failure_does_not_block_the_next(
     catches a failure that escapes the whole phase. Two containers here: the
     first's own extras lookup raises, and the second's extra ACL must still
     be written."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
 
@@ -1396,7 +1393,7 @@ def test_refresh_pool_pins_container_extras_on_first_tick(
     cycle. With no pre-existing `ct:` pool row here, the entry can only
     appear in this call's `apply_hosts` if phase B ran first.
     """
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
 
@@ -1458,7 +1455,7 @@ def test_refresh_pool_creates_the_repo_acl_when_absent(
     front of it to create one. Repair it here, exactly as
     `_refresh_container_extras` already does for a container's own extra ACL.
     """
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.network import acl_name
 
@@ -1490,7 +1487,7 @@ def test_refresh_pool_does_not_recreate_an_existing_repo_acl(
 ) -> None:
     """The mirror image: `incus network acl create` on a name that already
     exists fails, so the normal per-tick path must not attempt it."""
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.global_config import GlobalConfig
     from jailbee.network import acl_name
 
@@ -1522,7 +1519,7 @@ def test_refresh_pool_reconciles_shared_acl_on_both_bridges_after_db_default_los
     """Instance markers retain work ACLs without a DB default; legacy stopped
     loose instances keep their existing incusbr0 ACL attachment too."""
     from jailbee.egress import EgressEntry
-    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_pool import _refresh_pool_locked as refresh_pool
     from jailbee.egress_scope import extra_acl_name
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
@@ -1641,7 +1638,7 @@ def test_refresh_pool_keeps_wildcards_out_of_the_resolver(
     mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
 
-    result = egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    result = egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     assert result.status == "ok"
     assert rws.call_args_list[0].args == (["github.com"],)
@@ -1719,7 +1716,7 @@ def test_refresh_pool_syncs_the_proxy_rules_once_and_never_starts_the_proxy(
     sync = mocker.patch.object(egress_proxy, "sync_repo_rules")
     up = mocker.patch.object(egress_proxy, "proxy_up")
 
-    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     sync.assert_called_once_with(cfg, incus, db_session)
     up.assert_not_called()
@@ -1741,7 +1738,7 @@ def test_refresh_pool_syncs_the_proxy_rules_for_a_wildcard_only_repo(
     _quiet_refresh(mocker)
     sync = mocker.patch.object(egress_proxy, "sync_repo_rules")
 
-    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     sync.assert_called_once()
 
@@ -1765,7 +1762,7 @@ def test_refresh_pool_status_survives_a_proxy_rule_sync_failure(
     mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
     mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=RuntimeError("boom"))
 
-    result = egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+    result = egress_pool._refresh_pool_locked(cfg, gcfg, incus, db_session, now=frozen_now)
 
     assert result.status == "ok"
     write_acl.assert_called_once()

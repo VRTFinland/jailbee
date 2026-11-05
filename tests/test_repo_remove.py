@@ -850,4 +850,8 @@ def test_proxy_down_reports_fragment_may_remain(db_engine, mocker):
     mocker.patch("jailbee.egress_proxy.proxy_status", return_value=ProxyStatus.STOPPED)
     plan = RemovalPlan("foo", None, [], [], [], [], [], None, {}, [], [], [])
     results = execute_removal(plan, incus, lambda: Session(db_engine))
-    assert any(r.label == "proxy fragment" and r.ok and "may remain" in r.detail for r in results)
+    assert any(
+        r.label == "proxy fragment" and r.ok
+        and r.detail == "kept (proxy not running); fragment may remain on disk"
+        for r in results
+    )

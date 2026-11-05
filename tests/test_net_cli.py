@@ -69,6 +69,23 @@ def test_net_refresh_silent_on_noop(mocker: MockerFixture) -> None:
     assert result.stdout.strip() == ""  # silent on full no-op
 
 
+def test_net_refresh_repo_skipped_is_silent_success(mocker: MockerFixture, tmp_path: Path) -> None:
+    from jailbee.egress_pool import RefreshResult
+
+    mocker.patch("jailbee.cli._load_global")
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.cli.load_config", return_value=mocker.Mock(container_prefix="X"))
+    refresh = mocker.patch(
+        "jailbee.egress_pool.refresh_pool",
+        return_value=RefreshResult(container_prefix="X", status="skipped"),
+    )
+    mocker.patch("jailbee.db.get_engine")
+    result = runner.invoke(app, ["net", "refresh", "--repo", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == ""
+    refresh.assert_called_once()
+
+
 def test_net_refresh_exits_nonzero_on_acl_error(mocker: MockerFixture) -> None:
     from jailbee.egress_pool import RefreshResult
 
