@@ -34,12 +34,11 @@ PREAMBLE = "\n".join(
         "mount mode shares the tree.",
         "Do not rely on git push from the container.",
         "If you are a child, ask your orchestrator for publication and network access, "
-        "not the host.",
-        "Otherwise, ask the operator to publish changes or grant network access.",
+        "not the host. Otherwise, ask the operator to publish changes or grant network access.",
         "Network egress defaults to strict allowlisting; do not bypass blocked hosts.",
         "For a blocked host, the operator can run the exact host-side command:",
-        "jailbee net egress add <host> <container> (use the container's short_name).",
-        "Outside the repo, prefix it with jailbee --repo <container_prefix>.",
+        "jailbee net egress add <host> <container> (use the container's short_name); "
+        "outside the repo prefix jailbee --repo <container_prefix>.",
         "Treat gh as read-only; stage GitHub writes using the issue or PR outbox skills.",
         "Inside the container, jailbee offers service, config validate, inbox, version "
         "and --version;",
@@ -47,6 +46,7 @@ PREAMBLE = "\n".join(
         "From the repository directory, inspect services with jailbee service ls "
         "and jailbee service logs <service>.",
         "Start a service with jailbee service start <service>.",
+        "## Runtime arguments",
         "For one service, start/restart accept --env KEY=VALUE and -- ARGS; "
         "args require services.<name>.args: true. Overrides are one-off unless "
         "--persist is used; --reset-args clears persisted args and env.",

@@ -127,7 +127,8 @@ def test_refresh_transaction_cascades_under_one_lock(tmp_path: Path) -> None:
         events.append(("stop", tuple(names)))
         return RunReport(True, (), None, "")
 
-    def start(names):
+    def start(names, *, target=None, resolved=None):
+        assert target is None and resolved is None
         events.append(("start", tuple(names)))
         return RunReport(True, (), None, "")
 

@@ -16,7 +16,7 @@ class LaunchCommand(TyperCommand):
         for index, value in enumerate(args):
             if skip:
                 skip = False
-            elif value in ("--env", "--config"):
+            elif value in ("--env", "--config", "-c"):
                 skip = True
             elif value == "--":
                 ctx.meta["service_launch_args"] = args[index + 1 :]

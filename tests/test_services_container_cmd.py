@@ -259,3 +259,30 @@ def test_args_require_enabled_service(tmp_path):
     )
     assert result.exit_code == 2
     assert "services.backend.args" in result.output
+
+
+def test_cli_redacts_runtime_env_in_status_and_failure(tmp_path, monkeypatch):
+    from jailbee.services.launch_store import LaunchRequest
+    from tests.test_services_runtime import runtime
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    monkeypatch.setattr("jailbee.services.container_cmd._runtime", lambda _: rt)
+    secret = "secret-runtime-value"
+    assert rt.start(["web"], launch=LaunchRequest(None, {"TOKEN": secret}, False, False)).ok
+    runner = CliRunner()
+    for suffix in (["ls"], ["ls", "--json"]):
+        result = runner.invoke(container_app, ["service", *suffix])
+        assert result.exit_code == 0, result.output
+        assert "TOKEN" in result.output
+        assert secret not in result.output
+    proc.immediate_exit.add("svc-web")
+    original = proc.tmux
+    def capture(args):
+        if args[0] == "capture-pane":
+            import subprocess
+            return subprocess.CompletedProcess(args, 0, secret, "")
+        return original(args)
+    proc.tmux = capture
+    result = runner.invoke(container_app, ["service", "restart", "web", "--env", f"TOKEN={secret}"])
+    assert result.exit_code == 1
+    assert "***" in result.output
+    assert secret not in result.output

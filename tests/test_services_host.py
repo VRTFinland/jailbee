@@ -612,3 +612,16 @@ def test_host_restart_passes_runtime_options(make_cfg, tmp_path, monkeypatch):
         "-d",
         "5006",
     ]
+
+
+def test_config_short_option_value_double_dash_is_not_separator(make_cfg, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from jailbee import cli
+    cfg = make_cfg(tmp_path)
+    loaded = Mock(return_value=cfg)
+    monkeypatch.setattr(cli, "_load_or_exit", loaded)
+    monkeypatch.setattr(cli, "_resolve_existing", lambda *a, **k: (Mock(), "one"))
+    monkeypatch.setattr(host, "run_op", Mock(return_value=0))
+    result = CliRunner().invoke(cli.app, ["service", "restart", "one", "web", "-c", "--"])
+    assert result.exit_code == 0, result.output
+    assert str(loaded.call_args.args[0]) == "--"

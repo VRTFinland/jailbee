@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Service start/restart accept one-off or persisted runtime arguments and
+  environment overrides for a single service.
+
 - Interactive Claude sessions resume after normal JailBee stops and restarts, using their original launcher, arguments and working directory.
 - Managed services report health failures as `unhealthy`; `service wait` lets
   agents and hosts wait for readiness or detect failures without automatic restarts.
@@ -82,8 +85,6 @@ before editing `## Unreleased`.
 
 ### Added
 
-- Service start/restart accept one-off or persisted runtime arguments and
-  environment overrides for a single service.
 - **Managed repository services.** A repo's `services:` block declares
   long-running processes with dependencies; `jailbee service` (inside a
   container) and `jb service` (on the host) list, start, stop, restart,

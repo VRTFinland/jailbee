@@ -491,6 +491,16 @@ neither there is no probe. Prefer a health endpoint that checks critical
 dependencies over a static `UP` response. Health failures do not trigger an
 automatic restart. Use `jailbee service wait` to wait for state changes.
 
+### Runtime arguments
+
+Set `services.<name>.args: true` to permit positional arguments supplied after
+`--` to service start/restart (default: false). Forward them in the service
+command, for example `run: './scripts/dev/restart "$@" && exec tail -f /dev/null'`.
+`--env KEY=VALUE` works without enabling args. Overrides are one-off unless
+`--persist` saves them; plain restart uses persisted defaults and `--reset-args`
+clears stored args and env before applying new options. Status hides env values.
+
+
 ## `autostart`
 
 IDE and browser launches are controlled by `jetbrains.autostart` /
@@ -618,14 +628,6 @@ deferred stage finishes rather than right at the hand-off.
 
 **Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the JailBee repo.
 
-### Runtime arguments
-
-Set `services.<name>.args: true` to permit positional arguments supplied after
-`--` to service start/restart (default: false). Forward them in the service
-command, for example `run: './scripts/dev/restart "$@" && exec tail -f /dev/null'`.
-`--env KEY=VALUE` works without enabling args. Overrides are one-off unless
-`--persist` saves them; plain restart uses persisted defaults and `--reset-args`
-clears stored args and env before applying new options. Status hides env values.
 
 ## `push`
 

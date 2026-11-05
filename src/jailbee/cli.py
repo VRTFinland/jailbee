@@ -18372,9 +18372,9 @@ def service_start_cmd(
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
-    env: Annotated[list[str] | None, typer.Option("--env")] = None,
-    persist: Annotated[bool, typer.Option("--persist")] = False,
-    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+    env: Annotated[list[str] | None, typer.Option("--env", help="Set a runtime environment variable (KEY=VALUE).") ] = None,
+    persist: Annotated[bool, typer.Option("--persist", help="Save runtime overrides for later launches.")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args", help="Clear saved runtime arguments and environment.")] = False,
 ) -> None:
     """Start services."""
     launch = launch_request(ctx, names, env, persist, reset)
@@ -18397,9 +18397,9 @@ def service_restart_cmd(
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
-    env: Annotated[list[str] | None, typer.Option("--env")] = None,
-    persist: Annotated[bool, typer.Option("--persist")] = False,
-    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+    env: Annotated[list[str] | None, typer.Option("--env", help="Set a runtime environment variable (KEY=VALUE).") ] = None,
+    persist: Annotated[bool, typer.Option("--persist", help="Save runtime overrides for later launches.")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args", help="Clear saved runtime arguments and environment.")] = False,
 ) -> None:
     """Restart services."""
     launch = launch_request(ctx, names, env, persist, reset)
