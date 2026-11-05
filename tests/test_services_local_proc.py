@@ -53,6 +53,18 @@ def test_follow_poll_frames_ticks_and_decodes(follow_control):
     process.wait.assert_called_with(timeout=0.1)
 
 
+def test_follow_poll_ticks_during_continuous_unrelated_buffered_output(follow_control, monkeypatch):
+    proc, _process, selector, read = follow_control
+    clock = iter(i * 0.1 for i in range(100))
+    monkeypatch.setattr(proc, "now", lambda: next(clock))
+    selector.select.return_value = [1]
+    read.side_effect = [b"%end 1 2 3\n" + b"%output %2 ignored\n" * 20, b""]
+    stream = proc.follow_pane("svc", 10, initial=False, poll_interval=0.5)
+    assert next(stream) == ""
+    assert read.call_count == 1
+    stream.close()
+
+
 def test_follow_poll_attach_error_cleans_up(follow_control):
     proc, process, selector, read = follow_control
     selector.select.return_value = [1]

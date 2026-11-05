@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Generator, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, cast
@@ -52,7 +52,9 @@ while True:
 """
 
 
-def _control_lines(stream: IO[bytes], poll_interval: float | None) -> Generator[bytes | None]:
+def _control_lines(
+    stream: IO[bytes], poll_interval: float | None, now: Callable[[], float]
+) -> Generator[bytes | None]:
     if poll_interval is None:
         yield from stream
         return
@@ -61,8 +63,19 @@ def _control_lines(stream: IO[bytes], poll_interval: float | None) -> Generator[
         os.set_blocking(stream.fileno(), False)
         selector.register(stream, selectors.EVENT_READ)
         buffer = b""
+        deadline = now() + poll_interval
         while True:
-            if not selector.select(poll_interval):
+            remaining = deadline - now()
+            if remaining <= 0:
+                deadline = now() + poll_interval
+                yield None
+                continue
+            if b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                yield line
+                continue
+            if not selector.select(remaining):
+                deadline = now() + poll_interval
                 yield None
                 continue
             try:
@@ -72,9 +85,6 @@ def _control_lines(stream: IO[bytes], poll_interval: float | None) -> Generator[
             if not chunk:
                 return
             buffer += chunk
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                yield line
     finally:
         selector.close()
 
@@ -104,7 +114,7 @@ class LocalProc:
         attached = False
         capture_id: bytes | None = None
         streaming = False
-        protocol = _control_lines(process.stdout, poll_interval)
+        protocol = _control_lines(process.stdout, poll_interval, self.now)
         try:
             for line in protocol:
                 if line is None:
