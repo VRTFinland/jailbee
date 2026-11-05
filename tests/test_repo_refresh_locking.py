@@ -32,10 +32,14 @@ def engine(tmp_path):
 
 def register(engine, root, prefix="foo"):
     with Session(engine) as session:
-        session.add(RegisteredRepo(
-            container_prefix=prefix, repo_root=str(root), registered_at=datetime.now(UTC),
-            synthetic_config=True,
-        ))
+        session.add(
+            RegisteredRepo(
+                container_prefix=prefix,
+                repo_root=str(root),
+                registered_at=datetime.now(UTC),
+                synthetic_config=True,
+            )
+        )
         session.commit()
 
 
@@ -77,9 +81,14 @@ def test_refresh_all_reloads_registration_metadata(engine, tmp_path, mocker):
     new_root.mkdir()
     cfg = MagicMock(container_prefix="foo")
     load = mocker.patch.object(egress_pool, "load_repo_config", return_value=cfg)
-    mocker.patch.object(egress_pool, "_refresh_pool_locked", return_value=egress_pool.RefreshResult(
-        container_prefix="foo", status="ok",
-    ))
+    mocker.patch.object(
+        egress_pool,
+        "_refresh_pool_locked",
+        return_value=egress_pool.RefreshResult(
+            container_prefix="foo",
+            status="ok",
+        ),
+    )
     mocker.patch.object(egress_pool, "check_and_revert_loose")
     mocker.patch.object(egress_pool, "check_and_revert_mounts")
     mocker.patch.object(egress_pool, "check_and_revert_egress")
@@ -129,7 +138,10 @@ def test_direct_refresh_skips_removed_row_in_stale_session(engine, tmp_path, mak
             removal.commit()
         assert old is not None
         result = egress_pool.refresh_pool(
-            make_cfg(tmp_path, container_prefix="foo"), MagicMock(), MagicMock(), stale,
+            make_cfg(tmp_path, container_prefix="foo"),
+            MagicMock(),
+            MagicMock(),
+            stale,
             now=datetime.now(UTC),
         )
     assert result.status == "skipped"
@@ -152,7 +164,9 @@ def test_removal_holds_lock_through_final_commit(engine, tmp_path, make_cfg, moc
         with Session(engine) as session:
             # Registry is intentionally still present while removal owns it.
             assert session.get(RegisteredRepo, "foo") is not None
-            result = egress_pool.refresh_pool(cfg, MagicMock(), incus, session, now=datetime.now(UTC))
+            result = egress_pool.refresh_pool(
+                cfg, MagicMock(), incus, session, now=datetime.now(UTC)
+            )
             assert result.status == "skipped"
         with locked("foo", blocking=False) as acquired:
             assert not acquired
@@ -169,7 +183,9 @@ def test_removal_holds_lock_through_final_commit(engine, tmp_path, make_cfg, moc
                 final_commits.append(True)
             super().commit()
 
-    assert all(result.ok for result in execute_removal(empty_plan(), incus, lambda: RemovalSession(engine)))
+    assert all(
+        result.ok for result in execute_removal(empty_plan(), incus, lambda: RemovalSession(engine))
+    )
     assert final_commits == [True]
     core.assert_not_called()
     with Session(engine) as session:
@@ -219,9 +235,12 @@ def test_direct_refresh_serializes_before_removal(engine, tmp_path, make_cfg, mo
             assert removal_started.wait(5)
             # A second direct caller also observes the active operation.
             with Session(engine) as session:
-                assert egress_pool.refresh_pool(
-                    cfg, MagicMock(), incus, session, now=datetime.now(UTC)
-                ).status == "skipped"
+                assert (
+                    egress_pool.refresh_pool(
+                        cfg, MagicMock(), incus, session, now=datetime.now(UTC)
+                    ).status
+                    == "skipped"
+                )
             incus.profile_list.assert_not_called()
             assert not removing.done()
         finally:
@@ -250,9 +269,9 @@ def test_removal_failure_releases_lock_and_keeps_registration(engine, tmp_path, 
     incus = MagicMock(spec=Incus)
     incus.profile_list.side_effect = RuntimeError("inventory failed")
     mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
-    assert any(not result.ok for result in execute_removal(
-        empty_plan(), incus, lambda: Session(engine)
-    ))
+    assert any(
+        not result.ok for result in execute_removal(empty_plan(), incus, lambda: Session(engine))
+    )
     with locked("foo", blocking=False) as acquired:
         assert acquired
     with Session(engine) as session:

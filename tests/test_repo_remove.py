@@ -730,9 +730,7 @@ def test_golden_named_branch_is_not_golden(db_engine, mocker):
     mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
     incus = MagicMock()
     incus.profile_list.return_value = ["foo-base"]
-    incus.list_containers.return_value = [
-        {"name": "foo-base--golden", "profiles": ["foo-base"]}
-    ]
+    incus.list_containers.return_value = [{"name": "foo-base--golden", "profiles": ["foo-base"]}]
     incus.network_acl_list.return_value = []
     incus.list_images.return_value = []
     plan = plan_removal("foo", incus, lambda: Session(db_engine))
@@ -763,8 +761,14 @@ def test_default_shared_dir_is_kept_for_other_repo(db_engine, tmp_path, mocker, 
     shared = tmp_path / "foo-shared"
     shared.mkdir()
     with Session(db_engine) as session:
-        session.add(RegisteredRepo(container_prefix="other", repo_root=str(tmp_path),
-                                   registered_at=datetime.now(UTC), synthetic_config=True))
+        session.add(
+            RegisteredRepo(
+                container_prefix="other",
+                repo_root=str(tmp_path),
+                registered_at=datetime.now(UTC),
+                synthetic_config=True,
+            )
+        )
         session.commit()
     other = make_cfg(tmp_path, container_prefix="other", shared_dir=shared)
     mocker.patch("jailbee.repo_remove.load_repo_config", return_value=other)
@@ -796,10 +800,14 @@ def test_overlapping_shared_paths_are_kept(db_engine, tmp_path, mocker, make_cfg
         other_shared = tmp_path / "linked"
         other_shared.symlink_to(shared, target_is_directory=True)
     with Session(db_engine) as session:
-        session.add(RegisteredRepo(
-            container_prefix="other", repo_root=str(tmp_path),
-            registered_at=datetime.now(UTC), synthetic_config=True,
-        ))
+        session.add(
+            RegisteredRepo(
+                container_prefix="other",
+                repo_root=str(tmp_path),
+                registered_at=datetime.now(UTC),
+                synthetic_config=True,
+            )
+        )
         session.commit()
     other = make_cfg(tmp_path, container_prefix="other", shared_dir=other_shared)
     mocker.patch("jailbee.repo_remove.load_repo_config", return_value=other)
@@ -823,8 +831,13 @@ def test_unloadable_repo_keeps_default_shared_dir(db_engine, tmp_path, mocker):
     shared = tmp_path / "shared"
     shared.mkdir()
     with Session(db_engine) as session:
-        session.add(RegisteredRepo(container_prefix="other", repo_root=str(tmp_path / "missing"),
-                                   registered_at=datetime.now(UTC)))
+        session.add(
+            RegisteredRepo(
+                container_prefix="other",
+                repo_root=str(tmp_path / "missing"),
+                registered_at=datetime.now(UTC),
+            )
+        )
         session.commit()
     mocker.patch("jailbee.repo_remove._default_shared_dir", return_value=shared)
     mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
@@ -851,7 +864,8 @@ def test_proxy_down_reports_fragment_may_remain(db_engine, mocker):
     plan = RemovalPlan("foo", None, [], [], [], [], [], None, {}, [], [], [])
     results = execute_removal(plan, incus, lambda: Session(db_engine))
     assert any(
-        r.label == "proxy fragment" and r.ok
+        r.label == "proxy fragment"
+        and r.ok
         and r.detail == "kept (proxy not running); fragment may remain on disk"
         for r in results
     )

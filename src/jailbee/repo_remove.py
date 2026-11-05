@@ -147,8 +147,12 @@ def execute_removal(
 
     with locked(plan.prefix):
         return _execute_removal_locked(
-            plan, incus, session_factory, force=force,
-            destroy_container=destroy_container, destroy_orphan=destroy_orphan,
+            plan,
+            incus,
+            session_factory,
+            force=force,
+            destroy_container=destroy_container,
+            destroy_orphan=destroy_orphan,
         )
 
 
@@ -208,15 +212,18 @@ def _execute_removal_locked(
         owned = {n for n in names if _pool_owned(f"ct:{n}", plan.prefix, known, ownership)}
         foreign_acls = {extra_acl_name(n) for n in names - owned}
         candidates = {
-            f"{plan.prefix}-allowlist", bridge_extras_acl_name(plan.prefix),
-            f"{plan.prefix}-work-loose", _capped_acl_name(plan.prefix, "-work-container-extras"),
+            f"{plan.prefix}-allowlist",
+            bridge_extras_acl_name(plan.prefix),
+            f"{plan.prefix}-work-loose",
+            _capped_acl_name(plan.prefix, "-work-container-extras"),
             *(extra_acl_name(n) for n in owned),
         }
         for acl in incus.network_acl_list():
             if acl in foreign_acls:
                 continue
             if acl in candidates or (
-                acl.endswith("-extra") and len(acl) <= ACL_NAME_MAX
+                acl.endswith("-extra")
+                and len(acl) <= ACL_NAME_MAX
                 and _pool_owned(f"ct:{acl[:-6]}", plan.prefix, known, ownership)
             ):
                 if acl not in acls:
@@ -292,11 +299,14 @@ def _execute_removal_locked(
                 incus.delete(name, force=force)
 
         step(f"golden instance {name}", remove_golden)
+
     def remove_proxy_fragment() -> None:
         if not drop_fragment(incus, plan.prefix) and proxy_status(incus) != ProxyStatus.RUNNING:
-            results.append(StepResult(
-                "proxy fragment", True, "kept (proxy not running); fragment may remain on disk"
-            ))
+            results.append(
+                StepResult(
+                    "proxy fragment", True, "kept (proxy not running); fragment may remain on disk"
+                )
+            )
             return
         results.append(StepResult("proxy fragment", True, "removed or already absent"))
 
@@ -409,11 +419,7 @@ def plan_removal(
                     ownership[name] = profile[:-5]
                     break
         alias = cfg.golden.alias if cfg else f"{prefix}-base"
-        containers = sorted(
-            name
-            for name, owner in ownership.items()
-            if owner == prefix
-        )
+        containers = sorted(name for name, owner in ownership.items() if owner == prefix)
 
         pool_rows = session.exec(select(PoolIP)).all()
         known_container_names = set(ownership)
@@ -490,7 +496,9 @@ def plan_removal(
         if name in existing_acls and name not in foreign_acls
     ]
     alias = cfg.golden.alias if cfg else f"{prefix}-base"
-    other_configs = [(row, _load_registered_config(row)) for row in rows if row.container_prefix != prefix]
+    other_configs = [
+        (row, _load_registered_config(row)) for row in rows if row.container_prefix != prefix
+    ]
     reason = None
     if alias == SCRATCH_BASE_ALIAS:
         reason = "shared scratch base"
@@ -525,10 +533,16 @@ def plan_removal(
         if other_cfg is None:
             shared_reason = f"config unavailable for {other.container_prefix}"
             break
-        other_shared = Path(other_cfg.shared_dir) if other_cfg.shared_dir else _default_shared_dir(other.container_prefix)
+        other_shared = (
+            Path(other_cfg.shared_dir)
+            if other_cfg.shared_dir
+            else _default_shared_dir(other.container_prefix)
+        )
         resolved_shared = shared.resolve()
         resolved_other = other_shared.resolve()
-        if resolved_shared.is_relative_to(resolved_other) or resolved_other.is_relative_to(resolved_shared):
+        if resolved_shared.is_relative_to(resolved_other) or resolved_other.is_relative_to(
+            resolved_shared
+        ):
             shared_reason = f"shared with {other.container_prefix}"
             break
     purge_files: list[Path] = []
@@ -537,7 +551,8 @@ def plan_removal(
         if path.exists():
             (
                 purge_files
-                if purge and (path != shared or (shared == default_shared and shared_reason is None))
+                if purge
+                and (path != shared or (shared == default_shared and shared_reason is None))
                 else kept_files
             ).append(path)
     global_cfg, _ = load_global_config(default_global_config_path())
