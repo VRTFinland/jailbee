@@ -836,3 +836,23 @@ def test_redact_only_launch_values_of_four_or_more(tmp_path):
     store.set_persisted("a", Launch((), {"S": "persistent", "SHORT": "abc"}))
     store.set_current("a", Launch((), {"X": "current-secret"}), False)
     assert rt.redact("a", "persistent current-secret abc configured") == "*** *** abc configured"
+
+
+def test_start_stopped_with_options_does_not_start_cascade_dependents(tmp_path):
+    from jailbee.services.launch_store import LaunchRequest
+    rt, proc = runtime(tmp_path, {"db": {"run": "db", "args": True}, "web": {"run": "web", "depends_on": {"db": {"restart": True}}}})
+    result = rt.start(["db"], launch=LaunchRequest(("arg",), {}, False, False))
+    assert result.done == ("db",)
+    assert "svc-web" not in proc.windows
+
+
+def test_status_redacts_secrets_in_current_and_persisted_args(tmp_path):
+    from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore
+    rt, _ = runtime(tmp_path, {"web": {"run": "web", "args": True}})
+    LaunchStore(rt.state_dir / "launch.json").set_persisted("web", Launch(("saved-secret",), {"SAVED": "saved-secret"}))
+    assert rt.start(["web"], launch=LaunchRequest(("current-secret", "prefix-saved-secret"), {"TOKEN": "current-secret"}, False, False)).ok
+    status = rt.status(probe=False)[0]
+    assert status.launch["args"] == ["***", "prefix-***"]
+    assert status.launch["persisted_args"] == ["***"]
+    rendered = json.dumps(status.launch)
+    assert "saved-secret" not in rendered and "current-secret" not in rendered

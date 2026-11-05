@@ -258,8 +258,8 @@ class ServiceRuntime:
         if not (launch.args or launch.env or persisted.args or persisted.env):
             return item
         metadata: dict[str, object] = {
-            "args": list(launch.args), "env_keys": sorted(launch.env),
-            "persisted_args": list(persisted.args), "persisted_env_keys": sorted(persisted.env),
+            "args": [self.redact(item.name, arg) for arg in launch.args], "env_keys": sorted(launch.env),
+            "persisted_args": [self.redact(item.name, arg) for arg in persisted.args], "persisted_env_keys": sorted(persisted.env),
         }
         parts = []
         if launch.args:
@@ -454,7 +454,11 @@ class ServiceRuntime:
         self._validate_launch(names, launch)
         with self.locked():
             if launch is not None:
-                return self._restart_unlocked(names, launch=launch)
+                name = names[0]
+                item = self._lifecycle(name, self._panes(), self._state())
+                if item.state == "ready":
+                    return self._restart_unlocked(names, launch=launch)
+                return self._start_unlocked(names, target=name, resolved=self._resolve_request(name, launch))
             return self._start_unlocked(names)
 
     def _stop_unlocked(self, names: Sequence[str]) -> RunReport:
