@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
+import shutil
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,6 +120,147 @@ class RemovalPlan:
     global_refs: list[str]
 
 
+@dataclass(frozen=True)
+class StepResult:
+    label: str
+    ok: bool
+    detail: str
+
+
+def execute_removal(
+    plan: RemovalPlan,
+    incus: Incus,
+    session_factory: Callable[[], Session],
+    *,
+    force: bool = False,
+    destroy_container: Callable[..., None] | None = None,
+    destroy_orphan: Callable[..., None] | None = None,
+) -> list[StepResult]:
+    """Remove independent resources best-effort, retaining registration on failure."""
+    from jailbee.egress_proxy import drop_fragment
+    from jailbee.network_generation import WORK_BRIDGE
+    from jailbee.work_network import work_network_lock
+
+    if destroy_container is None:
+        from jailbee.lifecycle import destroy_container
+    if destroy_orphan is None:
+        from jailbee.orphans import destroy_orphan
+
+    results: list[StepResult] = []
+
+    def step(label: str, action: Callable[[], object]) -> None:
+        try:
+            action()
+        except Exception as exc:
+            results.append(StepResult(label, False, str(exc)))
+        else:
+            results.append(StepResult(label, True, "removed or already absent"))
+
+    known = {plan.prefix}
+    ownership = {name: plan.prefix for name in plan.containers}
+
+    def inventory() -> None:
+        # Capture ownership before deleting its profiles and instances.
+        with session_factory() as session:
+            known.update(row.container_prefix for row in session.exec(select(RegisteredRepo)).all())
+        known.update(p[:-5] for p in incus.profile_list() if p.endswith("-base") and p[:-5])
+        for raw in incus.list_containers(fast=True):
+            for profile in raw.get("profiles") or []:
+                if profile.endswith("-base"):
+                    ownership[raw["name"]] = profile[:-5]
+                    break
+
+    step("ownership", inventory)
+    inventory_ok = results[-1].ok
+    for name in plan.containers:
+        def remove_container(name: str = name) -> None:
+            if incus.exists(name):
+                if plan.cfg is not None:
+                    assert destroy_container is not None
+                    destroy_container(plan.cfg, incus, name, force=force)
+                else:
+                    assert destroy_orphan is not None
+                    destroy_orphan(incus, name, force=force)
+        step(f"container {name}", remove_container)
+    for name in plan.profiles:
+        step(f"profile {name}", lambda: incus.profile_delete(name) if incus.profile_exists(name) else None)
+    for name in plan.acls:
+        def remove_acl(name: str = name) -> None:
+            if not incus.network_acl_exists(name):
+                return
+            for reference in incus.network_acl_used_by(name):
+                parts = urlsplit(reference).path.split("/")
+                if len(parts) != 4 or parts[1:3] != ["1.0", "networks"] or not parts[3]:
+                    raise ValueError(f"ACL {name} is still referenced by {reference}")
+                network = unquote(parts[3])
+                with work_network_lock() if network == WORK_BRIDGE else nullcontext():
+                    current = incus.network_get(network, "security.acls")
+                    remaining = [acl.strip() for acl in current.split(",") if acl.strip() and acl.strip() != name]
+                    desired = ",".join(remaining)
+                    if desired != current:
+                        incus.network_set(network, "security.acls", desired)
+            incus.network_acl_delete(name)
+        step(f"acl {name}", remove_acl)
+    for name in plan.golden_images:
+        step(f"image {name}", lambda: incus.image_delete(name) if incus.image_exists(name) else None)
+    for name in plan.golden_instances:
+        step(f"golden instance {name}", lambda: incus.delete(name, force=force) if incus.exists(name) else None)
+    step("proxy fragment", lambda: drop_fragment(incus, plan.prefix))
+
+    def cleanup() -> None:
+        if not inventory_ok:
+            raise ValueError("state retained because ownership inventory failed")
+        with session_factory() as session:
+            for row in session.exec(select(PoolIP)).all():
+                if _pool_owned(row.container_prefix, plan.prefix, known, ownership):
+                    session.delete(row)
+            for records in (
+                session.exec(select(RefreshState)).all(),
+                session.exec(select(RepoUpgradeState)).all(),
+                session.exec(select(EgressOverride)).all(),
+                session.exec(select(BackgroundJob)).all(),
+                session.exec(select(SentRecord)).all(),
+            ):
+                for record in records:
+                    if record.container_prefix == plan.prefix:
+                        session.delete(record)
+            for notice in session.exec(select(DismissedNotice)).all():
+                if notice.scope == plan.prefix:
+                    session.delete(notice)
+            session.commit()
+            # Never purge recoverable user data after an incomplete removal.
+            if all(result.ok for result in results):
+                for path in plan.purge_files:
+                    def purge(path: Path = path) -> None:
+                        if path.is_symlink() or path.is_file():
+                            path.unlink()
+                        elif path.exists():
+                            shutil.rmtree(path)
+                    step(f"purge {path}", purge)
+            if all(result.ok for result in results):
+                registered = session.get(RegisteredRepo, plan.prefix)
+                if registered is not None:
+                    session.delete(registered)
+                session.commit()
+            else:
+                raise ValueError("registry retained because a removal step failed")
+
+    step("registry", cleanup)
+    return results
+
+
+def _pool_owned(value: str, prefix: str, known: set[str], ownership: dict[str, str]) -> bool:
+    if value == prefix:
+        return True
+    if not value.startswith("ct:"):
+        return False
+    name = value[3:]
+    if name in ownership:
+        return ownership[name] == prefix
+    matches = [p for p in known if name.startswith(p + "-")]
+    return bool(matches) and max(matches, key=len) == prefix
+
+
 def _load_registered_config(row: RegisteredRepo | None) -> Config | None:
     if row is None:
         return None
@@ -176,20 +320,10 @@ def plan_removal(
             if owner == prefix and name not in golden_names
         )
 
-        def pool_owned(value: str) -> bool:
-            if value == prefix:
-                return True
-            if not value.startswith("ct:"):
-                return False
-            name = value[3:]
-            if name in ownership:
-                return ownership[name] == prefix
-            matches = [p for p in known if name.startswith(p + "-")]
-            return bool(matches) and max(matches, key=len) == prefix
-
         state_counts = {
             "pool_ip": sum(
-                pool_owned(r.container_prefix) for r in session.exec(select(PoolIP)).all()
+                _pool_owned(r.container_prefix, prefix, known, ownership)
+                for r in session.exec(select(PoolIP)).all()
             ),
             "refresh_state": sum(
                 r.container_prefix == prefix for r in session.exec(select(RefreshState)).all()
