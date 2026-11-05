@@ -18311,6 +18311,8 @@ def prune(
             success(f"Destroyed {short_name(cfg, name)}")
 
 
+from jailbee.services.cli_launch import LaunchCommand, extra as launch_extra, request as launch_request
+
 service_app = typer.Typer(name="service", help="Manage container services.", no_args_is_help=True)
 app.add_typer(service_app)
 
@@ -18363,14 +18365,19 @@ def service_ls_cmd(
     _service_command("ls", name, None, config, ["--json"] if json_output else [])
 
 
-@service_app.command("start")
+@service_app.command("start", cls=LaunchCommand)
 def service_start_cmd(
+    ctx: typer.Context,
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
+    env: Annotated[list[str] | None, typer.Option("--env")] = None,
+    persist: Annotated[bool, typer.Option("--persist")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args")] = False,
 ) -> None:
     """Start services."""
-    _service_command("start", name, names, config)
+    launch = launch_request(ctx, names, env, persist, reset)
+    _service_command("start", name, names, config, launch_extra(launch) if launch else ())
 
 
 @service_app.command("stop")
@@ -18383,14 +18390,19 @@ def service_stop_cmd(
     _service_command("stop", name, names, config)
 
 
-@service_app.command("restart")
+@service_app.command("restart", cls=LaunchCommand)
 def service_restart_cmd(
+    ctx: typer.Context,
     name: ContainerArg = None,
     names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
     config: ConfigOption = None,
+    env: Annotated[list[str] | None, typer.Option("--env")] = None,
+    persist: Annotated[bool, typer.Option("--persist")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args")] = False,
 ) -> None:
     """Restart services."""
-    _service_command("restart", name, names, config)
+    launch = launch_request(ctx, names, env, persist, reset)
+    _service_command("restart", name, names, config, launch_extra(launch) if launch else ())
 
 
 @service_app.command("refresh")

@@ -47,6 +47,9 @@ PREAMBLE = "\n".join(
         "From the repository directory, inspect services with jailbee service ls "
         "and jailbee service logs <service>.",
         "Start a service with jailbee service start <service>.",
+        "For one service, start/restart accept --env KEY=VALUE and -- ARGS; "
+        "args require services.<name>.args: true. Overrides are one-off unless "
+        "--persist is used; --reset-args clears persisted args and env.",
         "## Health and waiting",
         "Before long tests or service-dependent work, check service ls or run "
         "jailbee service wait <service> --until unhealthy in the background.",

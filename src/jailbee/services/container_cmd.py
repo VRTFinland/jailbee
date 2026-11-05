@@ -13,6 +13,7 @@ from jailbee import prompting
 from jailbee.config.errors import ConfigError
 from jailbee.config.repo_layer import default_repo_config_path, load_repo_layer
 from jailbee.services import graph, refresh
+from jailbee.services.cli_launch import LaunchCommand, request
 from jailbee.services.local_proc import LocalProc
 from jailbee.services.runtime import RunReport, ServiceRuntime
 
@@ -110,10 +111,21 @@ def wait(
         raise typer.Exit(code)
 
 
-@service_app.command()
-def start(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
+@service_app.command(cls=LaunchCommand)
+def start(
+    ctx: Context,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    env: Annotated[list[str] | None, typer.Option("--env")] = None,
+    persist: Annotated[bool, typer.Option("--persist")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+) -> None:
+    launch = request(ctx, names, env, persist, reset)
     rt = _runtime(ctx.obj)
-    _report(rt.start(_names(rt, names)))
+    try:
+        _report(rt.start(_names(rt, names), launch=launch))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
 
 
 @service_app.command()
@@ -122,10 +134,21 @@ def stop(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = No
     _report(rt.stop(_names(rt, names, destructive=True)))
 
 
-@service_app.command()
-def restart(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
+@service_app.command(cls=LaunchCommand)
+def restart(
+    ctx: Context,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    env: Annotated[list[str] | None, typer.Option("--env")] = None,
+    persist: Annotated[bool, typer.Option("--persist")] = False,
+    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+) -> None:
+    launch = request(ctx, names, env, persist, reset)
     rt = _runtime(ctx.obj)
-    _report(rt.restart(_names(rt, names)))
+    try:
+        _report(rt.restart(_names(rt, names), launch=launch))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
 
 
 @service_app.command("refresh")

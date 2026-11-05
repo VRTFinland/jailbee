@@ -42,6 +42,14 @@ For connection refused, a blank UI, or HTTP 500, check `service ls` and
 changing application code to work around a dead service. JailBee does not
 restart unhealthy services automatically.
 
+### Runtime arguments
+
+For one explicitly named service, start/restart accept `--env KEY=VALUE`
+(repeatable) and `-- ARGS`. Arguments require `services.<name>.args: true`
+and `run` must forward `"$@"`. Overrides are one-off unless `--persist` is
+given; a plain restart uses persisted defaults. `--reset-args` clears stored
+arguments and environment first. Status hides environment values.
+
 ## Blocked network access
 
 The default network mode is strict, a default-deny egress allowlist; configuration may differ. Do not bypass a blocked destination through a proxy or tunnel. A child must ask its orchestrator for access, not request it directly from the host. Otherwise, give the operator the destination and container identity and ask them to run on the host:

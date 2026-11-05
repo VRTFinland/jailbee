@@ -82,6 +82,8 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Service start/restart accept one-off or persisted runtime arguments and
+  environment overrides for a single service.
 - **Managed repository services.** A repo's `services:` block declares
   long-running processes with dependencies; `jailbee service` (inside a
   container) and `jb service` (on the host) list, start, stop, restart,

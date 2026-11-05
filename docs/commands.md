@@ -131,6 +131,20 @@ run it on the host. Logs use tmux scrollback, not durable or
 byte-perfect capture: a line matching the exact tmux control-protocol snapshot
 trailer can truncate the snapshot or end following.
 
+### Runtime arguments
+
+`jailbee service start` and `restart` accept repeatable `--env KEY=VALUE`
+and arguments after `--`, for exactly one explicitly named service. On the
+host, put the container name first. Arguments require `services.<name>.args:
+true` and are passed to `run` as positional parameters. For example, use
+`run: './scripts/dev/restart "$@" && exec tail -f /dev/null'`.
+
+Overrides are one-off by default. `--persist` saves supplied arguments and
+merges supplied environment values into the persisted defaults. A plain
+restart uses those defaults again; `--reset-args` clears persisted arguments
+and environment before applying other options. Status displays environment
+keys, not values; avoid putting secrets in positional arguments.
+
 ### Health and waiting
 
 A live, ready service is `unhealthy` when its `health` command fails or times

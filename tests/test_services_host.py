@@ -580,3 +580,18 @@ def test_wait_run_op_argv(make_cfg, tmp_path, monkeypatch):
     extra = ["--until", "unhealthy", "--timeout", "60", "--interval", "10"]
     assert host.run_op(cfg, incus, "one", "wait", ["svc"], extra=extra) == 0
     assert run.call_args.args[3] == ["service", "--repo", "/repo", "wait", "svc", *extra]
+
+
+def test_host_restart_passes_runtime_options(make_cfg, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from jailbee import cli
+    cfg = make_cfg(tmp_path)
+    incus = Mock()
+    monkeypatch.setattr(cli, "_load_or_exit", lambda _: cfg)
+    monkeypatch.setattr(cli, "_resolve_existing", lambda *a, **k: (incus, "one"))
+    monkeypatch.setattr("jailbee.lifecycle.container_repo_dir", lambda *a: "/repo")
+    run = Mock(return_value=0)
+    monkeypatch.setattr("jailbee.container_app.run_in_container_interactive", run)
+    result = CliRunner().invoke(cli.app, ["service", "restart", "one", "backend", "--env", "K=V", "--persist", "--", "-d", "5006"])
+    assert result.exit_code == 0, result.output
+    assert run.call_args.args[3] == ["service", "--repo", "/repo", "restart", "backend", "--env", "K=V", "--persist", "--", "-d", "5006"]

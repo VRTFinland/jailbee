@@ -221,3 +221,34 @@ def test_wait_outputs_match_and_rejects_unknown(tmp_path, monkeypatch):
     assert result.exit_code == 0 and result.stdout == "db ready ok\n"
     result = runner.invoke(container_app, [*base, "missing", "--until", "ready"])
     assert result.exit_code == 2
+
+
+def test_runtime_separator_and_validation(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from jailbee.services.runtime import ServiceRuntime, RunReport
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  backend:\n    run: sleep 1\n    args: true\n  other:\n    run: sleep 1\n")
+    restart = Mock(return_value=RunReport(True, (), None, ""))
+    monkeypatch.setattr(ServiceRuntime, "restart", restart)
+    base = ["service", "--repo", str(tmp_path), "restart"]
+    result = CliRunner().invoke(container_app, [*base, "backend", "--", "-P", "flyway"])
+    assert result.exit_code == 0, result.output
+    assert restart.call_args.args[0] == ["backend"]
+    assert restart.call_args.kwargs["launch"].args == ("-P", "flyway")
+    result = CliRunner().invoke(container_app, [*base, "backend", "other", "--", "-x"])
+    assert result.exit_code == 2
+    assert "runtime options apply to exactly one service" in result.output
+    for value in ("secret-invalid", "BAD-KEY=secret-value", "--"):
+        result = CliRunner().invoke(container_app, [*base, "backend", "--env", value])
+        assert result.exit_code == 2
+        assert "secret" not in result.output
+
+
+def test_args_require_enabled_service(tmp_path):
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  backend:\n    run: sleep 1\n")
+    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "start", "backend", "--", "-x"])
+    assert result.exit_code == 2
+    assert "services.backend.args" in result.output

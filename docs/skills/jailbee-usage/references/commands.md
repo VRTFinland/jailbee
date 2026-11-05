@@ -67,6 +67,20 @@ Services menu appears only for running containers in repos with configured
 services; it uses gathered service choices without reading configuration in the
 frontend.
 
+### Runtime arguments
+
+`jailbee service start` and `restart` accept repeatable `--env KEY=VALUE`
+and arguments after `--`, for exactly one explicitly named service. On the
+host, put the container name first. Arguments require `services.<name>.args:
+true` and are passed to `run` as positional parameters. For example, use
+`run: './scripts/dev/restart "$@" && exec tail -f /dev/null'`.
+
+Overrides are one-off by default. `--persist` saves supplied arguments and
+merges supplied environment values into the persisted defaults. A plain
+restart uses those defaults again; `--reset-args` clears persisted arguments
+and environment before applying other options. Status displays environment
+keys, not values; avoid putting secrets in positional arguments.
+
 ### Health and waiting
 
 `jailbee service wait api --until unhealthy` watches for unhealthy, stopped,
