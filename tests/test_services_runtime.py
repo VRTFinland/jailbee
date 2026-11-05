@@ -719,15 +719,15 @@ def test_wait_timeout_and_unlimited_fresh_poll(tmp_path, monkeypatch):
     original = rt.status
     calls = []
 
-    def status(*, fresh):
-        calls.append(fresh)
+    def status(*, fresh, include_status):
+        calls.append((fresh, include_status))
         if len(calls) == 3:
             proc.windows["svc-web"] = (1, 1, 1)
-        return original(fresh=fresh)
+        return original(fresh=fresh, include_status=include_status)
 
     monkeypatch.setattr(rt, "status", status)
     code, result = rt.wait(["web"], "exited", timeout=0, interval=1)
-    assert code == 0 and result.state == "exited" and calls == [True, True, True]
+    assert code == 0 and result.state == "exited" and calls == [(True, False)] * 3
 
 
 def test_wait_ready_and_unhealthy_probe(tmp_path):
@@ -739,6 +739,22 @@ def test_wait_ready_and_unhealthy_probe(tmp_path):
     code, item = rt.wait(["web"], "unhealthy", timeout=1, interval=1)
     assert code == 0 and item.state == "unhealthy"
     assert len(proc.health_calls) == 2
+
+
+def test_wait_runs_health_without_status_probes(tmp_path):
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "web": {"run": "web", "health": "check", "status": "web-status"},
+            "other": {"run": "other", "status": "other-status"},
+        },
+    )
+    proc.windows.update({"svc-web": (0, "", 1), "svc-other": (0, "", 2)})
+    proc.health_result = ProbeResult(1, "", "bad", False)
+    code, item = rt.wait(["web"], "unhealthy", timeout=1, interval=1)
+    assert code == 0 and item.state == "unhealthy"
+    assert [call[0] for call in proc.health_calls] == ["check"]
+    assert item.status is None
 
 
 def test_status_json_object_fills_field_and_detail(tmp_path):

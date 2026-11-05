@@ -235,7 +235,9 @@ class ServiceRuntime:
         since = datetime.fromtimestamp(first, UTC).isoformat() if first is not None else item.since
         return replace(item, state="unhealthy", since=since, detail=detail)
 
-    def status(self, *, probe: bool = True, fresh: bool = False) -> list[ServiceStatus]:
+    def status(
+        self, *, probe: bool = True, fresh: bool = False, include_status: bool = True
+    ) -> list[ServiceStatus]:
         panes, states = self._panes(), self._state()
         items = [self._lifecycle(name, panes, states) for name in self.cfg.services]
         if not probe:
@@ -245,7 +247,12 @@ class ServiceRuntime:
             statuses: list[Future[tuple[ProbeResult, float | None]] | None] = []
             for item in items:
                 service = self.cfg.services[item.name]
-                if item.window is not None and item.state != "exited" and service.status:
+                if (
+                    include_status
+                    and item.window is not None
+                    and item.state != "exited"
+                    and service.status
+                ):
                     statuses.append(
                         pool.submit(
                             self._probe_launch,
@@ -286,7 +293,7 @@ class ServiceRuntime:
             return 2, None
         deadline = self.proc.now() + timeout if timeout else None
         while True:
-            statuses = {item.name: item for item in self.status(fresh=True)}
+            statuses = {item.name: item for item in self.status(fresh=True, include_status=False)}
             for name in names:
                 item = statuses[name]
                 if item.state == until or (
