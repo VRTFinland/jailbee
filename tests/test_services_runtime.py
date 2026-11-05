@@ -922,3 +922,21 @@ def test_status_redacts_secrets_in_current_and_persisted_args(tmp_path):
     assert status.launch["persisted_args"] == ["***"]
     rendered = json.dumps(status.launch)
     assert "saved-secret" not in rendered and "current-secret" not in rendered
+
+
+def test_status_detail_redacts_quoted_current_and_persisted_secrets(tmp_path):
+    from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore
+
+    rt, _ = runtime(tmp_path, {"web": {"run": "web", "args": True}})
+    LaunchStore(rt.state_dir / "launch.json").set_persisted(
+        "web", Launch(("saved'secret",), {"SAVED": "saved'secret"})
+    )
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("current'secret",), {"TOKEN": "current'secret"}, False, False)
+    ).ok
+    status = rt.status(probe=False)[0]
+    assert "args: '***' (one-off)" in status.detail
+    assert "persisted args: '***'" in status.detail
+    assert "current" not in status.detail and "saved" not in status.detail
+    assert status.launch["args"] == ["***"]
+    assert status.launch["persisted_args"] == ["***"]

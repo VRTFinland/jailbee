@@ -272,21 +272,23 @@ class ServiceRuntime:
         launch, is_persisted = current if current else (Launch(), False)
         if not (launch.args or launch.env or persisted.args or persisted.env):
             return item
+        args = [self.redact(item.name, arg) for arg in launch.args]
+        persisted_args = [self.redact(item.name, arg) for arg in persisted.args]
         metadata: dict[str, object] = {
-            "args": [self.redact(item.name, arg) for arg in launch.args],
+            "args": args,
             "env_keys": sorted(launch.env),
-            "persisted_args": [self.redact(item.name, arg) for arg in persisted.args],
+            "persisted_args": persisted_args,
             "persisted_env_keys": sorted(persisted.env),
         }
         parts = []
         if launch.args:
             parts.append(
-                f"args: {shlex.join(launch.args)} ({'persisted' if is_persisted else 'one-off'})"
+                f"args: {shlex.join(args)} ({'persisted' if is_persisted else 'one-off'})"
             )
         if launch.env:
             parts.append("env: " + ",".join(sorted(launch.env)))
         if persisted.args and persisted.args != launch.args:
-            parts.append("persisted args: " + shlex.join(persisted.args))
+            parts.append("persisted args: " + shlex.join(persisted_args))
         return replace(
             item,
             launch=metadata,
