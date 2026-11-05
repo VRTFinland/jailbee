@@ -5,9 +5,11 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import tempfile
 import time
+from collections import deque
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -19,6 +21,7 @@ from typing import Literal
 from jailbee.config import Config
 from jailbee.config.models_services import Service
 from jailbee.services.graph import restart_set, topo_order, with_dependencies
+from jailbee.services.log_query import strip_terminal
 from jailbee.services.local_proc import LocalProc, ProbeResult
 from jailbee.services.probe_cache import ProbeCache
 from jailbee.tmux import SESSION_NAME
@@ -325,6 +328,75 @@ class ServiceRuntime:
         while rows and not rows[-1].strip():
             rows.pop()
         return "".join(rows if all_history else rows[-lines:])
+
+    def wait_log(
+        self, name: str, pattern: re.Pattern[str], *, timeout: float, before: int,
+        after: int, silence: float = 2.0,
+    ) -> tuple[int, list[str]]:
+        started = self.proc.now()
+        topo_order(self.cfg.services, [name])
+        if not math.isfinite(timeout) or timeout < 0 or before < 0 or after < 0:
+            return 2, []
+
+        def pane_error() -> list[str]:
+            item = self._lifecycle(name, self._panes(), self._state())
+            return [f"{name}: {item.state}" + (f" ({item.detail})" if item.detail else "")]
+
+        pane = self._panes().get(WINDOW_PREFIX + name)
+        if pane is None or pane.dead:
+            return 3, pane_error()
+        preceding: deque[str] = deque(maxlen=before)
+        if before:
+            try:
+                preceding.extend(strip_terminal(self.logs(name, before)).splitlines()[-before:])
+            except RuntimeError:
+                return 3, pane_error()
+        stream = self.proc.follow_pane(self._target(name), 1, initial=False, poll_interval=0.1)
+        pending = ""
+        result: list[str] = []
+        matched = False
+        hit_length = 0
+        last_output = started
+        try:
+            for chunk in stream:
+                now = self.proc.now()
+                if not chunk:
+                    pane = self._panes().get(WINDOW_PREFIX + name)
+                    if pane is None or pane.dead:
+                        return 3, pane_error()
+                if matched and now - last_output >= silence:
+                    return 0, result
+                if not matched and timeout and now - started >= timeout:
+                    return 1, []
+                if not chunk:
+                    continue
+                last_output = now
+                pending += chunk
+                while "\n" in pending:
+                    raw, pending = pending.split("\n", 1)
+                    line = strip_terminal(raw)
+                    if matched:
+                        result.append(line)
+                        if len(result) >= hit_length + after:
+                            return 0, result
+                    elif pattern.search(line):
+                        matched = True
+                        result = [*preceding, line]
+                        hit_length = len(result)
+                        if not after:
+                            return 0, result
+                    else:
+                        preceding.append(line)
+            pane = self._panes().get(WINDOW_PREFIX + name)
+            if matched and pane is not None and not pane.dead:
+                return 0, result
+            return 3, pane_error()
+        except RuntimeError as exc:
+            return 3, [f"{name}: {exc}"]
+        finally:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])

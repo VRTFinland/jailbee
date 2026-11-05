@@ -1,6 +1,7 @@
 """Container service command line."""
 
 import json
+import math
 import re
 import socket
 from dataclasses import asdict
@@ -171,11 +172,21 @@ def logs(
     filters: Annotated[list[str] | None, typer.Option("--filter")] = None,
     before: Annotated[int, typer.Option("-B", min=0)] = 0,
     after: Annotated[int, typer.Option("-A", min=0)] = 0,
-    context: Annotated[int, typer.Option("-C", min=0)] = 0,
+    context: Annotated[int | None, typer.Option("-C", min=0)] = None,
+    wait_pattern: Annotated[str | None, typer.Option("--wait")] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout")] = None,
 ) -> None:
+    if (timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0)):
+        typer.echo("--timeout requires --wait and a finite nonnegative value", err=True)
+        raise typer.Exit(2)
+    if wait_pattern is not None and (grep or filters or follow):
+        typer.echo("--wait cannot be combined with --grep, --filter or --follow", err=True)
+        raise typer.Exit(2)
+    if context is not None:
+        before = after = context
     rt = _runtime(ctx.obj)
     selected = _names(rt, [name] if name else None)[0]
-    if follow and (grep or filters or before or after or context):
+    if follow and (grep or filters or before or after or context is not None):
         typer.echo("--follow cannot be combined with log queries", err=True)
         raise typer.Exit(2)
     expressions = list(grep or [])
@@ -191,6 +202,23 @@ def logs(
         typer.echo(f"invalid log regex: {exc}", err=True)
         raise typer.Exit(2) from exc
     try:
+        wait_regex = re.compile(wait_pattern) if wait_pattern is not None else None
+    except re.error as exc:
+        typer.echo(f"invalid log regex: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    try:
+        if wait_regex is not None:
+            seconds = timeout if timeout is not None else 300
+            code, output = rt.wait_log(selected, wait_regex, timeout=seconds, before=before, after=after)
+            if code == 1:
+                typer.echo(f"no match for {wait_pattern} within {seconds:g}s", err=True)
+            elif code == 3:
+                typer.echo("\n".join(output), err=True)
+            elif output:
+                typer.echo("\n".join(output))
+            if code:
+                raise typer.Exit(code)
+            return
         if not follow:
             if patterns:
                 text = log_query.strip_terminal(rt.logs(selected, lines, all_history=True))
@@ -198,8 +226,8 @@ def logs(
                     text.splitlines(),
                     patterns,
                     limit=lines,
-                    before=max(before, context),
-                    after=max(after, context),
+                    before=before,
+                    after=after,
                 )
                 if selected_lines:
                     typer.echo("\n".join(selected_lines))
@@ -210,6 +238,8 @@ def logs(
             typer.echo(chunk, nl=False)
     except KeyboardInterrupt:
         return
+    except typer.Exit:
+        raise
     except RuntimeError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

@@ -18439,16 +18439,31 @@ def service_logs_cmd(
     service: Annotated[str | None, typer.Argument(help="Service name.")] = None,
     lines: Annotated[int, typer.Option("-n", min=1, help="Number of log lines.")] = 30,
     follow: Annotated[bool, typer.Option("--follow", help="Follow log output.")] = False,
+    grep: Annotated[list[str] | None, typer.Option("--grep")] = None,
+    filters: Annotated[list[str] | None, typer.Option("--filter")] = None,
+    before: Annotated[int | None, typer.Option("-B", min=0)] = None,
+    after: Annotated[int | None, typer.Option("-A", min=0)] = None,
+    context: Annotated[int | None, typer.Option("-C", min=0)] = None,
+    wait_pattern: Annotated[str | None, typer.Option("--wait")] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout")] = None,
     config: ConfigOption = None,
 ) -> None:
     """Show service logs."""
-    _service_command(
-        "logs",
-        name,
-        [service] if service else None,
-        config,
-        ["-n", str(lines), *(["--follow"] if follow else [])],
-    )
+    extra = ["-n", str(lines)]
+    if follow:
+        extra.append("--follow")
+    for value in grep or []:
+        extra.extend(["--grep", value])
+    for value in filters or []:
+        extra.extend(["--filter", value])
+    for option, count in (("-B", before), ("-A", after), ("-C", context)):
+        if count is not None:
+            extra.extend([option, str(count)])
+    if wait_pattern is not None:
+        extra.extend(["--wait", wait_pattern])
+    if timeout is not None:
+        extra.extend(["--timeout", f"{timeout:g}"])
+    _service_command("logs", name, [service] if service else None, config, extra)
 
 
 if __name__ == "__main__":

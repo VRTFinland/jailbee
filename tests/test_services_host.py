@@ -571,6 +571,21 @@ def test_wait_host_delegates_options(make_cfg, tmp_path, monkeypatch):
     )
 
 
+def test_host_logs_passes_query_options(monkeypatch):
+    from typer.testing import CliRunner
+    from jailbee import cli
+
+    run = Mock()
+    monkeypatch.setattr(cli, "_service_command", run)
+    result = CliRunner().invoke(cli.app, ["service", "logs", "one", "web", "--grep", "a",
+        "--grep", "b", "--filter", "errors", "-A", "4", "-B", "3", "-C", "2",
+        "--wait", "ready", "--timeout", "12", "--follow"])
+    assert result.exit_code == 0, result.output
+    assert run.call_args.args == ("logs", "one", ["web"], None,
+        ["-n", "30", "--follow", "--grep", "a", "--grep", "b", "--filter", "errors",
+         "-B", "3", "-A", "4", "-C", "2", "--wait", "ready", "--timeout", "12"])
+
+
 def test_wait_run_op_argv(make_cfg, tmp_path, monkeypatch):
     cfg = make_cfg(tmp_path)
     incus = Mock()
