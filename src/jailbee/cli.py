@@ -55,7 +55,11 @@ app.add_typer(repo_app)
 
 
 @repo_app.command("ls")
-def repo_ls(fmt: Annotated[Literal["table", "json"], typer.Option("--format")] = "table") -> None:
+def repo_ls(
+    fmt: Annotated[
+        Literal["table", "json"], typer.Option("--format", help="Output format.")
+    ] = "table",
+) -> None:
     """List registered repositories and leftover resources."""
     from jailbee.incus import IncusError
     from jailbee.repo_commands import list_command
@@ -70,10 +74,14 @@ def repo_ls(fmt: Annotated[Literal["table", "json"], typer.Option("--format")] =
 @repo_app.command("rm")
 def repo_rm(
     target: Annotated[str | None, typer.Argument(help="Repository prefix or directory.")] = None,
-    yes: Annotated[bool, typer.Option("--yes")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
-    force: Annotated[bool, typer.Option("--force")] = False,
-    purge: Annotated[bool, typer.Option("--purge")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the removal plan only.")] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Skip agent and destroy risk guards.")
+    ] = False,
+    purge: Annotated[
+        bool, typer.Option("--purge", help="Remove eligible repository data files.")
+    ] = False,
 ) -> None:
     """Remove a repository's managed resources."""
     from jailbee.incus import IncusError
