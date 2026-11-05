@@ -235,6 +235,15 @@ def test_install_sh_masks_the_user_socket_units_that_clobber_host_sockets():
         assert unit in script, f"{unit} is not masked by install.sh"
 
 
+def test_install_sh_installs_agent_session_shutdown_unit():
+    script = _install_sh()
+
+    assert "cat > /etc/systemd/system/jailbee-agent-sessions.service" in script
+    assert "RequiresMountsFor=/opt/jailbee/app ${JAILBEE_USER_HOME}" in script
+    assert "ExecStop=-/usr/local/bin/jailbee _agent-snapshot --capture" in script
+    assert "systemctl enable jailbee-agent-sessions.service" in script
+
+
 def test_install_sh_masks_tmp_mount_so_tmp_stays_on_disk():
     """`container.tmpfs` relies on this: the opt-in mount comes from the Incus
     profile, and the golden image must not already be mounting a tmpfs."""

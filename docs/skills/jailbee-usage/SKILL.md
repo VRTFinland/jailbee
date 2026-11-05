@@ -37,6 +37,19 @@ and re-run with the value spelled out. `JAILBEE_NONINTERACTIVE=1` forces the
 same behaviour on a terminal. Usage lines below write such values as `[NAME]`;
 always pass them.
 
+## Claude session resume
+
+Interactive Claude sessions in managed autostart windows are captured on a
+normal `jailbee stop` or `jailbee restart` and resume in their own window with
+the original launcher, options and working directory. This excludes shell
+environment, non-Claude processes and background sessions. Resume requires a
+matching `claude-jb` marker; otherwise startup uses plain `claude`. The
+`autostart.resume_agent_sessions` setting defaults to `true`; setting it to
+`false` consumes a saved snapshot without resuming. Rebuild the golden image
+and create new containers to install the shutdown unit and updated launcher;
+`jailbee apply` alone does not retrofit existing containers. Host reboot and
+raw `incus stop` behavior are unverified.
+
 ## Repository services
 
 Inside a container, use `jailbee service ls` and `jailbee service restart X`

@@ -1932,6 +1932,7 @@ Top-level keys:
 | `on_start` | list[Step] \| list[Stage] | `[]` | Run on every stopped→running transition: both `jailbee new` (after `on_create`) and `jailbee start`/`restart`. Put one-shot setup in `on_create` and recurring launches (dev servers, etc.) in `on_start` — don't duplicate. Same two shapes as `on_create`. |
 | `step_timeout` | int | `600` | Default per-step timeout in seconds (overridable per step). |
 | `env` | map | `{}` | Global env merged into every step (per-step `env` wins on key collisions). |
+| `resume_agent_sessions` | bool | `true` | Resume eligible interactive Claude sessions captured on a normal JailBee stop/restart. `false` consumes the saved snapshot without resuming. Does not cover shell environment, non-Claude processes or background sessions; host reboot and raw `incus stop` are unverified. |
 
 #### Profiles
 

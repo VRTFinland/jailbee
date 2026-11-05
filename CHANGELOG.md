@@ -10,6 +10,7 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Interactive Claude sessions resume after normal JailBee stops and restarts, using their original launcher, arguments and working directory.
 - Re-run selected or failed autostart steps, record their outcomes, and use the
   terminal dashboard Autostart and Services menus.
 - `claude-jb` sessions receive a generated profile model map before their

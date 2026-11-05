@@ -589,6 +589,25 @@ echo "==> Enabling systemd-logind linger for ${CONTAINER_USER}"
 mkdir -p /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/${CONTAINER_USER}"
 
+# Snapshot interactive Claude sessions while systemd stops the container.
+# systemd expands JAILBEE_USER_HOME at image-build time; requiring both the
+# source mount and home mount makes the snapshot's paths available at stop.
+cat > /etc/systemd/system/jailbee-agent-sessions.service <<EOF
+[Unit]
+Description=Snapshot Claude sessions for resume after restart
+RequiresMountsFor=/opt/jailbee/app ${JAILBEE_USER_HOME}
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=${CONTAINER_USER}
+ExecStart=/bin/true
+ExecStop=-/usr/local/bin/jailbee _agent-snapshot --capture
+TimeoutStopSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable jailbee-agent-sessions.service
+
 # Keep the user manager that linger just guaranteed away from the host's
 # sockets. jailbee bind-mounts the host's own /run/user/<uid>/gnupg and
 # /run/user/<uid>/pulse *directories* into the container, and these user

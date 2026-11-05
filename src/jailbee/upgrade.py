@@ -594,6 +594,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "the new text"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 3),
+        actions=frozenset({"base_build"}),
+        reason=(
+            "Claude sessions are resumed after a restart: the golden image gains a "
+            "shutdown snapshot unit and `claude-jb` records its launcher"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
