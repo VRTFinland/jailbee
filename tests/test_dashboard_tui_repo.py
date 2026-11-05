@@ -74,6 +74,18 @@ def test_remove_repo_menu_respects_ssh_policy(mocker, tmp_path, allowed):
     permitted.assert_any_call(["repo", "rm", "alpha"], policy, over_ssh=True)
 
 
+def test_remove_repo_menu_uses_actual_ssh_permission(tmp_path):
+    group = cfg_group(tmp_path)
+    unrestricted = tmenu.open_repo_menu(
+        [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(restrict_host=False), over_ssh=True
+    )
+    restricted = tmenu.open_repo_menu(
+        [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), over_ssh=True
+    )
+    assert "repo-remove" in repo_menu_verbs(unrestricted)
+    assert "repo-remove" not in repo_menu_verbs(restricted)
+
+
 def test_remove_repo_hotkey_runs_foreground(mocker, tmp_path):
     group = cfg_group(tmp_path)
     child = mocker.patch.object(tsession.subprocess, "run")
