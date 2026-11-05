@@ -612,6 +612,68 @@ def test_bulk_loose_without_a_revert_policy_asks_nothing(mocker, tmp_path):
     assert child.call_args.args[0] == ["jailbee", "net", "loose", "alpha-a"]
 
 
+def test_network_strict_from_the_menu_runs_detached(mocker, tmp_path):
+    """Switching the network takes a while; the dashboard must stay usable.
+
+    Mutation: send `net strict` back to `dispatch` and the terminal is handed off.
+    """
+    child = _children(mocker)
+    session, terminal, group = _session(mocker, tmp_path, "Running")
+    group.containers[0].network = "loose"
+    session.handle_key("down")
+
+    session.overlay = session._selection_menu()
+    session.menu_chosen("net strict", "Network →", 0)
+
+    assert terminal.handed == []
+    assert [c.args[0] for c in child.call_args_list] == [["jailbee", "net", "strict", "alpha-a"]]
+
+
+def test_network_loose_from_the_menu_asks_the_ttl_then_runs_detached(mocker, tmp_path):
+    child = _children(mocker)
+    session, terminal, _ = _session(mocker, tmp_path, "Running", loose_ttl_default="5m")
+    session.handle_key("down")
+
+    session.overlay = session._selection_menu()
+    session.menu_chosen("net loose", "Network →", 0)
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "container-loose-ttl"
+    assert picker.entries[0].value == "5m"
+    assert child.call_args_list == []  # nothing runs before the answer
+    session.picker_chosen(PickerEntry("2h", "2h"))
+
+    assert terminal.handed == []
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "net", "loose", "alpha-a", "--for", "2h"]
+    ]
+    assert session.overlay is None
+
+
+def test_network_loose_without_a_revert_policy_runs_detached_at_once(mocker, tmp_path):
+    child = _children(mocker)
+    session, terminal, _ = _session(mocker, tmp_path, "Running", loose_ttl_default=None)
+    session.handle_key("down")
+
+    session.overlay = session._selection_menu()
+    session.menu_chosen("net loose", "Network →", 0)
+
+    assert session.overlay is None
+    assert terminal.handed == []
+    assert [c.args[0] for c in child.call_args_list] == [["jailbee", "net", "loose", "alpha-a"]]
+
+
+def test_a_failed_network_switch_is_reported_on_the_status_line(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",), stderr="acl busy")
+    session, _, _ = _session(mocker, tmp_path, "Running", loose_ttl_default=None)
+    session.handle_key("down")
+
+    session.overlay = session._selection_menu()
+    session.menu_chosen("net loose", "Network →", 0)
+    session.tick()
+
+    assert session.notice == "net loose: 0 ok, 1 failed (alpha-a: acl busy)"
+
+
 def test_every_marked_container_ineligible_for_the_picker_says_so(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running")
     session.marked = frozenset({"gone"})

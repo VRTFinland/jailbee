@@ -2842,6 +2842,14 @@ class DashboardSession:
         if picker.purpose == "bulk-loose-ttl":
             self._run_planned("net loose", ("--for", entry.value))
             return None
+        if picker.purpose == "container-loose-ttl":
+            # Re-planned: the container may have gone or got busy while asked.
+            action = self._plan_one("net loose", picker.target)
+            if action.eligible:
+                self.run_bulk(action, ("--for", entry.value))
+            else:
+                self.set_notice(nothing_to_do(action))
+            return None
         return picker.back
 
     def edit_config(self, *, global_layer: bool) -> None:
@@ -3277,10 +3285,12 @@ class DashboardSession:
                 self.overlay = self.begin_destroy(target)
             elif verb == "outbox clear":
                 self.overlay = self.begin_outbox_clear(target)
-            elif verb in DETACHED_MENU_VERBS:
+            elif verb in DETACHED_MENU_VERBS or verb == "net strict":
                 # Detached, as a bulk run of one: the dashboard stays usable
-                # through a shutdown or an autostart run.
+                # through a shutdown, an autostart run or a network switch.
                 self._run_planned_one(verb, target)
+            elif verb == "net loose":
+                self.overlay = self.begin_loose(target)
             else:
                 self.dispatch(target, verb)
 
@@ -3559,6 +3569,27 @@ class DashboardSession:
             over_ssh=self.over_ssh,
             busy=self.bulk_running(),
             orphans=True,
+        )
+
+    def begin_loose(self, name: str) -> Picker | None:
+        """Ask the loose TTL in the dashboard, then switch detached; None once it runs.
+
+        As the bulk path does: the CLI would otherwise ask on a blanked
+        screen and hold the dashboard for the whole switch.
+        """
+        action = self._plan_one("net loose", name)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return None
+        default = bulk_loose_default(self.groups, action.eligible)
+        if default is None:
+            self.run_bulk(action)
+            return None
+        return Picker(
+            "container-loose-ttl",
+            f"Keep {name} in loose for how long?",
+            ttl_entries(default),
+            target=name,
         )
 
     def begin_outbox_clear(self, name: str) -> Picker | None:
