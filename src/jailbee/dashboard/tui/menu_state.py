@@ -165,7 +165,7 @@ def open_repo_menu(
 ) -> RepoMenuState | None:
     """Offer creation, the credential group, egress and repo-level CLI entries, folding for all.
 
-    Everything but folding is offered for actionable repos only.
+    Removal and folding are offered even when the repo has no root.
 
     The credential group and egress entries are hidden when the SSH policy
     refuses them, so a session never sees an entry that can only fail.
@@ -202,6 +202,8 @@ def open_repo_menu(
             actions.append(MenuGroup(dact.DIAGNOSTICS_LABEL, extras.diagnostics))
         if extras.prune is not None:
             actions.append(extras.prune)
+    if permitted(dact.repo_remove_argv(prefix), ssh_policy, over_ssh=over_ssh):
+        actions.append(("Remove repo…", dact.REPO_REMOVE))
     actions.append(("Unfold" if prefix in folded else "Fold", "fold"))
     return RepoMenuState(prefix, actions)
 
@@ -324,6 +326,7 @@ _MENU_KEYS: dict[str, str] = {
     dact.DIAGNOSTICS_LABEL: "d",
     dact.REPO_PRUNE: "X",
     dact.REPO_SENT: "s",
+    dact.REPO_REMOVE: "R",
     "fold": "f",
     # Diagnostics →
     dact.REPO_DOCTOR: "d",

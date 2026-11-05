@@ -1037,6 +1037,7 @@ class DashboardSession:
         *,
         style: DispatchStyle = "output",
         diagnostic_path: Path | None = None,
+        allow_orphan: bool = False,
     ) -> int | None:
         """Hand the terminal to one dashboard-built `jailbee` command; notice a failure.
 
@@ -1048,6 +1049,9 @@ class DashboardSession:
         before the spawn.
         """
         repo = self.repo_for(target, kind)
+        if allow_orphan and target_group(self.groups, target, kind) is not None:
+            if repo is None or not repo.repo_root.is_dir():
+                repo = RepoTarget.orphan()
         if repo is None:
             self.set_notice(f"'{target}' is gone")
             return None
@@ -3219,6 +3223,10 @@ class DashboardSession:
                 self.run_dashboard_command(target, "repo", dact.disk_usage_argv())
             elif verb == dact.REPO_PRUNE:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
+            elif verb == dact.REPO_REMOVE:
+                self.run_dashboard_command(
+                    target, "repo", dact.repo_remove_argv(target), allow_orphan=True
+                )
             elif verb == dact.REPO_SENT:
                 self.outbox_parent = repo_parent
                 self.overlay = self.open_sent(target)

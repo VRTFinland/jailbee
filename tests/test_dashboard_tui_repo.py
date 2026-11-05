@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jailbee.config.models_remote import RemoteSSHConfig
@@ -38,9 +40,33 @@ def test_repo_header_enter_opens_menu_without_folding(mocker, tmp_path):
         "Apply config…",
         "Diagnostics →",
         "Prune stale containers…",
+        "Remove repo…",
         "Fold",
     ]
     save.assert_not_called()
+
+
+@pytest.mark.parametrize("root", ["present", "missing", "orphan"])
+def test_remove_repo_menu_runs_foreground_for_every_group(mocker, tmp_path, root):
+    from tests.dashboard_pilot import bare_session
+
+    repo_root = {"present": str(tmp_path), "missing": str(tmp_path / "gone"), "orphan": None}[root]
+    group = dmodel.RepoGroup("alpha", repo_root, None, [])
+    session, _ = bare_session(mocker, [group])
+    child = mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session.overlay = tmenu.open_repo_menu([group], "alpha", frozenset())
+    assert ("Remove repo…", "repo-remove") in session.overlay.actions
+    session.menu_chosen("repo-remove", None, 0)
+    repo, argv = child.call_args.args
+    assert argv == ["repo", "rm", "alpha"]
+    assert repo.cwd() == (tmp_path if root == "present" else Path.home())
+
+
+def test_remove_repo_menu_respects_ssh_policy(tmp_path):
+    group = cfg_group(tmp_path)
+    menu = tmenu.open_repo_menu([group], "alpha", frozenset(),
+                                ssh_policy=RemoteSSHConfig(), over_ssh=True)
+    assert "repo-remove" not in repo_menu_verbs(menu)
 
 
 # --- Repo-level CLI entries (apply, diagnostics, prune) ----------------------

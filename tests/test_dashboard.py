@@ -5754,7 +5754,7 @@ def test_repo_menu_diagnostics_submenu_then_prune_before_fold(tmp_path):
     labels = [i.label if isinstance(i, dmenus.MenuGroup) else i[0] for i in menu.actions]
     at = labels.index("Diagnostics →")
     assert labels[at - 1] == "Apply config…"
-    assert labels[at + 1 : at + 3] == ["Prune stale containers…", "Fold"]
+    assert labels[at + 1 : at + 4] == ["Prune stale containers…", "Remove repo…", "Fold"]
     diagnostics = menu.actions[at]
     assert isinstance(diagnostics, dmenus.MenuGroup)
     assert diagnostics.actions == (("Doctor", "doctor"), ("Disk usage", "disk-usage"))
