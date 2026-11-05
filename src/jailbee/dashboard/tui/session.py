@@ -1383,6 +1383,17 @@ class DashboardSession:
         }[right]
         return permitted(argv, self.ssh_policy, over_ssh=self.over_ssh)
 
+    def _publish_rate_raise_permitted(self, container: str, grant: GrantView) -> bool:
+        """Whether a higher rate passes the CLI's remote check: every held right is publishable."""
+        held = []
+        if grant.publish_issues or (grant.publish_foreign_repos and grant.publish_foreign_actions):
+            held.append("issues")
+        if grant.publish_prs:
+            held.append("prs")
+        if grant.publish_pr_reviews:
+            held.append("reviews")
+        return all(self._publish_widening_permitted(container, right) for right in held)
+
     def _publish_entries(self, container: str, grant: GrantView) -> list[PickerEntry]:
         """The publish rows of the Orchestration menu; turning a right off is always offered."""
         entries: list[PickerEntry] = []
@@ -1441,6 +1452,12 @@ class DashboardSession:
         grant = found[1].grant
         kind = value.removeprefix("issue:")
         current = set(grant.publish_issues)
+        if kind == "assign_self" and kind not in current and "assign" in current:
+            self.set_notice("assign_self is implied by assign; turn assign off first")
+            self.overlay = self._publish_issues_picker(
+                container, start_index=_PUBLISH_ISSUE_KINDS.index(kind)
+            )
+            return self.overlay if isinstance(self.overlay, Picker) else None
         new = tuple(sorted(current - {kind} if kind in current else current | {kind}))
         argv = dact.orchestrate_grant_argv(container, publish_issues=new)
         if not self.run_quiet_cli(repo, argv):
@@ -1621,6 +1638,13 @@ class DashboardSession:
             value = "limit"
         elif prompt.purpose == "container-orchestration-publish-rate":
             rate = int(answer)
+            if rate > grant.publish_rate and not self._publish_rate_raise_permitted(
+                container, grant
+            ):
+                self.set_notice(
+                    "Raising the publish rate needs manual publish permission in this session"
+                )
+                return self._reopen_orchestration(container, "publish-rate")
             argv = dact.orchestrate_grant_argv(container, publish_rate=rate)
             patched = replace(grant, publish_rate=rate)
             value = "publish-rate"

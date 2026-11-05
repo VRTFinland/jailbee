@@ -1856,3 +1856,51 @@ def test_publish_prompt_escape_returns_to_orchestration(mocker, tmp_path, value)
     session.overlay_cancel()
     quiet.assert_not_called()
     assert session.overlay.purpose == "container-orchestration"
+
+
+def test_ssh_refuses_raising_the_rate_without_manual_publish_permission(mocker, tmp_path):
+    session, quiet = _ssh_publish_session(
+        mocker, tmp_path, allow=[], publish={"publish_issues": ("comment",), "publish_rate": 30}
+    )
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-rate")
+    )
+    out = session.submit_prompt(prompt, "100")
+    quiet.assert_not_called()
+    assert "manual publish permission" in session.notice
+    assert out.entries[out.start_index].value == "publish-rate"
+    session.submit_prompt(prompt, "10")
+    assert quiet.call_args.args[1][2:4] == ["--publish-rate", "10"]
+
+
+def test_ssh_allows_raising_the_rate_the_session_could_publish_itself(mocker, tmp_path):
+    session, quiet = _ssh_publish_session(
+        mocker, tmp_path, allow=["issue apply"], publish={"publish_issues": ("comment",)}
+    )
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-rate")
+    )
+    session.submit_prompt(prompt, "100")
+    assert quiet.call_args.args[1][2:4] == ["--publish-rate", "100"]
+
+
+def test_implied_assign_self_toggle_runs_nothing(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, publish={"publish_issues": ("assign",)}
+    )
+    picker = _publish_issues_picker(session)
+    out = session.submit_picker(picker, PickerEntry("", "issue:assign_self"))
+    quiet.assert_not_called()
+    assert "implied by assign" in session.notice
+    assert out.entries[out.start_index].value == "issue:assign_self"
+
+
+def test_publish_foreign_submit_rejects_a_malformed_answer(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-foreign")
+    )
+    out = session.submit_prompt(prompt, "org/lib: close")
+    quiet.assert_not_called()
+    assert "Unknown issue action" in session.notice
+    assert out.entries[out.start_index].value == "publish-foreign"
