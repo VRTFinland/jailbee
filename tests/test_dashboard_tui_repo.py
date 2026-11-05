@@ -62,11 +62,31 @@ def test_remove_repo_menu_runs_foreground_for_every_group(mocker, tmp_path, root
     assert repo.cwd() == (tmp_path if root == "present" else Path.home())
 
 
-def test_remove_repo_menu_respects_ssh_policy(tmp_path):
+@pytest.mark.parametrize("allowed", [True, False])
+def test_remove_repo_menu_respects_ssh_policy(mocker, tmp_path, allowed):
     group = cfg_group(tmp_path)
-    menu = tmenu.open_repo_menu([group], "alpha", frozenset(),
-                                ssh_policy=RemoteSSHConfig(), over_ssh=True)
-    assert "repo-remove" not in repo_menu_verbs(menu)
+    policy = RemoteSSHConfig(restrict_host=False)
+    permitted = mocker.patch.object(tmenu, "permitted", return_value=allowed)
+    menu = tmenu.open_repo_menu(
+        [group], "alpha", frozenset(), ssh_policy=policy, over_ssh=True
+    )
+    assert ("repo-remove" in repo_menu_verbs(menu)) is allowed
+    permitted.assert_any_call(["repo", "rm", "alpha"], policy, over_ssh=True)
+
+
+def test_remove_repo_hotkey_runs_foreground(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+
+    assert drive(mocker, ["enter", "R"], [group]).rc == 0
+
+    child.assert_called_once_with(
+        ["jailbee", "repo", "rm", "alpha", "--config", str(group.config_path)],
+        check=False,
+        cwd=tmp_path,
+    )
 
 
 # --- Repo-level CLI entries (apply, diagnostics, prune) ----------------------
