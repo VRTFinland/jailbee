@@ -26,6 +26,10 @@ def main() -> NoReturn:
         from jailbee.inbox.cli import main as inbox_main
 
         raise SystemExit(inbox_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["_agent-snapshot"]:
+        from jailbee.agent_snapshot import main as snapshot_main
+
+        raise SystemExit(snapshot_main(sys.argv[2:]))
     from jailbee.container_cli import container_app
 
     container_app()

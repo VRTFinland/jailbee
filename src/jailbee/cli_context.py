@@ -12,7 +12,7 @@ EXIT_SKEW = 86
 EXIT_DEPS = 87
 EXIT_NOT_MOUNTED = 88
 SHARED_COMMANDS = frozenset({"config", "version", "service", "issue", "pr", "outbox"})
-CONTAINER_COMMANDS: frozenset[str] = frozenset({"inbox"})
+CONTAINER_COMMANDS: frozenset[str] = frozenset({"inbox", "_agent-snapshot"})
 HOST_COMMANDS: frozenset[str] = frozenset(
     {
         "_autostart-worker",
