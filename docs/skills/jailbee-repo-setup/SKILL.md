@@ -96,9 +96,10 @@ services:
 ```
 
 Filters are regular expressions validated at config load and selected with
-`jailbee service logs api --filter errors`. `history_limit` controls tmux
-scrollback for windows created later, including future autostart windows; it
-does not resize current panes or create durable logs. See the
+`jailbee service logs api --filter errors`. `history_limit` is per-service
+configuration; JailBee uses the maximum across services for tmux scrollback on
+windows created later, including future autostart windows. It does not resize
+current panes or create durable logs. See the
 [service configuration schema](references/config-schema.md#services) and
 [log-query options](../jailbee-usage/references/commands.md#status-and-log-queries).
 

@@ -27,7 +27,7 @@ or `-`, and are at most 63 characters.
 | `prepare` | Serial steps, default `[]`; run once on first selected autostart and explicitly on refresh. |
 | `ready`, `ready_timeout` | Optional probe and positive timeout in seconds (120). |
 | `status`, `status_timeout` | Optional read-only status probe and timeout in seconds (5, minimum 1); a failed or timed-out probe reports an error without changing lifecycle state. |
-| `logs.filters`, `logs.history_limit` | Named regex filters (`{}`) and retained tmux scrollback line limit (50000, minimum 1000); the limit applies to windows created later and is not durable logging. |
+| `logs.filters`, `logs.history_limit` | Named regex filters (`{}`) and per-service tmux scrollback limit (50000, minimum 1000); the session uses the maximum configured service limit for later windows. Not durable logging. |
 | `stop`, `stop_timeout` | Optional stop command and positive timeout in seconds (10). |
 | `working_dir`, `env` | Repo-relative directory (`""`) and environment (`{}`). |
 | `depends_on` | Map of service names to `{restart: false}` by default. |
@@ -46,9 +46,10 @@ changes.
 `logs.filters` maps lowercase names matching `[a-z][a-z0-9_-]*` to Python
 regular-expression strings, validated when configuration loads. For example,
 `errors: 'error|failed|exception'` defines a reusable filter for
-`jailbee service logs api --filter errors`. `logs.history_limit` sets tmux's
-session-wide scrollback limit for windows created later; changing it does not
-resize already-existing panes and does not provide durable log retention.
+`jailbee service logs api --filter errors`. Each service's `logs.history_limit` contributes to the session's scrollback
+setting: JailBee uses the maximum limit across configured services. It applies
+to windows created later; changing it does not resize existing panes and does
+not provide durable log retention.
 See [service log queries](commands.md#status-and-log-queries).
 On startup, a generated `services` stage prepares and starts selected services
 and their dependencies, waiting for readiness. By default it runs before the agent

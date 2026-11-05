@@ -43,7 +43,10 @@ For a one-shot line, start the wait command in the background before triggering
 the action:
 
 ```bash
-jailbee service logs api --wait 'ready' -A 40 --timeout 120
+jailbee service logs api --wait 'ready' -A 40 --timeout 120 &
+wait_pid=$!
+# Trigger the action that should produce the line here.
+wait "$wait_pid"
 ```
 
 The wait boundary is successful attachment to the tmux control output stream,

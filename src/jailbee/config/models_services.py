@@ -61,7 +61,9 @@ class ServiceLogs(BaseModel):
     history_limit: int = Field(
         default=50000,
         ge=1000,
-        description="Maximum retained tmux scrollback lines for later autostart windows.",
+        description=(
+            "This service's tmux scrollback limit; session uses the maximum across services."
+        ),
     )
 
     @field_validator("filters")

@@ -462,9 +462,9 @@ graph, and must be ready before start; `{restart: true}` cascades restarts.
 lifecycle state. `logs.filters` maps lowercase names matching
 `[a-z][a-z0-9_-]*` to regex strings validated at config load. For example,
 `errors: 'error|failed|exception'` can be selected with
-`jailbee service logs api --filter errors`. `logs.history_limit` sets tmux
-scrollback for newly created windows; existing panes are not resized and logs
-are not durable.
+`jailbee service logs api --filter errors`. Each service's `logs.history_limit`
+contributes to the session setting; JailBee uses the maximum configured value
+for newly created windows. Existing panes are not resized and logs are not durable.
 
 Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 (list), `env`, `working_dir`, `timeout` (default autostart step timeout), and

@@ -158,10 +158,10 @@ may omit a short setup gap. Output stops after two seconds of silence.
 `--timeout` is valid only with `--wait`, defaults to 300 seconds, and `0` means
 unlimited. Exit codes are 0 for a match, 1 for timeout, 2 for invalid input,
 and 3 if the pane becomes unusable before a buffered hit. These queries do not
-change service state. `services.<name>.logs.history_limit` controls tmux
-scrollback, default 50000 lines (minimum 1000); it is a session-wide setting
-applied to windows created later, including future autostart windows, and does
-not resize existing panes. Increasing it does not create durable log storage.
+change service state. Each `services.<name>.logs.history_limit` contributes to
+the session setting; JailBee uses the maximum across configured services
+(default 50000 lines, minimum 1000) for windows created later, including future
+autostart windows. It does not resize existing panes or create durable logs.
 
 ### Health and waiting
 

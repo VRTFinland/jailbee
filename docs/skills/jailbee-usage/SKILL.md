@@ -79,8 +79,9 @@ lifecycle state. `service logs` reads tmux scrollback, not durable logs. Repeat
 selects the last N matches across retained history before `-B`, `-A`, or `-C`
 context is expanded. See the [full log-query reference](references/commands.md#status-and-log-queries).
 
-For a one-shot line, start `jailbee service logs <service> --wait '<pattern>'
--A 40 --timeout 120` in the background before triggering the action. The wait
+For a one-shot line, start the wait in the background before the action, e.g.
+`jailbee service logs api --wait 'ready' -A 40 --timeout 120 &`; save its PID
+and wait for it after triggering the action. The wait
 boundary is successful attachment to the tmux control output stream, not
 command invocation; a short setup gap may be missed, and background launch
 alone does not guarantee attachment. If the action already ran, use

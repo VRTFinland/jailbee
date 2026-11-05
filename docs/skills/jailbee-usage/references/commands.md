@@ -80,8 +80,9 @@ are per-service definitions in `services.<name>.logs.filters`.
 `--wait PATTERN` reads new complete lines and accepts context options, but
 excludes grep, filter, and follow. Its boundary is successful attachment to the
 tmux control output stream, not command invocation; a short setup gap before
-attachment may be missed. Start it in the background before a one-shot action;
-background launch alone does not guarantee attachment. If the action already
+attachment may be missed. Start it in the background before a one-shot action (append `&` and save
+`$!` to wait for the command after triggering the event); background launch
+alone does not guarantee attachment. If the action already
 ran, use `--grep PATTERN -n 5 -A 40` instead. Context before a hit may omit a
 short setup gap. It stops after two seconds of silence. `--timeout` is valid
 only with wait, defaults to 300 seconds, and `0` means unlimited. Exit codes:

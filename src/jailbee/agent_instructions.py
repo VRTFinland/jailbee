@@ -27,15 +27,15 @@ PREAMBLE = "\n".join(
     [
         "# JailBee container environment",
         "You are in an isolated, host-managed development environment.",
-        "The host operator controls container lifecycle and network policy.",
-        "Read /etc/jailbee/container.json for identity, mode, and repo_dir.",
+        "The host operator controls lifecycle and network policy; read "
+        "/etc/jailbee/container.json for identity, mode, and repo_dir.",
         "Clone mode uses a per-branch clone; mount mode uses the mounted repository.",
-        "Make local commits. In clone mode, the host operator extracts commits; "
+        "Make local commits; In clone mode, the host operator extracts commits; "
         "mount mode shares the tree.",
         "Do not rely on git push from the container.",
         "If you are a child, ask your orchestrator for publication and network access, "
         "not the host.",
-        "Otherwise, ask the operator to publish changes or grant network access.",
+        "Otherwise, ask the operator to publish changes or grant network access. "
         "Network egress defaults to strict allowlisting; do not bypass blocked hosts.",
         "For a blocked host, the operator can run the exact host-side command:",
         "jailbee net egress add <host> <container> (use the container's short_name).",
@@ -47,24 +47,23 @@ PREAMBLE = "\n".join(
         "From the repository directory, inspect services with jailbee service ls "
         "and jailbee service logs <service>; start one with jailbee service "
         "start <service>.",
-        "## Status and log queries. service ls status probes are read-only "
-        "and report errors or timeouts without changing lifecycle state. "
-        "service logs reads retained tmux scrollback, not durable logs; repeat "
-        "--grep PATTERN or --filter NAME for their union, with -n N selecting "
-        "the last N matches (30 by default) before -B/-A/-C context expands.",
-        "For a one-shot line, start jailbee service logs <service> --wait "
-        "'<pattern>' -A 40 --timeout 120 in the background before triggering "
-        "the action. The boundary is successful attachment to the tmux control "
-        "output stream, not command invocation; setup output before attachment "
-        "may be missed, and background launch alone does not guarantee "
-        "attachment. Context before a hit may omit a short setup gap. If the "
-        "action already ran, use --grep '<pattern>' -n 5 -A 40 instead. For "
-        "errors, use --filter errors -n 20 -A 30 when defined. Wait excludes "
-        "grep/filter/follow; timeout defaults to 300 seconds (0 unlimited), "
-        "with exit codes 0 match, 1 timeout, 2 invalid input, 3 unusable pane. "
-        "The history limit affects later windows only; it is not durable.",
-        "## Health and waiting. Before long tests or service-dependent work, "
-        "check service ls or run "
+        "## Status and log queries",
+        "service ls status probes are read-only; errors/timeouts never change "
+        "lifecycle state. service logs reads retained tmux scrollback, not "
+        "durable logs. Repeat --grep PATTERN or --filter NAME for their union; "
+        "-n N selects the last N matches (default 30) before context expansion.",
+        "For one-shot output, start jailbee service logs <service> --wait "
+        "'<pattern>' -A 40 --timeout 120 in the background before the action. "
+        "The boundary is successful tmux control-stream attachment, not "
+        "invocation; setup output before it may be missed, and background launch "
+        "does not guarantee attachment. Context may omit a short setup gap. "
+        "If the action ran, use --grep '<pattern>' -n 5 -A 40; for errors, "
+        "--filter errors -n 20 -A 30 when defined. Wait excludes grep/filter/"
+        "follow; timeout defaults to 300 seconds (0 unlimited). Exit codes "
+        "are 0 match, 1 timeout, 2 invalid input, 3 unusable pane. Session "
+        "history uses the maximum configured service limit for later windows.",
+        "## Health and waiting",
+        "Before long tests or service-dependent work, check service ls or run "
         "jailbee service wait <service> --until unhealthy in the background.",
         "On connection refused, a blank UI, or HTTP 500, check service ls and logs first; "
         "fix the environment and restart the service, not app code to mask a dead service. "
