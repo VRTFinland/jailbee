@@ -48,7 +48,9 @@ def test_stale_extra_acls_preserve_other_repos_and_recover_capped(db_engine, moc
     incus.profile_list.return_value = ["foo-base", "foo-bar-base"]
     incus.list_containers.return_value = []
     incus.network_acl_list.return_value = [
-        "foo-one-extra", "foo-bar-one-extra", extra_acl_name(long_name)
+        "foo-one-extra",
+        "foo-bar-one-extra",
+        extra_acl_name(long_name),
     ]
     incus.list_images.return_value = []
     plan = plan_removal("foo", incus, lambda: Session(db_engine))
@@ -443,32 +445,75 @@ def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
     now = datetime.now(UTC)
     with Session(db_engine) as session:
         for prefix in ("foo", "foo-bar"):
-            session.add(PoolIP(
-                container_prefix=prefix, hostname="example.com", ip="1.2.3.4",
-                first_seen=now, last_seen=now,
-            ))
-            session.add(RefreshState(
-                container_prefix=prefix, last_refresh_at=now, last_refresh_status="ok",
-            ))
-            session.add(RepoUpgradeState(
-                container_prefix=prefix, base_build_version="1.0", base_build_observed=True,
-                apply_version="1.0", apply_observed=True, updated_at=now,
-            ))
-            session.add(EgressOverride(
-                container_prefix=prefix, entry="example.com", added_at=now,
-            ))
-            session.add(BackgroundJob(
-                container_name=f"{prefix}-one", container_prefix=prefix, phase="failed",
-                pid=1, log_path="/tmp/log", started_at=now, updated_at=now,
-            ))
-            session.add(DismissedNotice(
-                scope=prefix, key="apply", fingerprint="1", version="1", dismissed_at=now,
-            ))
-            session.add(SentRecord(
-                dedup_key=prefix, sent_at=now, container_prefix=prefix, container="one",
-                instance=f"{prefix}-one", publisher="user", state="applied", outbox="issue",
-                manifest="001", action_index=0, kind="create", repo="owner/repo",
-            ))
+            session.add(
+                PoolIP(
+                    container_prefix=prefix,
+                    hostname="example.com",
+                    ip="1.2.3.4",
+                    first_seen=now,
+                    last_seen=now,
+                )
+            )
+            session.add(
+                RefreshState(
+                    container_prefix=prefix,
+                    last_refresh_at=now,
+                    last_refresh_status="ok",
+                )
+            )
+            session.add(
+                RepoUpgradeState(
+                    container_prefix=prefix,
+                    base_build_version="1.0",
+                    base_build_observed=True,
+                    apply_version="1.0",
+                    apply_observed=True,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                EgressOverride(
+                    container_prefix=prefix,
+                    entry="example.com",
+                    added_at=now,
+                )
+            )
+            session.add(
+                BackgroundJob(
+                    container_name=f"{prefix}-one",
+                    container_prefix=prefix,
+                    phase="failed",
+                    pid=1,
+                    log_path="/tmp/log",
+                    started_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                DismissedNotice(
+                    scope=prefix,
+                    key="apply",
+                    fingerprint="1",
+                    version="1",
+                    dismissed_at=now,
+                )
+            )
+            session.add(
+                SentRecord(
+                    dedup_key=prefix,
+                    sent_at=now,
+                    container_prefix=prefix,
+                    container="one",
+                    instance=f"{prefix}-one",
+                    publisher="user",
+                    state="applied",
+                    outbox="issue",
+                    manifest="001",
+                    action_index=0,
+                    kind="create",
+                    repo="owner/repo",
+                )
+            )
         session.commit()
     incus = MagicMock(spec=Incus)
     incus.profile_list.return_value = []
@@ -478,8 +523,13 @@ def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
     assert all(r.ok for r in execute_removal(plan, incus, lambda: Session(db_engine)))
     with Session(db_engine) as session:
         for model in (
-            PoolIP, RefreshState, RepoUpgradeState, EgressOverride,
-            BackgroundJob, DismissedNotice, SentRecord,
+            PoolIP,
+            RefreshState,
+            RepoUpgradeState,
+            EgressOverride,
+            BackgroundJob,
+            DismissedNotice,
+            SentRecord,
         ):
             rows = session.exec(select(model)).all()
             assert len(rows) == 1
@@ -498,13 +548,22 @@ def test_execute_failed_capped_acl_retains_state_for_fresh_retry(db_engine, tmp_
     acl = extra_acl_name(container)
     now = datetime.now(UTC)
     with Session(db_engine) as session:
-        session.add(RegisteredRepo(
-            container_prefix="foo", repo_root=str(tmp_path / "gone"), registered_at=now,
-        ))
-        session.add(PoolIP(
-            container_prefix=f"ct:{container}", hostname="x", ip="1",
-            first_seen=now, last_seen=now,
-        ))
+        session.add(
+            RegisteredRepo(
+                container_prefix="foo",
+                repo_root=str(tmp_path / "gone"),
+                registered_at=now,
+            )
+        )
+        session.add(
+            PoolIP(
+                container_prefix=f"ct:{container}",
+                hostname="x",
+                ip="1",
+                first_seen=now,
+                last_seen=now,
+            )
+        )
         session.commit()
     incus = MagicMock(spec=Incus)
     incus.profile_list.return_value = []
@@ -515,6 +574,7 @@ def test_execute_failed_capped_acl_retains_state_for_fresh_retry(db_engine, tmp_
     incus.network_acl_delete.side_effect = RuntimeError("busy")
     mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
     mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+
     def factory():
         return Session(db_engine)
 

@@ -368,7 +368,9 @@ def plan_removal(
         known_container_names.update(
             row.container_name for row in session.exec(select(BackgroundJob)).all()
         )
-        known_container_names.update(row.container for row in session.exec(select(SentRecord)).all())
+        known_container_names.update(
+            row.container for row in session.exec(select(SentRecord)).all()
+        )
         state_counts = {
             "pool_ip": sum(
                 _pool_owned(r.container_prefix, prefix, known, ownership) for r in pool_rows
