@@ -142,7 +142,8 @@ def test_wait_log_new_lines_context_and_cleanup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(proc, "follow_pane", follow)
     assert rt.wait_log("web", re.compile("MATCH"), timeout=5, before=2, after=2) == (
-        0, ["history", "new", "MATCH", "after1", "after2"]
+        0,
+        ["history", "new", "MATCH", "after1", "after2"],
     )
     assert closed == [True]
     assert not proc.health_calls
@@ -172,6 +173,7 @@ def test_wait_log_timeout_and_pane_gone(tmp_path, monkeypatch):
 def test_wait_log_silence_zero_timeout_and_partial_chunks(tmp_path, monkeypatch):
     rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
     proc.windows["svc-web"] = (0, "", 123)
+
     def follow(*args, **kwargs):
         yield "hit\n"
         for i in range(40):
@@ -179,6 +181,7 @@ def test_wait_log_silence_zero_timeout_and_partial_chunks(tmp_path, monkeypatch)
             yield "\n"
         proc.clock += 2
         yield ""
+
     monkeypatch.setattr(proc, "follow_pane", follow)
     code, lines = rt.wait_log("web", re.compile("hit"), timeout=0, before=0, after=50)
     assert code == 0 and lines == ["hit", *[f"line {i}" for i in range(40)]]
@@ -189,10 +192,12 @@ def test_wait_log_eof_after_hit_live_and_pane_disappears(tmp_path, monkeypatch):
     proc.windows["svc-web"] = (0, "", 123)
     monkeypatch.setattr(proc, "follow_pane", lambda *a, **k: iter(["hit\n"]))
     assert rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=3) == (0, ["hit"])
+
     def gone(*args, **kwargs):
         yield "hit\n"
         proc.windows.clear()
         yield ""
+
     monkeypatch.setattr(proc, "follow_pane", gone)
     code, lines = rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=3)
     assert code == 3 and "stopped" in " ".join(lines)

@@ -176,7 +176,7 @@ def logs(
     wait_pattern: Annotated[str | None, typer.Option("--wait")] = None,
     timeout: Annotated[float | None, typer.Option("--timeout")] = None,
 ) -> None:
-    if (timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0)):
+    if timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0):
         typer.echo("--timeout requires --wait and a finite nonnegative value", err=True)
         raise typer.Exit(2)
     if wait_pattern is not None and (grep or filters or follow):
@@ -209,7 +209,9 @@ def logs(
     try:
         if wait_regex is not None:
             seconds = timeout if timeout is not None else 300
-            code, output = rt.wait_log(selected, wait_regex, timeout=seconds, before=before, after=after)
+            code, output = rt.wait_log(
+                selected, wait_regex, timeout=seconds, before=before, after=after
+            )
             if code == 1:
                 typer.echo(f"no match for {wait_pattern} within {seconds:g}s", err=True)
             elif code == 3:

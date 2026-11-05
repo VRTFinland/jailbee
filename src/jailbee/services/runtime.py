@@ -21,8 +21,8 @@ from typing import Literal
 from jailbee.config import Config
 from jailbee.config.models_services import Service
 from jailbee.services.graph import restart_set, topo_order, with_dependencies
-from jailbee.services.log_query import strip_terminal
 from jailbee.services.local_proc import LocalProc, ProbeResult
+from jailbee.services.log_query import strip_terminal
 from jailbee.services.probe_cache import ProbeCache
 from jailbee.tmux import SESSION_NAME
 
@@ -330,8 +330,14 @@ class ServiceRuntime:
         return "".join(rows if all_history else rows[-lines:])
 
     def wait_log(
-        self, name: str, pattern: re.Pattern[str], *, timeout: float, before: int,
-        after: int, silence: float = 2.0,
+        self,
+        name: str,
+        pattern: re.Pattern[str],
+        *,
+        timeout: float,
+        before: int,
+        after: int,
+        silence: float = 2.0,
     ) -> tuple[int, list[str]]:
         started = self.proc.now()
         topo_order(self.cfg.services, [name])
