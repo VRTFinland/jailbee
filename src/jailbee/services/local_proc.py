@@ -28,9 +28,8 @@ _PROBE_OUTPUT_LIMIT = 16 * 1024
 
 def _decode_probe_output(output: bytearray) -> str:
     text = output.decode("utf-8", errors="replace")
-    while len(text.encode("utf-8")) > _PROBE_OUTPUT_LIMIT:
-        text = text[: _PROBE_OUTPUT_LIMIT // 3]
-    return text
+    encoded = text.encode("utf-8")[-_PROBE_OUTPUT_LIMIT:]
+    return encoded.decode("utf-8", errors="ignore")
 
 
 # The anchor publishes its identity before the service command starts. It stays

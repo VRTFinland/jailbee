@@ -41,14 +41,17 @@ def test_run_probe_captures_stdout_stderr_and_exit_code(tmp_path):
     assert (result.code, result.stdout, result.stderr, result.timed_out) == (3, "out", "err", False)
 
 
-def test_run_probe_output_cap_applies_after_decoding_invalid_utf8(tmp_path):
+def test_run_probe_retains_maximal_tail_after_invalid_utf8_expansion(tmp_path):
     result = LocalProc().run_probe(
-        "head -c 10000 /dev/zero | tr '\\0' '\\377'",
+        "head -c 16383 /dev/zero | tr '\\0' a; printf '\\377useful-tail'",
         cwd=str(tmp_path),
         env={},
         timeout=5,
     )
-    assert len(result.stdout.encode("utf-8")) <= 16 * 1024
+    encoded = result.stdout.encode("utf-8")
+    assert len(encoded) <= 16 * 1024
+    assert len(encoded) >= 16 * 1024 - 32
+    assert result.stdout.endswith("useful-tail")
 
 
 def test_run_probe_caps_each_output_stream(tmp_path):
