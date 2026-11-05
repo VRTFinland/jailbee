@@ -4,11 +4,13 @@ import json
 import signal
 import subprocess
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from jailbee.services.local_proc import LocalProc
-from jailbee.services.runtime import ServiceRuntime
+from jailbee.services.local_proc import LocalProc, ProbeResult
+from jailbee.services.runtime import ServiceRuntime, compose_detail
 from tests.conftest import make_config
 
 
@@ -19,6 +21,8 @@ class FakeProc(LocalProc):
         self.clock = 0.0
         self.session = True
         self.probes = []
+        self.health_calls = []
+        self.health_result = ProbeResult(0, "", "", False)
         self.signals = []
         self.shells = []
         self.immediate_exit = set()
@@ -80,6 +84,10 @@ class FakeProc(LocalProc):
         self.shells.append((cmd, cwd, env, timeout, capture))
         return self.probes.pop(0) if self.probes else 1
 
+    def run_probe(self, cmd, *, cwd, env, timeout):
+        self.health_calls.append((cmd, cwd, dict(env), timeout))
+        return self.health_result
+
     def killpg(self, pid, sig):
         self.signals.append((pid, sig))
 
@@ -114,6 +122,97 @@ def runtime(tmp_path, services):
     proc = FakeProc()
     cfg = make_config(tmp_path, services=services)
     return ServiceRuntime(cfg, tmp_path, proc, tmp_path / "state"), proc
+
+
+def test_health_failure_is_derived_and_cached(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "serve", "health": "check", "env": {"X": "y"}}})
+    proc.windows["svc-web"] = (0, "", 123)
+    rt._save("web", "ready")
+    proc.health_result = ProbeResult(2, "stdout", "first\nreason\n", False)
+    status = rt.status()[0]
+    assert status.state == "unhealthy"
+    assert status.detail == "health check failed (exit 2): reason"
+    assert status.since and "T" in status.since
+    assert json.loads((rt.state_dir / "state.json").read_text())["web"]["state"] == "ready"
+    assert rt.status()[0] == status
+    assert proc.health_calls == [("check", str(tmp_path), {"X": "y"}, 5)]
+
+
+def test_health_timeout_fallback_and_probe_free_states(tmp_path):
+    rt, proc = runtime(tmp_path, {
+        "web": {"run": "web", "ready": "ready-check", "health_timeout": 7},
+        "other": {"run": "other"},
+        "starting": {"run": "s", "health": "s-check"},
+        "failed": {"run": "f", "health": "f-check"},
+    })
+    for name in rt.cfg.services:
+        proc.windows["svc-" + name] = (0, "", 1)
+    rt._save("starting", "starting")
+    rt._save("failed", "failed")
+    proc.health_result = ProbeResult(None, "", "", True)
+    assert rt.status(probe=False)[0].state == "ready"
+    assert not proc.health_calls
+    statuses = rt.status()
+    assert statuses[0].detail == "health check timed out after 7s"
+    assert [s.state for s in statuses] == ["unhealthy", "ready", "starting", "failed"]
+    assert [call[0] for call in proc.health_calls] == ["ready-check"]
+
+
+def test_start_checks_only_target_and_restarts_unhealthy(tmp_path):
+    rt, proc = runtime(tmp_path, {
+        "web": {"run": "web", "health": "web-check"},
+        "other": {"run": "other", "health": "other-check"},
+    })
+    proc.windows.update({"svc-web": (0, "", 1), "svc-other": (0, "", 2)})
+    proc.health_result = ProbeResult(1, "", "bad", False)
+    assert rt.start(["web"]).done == ("web",)
+    assert [call[0] for call in proc.health_calls] == ["web-check"]
+
+
+def test_parallel_probes_and_shared_cache_lock(tmp_path):
+    rt, proc = runtime(tmp_path, {
+        "a": {"run": "a", "health": "a-check"},
+        "b": {"run": "b", "health": "b-check"},
+    })
+    proc.windows.update({"svc-a": (0, "", 1), "svc-b": (0, "", 2)})
+    original = proc.run_probe
+
+    def slow(*args, **kwargs):
+        time.sleep(0.3)
+        return original(*args, **kwargs)
+
+    proc.run_probe = slow
+    start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: rt.status(), range(2)))
+    assert time.monotonic() - start < 0.55
+    assert all(s.state == "ready" for result in results for s in result)
+    assert sorted(call[0] for call in proc.health_calls) == ["a-check", "b-check"]
+
+
+def test_probe_snapshot_uses_original_launch(tmp_path):
+    rt, proc = runtime(tmp_path, {"a": {"run": "a", "health": "check"}})
+    proc.windows["svc-a"] = (0, "", 1)
+    rt._save("a", "ready")
+    old = rt._state()["a"]["since"]
+
+    def restarting(*args, **kwargs):
+        rt._save("a", "ready")
+        return ProbeResult(1, "", "old", False)
+
+    proc.run_probe = restarting
+    assert rt.status()[0].state == "unhealthy"
+    new = rt._state()["a"]["since"]
+    assert old != new
+    from jailbee.services.probe_cache import ProbeCache
+    cache = ProbeCache(rt.state_dir / "probes.json")
+    assert cache.get("a", "health", old) is not None
+    assert cache.get("a", "health", new) is None
+
+
+def test_compose_detail():
+    assert compose_detail("running", "ok", "launch") == "running · ok · launch"
+    assert compose_detail("", None, "launch") == "launch"
 
 
 def test_status_ground_truth(tmp_path):

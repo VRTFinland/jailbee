@@ -1,13 +1,15 @@
 """Container-side lifecycle for repository service windows."""
 
 import fcntl
+import hashlib
 import json
 import os
 import signal
 import tempfile
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -15,13 +17,14 @@ from typing import Literal
 from jailbee.config import Config
 from jailbee.config.models_services import Service
 from jailbee.services.graph import restart_set, topo_order, with_dependencies
-from jailbee.services.local_proc import LocalProc
+from jailbee.services.local_proc import LocalProc, ProbeResult
+from jailbee.services.probe_cache import ProbeCache
 from jailbee.tmux import SESSION_NAME
 
 WINDOW_PREFIX = "svc-"
 READY_GRACE_S = 2
 READY_POLL_S = 1.0
-State = Literal["stopped", "starting", "ready", "failed", "exited"]
+State = Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,12 @@ class ServiceStatus:
     window: str | None
     since: str | None
     detail: str
+    launch: dict[str, object] | None = None
+    status: dict[str, object] | str | None = None
+
+
+def compose_detail(lifecycle: str, status: str | None, launch: str | None) -> str:
+    return " · ".join(part for part in (lifecycle, status, launch) if part)
 
 
 @dataclass(frozen=True)
@@ -105,33 +114,94 @@ class ServiceRuntime:
                     continue
         return panes
 
-    def status(self) -> list[ServiceStatus]:
-        panes = self._panes()
-        states = self._state()
-        result = []
-        for name in self.cfg.services:
-            window = WINDOW_PREFIX + name
-            pane = panes.get(window)
-            saved = states.get(name, {})
-            if pane is None:
-                result.append(ServiceStatus(name, "stopped", None, None, ""))
-            elif pane.dead:
-                result.append(
-                    ServiceStatus(
-                        name,
-                        "exited",
-                        window,
-                        saved.get("since"),
-                        f"exited with status {pane.status}",
-                    )
+    def _lifecycle(
+        self, name: str, panes: dict[str, _Pane], states: dict[str, dict[str, str]]
+    ) -> ServiceStatus:
+        window = WINDOW_PREFIX + name
+        pane = panes.get(window)
+        saved = states.get(name, {})
+        if pane is None:
+            return ServiceStatus(name, "stopped", None, None, "")
+        if pane.dead:
+            return ServiceStatus(
+                name, "exited", window, saved.get("since"), f"exited with status {pane.status}"
+            )
+        raw = saved.get("state", "ready")
+        state: State = raw if raw in ("starting", "ready", "failed") else "ready"  # type: ignore[assignment]  # narrowed by membership
+        return ServiceStatus(name, state, window, saved.get("since"), saved.get("detail", ""))
+
+    def launch_env(self, name: str) -> dict[str, str]:
+        return dict(self.cfg.services[name].env)
+
+    def probe(
+        self, name: str, kind: Literal["health", "status"], cmd: str,
+        timeout: int, *, fresh: bool = False,
+    ) -> ProbeResult:
+        launch_id = self._state().get(name, {}).get("since", "")
+        return self._probe_launch(name, kind, cmd, timeout, launch_id, fresh=fresh)
+
+    def _probe_launch(
+        self, name: str, kind: Literal["health", "status"], cmd: str,
+        timeout: int, launch_id: str, *, fresh: bool,
+    ) -> ProbeResult:
+        cache = ProbeCache(self.state_dir / "probes.json")
+        if not fresh:
+            cached = cache.get(name, kind, launch_id)
+            if cached is not None:
+                return cached
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        key = json.dumps([name, kind, launch_id]).encode()
+        lock_path = self.state_dir / ("probe-" + hashlib.sha256(key).hexdigest() + ".lock")
+        with lock_path.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if not fresh:
+                    cached = cache.get(name, kind, launch_id)
+                    if cached is not None:
+                        return cached
+                service = self.cfg.services[name]
+                result = self.proc.run_probe(
+                    cmd, cwd=str(self.repo_dir / service.working_dir),
+                    env=self.launch_env(name), timeout=timeout,
                 )
-            else:
-                raw = saved.get("state", "ready")
-                state: State = raw if raw in ("starting", "ready", "failed") else "ready"  # type: ignore[assignment]  # narrowed by membership
-                result.append(
-                    ServiceStatus(name, state, window, saved.get("since"), saved.get("detail", ""))
-                )
-        return result
+                cache.put(name, kind, launch_id, result)
+                return result
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _health(self, item: ServiceStatus, *, fresh: bool) -> ServiceStatus:
+        service = self.cfg.services[item.name]
+        command = service.health or service.ready
+        if item.state != "ready" or not command:
+            return item
+        launch_id = item.since or ""
+        result = self._probe_launch(
+            item.name, "health", command, service.health_timeout, launch_id, fresh=fresh
+        )
+        if result.code == 0 and not result.timed_out:
+            return item
+        if result.timed_out:
+            detail = f"health check timed out after {service.health_timeout}s"
+        else:
+            lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+            if not lines:
+                lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            detail = f"health check failed (exit {result.code})"
+            if lines:
+                detail += ": " + lines[-1][:200]
+        first = ProbeCache(self.state_dir / "probes.json").first_failure(
+            item.name, "health", launch_id
+        )
+        since = datetime.fromtimestamp(first, UTC).isoformat() if first is not None else item.since
+        return replace(item, state="unhealthy", since=since, detail=detail)
+
+    def status(self, *, probe: bool = True, fresh: bool = False) -> list[ServiceStatus]:
+        panes, states = self._panes(), self._state()
+        items = [self._lifecycle(name, panes, states) for name in self.cfg.services]
+        if not probe:
+            return items
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            return list(pool.map(lambda item: self._health(item, fresh=fresh), items))
 
     def _target(self, name: str) -> str:
         return f"{SESSION_NAME}:={WINDOW_PREFIX}{name}"
@@ -247,7 +317,8 @@ class ServiceRuntime:
         order = topo_order(services, with_dependencies(services, names))
         done: list[str] = []
         for name in order:
-            if next(s for s in self.status() if s.name == name).state == "ready":
+            item = self._lifecycle(name, self._panes(), self._state())
+            if item.state == "ready" and self._health(item, fresh=True).state == "ready":
                 continue
             if not self._start_one(name):
                 try:
