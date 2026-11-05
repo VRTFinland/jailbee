@@ -125,19 +125,22 @@ def test_container_cli_lists_inbox():
 
 
 @pytest.mark.parametrize("handshake", [False, True])
-def test_container_cli_inbox_forwards_args(monkeypatch, mocker, tmp_path, handshake):
+def test_container_cli_inbox_publishes_request(monkeypatch, mocker, tmp_path, handshake):
     from jailbee import container_cli
 
     identity = tmp_path / "VERSION"
     identity.write_text("1.8.1 aaaa\n")
     monkeypatch.setattr(container_cli, "VERSION_FILE", identity)
-    target = mocker.patch("jailbee.inbox.cli.main", return_value=3)
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+    target = mocker.patch("jailbee.inbox.cli.cmd_send", return_value=3)
     prefix = ["--expect-version", "1.8.1 aaaa"] if handshake else []
     result = CliRunner().invoke(
         container_cli.container_app, [*prefix, "inbox", "send", "message", "--text", "x"]
     )
     assert result.exit_code == 3
-    target.assert_called_once_with(["send", "message", "--text", "x"])
+    target.assert_called_once()
+    assert target.call_args.args[1].type == "message"
+    assert target.call_args.args[1].text == "x"
 
 
 def test_container_cli_inbox_help_and_version_gate(monkeypatch, tmp_path):
@@ -151,7 +154,7 @@ def test_container_cli_inbox_help_and_version_gate(monkeypatch, tmp_path):
         container_cli.container_app, ["--expect-version", "1.8.1 aaaa", "inbox", "--help"]
     )
     assert result.exit_code == 0
-    assert "Usage: jailbee inbox" in result.output
+    assert "Usage:" in result.output and "inbox" in result.output
     result = runner.invoke(
         container_cli.container_app, ["--expect-version", "wrong", "inbox", "--help"]
     )
@@ -159,19 +162,17 @@ def test_container_cli_inbox_help_and_version_gate(monkeypatch, tmp_path):
     assert "version mismatch" in result.output
 
 
-def test_container_main_dispatches_inbox_without_typer(monkeypatch, mocker, tmp_path):
+def test_container_main_dispatches_inbox_through_typer(monkeypatch, mocker, tmp_path):
     from jailbee import container_main
 
     monkeypatch.setattr(container_main.container_deps, "check", lambda: None)
     monkeypatch.setattr(container_main, "PACKAGE_DIR", tmp_path)
-    monkeypatch.setattr(sys, "argv", ["jailbee", "inbox", "help"])
-    monkeypatch.delitem(sys.modules, "jailbee.container_cli", raising=False)
-    target = mocker.patch("jailbee.inbox.cli.main", return_value=0)
+    monkeypatch.setattr(sys, "argv", ["jailbee", "inbox", "--help"])
+    target = mocker.patch("jailbee.container_cli.container_app", side_effect=SystemExit(0))
     with pytest.raises(SystemExit) as exc:
         container_main.main()
     assert exc.value.code == 0
-    target.assert_called_once_with(["help"])
-    assert "jailbee.container_cli" not in sys.modules
+    target.assert_called_once_with()
 
 
 def test_expect_version_mismatch_exits_86(tmp_path, monkeypatch):

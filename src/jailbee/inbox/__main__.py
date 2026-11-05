@@ -1,5 +1,3 @@
-import sys
+from jailbee.inbox.container_cmd import inbox_app
 
-from jailbee.inbox.cli import main
-
-raise SystemExit(main(sys.argv[1:]))
+inbox_app(prog_name="jailbee inbox")

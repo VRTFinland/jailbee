@@ -1,4 +1,4 @@
-"""Standard-library command entry point for the inbox port."""
+"""Standard-library orchestration inbox command logic."""
 
 import fcntl
 import json
@@ -11,9 +11,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.render import (
     SaturatedNumber,
     clean_c0c1,
@@ -26,107 +26,10 @@ from jailbee.inbox.render import (
     tsv,
 )
 
+if TYPE_CHECKING:
+    from jailbee.inbox.send import SendRequest
+
 PROG = "jailbee inbox"
-USAGE = (
-    "Usage: jailbee inbox wait [--timeout DUR|none] [--wake-on LIST] [--quiet-after DUR]\n"
-    "                          [--digest DUR]\n"
-    "       jailbee inbox ls\n"
-    "       jailbee inbox read <id> [--keep]\n"
-    "       jailbee inbox runners [--json]\n"
-    "       jailbee inbox children [--json]\n"
-    "       jailbee inbox status [--child C] [--json]\n"
-    "       jailbee inbox send <type> [options]\n"
-    "\n"
-    "  wait   Print the path of the oldest unread message (exit 0), waiting up to\n"
-    "         DUR (seconds, or <n>s|m|h; default 30m) for one to arrive; exit 1\n"
-    "         on timeout. --timeout 0 checks once; --timeout none waits until a message\n"
-    "         arrives or the process is interrupted (use it for a background waiter).\n"
-    "         After an arrival, wait briefly for the burst to settle; then use ls to\n"
-    "         handle every unread message.\n"
-    "         --wake-on LIST filters comma-separated message kinds/status states\n"
-    "         (note,question,done,blocked,idle,queued,started,failed,refused). A bare\n"
-    "         word matches a message kind or a status state; msg:<kind> matches only a\n"
-    "         message, status:<state> only a status reply (e.g. msg:done,question,\n"
-    "         blocked,idle,status:failed,status:refused skips `delivered to` acks).\n"
-    "         A child's first message after each start always wakes. Nothing is marked read.\n"
-    "         --quiet-after DUR prints `quiet-child CHILD` (exit 0) when a running,\n"
-    "         not-done child is silent that long; needs fresh broker children.json (<=15m).\n"
-    "         A child's own activity (status.activity_at) counts as not silent.\n"
-    "         --digest DUR prints `digest` and the `status` table (exit 0) when DUR has\n"
-    "         passed since the last digest and a child is running and not done; the\n"
-    "         first digest is due DUR after the first `wait --digest` (stamp: digest-at).\n"
-    "         A real message or quiet-child wakeup wins; --wake-on does not apply.\n"
-    "         Needs fresh broker children.json (<=15m).\n"
-    "         Only one wait may run; a second exits 2. Concurrent send --wait is\n"
-    "         safe: wait skips its reserved statuses until that sender exits.\n"
-    "  ls     One line per unread message, oldest first:\n"
-    "         <id> <type> <from or ref> <kind or state> <first 60 chars of text>\n"
-    "  read   Pretty-print message <id> and move it to inbox/read/ (--keep leaves\n"
-    "         it in place); exit 1 if no unread message has that id.\n"
-    "\n"
-    "  runners  List the default runner and the runners a spawn or restart may name\n"
-    "         (--agent/--profile/--model of send). --json prints one array.\n"
-    "         Listed model tiers also accept the [1m] suffix.\n"
-    "\n"
-    "  children [--json]  Each child: name, running (container state), latest agent\n"
-    "         session, done (accepted done) — from the broker's children.json.\n"
-    "\n"
-    "  status [--child C] [--json]  One line per child from the broker's children.json:\n"
-    "         NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG (ages; unknown\n"
-    "         values print ?). LAST-MSG is up = last message from the child, down = last\n"
-    "         delivery to it. --json prints the items plus last_from_child_at. Exit 1\n"
-    "         for an unavailable/invalid snapshot or unknown --child. Use it instead of\n"
-    "         messaging a child to ask how it is doing.\n"
-    "\n"
-    "  send   Write a manifest for the orchestrator's host into outbox/ and print\n"
-    "         its id. --wait [--timeout DUR|none] waits for its status (default 30m):\n"
-    "         exit 0 on done/queued/started, 1 on refused/failed, 3 on timeout.\n"
-    "         Text (body or prompt) comes from --text T, --file PATH or -\n"
-    "         (stdin); at most 65536 bytes, not empty.\n"
-    "           message  [--to C] [--kind note|question|done|blocked]\n"
-    "                    [--reply-to ID] + text\n"
-    "           spawn    [--branch B] [--new [--base B] | --ref REF | --pr N]\n"
-    "                    [--mount M]... [--loose] [--egress H]... [--note T]\n"
-    "                    [--on-done destroy|keep] [--autostart-profile NAME] [--"
-    "services LIST] [runner] + text\n"
-    "                    [--warm PATH]... | [--no-warm] (fork only; replaces fork.warm_paths)\n"
-    "                    --branch is required except for --pr; the broker derives\n"
-    "                    the branch from the PR and ignores any supplied branch.\n"
-    "           refresh  --child C --services LIST [--wait]  Refresh services in"
-    " a child (prepare + restart); elevated prepares stop and resume its agent.\n"
-    "           restart  --child C [--on-done destroy|keep] [--autostart-profile"
-    " NAME] [--services LIST]\n"
-    "                    [--agent-only] [--resume ID|last] [runner | --default-r"
-    "unner] + text\n"
-    "                    --resume continues a recorded agent session (see children).\n"
-    "                    --agent-only relaunches an idle RUNNING child's agent only;\n"
-    "                    no boot/on_start, no extra slot, cannot use --autostart"
-    "-profile or --services.\n"
-    "                    --services selects comma-separated services; an empty l"
-    "ist starts none.\n"
-    "           update   --child C [--ref REF | --base BRANCH] [--merge]\n"
-    "                    --merge merges the update into the child's branch after a\n"
-    "                    conflict check; a conflict refuses it.\n"
-    "           import | stop   --child C\n"
-    "           destroy  --child C [--force]\n"
-    "           rights   [--child C] [--loose] [--mount M]... [--egress H]... --for DUR\n"
-    "                    [--revoke-loose] [--revoke-mount M]... [--revoke-egress H]...\n"
-    "                    `send rights` changes a child's rights at runtime. A gr"
-    "ant needs --for DUR (s|m|h); revokes need no duration. A\n"
-    "                    child may only revoke its own rights; an orchestrator names\n"
-    "                    --child. Refused while autostart runs in the child.\n"
-    "         runner = --agent claude|claude-jb [--profile P (claude-jb only)]\n"
-    "                  [--model fable|opus|sonnet|haiku (optional [1m])]; see `runners`.\n"
-    "                  --default-runner (restart only) clears the child's runner.\n"
-    "\n"
-    "Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration),\n"
-    "JAILBEE_LITELLM_CONFIG (default /etc/jailbee/litellm.json), JAILBEE_DEFAULT_AGENT,\n"
-    "JAILBEE_INBOX_POLL (poll seconds without inotifywait; default 5),\n"
-    "JAILBEE_INBOX_SETTLE (quiet seconds after an arrival; default 1, 0 disables).\n"
-    "JAILBEE_INBOX_INOTIFY=0 forces polling.\n"
-)
-
-
 @dataclass
 class Settings:
     base: Path
@@ -226,9 +129,7 @@ def _warning(path: Path) -> None:
     print(f"{PROG}: skipping unreadable message {path}", file=sys.stderr)
 
 
-def cmd_ls(settings: Settings, args: list[str]) -> int:
-    if args:
-        raise InboxUsage("ls takes no arguments")
+def cmd_ls(settings: Settings) -> int:
     for path in unread_files(settings.inbox):
         try:
             doc = _load(path)
@@ -250,20 +151,7 @@ def _clean_json(value: object) -> object:
     return value
 
 
-def cmd_read(settings: Settings, args: list[str]) -> int:
-    ident = ""
-    keep = False
-    for arg in args:
-        if arg == "--keep":
-            keep = True
-        elif arg.startswith("-"):
-            raise InboxUsage(f"unknown option '{arg}' (see --help)")
-        elif ident:
-            raise InboxUsage("read takes one id")
-        else:
-            ident = arg
-    if not ident:
-        raise InboxUsage("read needs a message id")
+def cmd_read(settings: Settings, ident: str, *, keep: bool = False) -> int:
     for path in unread_files(settings.inbox):
         fid = message_id(path)
         if fid is None:
@@ -310,16 +198,14 @@ def _load_snapshot(settings: Settings) -> tuple[Path, dict[str, Any]] | None:
     return path, doc
 
 
-def cmd_children(settings: Settings, args: list[str]) -> int:
-    if args not in ([], ["--json"]):
-        raise InboxBadUsage("children accepts only --json")
+def cmd_children(settings: Settings, *, as_json: bool = False) -> int:
     loaded = _load_snapshot(settings)
     if loaded is None:
         return 1
     path, doc = loaded
     children = doc["children"]
     line = max(1, len(path.read_text().rstrip().splitlines()))
-    if args:
+    if as_json:
         print(pretty(children))
     else:
         for child in children:
@@ -356,21 +242,9 @@ def cmd_children(settings: Settings, args: list[str]) -> int:
     return 0
 
 
-def cmd_status(settings: Settings, args: list[str]) -> int:
+def cmd_status(settings: Settings, *, child: str | None = None, as_json: bool = False) -> int:
     from jailbee.inbox.waiting import last_from_child
 
-    child: str | None = None
-    as_json = False
-    rest = iter(args)
-    for arg in rest:
-        if arg == "--json":
-            as_json = True
-        elif arg == "--child":
-            child = next(rest, None)
-            if child is None or child.startswith("--"):
-                raise InboxBadUsage("--child needs a name")
-        else:
-            raise InboxBadUsage("status accepts only --child C and --json")
     loaded = _load_snapshot(settings)
     if loaded is None:
         return 1
@@ -476,16 +350,13 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
     return result
 
 
-def cmd_runners(settings: Settings, args: list[str]) -> int:
-    for arg in args:
-        if arg != "--json":
-            raise InboxUsage(f"unknown argument '{arg}' (see --help)")
+def cmd_runners(settings: Settings, *, as_json: bool = False) -> int:
     try:
         entries = runners_json(settings)
     except JqError as exc:
         print(f"jq: error (at <unknown>): {exc}", file=sys.stderr)
         return 5
-    if args:
+    if as_json:
         print(pretty(entries))
         return 0
     first = entries[0]
@@ -524,40 +395,32 @@ def cmd_runners(settings: Settings, args: list[str]) -> int:
     return 0
 
 
-def cmd_wait(settings: Settings, args: list[str]) -> int:
+def cmd_wait(
+    settings: Settings,
+    *,
+    timeout: str = "30m",
+    wake_on: str | None = None,
+    quiet_after: str | None = None,
+    digest: str | None = None,
+) -> int:
     from jailbee.inbox.waiting import run_wait, valid_wake_token
 
-    timeout: int | None = 1800
-    wake: frozenset[str] | None = None
-    quiet = 0
-    digest = 0
-    index = 0
-    while index < len(args):
-        option = args[index]
-        if option not in ("--timeout", "--wake-on", "--quiet-after", "--digest"):
-            raise InboxUsage(f"unknown argument '{option}' (see --help)")
-        if index + 1 == len(args):
-            raise InboxUsage(f"{option} needs a value")
-        value = args[index + 1]
-        if option == "--timeout":
-            timeout = parse_timeout(value)
-        elif option == "--quiet-after":
-            quiet = parse_duration(value)
-            if not quiet:
-                raise InboxUsage("--quiet-after must be positive")
-        elif option == "--digest":
-            digest = parse_duration(value)
-            if not digest:
-                raise InboxUsage("--digest must be positive")
-        else:
-            tokens = value.split(",")
-            if not all(valid_wake_token(token) for token in tokens):
-                raise InboxUsage(
-                    "--wake-on needs comma-separated message kinds or status states "
-                    "(optionally msg:<kind> or status:<state>)"
-                )
-            wake = frozenset(tokens)
-        index += 2
+    seconds = parse_timeout(timeout)
+    quiet = parse_duration(quiet_after) if quiet_after is not None else 0
+    digest_seconds = parse_duration(digest) if digest is not None else 0
+    if quiet_after is not None and not quiet:
+        raise InboxUsage("--quiet-after must be positive")
+    if digest is not None and not digest_seconds:
+        raise InboxUsage("--digest must be positive")
+    wake = None
+    if wake_on is not None:
+        tokens = wake_on.split(",")
+        if not all(valid_wake_token(token) for token in tokens):
+            raise InboxUsage(
+                "--wake-on needs comma-separated message kinds or status states "
+                "(optionally msg:<kind> or status:<state>)"
+            )
+        wake = frozenset(tokens)
     settings.inbox.mkdir(parents=True, exist_ok=True)
     fd = os.open(settings.base / "wait.lock", os.O_WRONLY | os.O_CREAT, 0o644)
     try:
@@ -565,7 +428,7 @@ def cmd_wait(settings: Settings, args: list[str]) -> int:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise InboxUsage("another process is already waiting in this container") from None
-        rc, line = run_wait(settings, timeout=timeout, wake=wake, quiet=quiet, digest=digest)
+        rc, line = run_wait(settings, timeout=seconds, wake=wake, quiet=quiet, digest=digest_seconds)
         if line == "digest":
             return _print_digest(settings)
         if line is not None:
@@ -590,60 +453,13 @@ def _print_digest(settings: Settings) -> int:
     return 0
 
 
-def main(argv: list[str]) -> int:
-    try:
-        settings = load_settings(os.environ)
-        if not argv or argv[0] not in {
-            "wait",
-            "ls",
-            "read",
-            "runners",
-            "children",
-            "status",
-            "send",
-            "help",
-            "-h",
-            "--help",
-        }:
-            print(USAGE, end="", file=sys.stderr)
-            return 2
-        if argv[0] in {"help", "-h", "--help"}:
-            print(USAGE, end="")
-            return 0
-        commands = {
-            "wait": cmd_wait,
-            "ls": cmd_ls,
-            "read": cmd_read,
-            "children": cmd_children,
-            "status": cmd_status,
-            "runners": cmd_runners,
-        }
-        if argv[0] in commands:
-            return commands[argv[0]](settings, argv[1:])
-        if argv[0] == "send":
-            from jailbee.inbox.send import PublishError, parse_send, publish
+def cmd_send(settings: Settings, request: "SendRequest") -> int:
+    from jailbee.inbox.send import publish, validate
+    from jailbee.inbox.waiting import wait_for_status
 
-            try:
-                request = parse_send(argv[1:])
-                ident = publish(settings, request)
-                print(ident, flush=True)
-                if request.wait:
-                    from jailbee.inbox.waiting import wait_for_status
-
-                    return wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
-            except (PublishError, OSError) as exc:
-                if exc.__cause__ is not None:
-                    print(f"{PROG}: {exc.__cause__}", file=sys.stderr)
-                print(f"{PROG}: {exc}", file=sys.stderr)
-                return 1
-            return 0
-        raise InboxUsage("not implemented")
-    except InboxBadUsage as exc:
-        print(f"{PROG}: {exc}", file=sys.stderr)
-        print(f"see: {PROG} --help", file=sys.stderr)
-        return 2
-    except InboxUsage as exc:
-        print(f"{PROG}: {exc}", file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        return 130
+    request = validate(request)
+    ident = publish(settings, request)
+    print(ident, flush=True)
+    if request.wait:
+        return wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
+    return 0

@@ -270,9 +270,7 @@ def test_cmd_wait_digest_rejects_bad_values(tmp_path):
     settings = _settings(tmp_path)
     for value in ("0", "-5", "abc"):
         with pytest.raises(InboxUsage):
-            cli.cmd_wait(settings, ["--digest", value])
-    with pytest.raises(InboxUsage, match="--digest needs a value"):
-        cli.cmd_wait(settings, ["--digest"])
+            cli.cmd_wait(settings, digest=value)
 
 
 def test_cmd_wait_digest_stale_snapshot_names_digest(tmp_path):
@@ -281,7 +279,7 @@ def test_cmd_wait_digest_stale_snapshot_names_digest(tmp_path):
     settings = _settings(tmp_path)
     snapshot(tmp_path, [kid()], updated_at=1.0)
     with pytest.raises(InboxUsage, match="--digest"):
-        cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"])
+        cli.cmd_wait(settings, digest="1m", timeout="0")
 
 
 def test_cmd_wait_digest_first_call_not_due_then_due_prints_table_and_restamps(tmp_path, capsys):
@@ -291,20 +289,20 @@ def test_cmd_wait_digest_first_call_not_due_then_due_prints_table_and_restamps(t
 
     settings = _settings(tmp_path)
     fresh_snapshot(tmp_path, [kid("alpha")])
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 1
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 1
     assert capsys.readouterr().out == ""
     stamp = tmp_path / "digest-at"
     assert stamp.is_file()
     # Age the stamp: the period has elapsed.
     stamp.write_text(str(time.time() - 120))
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "digest"
     assert "alpha" in "\n".join(lines[1:])
     assert time.time() - float(stamp.read_text()) < 5
     assert not list(tmp_path.glob("digest-at.*")), "temp file left behind"
     # Repeated wait inside the same period: nothing.
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 1
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 1
     assert capsys.readouterr().out == ""
 
 
@@ -316,7 +314,7 @@ def test_cmd_wait_digest_ignores_wake_on(tmp_path, capsys):
     settings = _settings(tmp_path)
     fresh_snapshot(tmp_path, [kid("alpha")])
     (tmp_path / "digest-at").write_text(str(time.time() - 120))
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--wake-on", "failed", "--timeout", "0"]) == 0
+    assert cli.cmd_wait(settings, digest="1m", wake_on="failed", timeout="0") == 0
     assert capsys.readouterr().out.splitlines()[0] == "digest"
 
 
@@ -331,11 +329,11 @@ def test_cmd_wait_digest_message_wins_and_digest_follows(tmp_path, capsys):
     old = time.time() - 120
     stamp.write_text(str(old))
     message = put(tmp_path / "inbox/a.json", {"type": "message", "from": "alpha", "kind": "note"})
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0
     assert capsys.readouterr().out.strip() == str(message)
     assert float(stamp.read_text()) == old  # a message wakeup does not consume the digest
     message.unlink()
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0
     assert capsys.readouterr().out.splitlines()[0] == "digest"
 
 
@@ -352,7 +350,7 @@ def test_cmd_wait_digest_stamp_write_failure_still_prints_digest(tmp_path, capsy
         raise OSError("read-only file system")
 
     monkeypatch.setattr(waiting, "write_digest_stamp", broken)
-    assert cli.cmd_wait(settings, ["--digest", "1m", "--timeout", "0"]) == 0
+    assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0
     captured = capsys.readouterr()
     assert captured.out.splitlines()[0] == "digest"
     assert "alpha" in captured.out
@@ -409,4 +407,4 @@ def test_cmd_wait_digest_and_quiet_after_stale_snapshot_names_both_flags(tmp_pat
     settings = _settings(tmp_path)
     snapshot(tmp_path, [kid()], updated_at=1.0)
     with pytest.raises(InboxUsage, match=r"--quiet-after and --digest need a fresh broker"):
-        cli.cmd_wait(settings, ["--digest", "1m", "--quiet-after", "5m", "--timeout", "0"])
+        cli.cmd_wait(settings, digest="1m", quiet_after="5m", timeout="0")

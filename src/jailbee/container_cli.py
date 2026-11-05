@@ -11,6 +11,7 @@ from jailbee import __version__, cli_context
 from jailbee.container_outbox.issue_cmds import issue_app
 from jailbee.container_outbox.outbox_cmds import outbox_app
 from jailbee.container_outbox.pr_cmds import pr_app
+from jailbee.inbox.container_cmd import inbox_app
 from jailbee.services.container_cmd import service_app
 
 VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
@@ -65,6 +66,7 @@ container_app = typer.Typer(no_args_is_help=True, cls=ContainerGroup)
 config_app = typer.Typer(no_args_is_help=True)
 container_app.add_typer(config_app, name="config", cls=SharedGroup)
 container_app.add_typer(service_app, name="service")
+container_app.add_typer(inbox_app, name="inbox")
 container_app.add_typer(issue_app, name="issue", cls=SharedGroup)
 container_app.add_typer(pr_app, name="pr", cls=SharedGroup)
 container_app.add_typer(outbox_app, name="outbox", cls=SharedGroup)
@@ -83,20 +85,6 @@ def root(
 ) -> None:
     if expect_version is not None:
         _check_version(expect_version)
-
-
-@container_app.command(
-    context_settings={
-        "allow_extra_args": True,
-        "ignore_unknown_options": True,
-        "help_option_names": [],
-    },
-    help="Orchestration inbox: wait for, list, read and send messages (see `jailbee inbox --help`)",
-)
-def inbox(ctx: typer.Context) -> None:
-    from jailbee.inbox.cli import main as inbox_main
-
-    raise typer.Exit(inbox_main(ctx.args))
 
 
 @container_app.command()

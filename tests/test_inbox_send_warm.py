@@ -3,7 +3,7 @@
 import pytest
 
 from jailbee.inbox.errors import InboxBadUsage
-from jailbee.inbox.send import SendRequest, build_manifest, parse_send, validate
+from jailbee.inbox.send import SendRequest, build_manifest, validate
 
 
 def test_validate_resolves_pr_branch_without_mutating_request():
@@ -19,32 +19,31 @@ def test_validate_enforces_runner_cross_option_rules():
 
 
 @pytest.mark.parametrize(
-    "flags, expected", [(["--warm", "a", "--warm", "c"], ["a", "c"]), (["--no-warm"], [])]
+    "options, expected", [({"warm": ["a", "c"]}, ["a", "c"]), ({"no_warm": True}, [])]
 )
-def test_spawn_warm_manifest(flags, expected):
-    request = parse_send(["spawn", "--branch", "b", "--text", "task", *flags])
+def test_spawn_warm_manifest(options, expected):
+    request = validate(SendRequest(type="spawn", branch="b", text="task", **options))
     assert build_manifest(request, "warm-1", "body.md")["warm_paths"] == expected
 
 
 def test_spawn_no_override_omits_warm_paths():
-    request = parse_send(["spawn", "--branch", "b", "--text", "task"])
+    request = validate(SendRequest(type="spawn", branch="b", text="task"))
     assert "warm_paths" not in build_manifest(request, "warm-1", "body.md")
 
 
 @pytest.mark.parametrize(
-    "flags",
+    "options",
     [
-        ["--warm", "a", "--no-warm"],
-        ["--new", "--warm", "a"],
-        ["--pr", "1", "--no-warm"],
-        ["--warm", ""],
+        {"warm": ["a"], "no_warm": True},
+        {"new": True, "warm": ["a"]},
+        {"pr": "1", "no_warm": True},
     ],
 )
-def test_spawn_rejects_invalid_warm_flags(flags):
+def test_spawn_rejects_invalid_warm_flags(options):
     with pytest.raises(InboxBadUsage):
-        parse_send(["spawn", "--branch", "b", "--text", "task", *flags])
+        validate(SendRequest(type="spawn", branch="b", text="task", **options))
 
 
 def test_non_spawn_rejects_warm_flags():
     with pytest.raises(InboxBadUsage):
-        parse_send(["message", "--text", "hello", "--no-warm"])
+        validate(SendRequest(type="message", text="hello", no_warm=True))

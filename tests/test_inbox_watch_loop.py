@@ -165,7 +165,7 @@ def test_cmd_wait_inotify_environment_uses_poll_factory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(waiting, "run_wait", run)
     settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
-    assert cli.cmd_wait(settings, ["--timeout", "0"]) == 1
+    assert cli.cmd_wait(settings, timeout="0") == 1
     assert modes == ["poll"]
 
 
@@ -177,8 +177,9 @@ def test_interrupt_releases_wait_lock(tmp_path, monkeypatch, capsys):
 
     with monkeypatch.context() as patch:
         patch.setattr(waiting, "run_wait", interrupt)
-        assert cli.main(["wait", "--timeout", "none"]) == 130
-    assert cli.main(["wait", "--timeout", "0"]) == 1
+        with pytest.raises(KeyboardInterrupt):
+            cli.cmd_wait(cli.load_settings(os.environ), timeout="none")
+    assert cli.cmd_wait(cli.load_settings(os.environ), timeout="0") == 1
     assert "Traceback" not in capsys.readouterr().err
 
 
@@ -248,7 +249,7 @@ def test_read_vanished_during_move(tmp_path, monkeypatch, capsys):
         raise FileNotFoundError
 
     monkeypatch.setattr(Path, "rename", vanished)
-    assert cli.cmd_read(settings, ["hello"]) == 1
+    assert cli.cmd_read(settings, "hello") == 1
     output = capsys.readouterr()
     assert output.out == ""
     assert "no unread message" in output.err

@@ -228,7 +228,7 @@ def test_send_services_rejects_agent_only(script, base, tmp_path, value):
 def test_send_services_rejects_other_types(script, base, tmp_path, kind):
     result = run(script, "send", kind, "--services", "", env=env_for(base, tmp_path))
     assert result.returncode == 2
-    assert "--services only applies to spawn, restart and refresh" in result.stderr
+    assert "No such option: --services" in result.stderr
     assert not list((base / "outbox").glob("*"))
 
 
@@ -286,7 +286,7 @@ def test_send_update_merge_flag(script, base, tmp_path, source):
 def test_merge_flag_only_for_update(script, base, tmp_path):
     result = run(script, "send", "import", "--child", "c", "--merge", env=env_for(base, tmp_path))
     assert result.returncode == 2
-    assert "--merge only applies to update" in result.stderr
+    assert "No such option: --merge" in result.stderr
     assert not list((base / "outbox").glob("*.json"))
 
 
@@ -907,7 +907,7 @@ def test_send_creates_outbox_and_leaves_no_temp_file(script, tmp_path):
 def test_send_bad_usage_exits_2_and_writes_nothing(script, base, tmp_path, args):
     r = send(script, base, tmp_path, *args)
     assert r.returncode == 2, r.stderr
-    assert r.stderr.startswith(f"{script.prog}: ")
+    assert "Error" in r.stderr or r.stderr.startswith(f"{script.prog}: ")
     assert r.stdout == ""
     assert not list((base / "outbox").glob("*")) if (base / "outbox").exists() else True
 
@@ -1285,8 +1285,8 @@ def test_send_restart_agent_only(script, base, tmp_path, runner):
             ["restart", "--child", "c", "--autostart-profile", "heavy", "--text", "p"],
             "cannot be combined",
         ),
-        (["spawn", "--branch", "b", "--text", "p"], "only applies to restart"),
-        (["stop", "--child", "c"], "only applies to restart"),
+        (["spawn", "--branch", "b", "--text", "p"], "No such option: --agent-only"),
+        (["stop", "--child", "c"], "No such option: --agent-only"),
     ],
 )
 def test_send_agent_only_option_errors(script, base, tmp_path, args, detail):
@@ -1323,7 +1323,7 @@ def test_send_restart_default_runner_writes_null(script, base, tmp_path):
 def test_send_runner_option_errors(script, base, tmp_path, args):
     r = send(script, base, tmp_path, *args)
     assert r.returncode == 2, r.stderr
-    assert r.stderr.startswith(f"{script.prog}: ")
+    assert "Usage:" in r.stderr and "Error" in r.stderr
     assert not (base / "outbox").exists() or not list((base / "outbox").glob("*"))
 
 
@@ -1387,13 +1387,11 @@ def test_send_rights_usage_errors(script, base, tmp_path, args):
     assert not list((base / "outbox").glob("*.json"))
 
 
-def test_send_usage_error_prints_one_line_and_pointer(script, base, tmp_path):
+def test_send_usage_error_uses_typer_usage_panel(script, base, tmp_path):
     result = send(script, base, tmp_path, "rights", "--loose")
     assert result.returncode == 2
-    assert result.stderr.strip().splitlines() == [
-        f"{script.prog}: rights grants need --for",
-        f"see: {script.prog} --help",
-    ]
+    assert "Usage:" in result.stderr
+    assert "rights grants need --for" in result.stderr
 
 
 def test_send_rights_wait_uses_status_wait(script, base, tmp_path):
@@ -1403,9 +1401,9 @@ def test_send_rights_wait_uses_status_wait(script, base, tmp_path):
 
 
 def test_help_documents_send_rights(script, base, tmp_path):
-    out = run(script, "--help", env=env_for(base, tmp_path)).stdout
+    out = run(script, "send", "rights", "--help", env=env_for(base, tmp_path)).stdout
     for text in (
-        "send rights",
+        "rights",
         "--for",
         "--loose",
         "--revoke-loose",
@@ -1830,7 +1828,7 @@ def test_send_restart_resume(script, base, tmp_path, resume):
 def test_send_resume_only_for_restart(script, base, tmp_path):
     r = send(script, base, tmp_path, "spawn", "--branch", "b", "--text", "go", "--resume", "last")
     assert r.returncode == 2
-    assert "only applies to restart" in r.stderr
+    assert "No such option: --resume" in r.stderr
 
 
 def test_send_restart_resume_rejects_garbage(script, base, tmp_path):
@@ -1840,18 +1838,47 @@ def test_send_restart_resume_rejects_garbage(script, base, tmp_path):
     assert not (base / "outbox").exists()
 
 
-@pytest.mark.parametrize("arg", ["help", "-h", "--help"])
+def test_send_spawn_help_has_only_spawn_options(script, base, tmp_path):
+    result = run(script, "send", "spawn", "--help", env=env_for(base, tmp_path))
+    assert result.returncode == 0
+    assert "--branch" in result.stdout
+    assert "--child" not in result.stdout
+
+
+def test_send_help_lists_all_request_types(script, base, tmp_path):
+    result = run(script, "send", "--help", env=env_for(base, tmp_path))
+    assert result.returncode == 0
+    for name in ("message", "spawn", "import", "update", "restart", "refresh", "stop", "destroy", "rights", "publish"):
+        assert name in result.stdout
+
+
+@pytest.mark.parametrize("option", ["--branch", "--warm", "--file", "--agent", "--timeout"])
+def test_send_rejects_empty_non_text_options(script, base, tmp_path, option):
+    result = send(script, base, tmp_path, "spawn", "--branch", "b", "--text", "go", option, "")
+    assert result.returncode == 2
+    assert "non-empty value" in result.stderr
+    assert not list((base / "outbox").glob("*"))
+
+
+def test_inbox_help_lists_subcommands(script, base, tmp_path):
+    result = run(script, "--help", env=env_for(base, tmp_path))
+    assert result.returncode == 0
+    for command in ("wait", "ls", "read", "runners", "children", "status", "send"):
+        assert command in result.stdout
+
+
+@pytest.mark.parametrize("arg", ["-h", "--help"])
 def test_help_prints_usage_and_exits_0(script, base, tmp_path, arg):
     result = run(script, arg, env=env_for(base, tmp_path))
     assert result.returncode == 0
-    assert result.stdout.startswith(f"Usage: {script.prog} wait")
+    assert f"Usage: {script.prog}" in result.stdout
 
 
 @pytest.mark.parametrize("args", [(), ("unknown",)])
 def test_no_args_and_unknown_subcommand_exit_2(script, base, tmp_path, args):
     result = run(script, *args, env=env_for(base, tmp_path))
     assert result.returncode == 2
-    assert result.stderr.startswith(f"Usage: {script.prog} wait")
+    assert f"Usage: {script.prog}" in result.stderr
 
 
 def test_children_null_entry_and_boolean_version(script, base, tmp_path):

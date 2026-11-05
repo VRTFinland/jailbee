@@ -11,13 +11,24 @@ from types import SimpleNamespace
 import pytest
 
 from jailbee.inbox import cli, send
+from jailbee.inbox.container_cmd import inbox_app
+from typer._click.exceptions import ClickException
+
+
+def invoke(args):
+    try:
+        return inbox_app(args, prog_name="jailbee inbox", standalone_mode=False) or 0
+    except ClickException as exc:
+        exc.show()
+        return exc.exit_code
 
 
 def test_help_documents_model_suffix(capsys):
-    assert cli.main(["--help"]) == 0
+    assert invoke(["runners", "--help"]) == 0
     output = capsys.readouterr().out
-    assert "Listed model tiers also accept the [1m] suffix." in output
-    assert "haiku (optional [1m])" in output
+    assert "[1m] suffix" in output
+    assert invoke(["send", "spawn", "--help"]) == 0
+    assert "[1m] suffix" in capsys.readouterr().out
 
 
 # The Python implementation intentionally accepts [1m]; the shell reference does not.
@@ -26,7 +37,7 @@ def test_help_documents_model_suffix(capsys):
 def test_send_accepts_suffixed_model(tmp_path, monkeypatch, agent, model):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
     assert (
-        cli.main(
+        invoke(
             ["send", "spawn", "--branch", "b", "--text", "x", "--agent", agent, "--model", model]
         )
         == 0
@@ -39,7 +50,7 @@ def test_send_accepts_suffixed_model(tmp_path, monkeypatch, agent, model):
 def test_send_rejects_invalid_model_suffix(tmp_path, monkeypatch, model):
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
     assert (
-        cli.main(
+        invoke(
             ["send", "spawn", "--branch", "b", "--text", "x", "--agent", "claude", "--model", model]
         )
         == 2
@@ -54,7 +65,7 @@ def test_send_id_exhaustion_exits_one_without_traceback(tmp_path, monkeypatch, c
     outbox.mkdir()
     (outbox / "fixed.json").write_text("existing")
 
-    assert cli.main(["send", "message", "--text", "hello"]) == 1
+    assert invoke(["send", "message", "--text", "hello"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "jailbee inbox: could not find a free manifest id\n"
@@ -73,7 +84,7 @@ def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypat
         return original(path, target)
 
     monkeypatch.setattr(Path, "replace", fail_replace)
-    assert cli.main(["send", "message", "--text", "hello", "--wait"]) == 1
+    assert invoke(["send", "message", "--text", "hello", "--wait"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Traceback" not in captured.err
@@ -102,7 +113,7 @@ def test_interrupt_after_manifest_rename_keeps_request_and_releases_lock(
         return result
 
     monkeypatch.setattr(Path, "replace", interrupt_after_rename)
-    assert cli.main(["send", "message", "--text", "hello", "--wait"]) == 130
+    assert invoke(["send", "message", "--text", "hello", "--wait"]) == 130
     captured = capsys.readouterr()
     assert "Traceback" not in captured.err
     outbox = tmp_path / "outbox"
@@ -140,7 +151,7 @@ def test_send_reads_large_body_in_bounded_chunks(tmp_path, monkeypatch, capsys, 
 
         monkeypatch.setattr(Path, "open", bounded_open)
         args = ["--file", str(path)]
-    assert cli.main(["send", "message", *args]) == 2
+    assert invoke(["send", "message", *args]) == 2
     assert "the message text is 150001 bytes; the limit is 65536" in capsys.readouterr().err
     assert list((tmp_path / "outbox").iterdir()) == []
 
@@ -167,7 +178,7 @@ def test_send_reserves_and_publishes_body_before_manifest(tmp_path, monkeypatch)
     before = len(send._reservations)
     try:
         assert (
-            send.publish(settings, send.parse_send(["message", "--text", "hello", "--wait"]))
+            send.publish(settings, send.validate(send.SendRequest(type="message", text="hello", wait=True)))
             == "fixed"
         )
         assert observed == [True]

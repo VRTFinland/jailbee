@@ -231,7 +231,7 @@ def wait_for_status(settings: Settings, ref: str, timeout: int | None) -> int:
     path = Path(selected)
     data = _load(path)
     ident = message_id(path)
-    if data is None or ident is None or cmd_read(settings, [ident]):
+    if data is None or ident is None or cmd_read(settings, ident):
         return 1
     return 0 if data.get("state") in ("done", "queued", "started") else 1
 
