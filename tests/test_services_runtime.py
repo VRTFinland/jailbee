@@ -825,3 +825,17 @@ def test_status_and_health_run_concurrently(tmp_path):
     proc.run_probe = probe
     item = rt.status()[0]
     assert item.state == "ready" and item.status == "ok"
+
+
+def test_capture_uses_joined_lines(tmp_path):
+    rt, proc = runtime(tmp_path, {"db": {"run": "x"}})
+    rt.logs("db", 3, all_history=True)
+    cmd = next(c for c in proc.commands if c[0] == "capture-pane")
+    assert "-J" in cmd and cmd[cmd.index("-S") + 1] == "-"
+
+
+def test_history_limit_set_before_first_service_window(tmp_path):
+    rt, proc = runtime(tmp_path, {"db": {"run": "x", "logs": {"history_limit": 60000}}, "web": {"run": "x", "logs": {"history_limit": 70000}}})
+    assert rt.start(["db"]).ok
+    setting = ["set-option", "-t", "autostart", "history-limit", "70000"]
+    assert proc.commands.index(setting) < next(i for i, c in enumerate(proc.commands) if c[0] == "new-window")

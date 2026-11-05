@@ -242,3 +242,30 @@ def test_ls_json_includes_status_field(tmp_path: Path, monkeypatch) -> None:
     result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "ls", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)[0]["status"] == {"connections": 2}
+
+
+def test_logs_cli_grep_filter_context(tmp_path, monkeypatch):
+    from jailbee.services.runtime import ServiceRuntime
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: x\n    logs:\n      filters:\n        errors: ERROR\n")
+    calls = []
+    def capture(self, name, lines, *, all_history=False):
+        calls.append(all_history)
+        return "old ERROR\nskip\nbefore\n\x1b[31mERROR\x1b[0m\nafter\n"
+    monkeypatch.setattr(ServiceRuntime, "logs", capture)
+    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "logs", "db", "--filter", "errors", "--grep", "unused", "-n", "1", "-C", "1"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "before\nERROR\nafter\n"
+    assert calls == [True]
+
+
+def test_logs_cli_invalid_regex_and_unknown_filter_exit_2(tmp_path):
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: x\n")
+    base = ["service", "--repo", str(tmp_path), "logs", "db"]
+    runner = CliRunner()
+    for args in (["--grep", "["], ["--filter", "missing"], ["--grep", "x", "--follow"], ["--filter", "missing", "--follow"]):
+        result = runner.invoke(container_app, base + args)
+        assert result.exit_code == 2, result.output

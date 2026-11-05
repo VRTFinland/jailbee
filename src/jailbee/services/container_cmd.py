@@ -1,6 +1,7 @@
 """Container service command line."""
 
 import json
+import re
 import socket
 from dataclasses import asdict
 from pathlib import Path
@@ -12,7 +13,7 @@ from typer._click import Context
 from jailbee import prompting
 from jailbee.config.errors import ConfigError
 from jailbee.config.repo_layer import default_repo_config_path, load_repo_layer
-from jailbee.services import graph, refresh
+from jailbee.services import graph, log_query, refresh
 from jailbee.services.local_proc import LocalProc
 from jailbee.services.runtime import RunReport, ServiceRuntime
 
@@ -166,12 +167,41 @@ def logs(
     name: Annotated[str | None, typer.Argument()] = None,
     lines: Annotated[int, typer.Option("-n", min=1)] = 30,
     follow: Annotated[bool, typer.Option("--follow")] = False,
+    grep: Annotated[list[str] | None, typer.Option("--grep")] = None,
+    filters: Annotated[list[str] | None, typer.Option("--filter")] = None,
+    before: Annotated[int, typer.Option("-B", min=0)] = 0,
+    after: Annotated[int, typer.Option("-A", min=0)] = 0,
+    context: Annotated[int, typer.Option("-C", min=0)] = 0,
 ) -> None:
     rt = _runtime(ctx.obj)
     selected = _names(rt, [name] if name else None)[0]
+    if follow and (grep or filters or before or after or context):
+        typer.echo("--follow cannot be combined with log queries", err=True)
+        raise typer.Exit(2)
+    expressions = list(grep or [])
+    for name in filters or []:
+        expression = rt.cfg.services[selected].logs.filters.get(name)
+        if expression is None:
+            typer.echo(f"unknown log filter: {name}", err=True)
+            raise typer.Exit(2)
+        expressions.append(expression)
+    try:
+        patterns = [re.compile(expression) for expression in expressions]
+    except re.error as exc:
+        typer.echo(f"invalid log regex: {exc}", err=True)
+        raise typer.Exit(2) from exc
     try:
         if not follow:
-            typer.echo(rt.logs(selected, lines), nl=False)
+            if patterns:
+                text = log_query.strip_terminal(rt.logs(selected, lines, all_history=True))
+                selected_lines = log_query.select_lines(
+                    text.splitlines(), patterns, limit=lines,
+                    before=max(before, context), after=max(after, context),
+                )
+                if selected_lines:
+                    typer.echo("\n".join(selected_lines))
+            else:
+                typer.echo(rt.logs(selected, lines), nl=False)
             return
         for chunk in rt.follow_logs(selected, lines):
             typer.echo(chunk, nl=False)

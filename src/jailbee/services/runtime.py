@@ -313,9 +313,10 @@ class ServiceRuntime:
     def _target(self, name: str) -> str:
         return f"{SESSION_NAME}:={WINDOW_PREFIX}{name}"
 
-    def logs(self, name: str, lines: int) -> str:
+    def logs(self, name: str, lines: int, *, all_history: bool = False) -> str:
         topo_order(self.cfg.services, [name])
-        result = self.proc.tmux(["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"])
+        start = "-" if all_history else f"-{lines}"
+        result = self.proc.tmux(["capture-pane", "-p", "-J", "-t", self._target(name), "-S", start])
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "failed to capture service window")
         rows = result.stdout.splitlines(keepends=True)
@@ -323,7 +324,7 @@ class ServiceRuntime:
         # drop them so the last N lines are real output, not blank padding.
         while rows and not rows[-1].strip():
             rows.pop()
-        return "".join(rows[-lines:])
+        return "".join(rows if all_history else rows[-lines:])
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])
@@ -360,6 +361,14 @@ class ServiceRuntime:
             if result.returncode:
                 self._save(name, "failed", result.stderr)
                 return False
+        # tmux applies this session-wide to windows created afterwards, not existing panes.
+        history_limit = max(s.logs.history_limit for s in self.cfg.services.values())
+        configured = self.proc.tmux(
+            ["set-option", "-t", SESSION_NAME, "history-limit", str(history_limit)]
+        )
+        if configured.returncode:
+            self._save(name, "failed", configured.stderr)
+            return False
         self._save(name, "starting")
         args = [
             "new-window",
