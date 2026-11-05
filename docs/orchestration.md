@@ -44,12 +44,23 @@ Roles:
   orchestrator. A child never orchestrates.
 - **Ordinary container**: neither. Nothing changes for it.
 
-Child containers are not a substitute for an agent's own subagents. The
-bundled `jailbee-orchestration` skill tells the orchestrator to keep ordinary
-delegation (research, review, plan tasks) on its subagent tool and to spawn
-children only when the user asks for them: a grant permits orchestration, it
-does not request it. This matters most when `default_profile` grants every
-new container.
+A grant permits orchestration; it does not request it. This matters most
+when `default_profile` grants every new container. Once the user asks for
+child containers and the `jailbee-orchestration` skill is loaded, the agent
+keeps the orchestrator role for the session, saving its context for watching
+children, merging work, reviews and conversation with the user.
+
+For each new task, it investigates in its own container, using a subagent
+for anything beyond a few lookups, then chooses the implementation vehicle.
+Work benefiting from its own development environment (code with test suites,
+services, multi-step implementation or whole plans) goes to a child briefed
+with the findings and acceptance tests; the child implements, tests and
+commits, and the orchestrator merges or stages its work on `done`. Light
+text, doc or skill changes go to a fork or a fresh subagent when saving
+context matters; tiny edits can be done inline. Beyond those tiny edits,
+the orchestrator does the work itself only when it needs its own live
+environment or the user asks. Subagents remain the tool for investigation
+and review here, and for plan tasks inside a child.
 
 ## Grants
 

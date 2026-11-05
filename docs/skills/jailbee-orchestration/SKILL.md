@@ -1,6 +1,6 @@
 ---
 name: jailbee-orchestration
-description: Use only when the user explicitly asks for JailBee child containers and this container holds an orchestration grant (`~/.jailbee/orchestration/grant.json`) — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. Child containers are not subagents; the grant alone is no reason to use them, and ordinary delegation (subagents, parallel agents, plan execution) stays on the agent's own subagent tool. Trigger on "orchestrate child containers", "spawn a child container", "dispatch to containers", "merge the children", "orkestroi kontteja", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
+description: Use only when the user explicitly asks for JailBee child containers and this container holds an orchestration grant (`~/.jailbee/orchestration/grant.json`) — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. The grant alone is no reason to orchestrate; once invoked, keep the orchestrator role for the session, using subagents for investigation, review and light work, and children for work needing its own development environment. Trigger on "orchestrate child containers", "spawn a child container", "dispatch to containers", "merge the children", "orkestroi kontteja", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
 ---
 
 # Orchestrating child containers
@@ -17,22 +17,32 @@ children, and there are no partial grants: a request is accepted or
 
 ## Containers are not subagents
 
-A grant is a permission, not a prompt to use it. Child containers never
-replace your agent's own subagents:
+A grant is a permission, not a prompt to use it. Loading this skill means
+the user asked you to orchestrate: stay the orchestrator for the rest of
+the session. Save your context for watching children, merging their work,
+reviews and conversation with the user.
 
-- **Subagents** (your agent's Agent/Task tool, parallel agents, plan
-  execution workflows) are the default for all ordinary delegation:
-  research, review, implementing plan tasks, parallel independent fixes.
-  They share this container and work tree, are cheap, and return their
-  result straight to you.
-- **Child containers** are heavy: each is a new container with its own
-  checkout, branch, environment and long-running agent session, and its
-  work comes back through `import`, followed by a merge or a separate PR. Use them only when
-  the user asks for child containers (or names this workflow), for example
-  to work a backlog of separate issues each on its own branch.
+For each new user task, investigate here first: root cause, relevant files
+and open design questions. Use a subagent for anything beyond a few lookups.
+Then choose the implementation vehicle by what the work needs:
 
-When a skill or plan tells you to dispatch subagents, use subagents, even
-with a grant.
+- **Subagents** share this container and work tree and return their result
+  straight to you. Use them for investigation and review. Light work needing
+  no development environment (text, docs or skill wording) goes to a fork or
+  a fresh subagent when saving your context matters; tiny edits can be done inline.
+- **Child containers** have their own checkout, branch, environment and
+  long-running agent session. Use one when work benefits from its own
+  development environment: code changes with test suites, services, long
+  multi-step implementation or whole plans. Brief it with your findings and
+  acceptance tests. The child implements, tests and commits; on `done`,
+  merge or stage its work.
+
+Beyond tiny light edits, do the work yourself only when it needs this
+container's own live environment or the user asks you to.
+
+When a skill or plan tells you to dispatch subagents, use them at the
+appropriate level: here for investigation, review and light work; in the
+implementing child for plan tasks.
 
 One child takes one whole unit of work: a ticket, or a whole plan. Never
 split a plan's tasks across children; the child runs them itself, with its

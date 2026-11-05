@@ -334,6 +334,29 @@ def test_orchestration_skill_names_the_protocol_paths() -> None:
         assert needle in text, needle
 
 
+def test_orchestration_skill_keeps_the_orchestrator_role() -> None:
+    text = _skill_text(ORCH)
+    section = text.split("## Containers are not subagents\n", 1)[1].split("\n## ", 1)[0]
+    section = " ".join(section.split())
+    for needle in (
+        "A grant is a permission",
+        "orchestrator for the rest of the session",
+        "For each new user task, investigate here first",
+        "acceptance tests",
+        "fork or a fresh subagent",
+        "own development environment",
+        "implements, tests and commits",
+        "merge or stage its work",
+        "this container's own live environment",
+        "the user asks you to",
+        "the child runs them itself",
+        "When a skill or plan tells you to dispatch subagents",
+    ):
+        assert needle in section, needle
+    assert "implementing plan tasks, parallel independent fixes" not in section
+    assert "Use them only when" not in section
+
+
 def test_orchestration_skill_explains_missing_inbox_recovery() -> None:
     text = _skill_text(ORCH)
     assert "broker creates the directories" in text

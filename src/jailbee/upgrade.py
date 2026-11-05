@@ -602,6 +602,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "shutdown snapshot unit and `claude-jb` records its launcher"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 4),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills that keep the orchestrator role "
+            "for the session, using subagents for light work and children for work "
+            "needing its own development environment"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
