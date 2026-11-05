@@ -50,6 +50,32 @@ app = typer.Typer(
 
 app.add_typer(outbox_app)
 
+repo_app = typer.Typer(name="repo", help="Manage registered repositories.", no_args_is_help=True)
+app.add_typer(repo_app)
+
+
+@repo_app.command("ls")
+def repo_ls(fmt: Annotated[Literal["table", "json"], typer.Option("--format")] = "table") -> None:
+    """List registered repositories and leftover resources."""
+    from jailbee.repo_commands import list_command
+
+    list_command(fmt)
+
+
+@repo_app.command("rm")
+def repo_rm(
+    target: Annotated[str | None, typer.Argument(help="Repository prefix or directory.")] = None,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    force: Annotated[bool, typer.Option("--force")] = False,
+    purge: Annotated[bool, typer.Option("--purge")] = False,
+) -> None:
+    """Remove a repository's managed resources."""
+    from jailbee.repo_commands import remove_command
+
+    remove_command(target, yes=yes, dry_run=dry_run, force=force, purge=purge,
+                   running_agents=_running_agents, warn_before_destroy=_warn_before_destroy)
+
 config_app = typer.Typer(
     name="config",
     help="Configuration commands.",
