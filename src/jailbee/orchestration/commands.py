@@ -222,7 +222,9 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
     data = base.model_dump()
     if flags.publish_issues is not None:
         data["issues"] = _issue_kinds(flags.publish_issues)
-    if flags.publish_foreign_issues is not None:
+    if flags.publish_foreign_issues == ("none",):
+        data["foreign_issues"] = ForeignIssueRights().model_dump()
+    elif flags.publish_foreign_issues is not None:
         repos: list[str] = []
         actions: tuple[IssueActionKind, ...] | None = None
         for entry in flags.publish_foreign_issues:

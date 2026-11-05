@@ -13082,7 +13082,8 @@ def orchestrate_grant_cmd(
     publish_foreign_issues: Annotated[
         list[str] | None,
         typer.Option(
-            "--publish-foreign-issues", help="REPO:KINDS; repeatable, replaces foreign rights."
+            "--publish-foreign-issues",
+            help="REPO:KINDS; repeatable, replaces foreign rights; none clears them.",
         ),
     ] = None,
     publish_prs: Annotated[

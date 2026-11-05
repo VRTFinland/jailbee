@@ -142,7 +142,8 @@ counts as widening.
 
 `--publish-issues none` clears issue rights. Repeatable
 `--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed
-repository must use the same kinds. `--publish-prs/--no-publish-prs` and
+repository must use the same kinds. `--publish-foreign-issues none` clears the
+foreign block alone. `--publish-prs/--no-publish-prs` and
 `--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
 `--no-publish` clears everything and is exclusive with other publish flags.
 A bare `grant` keeps existing publish rights. `show` and `ls` display them.

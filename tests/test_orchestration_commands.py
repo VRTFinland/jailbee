@@ -83,6 +83,21 @@ def test_build_grant_foreign_issues_parse(cfg):
         )
 
 
+def test_build_grant_foreign_issues_none_clears_only_the_foreign_block(cfg):
+    current = commands.build_grant(
+        cfg,
+        None,
+        GrantFlags(publish_issues=("comment",), publish_foreign_issues=("org/lib:comment",)),
+    )
+    rights = commands.build_grant(
+        cfg, current, GrantFlags(publish_foreign_issues=("none",))
+    ).publish
+    assert rights.foreign_issues == commands.ForeignIssueRights()
+    assert rights.issues == ("comment",)
+    with pytest.raises(GrantError, match="REPO:KIND"):
+        commands.build_grant(cfg, None, GrantFlags(publish_foreign_issues=("none", "org/x:state")))
+
+
 @pytest.mark.parametrize(
     "changes",
     [
