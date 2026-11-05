@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.3 - 2026-11-05
+
 ### Added
 
 - Service health probes: a service with a `health` command whose probe fails
