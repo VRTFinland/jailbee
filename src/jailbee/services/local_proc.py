@@ -107,7 +107,6 @@ class LocalProc:
         *,
         initial: bool = True,
         poll_interval: float | None = None,
-        on_attached: Callable[[], None] | None = None,
     ) -> Iterator[str]:
         pane_result = self.tmux(["display-message", "-p", "-t", target, "#{pane_id}"])
         pane = pane_result.stdout.strip()
@@ -148,8 +147,6 @@ class LocalProc:
                         raise RuntimeError("failed to attach tmux control client")
                     if line.startswith(b"%end "):
                         attached = True
-                        if on_attached is not None:
-                            on_attached()
                         if initial:
                             process.stdin.write(
                                 f"capture-pane -p -J -t {pane} -S -{lines}\n".encode()

@@ -359,13 +359,12 @@ class ServiceRuntime:
             return 3, pane_error()
         preceding: deque[str] = deque(maxlen=before)
 
-        def capture_context() -> None:
-            if before:
+        if before:
+            try:
                 preceding.extend(strip_terminal(self.logs(name, before)).splitlines()[-before:])
-
-        stream = self.proc.follow_pane(
-            self._target(name), 1, initial=False, poll_interval=0.1, on_attached=capture_context
-        )
+            except RuntimeError:
+                return 3, pane_error()
+        stream = self.proc.follow_pane(self._target(name), 1, initial=False, poll_interval=0.1)
         pending = ""
         result: list[str] = []
         matched = False

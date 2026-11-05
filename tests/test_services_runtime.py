@@ -131,10 +131,9 @@ def test_wait_log_new_lines_context_and_cleanup(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "logs", lambda *a, **k: "MATCH old\nhistory\n")
     closed = []
 
-    def follow(target, lines, *, initial, poll_interval, on_attached):
+    def follow(target, lines, *, initial, poll_interval):
         assert initial is False and poll_interval > 0
         try:
-            on_attached()
             yield "new\n\x1b[3"
             yield "1mMATCH\x1b[0m\r\nafter1\n"
             yield "after2\n"
@@ -204,27 +203,29 @@ def test_wait_log_eof_after_hit_live_and_pane_disappears(tmp_path, monkeypatch):
     assert code == 3 and "stopped" in " ".join(lines)
 
 
-def test_wait_log_captures_history_after_attach_without_matching_it(tmp_path, monkeypatch):
+def test_wait_log_history_is_captured_before_attachment_without_overlap(tmp_path, monkeypatch):
     rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
     proc.windows["svc-web"] = (0, "", 123)
     events = []
 
     def history(*args, **kwargs):
-        assert events == ["attached"]
         events.append("history")
-        return "hit old\nbefore\n"
+        return "before\nhit\nlater\n" if "attached" in events else "old hit\nbefore\n"
 
-    def follow(*args, on_attached, **kwargs):
+    def follow(*args, **kwargs):
         events.append("attached")
-        on_attached()
-        yield "hit new\n"
+        callback = kwargs.get("on_attached")
+        if callback:
+            callback()
+        yield "hit\nlater\n"
 
     monkeypatch.setattr(rt, "logs", history)
     monkeypatch.setattr(proc, "follow_pane", follow)
-    assert rt.wait_log("web", re.compile("hit"), timeout=5, before=2, after=0) == (
+    assert rt.wait_log("web", re.compile("hit"), timeout=5, before=2, after=1) == (
         0,
-        ["hit old", "before", "hit new"],
+        ["old hit", "before", "hit", "later"],
     )
+    assert events == ["history", "attached"]
 
 
 @pytest.mark.parametrize("after", [0, 1])
