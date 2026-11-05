@@ -7,6 +7,54 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.repo_remove import list_repos
 
 
+def test_golden_candidate_owned_by_another_repo_is_not_removed(db_engine, mocker):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = ["foo-base", "foo-base-base"]
+    incus.list_containers.return_value = [
+        {"name": "foo-base-build", "profiles": ["foo-base-base"]},
+        {"name": "foo-base--golden", "profiles": []},
+    ]
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine))
+    assert plan.golden_instances == ["foo-base--golden"]
+
+
+def test_stale_extra_acls_preserve_other_repos_and_recover_capped(db_engine, mocker):
+    from jailbee.db.models import PoolIP
+    from jailbee.egress_scope import extra_acl_name
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    now = datetime.now(UTC)
+    long_name = "foo-" + "x" * 70
+    with Session(db_engine) as session:
+        session.add(
+            PoolIP(
+                container_prefix="ct:" + long_name,
+                hostname="host",
+                ip="1.2.3.4",
+                first_seen=now,
+                last_seen=now,
+            )
+        )
+        session.commit()
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = ["foo-base", "foo-bar-base"]
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = [
+        "foo-one-extra", "foo-bar-one-extra", extra_acl_name(long_name)
+    ]
+    incus.list_images.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine))
+    assert set(plan.acls) == {"foo-one-extra", extra_acl_name(long_name)}
+
+
 def test_registered_missing_directory(db_engine, tmp_path):
     with Session(db_engine) as session:
         session.add(

@@ -25,7 +25,12 @@ from jailbee.db.models import (
     RepoUpgradeState,
     SentRecord,
 )
-from jailbee.egress_scope import _capped_acl_name, bridge_extras_acl_name, extra_acl_name
+from jailbee.egress_scope import (
+    ACL_NAME_MAX,
+    _capped_acl_name,
+    bridge_extras_acl_name,
+    extra_acl_name,
+)
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.golden import find_all_archived_images
 from jailbee.maintenance import humanize
@@ -345,10 +350,18 @@ def plan_removal(
             if owner == prefix and name not in golden_names
         )
 
+        pool_rows = session.exec(select(PoolIP)).all()
+        known_container_names = set(ownership)
+        known_container_names.update(
+            row.container_prefix[3:] for row in pool_rows if row.container_prefix.startswith("ct:")
+        )
+        known_container_names.update(
+            row.container_name for row in session.exec(select(BackgroundJob)).all()
+        )
+        known_container_names.update(row.container for row in session.exec(select(SentRecord)).all())
         state_counts = {
             "pool_ip": sum(
-                _pool_owned(r.container_prefix, prefix, known, ownership)
-                for r in session.exec(select(PoolIP)).all()
+                _pool_owned(r.container_prefix, prefix, known, ownership) for r in pool_rows
             ),
             "refresh_state": sum(
                 r.container_prefix == prefix for r in session.exec(select(RefreshState)).all()
@@ -391,7 +404,24 @@ def plan_removal(
         *(extra_acl_name(c) for c in containers),
     ]
     existing_acls = set(incus.network_acl_list())
-    acls = [name for name in dict.fromkeys(candidates) if name in existing_acls]
+    owned_names = {
+        n for n in known_container_names if _pool_owned(f"ct:{n}", prefix, known, ownership)
+    }
+    foreign_names = known_container_names - owned_names
+    foreign_acls = {extra_acl_name(n) for n in foreign_names}
+    candidates.extend(extra_acl_name(n) for n in sorted(owned_names))
+    candidates.extend(
+        acl
+        for acl in sorted(existing_acls)
+        if acl.endswith("-extra")
+        and len(acl) < ACL_NAME_MAX
+        and _pool_owned(f"ct:{acl[:-6]}", prefix, known, ownership)
+    )
+    acls = [
+        name
+        for name in dict.fromkeys(candidates)
+        if name in existing_acls and name not in foreign_acls
+    ]
     alias = cfg.golden.alias if cfg else f"{prefix}-base"
     reason = None
     if alias == SCRATCH_BASE_ALIAS:
@@ -417,7 +447,7 @@ def plan_removal(
             for n in dict.fromkeys(
                 (f"{alias}--golden", f"{alias}--build", f"{alias}--old", f"{prefix}-base-build")
             )
-            if n in instance_names
+            if n in instance_names and ownership.get(n, prefix) == prefix
         ]
     default_shared = _default_shared_dir(prefix)
     shared = Path(cfg.shared_dir) if cfg and cfg.shared_dir else default_shared
