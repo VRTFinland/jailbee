@@ -139,10 +139,19 @@ def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp
 
 def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
     child_snapshot(base, started=time.time())
-    started = time.monotonic()
-    r = run(script, "wait", "--quiet-after", "1s", "--timeout", "none", env=env_for(base, tmp_path))
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "quiet-child kid"
+    with subprocess.Popen(
+        [*script.argv, "wait", "--quiet-after", "1s", "--timeout", "none"],
+        env=env_for(base, tmp_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        # Time the wait itself, not interpreter startup (slow under -n auto).
+        _await_wait_lock(base / "wait.lock")
+        started = time.monotonic()
+        out, err = proc.communicate(timeout=10)
+    assert proc.returncode == 0, err
+    assert out.strip() == "quiet-child kid"
     assert time.monotonic() - started < 3
 
 
@@ -320,53 +329,56 @@ def test_update_selectors_not_valid_for_import(script, base, tmp_path, option):
 def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "1"}
 
-    def writer():
-        time.sleep(0.5)
+    with subprocess.Popen(
+        [*script.argv, "wait", "--timeout", "10"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        # Write the burst only once the waiter is waiting: if interpreter startup
+        # outlasted the writer, the messages would already be there and wait
+        # would return without settling.
+        _await_wait_lock(base / "wait.lock")
+        time.sleep(0.2)
         write_inbox(base, FIRST, message("h-0000aaaa"))
         time.sleep(0.4)
         write_inbox(base, SECOND, message("h-0000bbbb"))
         time.sleep(0.8)
         write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
-
-    t = threading.Thread(target=writer)
-    t.start()
-    try:
-        r = run(script, "wait", "--timeout", "10", env=env)
-        ls = run(script, "ls", env=env)
-        assert r.returncode == 0 and r.stdout.strip().endswith(FIRST)
-        assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
-        assert "h-0000cccc" in ls.stdout
-    finally:
-        t.join()
+        out, err = proc.communicate(timeout=15)
+    ls = run(script, "ls", env=env)
+    assert proc.returncode == 0 and out.strip().endswith(FIRST), err
+    assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
+    assert "h-0000cccc" in ls.stdout
 
 
 def test_wait_with_message_present_returns_without_settling(script, base, tmp_path):
     write_inbox(base, FIRST, message("h-0000aaaa"))
-    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "3"}
+    # Settling would take 5 s; the bound leaves room for interpreter startup.
+    env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "5"}
     started = time.monotonic()
     assert run(script, "wait", "--timeout", "10", env=env).returncode == 0
-    assert time.monotonic() - started < 1.5
+    assert time.monotonic() - started < 3
 
 
 def test_wait_settle_zero_disables(script, base, tmp_path):
     env = env_for(base, tmp_path) | {"JAILBEE_INBOX_SETTLE": "0"}
-
-    def writer():
-        time.sleep(0.3)
+    with subprocess.Popen(
+        [*script.argv, "wait", "--timeout", "10"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        _await_wait_lock(base / "wait.lock")
         write_inbox(base, FIRST, message("h-0000aaaa"))
-        time.sleep(0.8)
-        write_inbox(base, SECOND, message("h-0000bbbb"))
-
-    t = threading.Thread(target=writer)
-    started = time.monotonic()
-    t.start()
-    try:
-        r = run(script, "wait", "--timeout", "10", env=env)
-        assert r.returncode == 0, r.stderr
-        assert time.monotonic() - started < 1.0
-        assert not (base / "inbox" / SECOND).exists()
-    finally:
-        t.join()
+        started = time.monotonic()
+        out, err = proc.communicate(timeout=10)
+    assert proc.returncode == 0, err
+    # The default 1 s settle would hold it at least that long.
+    assert time.monotonic() - started < 0.9
+    assert out.strip().endswith(FIRST)
 
 
 @pytest.mark.parametrize("settle", ["abc", "-1", "1e2", "."])
@@ -1584,6 +1596,24 @@ def test_wait_quiet_tolerates_one_slow_broker_round(script, base, tmp_path):
     assert r.returncode == 1, r.stderr
 
 
+def _await_wait_lock(path, deadline=10.0):
+    """Block until another process holds the waiter lock (startup is not instant).
+
+    Reads /proc/locks instead of probing with flock: a probe could itself hold
+    the lock at the moment the waiter tries, and make the waiter exit 2.
+    """
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        if path.exists():
+            inode = path.stat().st_ino
+            for line in Path("/proc/locks").read_text().splitlines():
+                fields = line.split()
+                if "FLOCK" in fields and fields[-3].endswith(f":{inode}"):
+                    return
+        time.sleep(0.02)
+    raise AssertionError("the first wait never took its lock")
+
+
 def test_wait_single_waiter_lock(script, base, tmp_path):
     env = env_for(base, tmp_path)
     with subprocess.Popen(
@@ -1593,7 +1623,7 @@ def test_wait_single_waiter_lock(script, base, tmp_path):
         stderr=subprocess.PIPE,
     ) as proc:
         try:
-            time.sleep(0.3)
+            _await_wait_lock(base / "wait.lock")
             r = run(script, "wait", "--timeout", "0", env=env)
             assert r.returncode == 2
             assert "already waiting" in r.stderr
@@ -1619,9 +1649,16 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
 def test_wait_poll_respects_timeout(script, base, tmp_path):
     env = env_for(base, tmp_path)
     env["JAILBEE_INBOX_POLL"] = "5"
-    started = time.monotonic()
-    r = run(script, "wait", "--timeout", "1", env=env)
-    assert r.returncode == 1
+    with subprocess.Popen(
+        [*script.argv, "wait", "--timeout", "1"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as proc:
+        _await_wait_lock(base / "wait.lock")
+        started = time.monotonic()
+        proc.communicate(timeout=10)
+    assert proc.returncode == 1
     assert time.monotonic() - started < 2.5
 
 
