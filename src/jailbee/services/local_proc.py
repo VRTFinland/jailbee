@@ -25,6 +25,14 @@ class ProbeResult:
 
 _PROBE_OUTPUT_LIMIT = 16 * 1024
 
+
+def _decode_probe_output(output: bytearray) -> str:
+    text = output.decode("utf-8", errors="replace")
+    while len(text.encode("utf-8")) > _PROBE_OUTPUT_LIMIT:
+        text = text[: _PROBE_OUTPUT_LIMIT // 3]
+    return text
+
+
 # The anchor publishes its identity before the service command starts. It stays
 # in the pane's process group after the pane shell exits.
 _ANCHOR = r"""import json, os, signal, sys, time
@@ -157,17 +165,23 @@ class LocalProc:
                 timed_out = True
                 self.signal_group(process.pid, signal.SIGKILL)
                 process.kill()
-                process.wait(timeout=0.1)
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    pass
             return ProbeResult(
                 None if timed_out else process.returncode,
-                outputs[process.stdout].decode("utf-8", errors="replace"),
-                outputs[process.stderr].decode("utf-8", errors="replace"),
+                _decode_probe_output(outputs[process.stdout]),
+                _decode_probe_output(outputs[process.stderr]),
                 timed_out,
             )
         except BaseException:
             self.signal_group(process.pid, signal.SIGKILL)
             process.kill()
-            process.wait()
+            try:
+                process.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
             raise
         finally:
             selector.close()

@@ -41,6 +41,16 @@ def test_run_probe_captures_stdout_stderr_and_exit_code(tmp_path):
     assert (result.code, result.stdout, result.stderr, result.timed_out) == (3, "out", "err", False)
 
 
+def test_run_probe_output_cap_applies_after_decoding_invalid_utf8(tmp_path):
+    result = LocalProc().run_probe(
+        "head -c 10000 /dev/zero | tr '\\0' '\\377'",
+        cwd=str(tmp_path),
+        env={},
+        timeout=5,
+    )
+    assert len(result.stdout.encode("utf-8")) <= 16 * 1024
+
+
 def test_run_probe_caps_each_output_stream(tmp_path):
     result = LocalProc().run_probe(
         "head -c 100000 /dev/zero | tr '\\0' x; head -c 100000 /dev/zero | tr '\\0' y >&2",
@@ -55,8 +65,9 @@ def test_run_probe_caps_each_output_stream(tmp_path):
 
 
 def test_run_probe_timeout_kills_process_group(tmp_path):
+    marker = tmp_path / "child-finished"
     result = LocalProc().run_probe(
-        "printf out; printf err >&2; sleep 30",
+        f"(sleep 2; touch {marker}) & printf out; printf err >&2; sleep 30",
         cwd=str(tmp_path),
         env={},
         timeout=0.1,
@@ -65,6 +76,30 @@ def test_run_probe_timeout_kills_process_group(tmp_path):
     assert result.stdout == "out"
     assert result.stderr == "err"
     assert result.timed_out
+    time.sleep(2.1)
+    assert not marker.exists()
+
+
+def test_run_probe_bounds_cleanup_when_wait_times_out(monkeypatch, tmp_path):
+    process = Mock(pid=123, stdout=None, stderr=None, returncode=None)
+    process.stdout = Mock()
+    process.stderr = Mock()
+    process.stdout.fileno.return_value = 10
+    process.stderr.fileno.return_value = 11
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired("bash", 0),
+        subprocess.TimeoutExpired("bash", 0),
+    ]
+    process.poll.return_value = None
+    process.kill = Mock()
+    monkeypatch.setattr(subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr("os.set_blocking", Mock())
+    monkeypatch.setattr("os.close", Mock())
+    monkeypatch.setattr("selectors.DefaultSelector", lambda: Mock(get_map=lambda: {}))
+    result = LocalProc().run_probe("sleep 30", cwd=str(tmp_path), env={}, timeout=1)
+    assert result.timed_out
+    assert process.wait.call_count == 2
+    assert all(call.kwargs.get("timeout") is not None for call in process.wait.call_args_list)
 
 
 def test_run_probe_timeout_does_not_wait_for_escaped_pipe_holder(tmp_path):
