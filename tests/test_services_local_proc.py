@@ -13,6 +13,64 @@ import pytest
 from jailbee.services.local_proc import LocalProc
 
 
+@pytest.fixture
+def follow_control(monkeypatch):
+    process = Mock()
+    process.stdout.fileno.return_value = 42
+    process.poll.return_value = None
+    selector = Mock()
+    monkeypatch.setattr(subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr("selectors.DefaultSelector", Mock(return_value=selector))
+    monkeypatch.setattr("os.set_blocking", Mock())
+    read = Mock()
+    monkeypatch.setattr("os.read", read)
+    proc = LocalProc()
+    monkeypatch.setattr(proc, "tmux", Mock(return_value=subprocess.CompletedProcess([], 0, "%1", "")))
+    return proc, process, selector, read
+
+
+def test_follow_poll_frames_ticks_and_decodes(follow_control):
+    proc, process, selector, read = follow_control
+    selector.select.side_effect = [[], [1], [1], [1], [1]]
+    read.side_effect = [
+        b"%end 1 2 3\n%output %1 caf\\303",
+        b"\\251\\012\n%output %1 \\342\n%output %1 \\202\\254\n%out",
+        b"put %1 done\n",
+        b"",
+    ]
+    assert list(proc.follow_pane("svc", 10, initial=False, poll_interval=0.25)) == [
+        "", "caf\u00e9\n", "\u20ac", "done"
+    ]
+    process.stdin.write.assert_not_called()
+    selector.close.assert_called_once()
+    process.stdout.close.assert_called_once()
+    process.stdin.close.assert_called_once()
+    process.wait.assert_called_with(timeout=0.1)
+
+
+def test_follow_poll_attach_error_cleans_up(follow_control):
+    proc, process, selector, read = follow_control
+    selector.select.return_value = [1]
+    read.return_value = b"%error 1 2 3\n"
+    with pytest.raises(RuntimeError, match="failed to attach"):
+        list(proc.follow_pane("svc", 10, initial=False, poll_interval=0.1))
+    selector.close.assert_called_once()
+    process.terminate.assert_called_once()
+    process.wait.assert_called_with(timeout=0.1)
+
+
+def test_follow_poll_close_bounds_reap(follow_control):
+    proc, process, selector, read = follow_control
+    selector.select.return_value = []
+    process.wait.side_effect = [subprocess.TimeoutExpired("tmux", 0.1), 0]
+    stream = proc.follow_pane("svc", 10, initial=False, poll_interval=0.1)
+    assert next(stream) == ""
+    stream.close()
+    process.kill.assert_called_once()
+    assert process.wait.call_count == 2
+    selector.close.assert_called_once()
+
+
 def test_shell_timeout_kills_group_and_reaps(monkeypatch, tmp_path):
     process = Mock(pid=123)
     process.wait.side_effect = [subprocess.TimeoutExpired("bash", 2), -9]

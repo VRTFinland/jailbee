@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, cast
@@ -52,13 +52,42 @@ while True:
 """
 
 
+def _control_lines(stream: IO[bytes], poll_interval: float | None) -> Generator[bytes | None]:
+    if poll_interval is None:
+        yield from stream
+        return
+    selector = selectors.DefaultSelector()
+    try:
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ)
+        buffer = b""
+        while True:
+            if not selector.select(poll_interval):
+                yield None
+                continue
+            try:
+                chunk = os.read(stream.fileno(), 8192)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                return
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                yield line
+    finally:
+        selector.close()
+
+
 class LocalProc:
     """Execute container-local service operations."""
 
     def tmux(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["tmux", *args], capture_output=True, text=True, check=False)
 
-    def follow_pane(self, target: str, lines: int) -> Iterator[str]:
+    def follow_pane(
+        self, target: str, lines: int, *, initial: bool = True, poll_interval: float | None = None
+    ) -> Iterator[str]:
         pane_result = self.tmux(["display-message", "-p", "-t", target, "#{pane_id}"])
         pane = pane_result.stdout.strip()
         if pane_result.returncode or not re.fullmatch(r"%\d+", pane):
@@ -75,8 +104,12 @@ class LocalProc:
         attached = False
         capture_id: bytes | None = None
         streaming = False
+        protocol = _control_lines(process.stdout, poll_interval)
         try:
-            for line in process.stdout:
+            for line in protocol:
+                if line is None:
+                    yield ""
+                    continue
                 line = line.rstrip(b"\n")
                 if capture_id is not None and not streaming:
                     if line == b"%end " + capture_id:
@@ -94,8 +127,11 @@ class LocalProc:
                         raise RuntimeError("failed to attach tmux control client")
                     if line.startswith(b"%end "):
                         attached = True
-                        process.stdin.write(f"capture-pane -p -J -t {pane} -S -{lines}\n".encode())
-                        process.stdin.flush()
+                        if initial:
+                            process.stdin.write(f"capture-pane -p -J -t {pane} -S -{lines}\n".encode())
+                            process.stdin.flush()
+                        else:
+                            streaming = True
                     continue
                 if not streaming:
                     if re.fullmatch(rb"%begin \d+ \d+ \d+", line):
@@ -109,10 +145,20 @@ class LocalProc:
                     if text:
                         yield text
         finally:
+            protocol.close()
             process.stdin.close()
-            if process.poll() is None:
+            if process.poll() is not None:
+                process.wait()
+            else:
                 process.terminate()
-            process.wait()
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=0.1)
+                    except subprocess.TimeoutExpired:
+                        pass
             process.stdout.close()
 
     def run_probe(
