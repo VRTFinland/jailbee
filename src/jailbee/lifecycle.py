@@ -4097,6 +4097,9 @@ def ls_field_specs(
                 else c.base_branch or "—"
             ),
             json=lambda c: c.base_branch,
+            # Cut like NAME: a long branch would otherwise widen the whole
+            # table. The details card shows it in full.
+            dashboard_max_width=NAME_MAX_WIDTH,
         ),
         table_format.FieldSpec(
             name="state",

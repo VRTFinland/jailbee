@@ -475,6 +475,17 @@ def test_a_long_name_is_capped_and_cut_at_the_end(tmp_path):  # type: ignore[no-
     assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2
 
 
+def test_a_long_base_branch_is_capped_like_the_name(tmp_path):  # type: ignore[no-untyped-def]
+    """A long base branch must not widen the table; the details card has it in full."""
+    from jailbee.dashboard.columns import optimize_column_widths
+    from jailbee.lifecycle import NAME_MAX_WIDTH
+
+    row = replace(ci("p-a", "p"), base_branch="feature/" + "b" * 60)
+    group = dmodel.RepoGroup("p", str(tmp_path), None, [row])
+    widths = optimize_column_widths([group], now=NOW, enabled=("name", "base"))
+    assert widths["base"] == NAME_MAX_WIDTH
+
+
 def test_a_capped_fork_name_counts_its_tree_prefix(tmp_path):  # type: ignore[no-untyped-def]
     from jailbee.lifecycle import NAME_MAX_WIDTH
 
