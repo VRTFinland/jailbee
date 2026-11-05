@@ -18380,6 +18380,23 @@ def service_refresh_cmd(
     _service_command("refresh", name, names, config, assume_yes=yes, force=force)
 
 
+@service_app.command("wait")
+def service_wait_cmd(
+    name: ContainerArg = None,
+    names: Annotated[list[str] | None, typer.Argument(help="Service names.")] = None,
+    until: Annotated[Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"], typer.Option("--until")] = "ready",
+    timeout: Annotated[float, typer.Option("--timeout", min=0)] = 0,
+    interval: Annotated[float, typer.Option("--interval", min=1)] = 10,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Wait for a service state."""
+    extra = ["--until", until, "--timeout", f"{timeout:g}", "--interval", f"{interval:g}"]
+    if json_output:
+        extra.append("--json")
+    _service_command("wait", name, names, config, extra)
+
+
 @service_app.command("logs")
 def service_logs_cmd(
     name: ContainerArg = None,

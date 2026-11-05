@@ -87,6 +87,27 @@ def _report(report: RunReport) -> None:
 
 
 @service_app.command()
+def wait(
+    ctx: Context,
+    names: Annotated[list[str] | None, typer.Argument()] = None,
+    until: Annotated[Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"], typer.Option("--until")] = "ready",
+    timeout: Annotated[float, typer.Option("--timeout", min=0)] = 0,
+    interval: Annotated[float, typer.Option("--interval", min=1)] = 10,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    rt = _runtime(ctx.obj)
+    selected = _names(rt, names)
+    code, item = rt.wait(selected, until, timeout=timeout, interval=interval)
+    if item is not None:
+        if json_output:
+            typer.echo(json.dumps(asdict(item)))
+        else:
+            typer.echo(f"{item.name} {item.state} {item.detail}")
+    if code:
+        raise typer.Exit(code)
+
+
+@service_app.command()
 def start(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
     rt = _runtime(ctx.obj)
     _report(rt.start(_names(rt, names)))

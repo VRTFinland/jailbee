@@ -3,6 +3,7 @@
 import fcntl
 import hashlib
 import json
+import math
 import os
 import signal
 import tempfile
@@ -196,6 +197,35 @@ class ServiceRuntime:
             return items
         with ThreadPoolExecutor(max_workers=8) as pool:
             return list(pool.map(lambda item: self._health(item, fresh=fresh), items))
+
+    def wait(
+        self, names: Sequence[str], until: str, *, timeout: float, interval: float
+    ) -> tuple[int, ServiceStatus | None]:
+        states = ("stopped", "starting", "ready", "failed", "exited", "unhealthy")
+        if (
+            not names or any(name not in self.cfg.services for name in names)
+            or until not in states or not math.isfinite(timeout) or timeout < 0
+            or not math.isfinite(interval) or interval < 1
+        ):
+            return 2, None
+        deadline = self.proc.now() + timeout if timeout else None
+        while True:
+            statuses = {item.name: item for item in self.status(fresh=True)}
+            for name in names:
+                item = statuses[name]
+                if item.state == until or (
+                    until == "unhealthy" and item.state in ("exited", "failed", "stopped")
+                ):
+                    return 0, item
+            if until == "ready":
+                for name in names:
+                    item = statuses[name]
+                    if item.state in ("failed", "exited", "stopped"):
+                        return 3, item
+            remaining = deadline - self.proc.now() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                return 1, None
+            self.proc.sleep(min(interval, remaining) if remaining is not None else interval)
 
     def _target(self, name: str) -> str:
         return f"{SESSION_NAME}:={WINDOW_PREFIX}{name}"

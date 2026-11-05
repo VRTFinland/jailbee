@@ -618,3 +618,43 @@ def test_follow_snapshot_preserves_protocol_looking_lines(monkeypatch):
         "%exit ordinary\n%error 1 9 0\n%end 1 8 0\n%begin 1 7 0\nlast\n",
         "ok\n",
     ]
+
+
+def test_wait_matches_and_validates_before_status(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}, "db": {"run": "db"}})
+    proc.windows["svc-db"] = (1, 1, 123)
+    code, result = rt.wait(["web", "db"], "unhealthy", timeout=2, interval=1)
+    assert code == 0 and result.name == "web" and result.state == "stopped"
+    code, result = rt.wait(["db"], "ready", timeout=2, interval=1)
+    assert code == 3 and result.state == "exited"
+    monkeypatch.setattr(rt, "status", lambda **kwargs: pytest.fail("must validate first"))
+    for names, until, timeout, interval in [([], "ready", 0, 1), (["missing"], "ready", 0, 1), (["web"], "bad", 0, 1), (["web"], "ready", -1, 1), (["web"], "ready", 0, 0)]:
+        assert rt.wait(names, until, timeout=timeout, interval=interval) == (2, None)
+
+
+def test_wait_timeout_and_unlimited_fresh_poll(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    assert rt.wait(["web"], "failed", timeout=2, interval=1) == (1, None)
+    assert proc.clock == 2
+    original = rt.status
+    calls = []
+    def status(*, fresh):
+        calls.append(fresh)
+        if len(calls) == 3:
+            proc.windows["svc-web"] = (1, 1, 1)
+        return original(fresh=fresh)
+    monkeypatch.setattr(rt, "status", status)
+    code, result = rt.wait(["web"], "exited", timeout=0, interval=1)
+    assert code == 0 and result.state == "exited" and calls == [True, True, True]
+
+
+def test_wait_ready_and_unhealthy_probe(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web", "health": "check"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    code, item = rt.wait(["web"], "ready", timeout=1, interval=1)
+    assert code == 0 and item.state == "ready"
+    proc.health_result = ProbeResult(1, "", "bad", False)
+    code, item = rt.wait(["web"], "unhealthy", timeout=1, interval=1)
+    assert code == 0 and item.state == "unhealthy"
+    assert len(proc.health_calls) == 2

@@ -192,3 +192,20 @@ def test_child_help_ignores_missing_and_invalid_config(tmp_path: Path) -> None:
     config.parent.mkdir()
     config.write_text("services: [invalid")
     assert runner.invoke(container_app, args).exit_code == 0
+
+
+def test_wait_outputs_match_and_rejects_unknown(tmp_path, monkeypatch):
+    from jailbee.services.runtime import ServiceRuntime, ServiceStatus
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: sleep 1\n")
+    monkeypatch.setattr(ServiceRuntime, "wait", lambda self, names, until, **kw: (0, ServiceStatus("db", "ready", None, None, "ok")))
+    runner = CliRunner()
+    base = ["service", "--repo", str(tmp_path), "wait"]
+    result = runner.invoke(container_app, [*base, "db", "--until", "ready", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["state"] == "ready"
+    result = runner.invoke(container_app, [*base, "db", "--until", "ready"])
+    assert result.exit_code == 0 and result.stdout == "db ready ok\n"
+    result = runner.invoke(container_app, [*base, "missing", "--until", "ready"])
+    assert result.exit_code == 2
