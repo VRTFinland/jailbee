@@ -478,7 +478,7 @@ if [ "${JAILBEE_LITELLM_SKIP_REACHABILITY:-}" != "1" ]; then
 fi
 # Best-effort launcher metadata lets session resume recover the original CLI
 # invocation without changing the arguments that Claude Code receives.
-{
+(
     umask 077
     launcher_dir="$HOME/.local/state/jailbee/launchers"
     mkdir -p "$launcher_dir" || true
@@ -491,7 +491,7 @@ fi
             mv -f -- "$launcher_tmp" "$launcher_dir/$$" 2>/dev/null || rm -f -- "$launcher_tmp" 2>/dev/null || true
         fi
     fi
-} || true
+) || true
 exec claude "${args[@]}"
 EOF
 chmod 0755 /usr/local/bin/claude-jb

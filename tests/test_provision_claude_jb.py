@@ -4,6 +4,7 @@ image and in the dev environment)."""
 
 import importlib.resources
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -91,16 +92,28 @@ def _lines(out: str) -> list[str]:
 
 def test_claude_jb_writes_launcher_file(script, env):
     fake = Path(env["PATH"].split(":", 1)[0]) / "claude"
-    fake.write_text("#!/bin/bash\nprintf 'PID:%s\\n' \"$$\"\n")
+    fake.write_text(
+        "#!/bin/bash\n"
+        "printf 'PID:%s\\n' \"$$\"\n"
+        "printf 'UMASK:%s\\n' \"$(umask)\"\n"
+    )
     fake.chmod(0o755)
 
-    r = _run(script, env, "-P", "codex", "--model", "opus")
+    r = subprocess.run(
+        [str(script), "-P", "codex", "--model", "opus"],
+        env=env,
+        capture_output=True,
+        text=True,
+        preexec_fn=lambda: os.umask(0o022),
+    )
 
     assert r.returncode == 0, r.stderr
     pid = next(line.removeprefix("PID:") for line in r.stdout.splitlines() if line.startswith("PID:"))
     launcher_dir = Path(env["HOME"]) / ".local/state/jailbee/launchers"
     [launcher] = list(launcher_dir.iterdir())
     assert launcher.name == pid
+    assert "UMASK:0022" in r.stdout.splitlines()
+    assert launcher.stat().st_mode & 0o777 == 0o600
     fields = launcher.read_bytes().split(b"\0")[:-1]
     assert len(fields) == 6
     assert fields[0].isdigit()
@@ -112,12 +125,13 @@ def test_claude_jb_launcher_file_failure_does_not_block(script, env, tmp_path):
     launchers.parent.mkdir(parents=True)
     launchers.write_text("not a directory")
     fake = Path(env["PATH"].split(":", 1)[0]) / "claude"
-    fake.write_text("#!/bin/bash\nexit 0\n")
+    fake.write_text("#!/bin/bash\nprintf 'LAUNCHED\\n'\nexit 0\n")
     fake.chmod(0o755)
 
     r = _run(script, env, "-P", "codex")
 
     assert r.returncode == 0, r.stderr
+    assert r.stdout == "LAUNCHED\n"
 
 
 def test_default_profile_env(script, env):
