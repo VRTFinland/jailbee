@@ -1854,7 +1854,18 @@ def test_send_spawn_help_has_only_spawn_options(script, base, tmp_path):
 def test_send_help_lists_all_request_types(script, base, tmp_path):
     result = run(script, "send", "--help", env=env_for(base, tmp_path))
     assert result.returncode == 0
-    for name in ("message", "spawn", "import", "update", "restart", "refresh", "stop", "destroy", "rights", "publish"):
+    for name in (
+        "message",
+        "spawn",
+        "import",
+        "update",
+        "restart",
+        "refresh",
+        "stop",
+        "destroy",
+        "rights",
+        "publish",
+    ):
         assert name in result.stdout
 
 

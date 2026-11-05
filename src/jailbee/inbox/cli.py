@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from jailbee.inbox.send import SendRequest
 
 PROG = "jailbee inbox"
+
+
 @dataclass
 class Settings:
     base: Path
@@ -428,7 +430,9 @@ def cmd_wait(
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise InboxUsage("another process is already waiting in this container") from None
-        rc, line = run_wait(settings, timeout=seconds, wake=wake, quiet=quiet, digest=digest_seconds)
+        rc, line = run_wait(
+            settings, timeout=seconds, wake=wake, quiet=quiet, digest=digest_seconds
+        )
         if line == "digest":
             return _print_digest(settings)
         if line is not None:

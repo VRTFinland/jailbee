@@ -9,10 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer._click.exceptions import ClickException
 
 from jailbee.inbox import cli, send
 from jailbee.inbox.container_cmd import inbox_app
-from typer._click.exceptions import ClickException
 
 
 def invoke(args):
@@ -178,7 +178,9 @@ def test_send_reserves_and_publishes_body_before_manifest(tmp_path, monkeypatch)
     before = len(send._reservations)
     try:
         assert (
-            send.publish(settings, send.validate(send.SendRequest(type="message", text="hello", wait=True)))
+            send.publish(
+                settings, send.validate(send.SendRequest(type="message", text="hello", wait=True))
+            )
             == "fixed"
         )
         assert observed == [True]
