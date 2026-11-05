@@ -60,8 +60,6 @@ class SendRequest:
 
 
 def parse_send(args: list[str]) -> SendRequest:
-    from jailbee.inbox.cli import parse_timeout
-
     def require(condition: bool, message: str) -> None:
         if not condition:
             raise InboxBadUsage(message)
@@ -146,7 +144,18 @@ def parse_send(args: list[str]) -> SendRequest:
             values[key] = val
         i += 2
     values.update(lists)
-    r = SendRequest(**values)  # type: ignore[arg-type]  # Parsed option values match the dataclass fields.
+    return validate(SendRequest(**values))  # type: ignore[arg-type]  # Parsed values match the fields.
+
+
+def validate(r: SendRequest) -> SendRequest:
+    """Validate cross-option rules and resolve derived request defaults."""
+    from jailbee.inbox.cli import parse_timeout
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise InboxBadUsage(message)
+
+    t = r.type
     require(not (r.warm and r.no_warm), "--warm and --no-warm are mutually exclusive")
     require(
         not (r.warm or r.no_warm) or (t == "spawn" and not r.new and not r.pr),

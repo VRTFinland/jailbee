@@ -3,7 +3,19 @@
 import pytest
 
 from jailbee.inbox.errors import InboxBadUsage
-from jailbee.inbox.send import build_manifest, parse_send
+from jailbee.inbox.send import SendRequest, build_manifest, parse_send, validate
+
+
+def test_validate_resolves_pr_branch_without_mutating_request():
+    request = SendRequest(type="spawn", pr="42", text="task")
+    validated = validate(request)
+    assert validated.branch == "pr-placeholder"
+    assert request.branch == ""
+
+
+def test_validate_enforces_runner_cross_option_rules():
+    with pytest.raises(InboxBadUsage, match="--profile needs --agent claude-jb"):
+        validate(SendRequest(type="spawn", branch="b", text="task", agent="claude", profile="p"))
 
 
 @pytest.mark.parametrize(
