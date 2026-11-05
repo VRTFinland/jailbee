@@ -44,9 +44,9 @@ resume in their own window with the original launcher, options and working
 directory. This includes sessions started outside the managed autostart
 window, including SSH sessions; shell environment, non-Claude processes and
 background sessions are not restored. A matching JailBee launcher marker
-preserves the original `claude-jb` flags; without a valid marker, resume uses
-plain `claude`. Plain `claude` sessions use their captured process command line
-and do not need a marker. The `autostart.resume_agent_sessions` setting defaults
+preserves the original `claude-jb` flags. Without a valid marker, a captured
+process command line naming `claude` or `claude-jb` is used; otherwise resume
+falls back to plain `claude`. Plain `claude` sessions do not need a marker. The `autostart.resume_agent_sessions` setting defaults
 to `true`; setting it to `false` consumes a saved snapshot without resuming.
 Rebuild the golden image and create new containers to install the shutdown
 unit and updated launcher; `jailbee apply` alone does not retrofit existing

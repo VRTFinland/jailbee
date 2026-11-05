@@ -219,3 +219,24 @@ def test_restore_hostile_window_is_safe(make_cfg, tmp_path):
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m")
     name = restore_steps(make_cfg(tmp_path), [], [entry], prompted=None, extra_env={})[0].name
     assert "[" not in name and "\x1b" not in name and len(name) <= 64
+
+
+def test_hostile_windows_run_through_serial_driver(make_cfg, tmp_path, mocker, capsys):
+    from jailbee import autostart
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config import AutostartChain, AutostartStage
+    cfg = make_cfg(tmp_path)
+    entries = [ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m"),
+               ResumeEntry(VALID_ID, "/work", ("claude",), "good")]
+    steps = restore_steps(cfg, [], entries, prompted=None, extra_env={})
+    launch = mocker.patch("jailbee.tmux.run_step")
+    chain = AutostartChain(name="agent", steps=steps)
+    stage = AutostartStage(stage="agent", chains=[chain])
+    progress = []
+    autostart._run_chain_serially(cfg, mocker.Mock(), "box", stage, chain, "/work",
+                                  on_progress=lambda *args: progress.append(args))
+    assert launch.call_count == 2
+    assert launch.call_args_list[1].kwargs["name"] == "good"
+    assert all("\x1b" not in str(event) and "[/]" not in str(event) for event in progress)
+    output = capsys.readouterr()
+    assert "\x1b" not in output.out + output.err

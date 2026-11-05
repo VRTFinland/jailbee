@@ -359,3 +359,125 @@ def test_huge_pid_is_invalid_not_an_exception(tmp_path: Path) -> None:
     data["pid"] = "1" * 5000
     path.write_text(json.dumps(data))
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
+def test_snapshot_unlink_failure_defers_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.parent.mkdir(parents=True)
+    row = {"session_id": ID}
+    path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [row]}))
+    original = Path.unlink
+    def blocked(self: Path, missing_ok: bool = False) -> None:
+        if self == path:
+            raise PermissionError("denied")
+        original(self, missing_ok=missing_ok)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", blocked)
+        assert snapshot.boot(tmp_path)["sessions"] == []
+    assert snapshot.boot(tmp_path)["sessions"] == [row]
+    assert snapshot.boot(tmp_path)["sessions"] == []
+
+
+def test_old_full_size_snapshot_respects_wire_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.parent.mkdir(parents=True)
+    row = {"session_id": ID, "value": ""}
+    base = {"version": 1, "source": "capture", "sessions": [row]}
+    row["value"] = "x" * (65536 - len(json.dumps(base)))
+    path.write_text(json.dumps(base))
+    assert path.stat().st_size == 65536
+    import pwd
+    from types import SimpleNamespace
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    assert snapshot.main(["--boot"]) == 0
+    output = capsys.readouterr().out
+    assert len(output.encode()) <= 65536
+    assert json.loads(output)["sessions"] == [row]
+
+
+def test_snapshot_storage_reserves_newline(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        snapshot._write_snapshot(tmp_path / "snapshot", b"x" * 65536)
+    snapshot._write_snapshot(tmp_path / "snapshot", b"x" * 65535)
+
+
+def test_oversized_single_stale_row_is_dropped_once(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    record(tmp_path, 1)
+    marker(tmp_path, 1, b"777\0claude\0" + b"x" * 65000 + b"\0")
+    path = tmp_path / snapshot.SESSIONS_RELPATH / "1.json"
+    data = json.loads(path.read_text())
+    data["cwd"] = "/" + "y" * 1000
+    path.write_text(json.dumps(data))
+    assert snapshot.boot(tmp_path)["sessions"] == []
+    assert "oversized" in capsys.readouterr().err
+    assert snapshot.boot(tmp_path)["sessions"] == []
+    assert not path.exists()
+
+
+def test_old_compact_maximum_snapshot_drops_unwireable_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import pwd
+    from types import SimpleNamespace
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.parent.mkdir(parents=True)
+    row = {"agent": "claude", "session_id": ID, "cwd": "/work", "launcher": ["claude", ""], "window": None}
+    payload = {"version": 1, "source": "capture", "sessions": [row]}
+    row["launcher"][1] = "x" * (65536 - len(json.dumps(payload, separators=(",", ":"))))
+    path.write_text(json.dumps(payload, separators=(",", ":")))
+    assert path.stat().st_size == 65536
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    assert snapshot.main(["--boot"]) == 0
+    result = capsys.readouterr()
+    assert len(result.out.encode()) <= 65536
+    assert json.loads(result.out)["sessions"] == []
+    assert "oversized" in result.err
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("home_env", ["", "/incorrect"])
+@pytest.mark.parametrize("action", ["--capture", "--boot"])
+def test_main_passwd_home_matrix(tmp_path, monkeypatch, home_env, action):
+    import pwd
+    from types import SimpleNamespace
+    monkeypatch.setenv("HOME", home_env)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    seen = []
+    monkeypatch.setattr(snapshot, "window_names", lambda: {})
+    monkeypatch.setattr(snapshot, "capture", lambda home, **kwargs: seen.append(home) or 0)
+    monkeypatch.setattr(snapshot, "boot", lambda home: seen.append(home) or {})
+    assert snapshot.main([action]) == 0
+    assert seen == [tmp_path]
+
+
+@pytest.mark.parametrize("kind", ["interactive", "background"])
+def test_string_pid_live_record_preserved(tmp_path, kind):
+    record(tmp_path, 7, kind=kind)
+    path = tmp_path / snapshot.SESSIONS_RELPATH / "7.json"
+    data = json.loads(path.read_text())
+    data["pid"] = "7"
+    path.write_text(json.dumps(data))
+    live(tmp_path / "proc", 7)
+    key = path.parent / "7.test.key"
+    key.touch()
+    launch = marker(tmp_path, 7, b"777\0claude\0")
+    snapshot.boot(tmp_path, proc=tmp_path / "proc")
+    assert path.exists() and key.exists() and launch.exists()
+
+
+@pytest.mark.parametrize("source", ["marker", "cmdline"])
+@pytest.mark.parametrize("argv", [["claude-jb", "--tools", "", "--model", "opus"], ["claude-jb", "--tools", ""]])
+def test_empty_launcher_values_survive_capture_and_replay(tmp_path, source, argv):
+    from jailbee.agent_resume import ResumeEntry, resume_run
+    import shlex
+    proc = tmp_path / "proc"
+    record(tmp_path, 1)
+    live(proc, 1)
+    encoded = b"\0".join(x.encode() for x in argv) + b"\0"
+    if source == "marker":
+        marker(tmp_path, 1, b"777\0" + encoded)
+    else:
+        (proc / "1" / "cmdline").write_bytes(encoded)
+    snapshot.capture(tmp_path, proc=proc, windows={})
+    launcher = sessions(tmp_path)[0]["launcher"]
+    assert launcher == argv
+    command = resume_run(ResumeEntry(ID, "/work", tuple(launcher), None))
+    assert shlex.split(command.split(" && exec ", 1)[1]) == argv + ["--resume", ID]

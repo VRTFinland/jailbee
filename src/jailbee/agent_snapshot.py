@@ -165,7 +165,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
     if has_snapshot:
         data = _json(path)
         if isinstance(data, dict) and data.get("version") == 1 and data.get("source") in ("capture", "stale") and isinstance(data.get("sessions"), list):
-            result = data
+            result = {"version": 1, "source": data["source"], "sessions": data["sessions"]}
     stale: list[dict[str, object]] = []
     unconsumed: set[str] = set()
     blocked_pids: set[str] = set()
@@ -220,12 +220,24 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             and isinstance(item.get("session_id"), str)
             and item["session_id"] in unconsumed
         ]
+        emitted = [item for item in entries if item not in blocked]
+        while len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1 > _LIMIT:
+            item = emitted.pop()
+            single = {**result, "sessions": [item]}
+            if len(json.dumps(single, separators=(",", ":")).encode()) + 1 > _LIMIT:
+                print("agent snapshot: dropping oversized snapshot session", file=sys.stderr)
+            else:
+                blocked.insert(0, item)
         if blocked:
             remaining = {**result, "sessions": blocked}
-            _write_snapshot(path, json.dumps(remaining).encode("utf-8"))
-            result["sessions"] = [item for item in entries if item not in blocked]
-        else:
-            _unlink_stale(path)
+            try:
+                _write_snapshot(path, json.dumps(remaining, separators=(",", ":")).encode())
+            except (OSError, ValueError) as exc:
+                print(f"agent snapshot: cannot retain snapshot: {exc}", file=sys.stderr)
+                emitted = []
+        elif not _unlink_stale(path):
+            emitted = []
+        result["sessions"] = emitted
     return result
 
 
@@ -248,6 +260,6 @@ def main(argv: list[str]) -> int:
             print(f"agent snapshot: {exc}", file=sys.stderr)
         return 0
     if argv == ["--boot"]:
-        print(json.dumps(boot(Path(pwd.getpwuid(os.getuid()).pw_dir))))
+        print(json.dumps(boot(Path(pwd.getpwuid(os.getuid()).pw_dir)), separators=(",", ":")))
         return 0
     return 2
