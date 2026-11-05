@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 from contextlib import nullcontext
 from dataclasses import dataclass
-import shutil
-from urllib.parse import unquote, urlsplit
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 from sqlmodel import select
 
@@ -173,6 +173,7 @@ def execute_removal(
     step("ownership", inventory)
     inventory_ok = results[-1].ok
     for name in plan.containers:
+
         def remove_container(name: str = name) -> None:
             if incus.exists(name):
                 if plan.cfg is not None:
@@ -181,10 +182,17 @@ def execute_removal(
                 else:
                     assert destroy_orphan is not None
                     destroy_orphan(incus, name, force=force)
+
         step(f"container {name}", remove_container)
     for name in plan.profiles:
-        step(f"profile {name}", lambda: incus.profile_delete(name) if incus.profile_exists(name) else None)
+
+        def remove_profile(name: str = name) -> None:
+            if incus.profile_exists(name):
+                incus.profile_delete(name)
+
+        step(f"profile {name}", remove_profile)
     for name in plan.acls:
+
         def remove_acl(name: str = name) -> None:
             if not incus.network_acl_exists(name):
                 return
@@ -195,16 +203,31 @@ def execute_removal(
                 network = unquote(parts[3])
                 with work_network_lock() if network == WORK_BRIDGE else nullcontext():
                     current = incus.network_get(network, "security.acls")
-                    remaining = [acl.strip() for acl in current.split(",") if acl.strip() and acl.strip() != name]
+                    remaining = [
+                        acl.strip()
+                        for acl in current.split(",")
+                        if acl.strip() and acl.strip() != name
+                    ]
                     desired = ",".join(remaining)
                     if desired != current:
                         incus.network_set(network, "security.acls", desired)
             incus.network_acl_delete(name)
+
         step(f"acl {name}", remove_acl)
     for name in plan.golden_images:
-        step(f"image {name}", lambda: incus.image_delete(name) if incus.image_exists(name) else None)
+
+        def remove_image(name: str = name) -> None:
+            if incus.image_exists(name):
+                incus.image_delete(name)
+
+        step(f"image {name}", remove_image)
     for name in plan.golden_instances:
-        step(f"golden instance {name}", lambda: incus.delete(name, force=force) if incus.exists(name) else None)
+
+        def remove_golden(name: str = name) -> None:
+            if incus.exists(name):
+                incus.delete(name, force=force)
+
+        step(f"golden instance {name}", remove_golden)
     step("proxy fragment", lambda: drop_fragment(incus, plan.prefix))
 
     def cleanup() -> None:
@@ -231,11 +254,13 @@ def execute_removal(
             # Never purge recoverable user data after an incomplete removal.
             if all(result.ok for result in results):
                 for path in plan.purge_files:
+
                     def purge(path: Path = path) -> None:
                         if path.is_symlink() or path.is_file():
                             path.unlink()
                         elif path.exists():
                             shutil.rmtree(path)
+
                     step(f"purge {path}", purge)
             if all(result.ok for result in results):
                 registered = session.get(RegisteredRepo, plan.prefix)
