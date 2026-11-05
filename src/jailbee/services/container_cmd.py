@@ -168,13 +168,29 @@ def logs(
     name: Annotated[str | None, typer.Argument()] = None,
     lines: Annotated[int, typer.Option("-n", min=1)] = 30,
     follow: Annotated[bool, typer.Option("--follow")] = False,
-    grep: Annotated[list[str] | None, typer.Option("--grep")] = None,
-    filters: Annotated[list[str] | None, typer.Option("--filter")] = None,
-    before: Annotated[int, typer.Option("-B", min=0)] = 0,
-    after: Annotated[int, typer.Option("-A", min=0)] = 0,
-    context: Annotated[int | None, typer.Option("-C", min=0)] = None,
-    wait_pattern: Annotated[str | None, typer.Option("--wait")] = None,
-    timeout: Annotated[float | None, typer.Option("--timeout")] = None,
+    grep: Annotated[
+        list[str] | None,
+        typer.Option("--grep", help="Select log lines matching this regex; repeat to combine."),
+    ] = None,
+    filters: Annotated[
+        list[str] | None,
+        typer.Option("--filter", help="Use a named service log regex; repeatable."),
+    ] = None,
+    before: Annotated[
+        int, typer.Option("-B", min=0, help="Include this many lines before matches.")
+    ] = 0,
+    after: Annotated[
+        int, typer.Option("-A", min=0, help="Include this many lines after matches.")
+    ] = 0,
+    context: Annotated[
+        int | None, typer.Option("-C", min=0, help="Include this many lines before and after.")
+    ] = None,
+    wait_pattern: Annotated[
+        str | None, typer.Option("--wait", help="Wait for new output matching this regex.")
+    ] = None,
+    timeout: Annotated[
+        float | None, typer.Option("--timeout", help="Wait timeout in seconds; 0 is unlimited.")
+    ] = None,
 ) -> None:
     if timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0):
         typer.echo("--timeout requires --wait and a finite nonnegative value", err=True)
