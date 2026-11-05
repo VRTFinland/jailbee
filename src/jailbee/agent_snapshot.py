@@ -122,17 +122,27 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         window = windows.get(match[1]) if match else None
         sessions.append(_item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window))
     if sessions:
+        payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode("utf-8")
+        if len(payload) > _LIMIT:
+            raise ValueError("agent snapshot exceeds size limit")
         path = home / SNAPSHOT_RELPATH
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=path.parent, prefix=".agent-sessions-")
         try:
-            with os.fdopen(fd, "w") as stream:
-                json.dump({"version": 1, "source": "capture", "sessions": sessions}, stream)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(payload)
             os.replace(name, path)
         finally:
             if os.path.exists(name):
                 os.unlink(name)
     return len(sessions)
+
+
+def _unlink_stale(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
@@ -158,17 +168,17 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             continue
         if not has_snapshot and data is not None and data.get("kind") == "interactive":
             stale.append(_item(data, _launcher(home, pid, str(data["procStart"]), ["claude"]), None))
-        entry.unlink(missing_ok=True)
+        _unlink_stale(entry)
     for entry in _entries(directory):
         match = re.fullmatch(r"([0-9]+)\..*\.key", entry.name)
         if match and match[1] not in live:
-            entry.unlink(missing_ok=True)
+            _unlink_stale(entry)
     for entry in _entries(home / LAUNCHERS_RELPATH):
         if not entry.name.isascii() or not entry.name.isdigit():
             continue
         args = _argv(entry)
         if not args or _start(proc, entry.name) != args[0]:
-            entry.unlink(missing_ok=True)
+            _unlink_stale(entry)
     if not has_snapshot:
         result["sessions"] = stale
     return result

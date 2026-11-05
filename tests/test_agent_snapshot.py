@@ -98,10 +98,45 @@ def test_boot_consumes_snapshot_and_stale_files(tmp_path: Path) -> None:
     key.touch()
     launch = marker(tmp_path, 1, b"777\0claude\0")
     path = tmp_path / snapshot.SNAPSHOT_RELPATH
-    path.write_text('{"version":1,"source":"capture","sessions":[]}')
-    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["source"] == "capture"
+    data = {"version": 1, "source": "capture", "sessions": [{"session_id": ID}]}
+    path.write_text(json.dumps(data))
+    record(tmp_path, 2)
+    live(tmp_path / "proc", 2)
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc") == data
     assert not key.exists() and not launch.exists()
+    assert (tmp_path / snapshot.SESSIONS_RELPATH / "2.json").exists()
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
+def test_boot_cleanup_directories_do_not_block_snapshot(tmp_path: Path) -> None:
+    record(tmp_path, 4)
+    directory = tmp_path / snapshot.SESSIONS_RELPATH
+    (directory / "1.json").mkdir()
+    (directory / "2.foo.key").mkdir()
+    launches = tmp_path / snapshot.LAUNCHERS_RELPATH
+    launches.mkdir(parents=True)
+    (launches / "3").mkdir()
+    (launches / "4").write_bytes(b"777\0claude\0")
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    data = {"version": 1, "source": "capture", "sessions": [{"session_id": ID}]}
+    path.write_text(json.dumps(data))
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc") == data
+    assert not (directory / "4.json").exists()
+    assert not (launches / "4").exists()
+
+
+def test_capture_oversize_keeps_existing_snapshot(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"previous")
+    for pid in (1, 2):
+        record(tmp_path, pid)
+        live(proc, pid)
+        marker(tmp_path, pid, b"777\0claude\0" + b"x" * 40000 + b"\0")
+    with pytest.raises(ValueError, match="snapshot"):
+        snapshot.capture(tmp_path, proc=proc, windows={})
+    assert path.read_bytes() == b"previous"
 
 
 def test_boot_without_snapshot_uses_stale_records(tmp_path: Path) -> None:
