@@ -8,9 +8,23 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from jailbee.config import load_repo_config
+from jailbee.config import SCRATCH_BASE_ALIAS, load_repo_config
 from jailbee.config.errors import ConfigError
-from jailbee.db.models import RegisteredRepo
+from jailbee.config.loader import _default_shared_dir
+from jailbee.config.local_layer import local_config_path
+from jailbee.db.models import (
+    BackgroundJob,
+    DismissedNotice,
+    EgressOverride,
+    PoolIP,
+    RefreshState,
+    RegisteredRepo,
+    RepoUpgradeState,
+    SentRecord,
+)
+from jailbee.egress_scope import _capped_acl_name, bridge_extras_acl_name, extra_acl_name
+from jailbee.global_config import default_global_config_path, load_global_config
+from jailbee.golden import find_all_archived_images
 from jailbee.maintenance import humanize
 from jailbee.paths import repo_config_path
 
@@ -19,6 +33,7 @@ if TYPE_CHECKING:
 
     from sqlmodel import Session
 
+    from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -84,3 +99,198 @@ def list_repos(
             base = "instance"
         result.append(RepoEntry(prefix, root, state, counts.get(prefix, 0), base))
     return result
+
+
+@dataclass(frozen=True)
+class RemovalPlan:
+    prefix: str
+    cfg: Config | None
+    containers: list[str]
+    profiles: list[str]
+    acls: list[str]
+    golden_images: list[str]
+    golden_instances: list[str]
+    golden_kept_reason: str | None
+    state_counts: dict[str, int]
+    purge_files: list[Path]
+    kept_files: list[Path]
+    global_refs: list[str]
+
+
+def _load_registered_config(row: RegisteredRepo | None) -> Config | None:
+    if row is None:
+        return None
+    root = Path(row.repo_root)
+    if not root.is_dir() or not (row.synthetic_config or repo_config_path(root)):
+        return None
+    try:
+        cfg = load_repo_config(root)
+        return cfg if cfg.container_prefix == row.container_prefix else None
+    except (ConfigError, OSError, ValueError):
+        return None
+
+
+def plan_removal(
+    prefix: str,
+    incus: Incus,
+    session_factory: Callable[[], Session],
+    *,
+    purge: bool = False,
+    cfg: Config | None = None,
+) -> RemovalPlan:
+    """Inventory only resources owned by this repository; perform no mutations."""
+    if cfg is not None and cfg.container_prefix != prefix:
+        raise ValueError("config container prefix does not match target")
+    with session_factory() as session:
+        rows = session.exec(select(RegisteredRepo)).all()
+        if cfg is None:
+            cfg = _load_registered_config(
+                next((r for r in rows if r.container_prefix == prefix), None)
+            )
+        profile_names = set(incus.profile_list())
+        known = (
+            {r.container_prefix for r in rows}
+            | {p[:-5] for p in profile_names if p.endswith("-base") and p[:-5]}
+            | {prefix}
+        )
+        instances = incus.list_containers(fast=True)
+        ownership: dict[str, str] = {}
+        for instance in instances:
+            name = instance.get("name")
+            if not isinstance(name, str):
+                continue
+            for profile in instance.get("profiles") or []:
+                if profile.endswith("-base") and profile[:-5] in known:
+                    ownership[name] = profile[:-5]
+                    break
+        alias = cfg.golden.alias if cfg else f"{prefix}-base"
+        golden_names = {
+            f"{alias}--golden",
+            f"{alias}--build",
+            f"{alias}--old",
+            f"{prefix}-base-build",
+        }
+        containers = sorted(
+            name
+            for name, owner in ownership.items()
+            if owner == prefix and name not in golden_names
+        )
+
+        def pool_owned(value: str) -> bool:
+            if value == prefix:
+                return True
+            if not value.startswith("ct:"):
+                return False
+            name = value[3:]
+            if name in ownership:
+                return ownership[name] == prefix
+            matches = [p for p in known if name.startswith(p + "-")]
+            return bool(matches) and max(matches, key=len) == prefix
+
+        state_counts = {
+            "pool_ip": sum(
+                pool_owned(r.container_prefix) for r in session.exec(select(PoolIP)).all()
+            ),
+            "refresh_state": sum(
+                r.container_prefix == prefix for r in session.exec(select(RefreshState)).all()
+            ),
+            "repo_upgrade_state": sum(
+                r.container_prefix == prefix for r in session.exec(select(RepoUpgradeState)).all()
+            ),
+            "egress_override": sum(
+                r.container_prefix == prefix for r in session.exec(select(EgressOverride)).all()
+            ),
+            "background_op": sum(
+                r.container_prefix == prefix for r in session.exec(select(BackgroundJob)).all()
+            ),
+            "dismissed_notice": sum(
+                r.scope == prefix for r in session.exec(select(DismissedNotice)).all()
+            ),
+            "sent_record": sum(
+                r.container_prefix == prefix for r in session.exec(select(SentRecord)).all()
+            ),
+        }
+    profiles = [
+        f"{prefix}-{s}"
+        for s in (
+            "base",
+            "binds",
+            "net-strict",
+            "net-loose",
+            "net-offline",
+            "net-work",
+            "net-work-strict",
+            "net-work-loose",
+        )
+        if f"{prefix}-{s}" in profile_names
+    ]
+    candidates = [
+        f"{prefix}-allowlist",
+        bridge_extras_acl_name(prefix),
+        f"{prefix}-work-loose",
+        _capped_acl_name(prefix, "-work-container-extras"),
+        *(extra_acl_name(c) for c in containers),
+    ]
+    existing_acls = set(incus.network_acl_list())
+    acls = [name for name in dict.fromkeys(candidates) if name in existing_acls]
+    alias = cfg.golden.alias if cfg else f"{prefix}-base"
+    reason = None
+    if alias == SCRATCH_BASE_ALIAS:
+        reason = "shared scratch base"
+    else:
+        for other in rows:
+            if other.container_prefix != prefix:
+                other_cfg = _load_registered_config(other)
+                if other_cfg and other_cfg.golden.alias == alias:
+                    reason = f"shared with {other.container_prefix}"
+                    break
+    images: list[str] = []
+    golden_instances: list[str] = []
+    if reason is None:
+        image_names = {
+            a.get("name") for image in incus.list_images() for a in image.get("aliases", [])
+        }
+        images = [a for a in (alias, f"{alias}--new", f"{alias}--old") if a in image_names]
+        images.extend(a.alias for a in find_all_archived_images(incus, [alias]))
+        instance_names = {i.get("name") for i in instances}
+        golden_instances = [
+            n
+            for n in dict.fromkeys(
+                (f"{alias}--golden", f"{alias}--build", f"{alias}--old", f"{prefix}-base-build")
+            )
+            if n in instance_names
+        ]
+    default_shared = _default_shared_dir(prefix)
+    shared = Path(cfg.shared_dir) if cfg and cfg.shared_dir else default_shared
+    purge_files: list[Path] = []
+    kept_files: list[Path] = []
+    for path in (local_config_path(prefix), shared):
+        if path.exists():
+            (
+                purge_files
+                if purge and (path != shared or shared == default_shared)
+                else kept_files
+            ).append(path)
+    global_cfg, _ = load_global_config(default_global_config_path())
+    refs = []
+    if prefix in global_cfg.credentials.repos:
+        refs.append("credentials.repos")
+    if prefix in global_cfg.remote.ssh.excluded_repos:
+        refs.append("remote.ssh.excluded_repos")
+    for i, root in enumerate(global_cfg.remote.ssh.mount_roots):
+        if prefix in root.repos:
+            refs.append(f"remote.ssh.mount_roots[{i}].repos")
+    return RemovalPlan(
+        prefix,
+        cfg,
+        containers,
+        profiles,
+        acls,
+        images,
+        golden_instances,
+        reason,
+        state_counts,
+        purge_files,
+        kept_files,
+        refs,
+    )
