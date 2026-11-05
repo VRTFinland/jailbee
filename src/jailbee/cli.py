@@ -4550,6 +4550,9 @@ def _post_start_actions(
     inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
 
     if no_autostart:
+        from jailbee.agent_resume import boot_entries
+
+        boot_entries(cfg, incus, name)
         return
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
@@ -5057,6 +5060,10 @@ def stop(
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
     with _stop_job_row(cfg, name):
+        if not force:
+            from jailbee.agent_resume import capture
+
+            capture(cfg, incus, name)
         stop_container(incus, name, force=force, label=short_name(cfg, name))
     success(f"Stopped: {short_name(cfg, name)}")
 

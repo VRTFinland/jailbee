@@ -2916,6 +2916,9 @@ def boot_container(
         # and then fails with "context deadline exceeded". `stop_container`
         # gives up sooner and says what is holding the container up. No
         # force fallback — this container holds the user's work.
+        from jailbee.agent_resume import capture
+
+        capture(cfg, incus, name)
         try:
             stop_container(incus, name, label=short_name(cfg, name))
         except IncusError:

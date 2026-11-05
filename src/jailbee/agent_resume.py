@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jailbee.accounts.adapters.claude import ClaudeAdapter
+from jailbee.config.models_agents import AutostartStep
+from jailbee.incus import IncusError
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
+    from jailbee.incus import Incus
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -188,3 +197,67 @@ def resume_run(entry: ResumeEntry) -> str:
     if resume is None:
         raise ValueError("invalid Claude session id")
     return f"cd {shlex.quote(entry.cwd)} && exec {shlex.join(replay_argv(entry.launcher))} {resume}"
+
+
+def capture(cfg: Config, incus: Incus, container: str) -> None:
+    """Capture live sessions before a clean shutdown, best effort."""
+    try:
+        incus.exec(container, ["jailbee", "_agent-snapshot", "--capture"],
+                   uid=cfg.container_user.uid, timeout=15)
+    except IncusError:
+        log.debug("Could not capture agent sessions", exc_info=True)
+
+
+def boot_entries(cfg: Config, incus: Incus, container: str) -> list[ResumeEntry]:
+    """Consume the boot snapshot and discard sessions without transcripts."""
+    try:
+        raw = incus.exec_capped(container, ["jailbee", "_agent-snapshot", "--boot"],
+                                max_bytes=65536, uid=cfg.container_user.uid, timeout=15)
+    except IncusError:
+        log.debug("Could not consume agent sessions", exc_info=True)
+        return []
+    adapter = ClaudeAdapter()
+    return [entry for entry in parse_snapshot(raw)
+            if adapter.session_exists(cfg, container, entry.session_id)]
+
+
+def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[ResumeEntry],
+                  *, prompted: str | None, extra_env: Mapping[str, str]) -> list[AutostartStep]:
+    """Replace matching agent steps and append other saved windows."""
+    from jailbee.tmux import window_for
+
+    result = list(steps)
+    names = {step.name for step in result}
+    windows = {window_for(name) for name in names}
+    claimed: set[int] = set()
+    prompted_window = window_for(prompted) if prompted is not None else None
+    for entry in entries:
+        if entry.window is not None and entry.window == prompted_window:
+            continue
+        match = next((i for i, step in enumerate(steps)
+                      if entry.window is not None and window_for(step.name) == entry.window
+                      and i not in claimed), None)
+        if match is not None:
+            result[match] = result[match].model_copy(update={"run": resume_run(entry)})
+            claimed.add(match)
+            continue
+        base = entry.window or "claude"
+        name = base
+        suffix = 2
+        while name in names or window_for(name) in windows:
+            name = f"{base}-{suffix}"
+            suffix += 1
+        names.add(name)
+        windows.add(window_for(name))
+        env = dict(extra_env)
+        for spec in cfg.agents.values():
+            try:
+                command = shlex.split(spec.command)
+            except ValueError:
+                continue
+            if command and os.path.basename(command[0]) == os.path.basename(entry.launcher[0]):
+                env.update(dict(spec.env))
+                break
+        result.append(AutostartStep(name=name, run=resume_run(entry), background=True,
+                                    continue_on_error=True, env=env))
+    return result

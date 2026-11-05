@@ -429,16 +429,19 @@ def _on_start_agent_steps(
     from jailbee.orchestration.labels import child_env, orchestrator_env
     from jailbee.orchestration.runner import read_resume, read_runner
 
+    from jailbee.agent_resume import boot_entries, restore_steps
+    from jailbee.agents import primary_agent
+
+    extra_env = {**child_env(cfg, incus, container), **orchestrator_env(cfg, incus, container)}
+    runner = read_runner(incus, container)
     steps = agent_autostart_steps(
-        cfg,
-        initial_prompt=pending,
-        extra_env={
-            **child_env(cfg, incus, container),
-            **orchestrator_env(cfg, incus, container),
-        },
-        runner=read_runner(incus, container),
+        cfg, initial_prompt=pending, extra_env=extra_env, runner=runner,
         resume=read_resume(incus, container),
     )
+    entries = boot_entries(cfg, incus, container)
+    if cfg.autostart.resume_agent_sessions:
+        prompted = ("claude" if runner is not None else primary_agent(cfg).name) if pending else None
+        steps = restore_steps(cfg, steps, entries, prompted=prompted, extra_env=extra_env)
     return steps, pending
 
 

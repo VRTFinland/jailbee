@@ -1420,6 +1420,7 @@ def test_on_start_agent_steps_reads_resume_label(tmp_path, mocker, value, expect
     cfg = _prompt_cfg(tmp_path, claude={"enabled": True})
     incus = mocker.Mock()
     incus.config_get.side_effect = lambda name, key: value if key == labels.RESUME else None
+    incus.exec_capped.return_value = ""
     mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=True)
     steps, _ = _on_start_agent_steps(cfg, incus, "child", AutostartTrigger.ON_START)
     assert (f"--resume {value}" in steps[0].run) == (expected is not None)
@@ -1441,3 +1442,23 @@ def test_resume_unavailable_warns_and_launches_plain(
     assert "cannot resume" in caplog.text
     if session.startswith("bad"):
         adapter.resume_args.assert_not_called()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, enabled):
+    from jailbee.agent_resume import ResumeEntry, resume_run
+    from jailbee.autostart import _on_start_agent_steps
+    cfg = _prompt_cfg(tmp_path, claude={"enabled": True, "autostart": True})
+    cfg = cfg.model_copy(update={"autostart": cfg.autostart.model_copy(update={"resume_agent_sessions": enabled})})
+    incus = mocker.Mock()
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.orchestration.runner.read_runner", return_value=None)
+    mocker.patch("jailbee.orchestration.runner.read_resume", return_value=None)
+    entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
+    boot = mocker.patch("jailbee.agent_resume.boot_entries", return_value=[entry])
+    steps, pending = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
+    boot.assert_called_once_with(cfg, incus, "box")
+    assert pending is False
+    assert (steps[0].run == resume_run(entry)) is enabled

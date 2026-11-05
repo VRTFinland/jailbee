@@ -12352,3 +12352,17 @@ def test_foreign_listing_retains_outcomes_without_applying_callers_config(make_c
     incus.list_containers.return_value = [_container("other-x", profiles=["other-base"])]
     autostart_outcomes.record("other-x", "on_start", "unknown", "step", "fail")
     assert list_containers(cfg, incus, all_repos=True)[0].autostart_failed == 1
+
+
+def test_restart_captures_before_stop(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    _boot_events(mocker, incus)
+    order = MagicMock()
+    order.attach_mock(incus.exec, "exec")
+    order.attach_mock(incus.stop, "stop")
+    boot_container(cfg, incus, "feat-x", restart=True)
+    calls = [c[0] for c in order.mock_calls]
+    assert calls.index("exec") < calls.index("stop")
+    assert incus.exec.call_args.args[1] == ["jailbee", "_agent-snapshot", "--capture"]

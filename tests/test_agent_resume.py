@@ -129,3 +129,72 @@ def test_resume_run_quotes_directory_and_adds_resume_args() -> None:
         resume_run(entry)
         == f"cd '/home/dev/my repo' && exec claude --model opus --resume {VALID_ID}"
     )
+
+
+def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config.models_agents import AutostartStep
+
+    cfg = make_cfg(tmp_path)
+    step = AutostartStep(name="claude", run="exec claude", env={"keep": "yes"})
+    entries = [ResumeEntry(VALID_ID, "/work", ("claude",), "claude"),
+               ResumeEntry(VALID_ID, "/work", ("claude",), "claude")]
+    result = restore_steps(cfg, [step], entries, prompted=None, extra_env={"ROLE": "child"})
+    assert result[0].run == resume_run(entries[0])
+    assert result[0].env == {"keep": "yes"}
+    assert result[1].name == "claude-2"
+    assert result[1].env["ROLE"] == "child"
+
+
+def test_restore_drops_prompted_window(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config.models_agents import AutostartStep
+
+    step = AutostartStep(name="claude", run="prompt")
+    entry = ResumeEntry(VALID_ID, "/work", ("claude",), "claude")
+    assert restore_steps(make_cfg(tmp_path), [step], [entry], prompted="claude", extra_env={}) == [step]
+
+
+def test_boot_entries_checks_transcripts(make_cfg, tmp_path, mocker):
+    from jailbee.agent_resume import boot_entries
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.exec_capped.return_value = json.dumps({"version": 1, "source": "capture", "sessions": [
+        {"agent": "claude", "session_id": VALID_ID, "cwd": "/work", "launcher": ["claude"], "window": None}]})
+    exists = mocker.patch("jailbee.agent_resume.ClaudeAdapter.session_exists", return_value=False)
+    assert boot_entries(cfg, incus, "box") == []
+    exists.assert_called_once_with(cfg, "box", VALID_ID)
+    incus.exec_capped.assert_called_once_with("box", ["jailbee", "_agent-snapshot", "--boot"], max_bytes=65536, uid=cfg.container_user.uid, timeout=15)
+
+
+def test_boot_and_capture_handle_incus_errors(make_cfg, tmp_path, mocker):
+    from jailbee.agent_resume import boot_entries, capture
+    from jailbee.incus import IncusError
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.exec.side_effect = IncusError("offline")
+    incus.exec_capped.side_effect = IncusError("offline")
+    capture(cfg, incus, "box")
+    assert boot_entries(cfg, incus, "box") == []
+    incus.exec.assert_called_once_with("box", ["jailbee", "_agent-snapshot", "--capture"], uid=cfg.container_user.uid, timeout=15)
+
+
+def test_restore_inherits_matching_custom_launcher_env(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    cfg = make_cfg(tmp_path)
+    from jailbee.config.models_agents import ClaudeAgentConfig
+    agent = ClaudeAgentConfig(command="claude-jb -P codex", env={"TOKEN": "value"}, autostart=False)
+    cfg = cfg.model_copy(update={"agents": {"claude": agent}})
+    entry = ResumeEntry(VALID_ID, "/work", ("claude-jb", "-P", "codex"), None)
+    result = restore_steps(cfg, [], [entry], prompted=None, extra_env={"ROLE": "child"})
+    assert result[0].env == {"ROLE": "child", "TOKEN": "value"}
+    assert result[0].background and result[0].continue_on_error
+
+
+def test_restore_deduplicates_sanitized_window_names(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config.models_agents import AutostartStep
+    step = AutostartStep(name="work space", run="other")
+    entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work space")
+    result = restore_steps(make_cfg(tmp_path), [step], [entry], prompted=None, extra_env={})
+    assert result[1].name == "work space-2"

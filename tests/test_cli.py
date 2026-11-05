@@ -2203,6 +2203,10 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
 
     assert result.exit_code == 0, result.stdout
     incus_mock.return_value.start.assert_called_once_with("myrepo-feat-only")
+    incus_mock.return_value.exec_capped.assert_called_once_with(
+        "myrepo-feat-only", ["jailbee", "_agent-snapshot", "--boot"],
+        max_bytes=65536, uid=53023, timeout=15,
+    )
 
 
 def test_stop_bounds_the_clean_shutdown(mocker, tmp_path):
@@ -11166,3 +11170,23 @@ def test_attach_tmux_falls_back_to_a_known_term_and_enables_features(mocker, mon
     cli._attach_tmux(mocker.MagicMock(), incus, "c1")
     features.assert_called_once_with(incus, "c1")
     assert incus.exec_interactive.call_args.kwargs["env"]["TERM"] == "xterm-256color"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_stop_captures_before_clean_shutdown_only(mocker, tmp_path, force):
+    from typer.testing import CliRunner
+    from jailbee.cli import app
+
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch("jailbee.cli._resolve_config_path", return_value=repo / ".jailbee" / "config.yaml")
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.exists.side_effect = lambda n: n == "myrepo-feat-bar"
+    order = mocker.Mock()
+    order.attach_mock(incus.exec, "exec")
+    order.attach_mock(incus.stop, "stop")
+    result = CliRunner().invoke(app, ["stop", "feat-bar"] + (["--force"] if force else []))
+    assert result.exit_code == 0, result.stdout
+    calls = [c[0] for c in order.mock_calls]
+    assert calls == (["stop"] if force else ["exec", "stop"])
+    if not force:
+        assert incus.exec.call_args.args[1] == ["jailbee", "_agent-snapshot", "--capture"]
