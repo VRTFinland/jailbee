@@ -639,9 +639,14 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
         b"%output %8 unrelated\134012\n%exit\n"
     )
 
+    class CapturedInput(BytesIO):
+        def close(self):
+            self.written = self.getvalue()
+            super().close()
+
     class Process:
         def __init__(self):
-            self.stdin = BytesIO()
+            self.stdin = CapturedInput()
             self.stdout = BytesIO(protocol)
             self.returncode = None
 
@@ -659,6 +664,7 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
     proc = LocalProc()
     monkeypatch.setattr(proc, "tmux", lambda args: subprocess.CompletedProcess(args, 0, "%7\n", ""))
     assert list(proc.follow_pane("autostart:=svc-db", 1)) == ["NEW\n", "same\nsame\n"]
+    assert b"capture-pane -p -J -t %7 -S -1\n" in process.stdin.written
     assert process.returncode == 0
 
 

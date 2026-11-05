@@ -94,7 +94,7 @@ class LocalProc:
                         raise RuntimeError("failed to attach tmux control client")
                     if line.startswith(b"%end "):
                         attached = True
-                        process.stdin.write(f"capture-pane -p -t {pane} -S -{lines}\n".encode())
+                        process.stdin.write(f"capture-pane -p -J -t {pane} -S -{lines}\n".encode())
                         process.stdin.flush()
                     continue
                 if not streaming:
