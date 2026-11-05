@@ -27,10 +27,10 @@ PREAMBLE = "\n".join(
     [
         "# JailBee container environment",
         "You are in an isolated, host-managed development environment.",
-        "The host operator controls container lifecycle and network policy.",
-        "Read /etc/jailbee/container.json for identity, mode, and repo_dir.",
+        "The host operator controls lifecycle and network policy; read "
+        "/etc/jailbee/container.json for identity, mode, and repo_dir.",
         "Clone mode uses a per-branch clone; mount mode uses the mounted repository.",
-        "Make local commits. In clone mode, the host operator extracts commits; "
+        "Make local commits; In clone mode, the host operator extracts commits; "
         "mount mode shares the tree.",
         "Do not rely on git push from the container.",
         "If you are a child, ask your orchestrator for publication and network access, "
@@ -44,12 +44,26 @@ PREAMBLE = "\n".join(
         "and --version;",
         "host management commands must be run by the operator on the host.",
         "From the repository directory, inspect services with jailbee service ls "
-        "and jailbee service logs <service>.",
-        "Start a service with jailbee service start <service>.",
-        "## Runtime arguments",
-        "For one service, start/restart accept --env KEY=VALUE and -- ARGS; "
+        "and jailbee service logs <service>; start one with jailbee service "
+        "start <service>.",
+        "Runtime arguments: for one service, start/restart accept --env KEY=VALUE and -- ARGS; "
         "args require services.<name>.args: true. Overrides are one-off unless "
         "--persist is used; --reset-args clears persisted args and env.",
+        "## Status and log queries",
+        "service ls status probes are read-only; errors/timeouts never change "
+        "lifecycle state. service logs reads retained tmux scrollback, not "
+        "durable logs. Repeat --grep PATTERN or --filter NAME for their union; "
+        "-n N selects the last N matches (default 30) before context expansion.",
+        "For one-shot output, start jailbee service logs <service> --wait "
+        "'<pattern>' -A 40 --timeout 120 in the background before the action. "
+        "The boundary is successful tmux control-stream attachment, not "
+        "invocation; setup output before it may be missed, and background launch "
+        "does not guarantee attachment. Context may omit a short setup gap. "
+        "If the action ran, use --grep '<pattern>' -n 5 -A 40; for errors, "
+        "--filter errors -n 20 -A 30 when defined. Wait excludes grep/filter/"
+        "follow; timeout defaults to 300 seconds (0 unlimited). Exit codes "
+        "are 0 match, 1 timeout, 2 invalid input, 3 unusable pane. Session "
+        "history uses the maximum configured service limit for later windows.",
         "## Health and waiting",
         "Before long tests or service-dependent work, check service ls or run "
         "jailbee service wait <service> --until unhealthy in the background.",

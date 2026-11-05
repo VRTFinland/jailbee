@@ -1,6 +1,7 @@
 """Container service runtime behavior without real tmux or shell processes."""
 
 import json
+import re
 import signal
 import subprocess
 import threading
@@ -641,9 +642,14 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
         b"%output %8 unrelated\134012\n%exit\n"
     )
 
+    class CapturedInput(BytesIO):
+        def close(self):
+            self.written = self.getvalue()
+            super().close()
+
     class Process:
         def __init__(self):
-            self.stdin = BytesIO()
+            self.stdin = CapturedInput()
             self.stdout = BytesIO(protocol)
             self.returncode = None
 
@@ -661,6 +667,7 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
     proc = LocalProc()
     monkeypatch.setattr(proc, "tmux", lambda args: subprocess.CompletedProcess(args, 0, "%7\n", ""))
     assert list(proc.follow_pane("autostart:=svc-db", 1)) == ["NEW\n", "same\nsame\n"]
+    assert b"capture-pane -p -J -t %7 -S -\n" in process.stdin.written
     assert process.returncode == 0
 
 
@@ -721,15 +728,15 @@ def test_wait_timeout_and_unlimited_fresh_poll(tmp_path, monkeypatch):
     original = rt.status
     calls = []
 
-    def status(*, fresh):
-        calls.append(fresh)
+    def status(*, fresh, include_status):
+        calls.append((fresh, include_status))
         if len(calls) == 3:
             proc.windows["svc-web"] = (1, 1, 1)
-        return original(fresh=fresh)
+        return original(fresh=fresh, include_status=include_status)
 
     monkeypatch.setattr(rt, "status", status)
     code, result = rt.wait(["web"], "exited", timeout=0, interval=1)
-    assert code == 0 and result.state == "exited" and calls == [True, True, True]
+    assert code == 0 and result.state == "exited" and calls == [(True, False)] * 3
 
 
 def test_wait_ready_and_unhealthy_probe(tmp_path):
@@ -941,3 +948,281 @@ def test_status_detail_redacts_quoted_current_and_persisted_secrets(tmp_path):
     assert "current" not in status.detail and "saved" not in status.detail
     assert status.launch["args"] == ["***"]
     assert status.launch["persisted_args"] == ["***"]
+
+
+def test_wait_log_new_lines_context_and_cleanup(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    monkeypatch.setattr(rt, "logs", lambda *a, **k: "MATCH old\nhistory\n")
+    closed = []
+
+    def follow(target, lines, *, initial, poll_interval):
+        assert initial is False and poll_interval > 0
+        try:
+            yield "new\n\x1b[3"
+            yield "1mMATCH\x1b[0m\r\nafter1\n"
+            yield "after2\n"
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    assert rt.wait_log("web", re.compile("MATCH"), timeout=5, before=2, after=2) == (
+        0,
+        ["history", "new", "MATCH", "after1", "after2"],
+    )
+    assert closed == [True]
+    assert not proc.health_calls
+
+
+def test_wait_log_timeout_and_pane_gone(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    closed = []
+
+    def follow(*args, **kwargs):
+        try:
+            while True:
+                proc.clock += 1
+                yield ""
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    assert rt.wait_log("web", re.compile("x"), timeout=2, before=0, after=0) == (1, [])
+    assert closed == [True]
+    proc.windows.clear()
+    code, lines = rt.wait_log("web", re.compile("x"), timeout=0, before=0, after=0)
+    assert code == 3 and "stopped" in " ".join(lines)
+
+
+def test_wait_log_silence_zero_timeout_and_partial_chunks(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+
+    def follow(*args, **kwargs):
+        yield "hit\n"
+        for i in range(40):
+            yield f"line {i}"
+            yield "\n"
+        proc.clock += 2
+        yield ""
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    code, lines = rt.wait_log("web", re.compile("hit"), timeout=0, before=0, after=50)
+    assert code == 0 and lines == ["hit", *[f"line {i}" for i in range(40)]]
+
+
+def test_wait_log_eof_after_hit_live_and_pane_disappears(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    monkeypatch.setattr(proc, "follow_pane", lambda *a, **k: iter(["hit\n"]))
+    assert rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=3) == (0, ["hit"])
+
+    def gone(*args, **kwargs):
+        yield "hit\n"
+        proc.windows.clear()
+        yield ""
+
+    monkeypatch.setattr(proc, "follow_pane", gone)
+    code, lines = rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=3)
+    assert code == 3 and "stopped" in " ".join(lines)
+
+
+def test_wait_log_history_is_captured_before_attachment_without_overlap(tmp_path, monkeypatch):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    events = []
+
+    def history(*args, **kwargs):
+        events.append("history")
+        return "before\nhit\nlater\n" if "attached" in events else "old hit\nbefore\n"
+
+    def follow(*args, **kwargs):
+        events.append("attached")
+        callback = kwargs.get("on_attached")
+        if callback:
+            callback()
+        yield "hit\nlater\n"
+
+    monkeypatch.setattr(rt, "logs", history)
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    assert rt.wait_log("web", re.compile("hit"), timeout=5, before=2, after=1) == (
+        0,
+        ["old hit", "before", "hit", "later"],
+    )
+    assert events == ["history", "attached"]
+
+
+@pytest.mark.parametrize("after", [0, 1])
+def test_wait_log_rejects_buffered_hit_after_pane_disappears(tmp_path, monkeypatch, after):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    closed = []
+
+    def follow(*args, **kwargs):
+        try:
+            proc.windows.clear()
+            yield "hit\ncontext\n"
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    code, lines = rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=after)
+    assert code == 3 and "stopped" in " ".join(lines)
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("chunk", ["hit\n", ""])
+def test_wait_log_rejects_replacement_pane(tmp_path, monkeypatch, chunk):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    closed = []
+
+    def follow(*args, **kwargs):
+        try:
+            proc.windows["svc-web"] = (0, "", 456)
+            yield chunk
+            proc.clock += 10
+            yield ""
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    code, _ = rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=0)
+    assert code == 3
+    assert closed == [True]
+
+
+def test_logs_capture_all_physical_rows_before_logical_tail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    logical = [f"{i}:" + "x" * 1000 + "\n" for i in range(30)]
+
+    def capture(args):
+        output = "".join(logical) if args[-1] == "-" else "x" * 100 + "\n"
+        return subprocess.CompletedProcess(args, 0, output, "")
+
+    proc.tmux = capture
+    assert rt.logs("web", 2) == "".join(logical[-2:])
+    assert rt.logs("web", 2, all_history=True) == "".join(logical)
+
+
+def test_wait_runs_health_without_status_probes(tmp_path):
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "web": {"run": "web", "health": "check", "status": "web-status"},
+            "other": {"run": "other", "status": "other-status"},
+        },
+    )
+    proc.windows.update({"svc-web": (0, "", 1), "svc-other": (0, "", 2)})
+    proc.health_result = ProbeResult(1, "", "bad", False)
+    code, item = rt.wait(["web"], "unhealthy", timeout=1, interval=1)
+    assert code == 0 and item.state == "unhealthy"
+    assert [call[0] for call in proc.health_calls] == ["check"]
+    assert item.status is None
+
+
+def test_status_json_object_fills_field_and_detail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status", "env": {"K": "V"}}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(0, '{"jobs": 3, "mode": "ok"}', "", False)
+    item = rt.status()[0]
+    assert item.status == {"jobs": 3, "mode": "ok"}
+    assert item.detail == "jobs=3 mode=ok"
+    assert proc.health_calls == [("status", str(tmp_path), {"K": "V"}, 5)]
+    assert rt.status()[0] == item and len(proc.health_calls) == 1
+
+
+def test_status_text_first_line(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(0, "\n  first line  \nsecond", "", False)
+    item = rt.status()[0]
+    assert item.status == item.detail == "first line"
+
+
+def test_status_error_detail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(7, "ignored", "oops", False)
+    item = rt.status()[0]
+    assert item.status is None and item.detail == "status: error (exit 7)"
+
+
+def test_status_timeout_and_large_output(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(None, "", "", True)
+    assert rt.status()[0].detail == "status: timed out"
+    proc.health_result = ProbeResult(0, "x" * 16384, "", False)
+    item = rt.status(fresh=True)[0]
+    assert len(item.detail) == len(item.status) == 120
+
+
+def test_status_not_run_for_stopped_or_dead_panes(tmp_path):
+    rt, proc = runtime(
+        tmp_path, {"a": {"run": "x", "status": "x"}, "b": {"run": "x", "status": "x"}}
+    )
+    proc.windows["svc-b"] = (1, 2, 1)
+    assert [s.state for s in rt.status()] == ["stopped", "exited"]
+    assert not proc.health_calls
+
+
+def test_status_does_not_change_state(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "x"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    rt._save("web", "starting", "booting")
+    proc.health_result = ProbeResult(1, "", "", False)
+    item = rt.status()[0]
+    assert item.state == "starting" and item.detail == "booting · status: error (exit 1)"
+    assert json.loads((rt.state_dir / "state.json").read_text())["web"]["state"] == "starting"
+
+
+def test_status_and_health_run_concurrently(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status", "health": "health"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    barrier = threading.Barrier(2, timeout=2)
+
+    def probe(cmd, **kwargs):
+        barrier.wait()
+        return ProbeResult(0, "ok" if cmd == "status" else "", "", False)
+
+    proc.run_probe = probe
+    item = rt.status()[0]
+    assert item.state == "ready" and item.status == "ok"
+
+
+def test_capture_uses_joined_lines(tmp_path):
+    rt, proc = runtime(tmp_path, {"db": {"run": "x"}})
+    rt.logs("db", 3, all_history=True)
+    cmd = next(c for c in proc.commands if c[0] == "capture-pane")
+    assert "-J" in cmd and cmd[cmd.index("-S") + 1] == "-"
+
+
+def test_history_limit_set_before_first_service_window(tmp_path):
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "db": {"run": "x", "logs": {"history_limit": 60000}},
+            "web": {"run": "x", "logs": {"history_limit": 70000}},
+        },
+    )
+    assert rt.start(["db"]).ok
+    setting = ["set-option", "-t", "autostart", "history-limit", "70000"]
+    assert proc.commands.index(setting) < next(
+        i for i, c in enumerate(proc.commands) if c[0] == "new-window"
+    )
+
+
+def test_detail_orders_health_status_launch_and_redacts_status(tmp_path):
+    from jailbee.services.launch_store import LaunchRequest
+
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "args": True, "status": "status"}})
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("-v",), {"TOKEN": "tok-secret"}, False, False)
+    ).ok
+    proc.health_result = ProbeResult(0, '{"user": "tok-secret", "n": 1}', "", False)
+    item = rt.status()[0]
+    assert item.detail == "user=*** n=1 · args: -v (one-off); env: TOKEN"
+    assert item.status == {"user": "***", "n": 1}
+    assert "tok-secret" not in str(item)

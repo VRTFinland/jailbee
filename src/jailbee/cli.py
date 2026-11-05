@@ -18466,16 +18466,47 @@ def service_logs_cmd(
     service: Annotated[str | None, typer.Argument(help="Service name.")] = None,
     lines: Annotated[int, typer.Option("-n", min=1, help="Number of log lines.")] = 30,
     follow: Annotated[bool, typer.Option("--follow", help="Follow log output.")] = False,
+    grep: Annotated[
+        list[str] | None,
+        typer.Option("--grep", help="Select log lines matching this regex; repeat to combine."),
+    ] = None,
+    filters: Annotated[
+        list[str] | None,
+        typer.Option("--filter", help="Use a named service log regex; repeatable."),
+    ] = None,
+    before: Annotated[
+        int | None, typer.Option("-B", min=0, help="Include this many lines before matches.")
+    ] = None,
+    after: Annotated[
+        int | None, typer.Option("-A", min=0, help="Include this many lines after matches.")
+    ] = None,
+    context: Annotated[
+        int | None, typer.Option("-C", min=0, help="Include this many lines before and after.")
+    ] = None,
+    wait_pattern: Annotated[
+        str | None, typer.Option("--wait", help="Wait for new output matching this regex.")
+    ] = None,
+    timeout: Annotated[
+        float | None, typer.Option("--timeout", help="Wait timeout in seconds; 0 is unlimited.")
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Show service logs."""
-    _service_command(
-        "logs",
-        name,
-        [service] if service else None,
-        config,
-        ["-n", str(lines), *(["--follow"] if follow else [])],
-    )
+    extra = ["-n", str(lines)]
+    if follow:
+        extra.append("--follow")
+    for value in grep or []:
+        extra.extend(["--grep", value])
+    for value in filters or []:
+        extra.extend(["--filter", value])
+    for option, count in (("-B", before), ("-A", after), ("-C", context)):
+        if count is not None:
+            extra.extend([option, str(count)])
+    if wait_pattern is not None:
+        extra.extend(["--wait", wait_pattern])
+    if timeout is not None:
+        extra.extend(["--timeout", f"{timeout:g}"])
+    _service_command("logs", name, [service] if service else None, config, extra)
 
 
 if __name__ == "__main__":

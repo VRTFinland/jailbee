@@ -145,6 +145,38 @@ restart uses those defaults again; `--reset-args` clears persisted arguments
 and environment before applying other options. Status displays environment
 keys, not values; avoid putting secrets in positional arguments.
 
+### Status and log queries
+
+A service may define a `status` shell command and `status_timeout` (default 5
+seconds, minimum 1). `service ls` reports its result without changing lifecycle
+state: JSON-object output is shown as status plus a short detail, other output
+uses the first nonempty line, and failures/timeouts report `status: error` or
+`status: timed out`. Status probes are cached briefly.
+
+`service logs` reads tmux scrollback, not durable logs. `-n N` defaults to the
+last 30 lines. Repeat `--grep PATTERN` or `--filter NAME` to select matching
+lines (the union of matches); filters are defined in `services.<name>.logs.filters`.
+Queries scan all retained history, then `-n` limits the last N matches before
+context expansion. `-B N`, `-A N`, or `-C N` include surrounding lines;
+overlapping or adjacent ranges merge, and gaps are separated by `--`.
+
+`--wait PATTERN` waits for new complete output and accepts `-B`, `-A`, or `-C`
+context; it cannot be combined with grep, filters, or follow. Its boundary is
+successful control-client attachment to the tmux output stream, not command
+invocation, and short setup output before attachment may be missed. For a
+one-shot line, start the wait in the background before triggering the action;
+starting a background process alone does not guarantee it has attached. If the
+action already ran, query retained history instead, for example
+`jailbee service logs api --grep 'ready' -n 5 -A 40`. Context before a wait match
+may omit a short setup gap. Output stops after two seconds of silence.
+`--timeout` is valid only with `--wait`, defaults to 300 seconds, and `0` means
+unlimited. Exit codes are 0 for a match, 1 for timeout, 2 for invalid input,
+and 3 if the pane becomes unusable before a buffered hit. These queries do not
+change service state. Each `services.<name>.logs.history_limit` contributes to
+the session setting; JailBee uses the maximum across configured services
+(default 50000 lines, minimum 1000) for windows created later, including future
+autostart windows. It does not resize existing panes or create durable logs.
+
 ### Health and waiting
 
 A live, ready service is `unhealthy` when its `health` command fails or times

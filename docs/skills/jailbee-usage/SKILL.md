@@ -71,6 +71,25 @@ with steps/chains stay ordinary work in either trigger. Slots reject network and
 nonempty mounts; elevate service prepare steps instead. Multiple slots have
 separate autostart status rows. See [service commands](references/commands.md#services).
 
+### Status and log queries
+
+`service ls` status probes are read-only; failures and timeouts do not change
+lifecycle state. `service logs` reads tmux scrollback, not durable logs. Repeat
+`--grep PATTERN` or `--filter NAME` for a union of matches; `-n` (default 30)
+selects the last N matches across retained history before `-B`, `-A`, or `-C`
+context is expanded. See the [full log-query reference](references/commands.md#status-and-log-queries).
+
+For a one-shot line, start the wait in the background before the action, e.g.
+`jailbee service logs api --wait 'ready' -A 40 --timeout 120 &`; save its PID
+and wait for it after triggering the action. The wait
+boundary is successful attachment to the tmux control output stream, not
+command invocation; a short setup gap may be missed, and background launch
+alone does not guarantee attachment. If the action already ran, use
+`--grep PATTERN -n 5 -A 40` instead. Context before a hit may omit a short setup
+gap. For errors, use `--filter errors -n 20 -A 30` if defined. Wait excludes
+grep, filter, and follow; timeout defaults to 300 seconds (`0` is unlimited).
+Exit codes are 0 match, 1 timeout, 2 invalid input, and 3 unusable pane.
+
 ### Health and waiting
 
 Before long tests or service-dependent work, check `jailbee service ls` or run

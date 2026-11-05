@@ -12,7 +12,7 @@ before editing `## Unreleased`.
 
 - Service start/restart accept one-off or persisted runtime arguments and
   environment overrides for a single service.
-
+- Service status probes and tmux log queries support read-only status summaries, named regex filters, context, and waiting for new output.
 - Interactive Claude sessions resume after normal JailBee stops and restarts, using their original launcher, arguments and working directory.
 - Managed services report health failures as `unhealthy`; `service wait` lets
   agents and hosts wait for readiness or detect failures without automatic restarts.

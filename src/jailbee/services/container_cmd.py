@@ -1,6 +1,8 @@
 """Container service command line."""
 
 import json
+import math
+import re
 import socket
 from dataclasses import asdict
 from pathlib import Path
@@ -12,7 +14,7 @@ from typer._click import Context
 from jailbee import prompting
 from jailbee.config.errors import ConfigError
 from jailbee.config.repo_layer import default_repo_config_path, load_repo_layer
-from jailbee.services import graph, refresh
+from jailbee.services import graph, log_query, refresh
 from jailbee.services.cli_launch import LaunchCommand, request
 from jailbee.services.local_proc import LocalProc
 from jailbee.services.runtime import RunReport, ServiceRuntime
@@ -189,17 +191,96 @@ def logs(
     name: Annotated[str | None, typer.Argument()] = None,
     lines: Annotated[int, typer.Option("-n", min=1)] = 30,
     follow: Annotated[bool, typer.Option("--follow")] = False,
+    grep: Annotated[
+        list[str] | None,
+        typer.Option("--grep", help="Select log lines matching this regex; repeat to combine."),
+    ] = None,
+    filters: Annotated[
+        list[str] | None,
+        typer.Option("--filter", help="Use a named service log regex; repeatable."),
+    ] = None,
+    before: Annotated[
+        int, typer.Option("-B", min=0, help="Include this many lines before matches.")
+    ] = 0,
+    after: Annotated[
+        int, typer.Option("-A", min=0, help="Include this many lines after matches.")
+    ] = 0,
+    context: Annotated[
+        int | None, typer.Option("-C", min=0, help="Include this many lines before and after.")
+    ] = None,
+    wait_pattern: Annotated[
+        str | None, typer.Option("--wait", help="Wait for new output matching this regex.")
+    ] = None,
+    timeout: Annotated[
+        float | None, typer.Option("--timeout", help="Wait timeout in seconds; 0 is unlimited.")
+    ] = None,
 ) -> None:
+    if timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0):
+        typer.echo("--timeout requires --wait and a finite nonnegative value", err=True)
+        raise typer.Exit(2)
+    if wait_pattern is not None and (grep or filters or follow):
+        typer.echo("--wait cannot be combined with --grep, --filter or --follow", err=True)
+        raise typer.Exit(2)
+    if context is not None:
+        before = after = context
     rt = _runtime(ctx.obj)
     selected = _names(rt, [name] if name else None)[0]
+    if follow and (grep or filters or before or after or context is not None):
+        typer.echo("--follow cannot be combined with log queries", err=True)
+        raise typer.Exit(2)
+    expressions = list(grep or [])
+    for name in filters or []:
+        expression = rt.cfg.services[selected].logs.filters.get(name)
+        if expression is None:
+            typer.echo(f"unknown log filter: {name}", err=True)
+            raise typer.Exit(2)
+        expressions.append(expression)
     try:
+        patterns = [re.compile(expression) for expression in expressions]
+    except re.error as exc:
+        typer.echo(f"invalid log regex: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    try:
+        wait_regex = re.compile(wait_pattern) if wait_pattern is not None else None
+    except re.error as exc:
+        typer.echo(f"invalid log regex: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    try:
+        if wait_regex is not None:
+            seconds = timeout if timeout is not None else 300
+            code, output = rt.wait_log(
+                selected, wait_regex, timeout=seconds, before=before, after=after
+            )
+            if code == 1:
+                typer.echo(f"no match for {wait_pattern} within {seconds:g}s", err=True)
+            elif code == 3:
+                typer.echo("\n".join(output), err=True)
+            elif output:
+                typer.echo("\n".join(output))
+            if code:
+                raise typer.Exit(code)
+            return
         if not follow:
-            typer.echo(rt.logs(selected, lines), nl=False)
+            if patterns:
+                text = log_query.strip_terminal(rt.logs(selected, lines, all_history=True))
+                selected_lines = log_query.select_lines(
+                    text.splitlines(),
+                    patterns,
+                    limit=lines,
+                    before=before,
+                    after=after,
+                )
+                if selected_lines:
+                    typer.echo("\n".join(selected_lines))
+            else:
+                typer.echo(rt.logs(selected, lines), nl=False)
             return
         for chunk in rt.follow_logs(selected, lines):
             typer.echo(chunk, nl=False)
     except KeyboardInterrupt:
         return
+    except typer.Exit:
+        raise
     except RuntimeError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

@@ -10,8 +10,9 @@ import shlex
 import signal
 import tempfile
 import time
+from collections import deque
 from collections.abc import Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from jailbee.config.models_services import Service
 from jailbee.services.graph import restart_set, topo_order, with_dependencies
 from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore, resolve_launch
 from jailbee.services.local_proc import LocalProc, ProbeResult
+from jailbee.services.log_query import strip_terminal
 from jailbee.services.probe_cache import ProbeCache
 from jailbee.tmux import SESSION_NAME
 
@@ -45,6 +47,21 @@ class ServiceStatus:
 
 def compose_detail(lifecycle: str, status: str | None, launch: str | None) -> str:
     return " · ".join(part for part in (lifecycle, status, launch) if part)
+
+
+def render_status(result: ProbeResult) -> tuple[dict[str, object] | str | None, str]:
+    if result.timed_out:
+        return None, "status: timed out"
+    if result.code != 0:
+        return None, f"status: error (exit {result.code})"
+    try:
+        value = json.loads(result.stdout)
+    except (ValueError, RecursionError):
+        value = None
+    if isinstance(value, dict):
+        return value, " ".join(f"{key}={item}" for key, item in value.items())[:120]
+    text = next((line.strip() for line in result.stdout.splitlines() if line.strip()), "")[:120]
+    return text, text
 
 
 @dataclass(frozen=True)
@@ -251,27 +268,64 @@ class ServiceRuntime:
             item,
             state="unhealthy",
             since=since,
-            detail=compose_detail(detail, None, item.detail) if item.launch else detail,
+            detail=detail,
         )
 
-    def status(self, *, probe: bool = True, fresh: bool = False) -> list[ServiceStatus]:
+    def status(
+        self, *, probe: bool = True, fresh: bool = False, include_status: bool = True
+    ) -> list[ServiceStatus]:
         panes, states = self._panes(), self._state()
-        items = [
-            self._with_launch(self._lifecycle(name, panes, states)) for name in self.cfg.services
-        ]
+        items = [self._lifecycle(name, panes, states) for name in self.cfg.services]
         if not probe:
-            return items
+            return [self._finish(item, None) for item in items]
         with ThreadPoolExecutor(max_workers=8) as pool:
-            return list(pool.map(lambda item: self._health(item, fresh=fresh), items))
+            health = [pool.submit(self._health, item, fresh=fresh) for item in items]
+            statuses: list[Future[tuple[ProbeResult, float | None]] | None] = []
+            for item in items:
+                service = self.cfg.services[item.name]
+                if (
+                    include_status
+                    and item.window is not None
+                    and item.state != "exited"
+                    and service.status
+                ):
+                    statuses.append(
+                        pool.submit(
+                            self._probe_launch,
+                            item.name,
+                            "status",
+                            service.status,
+                            service.status_timeout,
+                            item.since or "",
+                            fresh=fresh,
+                        )
+                    )
+                else:
+                    statuses.append(None)
+            results = []
+            for health_job, status_job in zip(health, statuses, strict=True):
+                item = health_job.result()
+                status_text = None
+                if status_job is not None:
+                    value, status_text = render_status(status_job.result()[0])
+                    item = replace(item, status=value)
+                results.append(self._finish(item, status_text))
+            return results
 
-    def _with_launch(self, item: ServiceStatus) -> ServiceStatus:
+    def _finish(self, item: ServiceStatus, status_text: str | None) -> ServiceStatus:
+        """Attach launch metadata and compose DETAIL as lifecycle · status · launch."""
+        metadata, launch_text = self._launch_view(item)
+        detail = compose_detail(item.detail, status_text, launch_text)
+        return replace(item, launch=metadata, detail=self.redact(item.name, detail))
+
+    def _launch_view(self, item: ServiceStatus) -> tuple[dict[str, object] | None, str | None]:
         if item.window is None or item.state == "exited":
-            return item
+            return None, None
         current = self.launch_store.current(item.name)
         persisted = self.launch_store.persisted(item.name)
         launch, is_persisted = current if current else (Launch(), False)
         if not (launch.args or launch.env or persisted.args or persisted.env):
-            return item
+            return None, None
         args = [self.redact(item.name, arg) for arg in launch.args]
         persisted_args = [self.redact(item.name, arg) for arg in persisted.args]
         metadata: dict[str, object] = {
@@ -287,11 +341,7 @@ class ServiceRuntime:
             parts.append("env: " + ",".join(sorted(launch.env)))
         if persisted.args and persisted.args != launch.args:
             parts.append("persisted args: " + shlex.join(persisted_args))
-        return replace(
-            item,
-            launch=metadata,
-            detail=self.redact(item.name, compose_detail(item.detail, None, "; ".join(parts))),
-        )
+        return metadata, "; ".join(parts) or None
 
     def wait(
         self, names: Sequence[str], until: str, *, timeout: float, interval: float
@@ -309,7 +359,7 @@ class ServiceRuntime:
             return 2, None
         deadline = self.proc.now() + timeout if timeout else None
         while True:
-            statuses = {item.name: item for item in self.status(fresh=True)}
+            statuses = {item.name: item for item in self.status(fresh=True, include_status=False)}
             for name in names:
                 item = statuses[name]
                 if item.state == until or (
@@ -329,9 +379,10 @@ class ServiceRuntime:
     def _target(self, name: str) -> str:
         return f"{SESSION_NAME}:={WINDOW_PREFIX}{name}"
 
-    def logs(self, name: str, lines: int) -> str:
+    def logs(self, name: str, lines: int, *, all_history: bool = False) -> str:
         topo_order(self.cfg.services, [name])
-        result = self.proc.tmux(["capture-pane", "-p", "-t", self._target(name), "-S", f"-{lines}"])
+        # tmux's start offset counts physical rows even with joined output.
+        result = self.proc.tmux(["capture-pane", "-p", "-J", "-t", self._target(name), "-S", "-"])
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "failed to capture service window")
         rows = result.stdout.splitlines(keepends=True)
@@ -339,7 +390,99 @@ class ServiceRuntime:
         # drop them so the last N lines are real output, not blank padding.
         while rows and not rows[-1].strip():
             rows.pop()
-        return "".join(rows[-lines:])
+        return "".join(rows if all_history else rows[-lines:])
+
+    def wait_log(
+        self,
+        name: str,
+        pattern: re.Pattern[str],
+        *,
+        timeout: float,
+        before: int,
+        after: int,
+        silence: float = 2.0,
+    ) -> tuple[int, list[str]]:
+        started = self.proc.now()
+        topo_order(self.cfg.services, [name])
+        if not math.isfinite(timeout) or timeout < 0 or before < 0 or after < 0:
+            return 2, []
+
+        original_pid: int | None = None
+
+        def pane_error() -> list[str]:
+            panes = self._panes()
+            current = panes.get(WINDOW_PREFIX + name)
+            if original_pid is not None and current is not None and current.pid != original_pid:
+                return [f"{name}: service pane replaced"]
+            item = self._lifecycle(name, panes, self._state())
+            return [f"{name}: {item.state}" + (f" ({item.detail})" if item.detail else "")]
+
+        pane = self._panes().get(WINDOW_PREFIX + name)
+        if pane is None or pane.dead:
+            return 3, pane_error()
+        original_pid = pane.pid
+
+        def original_live() -> bool:
+            current = self._panes().get(WINDOW_PREFIX + name)
+            return current is not None and not current.dead and current.pid == original_pid
+
+        def success(lines: list[str]) -> tuple[int, list[str]]:
+            if not original_live():
+                return 3, pane_error()
+            return 0, lines
+
+        preceding: deque[str] = deque(maxlen=before)
+
+        if before:
+            try:
+                preceding.extend(strip_terminal(self.logs(name, before)).splitlines()[-before:])
+            except RuntimeError:
+                return 3, pane_error()
+        stream = self.proc.follow_pane(self._target(name), 1, initial=False, poll_interval=0.1)
+        pending = ""
+        result: list[str] = []
+        matched = False
+        hit_length = 0
+        last_output = started
+        try:
+            for chunk in stream:
+                now = self.proc.now()
+                if not chunk and not original_live():
+                    return 3, pane_error()
+                if matched and now - last_output >= silence:
+                    return success(result)
+                if not matched and timeout and now - started >= timeout:
+                    if not original_live():
+                        return 3, pane_error()
+                    return 1, []
+                if not chunk:
+                    continue
+                last_output = now
+                pending += chunk
+                while "\n" in pending:
+                    raw, pending = pending.split("\n", 1)
+                    line = strip_terminal(raw)
+                    if matched:
+                        result.append(line)
+                        if len(result) >= hit_length + after:
+                            return success(result)
+                    elif pattern.search(line):
+                        matched = True
+                        result = [*preceding, line]
+                        hit_length = len(result)
+                        if not after:
+                            return success(result)
+                    else:
+                        preceding.append(line)
+            if matched:
+                return success(result)
+            return 3, pane_error()
+        except RuntimeError as exc:
+            return 3, [f"{name}: {exc}"]
+        finally:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
 
     def follow_logs(self, name: str, lines: int) -> Iterator[str]:
         topo_order(self.cfg.services, [name])
@@ -379,6 +522,14 @@ class ServiceRuntime:
             if result.returncode:
                 self._save(name, "failed", self.redact(name, result.stderr))
                 return False
+        # tmux applies this session-wide to windows created afterwards, not existing panes.
+        history_limit = max(s.logs.history_limit for s in self.cfg.services.values())
+        configured = self.proc.tmux(
+            ["set-option", "-t", SESSION_NAME, "history-limit", str(history_limit)]
+        )
+        if configured.returncode:
+            self._save(name, "failed", configured.stderr)
+            return False
         self._save(name, "starting")
         args = [
             "new-window",

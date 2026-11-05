@@ -452,10 +452,19 @@ path would otherwise become an argument to the first), while `args`
 Repo service names start with a lowercase letter or digit, contain lowercase
 letters, digits, `_` or `-`, and have at most 63 characters. Each has required
 nonempty `run` and optional `prepare` (list), `ready` (command), `ready_timeout`
-(positive seconds, 120), `stop` (command), `stop_timeout` (positive seconds,
-10), `working_dir` (repo-relative, `""`), `env` (`{}`), and `depends_on` (`{}`).
-Dependency keys name defined services, form an acyclic graph, and must be ready
-before start; `{restart: true}` cascades restarts.
+(positive seconds, 120), `status` (read-only command), `status_timeout` (integer
+seconds, minimum 1, default 5), `logs.filters` (named regex map, `{}`) and
+`logs.history_limit` (tmux scrollback lines, 50000, minimum 1000), `stop` (command), `stop_timeout`
+(positive seconds, 10), `working_dir` (repo-relative, `""`), `env` (`{}`), and
+`depends_on` (`{}`). Dependency keys name defined services, form an acyclic
+graph, and must be ready before start; `{restart: true}` cascades restarts.
+`service ls` reports status probe output or errors without changing service
+lifecycle state. `logs.filters` maps lowercase names matching
+`[a-z][a-z0-9_-]*` to regex strings validated at config load. For example,
+`errors: 'error|failed|exception'` can be selected with
+`jailbee service logs api --filter errors`. Each service's `logs.history_limit`
+contributes to the session setting; JailBee uses the maximum configured value
+for newly created windows. Existing panes are not resized and logs are not durable.
 
 Prepare steps have `run`, `network` (`strict`, `loose`, or unset), `mounts`
 (list), `env`, `working_dir`, `timeout` (default autostart step timeout), and
