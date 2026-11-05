@@ -15,9 +15,10 @@ def test_container_command_tree_does_not_load_config():
     assert result.stdout.strip() == "[]"
 
 
-def test_inbox_imports_stdlib_only():
+def test_inbox_behaviour_modules_import_stdlib_only():
     code = (
-        "import jailbee.inbox.cli, jailbee.inbox.send, jailbee.inbox.waiting; import sys;"
+        "import jailbee.inbox.cli, jailbee.inbox.send, jailbee.inbox.waiting, "
+        "jailbee.inbox.render, jailbee.inbox.watch, jailbee.inbox.errors; import sys;"
         "print(sorted(m for m in sys.modules if m.split('.')[0] in "
         "{'typer','pydantic','rich','yaml','click'}))"
     )

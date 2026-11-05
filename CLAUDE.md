@@ -39,7 +39,11 @@ isolated per-branch development environments using Incus system containers. See
   directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
   `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
   derivation is never defined in `Config`, the CLI or the overview.
-- **`jailbee.inbox` is stdlib-only and runs no subprocess.**
+- **Inbox behaviour modules are stdlib-only and run no subprocess.**
+  `inbox/container_cmd.py` is the Typer adapter; command logic and manifest
+  validation stay in `inbox/cli.py` and `inbox/send.py`.
+- **The container command tree imports config lazily.** Keep `jailbee.config`,
+  Pydantic and YAML imports inside command bodies so inbox and version stay fast.
 - **Container CLI dispatch:** `entry.py` selects `container_cli` before importing
   the host CLI. Container-side modules use only the standard library or baked
   dependencies. `services/local_proc.py` is the container-only exception for

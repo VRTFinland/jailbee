@@ -437,6 +437,12 @@ relay hop would wait up to a minute and systemd would kill the
 container-creation workers left in its cgroup. And one long-lived process
 serialises all orchestration actions without cross-process locking.
 
+The in-container `inbox/container_cmd.py` Typer adapter handles command parsing,
+help and usage errors. Inbox command logic, waiting, rendering and manifest
+validation remain standard-library modules and run no subprocess. The container
+command tree loads repository configuration only when a command needs it, so
+inbox and version do not pay the config-model startup cost.
+
 ## Security model
 
 Containers share the host kernel (the Linux VM's kernel on macOS). Bind mounts,
