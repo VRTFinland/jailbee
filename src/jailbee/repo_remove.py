@@ -123,6 +123,7 @@ class RemovalPlan:
     purge_files: list[Path]
     kept_files: list[Path]
     global_refs: list[str]
+    shared_kept_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,8 +142,32 @@ def execute_removal(
     destroy_container: Callable[..., None] | None = None,
     destroy_orphan: Callable[..., None] | None = None,
 ) -> list[StepResult]:
+    """Exclude refresh until all removal steps and the final registry commit finish."""
+    from jailbee.repo_locks import locked
+
+    with locked(plan.prefix):
+        return _execute_removal_locked(
+            plan,
+            incus,
+            session_factory,
+            force=force,
+            destroy_container=destroy_container,
+            destroy_orphan=destroy_orphan,
+        )
+
+
+def _execute_removal_locked(
+    plan: RemovalPlan,
+    incus: Incus,
+    session_factory: Callable[[], Session],
+    *,
+    force: bool,
+    destroy_container: Callable[..., None] | None,
+    destroy_orphan: Callable[..., None] | None,
+) -> list[StepResult]:
     """Remove independent resources best-effort, retaining registration on failure."""
-    from jailbee.egress_proxy import drop_fragment
+    from jailbee.egress_proxy import ProxyStatus, drop_fragment, proxy_status
+    from jailbee.init_command import BRIDGE_NETWORK, detach_acl_from_bridge
     from jailbee.network_generation import WORK_BRIDGE
     from jailbee.work_network import work_network_lock
 
@@ -163,6 +188,7 @@ def execute_removal(
 
     known = {plan.prefix}
     ownership = {name: plan.prefix for name in plan.containers}
+    acls = list(plan.acls)
 
     def inventory() -> None:
         # Capture ownership before deleting its profiles and instances.
@@ -174,6 +200,34 @@ def execute_removal(
                 if profile.endswith("-base"):
                     ownership[raw["name"]] = profile[:-5]
                     break
+        # Refresh may have created ACLs after the confirmation plan was shown.
+        # Expand only network resources, never the approved user-data/image set.
+        with session_factory() as session:
+            names = set(ownership)
+            names.update(
+                row.container_prefix[3:]
+                for row in session.exec(select(PoolIP)).all()
+                if row.container_prefix.startswith("ct:")
+            )
+        owned = {n for n in names if _pool_owned(f"ct:{n}", plan.prefix, known, ownership)}
+        foreign_acls = {extra_acl_name(n) for n in names - owned}
+        candidates = {
+            f"{plan.prefix}-allowlist",
+            bridge_extras_acl_name(plan.prefix),
+            f"{plan.prefix}-work-loose",
+            _capped_acl_name(plan.prefix, "-work-container-extras"),
+            *(extra_acl_name(n) for n in owned),
+        }
+        for acl in incus.network_acl_list():
+            if acl in foreign_acls:
+                continue
+            if acl in candidates or (
+                acl.endswith("-extra")
+                and len(acl) <= ACL_NAME_MAX
+                and _pool_owned(f"ct:{acl[:-6]}", plan.prefix, known, ownership)
+            ):
+                if acl not in acls:
+                    acls.append(acl)
 
     step("ownership", inventory)
     inventory_ok = results[-1].ok
@@ -196,7 +250,7 @@ def execute_removal(
                 incus.profile_delete(name)
 
         step(f"profile {name}", remove_profile)
-    for name in plan.acls:
+    for name in acls:
 
         def remove_acl(name: str = name) -> None:
             if not incus.network_acl_exists(name):
@@ -206,6 +260,9 @@ def execute_removal(
                 if len(parts) != 4 or parts[1:3] != ["1.0", "networks"] or not parts[3]:
                     raise ValueError(f"ACL {name} is still referenced by {reference}")
                 network = unquote(parts[3])
+                if network == BRIDGE_NETWORK:
+                    detach_acl_from_bridge(incus, name)
+                    continue
                 with work_network_lock() if network == WORK_BRIDGE else nullcontext():
                     current = incus.network_get(network, "security.acls")
                     remaining = [
@@ -242,7 +299,21 @@ def execute_removal(
                 incus.delete(name, force=force)
 
         step(f"golden instance {name}", remove_golden)
-    step("proxy fragment", lambda: drop_fragment(incus, plan.prefix))
+
+    def remove_proxy_fragment() -> None:
+        if not drop_fragment(incus, plan.prefix) and proxy_status(incus) != ProxyStatus.RUNNING:
+            results.append(
+                StepResult(
+                    "proxy fragment", True, "kept (proxy not running); fragment may remain on disk"
+                )
+            )
+            return
+        results.append(StepResult("proxy fragment", True, "removed or already absent"))
+
+    try:
+        remove_proxy_fragment()
+    except Exception as exc:
+        results.append(StepResult("proxy fragment", False, str(exc)))
 
     def cleanup() -> None:
         if not inventory_ok or any(not result.ok for result in results):
@@ -348,17 +419,7 @@ def plan_removal(
                     ownership[name] = profile[:-5]
                     break
         alias = cfg.golden.alias if cfg else f"{prefix}-base"
-        golden_names = {
-            f"{alias}--golden",
-            f"{alias}--build",
-            f"{alias}--old",
-            f"{prefix}-base-build",
-        }
-        containers = sorted(
-            name
-            for name, owner in ownership.items()
-            if owner == prefix and name not in golden_names
-        )
+        containers = sorted(name for name, owner in ownership.items() if owner == prefix)
 
         pool_rows = session.exec(select(PoolIP)).all()
         known_container_names = set(ownership)
@@ -426,7 +487,7 @@ def plan_removal(
         acl
         for acl in sorted(existing_acls)
         if acl.endswith("-extra")
-        and len(acl) < ACL_NAME_MAX
+        and len(acl) <= ACL_NAME_MAX
         and _pool_owned(f"ct:{acl[:-6]}", prefix, known, ownership)
     )
     acls = [
@@ -435,16 +496,20 @@ def plan_removal(
         if name in existing_acls and name not in foreign_acls
     ]
     alias = cfg.golden.alias if cfg else f"{prefix}-base"
+    other_configs = [
+        (row, _load_registered_config(row)) for row in rows if row.container_prefix != prefix
+    ]
     reason = None
     if alias == SCRATCH_BASE_ALIAS:
         reason = "shared scratch base"
     else:
-        for other in rows:
-            if other.container_prefix != prefix:
-                other_cfg = _load_registered_config(other)
-                if other_cfg and other_cfg.golden.alias == alias:
-                    reason = f"shared with {other.container_prefix}"
-                    break
+        for other, other_cfg in other_configs:
+            if other_cfg is None:
+                reason = f"config unavailable for {other.container_prefix}"
+                break
+            if other_cfg.golden.alias == alias:
+                reason = f"shared with {other.container_prefix}"
+                break
     images: list[str] = []
     golden_instances: list[str] = []
     if reason is None:
@@ -459,17 +524,35 @@ def plan_removal(
             for n in dict.fromkeys(
                 (f"{alias}--golden", f"{alias}--build", f"{alias}--old", f"{prefix}-base-build")
             )
-            if n in instance_names and ownership.get(n, prefix) == prefix
+            if n in instance_names and n not in ownership
         ]
     default_shared = _default_shared_dir(prefix)
     shared = Path(cfg.shared_dir) if cfg and cfg.shared_dir else default_shared
+    shared_reason = None
+    for other, other_cfg in other_configs:
+        if other_cfg is None:
+            shared_reason = f"config unavailable for {other.container_prefix}"
+            break
+        other_shared = (
+            Path(other_cfg.shared_dir)
+            if other_cfg.shared_dir
+            else _default_shared_dir(other.container_prefix)
+        )
+        resolved_shared = shared.resolve()
+        resolved_other = other_shared.resolve()
+        if resolved_shared.is_relative_to(resolved_other) or resolved_other.is_relative_to(
+            resolved_shared
+        ):
+            shared_reason = f"shared with {other.container_prefix}"
+            break
     purge_files: list[Path] = []
     kept_files: list[Path] = []
     for path in (local_config_path(prefix), shared):
         if path.exists():
             (
                 purge_files
-                if purge and (path != shared or shared == default_shared)
+                if purge
+                and (path != shared or (shared == default_shared and shared_reason is None))
                 else kept_files
             ).append(path)
     global_cfg, _ = load_global_config(default_global_config_path())
@@ -494,4 +577,5 @@ def plan_removal(
         purge_files,
         kept_files,
         refs,
+        shared_reason,
     )

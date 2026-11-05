@@ -158,14 +158,20 @@ jailbee destroy feat-foo --force
 
 Use `jailbee repo ls [--format table|json]` to inspect registered repos and
 leftovers (profiles without registry rows). `jailbee repo rm [TARGET] [--yes]
-[--dry-run] [--force] [--purge]` removes a repo by existing directory path or
-exact prefix; it also handles missing directories/configs and unregistered
-leftovers. The command prints a read-only cleanup plan first. Shared golden
-aliases are protected, resource cleanup matches exact names (never a prefix
-wildcard), and `--purge` removes only the repo-local override file and default
-shared directory; overridden shared paths and global config references are kept.
-`--force` bypasses running-agent and work-loss guards; `--yes` skips the final
-confirmation. `jailbee net unregister` is deprecated: it only unregisters and
+[--dry-run] [--force] [--purge]` removes a repo by exact prefix or explicit
+path (contains `/` or starts with `.` or `~`; use `./foo` for a relative path).
+A bare `foo` always means the prefix, even if the current directory contains
+`foo/`. Missing directories/configs and unregistered leftovers are supported.
+The command prints a read-only cleanup plan first, including a warning when
+container Git state could not be checked. Shared golden aliases are protected;
+if another registered repo's config cannot load, golden objects are kept
+conservatively. Resource cleanup matches exact names (never a prefix wildcard).
+`--purge` removes only the repo-local override file and an unshared default
+shared directory; overridden or overlapping/potentially shared paths and global
+config references are kept. If the egress proxy is down, the result notes
+that its fragment may remain and return on startup. `--force` bypasses
+running-agent and work-loss guards; `--yes` skips the final confirmation, not
+risk warnings. `jailbee net unregister` is deprecated: it only unregisters and
 leaves resources behind, so use `jailbee repo rm` instead.
 
 `jailbee dashboard` (alias: `jailbee tui`) is the live, cross-repo version of

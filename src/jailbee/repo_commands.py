@@ -68,6 +68,10 @@ def _print_plan(plan: RemovalPlan) -> None:
         typer.echo(f"{label}: {', '.join(map(str, values)) or '-'}")
     if plan.golden_kept_reason:
         typer.echo(f"Golden kept: {plan.golden_kept_reason}")
+    if plan.shared_kept_reason:
+        typer.echo(f"Shared files kept: {plan.shared_kept_reason}")
+    if plan.cfg is None:
+        typer.echo("Warning: repository config unavailable; container git state was not checked.")
     typer.echo(
         "State rows: " + (", ".join(f"{k}={v}" for k, v in plan.state_counts.items()) or "-")
     )
@@ -96,8 +100,10 @@ def remove_command(
     scope = scope_for_session()
     entries = None
     path_cfg = None
-    target_path = Path(target).expanduser() if target else None
-    if target_path is not None and target_path.is_dir():
+    if target and ("/" in target or target.startswith((".", "~"))):
+        target_path = Path(target).expanduser()
+        if not target_path.is_dir():
+            raise typer.BadParameter("Repository directory does not exist")
         root = target_path.resolve()
         entries = list_repos(incus, sessions, scope=scope)
         row = next((e for e in entries if e.repo_root and e.repo_root.resolve() == root), None)

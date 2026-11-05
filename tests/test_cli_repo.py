@@ -48,6 +48,7 @@ def test_repo_rm_dry_run_skips_guards(monkeypatch):
         golden_images=[],
         golden_instances=[],
         golden_kept_reason=None,
+        shared_kept_reason=None,
         state_counts={},
         purge_files=[],
         kept_files=[],
@@ -73,6 +74,7 @@ def test_force_does_not_skip_confirmation(monkeypatch):
         golden_images=[],
         golden_instances=[],
         golden_kept_reason="shared",
+        shared_kept_reason=None,
         state_counts={},
         purge_files=[],
         kept_files=[],
@@ -99,6 +101,7 @@ def test_execution_failure_returns_one(monkeypatch):
         golden_images=[],
         golden_instances=[],
         golden_kept_reason=None,
+        shared_kept_reason=None,
         state_counts={},
         purge_files=[],
         kept_files=[],
@@ -117,17 +120,18 @@ def test_execution_failure_returns_one(monkeypatch):
 
 
 def test_omitted_target_requires_destructive_picker_even_with_yes(monkeypatch):
-    from jailbee import repo_commands
+    from jailbee import repo_commands, repo_remove
 
     monkeypatch.setattr(
         repo_commands, "list_repos", lambda *a, **kw: [RepoEntry("demo", None, "leftover", 0, None)]
     )
+    monkeypatch.setattr(repo_remove, "plan_removal", lambda *a, **kw: pytest.fail("picker skipped"))
     result = CliRunner().invoke(app, ["repo", "rm", "--yes"])
     assert result.exit_code == 2
     assert "demo" in result.output
 
 
-def test_prefix_target_never_loads_cwd_config(monkeypatch):
+def test_prefix_target_never_loads_cwd_config(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     from jailbee import config, repo_remove
@@ -141,11 +145,14 @@ def test_prefix_target_never_loads_cwd_config(monkeypatch):
         golden_images=[],
         golden_instances=[],
         golden_kept_reason=None,
+        shared_kept_reason=None,
         state_counts={},
         purge_files=[],
         kept_files=[],
         global_refs=[],
     )
+    (tmp_path / "demo").mkdir()
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "load_repo_config", lambda *a: pytest.fail("cwd config loaded"))
     monkeypatch.setattr(repo_remove, "plan_removal", lambda *a, **kw: plan)
     result = CliRunner().invoke(app, ["repo", "rm", "demo", "--dry-run"])
@@ -275,9 +282,7 @@ def test_dry_run_real_plan_preserves_shared_alias(
         configs[root] = make_cfg(root, container_prefix=name, golden={"alias": "shared"})
     mocker.patch("jailbee.repo_remove.load_repo_config", side_effect=lambda root: configs[root])
     repo_cli_env.profile_list.return_value = ["target-base"]
-    repo_cli_env.list_containers.return_value = [
-        {"name": "shared--golden", "profiles": ["target-base"]}
-    ]
+    repo_cli_env.list_containers.return_value = [{"name": "shared--golden", "profiles": []}]
     result = CliRunner().invoke(app, ["repo", "rm", "target", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "Golden kept: shared with other" in result.output
