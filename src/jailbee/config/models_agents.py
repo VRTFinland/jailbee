@@ -922,7 +922,10 @@ class Autostart(BaseModel):
 
     resume_agent_sessions: bool = Field(
         default=True,
-        description="Resume the Claude sessions that were running when the container stopped, each with its own launcher and directory.",
+        description=(
+            "Resume the Claude sessions that were running when the container stopped, "
+            "each with its own launcher and directory."
+        ),
     )
 
     profiles: dict[str, Literal["all"] | AutostartProfile] = Field(

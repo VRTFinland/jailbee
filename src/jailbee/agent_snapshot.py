@@ -113,7 +113,13 @@ def _record(path: Path) -> dict[str, object] | None:
 
 
 def _item(data: dict[str, object], launcher: list[str], window: str | None) -> dict[str, object]:
-    return {"agent": "claude", "session_id": data["sessionId"], "cwd": data["cwd"], "launcher": launcher, "window": window}
+    return {
+        "agent": "claude",
+        "session_id": data["sessionId"],
+        "cwd": data["cwd"],
+        "launcher": launcher,
+        "window": window,
+    }
 
 
 def _write_snapshot(path: Path, payload: bytes) -> None:
@@ -142,9 +148,13 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         tmux = data.get("tmux")
         match = re.fullmatch(r"autostart:(@\d+)\.%\d+", tmux) if isinstance(tmux, str) else None
         window = windows.get(match[1]) if match else None
-        sessions.append(_item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window))
+        sessions.append(
+            _item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window)
+        )
     if sessions:
-        payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode("utf-8")
+        payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode(
+            "utf-8"
+        )
         _write_snapshot(home / SNAPSHOT_RELPATH, payload)
     return len(sessions)
 
@@ -161,10 +171,19 @@ def _unlink_stale(path: Path) -> bool:
 def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
     path = home / SNAPSHOT_RELPATH
     has_snapshot = (path.exists() or path.is_symlink()) and not path.is_dir()
-    result: dict[str, object] = {"version": 1, "source": "capture" if has_snapshot else "stale", "sessions": []}
+    result: dict[str, object] = {
+        "version": 1,
+        "source": "capture" if has_snapshot else "stale",
+        "sessions": [],
+    }
     if has_snapshot:
         data = _json(path)
-        if isinstance(data, dict) and data.get("version") == 1 and data.get("source") in ("capture", "stale") and isinstance(data.get("sessions"), list):
+        if (
+            isinstance(data, dict)
+            and data.get("version") == 1
+            and data.get("source") in ("capture", "stale")
+            and isinstance(data.get("sessions"), list)
+        ):
             result = {"version": 1, "source": data["source"], "sessions": data["sessions"]}
     stale: list[dict[str, object]] = []
     unconsumed: set[str] = set()
@@ -215,13 +234,17 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         entries = result["sessions"]
         assert isinstance(entries, list)
         blocked = [
-            item for item in entries
+            item
+            for item in entries
             if isinstance(item, dict)
             and isinstance(item.get("session_id"), str)
             and item["session_id"] in unconsumed
         ]
         emitted = [item for item in entries if item not in blocked]
-        while len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1 > _LIMIT:
+        while (
+            len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1
+            > _LIMIT
+        ):
             item = emitted.pop()
             single = {**result, "sessions": [item]}
             if len(json.dumps(single, separators=(",", ":")).encode()) + 1 > _LIMIT:
@@ -243,7 +266,9 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
 
 def window_names() -> dict[str, str]:
     try:
-        result = LocalProc().tmux(["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"])
+        result = LocalProc().tmux(
+            ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_name}"]
+        )
         if result.returncode:
             return {}
         rows = (line.split("\t", 2) for line in result.stdout.splitlines())

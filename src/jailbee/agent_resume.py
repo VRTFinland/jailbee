@@ -68,7 +68,14 @@ _VALUE_OPTIONS = {
     "--allowed-tools",
     "--disallowed-tools",
 }
-_OPTIONAL_OPTIONS = {"--prompt-suggestions", "--worktree", "-w", "--debug", "-d", "--remote-control"}
+_OPTIONAL_OPTIONS = {
+    "--prompt-suggestions",
+    "--worktree",
+    "-w",
+    "--debug",
+    "-d",
+    "--remote-control",
+}
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
 _VARIADIC_OPTIONS = {
     "--add-dir",
@@ -214,8 +221,12 @@ def resume_run(entry: ResumeEntry) -> str:
 def capture(cfg: Config, incus: Incus, container: str) -> None:
     """Capture live sessions before a clean shutdown, best effort."""
     try:
-        incus.exec(container, ["jailbee", "_agent-snapshot", "--capture"],
-                   uid=cfg.container_user.uid, timeout=15)
+        incus.exec(
+            container,
+            ["jailbee", "_agent-snapshot", "--capture"],
+            uid=cfg.container_user.uid,
+            timeout=15,
+        )
     except IncusError:
         log.debug("Could not capture agent sessions", exc_info=True)
 
@@ -223,18 +234,32 @@ def capture(cfg: Config, incus: Incus, container: str) -> None:
 def boot_entries(cfg: Config, incus: Incus, container: str) -> list[ResumeEntry]:
     """Consume the boot snapshot and discard sessions without transcripts."""
     try:
-        raw = incus.exec_capped(container, ["jailbee", "_agent-snapshot", "--boot"],
-                                max_bytes=65536, uid=cfg.container_user.uid, timeout=15)
+        raw = incus.exec_capped(
+            container,
+            ["jailbee", "_agent-snapshot", "--boot"],
+            max_bytes=65536,
+            uid=cfg.container_user.uid,
+            timeout=15,
+        )
     except IncusError:
         log.debug("Could not consume agent sessions", exc_info=True)
         return []
     adapter = ClaudeAdapter()
-    return [entry for entry in parse_snapshot(raw)
-            if adapter.session_exists(cfg, container, entry.session_id)]
+    return [
+        entry
+        for entry in parse_snapshot(raw)
+        if adapter.session_exists(cfg, container, entry.session_id)
+    ]
 
 
-def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[ResumeEntry],
-                  *, prompted: str | None, extra_env: Mapping[str, str]) -> list[AutostartStep]:
+def restore_steps(
+    cfg: Config,
+    steps: list[AutostartStep],
+    entries: Sequence[ResumeEntry],
+    *,
+    prompted: str | None,
+    extra_env: Mapping[str, str],
+) -> list[AutostartStep]:
     """Replace matching agent steps and append other saved windows."""
     from jailbee.autostart_plan import normalize_stages
     from jailbee.services.runtime import WINDOW_PREFIX
@@ -252,9 +277,16 @@ def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[Res
     for entry in entries:
         if entry.window is not None and entry.window == prompted_window:
             continue
-        match = next((i for i, step in enumerate(steps)
-                      if entry.window is not None and window_for(step.name) == entry.window
-                      and i not in claimed), None)
+        match = next(
+            (
+                i
+                for i, step in enumerate(steps)
+                if entry.window is not None
+                and window_for(step.name) == entry.window
+                and i not in claimed
+            ),
+            None,
+        )
         if match is not None:
             result[match] = result[match].model_copy(update={"run": resume_run(entry)})
             claimed.add(match)
@@ -276,6 +308,9 @@ def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[Res
             if command and os.path.basename(command[0]) == os.path.basename(entry.launcher[0]):
                 env.update(dict(spec.env))
                 break
-        result.append(AutostartStep(name=name, run=resume_run(entry), background=True,
-                                    continue_on_error=True, env=env))
+        result.append(
+            AutostartStep(
+                name=name, run=resume_run(entry), background=True, continue_on_error=True, env=env
+            )
+        )
     return result

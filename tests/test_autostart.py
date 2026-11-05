@@ -1448,8 +1448,11 @@ def test_resume_unavailable_warns_and_launches_plain(
 def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, enabled):
     from jailbee.agent_resume import ResumeEntry, resume_run
     from jailbee.autostart import _on_start_agent_steps
+
     cfg = _prompt_cfg(tmp_path, claude={"enabled": True, "autostart": True})
-    cfg = cfg.model_copy(update={"autostart": cfg.autostart.model_copy(update={"resume_agent_sessions": enabled})})
+    cfg = cfg.model_copy(
+        update={"autostart": cfg.autostart.model_copy(update={"resume_agent_sessions": enabled})}
+    )
     incus = mocker.Mock()
     mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
     mocker.patch("jailbee.orchestration.labels.child_env", return_value={})

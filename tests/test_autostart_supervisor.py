@@ -1611,8 +1611,13 @@ def test_detached_handoff_preserves_restored_agent_steps(tmp_path, mocker, make_
     from jailbee import autostart as mod
     from jailbee.agent_resume import ResumeEntry, resume_run
     from jailbee.config.models_agents import ClaudeAgentConfig
-    block = Autostart.model_validate({"on_start": [_stage("prep", detach=True), {"stage": "agents"}]})
-    cfg = _cfg_with(make_cfg, tmp_path, block).model_copy(update={"agents": {"claude": ClaudeAgentConfig(enabled=True, autostart=True)}})
+
+    block = Autostart.model_validate(
+        {"on_start": [_stage("prep", detach=True), {"stage": "agents"}]}
+    )
+    cfg = _cfg_with(make_cfg, tmp_path, block).model_copy(
+        update={"agents": {"claude": ClaudeAgentConfig(enabled=True, autostart=True)}}
+    )
     incus = mocker.MagicMock()
     entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
     extra = ResumeEntry(entry.session_id, "/other", ("claude",), "other")
@@ -1625,9 +1630,26 @@ def test_detached_handoff_preserves_restored_agent_steps(tmp_path, mocker, make_
     mocker.patch("jailbee.services.autostart.services_stage_wanted", return_value=False)
     run = mocker.patch("jailbee.autostart.run_stages")
     plan = mod.run_autostart(cfg, incus, "c1", mod.AutostartTrigger.ON_START, "/r")
-    payload = bg.autostart_job_to_dict(container_name="c1", autostart=block, from_trigger="on_start", repo_dir="/r", mirror_endpoint=None, override=None, log_path="x", progress_path="y", agent_steps=plan.agent_steps, agents_last=plan.agents_last)
+    payload = bg.autostart_job_to_dict(
+        container_name="c1",
+        autostart=block,
+        from_trigger="on_start",
+        repo_dir="/r",
+        mirror_endpoint=None,
+        override=None,
+        log_path="x",
+        progress_path="y",
+        agent_steps=plan.agent_steps,
+        agents_last=plan.agents_last,
+    )
     job = bg.dict_to_autostart_job(json.loads(json.dumps(payload)))
     mod.run_detached(cfg, incus, job)
     boot.assert_called_once()
-    steps = [step for call in run.call_args_list for stage in call.args[3] for chain in stage.all_chains() for step in chain.steps]
+    steps = [
+        step
+        for call in run.call_args_list
+        for stage in call.args[3]
+        for chain in stage.all_chains()
+        for step in chain.steps
+    ]
     assert {resume_run(entry), resume_run(extra)} <= {step.run for step in steps}

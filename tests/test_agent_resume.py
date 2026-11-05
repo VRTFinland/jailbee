@@ -137,8 +137,10 @@ def test_restore_matches_and_deduplicates_windows(make_cfg, tmp_path):
 
     cfg = make_cfg(tmp_path)
     step = AutostartStep(name="claude", run="exec claude", env={"keep": "yes"})
-    entries = [ResumeEntry(VALID_ID, "/work", ("claude",), "claude"),
-               ResumeEntry(VALID_ID, "/work", ("claude",), "claude")]
+    entries = [
+        ResumeEntry(VALID_ID, "/work", ("claude",), "claude"),
+        ResumeEntry(VALID_ID, "/work", ("claude",), "claude"),
+    ]
     result = restore_steps(cfg, [step], entries, prompted=None, extra_env={"ROLE": "child"})
     assert result[0].run == resume_run(entries[0])
     assert result[0].env == {"keep": "yes"}
@@ -152,37 +154,64 @@ def test_restore_drops_prompted_window(make_cfg, tmp_path):
 
     step = AutostartStep(name="claude", run="prompt")
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "claude")
-    assert restore_steps(make_cfg(tmp_path), [step], [entry], prompted="claude", extra_env={}) == [step]
+    assert restore_steps(make_cfg(tmp_path), [step], [entry], prompted="claude", extra_env={}) == [
+        step
+    ]
 
 
 def test_boot_entries_checks_transcripts(make_cfg, tmp_path, mocker):
     from jailbee.agent_resume import boot_entries
+
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    incus.exec_capped.return_value = json.dumps({"version": 1, "source": "capture", "sessions": [
-        {"agent": "claude", "session_id": VALID_ID, "cwd": "/work", "launcher": ["claude"], "window": None}]})
+    incus.exec_capped.return_value = json.dumps(
+        {
+            "version": 1,
+            "source": "capture",
+            "sessions": [
+                {
+                    "agent": "claude",
+                    "session_id": VALID_ID,
+                    "cwd": "/work",
+                    "launcher": ["claude"],
+                    "window": None,
+                }
+            ],
+        }
+    )
     exists = mocker.patch("jailbee.agent_resume.ClaudeAdapter.session_exists", return_value=False)
     assert boot_entries(cfg, incus, "box") == []
     exists.assert_called_once_with(cfg, "box", VALID_ID)
-    incus.exec_capped.assert_called_once_with("box", ["jailbee", "_agent-snapshot", "--boot"], max_bytes=65536, uid=cfg.container_user.uid, timeout=15)
+    incus.exec_capped.assert_called_once_with(
+        "box",
+        ["jailbee", "_agent-snapshot", "--boot"],
+        max_bytes=65536,
+        uid=cfg.container_user.uid,
+        timeout=15,
+    )
 
 
 def test_boot_and_capture_handle_incus_errors(make_cfg, tmp_path, mocker):
     from jailbee.agent_resume import boot_entries, capture
     from jailbee.incus import IncusError
+
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
     incus.exec.side_effect = IncusError("offline")
     incus.exec_capped.side_effect = IncusError("offline")
     capture(cfg, incus, "box")
     assert boot_entries(cfg, incus, "box") == []
-    incus.exec.assert_called_once_with("box", ["jailbee", "_agent-snapshot", "--capture"], uid=cfg.container_user.uid, timeout=15)
+    incus.exec.assert_called_once_with(
+        "box", ["jailbee", "_agent-snapshot", "--capture"], uid=cfg.container_user.uid, timeout=15
+    )
 
 
 def test_restore_inherits_matching_custom_launcher_env(make_cfg, tmp_path):
     from jailbee.agent_resume import restore_steps
+
     cfg = make_cfg(tmp_path)
     from jailbee.config.models_agents import ClaudeAgentConfig
+
     agent = ClaudeAgentConfig(command="claude-jb -P codex", env={"TOKEN": "value"}, autostart=False)
     cfg = cfg.model_copy(update={"agents": {"claude": agent}})
     entry = ResumeEntry(VALID_ID, "/work", ("claude-jb", "-P", "codex"), None)
@@ -194,6 +223,7 @@ def test_restore_inherits_matching_custom_launcher_env(make_cfg, tmp_path):
 def test_restore_deduplicates_sanitized_window_names(make_cfg, tmp_path):
     from jailbee.agent_resume import restore_steps
     from jailbee.config.models_agents import AutostartStep
+
     step = AutostartStep(name="work space", run="other")
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work space")
     result = restore_steps(make_cfg(tmp_path), [step], [entry], prompted=None, extra_env={})
@@ -203,19 +233,37 @@ def test_restore_deduplicates_sanitized_window_names(make_cfg, tmp_path):
 def test_restore_reserves_configured_step_windows(make_cfg, tmp_path):
     from jailbee.agent_resume import restore_steps
     from jailbee.config.models_agents import Autostart, AutostartStep
-    cfg = make_cfg(tmp_path).model_copy(update={"autostart": Autostart(on_start=[AutostartStep(name="work space", run="service")])})
+
+    cfg = make_cfg(tmp_path).model_copy(
+        update={"autostart": Autostart(on_start=[AutostartStep(name="work space", run="service")])}
+    )
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work_space")
     result = restore_steps(cfg, [], [entry], prompted=None, extra_env={})
     assert result[0].name == "work_space-2"
 
 
-@pytest.mark.parametrize("option", ["--autocompact", "--remote-control-session-name-prefix", "--prompt-suggestions", "--worktree", "-w", "--debug", "-d", "--remote-control", "--permission-prompts", "--environment"])
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--autocompact",
+        "--remote-control-session-name-prefix",
+        "--prompt-suggestions",
+        "--worktree",
+        "-w",
+        "--debug",
+        "-d",
+        "--remote-control",
+        "--permission-prompts",
+        "--environment",
+    ],
+)
 def test_replay_preserves_current_option_values(option):
     assert replay_argv(["claude", option, "value"]) == ["claude", option, "value"]
 
 
 def test_restore_hostile_window_is_safe(make_cfg, tmp_path):
     from jailbee.agent_resume import restore_steps
+
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m")
     name = restore_steps(make_cfg(tmp_path), [], [entry], prompted=None, extra_env={})[0].name
     assert "[" not in name and "\x1b" not in name and len(name) <= 64
@@ -225,16 +273,26 @@ def test_hostile_windows_run_through_serial_driver(make_cfg, tmp_path, mocker, c
     from jailbee import autostart
     from jailbee.agent_resume import restore_steps
     from jailbee.config import AutostartChain, AutostartStage
+
     cfg = make_cfg(tmp_path)
-    entries = [ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m"),
-               ResumeEntry(VALID_ID, "/work", ("claude",), "good")]
+    entries = [
+        ResumeEntry(VALID_ID, "/work", ("claude",), "[/]\x1b[31m"),
+        ResumeEntry(VALID_ID, "/work", ("claude",), "good"),
+    ]
     steps = restore_steps(cfg, [], entries, prompted=None, extra_env={})
     launch = mocker.patch("jailbee.tmux.run_step")
     chain = AutostartChain(name="agent", steps=steps)
     stage = AutostartStage(stage="agent", chains=[chain])
     progress = []
-    autostart._run_chain_serially(cfg, mocker.Mock(), "box", stage, chain, "/work",
-                                  on_progress=lambda *args: progress.append(args))
+    autostart._run_chain_serially(
+        cfg,
+        mocker.Mock(),
+        "box",
+        stage,
+        chain,
+        "/work",
+        on_progress=lambda *args: progress.append(args),
+    )
     assert launch.call_count == 2
     assert launch.call_args_list[1].kwargs["name"] == "good"
     assert all("\x1b" not in str(event) and "[/]" not in str(event) for event in progress)

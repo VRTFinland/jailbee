@@ -3444,7 +3444,10 @@ def _inline_autostart_handler(
     on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
 
     def on_detach(
-        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None,
+        block: "Autostart",
+        trigger: str,
+        repo_dir: str,
+        services_present: bool | None = None,
         plan: "AutostartPlan | None" = None,
     ) -> None:
         # The row this worker owns now tracks an autostart supervision run,
@@ -4084,8 +4087,6 @@ def _run_dashboard(
 
 
 if TYPE_CHECKING:
-    from jailbee.autostart_plan import AutostartPlan
-    from jailbee.config.models_agents import AutostartStep
     from collections.abc import Callable
 
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -4099,8 +4100,10 @@ if TYPE_CHECKING:
     from jailbee.accounts.models import PoolChange
     from jailbee.accounts.selection import AccountChoice
     from jailbee.apps import AppSpec
+    from jailbee.autostart_plan import AutostartPlan
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
+    from jailbee.config.models_agents import AutostartStep
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.columns import TableWindow
@@ -4602,7 +4605,9 @@ def _post_start_actions(
     _post_create_gui_launches(cfg, incus, name)
 
     if plan.detached and on_detach is not None:
-        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan)
+        on_detach(
+            cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan
+        )
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -4708,7 +4713,10 @@ def _autostart_detach_handler(
     """
 
     def on_detach(
-        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None,
+        block: "Autostart",
+        trigger: str,
+        repo_dir: str,
+        services_present: bool | None = None,
         plan: "AutostartPlan | None" = None,
     ) -> None:
         _spawn_autostart_worker(

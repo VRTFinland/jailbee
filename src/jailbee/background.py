@@ -30,12 +30,12 @@ from jailbee.db.models import JOB_STOP as JOB_STOP
 from jailbee.db.models import BackgroundJob
 
 if TYPE_CHECKING:
-    from jailbee.config.models_agents import AutostartStep
     from collections.abc import Callable
 
     from sqlalchemy.engine import Engine
 
     from jailbee.config import Autostart
+    from jailbee.config.models_agents import AutostartStep
     from jailbee.lifecycle import NewContainerOptions
 
 PHASE_STARTING = "starting"
@@ -572,7 +572,9 @@ def autostart_job_to_dict(
         "progress_path": progress_path,
         "services_present": services_present,
         "rerun": rerun,
-        "agent_steps": [s.model_dump(mode="json") for s in agent_steps] if agent_steps is not None else None,
+        "agent_steps": [s.model_dump(mode="json") for s in agent_steps]
+        if agent_steps is not None
+        else None,
         "agents_last": agents_last,
     }
 
@@ -608,8 +610,11 @@ def dict_to_autostart_job(raw: dict[str, Any]) -> AutostartJob:
         progress_path=raw["progress_path"],
         services_present=raw.get("services_present"),
         rerun=raw.get("rerun", False),
-        agent_steps=([AutostartStep.model_validate(s) for s in raw["agent_steps"]]
-                     if raw.get("agent_steps") is not None else None),
+        agent_steps=(
+            [AutostartStep.model_validate(s) for s in raw["agent_steps"]]
+            if raw.get("agent_steps") is not None
+            else None
+        ),
         agents_last=raw.get("agents_last", False),
     )
 

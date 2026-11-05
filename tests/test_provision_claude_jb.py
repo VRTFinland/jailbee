@@ -92,11 +92,7 @@ def _lines(out: str) -> list[str]:
 
 def test_claude_jb_writes_launcher_file(script, env):
     fake = Path(env["PATH"].split(":", 1)[0]) / "claude"
-    fake.write_text(
-        "#!/bin/bash\n"
-        "printf 'PID:%s\\n' \"$$\"\n"
-        "printf 'UMASK:%s\\n' \"$(umask)\"\n"
-    )
+    fake.write_text("#!/bin/bash\nprintf 'PID:%s\\n' \"$$\"\nprintf 'UMASK:%s\\n' \"$(umask)\"\n")
     fake.chmod(0o755)
 
     r = subprocess.run(
@@ -108,7 +104,9 @@ def test_claude_jb_writes_launcher_file(script, env):
     )
 
     assert r.returncode == 0, r.stderr
-    pid = next(line.removeprefix("PID:") for line in r.stdout.splitlines() if line.startswith("PID:"))
+    pid = next(
+        line.removeprefix("PID:") for line in r.stdout.splitlines() if line.startswith("PID:")
+    )
     launcher_dir = Path(env["HOME"]) / ".local/state/jailbee/launchers"
     [launcher] = list(launcher_dir.iterdir())
     assert launcher.name == pid

@@ -48,9 +48,9 @@ from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
-    from jailbee.autostart_plan import AutostartPlan
     from jailbee.accounts.models import AgentSession
     from jailbee.agent_status import ActivityLookup, AgentSummary
+    from jailbee.autostart_plan import AutostartPlan
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
@@ -2452,7 +2452,10 @@ def _new_container(
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
             on_detach(
-                effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services),
+                effective_cfg.autostart,
+                detached_from,
+                repo_dir,
+                bool(effective_cfg.services),
                 start_plan if detached_from == AutostartTrigger.ON_START.value else None,
             )
 

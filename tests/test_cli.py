@@ -2204,8 +2204,11 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
     assert result.exit_code == 0, result.stdout
     incus_mock.return_value.start.assert_called_once_with("myrepo-feat-only")
     incus_mock.return_value.exec_capped.assert_called_once_with(
-        "myrepo-feat-only", ["jailbee", "_agent-snapshot", "--boot"],
-        max_bytes=65536, uid=53023, timeout=15,
+        "myrepo-feat-only",
+        ["jailbee", "_agent-snapshot", "--boot"],
+        max_bytes=65536,
+        uid=53023,
+        timeout=15,
     )
 
 
@@ -11175,6 +11178,7 @@ def test_attach_tmux_falls_back_to_a_known_term_and_enables_features(mocker, mon
 @pytest.mark.parametrize("force", [False, True])
 def test_stop_captures_before_clean_shutdown_only(mocker, tmp_path, force):
     from typer.testing import CliRunner
+
     from jailbee.cli import app
 
     repo = _setup_repo(tmp_path, "myrepo")
