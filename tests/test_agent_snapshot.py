@@ -139,6 +139,32 @@ def test_capture_oversize_keeps_existing_snapshot(tmp_path: Path) -> None:
     assert path.read_bytes() == b"previous"
 
 
+@pytest.mark.parametrize("with_snapshot", [False, True])
+def test_boot_does_not_return_unconsumed_stale_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    with_snapshot: bool,
+) -> None:
+    record(tmp_path, 1)
+    path = tmp_path / snapshot.SESSIONS_RELPATH / "1.json"
+    if with_snapshot:
+        target = tmp_path / snapshot.SNAPSHOT_RELPATH
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [
+            {"agent": "claude", "session_id": ID, "cwd": "/work", "launcher": ["claude"], "window": None}
+        ]}))
+    original = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == path:
+            raise PermissionError("denied")
+        original(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+    assert "denied" in capsys.readouterr().err
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
 def test_boot_without_snapshot_uses_stale_records(tmp_path: Path) -> None:
     proc = tmp_path / "proc"
     for pid in (1, 2, 3):

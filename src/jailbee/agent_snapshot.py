@@ -138,11 +138,13 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
     return len(sessions)
 
 
-def _unlink_stale(path: Path) -> None:
+def _unlink_stale(path: Path) -> bool:
     try:
         path.unlink(missing_ok=True)
-    except OSError:
-        pass
+        return True
+    except OSError as exc:
+        print(f"agent snapshot: cannot remove {path}: {exc}", file=sys.stderr)
+        return False
 
 
 def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
@@ -155,6 +157,7 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             result = data
         path.unlink(missing_ok=True)
     stale: list[dict[str, object]] = []
+    unconsumed: set[str] = set()
     live: set[str] = set()
     directory = home / SESSIONS_RELPATH
     for entry in _entries(directory):
@@ -166,9 +169,14 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         if data is not None and start == str(data["procStart"]):
             live.add(pid)
             continue
-        if not has_snapshot and data is not None and data.get("kind") == "interactive":
-            stale.append(_item(data, _launcher(home, pid, str(data["procStart"]), ["claude"]), None))
-        _unlink_stale(entry)
+        item = None
+        if data is not None and data.get("kind") == "interactive":
+            item = _item(data, _launcher(home, pid, str(data["procStart"]), ["claude"]), None)
+        if _unlink_stale(entry):
+            if not has_snapshot and item is not None:
+                stale.append(item)
+        elif item is not None:
+            unconsumed.add(str(item["session_id"]))
     for entry in _entries(directory):
         match = re.fullmatch(r"([0-9]+)\..*\.key", entry.name)
         if match and match[1] not in live:
@@ -181,6 +189,15 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
             _unlink_stale(entry)
     if not has_snapshot:
         result["sessions"] = stale
+    elif unconsumed:
+        entries = result["sessions"]
+        if isinstance(entries, list):
+            result["sessions"] = [
+                item for item in entries
+                if not isinstance(item, dict)
+                or not isinstance(item.get("session_id"), str)
+                or item["session_id"] not in unconsumed
+            ]
     return result
 
 
