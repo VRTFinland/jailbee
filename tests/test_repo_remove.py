@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+import pytest
 from sqlmodel import Session
 
 from jailbee.db.models import RegisteredRepo
@@ -646,6 +647,23 @@ def test_execute_acl_uses_work_lock_and_refuses_profile_references(db_engine, mo
     assert any(not r.ok and "foreign" in r.detail for r in results)
 
 
+def test_execute_acl_uses_bridge_detach_helper(db_engine, mocker):
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    detach = mocker.patch("jailbee.init_command.detach_acl_from_bridge")
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_acl_used_by.return_value = ["/1.0/networks/incusbr0"]
+    plan = RemovalPlan("foo", None, [], [], ["foo-allowlist"], [], [], None, {}, [], [], [])
+    results = execute_removal(plan, incus, lambda: Session(db_engine))
+    assert all(result.ok for result in results)
+    detach.assert_called_once_with(incus, "foo-allowlist")
+    incus.network_acl_delete.assert_called_once_with("foo-allowlist")
+
+
 def test_execute_stops_running_golden_before_default_delete(db_engine, mocker):
     from jailbee.incus import Incus
     from jailbee.repo_remove import RemovalPlan, execute_removal
@@ -749,6 +767,41 @@ def test_default_shared_dir_is_kept_for_other_repo(db_engine, tmp_path, mocker, 
                                    registered_at=datetime.now(UTC), synthetic_config=True))
         session.commit()
     other = make_cfg(tmp_path, container_prefix="other", shared_dir=shared)
+    mocker.patch("jailbee.repo_remove.load_repo_config", return_value=other)
+    mocker.patch("jailbee.repo_remove._default_shared_dir", return_value=shared)
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine), purge=True)
+    assert shared in plan.kept_files
+    assert shared not in plan.purge_files
+    assert plan.shared_kept_reason == "shared with other"
+
+
+@pytest.mark.parametrize("other_path", ["descendant", "ancestor", "symlink"])
+def test_overlapping_shared_paths_are_kept(db_engine, tmp_path, mocker, make_cfg, other_path):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    shared = tmp_path / "parent" / "shared"
+    shared.mkdir(parents=True)
+    if other_path == "descendant":
+        other_shared = shared / "cache"
+    elif other_path == "ancestor":
+        other_shared = shared.parent
+    else:
+        other_shared = tmp_path / "linked"
+        other_shared.symlink_to(shared, target_is_directory=True)
+    with Session(db_engine) as session:
+        session.add(RegisteredRepo(
+            container_prefix="other", repo_root=str(tmp_path),
+            registered_at=datetime.now(UTC), synthetic_config=True,
+        ))
+        session.commit()
+    other = make_cfg(tmp_path, container_prefix="other", shared_dir=other_shared)
     mocker.patch("jailbee.repo_remove.load_repo_config", return_value=other)
     mocker.patch("jailbee.repo_remove._default_shared_dir", return_value=shared)
     mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))

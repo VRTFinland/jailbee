@@ -481,7 +481,9 @@ def plan_removal(
             shared_reason = f"config unavailable for {other.container_prefix}"
             break
         other_shared = Path(other_cfg.shared_dir) if other_cfg.shared_dir else _default_shared_dir(other.container_prefix)
-        if shared.resolve() == other_shared.resolve():
+        resolved_shared = shared.resolve()
+        resolved_other = other_shared.resolve()
+        if resolved_shared.is_relative_to(resolved_other) or resolved_other.is_relative_to(resolved_shared):
             shared_reason = f"shared with {other.container_prefix}"
             break
     purge_files: list[Path] = []
