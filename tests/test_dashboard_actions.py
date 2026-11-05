@@ -915,9 +915,9 @@ def test_unhealthy_service_with_extra_fields_and_actions():
         '"detail":"probe failed","launch":null,"status":null,"future":{"x":1}}]'
     )
     assert rows == (dact.ServiceRow("db", "unhealthy"),)
-    assert [e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries] == [
-        "stop", "restart", "refresh", "logs"
-    ]
+    assert [
+        e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries
+    ] == ["stop", "restart", "refresh", "logs"]
 
 
 @pytest.mark.parametrize("output", ["oops", "{}", '[{"name":"db","state":"running"}]'])

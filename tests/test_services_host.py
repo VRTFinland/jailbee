@@ -536,16 +536,39 @@ def test_host_claim_waits_for_actual_stop_handler(make_cfg, tmp_path, monkeypatc
 
 def test_wait_host_delegates_options(make_cfg, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee import cli
+
     cfg = make_cfg(tmp_path)
     incus = Mock()
     monkeypatch.setattr(cli, "_load_or_exit", lambda _: cfg)
     monkeypatch.setattr(cli, "_resolve_existing", lambda *args, **kwargs: (incus, "one"))
     run = Mock(return_value=0)
     monkeypatch.setattr(host, "run_op", run)
-    result = CliRunner().invoke(cli.app, ["service", "wait", "one", "web", "--until", "unhealthy", "--timeout", "60", "--interval", "10"])
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "service",
+            "wait",
+            "one",
+            "web",
+            "--until",
+            "unhealthy",
+            "--timeout",
+            "60",
+            "--interval",
+            "10",
+        ],
+    )
     assert result.exit_code == 0, result.output
-    run.assert_called_once_with(cfg, incus, "one", "wait", ["web"], extra=["--until", "unhealthy", "--timeout", "60", "--interval", "10"])
+    run.assert_called_once_with(
+        cfg,
+        incus,
+        "one",
+        "wait",
+        ["web"],
+        extra=["--until", "unhealthy", "--timeout", "60", "--interval", "10"],
+    )
 
 
 def test_wait_run_op_argv(make_cfg, tmp_path, monkeypatch):

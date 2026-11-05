@@ -136,16 +136,27 @@ class ServiceRuntime:
         return dict(self.cfg.services[name].env)
 
     def probe(
-        self, name: str, kind: Literal["health", "status"], cmd: str,
-        timeout: int, *, fresh: bool = False,
+        self,
+        name: str,
+        kind: Literal["health", "status"],
+        cmd: str,
+        timeout: int,
+        *,
+        fresh: bool = False,
     ) -> ProbeResult:
         launch_id = self._state().get(name, {}).get("since", "")
         result, _ = self._probe_launch(name, kind, cmd, timeout, launch_id, fresh=fresh)
         return result
 
     def _probe_launch(
-        self, name: str, kind: Literal["health", "status"], cmd: str,
-        timeout: int, launch_id: str, *, fresh: bool,
+        self,
+        name: str,
+        kind: Literal["health", "status"],
+        cmd: str,
+        timeout: int,
+        launch_id: str,
+        *,
+        fresh: bool,
     ) -> tuple[ProbeResult, float | None]:
         cache = ProbeCache(self.state_dir / "probes.json")
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -170,8 +181,10 @@ class ServiceRuntime:
                 service = self.cfg.services[name]
                 try:
                     result = self.proc.run_probe(
-                        cmd, cwd=str(self.repo_dir / service.working_dir),
-                        env=self.launch_env(name), timeout=timeout,
+                        cmd,
+                        cwd=str(self.repo_dir / service.working_dir),
+                        env=self.launch_env(name),
+                        timeout=timeout,
                     )
                 except OSError as exc:
                     result = ProbeResult(None, "", str(exc)[-16384:], False)
@@ -192,8 +205,11 @@ class ServiceRuntime:
         if result.code == 0 and not result.timed_out:
             return item
         if result.timed_out:
-            detail = (result.stderr if result.stderr == "probe lock timed out" else
-                      f"health check timed out after {service.health_timeout}s")
+            detail = (
+                result.stderr
+                if result.stderr == "probe lock timed out"
+                else f"health check timed out after {service.health_timeout}s"
+            )
         else:
             lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
             if not lines:
@@ -217,9 +233,13 @@ class ServiceRuntime:
     ) -> tuple[int, ServiceStatus | None]:
         states = ("stopped", "starting", "ready", "failed", "exited", "unhealthy")
         if (
-            not names or any(name not in self.cfg.services for name in names)
-            or until not in states or not math.isfinite(timeout) or timeout < 0
-            or not math.isfinite(interval) or interval < 1
+            not names
+            or any(name not in self.cfg.services for name in names)
+            or until not in states
+            or not math.isfinite(timeout)
+            or timeout < 0
+            or not math.isfinite(interval)
+            or interval < 1
         ):
             return 2, None
         deadline = self.proc.now() + timeout if timeout else None

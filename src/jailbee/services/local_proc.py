@@ -11,9 +11,9 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
-from typing import IO, cast
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, cast
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,9 @@ class ProbeCache:
             return {}
         if not isinstance(data, dict) or not isinstance(data.get("entries"), dict):
             return {}
-        return {k: v for k, v in data["entries"].items() if isinstance(k, str) and isinstance(v, dict)}
+        return {
+            k: v for k, v in data["entries"].items() if isinstance(k, str) and isinstance(v, dict)
+        }
 
     @staticmethod
     def _key(service: str, kind: str, launch_id: str) -> str:

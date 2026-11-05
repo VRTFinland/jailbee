@@ -90,7 +90,10 @@ def _report(report: RunReport) -> None:
 def wait(
     ctx: Context,
     names: Annotated[list[str] | None, typer.Argument()] = None,
-    until: Annotated[Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"], typer.Option("--until")] = "ready",
+    until: Annotated[
+        Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"],
+        typer.Option("--until"),
+    ] = "ready",
     timeout: Annotated[float, typer.Option("--timeout", min=0)] = 0,
     interval: Annotated[float, typer.Option("--interval", min=1)] = 10,
     json_output: Annotated[bool, typer.Option("--json")] = False,

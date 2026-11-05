@@ -6,7 +6,6 @@ import pytest
 from jailbee.services.local_proc import ProbeResult
 from jailbee.services.probe_cache import ProbeCache
 
-
 OK = ProbeResult(0, "ok", "", False)
 FAIL = ProbeResult(1, "", "bad", False)
 
@@ -39,7 +38,7 @@ def test_first_failure_survives_expiry_and_unrelated_prune(tmp_path):
     assert cache.first_failure("api", "health", "one") == 21
 
 
-@pytest.mark.parametrize("content", ["{", "[]", '{"entries": {"x": 1}}', '�'])
+@pytest.mark.parametrize("content", ["{", "[]", '{"entries": {"x": 1}}', "�"])
 def test_corrupt_cache_is_a_miss_and_can_be_replaced(tmp_path, content):
     path = tmp_path / "probes.json"
     path.write_text(content)
@@ -52,8 +51,10 @@ def test_corrupt_cache_is_a_miss_and_can_be_replaced(tmp_path, content):
 
 def test_concurrent_instances_do_not_lose_writes(tmp_path):
     path = tmp_path / "probes.json"
+
     def write(i):
         ProbeCache(path, now=lambda: 10.0).put(str(i), "health", "one", OK)
+
     with ThreadPoolExecutor(max_workers=16) as pool:
         list(pool.map(write, range(100)))
     cache = ProbeCache(path, now=lambda: 10.0)
