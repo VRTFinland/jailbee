@@ -57,9 +57,14 @@ app.add_typer(repo_app)
 @repo_app.command("ls")
 def repo_ls(fmt: Annotated[Literal["table", "json"], typer.Option("--format")] = "table") -> None:
     """List registered repositories and leftover resources."""
+    from jailbee.incus import IncusError
     from jailbee.repo_commands import list_command
 
-    list_command(fmt)
+    try:
+        list_command(fmt)
+    except (IncusError, ConfigError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
 
 
 @repo_app.command("rm")
@@ -71,10 +76,23 @@ def repo_rm(
     purge: Annotated[bool, typer.Option("--purge")] = False,
 ) -> None:
     """Remove a repository's managed resources."""
+    from jailbee.incus import IncusError
     from jailbee.repo_commands import remove_command
 
-    remove_command(target, yes=yes, dry_run=dry_run, force=force, purge=purge,
-                   running_agents=_running_agents, warn_before_destroy=_warn_before_destroy)
+    try:
+        remove_command(
+            target,
+            yes=yes,
+            dry_run=dry_run,
+            force=force,
+            purge=purge,
+            running_agents=_running_agents,
+            warn_before_destroy=_warn_before_destroy,
+        )
+    except (IncusError, ConfigError, OSError) as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+
 
 config_app = typer.Typer(
     name="config",
