@@ -4,6 +4,7 @@ import codecs
 import json
 import os
 import re
+import selectors
 import shlex
 import signal
 import subprocess
@@ -122,27 +123,56 @@ class LocalProc:
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
+        assert process.stdout is not None and process.stderr is not None
+        outputs = {process.stdout: bytearray(), process.stderr: bytearray()}
+        selector = selectors.DefaultSelector()
+        for stream in outputs:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout
+        timed_out = False
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = process.poll() is None or bool(selector.get_map())
+                    break
+                for key, _ in selector.select(remaining):
+                    stream = key.fileobj
+                    chunk = os.read(stream.fileno(), 8192)
+                    if not chunk:
+                        selector.unregister(stream)
+                        stream.close()
+                        continue
+                    output = outputs[stream]
+                    output.extend(chunk)
+                    if len(output) > _PROBE_OUTPUT_LIMIT:
+                        del output[: len(output) - _PROBE_OUTPUT_LIMIT]
+            if timed_out:
+                self.signal_group(process.pid, signal.SIGKILL)
+                process.kill()
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                self.signal_group(process.pid, signal.SIGKILL)
+                process.kill()
+                process.wait(timeout=0.1)
             return ProbeResult(
-                process.returncode,
-                stdout[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
-                stderr[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
-                False,
-            )
-        except subprocess.TimeoutExpired:
-            self.signal_group(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
-            return ProbeResult(
-                None,
-                stdout[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
-                stderr[:_PROBE_OUTPUT_LIMIT].decode("utf-8", errors="replace"),
-                True,
+                None if timed_out else process.returncode,
+                outputs[process.stdout].decode("utf-8", errors="replace"),
+                outputs[process.stderr].decode("utf-8", errors="replace"),
+                timed_out,
             )
         except BaseException:
             self.signal_group(process.pid, signal.SIGKILL)
+            process.kill()
             process.wait()
             raise
+        finally:
+            selector.close()
+            process.stdout.close()
+            process.stderr.close()
 
     def run_shell(
         self,

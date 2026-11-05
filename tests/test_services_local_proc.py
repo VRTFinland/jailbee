@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -42,30 +43,52 @@ def test_run_probe_captures_stdout_stderr_and_exit_code(tmp_path):
 
 def test_run_probe_caps_each_output_stream(tmp_path):
     result = LocalProc().run_probe(
-        "printf '%020000d' 0; printf '%020000d' 0 >&2",
+        "head -c 100000 /dev/zero | tr '\\0' x; head -c 100000 /dev/zero | tr '\\0' y >&2",
         cwd=str(tmp_path),
         env={},
         timeout=5,
     )
-    assert len(result.stdout) == 16 * 1024
-    assert len(result.stderr) == 16 * 1024
+    assert len(result.stdout.encode()) == 16 * 1024
+    assert len(result.stderr.encode()) == 16 * 1024
+    assert set(result.stdout) == {"x"}
+    assert set(result.stderr) == {"y"}
 
 
 def test_run_probe_timeout_kills_process_group(tmp_path):
-    marker = tmp_path / "child-finished"
     result = LocalProc().run_probe(
-        f"(sleep 2; touch {marker}) & printf started; sleep 10",
+        "printf out; printf err >&2; sleep 30",
         cwd=str(tmp_path),
         env={},
         timeout=0.1,
     )
     assert result.code is None
-    assert result.stdout == "started"
+    assert result.stdout == "out"
+    assert result.stderr == "err"
     assert result.timed_out
-    import time
 
-    time.sleep(2.1)
-    assert not marker.exists()
+
+def test_run_probe_timeout_does_not_wait_for_escaped_pipe_holder(tmp_path):
+    pidfile = tmp_path / "escaped.pid"
+    started = time.monotonic()
+    result = LocalProc().run_probe(
+        f"setsid sh -c 'echo $$ > {pidfile}; exec sleep 30' & sleep 0.1; sleep 30",
+        cwd=str(tmp_path),
+        env={},
+        timeout=0.2,
+    )
+    elapsed = time.monotonic() - started
+    try:
+        assert result.code is None
+        assert result.timed_out
+        assert elapsed < 1.0
+        assert len(result.stdout.encode()) <= 16 * 1024
+        assert len(result.stderr.encode()) <= 16 * 1024
+    finally:
+        if pidfile.exists():
+            try:
+                os.killpg(int(pidfile.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_interrupted_shell_kills_and_reaps_before_propagating(monkeypatch, tmp_path):
