@@ -18,12 +18,14 @@ class InboxGroup(TyperGroup):
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         if not args and not ctx.resilient_parsing:
             raise UsageError("Missing command.", ctx)
+        if args[:1] == ["help"]:
+            # The bash-era `jailbee inbox help` alias; keep it working.
+            args = ["--help", *args[1:]]
         return super().parse_args(ctx, args)
 
 
 HELP_SETTINGS = {"help_option_names": ["-h", "--help"]}
 inbox_app = typer.Typer(
-    no_args_is_help=True,
     cls=InboxGroup,
     context_settings=HELP_SETTINGS,
     help="Wait for, list, read and send orchestration messages.",
@@ -36,7 +38,6 @@ inbox_app = typer.Typer(
     ),
 )
 send_app = typer.Typer(
-    no_args_is_help=True,
     cls=InboxGroup,
     context_settings=HELP_SETTINGS,
     help=(
@@ -151,7 +152,10 @@ def wait(
     timeout: Annotated[
         str,
         typer.Option(
-            "--timeout", help="Seconds or <n>s|m|h; 0 checks once, none waits until interrupted."
+            "--timeout",
+            help=(
+                "Seconds or <n>s|m|h (default 30m); 0 checks once, none waits until interrupted."
+            ),
         ),
     ] = "30m",
     wake_on: Annotated[

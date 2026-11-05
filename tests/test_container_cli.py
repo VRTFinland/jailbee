@@ -307,3 +307,35 @@ def test_missing_mount(monkeypatch, tmp_path, capsys):
         container_main.main()
     assert exc.value.code == 88
     assert "run `jb apply` on the host" in capsys.readouterr().err
+
+
+def test_container_cli_inbox_end_to_end(monkeypatch, tmp_path):
+    """The mounted inbox tree runs the real commands, not a mock."""
+    from jailbee import container_cli
+
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+    app = container_cli.container_app
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["inbox"])
+    assert missing.exit_code == 2
+    assert "Missing command" in missing.output
+
+    for alias in (["inbox", "help"], ["inbox", "-h"], ["inbox", "--help"]):
+        shown = runner.invoke(app, alias)
+        assert shown.exit_code == 0, alias
+        assert "send" in shown.output and "wait" in shown.output
+
+    wait_help = runner.invoke(app, ["inbox", "wait", "--help"])
+    assert "default 30m" in " ".join(wait_help.output.split())
+
+    sent = runner.invoke(app, ["inbox", "send", "message", "--text", "hello"])
+    assert sent.exit_code == 0, sent.output
+    manifests = list((tmp_path / "outbox").glob("*.json"))
+    assert len(manifests) == 1
+    assert manifests[0].stem in sent.output
+
+    (tmp_path / "inbox").mkdir()
+    listed = runner.invoke(app, ["inbox", "ls"])
+    assert listed.exit_code == 0
+    assert listed.output == ""
