@@ -597,45 +597,6 @@ containers of the repo will still contend for the lock, and `claude
 --continue` in one container may pick a session running in the background in
 another.
 
-### Claude launchers and session resume
-
-The Claude preset's plain `claude` launcher and `claude-jb` (LiteLLM) are both
-available for interactive sessions. Define `agents.claude-jb` with
-`enabled: true`, `autostart: true`, `command: claude-jb` and
-`install_check: command -v claude-jb` to launch it in its own autostart window.
-This is separate from `litellm.autostart`, which swaps the ordinary Claude
-window to `claude-jb`.
-
-When an interactive Claude session is running in a managed autostart window,
-JailBee snapshots it during a normal `jailbee stop` or `jailbee restart` and
-resumes it with its own launcher, arguments and working directory. It does not
-restore shell environment, non-Claude processes, or background sessions.
-Resume requires the matching JailBee launcher marker; if it is missing or
-invalid, the next start falls back to the ordinary `claude` launcher.
-Set `autostart.resume_agent_sessions: false` to consume a saved snapshot
-without resuming it. Rebuild the golden image and create new containers to get
-the shutdown unit and updated `claude-jb`; existing containers do not receive
-these by `jailbee apply` alone. Host reboot and raw `incus stop` behavior have
-not been verified and are not covered by this guarantee.
-
-The plain `claude` launcher and `claude-jb` (LiteLLM) are both available for
-interactive sessions. `claude-jb` is selected for the Claude autostart window
-when `litellm.autostart` is enabled. To run it in its own agent window, define
-`agents.claude-jb` with `enabled: true`, `autostart: true`, `command:
-claude-jb` and `install_check: command -v claude-jb`.
-
-When an interactive Claude session is running in a managed autostart window,
-JailBee snapshots it during a normal `jailbee stop` or `jailbee restart` and
-resumes it with its own launcher, arguments and working directory. It does not
-restore shell environment, non-Claude processes, or background sessions.
-Resume requires the matching JailBee launcher marker; if it is missing or
-invalid, the next start falls back to the ordinary `claude` launcher.
-Set `autostart.resume_agent_sessions: false` to consume a saved snapshot
-without resuming it. Rebuild the golden image and create new containers to get
-the shutdown unit and updated `claude-jb`; existing containers do not receive
-these by `jailbee apply` alone. Host reboot and raw `incus stop` behavior have
-not been verified and are not covered by this guarantee.
-
 The per-container mounts land when a container starts, so after upgrading run
 `jailbee apply` and then restart each running container through jailbee
 (`jailbee restart`, or `jailbee stop` then `jailbee start`). A plain
@@ -648,6 +609,44 @@ still uses them — and can be deleted once every container of the repo has
 been restarted. The top-level `daemon.lock`, `daemon.status.json` and
 `daemon.log` can be deleted only when `agent_view` is `false` (or no daemon is
 running): with `agent_view: true` they are still live and shared.
+
+### Several Claude launchers
+
+The Claude preset's plain `claude` launcher and `claude-jb` (LiteLLM) are both
+available for interactive sessions. To run `claude-jb` in its own agent
+window, add this beside the Claude preset:
+
+```yaml
+agents:
+  claude-jb:
+    enabled: true
+    autostart: true
+    command: claude-jb
+    install_check: command -v claude-jb
+```
+
+This differs from `litellm.autostart`, which swaps the ordinary Claude
+autostart window to `claude-jb`.
+
+### Sessions resume after a restart
+
+On normal `jailbee stop` and `jailbee restart`, JailBee snapshots running
+interactive Claude sessions and resumes each in its own window with its
+launcher, flags and working directory. This also covers Claude sessions
+started outside the managed autostart window, including SSH sessions; shell
+environment, non-Claude processes and background sessions are not restored.
+
+A matching JailBee launcher marker preserves the original `claude-jb` flags.
+If that marker is missing or invalid, the session resumes with plain `claude`;
+plain `claude` sessions use the captured process command line and do not need a
+marker. Set `autostart.resume_agent_sessions: false` to consume the saved
+snapshot without resuming it. Rebuild the golden image and create new
+containers to install the shutdown unit and updated `claude-jb`; `jailbee
+apply` alone does not retrofit existing containers.
+
+Unit tests cover the stop/start integration; a real-container restart check
+remains unverified in this environment. Host reboot and raw `incus stop`
+behavior are also unverified and are not covered.
 
 ### Shared credential groups (`credentials`)
 

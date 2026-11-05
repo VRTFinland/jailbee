@@ -39,16 +39,20 @@ always pass them.
 
 ## Claude session resume
 
-Interactive Claude sessions in managed autostart windows are captured on a
-normal `jailbee stop` or `jailbee restart` and resume in their own window with
-the original launcher, options and working directory. This excludes shell
-environment, non-Claude processes and background sessions. Resume requires a
-matching `claude-jb` marker; otherwise startup uses plain `claude`. The
-`autostart.resume_agent_sessions` setting defaults to `true`; setting it to
-`false` consumes a saved snapshot without resuming. Rebuild the golden image
-and create new containers to install the shutdown unit and updated launcher;
-`jailbee apply` alone does not retrofit existing containers. Host reboot and
-raw `incus stop` behavior are unverified.
+On normal `jailbee stop` and `jailbee restart`, interactive Claude sessions
+resume in their own window with the original launcher, options and working
+directory. This includes sessions started outside the managed autostart
+window, including SSH sessions; shell environment, non-Claude processes and
+background sessions are not restored. A matching JailBee launcher marker
+preserves the original `claude-jb` flags; without a valid marker, resume uses
+plain `claude`. Plain `claude` sessions use their captured process command line
+and do not need a marker. The `autostart.resume_agent_sessions` setting defaults
+to `true`; setting it to `false` consumes a saved snapshot without resuming.
+Rebuild the golden image and create new containers to install the shutdown
+unit and updated launcher; `jailbee apply` alone does not retrofit existing
+containers. Unit tests cover the stop/start integration; a real-container
+restart check remains unverified in this environment. Host reboot and raw
+`incus stop` behavior are unverified and are not covered.
 
 ## Repository services
 
