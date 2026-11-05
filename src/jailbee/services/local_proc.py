@@ -223,7 +223,7 @@ class LocalProc:
         except ProcessLookupError:
             pass
 
-    def service_command(self, command: str, identity: Path) -> str:
+    def service_command(self, command: str, identity: Path, args: Sequence[str] = ()) -> str:
         python = shlex.quote(sys.executable)
         anchor = shlex.quote(_ANCHOR)
         path = shlex.quote(str(identity))
@@ -233,7 +233,7 @@ class LocalProc:
             f"{python} -c {anchor} {path} & anchor=$!; "
             f"while [ ! -f {path} ]; do "
             'kill -0 "$anchor" 2>/dev/null || exit 125; sleep 0.01; done; '
-            f'bash -lc {run}; status=$?; exit "$status"'
+            f'bash -lc {run} _ {shlex.join(args)}; status=$?; exit "$status"'
         )
 
     def signal_identity(self, identity: Path, sig: int) -> bool:

@@ -14,6 +14,14 @@ class Launch:
     env: Mapping[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class LaunchRequest:
+    args: tuple[str, ...] | None
+    env: Mapping[str, str]
+    persist: bool
+    reset: bool
+
+
 class LaunchStore:
     def __init__(self, path: Path) -> None:
         self.path = path

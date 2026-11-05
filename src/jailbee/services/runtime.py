@@ -5,6 +5,8 @@ import hashlib
 import json
 import math
 import os
+import re
+import shlex
 import signal
 import tempfile
 import time
@@ -19,6 +21,7 @@ from typing import Literal
 from jailbee.config import Config
 from jailbee.config.models_services import Service
 from jailbee.services.graph import restart_set, topo_order, with_dependencies
+from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore, resolve_launch
 from jailbee.services.local_proc import LocalProc, ProbeResult
 from jailbee.services.probe_cache import ProbeCache
 from jailbee.tmux import SESSION_NAME
@@ -65,6 +68,7 @@ class ServiceRuntime:
         self.repo_dir = repo_dir
         self.proc = proc
         self.state_dir = state_dir
+        self.launch_store = LaunchStore(state_dir / "launch.json")
 
     @contextmanager
     def locked(self) -> Iterator[None]:
@@ -133,7 +137,22 @@ class ServiceRuntime:
         return ServiceStatus(name, state, window, saved.get("since"), saved.get("detail", ""))
 
     def launch_env(self, name: str) -> dict[str, str]:
-        return dict(self.cfg.services[name].env)
+        current = self.launch_store.current(name)
+        launch = current[0] if current else Launch()
+        env = {**self.cfg.services[name].env, **launch.env}
+        if launch.args:
+            env["JAILBEE_SERVICE_ARGS"] = shlex.join(launch.args)
+        return env
+
+    def redact(self, name: str, text: str) -> str:
+        current = self.launch_store.current(name)
+        values = list(self.launch_store.persisted(name).env.values())
+        if current:
+            values.extend(current[0].env.values())
+        for value in sorted(set(values), key=len, reverse=True):
+            if len(value) >= 4:
+                text = text.replace(value, "***")
+        return text
 
     def probe(
         self,
@@ -177,6 +196,7 @@ class ServiceRuntime:
                 if not fresh:
                     cached = cache.get(name, kind, launch_id)
                     if cached is not None:
+                        cached = replace(cached, stdout=self.redact(name, cached.stdout), stderr=self.redact(name, cached.stderr))
                         return cached, cache.first_failure(name, kind, launch_id)
                 service = self.cfg.services[name]
                 try:
@@ -188,6 +208,7 @@ class ServiceRuntime:
                     )
                 except OSError as exc:
                     result = ProbeResult(None, "", str(exc)[-16384:], False)
+                result = replace(result, stdout=self.redact(name, result.stdout), stderr=self.redact(name, result.stderr))
                 cache.put(name, kind, launch_id, result)
                 return result, cache.first_failure(name, kind, launch_id)
             finally:
@@ -218,15 +239,36 @@ class ServiceRuntime:
             if lines:
                 detail += ": " + lines[-1][:200]
         since = datetime.fromtimestamp(first, UTC).isoformat() if first is not None else item.since
-        return replace(item, state="unhealthy", since=since, detail=detail)
+        return replace(item, state="unhealthy", since=since, detail=compose_detail(detail, None, item.detail) if item.launch else detail)
 
     def status(self, *, probe: bool = True, fresh: bool = False) -> list[ServiceStatus]:
         panes, states = self._panes(), self._state()
-        items = [self._lifecycle(name, panes, states) for name in self.cfg.services]
+        items = [self._with_launch(self._lifecycle(name, panes, states)) for name in self.cfg.services]
         if not probe:
             return items
         with ThreadPoolExecutor(max_workers=8) as pool:
             return list(pool.map(lambda item: self._health(item, fresh=fresh), items))
+
+    def _with_launch(self, item: ServiceStatus) -> ServiceStatus:
+        if item.window is None or item.state == "exited":
+            return item
+        current = self.launch_store.current(item.name)
+        persisted = self.launch_store.persisted(item.name)
+        launch, is_persisted = current if current else (Launch(), False)
+        if not (launch.args or launch.env or persisted.args or persisted.env):
+            return item
+        metadata: dict[str, object] = {
+            "args": list(launch.args), "env_keys": sorted(launch.env),
+            "persisted_args": list(persisted.args), "persisted_env_keys": sorted(persisted.env),
+        }
+        parts = []
+        if launch.args:
+            parts.append(f"args: {shlex.join(launch.args)} ({'persisted' if is_persisted else 'one-off'})")
+        if launch.env:
+            parts.append("env: " + ",".join(sorted(launch.env)))
+        if persisted.args and persisted.args != launch.args:
+            parts.append("persisted args: " + shlex.join(persisted.args))
+        return replace(item, launch=metadata, detail=self.redact(item.name, compose_detail(item.detail, None, "; ".join(parts))))
 
     def wait(
         self, names: Sequence[str], until: str, *, timeout: float, interval: float
@@ -280,11 +322,11 @@ class ServiceRuntime:
         topo_order(self.cfg.services, [name])
         yield from self.proc.follow_pane(self._target(name), lines)
 
-    def _shell(self, service: Service, command: str, timeout: float, *, capture: bool) -> int:
+    def _shell(self, name: str, service: Service, command: str, timeout: float, *, capture: bool) -> int:
         return self.proc.run_shell(
             command,
             cwd=str(self.repo_dir / service.working_dir),
-            env=service.env,
+            env=self.launch_env(name),
             timeout=timeout,
             capture=capture,
         )
@@ -297,19 +339,20 @@ class ServiceRuntime:
         self.proc.signal_identity(path, signal.SIGKILL)
         path.unlink(missing_ok=True)
 
-    def _start_one(self, name: str) -> bool:
+    def _start_one(self, name: str, effective: Launch, args_persisted: bool) -> bool:
         service = self.cfg.services[name]
         target = self._target(name)
         existing = self._panes().get(WINDOW_PREFIX + name)
         if existing is not None:
             self.proc.tmux(["kill-window", "-t", target])
         self._cleanup_group(name)
+        self.launch_store.set_current(name, effective, args_persisted)
         if self.proc.tmux(["has-session", "-t", SESSION_NAME]).returncode:
             result = self.proc.tmux(
                 ["new-session", "-d", "-s", SESSION_NAME, "-x", "200", "-y", "50"]
             )
             if result.returncode:
-                self._save(name, "failed", result.stderr)
+                self._save(name, "failed", self.redact(name, result.stderr))
                 return False
         self._save(name, "starting")
         args = [
@@ -322,28 +365,28 @@ class ServiceRuntime:
             "-c",
             str(self.repo_dir / service.working_dir),
         ]
-        for key, value in service.env.items():
+        for key, value in self.launch_env(name).items():
             args.extend(["-e", f"{key}={value}"])
         # Keep the initial pane alive until its window-local option is set.
         args.extend(["sleep", "infinity"])
         created = self.proc.tmux(args)
         if created.returncode:
-            self._save(name, "failed", created.stderr)
+            self._save(name, "failed", self.redact(name, created.stderr))
             return False
         configured = self.proc.tmux(["set-option", "-w", "-t", target, "remain-on-exit", "on"])
         if configured.returncode:
             self.proc.tmux(["kill-window", "-t", target])
-            self._save(name, "failed", configured.stderr)
+            self._save(name, "failed", self.redact(name, configured.stderr))
             return False
         respawn = ["respawn-pane", "-k", "-t", target]
-        for key, value in service.env.items():
+        for key, value in self.launch_env(name).items():
             respawn.extend(["-e", f"{key}={value}"])
         respawn.extend(
-            ["bash", "-lc", self.proc.service_command(service.run, self._identity(name))]
+            ["bash", "-lc", self.proc.service_command(service.run, self._identity(name), effective.args)]
         )
         spawned = self.proc.tmux(respawn)
         if spawned.returncode:
-            self._save(name, "failed", spawned.stderr)
+            self._save(name, "failed", self.redact(name, spawned.stderr))
             return False
         deadline = self.proc.now() + (service.ready_timeout if service.ready else READY_GRACE_S)
         while True:
@@ -360,7 +403,7 @@ class ServiceRuntime:
                 if remaining <= 0:
                     self._save(name, "failed", f"not ready after {service.ready_timeout}s")
                     return False
-                if self._shell(service, service.ready, remaining, capture=True) == 0:
+                if self._shell(name, service, service.ready, remaining, capture=True) == 0:
                     pane = self._panes().get(WINDOW_PREFIX + name)
                     if pane is not None and not pane.dead and self.proc.now() <= deadline:
                         self._save(name, "ready")
@@ -370,25 +413,48 @@ class ServiceRuntime:
             if remaining > 0:
                 self.proc.sleep(min(READY_POLL_S, remaining))
 
-    def _start_unlocked(self, names: Sequence[str]) -> RunReport:
+    def _validate_launch(self, names: Sequence[str], launch: LaunchRequest | None) -> None:
+        topo_order(self.cfg.services, names)
+        if launch is None:
+            return
+        if len(names) != 1:
+            raise ValueError("runtime options apply to exactly one service")
+        if launch.args is not None and not self.cfg.services[names[0]].args:
+            raise ValueError(f"positional arguments require services.{names[0]}.args")
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) for key in launch.env):
+            raise ValueError("invalid runtime environment key")
+
+    def _start_unlocked(self, names: Sequence[str], *, target: str | None = None,
+                        resolved: tuple[Launch, bool] | None = None) -> RunReport:
         services = self.cfg.services
         order = topo_order(services, with_dependencies(services, names))
         done: list[str] = []
         for name in order:
             item = self._lifecycle(name, self._panes(), self._state())
-            if item.state == "ready" and self._health(item, fresh=True).state == "ready":
+            if item.state == "ready" and name != target:
                 continue
-            if not self._start_one(name):
+            effective, persisted = resolved if name == target and resolved is not None else (self.launch_store.persisted(name), True)
+            if not self._start_one(name, effective, persisted):
                 try:
                     tail = self.logs(name, 30)
                 except RuntimeError as exc:
                     tail = f"failed to capture service logs: {exc}"
-                return RunReport(False, tuple(done), name, tail)
+                return RunReport(False, tuple(done), name, self.redact(name, tail))
             done.append(name)
         return RunReport(True, tuple(done), None, "")
 
-    def start(self, names: Sequence[str]) -> RunReport:
+    def _resolve_request(self, name: str, request: LaunchRequest) -> tuple[Launch, bool]:
+        persisted, effective, flag = resolve_launch(self.launch_store.persisted(name), args=request.args,
+            env=request.env, persist=request.persist, reset=request.reset)
+        if request.persist or request.reset:
+            self.launch_store.set_persisted(name, persisted)
+        return effective, flag
+
+    def start(self, names: Sequence[str], *, launch: LaunchRequest | None = None) -> RunReport:
+        self._validate_launch(names, launch)
         with self.locked():
+            if launch is not None:
+                return self._restart_unlocked(names, launch=launch)
             return self._start_unlocked(names)
 
     def _stop_unlocked(self, names: Sequence[str]) -> RunReport:
@@ -398,11 +464,12 @@ class ServiceRuntime:
             pane = self._panes().get(WINDOW_PREFIX + name)
             if pane is None:
                 self._cleanup_group(name)
+                self.launch_store.clear_current(name)
                 continue
             service = self.cfg.services[name]
             if not pane.dead:
                 if service.stop:
-                    self._shell(service, service.stop, service.stop_timeout, capture=False)
+                    self._shell(name, service, service.stop, service.stop_timeout, capture=False)
                 else:
                     self.proc.signal_identity(self._identity(name), signal.SIGINT)
                 deadline = self.proc.now() + service.stop_timeout
@@ -416,6 +483,7 @@ class ServiceRuntime:
                     self.proc.sleep(min(READY_POLL_S, remaining))
             self.proc.tmux(["kill-window", "-t", self._target(name)])
             self._cleanup_group(name)
+            self.launch_store.clear_current(name)
             self._save(name, "stopped")
             done.append(name)
         return RunReport(True, tuple(done), None, "")
@@ -424,12 +492,14 @@ class ServiceRuntime:
         with self.locked():
             return self._stop_unlocked(names)
 
-    def _restart_unlocked(self, names: Sequence[str]) -> RunReport:
+    def _restart_unlocked(self, names: Sequence[str], *, launch: LaunchRequest | None = None) -> RunReport:
         selected = restart_set(self.cfg.services, names)
         order = topo_order(self.cfg.services, selected)
+        resolved = self._resolve_request(names[0], launch) if launch is not None else None
         self._stop_unlocked(order)
-        return self._start_unlocked(order)
+        return self._start_unlocked(order, target=names[0] if launch is not None else None, resolved=resolved)
 
-    def restart(self, names: Sequence[str]) -> RunReport:
+    def restart(self, names: Sequence[str], *, launch: LaunchRequest | None = None) -> RunReport:
+        self._validate_launch(names, launch)
         with self.locked():
-            return self._restart_unlocked(names)
+            return self._restart_unlocked(names, launch=launch)
