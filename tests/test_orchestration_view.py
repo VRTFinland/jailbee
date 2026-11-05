@@ -28,6 +28,26 @@ def test_parse_grant_view_reads_all_fields():
     )
 
 
+def test_parse_grant_view_without_publish_has_no_publish_rights():
+    v = parse_grant_view(GRANT)
+    assert v is not None
+    assert (v.publish_issues, v.publish_foreign_repos, v.publish_foreign_actions) == ((), (), ())
+    assert (v.publish_prs, v.publish_pr_reviews, v.publish_rate) == (False, False, 30)
+
+
+def test_parse_grant_view_reads_publish_rights():
+    raw = GRANT[:-1] + (
+        ',"publish":{"issues":["state","comment"],'
+        '"foreign_issues":{"repos":["Org/Lib"],"actions":["comment"]},'
+        '"pull_requests":true,"pr_reviews":true,"max_actions_per_hour":12}}'
+    )
+    v = parse_grant_view(raw)
+    assert v is not None
+    assert v.publish_issues == ("comment", "state")
+    assert (v.publish_foreign_repos, v.publish_foreign_actions) == (("org/lib",), ("comment",))
+    assert (v.publish_prs, v.publish_pr_reviews, v.publish_rate) == (True, True, 12)
+
+
 @pytest.mark.parametrize("raw", [None, "", "{", "[]", '{"version": 2}', 42])
 def test_parse_grant_view_corrupt_is_none(raw):
     assert parse_grant_view(raw) is None

@@ -35,6 +35,13 @@ class GrantView:
     loose: bool
     egress: tuple[str, ...]
     default_runner: str | None = None
+    # publish rights (`PublishRights`), flattened; the defaults are "none granted"
+    publish_issues: tuple[str, ...] = ()
+    publish_foreign_repos: tuple[str, ...] = ()
+    publish_foreign_actions: tuple[str, ...] = ()
+    publish_prs: bool = False
+    publish_pr_reviews: bool = False
+    publish_rate: int = 30
 
 
 @dataclass(frozen=True)
@@ -64,6 +71,12 @@ def parse_grant_view(raw: object) -> GrantView | None:
         g.grantable.loose,
         g.grantable.egress,
         g.default_runner.describe() if g.default_runner else None,
+        publish_issues=tuple(g.publish.issues),
+        publish_foreign_repos=g.publish.foreign_issues.repos,
+        publish_foreign_actions=tuple(g.publish.foreign_issues.actions),
+        publish_prs=g.publish.pull_requests,
+        publish_pr_reviews=g.publish.pr_reviews,
+        publish_rate=g.publish.max_actions_per_hour,
     )
 
 
