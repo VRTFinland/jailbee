@@ -89,6 +89,37 @@ def _lines(out: str) -> list[str]:
     return out.splitlines()
 
 
+def test_claude_jb_writes_launcher_file(script, env):
+    fake = Path(env["PATH"].split(":", 1)[0]) / "claude"
+    fake.write_text("#!/bin/bash\nprintf 'PID:%s\\n' \"$$\"\n")
+    fake.chmod(0o755)
+
+    r = _run(script, env, "-P", "codex", "--model", "opus")
+
+    assert r.returncode == 0, r.stderr
+    pid = next(line.removeprefix("PID:") for line in r.stdout.splitlines() if line.startswith("PID:"))
+    launcher_dir = Path(env["HOME"]) / ".local/state/jailbee/launchers"
+    [launcher] = list(launcher_dir.iterdir())
+    assert launcher.name == pid
+    fields = launcher.read_bytes().split(b"\0")[:-1]
+    assert len(fields) == 6
+    assert fields[0].isdigit()
+    assert fields[1:] == [b"claude-jb", b"-P", b"codex", b"--model", b"opus"]
+
+
+def test_claude_jb_launcher_file_failure_does_not_block(script, env, tmp_path):
+    launchers = Path(env["HOME"]) / ".local/state/jailbee/launchers"
+    launchers.parent.mkdir(parents=True)
+    launchers.write_text("not a directory")
+    fake = Path(env["PATH"].split(":", 1)[0]) / "claude"
+    fake.write_text("#!/bin/bash\nexit 0\n")
+    fake.chmod(0o755)
+
+    r = _run(script, env, "-P", "codex")
+
+    assert r.returncode == 0, r.stderr
+
+
 def test_default_profile_env(script, env):
     r = _run(script, env, "-p", "hi")
     assert r.returncode == 0, r.stderr

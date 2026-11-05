@@ -322,6 +322,7 @@ cat > /usr/local/bin/claude-jb <<'EOF'
 set -euo pipefail
 config="${JAILBEE_LITELLM_CONFIG:-/etc/jailbee/litellm.json}"
 die() { printf 'claude-jb: %s\n' "$1" >&2; exit 2; }
+orig=("$@")
 
 profile="${JAILBEE_LITELLM_PROFILE:-}"
 args=()          # what the user passed, minus --profile
@@ -475,6 +476,22 @@ if [ "${JAILBEE_LITELLM_SKIP_REACHABILITY:-}" != "1" ]; then
     timeout 3 bash -c 'exec 3<>/dev/tcp/$1/$2' _ "$host" "$port" 2>/dev/null \
         || die "proxy $host:$port is unreachable; on the host run \`jailbee litellm up\` and \`jailbee apply\`."
 fi
+# Best-effort launcher metadata lets session resume recover the original CLI
+# invocation without changing the arguments that Claude Code receives.
+{
+    umask 077
+    launcher_dir="$HOME/.local/state/jailbee/launchers"
+    mkdir -p "$launcher_dir" || true
+    stat_text="$(cat "/proc/$$/stat" 2>/dev/null)" || true
+    proc_start="${stat_text##*) }"
+    proc_start="$(awk '{print $20}' <<< "$proc_start" 2>/dev/null)" || true
+    if [ -n "$proc_start" ]; then
+        launcher_tmp="$launcher_dir/.$$.$RANDOM.tmp"
+        if { printf '%s\0' "$proc_start" "claude-jb" "${orig[@]}" > "$launcher_tmp"; } 2>/dev/null; then
+            mv -f -- "$launcher_tmp" "$launcher_dir/$$" 2>/dev/null || rm -f -- "$launcher_tmp" 2>/dev/null || true
+        fi
+    fi
+} || true
 exec claude "${args[@]}"
 EOF
 chmod 0755 /usr/local/bin/claude-jb
