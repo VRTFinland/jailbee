@@ -53,10 +53,10 @@ def test_corrupt_cache_is_a_miss_and_can_be_replaced(tmp_path, content):
 def test_concurrent_instances_do_not_lose_writes(tmp_path):
     path = tmp_path / "probes.json"
     def write(i):
-        ProbeCache(path).put(str(i), "health", "one", OK)
+        ProbeCache(path, now=lambda: 10.0).put(str(i), "health", "one", OK)
     with ThreadPoolExecutor(max_workers=16) as pool:
         list(pool.map(write, range(100)))
-    cache = ProbeCache(path)
+    cache = ProbeCache(path, now=lambda: 10.0)
     assert all(cache.get(str(i), "health", "one") == OK for i in range(100))
     json.loads(path.read_text())
 
@@ -74,6 +74,19 @@ def test_malformed_fields_are_misses(tmp_path):
         assert cache.get("api", "health", "one") is None
         assert cache.first_failure("api", "health", "one") is None
         cache.put("other", "health", "one", OK)
+
+
+def test_future_timestamps_are_rejected_and_not_preserved(tmp_path):
+    clock = [20.0]
+    path = tmp_path / "probes.json"
+    cache = ProbeCache(path, now=lambda: clock[0])
+    cache.put("api", "health", "one", FAIL)
+    clock[0] = 10.0
+    assert cache.get("api", "health", "one") is None
+    assert cache.first_failure("api", "health", "one") is None
+    cache.put("other", "health", "one", OK)
+    cache.put("api", "health", "one", FAIL)
+    assert cache.first_failure("api", "health", "one") == 10.0
 
 
 def test_timeout_counts_as_failure(tmp_path):

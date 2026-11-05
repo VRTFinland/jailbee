@@ -42,6 +42,10 @@ class ProbeCache:
         except OverflowError:
             return False
 
+    @classmethod
+    def _not_future(cls, value: object, now: float) -> bool:
+        return cls._number(value) and float(value) <= now  # type: ignore[arg-type]  # validated above
+
     def get(self, service: str, kind: str, launch_id: str) -> ProbeResult | None:
         entry = self._read().get(self._key(service, kind, launch_id), {})
         timestamp = entry.get("timestamp")
@@ -49,9 +53,10 @@ class ProbeCache:
         stdout = entry.get("stdout")
         stderr = entry.get("stderr")
         timed_out = entry.get("timed_out")
+        now = self.now()
         if (
-            not self._number(timestamp)
-            or self.now() - float(timestamp) >= self.ttl  # type: ignore[arg-type]  # validated above
+            not self._not_future(timestamp, now)
+            or now - float(timestamp) >= self.ttl  # type: ignore[arg-type]  # validated above
             or not (code is None or type(code) is int)
             or not isinstance(stdout, str)
             or not isinstance(stderr, str)
@@ -62,7 +67,7 @@ class ProbeCache:
 
     def first_failure(self, service: str, kind: str, launch_id: str) -> float | None:
         value = self._read().get(self._key(service, kind, launch_id), {}).get("first_failed_at")
-        return float(value) if self._number(value) else None  # type: ignore[arg-type]  # validated above
+        return float(value) if self._not_future(value, self.now()) else None  # type: ignore[arg-type]  # validated above
 
     def put(self, service: str, kind: str, launch_id: str, result: ProbeResult) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,9 +79,9 @@ class ProbeCache:
                 entries = self._read()
                 for key, entry in list(entries.items()):
                     timestamp = entry.get("timestamp")
-                    if not self._number(timestamp) or now - float(timestamp) >= self.ttl:  # type: ignore[arg-type]  # validated above
+                    if not self._not_future(timestamp, now) or now - float(timestamp) >= self.ttl:  # type: ignore[arg-type]  # validated above
                         failure = entry.get("first_failed_at")
-                        if self._number(failure):
+                        if self._not_future(failure, now):
                             entries[key] = {"first_failed_at": failure}
                         else:
                             del entries[key]
@@ -84,7 +89,7 @@ class ProbeCache:
                 previous = entries.get(key, {}).get("first_failed_at")
                 failure = None
                 if result.code != 0 or result.timed_out:
-                    failure = previous if self._number(previous) else now
+                    failure = previous if self._not_future(previous, now) else now
                 entries[key] = {
                     "timestamp": now,
                     "code": result.code,
