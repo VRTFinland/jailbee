@@ -90,6 +90,20 @@ def test_capture_skips_dead_pid_and_foreign_tmux_session(tmp_path: Path) -> None
     assert sessions(home)[0]["window"] is None
 
 
+def test_capture_maps_window_through_grouped_attach_session(tmp_path: Path) -> None:
+    """Claude records the session of the client it ran under; an attached
+    client sits in a grouped session (`autostart-3`) sharing autostart's window ids.
+    Losing the window here made a restart resume into a new window *and*
+    start the autostart agent empty beside it."""
+    home, proc = tmp_path / "home", tmp_path / "proc"
+    record(home, 1, tmux="autostart-3:@8.%8")
+    record(home, 2, tmux="autostart-x:@8.%8", sessionId=ID.replace("0", "1", 1))
+    live(proc, 1)
+    live(proc, 2)
+    assert snapshot.capture(home, proc=proc, windows={"@8": "claude"}) == 2
+    assert [s["window"] for s in sessions(home)] == ["claude", None]
+
+
 def test_capture_with_no_sessions_keeps_existing_snapshot(tmp_path: Path) -> None:
     path = tmp_path / snapshot.SNAPSHOT_RELPATH
     path.parent.mkdir(parents=True)

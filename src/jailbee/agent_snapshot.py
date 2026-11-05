@@ -146,7 +146,13 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         if _start(proc, pid) != start:
             continue
         tmux = data.get("tmux")
-        match = re.fullmatch(r"autostart:(@\d+)\.%\d+", tmux) if isinstance(tmux, str) else None
+        # An attached client runs in a session grouped with autostart, which
+        # tmux names `autostart-<n>`; window ids are shared across the group.
+        match = (
+            re.fullmatch(r"autostart(?:-\d+)?:(@\d+)\.%\d+", tmux)
+            if isinstance(tmux, str)
+            else None
+        )
         window = windows.get(match[1]) if match else None
         sessions.append(
             _item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window)
