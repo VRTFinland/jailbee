@@ -67,6 +67,28 @@ Services menu appears only for running containers in repos with configured
 services; it uses gathered service choices without reading configuration in the
 frontend.
 
+### Status and log queries
+
+`service ls` can run the optional read-only `status` probe and reports its
+result, timeout, or error without changing lifecycle state. `service logs`
+reads tmux scrollback, not durable logs. Options: repeat `--grep PATTERN` and
+`--filter NAME` (union of matches); `-n N` (default 30, last N matches across
+all retained history before context); `-B N`, `-A N`, or `-C N` for context.
+Ranges merge when overlapping or adjacent; separated ranges use `--`. Filters
+are per-service definitions in `services.<name>.logs.filters`.
+
+`--wait PATTERN` reads new complete lines and accepts context options, but
+excludes grep, filter, and follow. Its boundary is successful attachment to the
+tmux control output stream, not command invocation; a short setup gap before
+attachment may be missed. Start it in the background before a one-shot action;
+background launch alone does not guarantee attachment. If the action already
+ran, use `--grep PATTERN -n 5 -A 40` instead. Context before a hit may omit a
+short setup gap. It stops after two seconds of silence. `--timeout` is valid
+only with wait, defaults to 300 seconds, and `0` means unlimited. Exit codes:
+0 match, 1 timeout, 2 invalid input, 3 pane unusable before a buffered hit.
+`logs.history_limit` configures tmux scrollback for subsequently created
+windows, not existing panes, and is not durable logging.
+
 ### Health and waiting
 
 `jailbee service wait api --until unhealthy` watches for unhealthy, stopped,

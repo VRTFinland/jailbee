@@ -45,10 +45,26 @@ PREAMBLE = "\n".join(
         "and --version;",
         "host management commands must be run by the operator on the host.",
         "From the repository directory, inspect services with jailbee service ls "
-        "and jailbee service logs <service>.",
-        "Start a service with jailbee service start <service>.",
-        "## Health and waiting",
-        "Before long tests or service-dependent work, check service ls or run "
+        "and jailbee service logs <service>; start one with jailbee service "
+        "start <service>.",
+        "## Status and log queries. service ls status probes are read-only "
+        "and report errors or timeouts without changing lifecycle state. "
+        "service logs reads retained tmux scrollback, not durable logs; repeat "
+        "--grep PATTERN or --filter NAME for their union, with -n N selecting "
+        "the last N matches (30 by default) before -B/-A/-C context expands.",
+        "For a one-shot line, start jailbee service logs <service> --wait "
+        "'<pattern>' -A 40 --timeout 120 in the background before triggering "
+        "the action. The boundary is successful attachment to the tmux control "
+        "output stream, not command invocation; setup output before attachment "
+        "may be missed, and background launch alone does not guarantee "
+        "attachment. Context before a hit may omit a short setup gap. If the "
+        "action already ran, use --grep '<pattern>' -n 5 -A 40 instead. For "
+        "errors, use --filter errors -n 20 -A 30 when defined. Wait excludes "
+        "grep/filter/follow; timeout defaults to 300 seconds (0 unlimited), "
+        "with exit codes 0 match, 1 timeout, 2 invalid input, 3 unusable pane. "
+        "The history limit affects later windows only; it is not durable.",
+        "## Health and waiting. Before long tests or service-dependent work, "
+        "check service ls or run "
         "jailbee service wait <service> --until unhealthy in the background.",
         "On connection refused, a blank UI, or HTTP 500, check service ls and logs first; "
         "fix the environment and restart the service, not app code to mask a dead service. "

@@ -30,6 +30,33 @@ jailbee service stop api
 
 `start` also starts required dependencies. `refresh` runs configured preparation steps and restarts the selected service; if preparation needs elevated network or mounts, it refuses and tells you how to ask the orchestrator or host. Service output comes from `svc-<name>` windows in the autostart tmux session. For another repository use `jailbee service --repo <path> ls`; `ls` and `plan` support `--json`.
 
+### Status and log queries
+
+`service ls` may run the configured read-only `status` probe; its output or a
+failure/timeout is reported without changing lifecycle state. `service logs`
+reads retained tmux scrollback, not durable logs. Use repeatable `--grep` regexes
+or named `--filter` entries; multiple patterns form a union. `-n` selects the
+last N matching lines (default 30), before context expansion; `-B`, `-A`, and
+`-C` add context, merging overlapping ranges and separating gaps with `--`.
+
+For a one-shot line, start the wait command in the background before triggering
+the action:
+
+```bash
+jailbee service logs api --wait 'ready' -A 40 --timeout 120
+```
+
+The wait boundary is successful attachment to the tmux control output stream,
+not command invocation; short setup output before attachment may be missed, and
+background launch alone does not guarantee attachment. Context before a match
+may also omit a short setup gap. If the action already ran, query retained
+history instead: `jailbee service logs api --grep 'ready' -n 5 -A 40`. For
+errors, use `jailbee service logs api --filter errors -n 20 -A 30` when the repo
+defines that filter. Wait excludes `--grep`, `--filter`, and `--follow`; timeout
+defaults to 300 seconds (`0` is unlimited). Exit codes: 0 match, 1 timeout, 2
+invalid input, 3 unusable pane. See service config for named filters and the
+session-wide scrollback limit.
+
 The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Other JailBee management commands run on the host, not here.
 
 ### Health and waiting

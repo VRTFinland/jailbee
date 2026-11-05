@@ -75,6 +75,33 @@ If the repo has none of these and is just docs/scripts, the defaulted config is 
 
 ## Common edits per stack
 
+### Service status and log filters
+
+Use `status` for an optional read-only command that summarizes a service in
+`jailbee service ls`; set `status_timeout` only when the probe needs more than
+the 5-second default. It reports errors/timeouts without changing lifecycle
+state. Define named regex filters under `services.<name>.logs.filters` when a
+repo has recurring log queries. Keep names lowercase, starting with a letter
+and containing only lowercase letters, digits, `_` or `-`; for example:
+
+```yaml
+services:
+  api:
+    run: ./run-api
+    status: "curl -fsS http://localhost:8080/status"
+    logs:
+      filters:
+        errors: "error|failed|exception"
+      history_limit: 50000
+```
+
+Filters are regular expressions validated at config load and selected with
+`jailbee service logs api --filter errors`. `history_limit` controls tmux
+scrollback for windows created later, including future autostart windows; it
+does not resize current panes or create durable logs. See the
+[service configuration schema](references/config-schema.md#services) and
+[log-query options](../jailbee-usage/references/commands.md#status-and-log-queries).
+
 ### `container_prefix` — required for non-conforming dir names
 
 `jailbee` defaults this to the repo directory name. It must match `[a-z0-9][a-z0-9-]*`. If the dir is `MyRepo`, `my_repo`, or `repo.thing`, set it explicitly:
