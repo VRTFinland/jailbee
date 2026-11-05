@@ -164,7 +164,7 @@ def read(
     ident: Annotated[str | None, typer.Argument(help="Unread message id.")] = None,
     keep: Annotated[bool, typer.Option("--keep", help="Leave the message unread in place.")] = False,
 ) -> None:
-    if ident is None:
+    if not ident:
         raise UsageError("read needs a message id")
     _run(lambda settings: cli.cmd_read(settings, ident, keep=keep))
 

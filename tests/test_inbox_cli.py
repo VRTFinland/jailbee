@@ -1838,6 +1838,12 @@ def test_send_restart_resume_rejects_garbage(script, base, tmp_path):
     assert not (base / "outbox").exists()
 
 
+def test_read_empty_id_is_usage_error(script, base, tmp_path):
+    result = run(script, "read", "", env=env_for(base, tmp_path))
+    assert result.returncode == 2
+    assert "read needs a message id" in result.stderr
+
+
 def test_send_spawn_help_has_only_spawn_options(script, base, tmp_path):
     result = run(script, "send", "spawn", "--help", env=env_for(base, tmp_path))
     assert result.returncode == 0
