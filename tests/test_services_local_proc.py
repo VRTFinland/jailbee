@@ -65,6 +65,19 @@ def test_follow_poll_ticks_during_continuous_unrelated_buffered_output(follow_co
     stream.close()
 
 
+def test_follow_poll_slow_tick_consumer_does_not_starve_output(follow_control, monkeypatch):
+    proc, _process, selector, read = follow_control
+    clock = [0.0]
+    monkeypatch.setattr(proc, "now", lambda: clock[0])
+    selector.select.side_effect = [[], [1], [1]]
+    read.side_effect = [b"%end 1 2 3\n%output %1 ready\n", b""]
+    stream = proc.follow_pane("svc", 10, initial=False, poll_interval=0.5)
+    assert next(stream) == ""
+    clock[0] = 1.0
+    assert next(stream) == "ready"
+    stream.close()
+
+
 def test_follow_poll_attach_error_cleans_up(follow_control):
     proc, process, selector, read = follow_control
     selector.select.return_value = [1]

@@ -64,20 +64,25 @@ def _control_lines(
         selector.register(stream, selectors.EVENT_READ)
         buffer = b""
         deadline = now() + poll_interval
+        progress_due = False
         while True:
             remaining = deadline - now()
-            if remaining <= 0:
-                deadline = now() + poll_interval
+            if remaining <= 0 and not progress_due:
                 yield None
+                deadline = now() + poll_interval
+                progress_due = True
                 continue
             if b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
+                progress_due = False
                 yield line
                 continue
-            if not selector.select(remaining):
-                deadline = now() + poll_interval
+            if not selector.select(max(0.0, remaining)):
                 yield None
+                deadline = now() + poll_interval
+                progress_due = True
                 continue
+            progress_due = False
             try:
                 chunk = os.read(stream.fileno(), 8192)
             except BlockingIOError:
