@@ -84,7 +84,7 @@ def remove_command(
     warn_before_destroy: Callable[..., bool],
 ) -> None:
     from jailbee import prompting, repo_remove
-    from jailbee.config import ConfigError, load_orphan_base_config, load_repo_config
+    from jailbee.config import ConfigError, load_repo_config
     from jailbee.lifecycle import destroy_container, list_containers
     from jailbee.orphans import destroy_orphan
 
@@ -98,15 +98,20 @@ def remove_command(
     path_cfg = None
     target_path = Path(target).expanduser() if target else None
     if target_path is not None and target_path.is_dir():
-        try:
-            path_cfg = load_repo_config(target_path.resolve())
-        except (ConfigError, OSError, ValueError) as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        target = path_cfg.container_prefix
+        root = target_path.resolve()
         entries = list_repos(incus, sessions, scope=scope)
-        row = next((e for e in entries if e.prefix == target), None)
-        if row and row.repo_root and row.repo_root.resolve() != target_path.resolve():
-            raise typer.BadParameter("Directory does not match the registered repository")
+        row = next((e for e in entries if e.repo_root and e.repo_root.resolve() == root), None)
+        if row is not None:
+            target = row.prefix
+        else:
+            try:
+                path_cfg = load_repo_config(root)
+            except (ConfigError, OSError, ValueError) as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            target = path_cfg.container_prefix
+            row = next((e for e in entries if e.prefix == target), None)
+            if row and row.repo_root and row.repo_root.resolve() != root:
+                raise typer.BadParameter("Directory does not match the registered repository")
     if target is None:
         entries = list_repos(incus, sessions, scope=scope)
         target = prompting.choose_one(
@@ -127,8 +132,20 @@ def remove_command(
         typer.echo("Confirmation requires a terminal or --yes", err=True)
         raise typer.Exit(2)
     if not force:
-        probe_cfg = plan.cfg or load_orphan_base_config(Path.home())
-        running = running_agents(probe_cfg, incus, plan.containers)
+        if plan.cfg is not None:
+            running = running_agents(plan.cfg, incus, plan.containers)
+        else:
+            from jailbee.accounts import groups
+            from jailbee.accounts.adapters import base
+
+            # Load every supported pooled adapter even when no repo config survives.
+            base.get_adapter("claude")
+            running = sorted(
+                f"{name}: {container}"
+                for name in base.ADAPTERS
+                for container in plan.containers
+                if groups.agent_running(incus, container, command=name) is True
+            )
         if running:
             typer.echo(
                 "Agents running: " + ", ".join(running) + "; use --force to override", err=True
