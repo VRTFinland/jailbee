@@ -198,3 +198,12 @@ def test_restore_deduplicates_sanitized_window_names(make_cfg, tmp_path):
     entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work space")
     result = restore_steps(make_cfg(tmp_path), [step], [entry], prompted=None, extra_env={})
     assert result[1].name == "work space-2"
+
+
+def test_restore_reserves_configured_step_windows(make_cfg, tmp_path):
+    from jailbee.agent_resume import restore_steps
+    from jailbee.config.models_agents import Autostart, AutostartStep
+    cfg = make_cfg(tmp_path).model_copy(update={"autostart": Autostart(on_start=[AutostartStep(name="work space", run="service")])})
+    entry = ResumeEntry(VALID_ID, "/work", ("claude",), "work_space")
+    result = restore_steps(cfg, [], [entry], prompted=None, extra_env={})
+    assert result[0].name == "work_space-2"

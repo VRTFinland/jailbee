@@ -48,6 +48,7 @@ from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
+    from jailbee.autostart_plan import AutostartPlan
     from jailbee.accounts.models import AgentSession
     from jailbee.agent_status import ActivityLookup, AgentSummary
     from jailbee.branch_config import EscalationVerdict
@@ -1622,7 +1623,7 @@ def new_container(
     *,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
-    on_detach: Callable[[Autostart, str, str, bool], None] | None = None,
+    on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
     """Create a new container from the golden. Returns container name.
 
@@ -1664,7 +1665,7 @@ def _new_container(
     progress: _CreateProgress,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
-    on_detach: Callable[[Autostart, str, str, bool], None] | None = None,
+    on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
     """Create a new container from the golden. Returns container name.
 
@@ -2451,7 +2452,8 @@ def _new_container(
                 detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
             on_detach(
-                effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services)
+                effective_cfg.autostart, detached_from, repo_dir, bool(effective_cfg.services),
+                start_plan if detached_from == AutostartTrigger.ON_START.value else None,
             )
 
     return name

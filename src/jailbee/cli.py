@@ -3422,7 +3422,7 @@ def _inline_autostart_handler(
     log_path: str,
     mirror_endpoint: tuple[str, int] | None,
     override: Literal["wait", "no_wait"] | None,
-) -> "Callable[[Autostart, str, str, bool], None]":
+) -> "Callable[[Autostart, str, str, bool, AutostartPlan | None], None]":
     """The `on_detach` a *background worker* hands down.
 
     Counterpart to `_autostart_detach_handler`, which spawns a supervisor.
@@ -3444,7 +3444,8 @@ def _inline_autostart_handler(
     on_phase, on_progress = _autostart_reporters(engine, full_name, progress_path)
 
     def on_detach(
-        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None
+        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None,
+        plan: "AutostartPlan | None" = None,
     ) -> None:
         # The row this worker owns now tracks an autostart supervision run,
         # and its kind has to say so before the first stage phase lands on
@@ -3477,6 +3478,8 @@ def _inline_autostart_handler(
                 log_path=log_path,
                 progress_path=str(progress_path),
                 services_present=services_present,
+                agent_steps=plan.agent_steps if plan else None,
+                agents_last=plan.agents_last if plan else False,
             ),
             on_phase=on_phase,
             on_progress=on_progress,
@@ -3568,6 +3571,8 @@ def _spawn_autostart_worker(
     override: "Literal['wait', 'no_wait'] | None" = None,
     services_present: bool | None = None,
     rerun: bool = False,
+    agent_steps: "list[AutostartStep] | None" = None,
+    agents_last: bool = False,
 ) -> None:
     """Hand the detached stages to a `_autostart-worker` and record its row.
 
@@ -3649,6 +3654,8 @@ def _spawn_autostart_worker(
                 progress_path=str(progress_path),
                 services_present=services_present,
                 rerun=rerun,
+                agent_steps=agent_steps,
+                agents_last=agents_last,
             )
         )
     )
@@ -4077,6 +4084,8 @@ def _run_dashboard(
 
 
 if TYPE_CHECKING:
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.config.models_agents import AutostartStep
     from collections.abc import Callable
 
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -4512,7 +4521,7 @@ def _post_start_actions(
     *,
     no_autostart: bool,
     override: Literal["wait", "no_wait"] | None = None,
-    on_detach: "Callable[[Autostart, str, str, bool], None] | None" = None,
+    on_detach: "Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None" = None,
 ) -> None:
     """Shared post-boot flow for `start` and `restart`.
 
@@ -4593,7 +4602,7 @@ def _post_start_actions(
     _post_create_gui_launches(cfg, incus, name)
 
     if plan.detached and on_detach is not None:
-        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services))
+        on_detach(cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan)
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:
@@ -4676,7 +4685,7 @@ def _autostart_detach_handler(
     full_name: str,
     mirror_endpoint: tuple[str, int] | None,
     override: Literal["wait", "no_wait"] | None,
-) -> "Callable[[Autostart, str, str, bool], None]":
+) -> "Callable[[Autostart, str, str, bool, AutostartPlan | None], None]":
     """The `on_detach` callback the foreground commands hand down.
 
     `new_container` and `_post_start_actions` compute the deferred stages but
@@ -4699,7 +4708,8 @@ def _autostart_detach_handler(
     """
 
     def on_detach(
-        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None
+        block: "Autostart", trigger: str, repo_dir: str, services_present: bool | None = None,
+        plan: "AutostartPlan | None" = None,
     ) -> None:
         _spawn_autostart_worker(
             cfg,
@@ -4712,6 +4722,8 @@ def _autostart_detach_handler(
             mirror_endpoint=mirror_endpoint,
             override=override,
             services_present=services_present,
+            agent_steps=plan.agent_steps if plan else None,
+            agents_last=plan.agents_last if plan else False,
         )
 
     return on_detach

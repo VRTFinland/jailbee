@@ -210,7 +210,7 @@ def test_new_container_hands_the_on_start_stages_to_on_detach(tmp_path, make_cfg
         cfg,
         incus,
         _opts(),
-        on_detach=lambda block, trigger, repo_dir, services_present: seen.append(
+        on_detach=lambda block, trigger, repo_dir, services_present, plan: seen.append(
             (trigger, repo_dir, services_present)
         ),
     )
@@ -240,7 +240,7 @@ def test_new_container_hands_off_from_on_create_without_running_on_start(
         _cfg_for_new(make_cfg, tmp_path),
         incus,
         _opts(),
-        on_detach=lambda block, trigger, repo_dir, services_present: seen.append(trigger),
+        on_detach=lambda block, trigger, repo_dir, services_present, plan: seen.append(trigger),
     )
 
     assert run_autostart.call_count == 1
@@ -263,7 +263,7 @@ def test_new_container_does_not_hand_off_when_nothing_detaches(tmp_path, make_cf
         _cfg_for_new(make_cfg, tmp_path),
         incus,
         _opts(),
-        on_detach=lambda block, trigger, repo_dir, services_present: calls.append(trigger),
+        on_detach=lambda block, trigger, repo_dir, services_present, plan: calls.append(trigger),
     )
 
     assert calls == []

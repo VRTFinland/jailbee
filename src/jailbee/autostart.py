@@ -497,6 +497,10 @@ def run_autostart(
         and trigger == AutostartTrigger.ON_START
         and services_stage_wanted(cfg, incus, container),
     )
+    if trigger == AutostartTrigger.ON_START and not skip_agents:
+        from dataclasses import replace
+
+        plan = replace(plan, agent_steps=list(agent_steps), agents_last=prompted)
     if not plan.blocking:
         return plan
 
@@ -600,6 +604,8 @@ def run_detached(
                 agent_steps: list[AutostartStep] | tuple[AutostartStep, ...]
                 if spec.rerun:
                     agent_steps, prompted = (), False
+                elif trigger == AutostartTrigger.ON_START and spec.agent_steps is not None:
+                    agent_steps, prompted = spec.agent_steps, spec.agents_last
                 else:
                     agent_steps, prompted = _on_start_agent_steps(
                         cfg, incus, spec.container_name, trigger

@@ -224,11 +224,17 @@ def boot_entries(cfg: Config, incus: Incus, container: str) -> list[ResumeEntry]
 def restore_steps(cfg: Config, steps: list[AutostartStep], entries: Sequence[ResumeEntry],
                   *, prompted: str | None, extra_env: Mapping[str, str]) -> list[AutostartStep]:
     """Replace matching agent steps and append other saved windows."""
+    from jailbee.autostart_plan import normalize_stages
+    from jailbee.services.runtime import WINDOW_PREFIX
     from jailbee.tmux import window_for
 
     result = list(steps)
     names = {step.name for step in result}
     windows = {window_for(name) for name in names}
+    for stage in normalize_stages(cfg.autostart.on_start):
+        for chain in stage.all_chains():
+            windows.update(window_for(step.name) for step in chain.steps)
+    windows.update(window_for(WINDOW_PREFIX + name) for name in cfg.services)
     claimed: set[int] = set()
     prompted_window = window_for(prompted) if prompted is not None else None
     for entry in entries:

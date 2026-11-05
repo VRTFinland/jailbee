@@ -68,6 +68,8 @@ class AutostartPlan:
 
     blocking: list[AutostartStage]
     detached: list[AutostartStage]
+    agent_steps: list[AutostartStep] | None = None
+    agents_last: bool = False
 
 
 def normalize_stages(entries: list[AutostartStep] | list[AutostartStage]) -> list[AutostartStage]:
