@@ -8,16 +8,31 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.3 - 2026-11-05
+
 ### Added
 
-- Service start/restart accept one-off or persisted runtime arguments and
-  environment overrides for a single service.
-- Service status probes and tmux log queries support read-only status summaries, named regex filters, context, and waiting for new output.
-- Interactive Claude sessions resume after normal JailBee stops and restarts, using their original launcher, arguments and working directory.
-- Managed services report health failures as `unhealthy`; `service wait` lets
-  agents and hosts wait for readiness or detect failures without automatic restarts.
-- Re-run selected or failed autostart steps, record their outcomes, and use the
-  terminal dashboard Autostart and Services menus.
+- Service health probes: a service with a `health` command whose probe fails
+  is shown as `unhealthy` in `jailbee service ls` and the terminal dashboard
+  (JailBee does not restart it). `jailbee service wait --until STATE` waits
+  for a state, for agents inside the container and for scripts on the host
+  ([#73](https://github.com/VRTFinland/jailbee/issues/73)).
+- Service runtime arguments: `jailbee service start|restart` take
+  `--env KEY=VALUE` and, for a service with `args: true`, `-- ARGS`. They
+  apply once, or on every start with `--persist`; `--reset-args` clears them
+  ([#74](https://github.com/VRTFinland/jailbee/issues/74)).
+- Service status and log queries: an optional `status` command's output is
+  shown by `jailbee service ls`, and `jailbee service logs` gains repeatable
+  `--grep` and named `--filter`s (`logs.filters`), context lines
+  (`-A`/`-B`/`-C`) and `--wait PATTERN` for output that has not appeared yet
+  ([#75](https://github.com/VRTFinland/jailbee/issues/75)).
+- Interactive Claude sessions resume after a normal JailBee stop and restart,
+  with their original launcher, arguments and working directory. Needs
+  `jailbee base build`.
+- `jailbee autostart run` re-runs selected stages or steps (`--stage`,
+  `--step`, `--failed`) in a running container. Each step's last outcome is
+  recorded, containers with a failed step are marked `⚠`, and the terminal
+  dashboard gains Autostart and Services menus.
 - `claude-jb` sessions receive a generated profile model map before their
   instructions. Routes can describe model strengths with `description`, and
   profiles can opt out with `model_map: false`.

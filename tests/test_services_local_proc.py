@@ -157,17 +157,20 @@ def test_run_probe_caps_each_output_stream(tmp_path):
 
 def test_run_probe_timeout_kills_process_group(tmp_path):
     marker = tmp_path / "child-finished"
+    # `bash -lc` sources the login profile before the command runs; an empty
+    # HOME and a 1 s budget keep a slow host profile from eating the timeout
+    # before `printf` has run.
     result = LocalProc().run_probe(
         f"(sleep 2; touch {marker}) & printf out; printf err >&2; sleep 30",
         cwd=str(tmp_path),
-        env={},
-        timeout=0.1,
+        env={"HOME": str(tmp_path)},
+        timeout=1,
     )
     assert result.code is None
     assert result.stdout == "out"
     assert result.stderr == "err"
     assert result.timed_out
-    time.sleep(2.1)
+    time.sleep(1.5)
     assert not marker.exists()
 
 
@@ -199,7 +202,7 @@ def test_run_probe_timeout_does_not_wait_for_escaped_pipe_holder(tmp_path):
     result = LocalProc().run_probe(
         f"setsid sh -c 'echo $$ > {pidfile}; exec sleep 30' & sleep 0.1; sleep 30",
         cwd=str(tmp_path),
-        env={},
+        env={"HOME": str(tmp_path)},
         timeout=0.2,
     )
     elapsed = time.monotonic() - started
