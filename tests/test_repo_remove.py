@@ -423,6 +423,126 @@ def test_execute_cleans_exact_state_and_is_idempotent(db_engine, tmp_path, mocke
     assert destroy.call_count == 1
 
 
+def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
+    db_engine, tmp_path, mocker
+):
+    from sqlmodel import select
+
+    from jailbee.db.models import (
+        BackgroundJob,
+        DismissedNotice,
+        EgressOverride,
+        PoolIP,
+        RefreshState,
+        RepoUpgradeState,
+        SentRecord,
+    )
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    now = datetime.now(UTC)
+    with Session(db_engine) as session:
+        for prefix in ("foo", "foo-bar"):
+            session.add(PoolIP(
+                container_prefix=prefix, hostname="example.com", ip="1.2.3.4",
+                first_seen=now, last_seen=now,
+            ))
+            session.add(RefreshState(
+                container_prefix=prefix, last_refresh_at=now, last_refresh_status="ok",
+            ))
+            session.add(RepoUpgradeState(
+                container_prefix=prefix, base_build_version="1.0", base_build_observed=True,
+                apply_version="1.0", apply_observed=True, updated_at=now,
+            ))
+            session.add(EgressOverride(
+                container_prefix=prefix, entry="example.com", added_at=now,
+            ))
+            session.add(BackgroundJob(
+                container_name=f"{prefix}-one", container_prefix=prefix, phase="failed",
+                pid=1, log_path="/tmp/log", started_at=now, updated_at=now,
+            ))
+            session.add(DismissedNotice(
+                scope=prefix, key="apply", fingerprint="1", version="1", dismissed_at=now,
+            ))
+            session.add(SentRecord(
+                dedup_key=prefix, sent_at=now, container_prefix=prefix, container="one",
+                instance=f"{prefix}-one", publisher="user", state="applied", outbox="issue",
+                manifest="001", action_index=0, kind="create", repo="owner/repo",
+            ))
+        session.commit()
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    plan = RemovalPlan("foo", None, [], [], [], [], [], None, {}, [], [], [])
+    assert all(r.ok for r in execute_removal(plan, incus, lambda: Session(db_engine)))
+    with Session(db_engine) as session:
+        for model in (
+            PoolIP, RefreshState, RepoUpgradeState, EgressOverride,
+            BackgroundJob, DismissedNotice, SentRecord,
+        ):
+            rows = session.exec(select(model)).all()
+            assert len(rows) == 1
+            row = rows[0]
+            assert getattr(row, "container_prefix", getattr(row, "scope", None)) == "foo-bar"
+
+
+def test_execute_failed_capped_acl_retains_state_for_fresh_retry(db_engine, tmp_path, mocker):
+    from jailbee.db.models import PoolIP
+    from jailbee.egress_scope import extra_acl_name
+    from jailbee.global_config import GlobalConfig
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import execute_removal, plan_removal
+
+    container = "foo-" + "long-name-" * 12
+    acl = extra_acl_name(container)
+    now = datetime.now(UTC)
+    with Session(db_engine) as session:
+        session.add(RegisteredRepo(
+            container_prefix="foo", repo_root=str(tmp_path / "gone"), registered_at=now,
+        ))
+        session.add(PoolIP(
+            container_prefix=f"ct:{container}", hostname="x", ip="1",
+            first_seen=now, last_seen=now,
+        ))
+        session.commit()
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.list_images.return_value = []
+    incus.network_acl_list.return_value = [acl]
+    incus.network_acl_used_by.return_value = []
+    incus.network_acl_delete.side_effect = RuntimeError("busy")
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    def factory():
+        return Session(db_engine)
+
+    plan = plan_removal("foo", incus, factory)
+    assert plan.acls == [acl]
+    assert any(not result.ok for result in execute_removal(plan, incus, factory))
+    assert plan_removal("foo", incus, factory).acls == [acl]
+
+
+def test_execute_purge_unlinks_symlink_without_deleting_target(db_engine, tmp_path, mocker):
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "data").write_text("preserved")
+    link = tmp_path / "shared"
+    link.symlink_to(target, target_is_directory=True)
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    plan = RemovalPlan("foo", None, [], [], [], [], [], None, {}, [link], [], [])
+    assert all(r.ok for r in execute_removal(plan, incus, lambda: Session(db_engine)))
+    assert not link.is_symlink()
+    assert (target / "data").read_text() == "preserved"
+
+
 def test_execute_acl_uses_work_lock_and_refuses_profile_references(db_engine, mocker):
     from contextlib import contextmanager
 
@@ -463,6 +583,40 @@ def test_execute_acl_uses_work_lock_and_refuses_profile_references(db_engine, mo
     results = execute_removal(plan, incus, lambda: Session(db_engine))
     incus.network_acl_delete.assert_called_once_with("foo-allowlist")
     assert any(not r.ok and "foreign" in r.detail for r in results)
+
+
+def test_execute_stops_running_golden_before_default_delete(db_engine, mocker):
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+    from jailbee.stopping import CLEAN_STOP_BUDGET
+
+    running = True
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.side_effect = lambda **kwargs: [
+        {"name": "foo-base--build", "status": "Running" if running else "Stopped"}
+    ]
+
+    def stop(name, *, timeout):
+        nonlocal running
+        assert name == "foo-base--build"
+        assert timeout == CLEAN_STOP_BUDGET
+        running = False
+
+    def delete(name, *, force):
+        assert name == "foo-base--build"
+        assert force is False
+        if running:
+            raise RuntimeError("cannot delete a running instance")
+
+    incus.stop.side_effect = stop
+    incus.delete.side_effect = delete
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    plan = RemovalPlan("foo", None, [], [], [], [], ["foo-base--build"], None, {}, [], [], [])
+    results = execute_removal(plan, incus, lambda: Session(db_engine))
+    assert all(result.ok for result in results)
+    incus.stop.assert_called_once_with("foo-base--build", timeout=CLEAN_STOP_BUDGET)
+    incus.delete.assert_called_once_with("foo-base--build", force=False)
 
 
 def test_execute_purge_failure_retains_registry(db_engine, tmp_path, mocker):

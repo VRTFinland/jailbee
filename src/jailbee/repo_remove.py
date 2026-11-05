@@ -230,14 +230,24 @@ def execute_removal(
 
         def remove_golden(name: str = name) -> None:
             if incus.exists(name):
+                from jailbee.stopping import stop_container
+
+                if any(
+                    raw.get("name") == name and raw.get("status") == "Running"
+                    for raw in incus.list_containers(fast=True)
+                ):
+                    stop_container(
+                        incus, name, force=force, force_fallback=True, show_progress=False
+                    )
                 incus.delete(name, force=force)
 
         step(f"golden instance {name}", remove_golden)
     step("proxy fragment", lambda: drop_fragment(incus, plan.prefix))
 
     def cleanup() -> None:
-        if not inventory_ok:
-            raise ValueError("state retained because ownership inventory failed")
+        if not inventory_ok or any(not result.ok for result in results):
+            # Capped ACL names cannot be reversed: retain rows needed to rediscover them.
+            raise ValueError("state and registry retained because a removal step failed")
         with session_factory() as session:
             for row in session.exec(select(PoolIP)).all():
                 if _pool_owned(row.container_prefix, plan.prefix, known, ownership):
