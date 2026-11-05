@@ -77,8 +77,8 @@ seconds (minimum 1); `--timeout 0` means no limit. Exit codes: 0 match, 1
 timeout, 2 invalid input, 3 stopped/failed/exited while waiting for ready.
 `--json` prints the matching status. Each tick synchronously reads fresh
 status before checking the deadline, so a scan may overrun the overall timeout;
-each probe is bounded by `health_timeout`. Health checks use `health`, falling
-back to `ready`; no command means no probe. Unhealthy services are not
+lock acquisition and the probe are each bounded separately by `health_timeout`.
+Health checks use `health`, falling back to `ready`; no command means no probe. Unhealthy services are not
 restarted automatically.
 
 For autostart, `new --services`, profile services, and orchestration spawn/restart

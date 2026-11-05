@@ -190,6 +190,64 @@ def test_parallel_probes_and_shared_cache_lock(tmp_path):
     assert sorted(call[0] for call in proc.health_calls) == ["a-check", "b-check"]
 
 
+@pytest.mark.parametrize("fresh", [False, True])
+def test_probe_lock_wait_is_bounded_without_overwriting_writer(tmp_path, fresh):
+    rt, proc = runtime(tmp_path, {"a": {"run": "a", "health": "check", "health_timeout": 1}})
+    proc.windows["svc-a"] = (0, "", 1)
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def blocked(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        assert release.wait(5)
+        return ProbeResult(0, "", "", False)
+
+    proc.run_probe = blocked
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(rt.status, fresh=True)
+        assert entered.wait(2)
+        try:
+            start = time.monotonic()
+            result = pool.submit(rt.status, fresh=fresh).result(timeout=3)[0]
+            assert time.monotonic() - start < 2.5
+            assert result.state == "unhealthy"
+            assert "lock timed out" in result.detail
+            assert result.since is not None
+        finally:
+            release.set()
+        assert writer.result(timeout=3)[0].state == "ready"
+    assert rt.status()[0].state == "ready"
+    assert len(calls) == 1
+
+
+def test_probe_launch_error_is_isolated_from_other_services(tmp_path):
+    rt, proc = runtime(tmp_path, {
+        "bad": {"run": "bad", "health": "bad-check"},
+        "good": {"run": "good", "health": "good-check"},
+    })
+    proc.windows.update({"svc-bad": (0, "", 1), "svc-good": (0, "", 2)})
+
+    def probe(cmd, **kwargs):
+        if cmd == "bad-check":
+            raise OSError("missing directory")
+        return ProbeResult(0, "", "", False)
+
+    proc.run_probe = probe
+    statuses = rt.status()
+    assert [item.state for item in statuses] == ["unhealthy", "ready"]
+    assert "missing directory" in statuses[0].detail
+    assert rt.wait(["good"], "ready", timeout=1, interval=1)[0] == 0
+
+
+def test_wait_any_ready_prefers_later_match_over_earlier_failure(tmp_path):
+    rt, proc = runtime(tmp_path, {"a": {"run": "a"}, "b": {"run": "b"}})
+    proc.windows.update({"svc-a": (0, "", 1), "svc-b": (0, "", 2)})
+    rt._save("a", "failed")
+    code, item = rt.wait(["a", "b"], "ready", timeout=1, interval=1)
+    assert code == 0 and item.name == "b"
+
+
 def test_concurrent_success_does_not_erase_failed_status_since(tmp_path):
     rt, proc = runtime(tmp_path, {"a": {"run": "a", "health": "check"}})
     proc.windows["svc-a"] = (0, "", 1)

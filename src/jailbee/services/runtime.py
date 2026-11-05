@@ -7,6 +7,7 @@ import math
 import os
 import signal
 import tempfile
+import time
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -151,17 +152,29 @@ class ServiceRuntime:
         key = json.dumps([name, kind, launch_id]).encode()
         lock_path = self.state_dir / ("probe-" + hashlib.sha256(key).hexdigest() + ".lock")
         with lock_path.open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return ProbeResult(None, "", "probe lock timed out", True), time.time()
+                    time.sleep(min(0.05, remaining))
             try:
                 if not fresh:
                     cached = cache.get(name, kind, launch_id)
                     if cached is not None:
                         return cached, cache.first_failure(name, kind, launch_id)
                 service = self.cfg.services[name]
-                result = self.proc.run_probe(
-                    cmd, cwd=str(self.repo_dir / service.working_dir),
-                    env=self.launch_env(name), timeout=timeout,
-                )
+                try:
+                    result = self.proc.run_probe(
+                        cmd, cwd=str(self.repo_dir / service.working_dir),
+                        env=self.launch_env(name), timeout=timeout,
+                    )
+                except OSError as exc:
+                    result = ProbeResult(None, "", str(exc)[-16384:], False)
                 cache.put(name, kind, launch_id, result)
                 return result, cache.first_failure(name, kind, launch_id)
             finally:
@@ -179,7 +192,8 @@ class ServiceRuntime:
         if result.code == 0 and not result.timed_out:
             return item
         if result.timed_out:
-            detail = f"health check timed out after {service.health_timeout}s"
+            detail = (result.stderr if result.stderr == "probe lock timed out" else
+                      f"health check timed out after {service.health_timeout}s")
         else:
             lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
             if not lines:

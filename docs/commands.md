@@ -148,8 +148,9 @@ the first matching service wins. `--json` prints the matching status.
 (no limit). Exit codes are 0 for a match, 1 for timeout, 2 for invalid input,
 and 3 when waiting for ready encounters stopped, failed, or exited. Each tick
 performs a synchronous fresh status read before checking the deadline, so an
-in-flight scan can exceed the overall timeout; individual probes remain bounded
-by `health_timeout`.
+in-flight scan can exceed the overall timeout. Lock acquisition and the probe
+itself are each bounded separately by `health_timeout`, so a scan may include
+both waits.
 
 ## Global repository option
 
