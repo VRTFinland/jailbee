@@ -156,6 +156,18 @@ jailbee git pull feat-foo       # merge the container's branch back into its bas
 jailbee destroy feat-foo --force
 ```
 
+Use `jailbee repo ls [--format table|json]` to inspect registered repos and
+leftovers (profiles without registry rows). `jailbee repo rm [TARGET] [--yes]
+[--dry-run] [--force] [--purge]` removes a repo by existing directory path or
+exact prefix; it also handles missing directories/configs and unregistered
+leftovers. The command prints a read-only cleanup plan first. Shared golden
+aliases are protected, resource cleanup matches exact names (never a prefix
+wildcard), and `--purge` removes only the repo-local override file and default
+shared directory; overridden shared paths and global config references are kept.
+`--force` bypasses running-agent and work-loss guards; `--yes` skips the final
+confirmation. `jailbee net unregister` is deprecated: it only unregisters and
+leaves resources behind, so use `jailbee repo rm` instead.
+
 `jailbee dashboard` (alias: `jailbee tui`) is the live, cross-repo version of
 `jailbee ls` — an auto-refreshing TUI where you navigate containers and press Enter to act
 (shell/ide/chrome/restart/stop/destroy, plus the workflow verbs — including
