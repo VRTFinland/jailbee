@@ -835,7 +835,15 @@ def test_capture_uses_joined_lines(tmp_path):
 
 
 def test_history_limit_set_before_first_service_window(tmp_path):
-    rt, proc = runtime(tmp_path, {"db": {"run": "x", "logs": {"history_limit": 60000}}, "web": {"run": "x", "logs": {"history_limit": 70000}}})
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "db": {"run": "x", "logs": {"history_limit": 60000}},
+            "web": {"run": "x", "logs": {"history_limit": 70000}},
+        },
+    )
     assert rt.start(["db"]).ok
     setting = ["set-option", "-t", "autostart", "history-limit", "70000"]
-    assert proc.commands.index(setting) < next(i for i, c in enumerate(proc.commands) if c[0] == "new-window")
+    assert proc.commands.index(setting) < next(
+        i for i, c in enumerate(proc.commands) if c[0] == "new-window"
+    )

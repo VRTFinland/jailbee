@@ -195,8 +195,11 @@ def logs(
             if patterns:
                 text = log_query.strip_terminal(rt.logs(selected, lines, all_history=True))
                 selected_lines = log_query.select_lines(
-                    text.splitlines(), patterns, limit=lines,
-                    before=max(before, context), after=max(after, context),
+                    text.splitlines(),
+                    patterns,
+                    limit=lines,
+                    before=max(before, context),
+                    after=max(after, context),
                 )
                 if selected_lines:
                     typer.echo("\n".join(selected_lines))

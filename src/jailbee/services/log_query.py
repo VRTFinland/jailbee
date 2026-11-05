@@ -11,7 +11,12 @@ def strip_terminal(text: str) -> str:
 
 
 def select_lines(
-    lines: Sequence[str], patterns: Sequence[re.Pattern[str]], *, limit: int, before: int, after: int
+    lines: Sequence[str],
+    patterns: Sequence[re.Pattern[str]],
+    *,
+    limit: int,
+    before: int,
+    after: int,
 ) -> list[str]:
     matches = [i for i, line in enumerate(lines) if any(p.search(line) for p in patterns)][-limit:]
     ranges: list[tuple[int, int]] = []
