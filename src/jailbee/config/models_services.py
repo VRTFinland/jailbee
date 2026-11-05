@@ -54,8 +54,15 @@ class ServiceDependency(BaseModel):
 class ServiceLogs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    filters: dict[str, str] = Field(default_factory=dict)
-    history_limit: int = Field(default=50000, ge=1000)
+    filters: dict[str, str] = Field(
+        default_factory=dict,
+        description="Named regular-expression filters for service log queries.",
+    )
+    history_limit: int = Field(
+        default=50000,
+        ge=1000,
+        description="Maximum retained tmux scrollback lines for later autostart windows.",
+    )
 
     @field_validator("filters")
     @classmethod
@@ -83,7 +90,9 @@ class Service(BaseModel):
     health_timeout: int = Field(default=5, ge=1, description="Health probe timeout in seconds.")
     status: str | None = Field(default=None, description="Optional status probe command.")
     status_timeout: int = Field(default=5, ge=1, description="Status probe timeout in seconds.")
-    logs: ServiceLogs = Field(default_factory=ServiceLogs)
+    logs: ServiceLogs = Field(
+        default_factory=ServiceLogs, description="Log query filters and retained history limit."
+    )
     stop: str | None = Field(default=None, description="Optional stop command.")
     stop_timeout: int = Field(default=10, gt=0, description="Stop timeout in seconds.")
     working_dir: str = Field(
