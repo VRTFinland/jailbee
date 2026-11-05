@@ -282,9 +282,7 @@ class ServiceRuntime:
         }
         parts = []
         if launch.args:
-            parts.append(
-                f"args: {shlex.join(args)} ({'persisted' if is_persisted else 'one-off'})"
-            )
+            parts.append(f"args: {shlex.join(args)} ({'persisted' if is_persisted else 'one-off'})")
         if launch.env:
             parts.append("env: " + ",".join(sorted(launch.env)))
         if persisted.args and persisted.args != launch.args:

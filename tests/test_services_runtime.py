@@ -932,7 +932,8 @@ def test_status_detail_redacts_quoted_current_and_persisted_secrets(tmp_path):
         "web", Launch(("saved'secret",), {"SAVED": "saved'secret"})
     )
     assert rt.start(
-        ["web"], launch=LaunchRequest(("current'secret",), {"TOKEN": "current'secret"}, False, False)
+        ["web"],
+        launch=LaunchRequest(("current'secret",), {"TOKEN": "current'secret"}, False, False),
     ).ok
     status = rt.status(probe=False)[0]
     assert "args: '***' (one-off)" in status.detail
