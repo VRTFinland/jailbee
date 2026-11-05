@@ -739,3 +739,71 @@ def test_wait_ready_and_unhealthy_probe(tmp_path):
     code, item = rt.wait(["web"], "unhealthy", timeout=1, interval=1)
     assert code == 0 and item.state == "unhealthy"
     assert len(proc.health_calls) == 2
+
+
+def test_status_json_object_fills_field_and_detail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status", "env": {"K": "V"}}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(0, '{"jobs": 3, "mode": "ok"}', "", False)
+    item = rt.status()[0]
+    assert item.status == {"jobs": 3, "mode": "ok"}
+    assert item.detail == "jobs=3 mode=ok"
+    assert proc.health_calls == [("status", str(tmp_path), {"K": "V"}, 5)]
+    assert rt.status()[0] == item and len(proc.health_calls) == 1
+
+
+def test_status_text_first_line(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(0, "\n  first line  \nsecond", "", False)
+    item = rt.status()[0]
+    assert item.status == item.detail == "first line"
+
+
+def test_status_error_detail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(7, "ignored", "oops", False)
+    item = rt.status()[0]
+    assert item.status is None and item.detail == "status: error (exit 7)"
+
+
+def test_status_timeout_and_large_output(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    proc.health_result = ProbeResult(None, "", "", True)
+    assert rt.status()[0].detail == "status: timed out"
+    proc.health_result = ProbeResult(0, "x" * 16384, "", False)
+    item = rt.status(fresh=True)[0]
+    assert len(item.detail) == len(item.status) == 120
+
+
+def test_status_not_run_for_stopped_or_dead_panes(tmp_path):
+    rt, proc = runtime(tmp_path, {"a": {"run": "x", "status": "x"}, "b": {"run": "x", "status": "x"}})
+    proc.windows["svc-b"] = (1, 2, 1)
+    assert [s.state for s in rt.status()] == ["stopped", "exited"]
+    assert not proc.health_calls
+
+
+def test_status_does_not_change_state(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "x"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    rt._save("web", "starting", "booting")
+    proc.health_result = ProbeResult(1, "", "", False)
+    item = rt.status()[0]
+    assert item.state == "starting" and item.detail == "booting · status: error (exit 1)"
+    assert json.loads((rt.state_dir / "state.json").read_text())["web"]["state"] == "starting"
+
+
+def test_status_and_health_run_concurrently(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x", "status": "status", "health": "health"}})
+    proc.windows["svc-web"] = (0, "", 1)
+    barrier = threading.Barrier(2, timeout=2)
+
+    def probe(cmd, **kwargs):
+        barrier.wait()
+        return ProbeResult(0, "ok" if cmd == "status" else "", "", False)
+
+    proc.run_probe = probe
+    item = rt.status()[0]
+    assert item.state == "ready" and item.status == "ok"

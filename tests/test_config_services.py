@@ -180,3 +180,20 @@ def test_profile_services_accepts_existing_and_empty(tmp_path):
     )
     assert cfg.autostart.profiles["p"].services == ["web"]
     assert cfg.autostart.profiles["q"].services == []
+
+
+def test_invalid_filter_regex_rejected_at_load(tmp_path):
+    assert load("services: {web: {run: x, logs: {filters: {errors: error}}}}", tmp_path).services["web"].logs.filters == {"errors": "error"}
+    with pytest.raises(ConfigError) as exc:
+        load("services: {web: {run: x, logs: {filters: {errors: '['}}}}", tmp_path)
+    assert "web" in str(exc.value) and "errors" in str(exc.value)
+    with pytest.raises(ConfigError):
+        load("services: {web: {run: x, logs: {filters: {BAD: x}}}}", tmp_path)
+
+
+def test_history_limit_minimum(tmp_path):
+    assert load("services: {web: {run: x}}", tmp_path).services["web"].logs.history_limit == 50000
+    with pytest.raises(ConfigError):
+        load("services: {web: {run: x, logs: {history_limit: 999}}}", tmp_path)
+    with pytest.raises(ConfigError):
+        load("services: {web: {run: x, status_timeout: 0}}", tmp_path)

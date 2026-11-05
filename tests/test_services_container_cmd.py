@@ -221,3 +221,19 @@ def test_wait_outputs_match_and_rejects_unknown(tmp_path, monkeypatch):
     assert result.exit_code == 0 and result.stdout == "db ready ok\n"
     result = runner.invoke(container_app, [*base, "missing", "--until", "ready"])
     assert result.exit_code == 2
+
+
+def test_ls_json_includes_status_field(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+    from jailbee.services.local_proc import ProbeResult
+
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("container_prefix: repo\nservices:\n  db:\n    run: x\n    status: check\n")
+    monkeypatch.setattr("jailbee.services.local_proc.LocalProc.tmux", lambda self, args:
+                        subprocess.CompletedProcess(args, 0, "svc-db\t0\t\t123\n", ""))
+    monkeypatch.setattr("jailbee.services.local_proc.LocalProc.run_probe", lambda *a, **kw:
+                        ProbeResult(0, '{"connections": 2}', "", False))
+    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "ls", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)[0]["status"] == {"connections": 2}

@@ -9,7 +9,7 @@ import signal
 import tempfile
 import time
 from collections.abc import Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -42,6 +42,21 @@ class ServiceStatus:
 
 def compose_detail(lifecycle: str, status: str | None, launch: str | None) -> str:
     return " · ".join(part for part in (lifecycle, status, launch) if part)
+
+
+def render_status(result: ProbeResult) -> tuple[dict[str, object] | str | None, str]:
+    if result.timed_out:
+        return None, "status: timed out"
+    if result.code != 0:
+        return None, f"status: error (exit {result.code})"
+    try:
+        value = json.loads(result.stdout)
+    except (ValueError, RecursionError):
+        value = None
+    if isinstance(value, dict):
+        return value, " ".join(f"{key}={item}" for key, item in value.items())[:120]
+    text = next((line.strip() for line in result.stdout.splitlines() if line.strip()), "")[:120]
+    return text, text
 
 
 @dataclass(frozen=True)
@@ -226,7 +241,27 @@ class ServiceRuntime:
         if not probe:
             return items
         with ThreadPoolExecutor(max_workers=8) as pool:
-            return list(pool.map(lambda item: self._health(item, fresh=fresh), items))
+            health = [pool.submit(self._health, item, fresh=fresh) for item in items]
+            statuses: list[Future[tuple[ProbeResult, float | None]] | None] = []
+            for item in items:
+                service = self.cfg.services[item.name]
+                if item.window is not None and item.state != "exited" and service.status:
+                    statuses.append(
+                        pool.submit(
+                            self._probe_launch, item.name, "status", service.status,
+                            service.status_timeout, item.since or "", fresh=fresh,
+                        )
+                    )
+                else:
+                    statuses.append(None)
+            results = []
+            for health_job, status_job in zip(health, statuses, strict=True):
+                item = health_job.result()
+                if status_job is not None:
+                    value, detail = render_status(status_job.result()[0])
+                    item = replace(item, status=value, detail=compose_detail(item.detail, detail, None))
+                results.append(item)
+            return results
 
     def wait(
         self, names: Sequence[str], until: str, *, timeout: float, interval: float
