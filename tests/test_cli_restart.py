@@ -6,7 +6,12 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from jailbee.autostart_plan import AutostartPlan
 from jailbee.cli import app
+
+# `run_autostart` returns the plan the CLI hands to a detached worker; a bare
+# MagicMock would be serialised into the job file.
+_NO_DETACHED = AutostartPlan(blocking=[], detached=[])
 
 runner = CliRunner()
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -30,7 +35,7 @@ def _common_mocks(mocker):
 def test_restart_runs_autostart_on_start_trigger(mocker):
     """Restart must run autostart, just like start."""
     _common_mocks(mocker)
-    run_autostart = mocker.patch("jailbee.autostart.run_autostart")
+    run_autostart = mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     result = runner.invoke(
         app,
@@ -48,7 +53,7 @@ def test_restart_runs_autostart_on_start_trigger(mocker):
 def test_restart_no_autostart_flag_skips_autostart(mocker):
     """--no-autostart on restart should skip autostart, mirroring start."""
     _common_mocks(mocker)
-    run_autostart = mocker.patch("jailbee.autostart.run_autostart")
+    run_autostart = mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     result = runner.invoke(
         app,
@@ -72,7 +77,7 @@ def test_restart_pins_hosts_for_strict_container(mocker):
         "jailbee.lifecycle.current_network_mode",
         return_value="strict",
     )
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
     apply = mocker.patch("jailbee.hosts.apply_hosts")
 
     result = runner.invoke(
@@ -96,7 +101,7 @@ def test_restart_syncs_the_proxy_with_the_current_mode(mocker):
 
     _common_mocks(mocker)
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
     mocker.patch("jailbee.hosts.apply_hosts")
     sync = mocker.patch.object(egress_proxy, "sync_container")
 
@@ -119,7 +124,7 @@ def test_restart_syncs_the_proxy_with_the_current_mode(mocker):
 def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
     launch = mocker.patch("jailbee.apps.launch")
 
     result = runner.invoke(
@@ -144,7 +149,7 @@ def test_restart_continues_launching_chrome_after_ide_launcher_is_missing(mocker
     """
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
     error_mock = mocker.patch("jailbee.tui.error")
 
     def fake_launch(cfg, incus, container, spec, args=None, **kwargs):
@@ -170,7 +175,7 @@ def test_restart_skips_ide_when_jetbrains_disabled(mocker, tmp_path):
     jetbrains.autostart=true and a graphical session is detected."""
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     repo = tmp_path / "myrepo"
     (repo / ".git").mkdir(parents=True)
@@ -194,7 +199,7 @@ def test_restart_skips_chrome_when_chrome_disabled(mocker, tmp_path):
     chrome.autostart=true and a graphical session is detected."""
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)
-    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     repo = tmp_path / "myrepo"
     (repo / ".git").mkdir(parents=True)

@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from jailbee.autostart_plan import AutostartPlan
 from jailbee.cli import app
+
+# `run_autostart` returns the plan the CLI hands to a detached worker; a bare
+# MagicMock would be serialised into the job file.
+_NO_DETACHED = AutostartPlan(blocking=[], detached=[])
 
 runner = CliRunner()
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -117,7 +122,7 @@ def test_start_forwards_mirror_endpoint_to_run_autostart(mocker):
     )
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=False)
-    run_autostart = mocker.patch("jailbee.autostart.run_autostart")
+    run_autostart = mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     result = runner.invoke(
         app,
@@ -145,7 +150,7 @@ def test_start_no_autostart_still_injects_github_token(mocker):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
     inject = mocker.patch("jailbee.autostart.inject_github_token")
-    run_autostart = mocker.patch("jailbee.autostart.run_autostart")
+    run_autostart = mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
 
     result = runner.invoke(
         app,
