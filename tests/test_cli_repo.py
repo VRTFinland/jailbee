@@ -225,11 +225,20 @@ def test_dry_run_real_plan_never_mutates_incus(repo_cli_env, db_engine, tmp_path
         {"name": "target-one", "profiles": ["target-base"]}
     ]
     repo_cli_env.list_images.return_value = [{"aliases": [{"name": "target-base"}]}]
+    from sqlmodel import Session
+
+    from jailbee import repo_remove
+    from jailbee.db.models import RegisteredRepo
+
     mocker.patch("jailbee.config.load_repo_config", side_effect=AssertionError("cwd config loaded"))
+    execute = mocker.spy(repo_remove, "execute_removal")
     result = CliRunner().invoke(app, ["repo", "rm", "target", "--dry-run"])
     assert result.exit_code == 0, result.output
     for item in ("target-one", "target-base", "target-binds", "target-allowlist"):
         assert item in result.output
+    execute.assert_not_called()
+    with Session(db_engine) as session:
+        assert (session.get(RegisteredRepo, "target") is not None) is registered
     assert {call[0] for call in repo_cli_env.method_calls} <= {
         "profile_list", "network_acl_list", "list_containers", "list_images"
     }
