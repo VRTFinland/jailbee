@@ -42,6 +42,48 @@ def test_corrupt_store_is_empty(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "current",
+    [
+        {"args": "broken", "env": {}, "persisted_args": False},
+        {"args": [], "env": {"A": 1}, "persisted_args": False},
+        {"args": [], "env": {}, "persisted_args": "false"},
+        {"args": [], "env": {}},
+    ],
+)
+def test_structurally_corrupt_current_is_absent(tmp_path: Path, current: dict[str, object]) -> None:
+    path = tmp_path / "launch.json"
+    path.write_text(json.dumps({"api": {"current": current}}))
+
+    assert LaunchStore(path).current("api") is None
+
+
+def test_clear_persisted_preserves_current_and_other_services(tmp_path: Path) -> None:
+    store = LaunchStore(tmp_path / "launch.json")
+    store.set_persisted("api", Launch(("saved",), {"A": "1"}))
+    store.set_current("api", Launch(("live",), {"B": "2"}), False)
+    store.set_persisted("worker", Launch(("worker",), {}))
+
+    store.clear_persisted("api")
+
+    assert store.persisted("api") == Launch()
+    assert store.current("api") == (Launch(("live",), {"B": "2"}), False)
+    assert store.persisted("worker") == Launch(("worker",), {})
+
+
+def test_clear_current_preserves_persisted_and_other_services(tmp_path: Path) -> None:
+    store = LaunchStore(tmp_path / "launch.json")
+    store.set_persisted("api", Launch(("saved",), {"A": "1"}))
+    store.set_current("api", Launch(("live",), {"B": "2"}), False)
+    store.set_current("worker", Launch(("worker",), {}), True)
+
+    store.clear_current("api")
+
+    assert store.current("api") is None
+    assert store.persisted("api") == Launch(("saved",), {"A": "1"})
+    assert store.current("worker") == (Launch(("worker",), {}), True)
+
+
+@pytest.mark.parametrize(
     ("persisted", "args", "env", "persist", "reset", "want_persisted", "want_effective", "want_flag"),
     [
         (Launch(("old",), {"A": "1"}), None, {}, False, False, Launch(("old",), {"A": "1"}), Launch(("old",), {"A": "1"}), True),

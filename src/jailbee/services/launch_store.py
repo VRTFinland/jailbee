@@ -28,31 +28,33 @@ class LaunchStore:
         return {name: value for name, value in data.items() if isinstance(name, str) and isinstance(value, dict)}
 
     @staticmethod
-    def _launch(value: object) -> Launch:
+    def _launch(value: object) -> Launch | None:
         if not isinstance(value, dict):
-            return Launch()
-        args = value.get("args", [])
-        env = value.get("env", {})
+            return None
+        args = value.get("args")
+        env = value.get("env")
         if (
             not isinstance(args, list)
             or not all(isinstance(arg, str) for arg in args)
             or not isinstance(env, dict)
             or not all(isinstance(key, str) and isinstance(item, str) for key, item in env.items())
         ):
-            return Launch()
+            return None
         return Launch(tuple(args), env)
 
     def persisted(self, name: str) -> Launch:
-        return self._launch(self._read().get(name, {}).get("persisted"))
+        launch = self._launch(self._read().get(name, {}).get("persisted"))
+        return launch if launch is not None else Launch()
 
     def current(self, name: str) -> tuple[Launch, bool] | None:
-        item = self._read().get(name, {})
-        current = item.get("current")
+        current = self._read().get(name, {}).get("current")
         if not isinstance(current, dict):
             return None
         launch = self._launch(current)
         flag = current.get("persisted_args")
-        return launch, flag if isinstance(flag, bool) else False
+        if launch is None or not isinstance(flag, bool):
+            return None
+        return launch, flag
 
     def set_persisted(self, name: str, launch: Launch) -> None:
         data = self._read()
