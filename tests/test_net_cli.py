@@ -117,6 +117,25 @@ def test_net_install_says_it_is_deprecated(mocker: MockerFixture) -> None:
     assert LEGACY_REMOVAL_VERSION in combined
 
 
+def test_net_unregister_warns_about_repo_rm(mocker: MockerFixture) -> None:
+    from jailbee.constants import LEGACY_REMOVAL_VERSION
+
+    mocker.patch("jailbee.db.get_engine")
+    fake_session: Any = mocker.MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.get.return_value = None
+    mocker.patch("sqlmodel.Session", return_value=fake_session)
+
+    result = runner.invoke(app, ["net", "unregister", "--prefix", "X"])
+
+    combined = (result.output or "") + (result.stderr or "")
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in combined
+    assert "jailbee repo rm" in combined
+    assert LEGACY_REMOVAL_VERSION in combined
+    assert "not registered: X" in result.output
+
+
 def test_net_unregister_removes_row(
     mocker: MockerFixture,
     tmp_path: Path,

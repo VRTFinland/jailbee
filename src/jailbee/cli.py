@@ -10860,7 +10860,11 @@ def net_unregister_cmd(
         typer.Option("--prefix", help="Target container_prefix directly"),
     ] = None,
 ) -> None:
-    """Remove the cwd (or --repo) registration from the refresh registry."""
+    """Deprecated: use `jailbee repo rm` to remove a repository."""
+    warn(
+        "`jailbee net unregister` is deprecated — use `jailbee repo rm` instead. "
+        f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+    )
     from sqlmodel import Session
 
     from jailbee.db import get_engine
