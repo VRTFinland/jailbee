@@ -87,6 +87,12 @@ def test_parse_invalid_snapshot_returns_empty(raw: str) -> None:
         (["claude", "--mcp-config", "a", "b"], ["claude", "--mcp-config", "a", "b"]),
         (["claude", "--allowedTools", "X", "Y"], ["claude", "--allowedTools", "X", "Y"]),
         (["claude", "--session-id", "--resume"], ["claude"]),
+        (["claude", "-n", "work"], ["claude", "-n", "work"]),
+        (["claude", "--allowed-tools", "X", "Y"], ["claude", "--allowed-tools", "X", "Y"]),
+        (["claude", "--betas", "one", "two"], ["claude", "--betas", "one", "two"]),
+        (["claude", "--file", "a", "b"], ["claude", "--file", "a", "b"]),
+        (["claude", "--from-pr", "123", "--model", "opus"], ["claude", "--model", "opus"]),
+        (["claude", "--from-pr=123", "--model", "opus"], ["claude", "--model", "opus"]),
         (["claude", "--system-prompt", "--resume"], ["claude", "--system-prompt", "--resume"]),
         (
             ["claude-jb", "-P", "codex", "-C", "1m", "--model", "opus"],

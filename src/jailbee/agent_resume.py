@@ -24,6 +24,7 @@ _VALUE_OPTIONS = {
     "--model",
     "--system-prompt",
     "--system-prompt-file",
+    "-n",
     "--agent",
     "--agents",
     "--effort",
@@ -51,9 +52,21 @@ _VALUE_OPTIONS = {
     "--add-dir",
     "--append-system-prompt",
     "--append-system-prompt-file",
+    "--allowed-tools",
+    "--disallowed-tools",
 }
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
-_VARIADIC_OPTIONS = {"--add-dir", "--allowedTools", "--disallowedTools", "--mcp-config", "--tools"}
+_VARIADIC_OPTIONS = {
+    "--add-dir",
+    "--allowedTools",
+    "--allowed-tools",
+    "--disallowedTools",
+    "--disallowed-tools",
+    "--betas",
+    "--file",
+    "--mcp-config",
+    "--tools",
+}
 
 
 def parse_snapshot(raw: str) -> list[ResumeEntry]:
@@ -126,6 +139,11 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
     index = 1
     while index < len(args):
         arg = args[index]
+        if arg == "--from-pr":
+            index += 1
+            if index < len(args) and not args[index].startswith("-"):
+                index += 1
+            continue
         if arg == "--session-id":
             index += 1
             if index < len(args):
@@ -138,7 +156,12 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
             continue
         if arg == "--":
             break
-        if arg.startswith("--resume=") or arg.startswith("--session-id=") or arg in _REMOVE_FLAGS:
+        if (
+            arg.startswith("--resume=")
+            or arg.startswith("--session-id=")
+            or arg.startswith("--from-pr=")
+            or arg in _REMOVE_FLAGS
+        ):
             index += 1
             continue
         if arg in _VALUE_OPTIONS or arg in _VARIADIC_OPTIONS:
