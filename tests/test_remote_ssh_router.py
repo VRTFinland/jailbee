@@ -1838,3 +1838,9 @@ def test_outbox_sent_leaves_are_container_commands_under_repo_scope(argv):
         policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=["outbox ls"]))
     with pytest.raises(RouteError, match="config"):
         policy_allows((*argv, "--config", "/etc/passwd"), FULL)
+
+
+def test_service_wait_is_container_command():
+    from jailbee.remote_ssh.router import _CONTAINER_COMMANDS
+
+    assert "service wait" in _CONTAINER_COMMANDS

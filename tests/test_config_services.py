@@ -92,6 +92,12 @@ def test_profile_can_name_implicit_services_slot(tmp_path):
 def test_minimal_service(tmp_path):
     service = load('services: {web: {run: "npm run dev"}}', tmp_path).services["web"]
     assert (service.ready_timeout, service.stop_timeout, service.prepare) == (120, 10, [])
+    assert (service.health, service.health_timeout) == (None, 5)
+
+
+def test_health_timeout_must_be_positive(tmp_path):
+    with pytest.raises(ConfigError, match="health_timeout"):
+        load("services: {web: {run: x, health_timeout: 0}}", tmp_path)
 
 
 @pytest.mark.parametrize(

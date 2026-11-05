@@ -482,6 +482,15 @@ in branch diffs, and multiple service-start stages have separate status rows
 (services#1, services#2, ...). A legacy container plan without depends_on metadata
 runs the full selected plan, including prepare, rather than partition unsafely.
 
+### Health and waiting
+
+Optional `health` is a shell command and `health_timeout` is an integer of at
+least 1 second (default 5). A failed or timed-out health check marks a live ready
+service unhealthy on status reads; if omitted, `ready` is reused, and with
+neither there is no probe. Prefer a health endpoint that checks critical
+dependencies over a static `UP` response. Health failures do not trigger an
+automatic restart. Use `jailbee service wait` to wait for state changes.
+
 ## `autostart`
 
 IDE and browser launches are controlled by `jetbrains.autostart` /

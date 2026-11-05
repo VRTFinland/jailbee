@@ -4,13 +4,34 @@ import codecs
 import json
 import os
 import re
+import selectors
 import shlex
 import signal
 import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, cast
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    code: int | None
+    stdout: str
+    stderr: str
+    timed_out: bool
+
+
+_PROBE_OUTPUT_LIMIT = 16 * 1024
+
+
+def _decode_probe_output(output: bytearray) -> str:
+    text = output.decode("utf-8", errors="replace")
+    encoded = text.encode("utf-8")[-_PROBE_OUTPUT_LIMIT:]
+    return encoded.decode("utf-8", errors="ignore")
+
 
 # The anchor publishes its identity before the service command starts. It stays
 # in the pane's process group after the pane shell exits.
@@ -93,6 +114,79 @@ class LocalProc:
                 process.terminate()
             process.wait()
             process.stdout.close()
+
+    def run_probe(
+        self,
+        cmd: str,
+        *,
+        cwd: str,
+        env: Mapping[str, str],
+        timeout: int,
+    ) -> ProbeResult:
+        process = subprocess.Popen(
+            ["bash", "-lc", cmd],
+            cwd=cwd,
+            env={**os.environ, **env},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        assert process.stdout is not None and process.stderr is not None
+        outputs = {process.stdout: bytearray(), process.stderr: bytearray()}
+        selector = selectors.DefaultSelector()
+        for stream in outputs:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = process.poll() is None or bool(selector.get_map())
+                    break
+                for key, _ in selector.select(remaining):
+                    stream = cast(IO[bytes], key.fileobj)
+                    chunk = os.read(stream.fileno(), 8192)
+                    if not chunk:
+                        selector.unregister(stream)
+                        stream.close()
+                        continue
+                    output = outputs[stream]
+                    output.extend(chunk)
+                    if len(output) > _PROBE_OUTPUT_LIMIT:
+                        del output[: len(output) - _PROBE_OUTPUT_LIMIT]
+            if timed_out:
+                self.signal_group(process.pid, signal.SIGKILL)
+                process.kill()
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                self.signal_group(process.pid, signal.SIGKILL)
+                process.kill()
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    pass
+            return ProbeResult(
+                None if timed_out else process.returncode,
+                _decode_probe_output(outputs[process.stdout]),
+                _decode_probe_output(outputs[process.stderr]),
+                timed_out,
+            )
+        except BaseException:
+            self.signal_group(process.pid, signal.SIGKILL)
+            process.kill()
+            try:
+                process.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        finally:
+            selector.close()
+            process.stdout.close()
+            process.stderr.close()
 
     def run_shell(
         self,

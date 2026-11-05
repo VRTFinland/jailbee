@@ -909,6 +909,17 @@ def test_services_json_and_state_actions():
     ]
 
 
+def test_unhealthy_service_with_extra_fields_and_actions():
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"unhealthy","window":"svc-db","since":null,'
+        '"detail":"probe failed","launch":null,"status":null,"future":{"x":1}}]'
+    )
+    assert rows == (dact.ServiceRow("db", "unhealthy"),)
+    assert [
+        e.value for e in dact.service_action_picker("alpha-x", "db", rows[0].state).entries
+    ] == ["stop", "restart", "refresh", "logs"]
+
+
 @pytest.mark.parametrize("output", ["oops", "{}", '[{"name":"db","state":"running"}]'])
 def test_services_reject_malformed_output(output):
     with pytest.raises(ValueError):

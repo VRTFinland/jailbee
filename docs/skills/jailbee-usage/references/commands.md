@@ -67,6 +67,20 @@ Services menu appears only for running containers in repos with configured
 services; it uses gathered service choices without reading configuration in the
 frontend.
 
+### Health and waiting
+
+`jailbee service wait api --until unhealthy` watches for unhealthy, stopped,
+failed, or exited; on the host use `jb service wait CONTAINER api --until
+unhealthy`. `--until ready` is the default; the other lifecycle states are also
+accepted. Multiple names return the first match. `--interval` defaults to 10
+seconds (minimum 1); `--timeout 0` means no limit. Exit codes: 0 match, 1
+timeout, 2 invalid input, 3 stopped/failed/exited while waiting for ready.
+`--json` prints the matching status. Each tick synchronously reads fresh
+status before checking the deadline, so a scan may overrun the overall timeout;
+lock acquisition and the probe are each bounded separately by `health_timeout`.
+Health checks use `health`, falling back to `ready`; no command means no probe. Unhealthy services are not
+restarted automatically.
+
 For autostart, `new --services`, profile services, and orchestration spawn/restart
 `--services` select the dependency-closed plan. Reserved `on_start` services slots
 place it without broadening selection. Slots may name disjoint `services: [names]`

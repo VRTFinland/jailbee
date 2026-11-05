@@ -11,6 +11,8 @@ before editing `## Unreleased`.
 ### Added
 
 - Interactive Claude sessions resume after normal JailBee stops and restarts, using their original launcher, arguments and working directory.
+- Managed services report health failures as `unhealthy`; `service wait` lets
+  agents and hosts wait for readiness or detect failures without automatic restarts.
 - Re-run selected or failed autostart steps, record their outcomes, and use the
   terminal dashboard Autostart and Services menus.
 - `claude-jb` sessions receive a generated profile model map before their

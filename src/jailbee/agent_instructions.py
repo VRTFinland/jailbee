@@ -47,6 +47,12 @@ PREAMBLE = "\n".join(
         "From the repository directory, inspect services with jailbee service ls "
         "and jailbee service logs <service>.",
         "Start a service with jailbee service start <service>.",
+        "## Health and waiting",
+        "Before long tests or service-dependent work, check service ls or run "
+        "jailbee service wait <service> --until unhealthy in the background.",
+        "On connection refused, a blank UI, or HTTP 500, check service ls and logs first; "
+        "fix the environment and restart the service, not app code to mask a dead service. "
+        "JailBee does not automatically restart unhealthy services.",
         "If JAILBEE_ROLE=child, your first prompt identifies you as a child, or you were adopted,",
         "use jailbee-orchestration-child. The variable is set only on orchestrator launches;",
         "its absence does not mean you are not a child.",
