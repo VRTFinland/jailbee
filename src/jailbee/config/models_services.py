@@ -58,6 +58,7 @@ class Service(BaseModel):
         default_factory=list, description="Serial preparation steps."
     )
     run: str = Field(min_length=1, description="Long-running foreground shell command.")
+    args: bool = Field(default=False, description="Allow positional runtime arguments.")
     ready: str | None = Field(default=None, description="Optional readiness probe command.")
     ready_timeout: int = Field(default=120, gt=0, description="Readiness timeout in seconds.")
     health: str | None = Field(default=None, description="Optional health probe command.")

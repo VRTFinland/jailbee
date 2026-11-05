@@ -91,6 +91,7 @@ def test_profile_can_name_implicit_services_slot(tmp_path):
 
 def test_minimal_service(tmp_path):
     service = load('services: {web: {run: "npm run dev"}}', tmp_path).services["web"]
+    assert service.args is False
     assert (service.ready_timeout, service.stop_timeout, service.prepare) == (120, 10, [])
     assert (service.health, service.health_timeout) == (None, 5)
 
