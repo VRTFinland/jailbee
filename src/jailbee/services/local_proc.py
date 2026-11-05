@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from typing import IO, cast
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -145,7 +146,7 @@ class LocalProc:
                     timed_out = process.poll() is None or bool(selector.get_map())
                     break
                 for key, _ in selector.select(remaining):
-                    stream = key.fileobj
+                    stream = cast(IO[bytes], key.fileobj)
                     chunk = os.read(stream.fileno(), 8192)
                     if not chunk:
                         selector.unregister(stream)
