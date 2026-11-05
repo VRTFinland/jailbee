@@ -67,9 +67,7 @@ def test_remove_repo_menu_respects_ssh_policy(mocker, tmp_path, allowed):
     group = cfg_group(tmp_path)
     policy = RemoteSSHConfig(restrict_host=False)
     permitted = mocker.patch.object(tmenu, "permitted", return_value=allowed)
-    menu = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=policy, over_ssh=True
-    )
+    menu = tmenu.open_repo_menu([group], "alpha", frozenset(), ssh_policy=policy, over_ssh=True)
     assert ("repo-remove" in repo_menu_verbs(menu)) is allowed
     permitted.assert_any_call(["repo", "rm", "alpha"], policy, over_ssh=True)
 
@@ -77,7 +75,11 @@ def test_remove_repo_menu_respects_ssh_policy(mocker, tmp_path, allowed):
 def test_remove_repo_menu_uses_actual_ssh_permission(tmp_path):
     group = cfg_group(tmp_path)
     unrestricted = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(restrict_host=False), over_ssh=True
+        [group],
+        "alpha",
+        frozenset(),
+        ssh_policy=RemoteSSHConfig(restrict_host=False),
+        over_ssh=True,
     )
     restricted = tmenu.open_repo_menu(
         [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), over_ssh=True

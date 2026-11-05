@@ -650,7 +650,10 @@ def test_network_set_invokes_cli(incus, mocker):
 def test_network_acl_used_by_returns_referencing_objects(incus, mocker):
     run = _mock_run(
         mocker,
-        stdout="name: myrepo-allowlist\nused_by:\n- /1.0/networks/incusbr0\n- /1.0/networks/jailbee-work\n",
+        stdout=(
+            "name: myrepo-allowlist\nused_by:\n"
+            "- /1.0/networks/incusbr0\n- /1.0/networks/jailbee-work\n"
+        ),
     )
 
     assert incus.network_acl_used_by("myrepo-allowlist") == [

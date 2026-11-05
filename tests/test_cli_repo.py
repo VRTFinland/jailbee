@@ -156,10 +156,9 @@ def test_prefix_target_never_loads_cwd_config(monkeypatch):
 def repo_cli_env(mocker, db_engine, tmp_path, monkeypatch):
     from unittest.mock import MagicMock
 
+    from jailbee import repo_remove
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
-
-    from jailbee import repo_remove
 
     monkeypatch.setenv("HOME", str(tmp_path))
     cwd = tmp_path / "cwd"
@@ -214,19 +213,27 @@ def test_ls_json_real_inventory(repo_cli_env, db_engine, tmp_path, mocker, make_
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == [
         {
-            "prefix": "gone", "path": str(tmp_path / "gone"), "state": "dir missing",
-            "containers": 0, "base": None,
+            "prefix": "gone",
+            "path": str(tmp_path / "gone"),
+            "state": "dir missing",
+            "containers": 0,
+            "base": None,
         },
         {"prefix": "orphan", "path": None, "state": "leftover", "containers": 1, "base": None},
         {
-            "prefix": "registered", "path": str(root), "state": "ok",
-            "containers": 0, "base": "2.0 KB",
+            "prefix": "registered",
+            "path": str(root),
+            "state": "ok",
+            "containers": 0,
+            "base": "2.0 KB",
         },
     ]
 
 
 @pytest.mark.parametrize("registered", [True, False], ids=["missing-config", "leftover"])
-def test_dry_run_real_plan_never_mutates_incus(repo_cli_env, db_engine, tmp_path, mocker, registered):
+def test_dry_run_real_plan_never_mutates_incus(
+    repo_cli_env, db_engine, tmp_path, mocker, registered
+):
     if registered:
         _register(db_engine, "target", tmp_path / "missing")
     repo_cli_env.profile_list.return_value = ["target-base", "target-binds"]
@@ -250,11 +257,16 @@ def test_dry_run_real_plan_never_mutates_incus(repo_cli_env, db_engine, tmp_path
     with Session(db_engine) as session:
         assert (session.get(RegisteredRepo, "target") is not None) is registered
     assert {call[0] for call in repo_cli_env.method_calls} <= {
-        "profile_list", "network_acl_list", "list_containers", "list_images"
+        "profile_list",
+        "network_acl_list",
+        "list_containers",
+        "list_images",
     }
 
 
-def test_dry_run_real_plan_preserves_shared_alias(repo_cli_env, db_engine, tmp_path, mocker, make_cfg):
+def test_dry_run_real_plan_preserves_shared_alias(
+    repo_cli_env, db_engine, tmp_path, mocker, make_cfg
+):
     configs = {}
     for name in ("target", "other"):
         root = tmp_path / name
@@ -272,5 +284,8 @@ def test_dry_run_real_plan_preserves_shared_alias(repo_cli_env, db_engine, tmp_p
     assert "Golden instances: -" in result.output
     assert "Containers: -" in result.output
     assert {call[0] for call in repo_cli_env.method_calls} <= {
-        "profile_list", "network_acl_list", "list_containers", "list_images"
+        "profile_list",
+        "network_acl_list",
+        "list_containers",
+        "list_images",
     }
