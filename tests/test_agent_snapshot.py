@@ -165,6 +165,54 @@ def test_boot_does_not_return_unconsumed_stale_session(
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
 
 
+@pytest.mark.parametrize("with_snapshot", [False, True])
+def test_boot_retries_unconsumed_session_with_launcher_and_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_snapshot: bool,
+) -> None:
+    record(tmp_path, 1)
+    session = tmp_path / snapshot.SESSIONS_RELPATH / "1.json"
+    launch = marker(tmp_path, 1, b"777\0claude-jb\0-P\0codex\0")
+    expected = {"agent": "claude", "session_id": ID, "cwd": "/work", "launcher": ["claude-jb", "-P", "codex"], "window": "claude" if with_snapshot else None}
+    if with_snapshot:
+        path = tmp_path / snapshot.SNAPSHOT_RELPATH
+        path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [expected]}))
+    original = Path.unlink
+
+    def blocked(self: Path, missing_ok: bool = False) -> None:
+        if self == session:
+            raise PermissionError("denied")
+        original(self, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", blocked)
+        assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+        assert launch.exists()
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == [expected]
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
+def test_boot_retains_only_blocked_snapshot_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    record(tmp_path, 1)
+    record(tmp_path, 2, sessionId=other_id)
+    path = tmp_path / snapshot.SNAPSHOT_RELPATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [{"session_id": ID}, {"session_id": other_id}]}))
+    blocked = tmp_path / snapshot.SESSIONS_RELPATH / "1.json"
+    original = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == blocked:
+            raise PermissionError("denied")
+        original(self, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", unlink)
+        assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == [{"session_id": other_id}]
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == [{"session_id": ID}]
+    assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
+
+
 def test_boot_without_snapshot_uses_stale_records(tmp_path: Path) -> None:
     proc = tmp_path / "proc"
     for pid in (1, 2, 3):

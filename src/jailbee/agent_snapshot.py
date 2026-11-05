@@ -108,6 +108,20 @@ def _item(data: dict[str, object], launcher: list[str], window: str | None) -> d
     return {"agent": "claude", "session_id": data["sessionId"], "cwd": data["cwd"], "launcher": launcher, "window": window}
 
 
+def _write_snapshot(path: Path, payload: bytes) -> None:
+    if len(payload) > _LIMIT:
+        raise ValueError("agent snapshot exceeds size limit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".agent-sessions-")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
 def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str]) -> int:
     sessions: list[dict[str, object]] = []
     for path in _entries(home / SESSIONS_RELPATH):
@@ -123,18 +137,7 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         sessions.append(_item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window))
     if sessions:
         payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode("utf-8")
-        if len(payload) > _LIMIT:
-            raise ValueError("agent snapshot exceeds size limit")
-        path = home / SNAPSHOT_RELPATH
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(dir=path.parent, prefix=".agent-sessions-")
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(payload)
-            os.replace(name, path)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
+        _write_snapshot(home / SNAPSHOT_RELPATH, payload)
     return len(sessions)
 
 
@@ -155,9 +158,9 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         data = _json(path)
         if isinstance(data, dict) and data.get("version") == 1 and data.get("source") in ("capture", "stale") and isinstance(data.get("sessions"), list):
             result = data
-        path.unlink(missing_ok=True)
     stale: list[dict[str, object]] = []
     unconsumed: set[str] = set()
+    blocked_pids: set[str] = set()
     live: set[str] = set()
     directory = home / SESSIONS_RELPATH
     for entry in _entries(directory):
@@ -175,29 +178,37 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         if _unlink_stale(entry):
             if not has_snapshot and item is not None:
                 stale.append(item)
-        elif item is not None:
-            unconsumed.add(str(item["session_id"]))
+        else:
+            blocked_pids.add(pid)
+            if item is not None:
+                unconsumed.add(str(item["session_id"]))
     for entry in _entries(directory):
         match = re.fullmatch(r"([0-9]+)\..*\.key", entry.name)
         if match and match[1] not in live:
             _unlink_stale(entry)
     for entry in _entries(home / LAUNCHERS_RELPATH):
-        if not entry.name.isascii() or not entry.name.isdigit():
+        if not entry.name.isascii() or not entry.name.isdigit() or entry.name in blocked_pids:
             continue
         args = _argv(entry)
         if not args or _start(proc, entry.name) != args[0]:
             _unlink_stale(entry)
     if not has_snapshot:
         result["sessions"] = stale
-    elif unconsumed:
+    else:
         entries = result["sessions"]
-        if isinstance(entries, list):
-            result["sessions"] = [
-                item for item in entries
-                if not isinstance(item, dict)
-                or not isinstance(item.get("session_id"), str)
-                or item["session_id"] not in unconsumed
-            ]
+        assert isinstance(entries, list)
+        blocked = [
+            item for item in entries
+            if isinstance(item, dict)
+            and isinstance(item.get("session_id"), str)
+            and item["session_id"] in unconsumed
+        ]
+        if blocked:
+            remaining = {**result, "sessions": blocked}
+            _write_snapshot(path, json.dumps(remaining).encode("utf-8"))
+            result["sessions"] = [item for item in entries if item not in blocked]
+        else:
+            path.unlink(missing_ok=True)
     return result
 
 
