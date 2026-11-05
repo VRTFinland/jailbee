@@ -258,11 +258,14 @@ def test_killpg_ignores_vanished_process(monkeypatch):
 
 def test_args_survive_both_shell_levels(tmp_path, monkeypatch):
     import jailbee.services.local_proc as module
+
     monkeypatch.setattr(module, "_ANCHOR", "pass")
     identity = tmp_path / "anchor"
     identity.touch()
     out = tmp_path / "out"
     args = ["a b", "'q'", "$HOME", "x;y"]
     command = LocalProc().service_command('printf "%s\\0" "$@" > "$OUT"', identity, args)
-    subprocess.run(["bash", "-lc", command], env={**os.environ, "OUT": str(out)}, check=True, timeout=5)
+    subprocess.run(
+        ["bash", "-lc", command], env={**os.environ, "OUT": str(out)}, check=True, timeout=5
+    )
     assert out.read_bytes().split(b"\0") == [b"a b", b"'q'", b"$HOME", b"x;y", b""]

@@ -745,8 +745,11 @@ def test_wait_ready_and_unhealthy_probe(tmp_path):
 
 def test_one_off_args_do_not_survive_plain_restart(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
+
     rt, proc = runtime(tmp_path, {"web": {"run": "serve", "args": True}})
-    assert rt.start(["web"], launch=LaunchRequest(("one",), {"TOKEN": "secret-one"}, False, False)).ok
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("one",), {"TOKEN": "secret-one"}, False, False)
+    ).ok
     assert proc.last_args["anchor-web.json"] == ("one",)
     assert rt.restart(["web"]).ok
     assert proc.last_args["anchor-web.json"] == ()
@@ -755,8 +758,11 @@ def test_one_off_args_do_not_survive_plain_restart(tmp_path):
 
 def test_persisted_args_survive_restart_and_store_reload(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
+
     rt, proc = runtime(tmp_path, {"web": {"run": "serve", "args": True}})
-    assert rt.start(["web"], launch=LaunchRequest(("saved",), {"TOKEN": "secret-two"}, True, False)).ok
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("saved",), {"TOKEN": "secret-two"}, True, False)
+    ).ok
     rt = ServiceRuntime(rt.cfg, tmp_path, proc, rt.state_dir)
     assert rt.restart(["web"]).ok
     assert proc.last_args["anchor-web.json"] == ("saved",)
@@ -765,17 +771,42 @@ def test_persisted_args_survive_restart_and_store_reload(tmp_path):
 
 def test_launch_env_reaches_ready_and_stop_probes(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
-    rt, proc = runtime(tmp_path, {"web": {"run": "serve", "args": True, "ready": "ready", "stop": "stop", "env": {"BASE": "yes"}}})
+
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "web": {
+                "run": "serve",
+                "args": True,
+                "ready": "ready",
+                "stop": "stop",
+                "env": {"BASE": "yes"},
+            }
+        },
+    )
     proc.probes = [0]
-    assert rt.start(["web"], launch=LaunchRequest(("a b",), {"TOKEN": "secret-three"}, False, False)).ok
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("a b",), {"TOKEN": "secret-three"}, False, False)
+    ).ok
     assert rt.stop(["web"]).ok
-    assert [s[2] for s in proc.shells] == [{"BASE": "yes", "TOKEN": "secret-three", "JAILBEE_SERVICE_ARGS": "'a b'"}] * 2
+    assert [s[2] for s in proc.shells] == [
+        {"BASE": "yes", "TOKEN": "secret-three", "JAILBEE_SERVICE_ARGS": "'a b'"}
+    ] * 2
 
 
 def test_cascade_dependents_use_their_own_launch(tmp_path):
     from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore
-    rt, proc = runtime(tmp_path, {"db": {"run": "db", "args": True}, "web": {"run": "web", "args": True, "depends_on": {"db": {"restart": True}}}})
-    LaunchStore(rt.state_dir / "launch.json").set_persisted("web", Launch(("web-arg",), {"WEB": "value"}))
+
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "db": {"run": "db", "args": True},
+            "web": {"run": "web", "args": True, "depends_on": {"db": {"restart": True}}},
+        },
+    )
+    LaunchStore(rt.state_dir / "launch.json").set_persisted(
+        "web", Launch(("web-arg",), {"WEB": "value"})
+    )
     assert rt.restart(["db"], launch=LaunchRequest(("db-arg",), {}, False, False)).ok
     assert proc.last_args["anchor-db.json"] == ("db-arg",)
     assert proc.last_args["anchor-web.json"] == ("web-arg",)
@@ -784,6 +815,7 @@ def test_cascade_dependents_use_their_own_launch(tmp_path):
 
 def test_start_ready_service_with_options_restarts_it(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
+
     rt, proc = runtime(tmp_path, {"web": {"run": "web", "args": True}})
     assert rt.start(["web"]).ok
     assert rt.start(["web"], launch=LaunchRequest(("new",), {}, False, False)).done == ("web",)
@@ -792,12 +824,22 @@ def test_start_ready_service_with_options_restarts_it(tmp_path):
 
 def test_status_launch_field_and_detail(tmp_path):
     from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore
+
     rt, proc = runtime(tmp_path, {"web": {"run": "web", "args": True, "health": "check"}})
-    LaunchStore(rt.state_dir / "launch.json").set_persisted("web", Launch(("saved",), {"SAVED": "saved-secret"}))
-    assert rt.start(["web"], launch=LaunchRequest(("a b",), {"TOKEN": "secret-four"}, False, False)).ok
+    LaunchStore(rt.state_dir / "launch.json").set_persisted(
+        "web", Launch(("saved",), {"SAVED": "saved-secret"})
+    )
+    assert rt.start(
+        ["web"], launch=LaunchRequest(("a b",), {"TOKEN": "secret-four"}, False, False)
+    ).ok
     proc.health_result = ProbeResult(1, "secret-four", "saved-secret", False)
     status = rt.status()[0]
-    assert status.launch == {"args": ["a b"], "env_keys": ["SAVED", "TOKEN"], "persisted_args": ["saved"], "persisted_env_keys": ["SAVED"]}
+    assert status.launch == {
+        "args": ["a b"],
+        "env_keys": ["SAVED", "TOKEN"],
+        "persisted_args": ["saved"],
+        "persisted_env_keys": ["SAVED"],
+    }
     assert "args: 'a b' (one-off)" in status.detail
     assert "persisted args: saved" in status.detail
     assert "env: SAVED,TOKEN" in status.detail
@@ -807,13 +849,16 @@ def test_status_launch_field_and_detail(tmp_path):
 
 def test_failed_start_redacts_launch_secrets(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
+
     rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
     proc.immediate_exit.add("svc-web")
     original = proc.tmux
+
     def capture(args):
         if args[0] == "capture-pane":
             return subprocess.CompletedProcess(args, 0, "secret-five\n", "")
         return original(args)
+
     proc.tmux = capture
     report = rt.start(["web"], launch=LaunchRequest(None, {"TOKEN": "secret-five"}, False, False))
     assert report.tail == "***\n"
@@ -821,8 +866,13 @@ def test_failed_start_redacts_launch_secrets(tmp_path):
 
 def test_invalid_requests_do_not_change_lifecycle(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
+
     rt, proc = runtime(tmp_path, {"a": {"run": "a"}, "b": {"run": "b"}})
-    for names, request in [(["a", "b"], LaunchRequest(None, {}, False, False)), (["a"], LaunchRequest(("x",), {}, False, False)), (["a"], LaunchRequest(None, {"BAD-KEY": "secret-value"}, False, False))]:
+    for names, request in [
+        (["a", "b"], LaunchRequest(None, {}, False, False)),
+        (["a"], LaunchRequest(("x",), {}, False, False)),
+        (["a"], LaunchRequest(None, {"BAD-KEY": "secret-value"}, False, False)),
+    ]:
         with pytest.raises(ValueError) as error:
             rt.restart(names, launch=request)
         assert "secret-value" not in str(error.value)
@@ -831,6 +881,7 @@ def test_invalid_requests_do_not_change_lifecycle(tmp_path):
 
 def test_redact_only_launch_values_of_four_or_more(tmp_path):
     from jailbee.services.launch_store import Launch, LaunchStore
+
     rt, _ = runtime(tmp_path, {"a": {"run": "a", "env": {"CONFIG": "configured"}}})
     store = LaunchStore(rt.state_dir / "launch.json")
     store.set_persisted("a", Launch((), {"S": "persistent", "SHORT": "abc"}))
@@ -840,7 +891,14 @@ def test_redact_only_launch_values_of_four_or_more(tmp_path):
 
 def test_start_stopped_with_options_does_not_start_cascade_dependents(tmp_path):
     from jailbee.services.launch_store import LaunchRequest
-    rt, proc = runtime(tmp_path, {"db": {"run": "db", "args": True}, "web": {"run": "web", "depends_on": {"db": {"restart": True}}}})
+
+    rt, proc = runtime(
+        tmp_path,
+        {
+            "db": {"run": "db", "args": True},
+            "web": {"run": "web", "depends_on": {"db": {"restart": True}}},
+        },
+    )
     result = rt.start(["db"], launch=LaunchRequest(("arg",), {}, False, False))
     assert result.done == ("db",)
     assert "svc-web" not in proc.windows
@@ -848,9 +906,17 @@ def test_start_stopped_with_options_does_not_start_cascade_dependents(tmp_path):
 
 def test_status_redacts_secrets_in_current_and_persisted_args(tmp_path):
     from jailbee.services.launch_store import Launch, LaunchRequest, LaunchStore
+
     rt, _ = runtime(tmp_path, {"web": {"run": "web", "args": True}})
-    LaunchStore(rt.state_dir / "launch.json").set_persisted("web", Launch(("saved-secret",), {"SAVED": "saved-secret"}))
-    assert rt.start(["web"], launch=LaunchRequest(("current-secret", "prefix-saved-secret"), {"TOKEN": "current-secret"}, False, False)).ok
+    LaunchStore(rt.state_dir / "launch.json").set_persisted(
+        "web", Launch(("saved-secret",), {"SAVED": "saved-secret"})
+    )
+    assert rt.start(
+        ["web"],
+        launch=LaunchRequest(
+            ("current-secret", "prefix-saved-secret"), {"TOKEN": "current-secret"}, False, False
+        ),
+    ).ok
     status = rt.status(probe=False)[0]
     assert status.launch["args"] == ["***", "prefix-***"]
     assert status.launch["persisted_args"] == ["***"]

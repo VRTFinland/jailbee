@@ -33,7 +33,11 @@ class LaunchStore:
             return {}
         if not isinstance(data, dict):
             return {}
-        return {name: value for name, value in data.items() if isinstance(name, str) and isinstance(value, dict)}
+        return {
+            name: value
+            for name, value in data.items()
+            if isinstance(name, str) and isinstance(value, dict)
+        }
 
     @staticmethod
     def _launch(value: object) -> Launch | None:
