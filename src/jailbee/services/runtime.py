@@ -358,6 +358,7 @@ class ServiceRuntime:
         if pane is None or pane.dead:
             return 3, pane_error()
         preceding: deque[str] = deque(maxlen=before)
+
         def capture_context() -> None:
             if before:
                 preceding.extend(strip_terminal(self.logs(name, before)).splitlines()[-before:])

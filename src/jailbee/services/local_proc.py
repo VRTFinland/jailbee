@@ -101,7 +101,12 @@ class LocalProc:
         return subprocess.run(["tmux", *args], capture_output=True, text=True, check=False)
 
     def follow_pane(
-        self, target: str, lines: int, *, initial: bool = True, poll_interval: float | None = None,
+        self,
+        target: str,
+        lines: int,
+        *,
+        initial: bool = True,
+        poll_interval: float | None = None,
         on_attached: Callable[[], None] | None = None,
     ) -> Iterator[str]:
         pane_result = self.tmux(["display-message", "-p", "-t", target, "#{pane_id}"])

@@ -208,18 +208,22 @@ def test_wait_log_captures_history_after_attach_without_matching_it(tmp_path, mo
     rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
     proc.windows["svc-web"] = (0, "", 123)
     events = []
+
     def history(*args, **kwargs):
         assert events == ["attached"]
         events.append("history")
         return "hit old\nbefore\n"
+
     def follow(*args, on_attached, **kwargs):
         events.append("attached")
         on_attached()
         yield "hit new\n"
+
     monkeypatch.setattr(rt, "logs", history)
     monkeypatch.setattr(proc, "follow_pane", follow)
     assert rt.wait_log("web", re.compile("hit"), timeout=5, before=2, after=0) == (
-        0, ["hit old", "before", "hit new"]
+        0,
+        ["hit old", "before", "hit new"],
     )
 
 
