@@ -346,3 +346,17 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
 - The project was built spec-first with the `superpowers:writing-plans` /
   `superpowers:executing-plans` skills. Those specs and plans are not in
   the tree (see Repo conventions) — `docs/` plus the code are the record.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `VRTFinland/jailbee`; read with `gh`, write through the JailBee issue outbox (an orchestrator may self-publish within its grant). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
