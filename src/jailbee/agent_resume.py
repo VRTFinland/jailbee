@@ -22,16 +22,21 @@ class ResumeEntry:
 
 _VALUE_OPTIONS = {
     "--model",
+    "--system-prompt",
+    "--system-prompt-file",
+    "--tools",
+    "--allowedTools",
+    "--disallowedTools",
+    "--permission-mode",
+    "--settings",
+    "--mcp-config",
     "-P",
     "--profile",
     "-C",
     "--context",
-    "--permission-mode",
     "--add-dir",
     "--append-system-prompt",
     "--append-system-prompt-file",
-    "--settings",
-    "--mcp-config",
 }
 _REMOVE_FLAGS = {"-r", "--resume", "-c", "--continue", "--fork-session", "-p", "--print"}
 
@@ -103,7 +108,6 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
     if not args:
         return []
     result = [args[0]]
-    prompt_indexes: list[int] = []
     index = 1
     while index < len(args):
         arg = args[index]
@@ -112,6 +116,8 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
             if index < len(args) and not args[index].startswith("-"):
                 index += 1
             continue
+        if arg == "--":
+            break
         if arg.startswith("--resume=") or arg.startswith("--session-id=") or arg in _REMOVE_FLAGS:
             index += 1
             continue
@@ -125,11 +131,11 @@ def replay_argv(launcher: Sequence[str]) -> list[str]:
         if arg.startswith("-"):
             result.append(arg)
         else:
-            prompt_indexes.append(len(result))
+            # The CLI prompt is a trailing positional argument, never an earlier token.
+            if index == len(args) - 1:
+                break
             result.append(arg)
         index += 1
-    if prompt_indexes:
-        del result[prompt_indexes[-1]]
     return result
 
 

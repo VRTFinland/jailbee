@@ -89,6 +89,16 @@ def test_parse_invalid_snapshot_returns_empty(raw: str) -> None:
         (["claude", "-c", "--model", "haiku"], ["claude", "--model", "haiku"]),
         (["claude", "--session-id=X", "--fork-session"], ["claude"]),
         (["claude", "--model", "opus", "fix the bug"], ["claude", "--model", "opus"]),
+        (["claude", "fix bug", "--model", "opus"], ["claude", "fix bug", "--model", "opus"]),
+        (["claude", "--", "fix bug"], ["claude"]),
+        (
+            ["claude", "--system-prompt", "--resume", "--model", "opus"],
+            ["claude", "--system-prompt", "--resume", "--model", "opus"],
+        ),
+        (
+            ["claude", "--session-id", "abc", "--tools", "Read,Write", "--permission-mode", "plan"],
+            ["claude", "--tools", "Read,Write", "--permission-mode", "plan"],
+        ),
         (["claude", "-p", "hi"], ["claude"]),
         (["claude-jb", "-P", "deep"], ["claude-jb", "-P", "deep"]),
     ],
