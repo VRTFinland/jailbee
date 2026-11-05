@@ -26,6 +26,9 @@ from jailbee.global_config import (
     load_global_config,
 )
 from jailbee.paths import find_repo_config
+from jailbee.services.cli_launch import LaunchCommand
+from jailbee.services.cli_launch import extra as launch_extra
+from jailbee.services.cli_launch import request as launch_request
 from jailbee.tui import (
     confirm_destroy_risk,
     default_confirm,
@@ -18310,8 +18313,6 @@ def prune(
             destroy_container(cfg, incus, name, force=True)
             success(f"Destroyed {short_name(cfg, name)}")
 
-
-from jailbee.services.cli_launch import LaunchCommand, extra as launch_extra, request as launch_request
 
 service_app = typer.Typer(name="service", help="Manage container services.", no_args_is_help=True)
 app.add_typer(service_app)

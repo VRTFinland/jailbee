@@ -3,8 +3,8 @@
 import re
 
 import typer
-from typer.core import TyperCommand
 from typer._click import Context
+from typer.core import TyperCommand
 
 from jailbee.services.launch_store import LaunchRequest
 
@@ -19,13 +19,15 @@ class LaunchCommand(TyperCommand):
             elif value in ("--env", "--config"):
                 skip = True
             elif value == "--":
-                ctx.meta["service_launch_args"] = args[index + 1:]
+                ctx.meta["service_launch_args"] = args[index + 1 :]
                 args = args[:index]
                 break
         return super().parse_args(ctx, args)
 
 
-def request(ctx: Context, names: list[str] | None, env: list[str] | None, persist: bool, reset: bool) -> LaunchRequest | None:
+def request(
+    ctx: Context, names: list[str] | None, env: list[str] | None, persist: bool, reset: bool
+) -> LaunchRequest | None:
     args = ctx.meta.get("service_launch_args")
     if args is None and not env and not persist and not reset:
         return None

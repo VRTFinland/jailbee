@@ -225,10 +225,15 @@ def test_wait_outputs_match_and_rejects_unknown(tmp_path, monkeypatch):
 
 def test_runtime_separator_and_validation(tmp_path, monkeypatch):
     from unittest.mock import Mock
-    from jailbee.services.runtime import ServiceRuntime, RunReport
+
+    from jailbee.services.runtime import RunReport, ServiceRuntime
+
     config = tmp_path / ".jailbee" / "config.yaml"
     config.parent.mkdir()
-    config.write_text("container_prefix: repo\nservices:\n  backend:\n    run: sleep 1\n    args: true\n  other:\n    run: sleep 1\n")
+    config.write_text(
+        "container_prefix: repo\nservices:\n  backend:\n    run: sleep 1\n"
+        "    args: true\n  other:\n    run: sleep 1\n"
+    )
     restart = Mock(return_value=RunReport(True, (), None, ""))
     monkeypatch.setattr(ServiceRuntime, "restart", restart)
     base = ["service", "--repo", str(tmp_path), "restart"]
@@ -249,6 +254,8 @@ def test_args_require_enabled_service(tmp_path):
     config = tmp_path / ".jailbee" / "config.yaml"
     config.parent.mkdir()
     config.write_text("container_prefix: repo\nservices:\n  backend:\n    run: sleep 1\n")
-    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "start", "backend", "--", "-x"])
+    result = CliRunner().invoke(
+        container_app, ["service", "--repo", str(tmp_path), "start", "backend", "--", "-x"]
+    )
     assert result.exit_code == 2
     assert "services.backend.args" in result.output
