@@ -149,7 +149,7 @@ class LocalProc:
                         attached = True
                         if initial:
                             process.stdin.write(
-                                f"capture-pane -p -J -t {pane} -S -{lines}\n".encode()
+                                f"capture-pane -p -J -t {pane} -S -\n".encode()
                             )
                             process.stdin.flush()
                         else:

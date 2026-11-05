@@ -318,8 +318,8 @@ class ServiceRuntime:
 
     def logs(self, name: str, lines: int, *, all_history: bool = False) -> str:
         topo_order(self.cfg.services, [name])
-        start = "-" if all_history else f"-{lines}"
-        result = self.proc.tmux(["capture-pane", "-p", "-J", "-t", self._target(name), "-S", start])
+        # tmux's start offset counts physical rows even with joined output.
+        result = self.proc.tmux(["capture-pane", "-p", "-J", "-t", self._target(name), "-S", "-"])
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "failed to capture service window")
         rows = result.stdout.splitlines(keepends=True)
@@ -344,19 +344,30 @@ class ServiceRuntime:
         if not math.isfinite(timeout) or timeout < 0 or before < 0 or after < 0:
             return 2, []
 
-        def pane_error() -> list[str]:
-            item = self._lifecycle(name, self._panes(), self._state())
-            return [f"{name}: {item.state}" + (f" ({item.detail})" if item.detail else "")]
+        original_pid: int | None = None
 
-        def success(lines: list[str]) -> tuple[int, list[str]]:
-            pane = self._panes().get(WINDOW_PREFIX + name)
-            if pane is None or pane.dead:
-                return 3, pane_error()
-            return 0, lines
+        def pane_error() -> list[str]:
+            panes = self._panes()
+            current = panes.get(WINDOW_PREFIX + name)
+            if original_pid is not None and current is not None and current.pid != original_pid:
+                return [f"{name}: service pane replaced"]
+            item = self._lifecycle(name, panes, self._state())
+            return [f"{name}: {item.state}" + (f" ({item.detail})" if item.detail else "")]
 
         pane = self._panes().get(WINDOW_PREFIX + name)
         if pane is None or pane.dead:
             return 3, pane_error()
+        original_pid = pane.pid
+
+        def original_live() -> bool:
+            current = self._panes().get(WINDOW_PREFIX + name)
+            return current is not None and not current.dead and current.pid == original_pid
+
+        def success(lines: list[str]) -> tuple[int, list[str]]:
+            if not original_live():
+                return 3, pane_error()
+            return 0, lines
+
         preceding: deque[str] = deque(maxlen=before)
 
         if before:
@@ -373,13 +384,13 @@ class ServiceRuntime:
         try:
             for chunk in stream:
                 now = self.proc.now()
-                if not chunk:
-                    pane = self._panes().get(WINDOW_PREFIX + name)
-                    if pane is None or pane.dead:
-                        return 3, pane_error()
+                if not chunk and not original_live():
+                    return 3, pane_error()
                 if matched and now - last_output >= silence:
                     return success(result)
                 if not matched and timeout and now - started >= timeout:
+                    if not original_live():
+                        return 3, pane_error()
                     return 1, []
                 if not chunk:
                     continue
@@ -400,9 +411,8 @@ class ServiceRuntime:
                             return success(result)
                     else:
                         preceding.append(line)
-            pane = self._panes().get(WINDOW_PREFIX + name)
-            if matched and pane is not None and not pane.dead:
-                return 0, result
+            if matched:
+                return success(result)
             return 3, pane_error()
         except RuntimeError as exc:
             return 3, [f"{name}: {exc}"]

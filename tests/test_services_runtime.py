@@ -247,6 +247,27 @@ def test_wait_log_rejects_buffered_hit_after_pane_disappears(tmp_path, monkeypat
     assert closed == [True]
 
 
+@pytest.mark.parametrize("chunk", ["hit\n", ""])
+def test_wait_log_rejects_replacement_pane(tmp_path, monkeypatch, chunk):
+    rt, proc = runtime(tmp_path, {"web": {"run": "x"}})
+    proc.windows["svc-web"] = (0, "", 123)
+    closed = []
+
+    def follow(*args, **kwargs):
+        try:
+            proc.windows["svc-web"] = (0, "", 456)
+            yield chunk
+            proc.clock += 10
+            yield ""
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(proc, "follow_pane", follow)
+    code, _ = rt.wait_log("web", re.compile("hit"), timeout=5, before=0, after=0)
+    assert code == 3
+    assert closed == [True]
+
+
 def test_health_failure_is_derived_and_cached(tmp_path):
     rt, proc = runtime(tmp_path, {"web": {"run": "serve", "health": "check", "env": {"X": "y"}}})
     proc.windows["svc-web"] = (0, "", 123)
@@ -688,6 +709,19 @@ def test_logs_limits_output_and_reports_capture_errors(tmp_path):
         rt.logs("web", 2)
 
 
+def test_logs_capture_all_physical_rows_before_logical_tail(tmp_path):
+    rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
+    logical = [f"{i}:" + "x" * 1000 + "\n" for i in range(30)]
+
+    def capture(args):
+        output = "".join(logical) if args[-1] == "-" else "x" * 100 + "\n"
+        return subprocess.CompletedProcess(args, 0, output, "")
+
+    proc.tmux = capture
+    assert rt.logs("web", 2) == "".join(logical[-2:])
+    assert rt.logs("web", 2, all_history=True) == "".join(logical)
+
+
 def test_logs_trim_trailing_blank_pane_rows_before_slicing(tmp_path):
     rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
     pane = "one\ntwo\nthree\n" + "\n" * 20
@@ -787,7 +821,7 @@ def test_follow_snapshot_boundary_and_saturated_history(tmp_path, monkeypatch):
     proc = LocalProc()
     monkeypatch.setattr(proc, "tmux", lambda args: subprocess.CompletedProcess(args, 0, "%7\n", ""))
     assert list(proc.follow_pane("autostart:=svc-db", 1)) == ["NEW\n", "same\nsame\n"]
-    assert b"capture-pane -p -J -t %7 -S -1\n" in process.stdin.written
+    assert b"capture-pane -p -J -t %7 -S -\n" in process.stdin.written
     assert process.returncode == 0
 
 
