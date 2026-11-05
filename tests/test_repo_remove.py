@@ -192,7 +192,8 @@ def test_plan_only_exact_resources_and_stale_pools(db_engine, tmp_path, mocker):
     assert plan.containers == ["foo-one"]
     assert plan.profiles == ["foo-base", "foo-binds"]
     assert set(plan.acls) == {"foo-allowlist", "foo-one-extra"}
-    assert set(plan.golden_images) == {"foo-base", "foo-base-2026-01-01"}
+    assert plan.golden_images == []
+    assert plan.golden_kept_reason == "config unavailable for foo-bar"
     assert plan.state_counts["pool_ip"] == 2
 
 
@@ -285,7 +286,7 @@ def test_scratch_golden_is_kept_and_not_counted_as_container(db_engine, tmp_path
         {"name": SCRATCH_BASE_ALIAS + "--golden", "profiles": ["foo-base"]}
     ]
     plan = plan_removal("foo", incus, lambda: Session(db_engine))
-    assert plan.containers == []
+    assert plan.containers == [SCRATCH_BASE_ALIAS + "--golden"]
     assert plan.golden_instances == []
     assert plan.golden_kept_reason == "shared scratch base"
 
@@ -702,3 +703,98 @@ def test_execute_purge_failure_retains_registry(db_engine, tmp_path, mocker):
     assert any(not r.ok and "denied" in r.detail for r in results)
     with Session(db_engine) as session:
         assert session.get(RegisteredRepo, "foo") is not None
+
+
+def test_golden_named_branch_is_not_golden(db_engine, mocker):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = ["foo-base"]
+    incus.list_containers.return_value = [
+        {"name": "foo-base--golden", "profiles": ["foo-base"]}
+    ]
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine))
+    assert plan.containers == ["foo-base--golden"]
+    assert plan.golden_instances == []
+
+
+def test_exact_max_length_extra_acl_is_discovered(db_engine, mocker):
+    from jailbee.egress_scope import ACL_NAME_MAX
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    acl = "foo-" + "x" * (ACL_NAME_MAX - len("foo--extra")) + "-extra"
+    assert len(acl) == ACL_NAME_MAX
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = ["foo-base"]
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = [acl]
+    incus.list_images.return_value = []
+    assert plan_removal("foo", incus, lambda: Session(db_engine)).acls == [acl]
+
+
+def test_default_shared_dir_is_kept_for_other_repo(db_engine, tmp_path, mocker, make_cfg):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    shared = tmp_path / "foo-shared"
+    shared.mkdir()
+    with Session(db_engine) as session:
+        session.add(RegisteredRepo(container_prefix="other", repo_root=str(tmp_path),
+                                   registered_at=datetime.now(UTC), synthetic_config=True))
+        session.commit()
+    other = make_cfg(tmp_path, container_prefix="other", shared_dir=shared)
+    mocker.patch("jailbee.repo_remove.load_repo_config", return_value=other)
+    mocker.patch("jailbee.repo_remove._default_shared_dir", return_value=shared)
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine), purge=True)
+    assert shared in plan.kept_files
+    assert shared not in plan.purge_files
+    assert plan.shared_kept_reason == "shared with other"
+
+
+def test_unloadable_repo_keeps_default_shared_dir(db_engine, tmp_path, mocker):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    with Session(db_engine) as session:
+        session.add(RegisteredRepo(container_prefix="other", repo_root=str(tmp_path / "missing"),
+                                   registered_at=datetime.now(UTC)))
+        session.commit()
+    mocker.patch("jailbee.repo_remove._default_shared_dir", return_value=shared)
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    plan = plan_removal("foo", incus, lambda: Session(db_engine), purge=True)
+    assert shared in plan.kept_files
+    assert plan.shared_kept_reason == "config unavailable for other"
+    assert plan.golden_kept_reason == "config unavailable for other"
+
+
+def test_proxy_down_reports_fragment_may_remain(db_engine, mocker):
+    from jailbee.egress_proxy import ProxyStatus
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    mocker.patch("jailbee.egress_proxy.proxy_status", return_value=ProxyStatus.STOPPED)
+    plan = RemovalPlan("foo", None, [], [], [], [], [], None, {}, [], [], [])
+    results = execute_removal(plan, incus, lambda: Session(db_engine))
+    assert any(r.label == "proxy fragment" and r.ok and "may remain" in r.detail for r in results)
