@@ -148,9 +148,7 @@ class LocalProc:
                     if line.startswith(b"%end "):
                         attached = True
                         if initial:
-                            process.stdin.write(
-                                f"capture-pane -p -J -t {pane} -S -\n".encode()
-                            )
+                            process.stdin.write(f"capture-pane -p -J -t {pane} -S -\n".encode())
                             process.stdin.flush()
                         else:
                             streaming = True
