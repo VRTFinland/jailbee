@@ -167,9 +167,11 @@ container Git state could not be checked. Shared golden aliases are protected;
 if another registered repo's config cannot load, golden objects are kept
 conservatively. Resource cleanup matches exact names (never a prefix wildcard).
 `--purge` removes only the repo-local override file and an unshared default
-shared directory; overridden or potentially shared paths and global config
-references are kept. `--force` bypasses running-agent and work-loss guards;
-`--yes` skips the final confirmation, not risk warnings. `jailbee net unregister` is deprecated: it only unregisters and
+shared directory; overridden or overlapping/potentially shared paths and global
+config references are kept. If the egress proxy is down, the result notes
+that its fragment may remain and return on startup. `--force` bypasses
+running-agent and work-loss guards; `--yes` skips the final confirmation, not
+risk warnings. `jailbee net unregister` is deprecated: it only unregisters and
 leaves resources behind, so use `jailbee repo rm` instead.
 
 `jailbee dashboard` (alias: `jailbee tui`) is the live, cross-repo version of
